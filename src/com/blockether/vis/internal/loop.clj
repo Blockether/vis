@@ -796,7 +796,7 @@
                           :timeout? false}))]
       exec)))
 
-;; Print-cap defaults for `fmt/safe-pr-str` - chosen so a wide flat
+;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
 ;; an unbounded JVM string before truncation. Override per call site
 ;; when a tighter or looser bound is required.
@@ -2481,9 +2481,10 @@
         _ (assert effective-model "Router must resolve a root model")
         has-reasoning? (reasoning-effort-configurable? resolved-model)
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
-        ;; Activate extensions ONCE per turn. Threaded through both the
-        ;; prompt message assembler (core, environment, extension messages) and
-        ;; the per-iteration ext nudge collector - activation-fn never re-fires in the channel-rendered tool-call rowthe loop.
+        ;; Activate extensions ONCE per conversation turn. Threaded through both
+        ;; the prompt message assembler (core, environment, extension messages)
+        ;; and the per-iteration ext nudge collector - activation-fn never
+        ;; re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
         conversation-base {:id           (:conversation-id environment)

@@ -288,8 +288,6 @@
 (def channel-render-tool-result         extension/channel-render-tool-result)
 (def default-journal-error-text         extension/default-journal-error-text)
 (def default-channel-error-ir           extension/default-channel-error-ir)
-(def render-pr-str-journal              extension/render-pr-str-journal)
-(def render-pr-str-channel              extension/render-pr-str-channel)
 (def render-string-journal              extension/render-string-journal)
 (def render-string-channel              extension/render-string-channel)
 (def register-op!                        extension/register-op!)
@@ -441,7 +439,6 @@
 ;; `prompt/build-iteration-context`; the re-export is dropped
 ;; rather than aliased so any straggler caller fails loud.
 
-(def safe-pr-str                      fmt/safe-pr-str)
 (def assemble-initial-messages        prompt/assemble-initial-messages)
 ;; =============================================================================
 ;; Channel event bus

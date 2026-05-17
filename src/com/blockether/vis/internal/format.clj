@@ -382,20 +382,20 @@
 ;; =============================================================================
 ;; Bounded value rendering
 ;;
-;; UI-level helper: stringify an arbitrary Clojure value with size + nesting
-;; caps so TUI progress chunks, history-restore previews, and journal `;; => …`
-;; lines never dump multi-megabyte payloads into a render buffer. Distinct
-;; from `format-clojure` above (which formats *source code* via zprint);
-;; this one renders *runtime values* via zprint for data shapes and
-;; `pr-str` for everything else.
+;; UI-level helper: stringify a plain Clojure value with size + nesting
+;; caps so non-tool progress chunks, history-restore previews, and journal
+;; `;; => …` lines never dump multi-megabyte payloads into a render buffer.
+;; Tool results must use symbol-specific renderers in `internal.extension`.
+;; Distinct from `format-clojure` above (which formats *source code* via
+;; zprint); this one renders *runtime values* via zprint for data shapes and
+;; `pr-str` for scalar fallback.
 ;; =============================================================================
 
 (def ^:const MAX_RESULT_DISPLAY_CHARS
-  "Default char cap on `safe-pr-str` output when no `:max-chars`
-   override is passed. TUI progress chunks, history-restore previews,
-   and external `vis.core/safe-pr-str` callers all use this. Tape
-   rendering passes its own `JOURNAL_RESULT_MAX_CHARS` and bypasses the
-   default."
+  "Default char cap on bounded plain-value output when no `:max-chars`
+   override is passed. TUI progress chunks and history-restore previews
+   use this. Tape rendering passes its own `JOURNAL_RESULT_MAX_CHARS` and
+   bypasses the default."
   1500)
 
 (defn- strip-sandbox-ns [s]
@@ -414,12 +414,13 @@
     (safe-zprint-str v {:width 80})
     (pr-str v)))
 
-(defn safe-pr-str
-  "Bounded Clojure data rendering for working-memory previews
+(defn bounded-value-str
+  "Bounded Clojure data rendering for plain working-memory previews
    (TUI progress, history-restore, journal `;; => …` lines). Caps output
    at `MAX_RESULT_DISPLAY_CHARS` chars by default; callers that want
-   a tighter or looser bound pass `:max-chars`."
-  ([v] (safe-pr-str v {}))
+   tighter or looser bounds pass `:max-chars`. Do not use for tool results;
+   tools must render through their symbol-specific renderers."
+  ([v] (bounded-value-str v {}))
   ([v {:keys [max-chars print-length print-level] :as opts
        :or {max-chars MAX_RESULT_DISPLAY_CHARS
             print-length 64

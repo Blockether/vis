@@ -179,15 +179,209 @@
   []
   (success-envelope (refresh!)))
 
+(defn- present
+  [v]
+  (let [s (str v)]
+    (if (string/blank? s) "-" s)))
+
+(defn- git-status
+  [git-map]
+  (cond
+    (nil? git-map) "not in git repo"
+    (:dirty? git-map) "dirty"
+    (:clean? git-map) "clean"
+    :else "unknown"))
+
+(defn- git-summary
+  [git-map]
+  (if git-map
+    (str "git " (present (:branch git-map))
+      " / " (git-status git-map)
+      (when-let [n (:modified git-map)] (str " / modified " n))
+      (when-let [n (:untracked git-map)] (str " / untracked " n))
+      (when-let [n (:ahead git-map)] (when (pos? (long n)) (str " / ahead " n)))
+      (when-let [n (:behind git-map)] (when (pos? (long n)) (str " / behind " n))))
+    "git unavailable"))
+
+(defn- language-summary
+  [languages-map]
+  (if languages-map
+    (let [top (->> (:languages languages-map)
+                (take 5)
+                (map (fn [{:keys [language files bytes-pct]}]
+                       (str (present language) " " (or files 0) " file(s)"
+                         (when bytes-pct (format " %.1f%%%%" (double bytes-pct))))))
+                (string/join ", "))]
+      (str "languages " (present (:primary languages-map))
+        " / " (or (:total-files languages-map) 0) " file(s)"
+        (when (seq top) (str " / top " top))))
+    "languages unavailable"))
+
+(defn- repositories-summary
+  [repositories-map]
+  (if repositories-map
+    (str "repositories " (or (:count repositories-map) 0)
+      (when (:truncated? repositories-map) " / truncated"))
+    "repositories unavailable"))
+
+(defn- monorepo-summary
+  [monorepo-map]
+  (if-let [shape (:shape monorepo-map)]
+    (str "monorepo " (name shape))
+    "monorepo none detected"))
+
+(defn- snapshot-lines
+  [{:keys [host git languages monorepo repositories]}]
+  (remove nil?
+    [(str "cwd " (present (:cwd host)))
+     (git-summary git)
+     (language-summary languages)
+     (monorepo-summary monorepo)
+     (repositories-summary repositories)]))
+
+(defn- ir-text [s] [:span {} (str s)])
+(defn- ir-code [s] [:c {} (str s)])
+(defn- ir-p [& children] (into [:p {}] children))
+
+(defn- lines-channel
+  [title lines]
+  (into [:ir {}
+         (ir-p (ir-code title))]
+    (when (seq lines)
+      [(into [:ul {}]
+         (map (fn [line] [:li {} (ir-p (ir-text line))]) lines))])))
+
+(defn- render-snapshot-journal
+  [result]
+  (str "v/snapshot — " (string/join "; " (snapshot-lines result))))
+
+(defn- render-snapshot-channel
+  [result]
+  (lines-channel "v/snapshot" (snapshot-lines result)))
+
+(defn- render-refresh-journal
+  [result]
+  (str "v/refresh! — refreshed; " (string/join "; " (snapshot-lines result))))
+
+(defn- render-refresh-channel
+  [result]
+  (lines-channel "v/refresh! refreshed environment" (snapshot-lines result)))
+
+(defn- render-git-journal
+  [result]
+  (str "v/git — " (git-summary result)))
+
+(defn- render-git-channel
+  [result]
+  (lines-channel "v/git" [(git-summary result) (when result (str "root " (present (:root result))))]))
+
+(defn- render-languages-journal
+  [result]
+  (str "v/languages — " (language-summary result)))
+
+(defn- render-languages-channel
+  [result]
+  (lines-channel "v/languages" [(language-summary result)]))
+
+(defn- render-monorepo-journal
+  [result]
+  (str "v/monorepo — " (monorepo-summary result)))
+
+(defn- render-monorepo-channel
+  [result]
+  (lines-channel "v/monorepo" [(monorepo-summary result)]))
+
+(defn- render-repositories-journal
+  [result]
+  (str "v/repositories — " (repositories-summary result)))
+
+(defn- render-repositories-channel
+  [result]
+  (let [repos (take 10 (:repositories result))]
+    (lines-channel "v/repositories"
+      (cons (repositories-summary result)
+        (map (fn [{:keys [path branch dirty? clean?]}]
+               (str (present path) " / " (present branch) " / "
+                 (cond dirty? "dirty" clean? "clean" :else "unknown")))
+          repos)))))
+
+(defn- guidance-summary
+  [{:keys [found? source path content]}]
+  (if found?
+    (str "guidance " (present source) " / " (present path)
+      " / " (count (string/split-lines (or content ""))) " line(s)")
+    "guidance not found"))
+
+(defn- render-guidance-journal
+  [result]
+  (str "v/main-agent-instructions — " (guidance-summary result)))
+
+(defn- render-guidance-channel
+  [{:keys [content] :as result}]
+  (into [:ir {}
+         (ir-p (ir-code "v/main-agent-instructions") (ir-text (str " — " (guidance-summary result))))]
+    (when (seq content)
+      [[:code {:lang "text"} content]])))
+
+(defn- warning-line
+  [{:keys [source reason path]}]
+  (str (present source) " / " (present reason) " / " (present path)))
+
+(defn- render-scan-warnings-journal
+  [result]
+  (str "v/scan-warnings — " (count result) " warning(s)"))
+
+(defn- render-scan-warnings-channel
+  [result]
+  (lines-channel "v/scan-warnings"
+    (if (seq result)
+      (map warning-line result)
+      ["no scan warnings"])))
+
+(defn- reload-summary
+  [result]
+  (str "added " (count (:added result))
+    " / removed " (count (:removed result))
+    " / reloaded " (count (:reloaded result))
+    " / errors " (count (:errors result))))
+
+(defn- render-reload-journal
+  [result]
+  (str "v/reload-extensions! — " (reload-summary result)))
+
+(defn- render-reload-channel
+  [result]
+  (lines-channel "v/reload-extensions!" [(reload-summary result)]))
+
+(defn- env-renderers
+  [sym]
+  (case sym
+    snapshot {:journal-render-fn render-snapshot-journal
+              :channel-render-fn render-snapshot-channel}
+    refresh! {:journal-render-fn render-refresh-journal
+              :channel-render-fn render-refresh-channel}
+    git {:journal-render-fn render-git-journal
+         :channel-render-fn render-git-channel}
+    languages {:journal-render-fn render-languages-journal
+               :channel-render-fn render-languages-channel}
+    monorepo {:journal-render-fn render-monorepo-journal
+              :channel-render-fn render-monorepo-channel}
+    repositories {:journal-render-fn render-repositories-journal
+                  :channel-render-fn render-repositories-channel}
+    main-agent-instructions {:journal-render-fn render-guidance-journal
+                             :channel-render-fn render-guidance-channel}
+    scan-warnings {:journal-render-fn render-scan-warnings-journal
+                   :channel-render-fn render-scan-warnings-channel}
+    reload-extensions! {:journal-render-fn render-reload-journal
+                        :channel-render-fn render-reload-channel}))
+
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.
    The public helper vars above stay plain Clojure functions for host callers;
    only the SCI symbol implementation returns a tool envelope."
   [v sym]
   (vis/symbol v
-    {:symbol sym
-     :journal-render-fn vis/render-pr-str-journal
-     :channel-render-fn vis/render-pr-str-channel}))
+    (assoc (env-renderers sym) :symbol sym)))
 
 (def snapshot-symbol
   (env-data-symbol #'snapshot-tool 'snapshot))

@@ -646,14 +646,14 @@
     :else
     (str x)))
 
-(defn- trace-safe-pr-str [x]
+(defn- trace-value-str [x]
   (try
     (pr-str (trace-safe x))
     (catch Throwable t
       (str "#<unprintable " (type t) ": " (.getMessage t) ">"))))
 
 (defn- trace-pr-str [x]
-  (let [s (trace-safe-pr-str x)]
+  (let [s (trace-value-str x)]
     (if (> (count s) trace-max-inline-chars)
       (str (subs s 0 trace-max-inline-chars) "… [truncated " (- (count s) trace-max-inline-chars) " chars]")
       s)))
@@ -675,7 +675,7 @@
     :else       nil))
 
 (defn- print-full-trace-edn-frame! [event payload]
-  (stdout! (trace-safe-pr-str {:event event :payload payload})))
+  (stdout! (trace-value-str {:event event :payload payload})))
 
 (defn- print-full-trace-json-frame! [event payload]
   (stdout! (json/write-json-str (json-safe (trace-safe {:event event :payload payload})))))
