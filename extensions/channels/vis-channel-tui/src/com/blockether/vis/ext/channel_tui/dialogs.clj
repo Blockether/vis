@@ -1092,49 +1092,42 @@
     :label "Mouse selection auto-copy"
     :description "Drag-select visible text; copied automatically on mouse release"}])
 
-(defn- contributor-hook?
-  "True when `hook-id` is a TUI contributor recognised by header /
-   footer (matches `*/header-row` or `*/footer-segment`)."
-  [hook-id]
-  (let [n (some-> hook-id name)]
-    (or (= "header-row" n)
-      (= "footer-segment" n)
-      (= :tui/header-row hook-id)
-      (= :tui/footer-segment hook-id))))
+(def ^:private tui-contributor-slots
+  #{:tui.slot/header-row :tui.slot/footer-segment})
 
-(def ^:private undisableable-tui-contributor-hooks
-  "Hooks that paint core identity / cannot be hidden from the user.
+(def ^:private undisableable-tui-contributions
+  "Contributions that paint core identity / cannot be hidden from the user.
    The Settings dialog hides their toggle rows; the rendering path in
    footer.clj also bypasses `:contributors-disabled` for them."
-  #{:tui.builtin.model/footer-segment})
+  #{:tui.builtin.model/footer})
 
 (defn- contributor-rows
-  "Settings-dialog rows for the registered TUI contributor hooks.
+  "Settings-dialog rows for registered TUI channel contributions.
    Each row is a `:set-toggle` against `:contributors-disabled`.
-   Builtin core-identity hooks (see `undisableable-tui-contributor-hooks`)
+   Builtin core-identity contributions (see `undisableable-tui-contributions`)
    are filtered out so the user can't accidentally hide the model label
    or other critical chrome.
    When no extensions have registered toggleable TUI contributors,
    returns nil so the section stays hidden — don't show an empty band."
   []
-  (let [hooks (->> (vis/channel-hooks-for :tui)
-                (filter #(contributor-hook? (:hook-id %)))
-                (remove #(contains? undisableable-tui-contributor-hooks (:hook-id %)))
-                (sort-by #(str (:hook-id %))))]
-    (when (seq hooks)
+  (let [contributions (->> (vis/channel-contributions-for :tui)
+                        (filter #(contains? tui-contributor-slots (:slot %)))
+                        (remove #(contains? undisableable-tui-contributions (:id %)))
+                        (sort-by (juxt #(str (:slot %)) #(str (:id %)))))]
+    (when (seq contributions)
       (vec
         (cons {:type :section :label "Header / Footer Contributors"}
-          (for [{:keys [hook-id]} hooks]
-            {:key (keyword (str "contrib::" hook-id))
+          (for [{:keys [id slot]} contributions]
+            {:key (keyword (str "contrib::" id))
              :type :set-toggle
              :set-key :contributors-disabled
-             :item-id hook-id
-             :label (str hook-id)
+             :item-id id
+             :label (str id)
              :description (str "Toggle this extension's contribution to the TUI "
-                            (cond
-                              (= "header-row" (name hook-id)) "header subtitle row"
-                              (= "footer-segment" (name hook-id)) "footer"
-                              :else "chrome"))}))))))
+                            (case slot
+                              :tui.slot/header-row "header subtitle row"
+                              :tui.slot/footer-segment "footer"
+                              "chrome"))}))))))
 
 (defn- settings-content-width
   [cols]

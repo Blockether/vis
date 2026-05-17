@@ -78,6 +78,9 @@
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
 
+(def ^:private selected-transcript-text
+  (deref #'screen/selected-transcript-text))
+
 (def ^:private copyable-bubble-text
   (deref #'screen/copyable-bubble-text))
 
@@ -472,6 +475,17 @@
                   {:anchor (selection/point 0 0)
                    :focus  (selection/point 39 5)}
                   ranges)))))
+
+  (it "copies transcript selection from document rows after auto-scroll"
+    (let [message {:role :assistant
+                   :prewrapped-lines ["line zero" "line one" "line two" "line three"]}
+          layout  {:total-h 6
+                   :heights [6]
+                   :offsets [0 6]}
+          sel     {:anchor (selection/point 0 1)
+                   :focus  (selection/point 39 4)}]
+      (expect (= "line zero\nline one\nline two\nline three"
+                (selected-transcript-text [message] layout 40 {} {} sel)))))
 
   (it "marks input text rows as selectable without input padding"
     (expect (= [{:row 11 :col 2 :width 16}

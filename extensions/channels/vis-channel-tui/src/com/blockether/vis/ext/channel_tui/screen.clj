@@ -296,12 +296,12 @@
              :screen screen
              :app-db state/app-db
              :publish! #(vis/publish-channel-event! :tui %)}]
-    (->> (vis/channel-hooks-for :tui)
-      (mapcat (fn [{:keys [commands-fn hook-id]}]
+    (->> (vis/channel-contributions-for :tui :tui.slot/commands)
+      (mapcat (fn [{:keys [id] f :fn}]
                 (try
-                  (map #(assoc % :hook-id hook-id) (or (some-> commands-fn (apply [ctx])) []))
+                  (map #(assoc % :contribution-id id) (or (some-> f (apply [ctx])) []))
                   (catch Throwable t
-                    (vis/notify! (str "Extension command hook failed: " (or (ex-message t) t))
+                    (vis/notify! (str "Extension command contribution failed: " (or (ex-message t) t))
                       :level :warn :ttl-ms copy-success-ttl-ms)
                     []))))
       (filter #(and (:id %) (:label %) (ifn? (:run-fn %))))
@@ -534,6 +534,73 @@
           {:row row
            :col (bubble-line-text-col (:role message) bubble-left line)
            :width content-w})))))
+
+(defn- transcript-document-copy-lines
+  "Return selectable transcript rows in document coordinates.
+
+   Mouse drag anchors live in virtual transcript coordinates so selection can
+   survive auto-scroll. The old copy path projected that selection back onto the
+   current screen cells, losing rows that had scrolled off-screen before
+   release. This builds the selected document rows from messages/layout instead."
+  [messages layout cols settings copy-opts selection]
+  (let [bubble-left (long render/MESSAGE_MARGIN_LEFT)
+        bubble-w    (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        content-w   (long (max 0 (- bubble-w (* 2 bubble-content-h-pad))))
+        offsets     (vec (:offsets layout))
+        heights     (vec (:heights layout))
+        {:keys [start end]} (selection/normalize selection)
+        start-row   (long (:row start))
+        end-row     (long (:row end))]
+    (if (or (not (pos? content-w)) (empty? offsets))
+      []
+      (vec
+        (for [[idx message] (map-indexed vector messages)
+              :let [top    (long (or (get offsets idx) 0))
+                    bottom (long (or (get offsets (inc idx))
+                                   (+ top (long (or (get heights idx) 0)))))]
+              :when (and (<= top end-row) (>= (dec bottom) start-row))
+              :let [projected   (if (:prewrapped-lines message)
+                                  message
+                                  (virtual/project-message message bubble-w settings copy-opts))
+                    message     (or projected message {})
+                    top-pad     (if (= :user (:role message)) 1 0)
+                    content-top (+ top 1 top-pad)]
+              [line-idx line] (map-indexed vector (projected-content-lines message content-w))
+              :let [row (+ content-top (long line-idx))]
+              :when (and (<= start-row row)
+                      (<= row end-row)
+                      (copyable-transcript-line? line))]
+          (let [visible (selection/clean-copied-text line)
+                visible (if (and (output-indented-row? line)
+                              (str/starts-with? visible selection-output-indent))
+                          (subs visible (count selection-output-indent))
+                          visible)]
+            {:row row
+             :col (bubble-line-text-col (:role message) bubble-left line)
+             :width content-w
+             :text visible}))))))
+
+(defn- selected-transcript-text
+  "Extract selected transcript text from virtual document rows, not only
+   current screen cells. Used when mouse selection auto-scroll moves earlier
+   selected rows off-screen before release."
+  [messages layout cols settings copy-opts selection]
+  (let [doc-lines (transcript-document-copy-lines messages layout cols settings copy-opts selection)
+        total-h   (long (or (:total-h layout) (peek (vec (:offsets layout))) 0))
+        by-row    (into {} (map (juxt :row identity) doc-lines))
+        ranges    (selection/selected-ranges selection cols total-h
+                    (mapv #(select-keys % [:row :col :width]) doc-lines))]
+    (selection/clean-copied-text
+      (str/join "\n"
+        (map (fn [{:keys [row col width]}]
+               (let [{line-col :col text :text} (get by-row row)
+                     text  (or text "")
+                     from  (max 0 (- (long col) (long (or line-col 0))))
+                     to    (min (count text) (+ from (long width)))]
+                 (if (< from to)
+                   (subs text from to)
+                   "")))
+          ranges)))))
 
 (defn- copyable-bubble-text
   "Whole-bubble copy hands the user complete text, not the collapsed viewport.
@@ -871,6 +938,8 @@
        :messages-top messages-top
        :text-top text-top
        :eff-scroll (:eff-scroll layout)
+       :heights (:heights layout)
+       :offsets (:offsets layout)
        :screen-cells screen-cells
        :selectable-ranges selectable-ranges
        :transcript-selectable-ranges transcript-selectable-ranges
@@ -1078,6 +1147,8 @@
        :messages-top messages-top
        :text-top text-top
        :eff-scroll (:eff-scroll layout)
+       :heights (:heights layout)
+       :offsets (:offsets layout)
        :visible (:visible layout)})))
 
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
@@ -2017,11 +2088,20 @@
                                                  transcript-bubble-copy-regions))
                                screen-sel    (selection/document->screen-selection
                                                sel selection-viewport)
-                               payload       (selection/selected-text
-                                               (get-in db [:layout :screen-cells])
-                                               screen-sel
-                                               (selectable-ranges-for-source
-                                                 source transcript-selectable-ranges input-selectable-ranges))]
+                               payload       (if (= source :transcript)
+                                               (selected-transcript-text
+                                                 (:messages db)
+                                                 (:layout db)
+                                                 cols
+                                                 (:settings db)
+                                                 {:conversation-id   (get-in db [:conversation :id])
+                                                  :detail-expansions (:detail-expansions db)}
+                                                 sel)
+                                               (selection/selected-text
+                                                 (get-in db [:layout :screen-cells])
+                                                 screen-sel
+                                                 (selectable-ranges-for-source
+                                                   source transcript-selectable-ranges input-selectable-ranges)))]
                            (state/dispatch [:clear-mouse-selection])
                            (cond
                              disclosure-hit

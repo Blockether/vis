@@ -3251,87 +3251,6 @@
     (broadcast-title-change! conversation-id t)
     nil))
 
-(def ^:private auto-title-max-words 6)
-(def ^:private auto-title-max-chars 80)
-
-(defn- clean-auto-title
-  "Trim, drop wrapping quotes/backticks, collapse whitespace, drop
-   trailing punctuation, and clamp word count. Returns nil if the
-   result is unusable."
-  [s]
-  (when s
-    (let [t (-> (str s)
-              (str/replace #"^[\s\"'`]+|[\s\"'`]+$" "")
-              (str/replace #"\s+" " ")
-              (str/replace #"[.。\!\?]+$" ""))
-          words (str/split t #"\s+")
-          clamped (str/join " " (take auto-title-max-words words))]
-      (when (and (not (str/blank? clamped))
-              (<= (count clamped) auto-title-max-chars))
-        clamped))))
-
-(defn- auto-title!
-  "Generate a 6-words-max title for `conversation-id` from the user
-   request, persist it, and broadcast. Synchronous - caller picks the
-   thread (we wrap it in a `future` from `turn!` so the answer path
-   is never blocked).
-
-   Skipped silently when:
-     - the conversation already has a non-blank title
-     - the user request is blank
-     - the LLM call fails / returns blank
-     - the post-cleaned candidate is unusable
-
-   Goes through `svar/ask-code!` with `:lang \"text\"` (no JSON spec
-   anywhere in Vis)."
-  [{:keys [router db-info conversation-id conversation-title-atom user-request resolved-model]}]
-  (when (and router db-info conversation-id
-          (string? user-request)
-          (not (str/blank? user-request)))
-    (let [conv  (try (persistance/db-get-conversation db-info conversation-id)
-                  (catch Throwable _ nil))
-          cur   (some-> conv :title str)]
-      (when (str/blank? cur)
-        (try
-          (let [prompt (str "Pick a short conversation title for this user request - at most "
-                         auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
-                         "User request:\n" user-request "\n\n"
-                         "Reply with ONE fenced ```text block containing only the title.")
-                llm-headers (copilot-llm-headers resolved-model "agent")
-                resp (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
-                                                        :conversation-id conversation-id
-                                                        :internal-call :auto-title)]
-                       (svar/ask-code! router
-                         (with-default-ask-code-idle-timeout
-                           (cond-> {:messages           [(svar/user prompt)]
-                                    :lang               "text"
-                                    :reasoning          :off
-                                    :code-tail-pointer? true}
-                             llm-headers (assoc :llm-headers llm-headers)))))
-                raw  (or (some-> resp :result str/trim not-empty)
-                       (some-> resp :raw str/trim not-empty))
-                title (clean-auto-title raw)]
-            (when title
-              (set-title-with-broadcast! db-info conversation-id
-                conversation-title-atom title)))
-          (catch Throwable t
-            (tel/log! {:level :debug :id ::auto-title-failed
-                       :data  {:conversation-id conversation-id
-                               :error           (ex-message t)}
-                       :msg   "Auto-title generation failed (silently skipped)"})))))))
-
-(defn- spawn-auto-title!
-  "Fire-and-forget wrapper around `auto-title!`. Runs on a JVM future
-   so the iteration loop returns immediately to the channel; the
-   eventual `set-title-with-broadcast!` call wakes title listeners
-   (TUI header, Telegram label) on its own."
-  [args]
-  (when args
-    (cancellation/worker-future "vis-auto-title"
-      #(try (auto-title! args)
-         (catch Throwable _))))
-  nil)
-
 ;; -----------------------------------------------------------------------------
 ;; Finalize turn result
 ;; -----------------------------------------------------------------------------
@@ -3447,7 +3366,7 @@
   ([environment messages opts]
    (let [ctx (prepare-turn-context environment messages opts)
          {:keys [eval-timeout-ms
-                 debug? user-request root-resolved-model root-model
+                 debug? user-request root-model
                  db-info
                  environment-id]} ctx]
      (binding [*rlm-context*       {:rlm-environment-id environment-id :rlm-type :main
@@ -3499,18 +3418,6 @@
                     :reasoning         reasoning
                     :total-tokens-atom total-tokens-atom
                     :total-cost-atom   total-cost-atom}))]
-           ;; Auto-title hook: fire-and-forget on a successful turn
-           ;; when the conversation has no title yet. Background
-           ;; future -> answer return is never blocked. Failure is
-           ;; logged at :debug and silently dropped.
-           (when-not status
-             (spawn-auto-title!
-               {:router                  (:router environment)
-                :db-info                 db-info
-                :conversation-id         (:conversation-id environment)
-                :conversation-title-atom (:conversation-title-atom environment)
-                :user-request            user-request
-                :resolved-model          root-resolved-model}))
            result))))))
 
 ;; =============================================================================

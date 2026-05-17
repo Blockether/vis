@@ -308,7 +308,7 @@
 (def extension-load-failures             manifest/load-failures)
 (def deregister-extension!               extension/deregister-extension!)
 (def extension-source-markers-of         extension/extension-source-markers-of)
-(def channel-hooks-for                   extension/channel-hooks-for)
+(def channel-contributions-for           extension/channel-contributions-for)
 (def reload-extensions!                  lp/reload-extensions!)
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;

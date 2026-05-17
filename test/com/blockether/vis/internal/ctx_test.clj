@@ -23,6 +23,7 @@
           out  (ctx/build {:environment {:sci-ctx sci-ctx :initial-ns-keys initial-ns-keys}
                            :conversation conv})]
       (expect (= conv (:conversation out)))
+      (expect (not (contains? out :tree)))
       (expect (some? (get-in out [:defs 'hits :doc])))
       (expect (= "rg results" (get-in out [:defs 'hits :doc])))
       (expect (some? (get-in out [:defs 'hits :shape])))
