@@ -462,6 +462,44 @@
               repaired))))
       (catch Throwable _ nil))))
 
+(defn- bare-list-literal-hint
+  "Detect `(v1 v2 v3)` where the head is not a callable (not a symbol,
+   keyword, or another collection that can act as a fn). Returns a hint
+   string when the form would crash with ClassCastException at the call site,
+   nil otherwise. Targets the classic LLM mistake of writing
+     (1 4 7 10 13)
+   instead of
+     '(1 4 7 10 13)
+   which the 4Clojure / swe-bench Lite traces show repeatedly."
+  [form]
+  (when (and (seq? form) (seq form))
+    (let [head (first form)]
+      (when-not (or (symbol? head) (keyword? head)
+                  (seq? head) (set? head) (map? head) (vector? head))
+        (str "Top-level list whose head is not callable: "
+          (let [s (pr-str form)] (if (<= (count s) 200) s (str (subs s 0 200) "…")))
+          ". Did you mean to quote it as data? Use `'" (pr-str form) "`.")))))
+
+(defn- string-as-fn-hint
+  "Detect `(\"text\" ...)` calls (JS/Python paren leakage into Clojure).
+   Returns a hint when found, nil otherwise. Scans the form tree."
+  [form]
+  (let [bad (some (fn [node]
+                    (when (and (seq? node) (string? (first node))) node))
+              (when (coll? form) (tree-seq coll? seq form)))]
+    (when bad
+      (str "List with a String literal as head: " (pr-str bad)
+        ". Strings are not callable in Clojure; this would throw "
+        "ClassCastException. Most often this is JS/Python call-paren leakage: "
+        "write `(v/bold \"text\")`, not `(v/bold(\"text\"))`."))))
+
+(defn- pre-eval-lint-hint
+  "Return a hint string when a parsed form would clearly fail at eval time
+   (bare list literal, string-as-fn call). Returns nil for clean forms."
+  [form]
+  (or (bare-list-literal-hint form)
+    (string-as-fn-hint form)))
+
 (defn- parse-top-level-forms
   "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
    for per-form eval + capture.
@@ -530,26 +568,33 @@
         (parse-top-level-forms code)
         eval-one-form
         (fn [form source]
-          (let [pre-out (.length (.getBuffer stdout-writer))
-                pre-err (.length (.getBuffer stderr-writer))]
-            (try
-              (let [v (sci/eval-form sci-ctx form)
-                    out (.substring (.getBuffer stdout-writer) pre-out)
-                    err (.substring (.getBuffer stderr-writer) pre-err)]
-                (cond-> {:source source :result v}
-                  (pos? (.length out)) (assoc :stdout (.toString out))
-                  (pos? (.length err)) (assoc :stderr (.toString err))))
-              (catch Throwable e
-                (let [out (.substring (.getBuffer stdout-writer) pre-out)
-                      err (.substring (.getBuffer stderr-writer) pre-err)
-                      err-map (try (extension/ex->op-error e {:block-source source})
-                                (catch Throwable _
-                                  {:message (or (ex-message e)
-                                              (.getName (class e)))}))]
-                  (reset! thrown e)
-                  (cond-> {:source source :error err-map}
+          (if-let [hint (pre-eval-lint-hint form)]
+            ;; Pre-eval lint short-circuit: forms guaranteed to crash
+            ;; (bare list literal head is a number/string, JS/Python paren
+            ;; leakage) get a precise hint instead of SCI's generic
+            ;; ClassCastException.
+            {:source source
+             :error {:message hint :data {:phase :vis/lint}}}
+            (let [pre-out (.length (.getBuffer stdout-writer))
+                  pre-err (.length (.getBuffer stderr-writer))]
+              (try
+                (let [v (sci/eval-form sci-ctx form)
+                      out (.substring (.getBuffer stdout-writer) pre-out)
+                      err (.substring (.getBuffer stderr-writer) pre-err)]
+                  (cond-> {:source source :result v}
                     (pos? (.length out)) (assoc :stdout (.toString out))
-                    (pos? (.length err)) (assoc :stderr (.toString err))))))))
+                    (pos? (.length err)) (assoc :stderr (.toString err))))
+                (catch Throwable e
+                  (let [out (.substring (.getBuffer stdout-writer) pre-out)
+                        err (.substring (.getBuffer stderr-writer) pre-err)
+                        err-map (try (extension/ex->op-error e {:block-source source})
+                                  (catch Throwable _
+                                    {:message (or (ex-message e)
+                                                (.getName (class e)))}))]
+                    (reset! thrown e)
+                    (cond-> {:source source :error err-map}
+                      (pos? (.length out)) (assoc :stdout (.toString out))
+                      (pos? (.length err)) (assoc :stderr (.toString err)))))))))
         eval-per-form
         (fn []
           ;; Walk parsed forms in order, capture per-form outcome; stop at
