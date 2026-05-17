@@ -39,6 +39,7 @@
   ;;                  used at every public-API guard.
   ;;   telemere     - logging used everywhere.
   ;;   clojure-plus - cond+/walk patches used by env.clj sandbox.
+  ;;   clj-reload   - smart namespace reload support for extension hot-reload.
   ;;   sci          - sandbox engine (env.clj).
   ;;   edamame      - Clojure parser used by parse-rescue (loop.clj).
   ;;   parinfer     - paren auto-balancer; first-line repair when LLM emits
@@ -68,6 +69,7 @@
   org.clojure/clojure                             {:mvn/version "1.12.4"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
+  io.github.tonsky/clj-reload                     {:mvn/version "1.0.0"}
   metosin/malli                                   {:mvn/version "0.20.1"}
   org.babashka/sci                                {:mvn/version "0.12.51"}
   borkdude/edamame                                {:mvn/version "1.5.39"}

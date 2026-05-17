@@ -939,12 +939,15 @@
    a turn was cancelled before any iteration produced visible work
    - the user pressed Esc fast, no trace exists, so dropping the
    placeholder bubble keeps the transcript clean."
-  [db {:keys [text pastes paste-counter input-history]}]
+  [db {:keys [text pastes paste-counter]}]
+  ;; NOTE: :input-history is intentionally NOT touched here. The live
+  ;; app-db value already includes the just-sent entry (conj'd in
+  ;; :send-message). Overwriting it from a pre-send snapshot would
+  ;; drop the cancelled message from Arrow-Up recall.
   (-> db
     (assoc :messages (drop-pending-turn-messages (:messages db))
       :messages-scroll nil
       :input (text->input-state text)
-      :input-history (vec (or input-history []))
       :input-history-index nil
       :input-history-draft nil
       :slash-command-index 0
@@ -969,10 +972,10 @@
    `db-store-iteration!` calls and `finalize-turn-result`'s
    `db-update-conversation-turn!`, so reopening the conversation
    shows the same partial trace."
-  [db {:keys [text pastes paste-counter input-history]}]
+  [db {:keys [text pastes paste-counter]}]
+  ;; See note in restore-submitted-input: leave :input-history alone.
   (-> db
     (assoc :input (text->input-state text)
-      :input-history (vec (or input-history []))
       :input-history-index nil
       :input-history-draft nil
       :slash-command-index 0
@@ -1147,8 +1150,7 @@
                :turn-start-ms (System/currentTimeMillis)
                :submitted-input {:text text
                                  :pastes (:pastes db)
-                                 :paste-counter (:paste-counter db)
-                                 :input-history (vec (or (:input-history db) []))}
+                                 :paste-counter (:paste-counter db)}
                :input-history-index nil
                :input-history-draft nil
                :slash-command-index 0
