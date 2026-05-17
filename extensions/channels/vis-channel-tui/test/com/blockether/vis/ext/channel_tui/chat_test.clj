@@ -159,7 +159,7 @@
     (expect (= "" ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer)) nil))))
 
   (it "rebuilds tool-result details from canonical op envelope keys"
-    ;; Generic envelope shaped like a tool result with stdout/stderr/command
+    ;; Generic envelope shaped like a tool result with command/target
     ;; metadata. Asserts chat layer extracts the canonical keys regardless
     ;; of which extension emitted them.
     (let [tool-out (extension/success

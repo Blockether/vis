@@ -573,7 +573,6 @@
           trace       [{:code      ["(+ 1 2)"]
                         :comments  [nil]
                         :results   [huge-result]
-                        :stdouts   [""]
                         :durations [1]
                         :successes [true]}]
           copied      (copyable-bubble-text

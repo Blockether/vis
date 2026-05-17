@@ -47,7 +47,6 @@
                      {:thinking  "thinking line"
                       :code      (vec (repeat forms-per-iter "(+ 1 2)"))
                       :results   (vec (repeat forms-per-iter "3"))
-                      :stdouts   (vec (repeat forms-per-iter ""))
                       :durations (vec (repeat forms-per-iter 1))
                       :successes (vec (repeat forms-per-iter true))}))]
     {:role            :assistant
@@ -103,7 +102,6 @@
                             :results (mapv :result chunk)
                             :result-kinds (mapv :kind chunk)
                             :result-details (mapv :detail chunk)
-                            :stdouts (vec (repeat (count chunk) ""))
                             :durations (vec (repeat (count chunk) 1))
                             :successes (vec (repeat (count chunk) true))})))]
     {:role :assistant
@@ -225,7 +223,6 @@
             trace       [{:code      ["(+ 1 2)"]
                           :comments  [nil]
                           :results   [huge-result]
-                          :stdouts   [""]
                           :durations [1]
                           :successes [true]}]
             {:keys [visible]}
@@ -248,7 +245,6 @@
             progress-entry (fn [i done?]
                              {:code      [(str "(do (Thread/sleep 1000) " i ")")]
                               :results   [(when done? huge-result)]
-                              :stdouts   [""]
                               :durations [(when done? 1000)]
                               :successes [(when done? true)]
                               :started-at-ms [(when-not done? 0)]})
