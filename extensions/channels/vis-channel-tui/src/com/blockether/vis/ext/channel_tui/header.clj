@@ -39,16 +39,16 @@
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]))
 
-;; -- Channel-hook conventions consumed by this namespace --------------
+;; -- Channel-contribution conventions consumed by this namespace --------------
 ;;
 ;; Extensions contribute to the header band by adding entries to their
-;; `:ext/channel-hooks` vec. The TUI consumes the following hook ids:
+;; `:ext/channel-contributions` map. The TUI consumes the following slot:
 ;;
-;;   {:channel-id :tui
-;;    :hook-id    :tui/header-row             ;; or :*/header-row
-;;    :render-fn  (fn [db cols] -> ir | nil)}
+;;   {:tui.slot/header-row
+;;    [{:id :my.extension/header-row
+;;      :fn (fn [db cols] -> ir | nil)}]}
 ;;
-;; The render-fn returns CANONICAL IR (`[:ir {?:align ?:fg-role ...} &
+;; The fn returns CANONICAL IR (`[:ir {?:align ?:fg-role ...} &
 ;; blocks]`) — channel-agnostic data, NOT a paint thunk. The TUI
 ;; walks the IR via `ir-tui/ir->lines` and paints the resulting
 ;; styled lines into rows; other channels (Telegram, web) translate
@@ -67,7 +67,7 @@
 ;; extension namespaces. Symmetric with how other channels would
 ;; expose their own hook conventions (e.g. `:telegram/preamble`).
 ;;
-;; See `com.blockether.vis.internal.extension/channel-hooks-for`.
+;; See `com.blockether.vis.internal.extension/channel-contributions-for`.
 
 (def ^:private id-display-chars
   "How many leading characters of the conversation UUID to show in
@@ -127,12 +127,12 @@
     (:id (first tabs))))
 
 (defn- contributor-disabled?
-  [db hook-id]
+  [db contribution-id]
   (let [disabled (get-in db [:settings :contributors-disabled])]
-    (and (set? disabled) (contains? disabled hook-id))))
+    (and (set? disabled) (contains? disabled contribution-id))))
 
 (defn- ir-root?
-  "Lightweight check: shape returned by render-fn is canonical IR.
+  "Lightweight check: shape returned by contribution fn is canonical IR.
    Does NOT validate inner blocks; just confirms the envelope so
    we know to walk it. Bad inner shape will be caught by ir-tui."
   [x]
@@ -212,43 +212,36 @@
                  (recur (inc i) (next lines))))))}))))
 
 (defn- header-row-specs
-  "Query every extension's `*/header-row` hook, run its `:render-fn`,
-   collect the resulting row specs.
+  "Query every extension's `:tui.slot/header-row` contribution, run its
+   `:fn`, collect the resulting row specs.
 
-   Hook contract: `:render-fn` returns canonical IR (or nil to skip
-   this frame). The IR is walked + converted to a row spec here.
+   Slot contract: `:fn` returns canonical IR (or nil to skip this frame).
+   The IR is walked + converted to a row spec here.
 
-   Settings can disable a hook by id via `:contributors-disabled`.
-   Hook crashes never propagate — misbehaving extensions just lose
+   Settings can disable a contribution by id via `:contributors-disabled`.
+   Contribution crashes never propagate — misbehaving extensions just lose
    their row that frame."
   [db cols]
   (vec
-    (for [{:keys [hook-id render-fn]} (vis/channel-hooks-for :tui)
-          :when (and (ifn? render-fn)
-                  (not (contributor-disabled? db hook-id))
-                  ;; Consume hooks whose id is `:tui/header-row` or
-                  ;; whose name ends in `header-row` (e.g.
-                  ;; `:goal/header-row`). Lets each extension scope
-                  ;; its hook id under its own namespace without
-                  ;; conflicting with other tui channel-hook surfaces.
-                  (or (= :tui/header-row hook-id)
-                    (= "header-row" (name hook-id))))
-          :let [ir   (try (render-fn db cols) (catch Throwable _ nil))
+    (for [{:keys [id] f :fn} (vis/channel-contributions-for :tui :tui.slot/header-row)
+          :when (and (ifn? f)
+                  (not (contributor-disabled? db id)))
+          :let [ir   (try (f db cols) (catch Throwable _ nil))
                 spec (when (ir-root? ir)
                        (try (ir->header-row-spec ir cols)
                          (catch Throwable _ nil)))]
           :when (and spec (pos? (long (or (:height spec) 0))))]
-      {:id hook-id :spec spec})))
+      {:id id :spec spec})))
 
 (defn header-rows
   "Rows needed by the header for this app-db. Workspace tabs add a tab top
    border plus tab row when more than one tab exists; each enabled extension
-   that declares a `:tui/header-row` channel-hook adds its render-fn's
+   that declares a `:tui.slot/header-row` channel contribution adds its fn's
    reported height.
 
-   Note: render-fns are invoked here AND in `draw-header!` (the
+   Note: contribution fns are invoked here AND in `draw-header!` (the
    render path needs both the total height and the draw-fn).
-   Extensions should keep their render-fn cheap or memoise
+   Extensions should keep their fn cheap or memoise
    per-frame internally — the goal extension uses a 100ms TTL atom
    for its SQLite lookup."
   ([db]
@@ -377,9 +370,9 @@
         top-rule-row (+ header-top (if tabs? 2 0))
         content-row  (+ header-top (if tabs? 3 1))
         ;; Extension-contributed rows sit BETWEEN the title content
-        ;; row and the bottom rule. Each `:tui/header-row` hook
+        ;; row and the bottom rule. Each `:tui.slot/header-row` contribution
         ;; returns a row spec or nil; we allocate rows for the
-        ;; non-nil ones and call their `:draw!` to paint. Hooks
+        ;; non-nil ones and call their `:draw!` to paint. Contributions
         ;; that return nil cost zero vertical space.
         contrib-specs (header-row-specs db cols)
         bottom-row   (dec (+ header-top (header-rows db cols)))
@@ -549,10 +542,10 @@
                :text     full-uuid
                :enabled? true})))))
 
-    ;; Extension-contributed rows. Each `:tui/header-row` hook gets
+    ;; Extension-contributed rows. Each `:tui.slot/header-row` contribution gets
     ;; its allocated row range below the content row. We wipe each
     ;; row first so previous-frame characters can't bleed through,
-    ;; then hand the painter to the hook's `:draw!`.
+    ;; then hand the painter to the contribution's `:draw!`.
     (loop [row (inc content-row)
            specs (seq contrib-specs)]
       (when specs

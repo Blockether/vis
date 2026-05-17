@@ -70,8 +70,9 @@
       (expect (= "voice" (:cmd/name cli)))
       (expect (= ["models"] (mapv :cmd/name (:cmd/subcommands cli))))))
 
-  (it "defers TUI voice input namespace until the channel hook is invoked"
-    (let [hook  (first (:ext/channel-hooks voice/voice-extension))
+  (it "defers TUI voice input namespace until the channel contribution is invoked"
+    (let [contribution (first (get-in voice/voice-extension
+                                [:ext/channel-contributions :tui.slot/commands]))
           calls (atom [])]
       (with-redefs [clojure.core/requiring-resolve
                     (fn [sym]
@@ -82,5 +83,5 @@
                           :ctx ctx}]))]
         (expect (= [{:id :test/voice-command
                      :ctx {:source :test}}]
-                  ((:commands-fn hook) {:source :test})))
+                  ((:fn contribution) {:source :test})))
         (expect (= ['com.blockether.vis.ext.voice.input/tui-commands] @calls))))))

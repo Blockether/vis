@@ -695,20 +695,33 @@
   (s/keys :req-un [:ext.hook.return/reject]
     :opt-un [:ext.hook.return/message :ext.hook.return/hint]))
 
-;; Channel-local hooks let extensions contribute UI commands/status behavior to
-;; concrete channels without requiring those channel namespaces. The TUI uses
-;; this for voice commands; other channels may ignore the surface.
-(s/def :ext.channel-hook/channel-id keyword?)
-(s/def :ext.channel-hook/hook-id keyword?)
-(s/def :ext.channel-hook/commands-fn ifn?) ;; (fn [ctx]) -> seq<{:id :label :run-fn}>
-(s/def :ext.channel-hook/render-fn   ifn?) ;; channel-specific render fn; shape per hook-id contract
-(s/def :ext.channel-hook/state-fn    ifn?) ;; channel-agnostic state extractor (when channels want raw data)
-(s/def ::channel-hook
-  (s/keys :req-un [:ext.channel-hook/channel-id :ext.channel-hook/hook-id]
-    :opt-un [:ext.channel-hook/commands-fn
-             :ext.channel-hook/render-fn
-             :ext.channel-hook/state-fn]))
-(s/def :ext/channel-hooks (s/coll-of ::channel-hook :kind vector?))
+;; Channel contributions let extensions add passive UI/command parts to
+;; concrete channel slots without requiring those channel namespaces.
+;; Shape: {:ext/channel-contributions {:tui.slot/commands [{:id :voice/input
+;;                                                          :fn f}]}}
+;; The slot key declares where the contribution goes; the channel owns that
+;; slot's fn arity + return contract.
+(defn- channel-slot?
+  [x]
+  (and (keyword? x)
+    (when-let [ns (namespace x)]
+      (str/ends-with? ns ".slot"))))
+
+(defn- channel-slot->channel-id
+  [slot]
+  (let [ns (namespace slot)]
+    (when-not (and (keyword? slot) ns (str/ends-with? ns ".slot"))
+      (throw (ex-info "Channel contribution slot must be a qualified keyword ending in .slot"
+               {:type :extension/invalid-channel-contribution-slot
+                :slot slot})))
+    (keyword (subs ns 0 (- (count ns) (count ".slot"))))))
+
+(s/def :ext.channel-contribution/id keyword?)
+(s/def :ext.channel-contribution/fn ifn?)
+(s/def ::channel-contribution
+  (s/keys :req-un [:ext.channel-contribution/id :ext.channel-contribution/fn]))
+(s/def :ext/channel-contributions
+  (s/map-of channel-slot? (s/coll-of ::channel-contribution :kind vector?)))
 
 ;; Optional extension-owned environment/config declarations. These name
 ;; OS-style environment variables that can also be overridden from
@@ -889,7 +902,7 @@
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
-            :ext/channel-hooks
+            :ext/channel-contributions
             :ext/doctor-check-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
@@ -1613,7 +1626,7 @@
 (defn- derive-kind
   "Auto-derive `:ext/kind` for the categorical cases when the author
    didn't set one. Extensions that contribute providers, channels,
-   channel hooks, or persistence backends (and nothing forcing a different
+   channel contributions, or persistence backends (and nothing forcing a different
    label) get bucketed under `\"providers\"` / `\"channels\"` /
    `\"persistance\"` so `vis extensions list` reads as a clean grouped
    table instead of a column of blanks.
@@ -1626,7 +1639,7 @@
     (some? (:ext/kind spec))            (:ext/kind spec)
     (seq (:ext/providers spec))         "providers"
     (seq (:ext/channels spec))          "channels"
-    (seq (:ext/channel-hooks spec))     "channels"
+    (seq (:ext/channel-contributions spec)) "channels"
     (seq (:ext/persistance spec))       "persistance"
     :else                               nil))
 
@@ -1651,7 +1664,7 @@
       (not (:ext/channels spec))                       (assoc :ext/channels [])
       (not (:ext/providers spec))                      (assoc :ext/providers [])
       (not (:ext/persistance spec))                    (assoc :ext/persistance [])
-      (not (:ext/channel-hooks spec))                  (assoc :ext/channel-hooks [])
+      (not (:ext/channel-contributions spec))          (assoc :ext/channel-contributions {})
       (not (:ext/doctor-check-fn spec))                (assoc :ext/doctor-check-fn (constantly [])))
     (validate!)))
 
@@ -2052,15 +2065,28 @@
   (let [registry @extension-registry]
     (into [] (keep registry) @extension-order)))
 
-(defn channel-hooks-for
-  "Return registered extension channel hooks for `channel-id` in extension
-   registration order. Hooks are passive data; channels decide which hook
-   keys they support."
-  [channel-id]
-  (->> (registered-extensions)
-    (mapcat :ext/channel-hooks)
-    (filter #(= channel-id (:channel-id %)))
-    vec))
+(defn- normalized-channel-contribution
+  [slot contribution]
+  (assoc contribution
+    :channel-id (channel-slot->channel-id slot)
+    :slot slot))
+
+(defn channel-contributions-for
+  "Return registered extension channel contributions for `channel-id` in
+   extension registration order. With `slot`, return only contributions for
+   that channel slot. Contributions are passive data; the channel owns each
+   slot's fn arity + return contract."
+  ([channel-id]
+   (channel-contributions-for channel-id nil))
+  ([channel-id slot]
+   (let [rows (->> (registered-extensions)
+                (mapcat (fn [ext]
+                          (mapcat (fn [[slot contributions]]
+                                    (map #(normalized-channel-contribution slot %) contributions))
+                            (:ext/channel-contributions ext))))
+                (filter #(= channel-id (:channel-id %))))]
+     (vec (cond->> rows
+            slot (filter #(= slot (:slot %))))))))
 
 (defn tool-result-symbol-entry
   [tool-result]

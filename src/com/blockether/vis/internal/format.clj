@@ -399,7 +399,7 @@
   1500)
 
 (defn- strip-sandbox-ns [s]
-  (str/replace (str s) #"\bsandbox/" ""))
+  (str/replace (str s) #"\bsandbox/|\buser/" ""))
 
 (defn- zprintable-data?
   [v]
