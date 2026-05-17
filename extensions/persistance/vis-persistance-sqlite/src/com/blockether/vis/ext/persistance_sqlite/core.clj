@@ -1002,9 +1002,6 @@
 ;; Iteration - conversation_turn_iteration table
 ;; =============================================================================
 
-(defn- blank-text? [s]
-  (or (nil? s) (and (string? s) (str/blank? s))))
-
 (defn- require-iteration-code!
   [opts]
   (when-not (contains? opts :code)

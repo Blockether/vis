@@ -377,11 +377,11 @@
    table + per-ns breakdown."
   [result]
   (or (seq (:errors result))
-      (seq (:failed result))
-      (seq (:env-reseat-skipped result))
-      (pos? (long (or (:blocked-ms result) 0)))
-      (let [s (get-in result [:env-refresh :status])]
-        (and s (not (#{:scheduled :idle :ok} s))))))
+    (seq (:failed result))
+    (seq (:env-reseat-skipped result))
+    (pos? (long (or (:blocked-ms result) 0)))
+    (let [s (get-in result [:env-refresh :status])]
+      (and s (not (#{:scheduled :idle :ok} s))))))
 
 (defn- reload-happy-line
   "One-line summary for the happy path. Mentions counts that matter and

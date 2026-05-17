@@ -1312,7 +1312,7 @@
                     :results [big-body]
                     :result-kinds [:tool]
                     :result-details [{:op :v/patch :tag :op.tag/mutation
-                                      :color-role :tool-color/edit}]
+                                      :color-role :tool-color/edit}] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1332,7 +1332,7 @@
                     :results [big-body]
                     :result-kinds [:tool]
                     :result-details [{:op :v/patch :tag :op.tag/mutation
-                                      :color-role :tool-color/edit}]
+                                      :color-role :tool-color/edit}] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1362,7 +1362,7 @@
                     :results [big-body]
                     :result-kinds [:tool]
                     :result-details [{:op :v/cat :tag :op.tag/observation
-                                      :color-role :tool-color/read}]
+                                      :color-role :tool-color/read}] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1386,7 +1386,7 @@
       (render/invalidate-cache!)
       (let [trace [{:code ["(boom)"]
                     :results ["- pretend-bullet"]
-                    :result-kinds [:tool]
+                    :result-kinds [:tool] :durations [1] :successes [false]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {}}
