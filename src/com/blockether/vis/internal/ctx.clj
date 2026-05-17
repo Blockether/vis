@@ -12,8 +12,8 @@
    and the per-iteration scope is not buried inside the conversation.
 
    `:defs` is an ordered map; newest sym first. History (prior turns,
-   iterations, code, errors, stdout/stderr) is reachable via foundation
-   tools, not embedded in ctx.
+   iterations, code, errors) is reachable via foundation tools,
+   not embedded in ctx.
 
    No previews. No raw values. Real values live in the SCI sandbox; the
    model derefs symbols when it needs them.
@@ -167,18 +167,10 @@
 ;; REPL-style iteration outcome rendering
 ;;
 ;; Each prior iteration of the current turn is rendered as a REPL transcript
-;; (code lines, per-form `;; => shape`, `;; ! stdout> ...`, `;; ! ERROR ...`).
-;; The whole block forms one user-message trailer the model sees between its
-;; own assistant replays, plus the fresh `ctx` snapshot at the end.
+;; (code lines, per-form `;; => shape`, `;; ! ERROR ...`). The whole block
+;; forms one user-message trailer the model sees between its own assistant
+;; replays, plus the fresh `ctx` snapshot at the end.
 ;; =============================================================================
-
-(defn- side-effect-lines
-  [{:keys [stdout stderr]}]
-  (cond-> []
-    (non-blank? stdout)
-    (into (mapv #(str ";; ! stdout> " %) (str/split-lines stdout)))
-    (non-blank? stderr)
-    (into (mapv #(str ";; ! stderr> " %) (str/split-lines stderr)))))
 
 (defn- error-lines
   [err]
@@ -259,21 +251,20 @@
                           (bounded-pr-str value)))))
 
 (defn- per-form-block-lines
-  "Render lines for a single per-form entry (:source :result :stdout :stderr
-   :error). Each form gets its own value, stdout, stderr, and error so the
-   model never loses sight of what each form produced."
-  [_cache-key _position _idx {:keys [source result stdout stderr error]}]
+  "Render lines for a single per-form entry (:source :result :error).
+   Each form gets its own value and error so the model never loses
+   sight of what each form produced."
+  [_cache-key _position _idx {:keys [source result error]}]
   (concat
     [source]
     (form-result-lines (when (nil? error) result))
-    (side-effect-lines {:stdout stdout :stderr stderr})
     (error-lines error)))
 
 (defn- iteration->repl-text
   "Render one prior iteration as a REPL transcript block. When the engine
    captured per-form outcomes (`:forms`), each form is rendered with its own
-   value/shape/stdout/stderr/error. Falls back to whole-block render when the
-   parser rejected the source."
+   value/shape/error. Falls back to whole-block render when the parser
+   rejected the source."
   [cache-key {:keys [position blocks]}]
   (let [block    (first blocks)
         forms    (:forms block)
@@ -293,7 +284,6 @@
                      (concat
                        [code]
                        (form-result-lines result)
-                       (side-effect-lines block)
                        (error-lines (:error block)))))]
     (str/join "\n" (concat header body))))
 

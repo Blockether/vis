@@ -859,8 +859,6 @@
                  (when-let [ms (:execution-time-ms chunk)] (str " " (trace-dim (str ms "ms"))))
                  (when (:repaired? chunk) (str " " (trace-warn "repaired")))
                  (when (:timeout? chunk) (str " " (trace-bad "timeout")))
-                 (pretty-block "stdout" (:stdout chunk))
-                 (pretty-block "stderr" (:stderr chunk))
                  (if-let [err (trace-error-summary (:error chunk))]
                    (pretty-block "error" (trace-bad err))
                    (pretty-block "result" (trace-pr-str (:result chunk))))))

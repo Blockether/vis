@@ -19,7 +19,7 @@
 
      :form-result      One block finished evaluating. Carries
                        `:position`, `:code`, `:result`/`:error`,
-                       `:stdout`, `:stderr`, `:execution-time-ms`. The
+                       `:execution-time-ms`. The
                        tracker writes per-block data into the
                        iteration entry's parallel vectors at index
                        `:position`. Chunks tagged `:silent?` (or
@@ -55,8 +55,6 @@
       :results   [str-or-IR-or-formatted-error ...]
       :result-kinds [keyword ...] ;; :tool, :value, or :error
       :result-details [map-or-str ...] ;; extra result metadata
-      :stdouts   [str ...]
-      :stderrs   [str ...]
       :durations [int-ms ...]
       :successes [bool ...]
       :started-at-ms [int-ms ...] ;; running form start timestamps
@@ -84,8 +82,6 @@
    :results   []
    :result-kinds []
    :result-details []
-   :stdouts   []
-   :stderrs   []
    :durations []
    :successes []
    :started-at-ms []
@@ -111,9 +107,7 @@
 
 (defn- tool-result-detail
   "Project tool-result envelope to the small detail map TUI labels
-   consume. Phase-4 envelope is flat (`:symbol`, `:tag`,
-   `:metadata`, `:stdout`, `:stderr`); legacy `:info` key
-   is gone."
+   consume. Envelope is flat (`:symbol`, `:tag`, `:metadata`)."
   [tool-result]
   (when (extension/tool-result? tool-result)
     (let [meta (or (:metadata tool-result) {})]
@@ -121,9 +115,7 @@
         (:symbol tool-result) (assoc :op (:symbol tool-result))
         (:tag tool-result)    (assoc :tag (:tag tool-result))
         :always (merge (select-keys meta [:spec :paths :hit-count :truncated-by
-                                          :command :cwd :target]))
-        (some? (:stdout tool-result)) (assoc :stdout (:stdout tool-result))
-        (some? (:stderr tool-result)) (assoc :stderr (:stderr tool-result))))))
+                                          :command :cwd :target]))))))
 
 (defn- form-result-detail
   [chunk]
@@ -248,8 +240,6 @@
                                                        (format-form-result chunk))))
       (update :result-kinds #(assoc (pad-to % need) idx (form-result-kind chunk)))
       (update :result-details #(assoc (pad-to % need) idx (form-result-detail chunk)))
-      (update :stdouts   #(assoc (pad-to % need) idx (or (:stdout chunk) "")))
-      (update :stderrs   #(assoc (pad-to % need) idx (or (:stderr chunk) "")))
       (update :durations #(assoc (pad-to % need) idx (or (:execution-time-ms chunk) 0)))
       (update :successes #(assoc (pad-to % need) idx (nil? (:error chunk))))
       (update :silents   #(assoc (pad-to % need) idx (and (nil? (:error chunk))
@@ -290,8 +280,6 @@
         (update :results   drop-slot idx)
         (update :result-kinds drop-slot idx)
         (update :result-details drop-slot idx)
-        (update :stdouts   drop-slot idx)
-        (update :stderrs   drop-slot idx)
         (update :durations drop-slot idx)
         (update :successes drop-slot idx)
         (update :started-at-ms drop-slot idx)
@@ -328,8 +316,6 @@
         (update :results   insert-slot display-idx)
         (update :result-kinds insert-slot display-idx)
         (update :result-details insert-slot display-idx)
-        (update :stdouts   insert-slot display-idx)
-        (update :stderrs   insert-slot display-idx)
         (update :durations insert-slot display-idx)
         (update :successes insert-slot display-idx)
         (update :started-at-ms insert-slot display-idx)

@@ -100,10 +100,6 @@
 (def tool-color-move    (rgb :tool-color-move))
 (def tool-color-shell   (rgb :tool-color-shell))
 (def tool-color-meta    (rgb :tool-color-meta))
-(def stdout-bg         (rgb :stdout-bg))
-(def stdout-fg         (rgb :stdout-fg))
-(def stdout-label-fg   (rgb :stdout-label-fg))
-(def stdout-sep-fg     (rgb :stdout-sep-fg))
 (def iteration-header-fg    (rgb :iteration-header-fg))
 (def iteration-header-bg    (rgb :iteration-header-bg))
 (def answer-sep-fg     (rgb :answer-sep-fg))
@@ -209,10 +205,6 @@
    :tool-color-move #'tool-color-move
    :tool-color-shell #'tool-color-shell
    :tool-color-meta #'tool-color-meta
-   :stdout-bg #'stdout-bg
-   :stdout-fg #'stdout-fg
-   :stdout-label-fg #'stdout-label-fg
-   :stdout-sep-fg #'stdout-sep-fg
    :iteration-header-fg #'iteration-header-fg
    :iteration-header-bg #'iteration-header-bg
    :answer-sep-fg #'answer-sep-fg

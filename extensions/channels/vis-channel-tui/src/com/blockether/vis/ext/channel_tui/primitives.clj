@@ -757,16 +757,12 @@
 (def MARKER_THINKING   "\u200B")  ;; zero-width space       -> italic, dim (reasoning)
 (def MARKER_CODE       "\u200C")  ;; zero-width non-joiner  -> code style
 (def MARKER_RESULT     "\u200D")  ;; zero-width joiner      -> result/return value (success)
-(def MARKER_STDOUT     "\uFEFF")  ;; byte-order mark        -> stdout output
 (def MARKER_SEP        "\u2060")  ;; word-joiner            -> separator line
 (def MARKER_CODE_OK    "\u2061")  ;; function application   -> code with success status
 (def MARKER_CODE_ERR   "\u2062")  ;; invisible times        -> code with error status
 (def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    -> error result line
 (def MARKER_DURATION   "\u2064")  ;; invisible plus         -> duration annotation
-(def MARKER_STDERR     "\u2065")  ;; invisible reserved     -> stderr output
 (def MARKER_ITERATION_HDR   "\u2066")  ;; LRI                    -> iteration header with bg
-(def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    -> stdout separator line
-(def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    -> stdout empty padding line
 (def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    -> answer separator (trace->answer break)
 (def MARKER_CODE_PAD   "\u206A")  ;; ISS                    -> running/neutral code block padding line
 (def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   -> error code block padding line
