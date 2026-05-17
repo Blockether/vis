@@ -142,7 +142,7 @@
    When `:channel` is empty (plain-value form: `(+ 1 2)`, a `def` whose
    value isn't a tool-result, etc.) the form-level `:result` IS what
    the model wrote: render via `channel-render-tool-result` when the
-   value is an `:envelope`, otherwise bounded `safe-pr-str`."
+   value is an `:envelope`, otherwise bounded plain-value text."
   [chunk]
   (if (:error chunk)
     (extension/default-channel-error-ir {:success? false :error (:error chunk)})
@@ -166,7 +166,7 @@
         (extension/channel-render-tool-result (:result chunk))
 
         :else
-        (fmt/safe-pr-str (:result chunk))))))
+        (fmt/bounded-value-str (:result chunk))))))
 
 (defn- normalize-thinking-text [thinking]
   (some-> thinking str str/trim))

@@ -41,4 +41,4 @@
   [restored-values code]
   (when-let [name (def-symbol-name code)]
     (when (contains? restored-values name)
-      (fmt/safe-pr-str (get restored-values name)))))
+      (fmt/bounded-value-str (get restored-values name)))))
