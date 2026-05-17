@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
+   [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.env.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
+   [edamame.core :as edamame]
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci]))
 
@@ -34,6 +36,25 @@
     (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
       (expect (= 180000 (:semantic-timeout-ms opts)))
       (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))))
+
+(defdescribe malformed-direct-answer-repair-test
+  (it "repairs unescaped quotes inside direct done IR paragraph blocks"
+    (let [preflight (var-get #'lp/code-entries-preflight)
+          src "(done [:ir [:p \"Cześć! 🙂  Nie do końca rozumiem pytanie — możesz doprecyzować, o co chodzi z tym „9k\"? Chętnie pomogę, jeśli powiesz w jakim kontekście (kod, repo, coś innego).\"]])"
+          {:keys [code-entries]} (preflight 1 [{:source src :lang "clojure"}])
+          entry (first code-entries)]
+      (expect (= 1 (count code-entries)))
+      (expect (true? (:repaired? entry)))
+      (expect (str/includes? (:expr entry) "„9k\\\"?"))
+      (expect (= 1 (count (edamame/parse-string-all (:expr entry) lp/edamame-opts))))
+      (expect (= [{:kind :answer-ref}] (:render-segments entry)))))
+
+  (it "does not rewrite malformed non-answer code"
+    (let [preflight (var-get #'lp/code-entries-preflight)
+          src "(println \"a\" broken \"b)"
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+      (expect (nil? (:repaired? entry)))
+      (expect (= src (:expr entry))))))
 
 ;; ---------------------------------------------------------------------------
 ;; def-sink -> vars-snapshot (per-var precise source extraction)

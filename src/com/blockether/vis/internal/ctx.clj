@@ -2,12 +2,16 @@
   "Engine-owned `ctx` snapshot bound under sandbox name `ctx` before every
    model call.
 
-   Three keys, every nil/blank field stripped:
+   Four keys, every nil/blank field stripped:
 
-     :conversation {:id :title :turn-id :iteration-id :user-request}
+     :conversation {:id :title :turn-id :user-request}
+     :iteration    {:id :position}
      :tree         vector of cwd-relative file paths (depth 8, gitignore-aware,
                    directories excluded so paths read cleanly)
      :defs         {sym {:doc <string?> :shape <malli|fn-shape>}}
+
+   `:iteration` lives at the top level so `(:iteration ctx)` works directly
+   and the per-iteration scope is not buried inside the conversation.
 
    `:defs` is an ordered map; newest sym first. History (prior turns,
    iterations, code, errors, stdout/stderr) is reachable via foundation
@@ -217,10 +221,12 @@
 (defn build
   "Build the engine ctx snapshot.
 
-   `:conversation` — pre-pruned map `{:id :title :turn-id :iteration-id :user-request}`."
-  [{:keys [environment conversation]}]
+   `:conversation` — pre-pruned map `{:id :title :turn-id :user-request}`.
+   `:iteration`    — pre-pruned map `{:id :position}`."
+  [{:keys [environment conversation iteration]}]
   (prune
     {:conversation (prune (or conversation {}))
+     :iteration    (prune (or iteration {}))
      :tree         (build-tree)
      :defs         (or (build-defs (:sci-ctx environment)
                          (:initial-ns-keys environment))
