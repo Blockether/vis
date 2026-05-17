@@ -251,49 +251,25 @@
       [(into [:ul {}]
          (map (fn [line] [:li {} (ir-p (ir-text line))]) lines))])))
 
-(defn- render-snapshot-journal
-  [result]
-  (str "v/snapshot — " (string/join "; " (snapshot-lines result))))
-
 (defn- render-snapshot-channel
   [result]
   (lines-channel "v/snapshot" (snapshot-lines result)))
-
-(defn- render-refresh-journal
-  [result]
-  (str "v/refresh! — refreshed; " (string/join "; " (snapshot-lines result))))
 
 (defn- render-refresh-channel
   [result]
   (lines-channel "v/refresh! refreshed environment" (snapshot-lines result)))
 
-(defn- render-git-journal
-  [result]
-  (str "v/git — " (git-summary result)))
-
 (defn- render-git-channel
   [result]
   (lines-channel "v/git" [(git-summary result) (when result (str "root " (present (:root result))))]))
-
-(defn- render-languages-journal
-  [result]
-  (str "v/languages — " (language-summary result)))
 
 (defn- render-languages-channel
   [result]
   (lines-channel "v/languages" [(language-summary result)]))
 
-(defn- render-monorepo-journal
-  [result]
-  (str "v/monorepo — " (monorepo-summary result)))
-
 (defn- render-monorepo-channel
   [result]
   (lines-channel "v/monorepo" [(monorepo-summary result)]))
-
-(defn- render-repositories-journal
-  [result]
-  (str "v/repositories — " (repositories-summary result)))
 
 (defn- render-repositories-channel
   [result]
@@ -312,10 +288,6 @@
       " / " (count (string/split-lines (or content ""))) " line(s)")
     "guidance not found"))
 
-(defn- render-guidance-journal
-  [result]
-  (str "v/main-agent-instructions — " (guidance-summary result)))
-
 (defn- render-guidance-channel
   [{:keys [content] :as result}]
   (into [:ir {}
@@ -326,10 +298,6 @@
 (defn- warning-line
   [{:keys [source reason path]}]
   (str (present source) " / " (present reason) " / " (present path)))
-
-(defn- render-scan-warnings-journal
-  [result]
-  (str "v/scan-warnings — " (count result) " warning(s)"))
 
 (defn- render-scan-warnings-channel
   [result]
@@ -345,10 +313,6 @@
     " / reloaded " (count (:reloaded result))
     " / errors " (count (:errors result))))
 
-(defn- render-reload-journal
-  [result]
-  (str "v/reload-extensions! — " (reload-summary result)))
-
 (defn- render-reload-channel
   [result]
   (lines-channel "v/reload-extensions!" [(reload-summary result)]))
@@ -356,24 +320,15 @@
 (defn- env-renderers
   [sym]
   (case sym
-    snapshot {:journal-render-fn render-snapshot-journal
-              :channel-render-fn render-snapshot-channel}
-    refresh! {:journal-render-fn render-refresh-journal
-              :channel-render-fn render-refresh-channel}
-    git {:journal-render-fn render-git-journal
-         :channel-render-fn render-git-channel}
-    languages {:journal-render-fn render-languages-journal
-               :channel-render-fn render-languages-channel}
-    monorepo {:journal-render-fn render-monorepo-journal
-              :channel-render-fn render-monorepo-channel}
-    repositories {:journal-render-fn render-repositories-journal
-                  :channel-render-fn render-repositories-channel}
-    main-agent-instructions {:journal-render-fn render-guidance-journal
-                             :channel-render-fn render-guidance-channel}
-    scan-warnings {:journal-render-fn render-scan-warnings-journal
-                   :channel-render-fn render-scan-warnings-channel}
-    reload-extensions! {:journal-render-fn render-reload-journal
-                        :channel-render-fn render-reload-channel}))
+    snapshot                {:render-fn render-snapshot-channel}
+    refresh!                {:render-fn render-refresh-channel}
+    git                     {:render-fn render-git-channel}
+    languages               {:render-fn render-languages-channel}
+    monorepo                {:render-fn render-monorepo-channel}
+    repositories            {:render-fn render-repositories-channel}
+    main-agent-instructions {:render-fn render-guidance-channel}
+    scan-warnings           {:render-fn render-scan-warnings-channel}
+    reload-extensions!      {:render-fn render-reload-channel}))
 
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.

@@ -166,7 +166,7 @@
                      {:op :v/cat
                       :result {:path "x.txt" :lines ["ok"]}
                       :metadata {:target {:path "x.txt"}}})]
-      (with-redefs [extension/channel-render-tool-result (fn [_] "rendered tool")
+      (with-redefs [extension/render-tool-result (fn [_] "rendered tool")
                     vis/db-info (fn [] :db)
                     vis/db-list-conversation-turns
                     (fn [_db _cid]

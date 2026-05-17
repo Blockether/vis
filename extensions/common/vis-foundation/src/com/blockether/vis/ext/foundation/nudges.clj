@@ -89,7 +89,7 @@
                "the conversation is discoverable in the sidebar. "
                ;; Bundle with the first real probe so we don't spend a
                ;; whole iteration on metadata. Title-setting is
-               ;; structurally silent: no extension tool, no journal
+               ;; structurally silent: no extension tool, no trailer
                ;; evidence — by itself it's a wasted round-trip.
                "Bundle this call into the SAME iteration as your first "
                "real probe, e.g. "

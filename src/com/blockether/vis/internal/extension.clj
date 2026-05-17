@@ -42,35 +42,35 @@
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
-(defn channel-render-ir?
-  "True when `x` is an IR value acceptable from `:channel-render-fn`.
+(defn render-ir?
+  "True when `x` is an IR value acceptable from `:render-fn`.
    Non-canonical `[:ir ...]` is accepted and normalized at render time."
   [x]
   (render/ir? x))
 
-(defn channel-render-value?
-  "Channel renderers must return answer IR (`[:ir ...]`)."
+(defn render-value?
+  "Render fns must return answer IR (`[:ir ...]`)."
   [x]
-  (channel-render-ir? x))
+  (render-ir? x))
 
-(defn literal-channel-ir
-  "Build literal-text channel IR. This is for compatibility wrappers and
-   error placeholders, not for `:channel-render-fn` return strings."
+(defn literal-ir
+  "Build literal-text IR. For compatibility wrappers and error placeholders,
+   not for `:render-fn` return strings."
   [x]
   (render/->ast (str x)))
 
-(defn normalize-channel-render-value
-  "Normalize an accepted channel-render IR value to canonical IR."
+(defn normalize-render-value
+  "Normalize an accepted render-fn IR value to canonical IR."
   [x]
   (render/->ast x))
 
-(defn combine-channel-render-values
-  "Combine per-form channel IR values into one canonical IR root."
+(defn combine-render-values
+  "Combine per-form IR values into one canonical IR root."
   [values]
   (let [values (vec (remove nil? values))]
     (if (empty? values)
       [:ir {}]
-      (let [blocks     (map #(drop 2 (normalize-channel-render-value %)) values)
+      (let [blocks     (map #(drop 2 (normalize-render-value %)) values)
             separators (repeat [[:p {} [:span {} ""]]])]
         (into [:ir {}] (mapcat identity (butlast (interleave blocks separators))))))))
 
@@ -135,13 +135,17 @@
         (or (nil? success?) (some? error))))))
 
 ;; ---------------------------------------------------------------------------
-;; Sink-entry shape (one entry per tool-symbol call in the channel-rendered tool-call rowa top-level form)
+;; Sink-entry shape (one entry per tool-symbol call in a top-level form)
+;;
+;; Only the channel sink remains. The model-facing surface is the REPL-style
+;; per-iteration trailer (`internal.ctx/render-iteration-trailer`) built from
+;; the actual SCI form values, not a per-tool string render.
 ;; ---------------------------------------------------------------------------
 
 (s/def :ext.sink/position  (s/and integer? (complement neg?)))
 (s/def :ext.sink/form      non-blank-string?)
 (s/def :ext.sink/success?  boolean?)
-(s/def :ext.sink/result    (s/nilable #(or (string? %) (channel-render-value? %))))
+(s/def :ext.sink/result    (s/nilable render-value?))
 (s/def :ext.sink/error     ::error)           ; ::error is itself nilable per its spec
 
 (s/def ::sink-entry
@@ -150,12 +154,12 @@
                      :ext.sink/success? :ext.sink/result :ext.sink/error])
     (fn [{:keys [success? result error]}]
       (if success?
-        (and (or (string? result) (channel-render-value? result)) (nil? error)) ; journal string or channel IR
-        (and (nil? result) (some? error))))))  ; failure -> raw error map, no text
+        (and (render-value? result) (nil? error))
+        (and (nil? result) (some? error))))))
 
 (defn assert-sink-entry!
-  "Throw on shape drift before a sink write. Cheap; runs inside
-   `record-{journal,channel}-entry!` per call."
+  "Throw on shape drift before a render sink write. Cheap; runs inside
+   `record-render-entry!` per call."
   [entry]
   (when-not (s/valid? ::sink-entry entry)
     (throw (ex-info "Invalid sink entry"
@@ -177,42 +181,34 @@
   event)
 
 ;; ============================================================================
-;; Per-top-level-form render sinks
+;; Per-top-level-form render sink
 ;;
 ;; `run-sci-code` (`internal/loop.clj`) binds these dynamic vars before
 ;; evaluating each top-level form. `invoke-symbol-wrapper` writes ONE entry
-;; to BOTH sinks per tool-symbol call, regardless of nesting depth
+;; to the sink per tool-symbol call, regardless of nesting depth
 ;; (`(do ...)`, `(let ...)`, deeply nested) and regardless of whether the
 ;; tool-result bubbles up as the form's return value.
-;;
-;; The position counter is shared between journal and channel sinks: a
-;; given call gets the same `:position` integer in both vectors. Counter
-;; resets per top-level form.
 ;;
 ;; Late writes from threads spawned by tools that survive past the form's
 ;; return are silently dropped - the dynamic var has unwound, the `when`
 ;; guard turns the write into a no-op. Tools that need observation must
 ;; complete inline.
+;;
+;; The MODEL never reads this sink. The trailer renders the real per-form
+;; SCI values (`internal.ctx`). This sink exists solely so runtime channels
+;; (TUI, Telegram, …) can paint each tool call's IR.
 ;; ============================================================================
 
-(def ^:dynamic *journal-render-sink*
+(def ^:dynamic *render-sink*
   "Per-top-level-form atom holding a vec of `::sink-entry`s, one per
    tool-symbol call. Bound fresh by `run-sci-code` before each form's
-   eval; deref'd into the block result map under `:journal` after."
-  nil)
-
-(def ^:dynamic *channel-render-sink*
-  "Per-top-level-form atom holding a vec of `::sink-entry`s, one per
-   tool-symbol call. Mirrors `*journal-render-sink*` shape; entries are
-   markdown-rendered (uniform across channels). Bound fresh by
-   `run-sci-code` before each form's eval; deref'd into the block result
-   map under `:channel` after."
+   eval; deref'd into the block result map under `:channel` after."
   nil)
 
 (def ^:dynamic *sink-position*
-  "Per-top-level-form atom holding a monotonic long counter. Both sinks
-   read from it via `swap!` before each entry, so a given tool call gets
-   the SAME `:position` index in both `:journal` and `:channel` vecs."
+  "Per-top-level-form atom holding a monotonic long counter; bumped once
+   per tool-symbol call so each entry in `*render-sink*` carries
+   a stable `:position` even across nested calls."
   nil)
 
 (def ^:dynamic *turn-observation-cache*
@@ -245,23 +241,13 @@
     (let [v (swap! *sink-position* (fnil inc -1))]
       (long v))))
 
-(defn record-journal-entry!
+(defn record-render-entry!
   "Validate `entry` against `::sink-entry` and conj into the active
-   journal sink atom. No-op when `*journal-render-sink*` is unbound
-   (e.g. ad-hoc REPL eval, or a thread spawned past the form's eval)."
+   render sink atom. No-op when `*render-sink*` is unbound."
   [entry]
-  (when *journal-render-sink*
+  (when *render-sink*
     (assert-sink-entry! entry)
-    (swap! *journal-render-sink* conj entry))
-  entry)
-
-(defn record-channel-entry!
-  "Validate `entry` against `::sink-entry` and conj into the active
-   channel sink atom. No-op when `*channel-render-sink*` is unbound."
-  [entry]
-  (when *channel-render-sink*
-    (assert-sink-entry! entry)
-    (swap! *channel-render-sink* conj entry))
+    (swap! *render-sink* conj entry))
   entry)
 
 (defn tool-result?
@@ -560,7 +546,7 @@
 (s/def :ext.symbol/arglists (s/and vector? seq))
 
 ;; Raw callable helpers compose as normal Clojure values. They bypass the
-;; observed-tool envelope/journal/channel wrapper and return their function's
+;; observed-tool envelope/channel wrapper and return their function's
 ;; value directly in SCI.
 (s/def :ext.symbol/raw? boolean?)
 
@@ -573,25 +559,18 @@
 ;; Error decorator: (fn [err env f args] -> map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
 
-;; Renderer for this symbol's journal row. Receives only the unwrapped
-;; `:result` value (engine extracts before calling). Returns plaintext.
-;; Mandatory for observed fn-symbols; raw helpers skip rendering.
-(s/def :ext.symbol/journal-render-fn fn?)
-
 ;; Renderer for this symbol's runtime channel result (TUI, Telegram, ...).
 ;; Receives only the unwrapped `:result` value. Returns answer IR.
 ;; Mandatory for observed fn-symbols; raw helpers skip rendering.
-(s/def :ext.symbol/channel-render-fn fn?)
+;;
+;; NOTE: there is intentionally no model-facing renderer. The RLM reads
+;; the actual SCI form value out of the per-iteration trailer; no per-tool
+;; string curation happens.
+(s/def :ext.symbol/render-fn fn?)
 
-;; Optional override for journal failure rendering. Receives the tool
-;; result's `:error` map only. When absent, the engine uses
-;; `default-journal-error-text`.
-(s/def :ext.symbol/journal-render-error-fn fn?)
-
-;; Optional override for channel failure rendering. Receives the
-;; tool-result envelope only. When absent, the engine uses
-;; `default-channel-error-ir`.
-(s/def :ext.symbol/channel-render-error-fn fn?)
+;; Optional override for failure rendering. Receives the tool-result
+;; envelope only. When absent, the engine uses `default-error-ir`.
+(s/def :ext.symbol/render-error-fn fn?)
 
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
@@ -601,13 +580,11 @@
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists]
     :opt [:ext.symbol/raw?
-          :ext.symbol/journal-render-fn
-          :ext.symbol/channel-render-fn
+          :ext.symbol/render-fn
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn
           :ext.symbol/source
-          :ext.symbol/journal-render-error-fn
-          :ext.symbol/channel-render-error-fn]))
+          :ext.symbol/render-error-fn]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc]
@@ -661,7 +638,7 @@
 ;;
 ;; Every hook declares :id, :doc, :phase, :fn — the contract is explicit
 ;; and the failure surface reviewable. One extension can ship many
-;; independent hooks as a flat vector. Exceptions thrown in the channel-rendered tool-call row:fn are
+;; independent hooks as a flat vector. Exceptions thrown in :fn are
 ;; caught + logged via Telemere; a misbehaving hook never blocks the
 ;; loop or starves siblings.
 ;;
@@ -909,18 +886,10 @@
 ;; Symbol helpers (builder fns)
 ;; =============================================================================
 
-(defn render-string-journal
-  "Pass-through renderer for symbols whose `:result` is already a string
-   (markdown helpers, plain text producers). Truncates to ~1500 chars."
+(defn render-string
+  "Render fn for string-shaped `:result`; returns literal IR."
   [result]
-  (let [s (str result)
-        n (count s)]
-    (if (<= n 1500) s (str (subs s 0 1500) "…<+" (- n 1500) " chars>"))))
-
-(defn render-string-channel
-  "Channel renderer for string-shaped `:result`; returns literal IR."
-  [result]
-  (literal-channel-ir (str result)))
+  (literal-ir (str result)))
 
 (defn- validate-symbol-entry!
   "Assert a symbol entry conforms to ::symbol-entry. Throws on violation."
@@ -997,7 +966,7 @@
 (defn- build-symbol-entry
   "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Observed tools keep their symbol-specific
-   journal/channel renderers; raw helpers do not render. Used by both the
+   channel renderer; raw helpers do not render. Used by both the
    var-based public API and the test-friendly direct-args form below."
   [{sym :symbol :keys [fn doc arglists source]} opts]
   (let [raw? (true? (:raw? opts))]
@@ -1008,13 +977,11 @@
                            :arglists arglists}
         raw?           (assoc :ext.symbol/raw? true)
         source         (assoc :ext.symbol/source source)
-        (:journal-render-fn opts) (assoc :ext.symbol/journal-render-fn (:journal-render-fn opts))
-        (:channel-render-fn opts) (assoc :ext.symbol/channel-render-fn (:channel-render-fn opts))
+        (:render-fn opts)   (assoc :ext.symbol/render-fn (:render-fn opts))
         (:before-fn opts)   (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)    (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
-        (:journal-render-error-fn opts) (assoc :ext.symbol/journal-render-error-fn (:journal-render-error-fn opts))
-        (:channel-render-error-fn opts) (assoc :ext.symbol/channel-render-error-fn (:channel-render-error-fn opts))))))
+        (:render-error-fn opts) (assoc :ext.symbol/render-error-fn (:render-error-fn opts))))))
 
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
@@ -1029,18 +996,18 @@
    docstring + arglists). Pass it as `#'my-tool`.
 
    Observed tools return canonical internal envelope maps and must provide
-   symbol-specific journal/channel renderers. Engine never pr-strs successful
-   tool data as fallback.
+   a symbol-specific channel renderer. The model-facing surface is the
+   per-iteration trailer (real SCI form values); no per-tool model-side
+   render exists.
 
    Raw helpers pass `:raw? true` and return plain values directly, with no
-   envelope enforcement, journal/channel sink, or tool metadata.
+   envelope enforcement, channel sink, or tool metadata.
 
    Optional opts:
      :symbol                    - override the SCI sandbox name (default: var name).
      :doc / :doc-fn / :arglists - metadata fallback for third-party vars.
      :raw?                      - true for plain composable helpers.
-     :journal-render-fn         - required for observed tools; returns string.
-     :channel-render-fn         - required for observed tools; returns IR.
+     :render-fn                 - required for observed tools; returns IR.
      :before-fn :after-fn :on-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
@@ -1090,9 +1057,8 @@
   "Build a raw callable helper entry FROM A CLOJURE VAR.
 
    Helpers are bound as plain values in SCI, not observed tools: no envelope
-   validation, no journal renderer, no channel renderer. Use for composable
-   host helper functions such as `snapshot`, not for user-observable tool
-   calls."
+   validation, no channel renderer. Use for composable host helper functions
+   such as `snapshot`, not for user-observable tool calls."
   ([v] (helper v nil))
   ([v opts]
    (if (var? v)
@@ -1289,24 +1255,18 @@
   ext)
 
 (defn- validate-symbol-renderers!
-  "Fail closed: every observed tool owns its success rendering. This prevents
-   generic pr-str dumps of internal result maps from reaching journals/channels."
+  "Fail closed: every observed tool owns its channel rendering. The model-
+   facing surface is the trailer (real SCI form values); no second
+   model-side render is required or accepted."
   [ext]
   (doseq [sym-entry (:ext/symbols ext)
           :when    (and (:ext.symbol/fn sym-entry)
                      (not (:ext.symbol/raw? sym-entry)))]
-    (when-not (:ext.symbol/journal-render-fn sym-entry)
+    (when-not (:ext.symbol/render-fn sym-entry)
       (anomaly/incorrect!
         (str "Extension '" (:ext/namespace ext) "' symbol '"
-          (:ext.symbol/symbol sym-entry) "' is missing :journal-render-fn.")
-        {:type      :extension/missing-journal-renderer
-         :extension (:ext/namespace ext)
-         :symbol    (:ext.symbol/symbol sym-entry)}))
-    (when-not (:ext.symbol/channel-render-fn sym-entry)
-      (anomaly/incorrect!
-        (str "Extension '" (:ext/namespace ext) "' symbol '"
-          (:ext.symbol/symbol sym-entry) "' is missing :channel-render-fn.")
-        {:type      :extension/missing-channel-renderer
+          (:ext.symbol/symbol sym-entry) "' is missing :render-fn.")
+        {:type      :extension/missing-renderer
          :extension (:ext/namespace ext)
          :symbol    (:ext.symbol/symbol sym-entry)})))
   ext)
@@ -1317,7 +1277,7 @@
    when the key is present. Throws with spec explain-data on violation."
   [ext]
   (when (contains? ext :ext/environment-prompt-fn)
-    (throw (ex-info ":ext/environment-prompt-fn was removed; put model-facing environment text in the channel-rendered tool-call row:ext/prompt"
+    (throw (ex-info ":ext/environment-prompt-fn was removed; put model-facing environment text in :ext/prompt"
              {:type :extension/retired-environment-prompt-fn
               :namespace (:ext/namespace ext)})))
   (let [ext (cond-> ext
@@ -1494,12 +1454,7 @@
                     sym-name)]
     (pr-str (cons head (vec args)))))
 
-(defn- missing-tool-renderer-journal
-  [tool-result]
-  (str "Tool result for " (or (:symbol tool-result) "unknown tool")
-    " has no registered journal renderer; payload omitted."))
-
-(defn- missing-tool-renderer-channel
+(defn- missing-tool-renderer-ir
   [tool-result]
   (render/->ast
     [:ir {}
@@ -1508,60 +1463,39 @@
       [:c {} (str (or (:symbol tool-result) "unknown tool"))]
       [:span {} " has no registered channel renderer; payload omitted."]]]))
 
-(defn- render-journal-value
-  "Run symbol-owned journal renderer for sink recording."
+(defn- render-value
+  "Run symbol-owned render fn for sink recording."
   [sym-entry value]
-  (let [rendered ((:ext.symbol/journal-render-fn sym-entry) value)]
-    (when-not (string? rendered)
-      (throw (ex-info (str ":journal-render-fn for symbol '"
-                        (:ext.symbol/symbol sym-entry)
-                        "' must return a string, got " (pr-str (type rendered)))
-               {:type :extension/render-non-string
-                :symbol (:ext.symbol/symbol sym-entry)
-                :label :journal-render-fn
-                :value rendered})))
-    rendered))
-
-(defn- render-channel-value
-  "Run symbol-owned channel renderer for sink recording."
-  [sym-entry value]
-  (let [rendered ((:ext.symbol/channel-render-fn sym-entry) value)]
-    (when-not (channel-render-value? rendered)
-      (throw (ex-info (str ":channel-render-fn for symbol '"
+  (let [rendered ((:ext.symbol/render-fn sym-entry) value)]
+    (when-not (render-value? rendered)
+      (throw (ex-info (str ":render-fn for symbol '"
                         (:ext.symbol/symbol sym-entry)
                         "' must return IR, got " (pr-str (type rendered)))
                {:type :extension/render-non-ir
                 :symbol (:ext.symbol/symbol sym-entry)
-                :label :channel-render-fn
+                :label :render-fn
                 :value rendered})))
-    (normalize-channel-render-value rendered)))
+    (normalize-render-value rendered)))
 
 (defn- write-sink-entries!
   "After a tool symbol's `invoke-symbol-wrapper` produces a final
-   tool-result, write ONE entry to each of the active per-form sinks
-   (`*journal-render-sink*` and `*channel-render-sink*`). Both sinks share
-   the same `*sink-position*` counter so a given call gets the same
-   `:position` in both vecs.
+   tool-result, write ONE entry to `*render-sink*` so runtime channels
+   (TUI, Telegram, …) can paint each call.
 
    No-op when:
      - `result` is not a tool-result (defensive; fn-symbols always
        return one, but ad-hoc consumers might bypass).
-     - Both sinks are unbound (no observer; skip all rendering work)."
+     - The render sink is unbound (no observer; skip all rendering work)."
   [ext sym-entry args result]
-  (when (and (tool-result? result)
-          (or *journal-render-sink* *channel-render-sink*))
+  (when (and (tool-result? result) *render-sink*)
     (let [position (next-sink-position!)
           form-str (sink-form-string ext sym-entry args)
           base     {:position position :form form-str}]
       (if (:success? result)
         (let [unwrapped (:result result)
-              j-text   (render-journal-value sym-entry unwrapped)
-              c-text   (render-channel-value sym-entry unwrapped)]
-          (record-journal-entry! (assoc base :success? true :result j-text :error nil))
-          (record-channel-entry! (assoc base :success? true :result c-text :error nil)))
-        (let [err (:error result)]
-          (record-journal-entry! (assoc base :success? false :result nil :error err))
-          (record-channel-entry! (assoc base :success? false :result nil :error err))))))
+              ir       (render-value sym-entry unwrapped)]
+          (record-render-entry! (assoc base :success? true :result ir :error nil)))
+        (record-render-entry! (assoc base :success? false :result nil :error (:error result))))))
   result)
 
 (def ^:dynamic *current-extension*
@@ -1600,7 +1534,7 @@
    :on-error-fn can return {:result val}, {:error err}, or {:fn :args :env} to retry.
 
    The implementation's final value must be a canonical internal envelope.
-   The wrapper records journal/channel/provenance from that envelope, then
+   The wrapper records channel/provenance from that envelope, then
    returns only the payload `:result` to SCI. Failure envelopes are converted
    into thrown ex-info so ordinary SCI error reporting handles them.
 
@@ -2192,7 +2126,7 @@
 (defn- format-error-fields
   "Pull the `:message` (and an inferred `:type` from the trace's first
    line) out of an `:error` map for the engine's default error
-   formatters. Defensive: never throws in the channel-rendered tool-call rowa renderer.
+   formatters. Defensive: never throws inside a renderer.
 
    Per PLAN §2.1 the new structured error has `:message :trace :hint
    :block`. The `:type` historical field is no longer carried; the
@@ -2216,23 +2150,9 @@
       :else
       {:type "unknown" :message (str error)})))
 
-(defn default-journal-error-text
-  "Engine fallback used by `journal-render-tool-result` when a symbol
-   does NOT declare `:ext.symbol/journal-render-error-fn`. Single-line,
-   terse. `:type` + `:message` only; full trace lives in transcript
-   DB."
-  ([tool-result] (default-journal-error-text tool-result nil))
-  ([tool-result _ctx]
-   (let [op   (:symbol tool-result)
-         {:keys [type message]} (format-error-fields (:error tool-result))]
-     (str "ERROR "
-       (when op (str ":op " op " "))
-       ":type " type
-       " :message " (pr-str message)))))
-
-(defn default-channel-error-ir
-  "Engine fallback used by `channel-render-tool-result` when a symbol does
-   not declare `:ext.symbol/channel-render-error-fn`. Returns canonical IR
+(defn default-error-ir
+  "Engine fallback used by `render-tool-result` when a symbol does
+   not declare `:ext.symbol/render-error-fn`. Returns canonical IR
    and includes rendered source context when `:error :block` is present."
   [tool-result]
   (let [op                  (:symbol tool-result)
@@ -2248,47 +2168,20 @@
               (when (seq message) [:span {} (str ": " message)])]]
         (when context-ir (drop 2 context-ir))))))
 
-(defn assert-string!
-  [v label sym-entry]
-  (when-not (string? v)
-    (throw (ex-info (str label " for symbol '"
-                      (:ext.symbol/symbol sym-entry)
-                      "' must return a string, got " (pr-str (type v)))
-             {:type :extension/render-non-string
-              :symbol  (:ext.symbol/symbol sym-entry)
-              :label label
-              :value v})))
-  v)
-
-(defn journal-render-tool-result
-  "Render a tool-result for journal/tool-call rows. Successful results use the
-   registered symbol renderer. Missing renderer means payload omitted, never
-   pr-str dumped."
-  [tool-result]
-  (if-not (:success? tool-result)
-    (if-let [f (:ext.symbol/journal-render-error-fn (tool-result-symbol-entry tool-result))]
-      (assert-string! (f (:error tool-result))
-        ":journal-render-error-fn"
-        (tool-result-symbol-entry tool-result))
-      (default-journal-error-text tool-result))
-    (if-let [sym-entry (tool-result-symbol-entry tool-result)]
-      (render-journal-value sym-entry (:result tool-result))
-      (missing-tool-renderer-journal tool-result))))
-
-(defn channel-render-tool-result
+(defn render-tool-result
   "Render a tool-result for runtime channels (TUI, telegram, ...). Successful
    results use the registered symbol renderer. Missing renderer means payload
    omitted, never pr-str dumped."
   [tool-result]
   (if-not (:success? tool-result)
     (if-let [sym-entry (tool-result-symbol-entry tool-result)]
-      (if-let [f (:ext.symbol/channel-render-error-fn sym-entry)]
-        (normalize-channel-render-value (f tool-result))
-        (default-channel-error-ir tool-result))
-      (default-channel-error-ir tool-result))
+      (if-let [f (:ext.symbol/render-error-fn sym-entry)]
+        (normalize-render-value (f tool-result))
+        (default-error-ir tool-result))
+      (default-error-ir tool-result))
     (if-let [sym-entry (tool-result-symbol-entry tool-result)]
-      (render-channel-value sym-entry (:result tool-result))
-      (missing-tool-renderer-channel tool-result))))
+      (render-value sym-entry (:result tool-result))
+      (missing-tool-renderer-ir tool-result))))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.

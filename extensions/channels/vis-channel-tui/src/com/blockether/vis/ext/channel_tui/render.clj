@@ -2680,7 +2680,7 @@
 
 (defn- ir-body-entries
   "Render canonical channel IR into painter entries. This path is IR-only:
-   channel-render-fn output must already be `[:ir ...]`; strings belong to
+   render-fn output must already be `[:ir ...]`; strings belong to
    raw value/stdout fallback paths, not tool/channel rendering.
 
    Channel IR renders in place. Do not stringify it and do not prepend

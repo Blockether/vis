@@ -54,13 +54,13 @@
                 (mapv :slot (extension/channel-contributions-for :tui)))))))
 
 (defdescribe symbol-renderer-test
-  (it "requires renderers for observed tool symbols"
+  (it "requires a render fn for observed tool symbols"
     (extension/register-op! :test.missing-renderer/demo {:tag :op.tag/observation})
     (let [entry (extension/symbol
                   'demo
                   (fn [] (extension/success {:result {:secret "payload"}}))
                   {:doc "demo" :arglists '([])})]
-      (expect (= :extension/missing-journal-renderer
+      (expect (= :extension/missing-renderer
                 (try
                   (extension/extension
                     {:ext/namespace 'test.missing-renderer
@@ -72,30 +72,26 @@
                   (catch clojure.lang.ExceptionInfo e
                     (:type (ex-data e))))))))
 
-  (it "uses symbol-specific renderers instead of dumping tool result data"
+  (it "uses the symbol-specific render-fn instead of dumping tool result data"
     (extension/register-op! :test.renderer/demo {:tag :op.tag/observation})
     (let [entry (extension/symbol
                   'demo
                   (fn [] (extension/success {:result {:secret "payload"}}))
                   {:doc "demo"
                    :arglists '([])
-                   :journal-render-fn (fn [_] "journal-specific")
-                   :channel-render-fn (fn [_] [:ir {} [:p {} [:span {} "channel-specific"]]])})
+                   :render-fn (fn [_] [:ir {} [:p {} [:span {} "render-specific"]]])})
           ext   (extension/register-extension!
                   {:ext/namespace 'test.renderer
                    :ext/kind "test"
                    :ext/doc "Test renderer."
                    :ext/alias {:ns 'test.renderer :alias 'test.renderer}
                    :ext/symbols [entry]})
-          journal (atom [])
           channel (atom [])]
       (try
-        (binding [extension/*journal-render-sink* journal
-                  extension/*channel-render-sink* channel
-                  extension/*sink-position* (atom -1)]
+        (binding [extension/*render-sink*    channel
+                  extension/*sink-position*  (atom -1)]
           ((get (extension/wrap-extension ext {}) 'demo)))
-        (expect (= "journal-specific" (-> @journal first :result)))
-        (expect (= [:ir {} [:p {} [:span {} "channel-specific"]]]
+        (expect (= [:ir {} [:p {} [:span {} "render-specific"]]]
                   (-> @channel first :result)))
         (finally
           (extension/deregister-extension! 'test.renderer))))))

@@ -602,6 +602,18 @@
                    "")))
           ranges)))))
 
+(defn- release-selection-focus
+  "Return document-space focus for a mouse-selection release.
+
+   Drag-copy must use the release event's current viewport so a selection that
+   auto-scrolled past the original screen includes the newly exposed rows.
+   Double-click line selection is pre-expanded at click-down, so keep that
+   stored focus."
+  [anchor stored-focus line-selection? screen-point viewport]
+  (if line-selection?
+    (or stored-focus anchor)
+    (selection/screen->document-point screen-point viewport)))
+
 (defn- copyable-bubble-text
   "Whole-bubble copy hands the user complete text, not the collapsed viewport.
 
@@ -1697,6 +1709,7 @@
                mouse-selection-anchor (volatile! nil)
                mouse-selection-focus  (volatile! nil)
                mouse-selection-source (volatile! nil)
+               mouse-selection-line?  (volatile! false)
                last-selection-click   (volatile! nil)
                ;; `paste-buffer` accumulates every keystroke received
                ;; between `paste-start?` and `paste-end?`. We treat
@@ -2059,22 +2072,23 @@
                      (let [was-dragging?    (some? @scrollbar-drag-offset)
                            already-handled? @click-action-fired?
                            anchor           @mouse-selection-anchor
-                           focus            (or @mouse-selection-focus
-                                              (selection/screen->document-point
-                                                (selection/point mx my)
-                                                selection-viewport))
+                           line-selection?  @mouse-selection-line?
+                           screen-point     (selection/point mx my)
+                           focus            (release-selection-focus
+                                              anchor @mouse-selection-focus line-selection?
+                                              screen-point selection-viewport)
                            source           @mouse-selection-source]
                        (vreset! scrollbar-drag-offset nil)
                        (vreset! click-action-fired? false)
                        (vreset! mouse-selection-anchor nil)
                        (vreset! mouse-selection-focus nil)
                        (vreset! mouse-selection-source nil)
+                       (vreset! mouse-selection-line? false)
                        (if (and selection-copy? anchor)
                          (let [sel           {:anchor anchor
                                               :focus  focus
                                               :source source}
                                simple-click? (= anchor (:focus sel))
-                               screen-point  (selection/point mx my)
                                disclosure-hit (when (and simple-click?
                                                       (not= source :input))
                                                 (bubble-copy-hit
@@ -2181,6 +2195,7 @@
                              ;; fallback fire - we just handled it.
                              (vreset! click-action-fired? true)
                              (vreset! last-selection-click nil)
+                             (vreset! mouse-selection-line? false)
                              (case (:kind hit)
                              ;; Header copy-id affordance: drop the
                              ;; FULL UUID onto the system clipboard,
@@ -2227,7 +2242,8 @@
                                                    input-selectable-ranges
                                                    {:row-padding 2})]
                                (if-not source
-                                 (vreset! last-selection-click nil)
+                                 (do (vreset! last-selection-click nil)
+                                   (vreset! mouse-selection-line? false))
                                  (let [now-ms       (System/currentTimeMillis)
                                        source-ranges (selectable-ranges-for-source
                                                        source
@@ -2255,6 +2271,7 @@
                                    (vreset! mouse-selection-anchor doc-anchor)
                                    (vreset! mouse-selection-focus (:focus line-sel))
                                    (vreset! mouse-selection-source source)
+                                   (vreset! mouse-selection-line? (boolean line-sel))
                                    (state/dispatch
                                      [:set-mouse-selection
                                       {:anchor doc-anchor

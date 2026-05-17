@@ -50,7 +50,7 @@
 
 (def ^:private default-grep-limit 50)
 (def ^:private default-list-depth 5)
-(def ^:private journal-render-chars 3000)
+(def ^:private render-preview-chars 3000)
 
 ;; v/cat pagination contract:
 ;;   `default-cat-limit`     - lines per window when the model omits `n`.
@@ -735,9 +735,9 @@
 (defn- bounded-render-text
   [s]
   (let [s (str s)]
-    (if (> (count s) journal-render-chars)
-      (str (subs s 0 journal-render-chars)
-        "\n...<+" (- (count s) journal-render-chars) " chars>")
+    (if (> (count s) render-preview-chars)
+      (str (subs s 0 render-preview-chars)
+        "\n...<+" (- (count s) render-preview-chars) " chars>")
       s)))
 
 ;; =============================================================================
@@ -1036,13 +1036,8 @@
     (map (fn [item] [:li {} (ir-p item)]) (filter some? items))))
 
 (defn- render-edn-block
-  ([value]
-   (render-edn-block :channel value))
-  ([surface value]
-   (let [text (bounded-render-text (pr-str value))]
-     (case surface
-       :journal text
-       (ir-root (ir-code-block "edn" text))))))
+  [value]
+  (ir-root (ir-code-block "edn" (bounded-render-text (pr-str value)))))
 
 (defn- tree-entry-line
   [depth {:keys [name path type size] :as entry}]
@@ -1078,43 +1073,13 @@
 ;; Per-symbol renderers
 ;;
 ;; Engine contract:
-;;   journal-render-fn -> (fn [result] string)
-;;   channel-render-fn -> (fn [result] string)
+;;   render-fn -> (fn [result] [:ir ...])
 ;;
 ;; `result` is the raw payload returned to SCI. Engine handles
-;; `:success? false` separately - error fns are optional and fall back to
-;; `default-{journal,channel}-error-text`.
+;; `:success? false` separately — error fns are optional and fall back to
+;; `default-error-ir`. The MODEL surface is the per-iteration trailer
+;; (real SCI values via pr-str); there is no second model-side render.
 ;; ---------------------------------------------------------------------------
-
-(def ^:private cat-journal-peek-lines 10)
-(def ^:private ls-journal-peek-entries 20)
-(def ^:private rg-journal-peek-hits 10)
-
-(defn- journal-render-cat
-  "v/cat journal preview: header line + bounded line-numbered peek + a
-   tail hint that points the model back at the binding for full data.
-
-   Input is the plain map returned by the tool (`:path :offset :line-count
-   :next-offset :eof? :truncated-by :lines`). No handles, no deref."
-  [{:keys [path offset line-count next-offset eof? truncated-by lines]}]
-  (let [start-line (or offset 1)
-        peek       (vec (take cat-journal-peek-lines (or lines [])))
-        rendered   (numbered-line-block start-line peek)
-        more       (- (long (or line-count 0)) (count peek))
-        header     (str "v/cat " (pr-str path)
-                     " — " (or line-count 0) " line(s) from line " start-line
-                     (cond
-                       eof?        " (eof)"
-                       next-offset (str " (next-offset " next-offset ")")
-                       :else       ""))
-        more-line  (when (pos? more)
-                     (str "… +" more
-                       " more line(s); the result is a plain map — "
-                       "slice with `(subvec (:lines <binding>) a b)`."))
-        bytes-line (when (= :bytes truncated-by)
-                     "(window hit the 64KB byte cap; advance via (:next-offset <binding>))")]
-    (str/join "\n"
-      (keep identity [header rendered more-line bytes-line]))))
 
 (defn- channel-render-cat
   "Channel preview: numbered-line-block + header. Reads the plain map
@@ -1130,25 +1095,6 @@
           :else       "."))
       (ir-code-block "text" (bounded-render-text body)))))
 
-(defn- journal-render-ls
-  "v/ls journal: header line + first N top-level entry names + tail hint.
-   Input is the plain tree map from the tool."
-  [{:keys [path entry-count children]}]
-  (let [show       (take ls-journal-peek-entries (or children []))
-        more       (- (long (or entry-count 0)) (count show))
-        header     (str "v/ls " (pr-str path)
-                     " — " (or entry-count 0) " top-level entry(ies)")
-        body       (str/join "\n"
-                     (map #(str "  - " (:name %)
-                             (when-let [t (:type %)] (str " (" (name t) ")")))
-                       show))
-        more-line  (when (pos? more)
-                     (str "… +" more
-                       " more; full tree is `(:children <binding>)` / recurse "
-                       "with `(tree-seq map? :children <binding>)`."))]
-    (str/join "\n"
-      (keep identity [header body more-line]))))
-
 (defn- channel-render-ls
   "Channel preview: pretty tree from the plain map."
   [tree]
@@ -1157,25 +1103,6 @@
       (or (:entry-count tree) (count (:children tree))) " top-level entries.")
     (ir-code-block "text"
       (bounded-render-text (str/join "\n" (tree-lines tree))))))
-
-(defn- journal-render-rg
-  "v/rg journal: header line + first N hits as `path:line  text` + tail
-   hint. Input is the plain map from the tool."
-  [{:keys [hit-count truncated-by hits]}]
-  (let [show       (take rg-journal-peek-hits (or hits []))
-        more       (- (long (or hit-count 0)) (count show))
-        header     (str "v/rg — " (or hit-count 0) " hit(s), truncated-by "
-                     (or (some-> truncated-by name) "none"))
-        body       (str/join "\n"
-                     (map (fn [{:keys [path line text]}]
-                            (str "  " path ":" line "  " text))
-                       show))
-        more-line  (when (pos? more)
-                     (str "… +" more
-                       " more; full vec is `(:hits <binding>)` — "
-                       "narrow with `filter` / `take` / `frequencies`."))]
-    (str/join "\n"
-      (keep identity [header body more-line]))))
 
 (defn- channel-render-rg
   "Channel preview: full hit list from the plain map."
@@ -1190,13 +1117,6 @@
             (map (fn [{:keys [path line text]}]
                    (str path ":" line " " text)) hits)))))))
 
-(defn- journal-render-patch
-  [_result]
-  ;; Patch result is the per-file path map; the interesting data lives on
-  ;; :info (which the journal renderer does not see). Keep the journal
-  ;; entry minimal - one line confirming a write happened.
-  "v/patch — wrote edit(s) (full diff visible in channel render)")
-
 (defn- channel-render-patch
   [result]
   ;; `result` here is the [{:path ...}] vec, but the rich diff data lives on
@@ -1208,60 +1128,31 @@
       (ir-p "Patched " (count files) " file(s).")
       (ir-ul (map (fn [{:keys [path]}] (ir-code path)) files)))))
 
-(defn- journal-render-patch-check
-  [result]
-  (str "v/patch-check — " (pr-str result)))
-
 (defn- channel-render-patch-check
   [result]
-  (render-edn-block :channel result))
-
-(defn- journal-render-create-dirs
-  [result]
-  (str "v/create-dirs — ensured " result))
+  (render-edn-block result))
 
 (defn- channel-render-create-dirs
   [result]
   (ir-root (ir-p "Ensured dir " (ir-code result) ".")))
 
-(defn- journal-render-copy
-  [result]
-  (str "v/copy — wrote " result))
-
 (defn- channel-render-copy
   [result]
   (ir-root (ir-p "Copied to " (ir-code result) ".")))
-
-(defn- journal-render-move
-  [result]
-  (str "v/move — wrote " result))
 
 (defn- channel-render-move
   [result]
   (ir-root (ir-p "Moved to " (ir-code result) ".")))
 
-(defn- journal-render-delete
-  [result]
-  (str "v/delete — " (pr-str result)))
-
 (defn- channel-render-delete
   [result]
   (ir-root (ir-p "Deleted. " (ir-code (pr-str result)))))
-
-(defn- journal-render-delete-if-exists
-  [result]
-  (str "v/delete-if-exists — "
-    (if result "deleted" "already absent")))
 
 (defn- channel-render-delete-if-exists
   [result]
   (if result
     (ir-root (ir-p "Deleted."))
     (ir-root (ir-p "Already absent."))))
-
-(defn- journal-render-exists?
-  [result]
-  (str "v/exists? — " (pr-str result)))
 
 (defn- channel-render-exists?
   [result]
@@ -1285,89 +1176,67 @@
 (def cat-symbol
   (vis/symbol #'cat-tool
     {:symbol 'cat
-
-     :journal-render-fn journal-render-cat
-     :channel-render-fn channel-render-cat
+     :render-fn channel-render-cat
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
 
 (def ls-symbol
   (vis/symbol #'ls-tool
     {:symbol 'ls
-
-     :journal-render-fn journal-render-ls
-     :channel-render-fn channel-render-ls
+     :render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
 
 (def rg-symbol
   (vis/symbol #'rg-tool
     {:symbol 'rg
-
-     :journal-render-fn journal-render-rg
-     :channel-render-fn channel-render-rg
+     :render-fn channel-render-rg
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
 
 (def patch-symbol
   (vis/symbol #'patch-tool
     {:symbol 'patch
-
-     :journal-render-fn journal-render-patch
-     :channel-render-fn channel-render-patch
+     :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
 
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool
     {:symbol 'patch-check
-
-     :journal-render-fn journal-render-patch-check
-     :channel-render-fn channel-render-patch-check
+     :render-fn channel-render-patch-check
      :on-error-fn (tool-failure-on-error :v/patch-check :file nil)}))
 
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
-
-     :journal-render-fn journal-render-create-dirs
-     :channel-render-fn channel-render-create-dirs
+     :render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
 
 (def copy-symbol
   (vis/symbol #'copy-tool
     {:symbol 'copy
-
-     :journal-render-fn journal-render-copy
-     :channel-render-fn channel-render-copy
+     :render-fn channel-render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
 
 (def move-symbol
   (vis/symbol #'move-tool
     {:symbol 'move
-
-     :journal-render-fn journal-render-move
-     :channel-render-fn channel-render-move
+     :render-fn channel-render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
 
 (def delete-symbol
   (vis/symbol #'delete-tool
     {:symbol 'delete
-
-     :journal-render-fn journal-render-delete
-     :channel-render-fn channel-render-delete
+     :render-fn channel-render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
 
 (def delete-if-exists-symbol
   (vis/symbol #'delete-if-exists-tool
     {:symbol 'delete-if-exists
-
-     :journal-render-fn journal-render-delete-if-exists
-     :channel-render-fn channel-render-delete-if-exists
+     :render-fn channel-render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
 
 (def exists?-symbol
   (vis/symbol #'exists-tool
     {:symbol 'exists?
-
-     :journal-render-fn journal-render-exists?
-     :channel-render-fn channel-render-exists?
+     :render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
 
 (defn available-editing-symbols
@@ -1388,7 +1257,7 @@
   []
   (str/join "\n"
     ["`v/` editing tools — RLM-shaped. Every tool returns a PLAIN CLOJURE MAP;"
-     "destructure with :keys. The journal shows a bounded peek (header +"
+     "destructure with :keys. The trailer shows the real value via pr-str (bounded);"
      "first lines/hits/entries); the full data lives in the bound def."
      ""
      "READ"

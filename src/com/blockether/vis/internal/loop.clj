@@ -147,13 +147,13 @@
    Why source-walk and not the SCI resolve hook: SCI analyzes /
    compiles forms before evaluating them, baking symbol-to-var
    resolution into the AST. The runtime `resolve-symbol*` patch never
-   fires for symbols in the channel-rendered tool-call rowan init body, so the only stable point at
+   fires for symbols in an init body, so the only stable point at
    which we can recover dep relationships is the source itself.
 
    The output is intentionally permissive: it includes refs to core
    ops (`inc`, `*`, `+`), to locals introduced by `let` / `fn`
    parameter lists, and to macro symbols. The persistence layer
-   filters every edge against the existing-soul-name set in the channel-rendered tool-call rowits
+   filters every edge against the existing-soul-name set in its
    write transaction, so only refs that actually correspond to a
    tracked user var land in `definition_dependency`. Self-references
    (a recursive `defn` body using its own name) are dropped here
@@ -409,7 +409,7 @@
     "Bare string literal in :code. Prose belongs in :answer (the loop auto-detects plain text), not in :code."
 
     (markdown-fence-block? expr)
-    "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms in the channel-rendered tool-call rowthe code block."
+    "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms in the code block."
 
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
@@ -547,12 +547,11 @@
         err-pw       (java.io.PrintWriter. stderr-writer true)
         thrown       (atom nil)
         tool-counts  (atom {})
-        ;; Per-top-level-form sinks. `invoke-symbol-wrapper` writes ONE entry
-        ;; to each per tool-symbol call; `*sink-position*` is shared so the
-        ;; same call gets matching `:position` in both vectors. All three
-        ;; rebind cleanly when the form returns - late-arriving thread
-        ;; writes silently drop (the dynamic var binding has unwound).
-        journal-sink (atom [])
+        ;; Per-top-level-form channel sink. `invoke-symbol-wrapper` writes
+        ;; ONE entry per tool-symbol call; `*sink-position*` stamps each
+        ;; entry with a stable position. Both rebind cleanly when the form
+        ;; returns — late-arriving thread writes silently drop (the dynamic
+        ;; var binding has unwound).
         channel-sink (atom [])
         sink-pos     (atom -1)
         ;; Per-iteration sinks. `*def-sink-atom*`
@@ -650,8 +649,7 @@
                         (try
                           (let [outcome
                                 (binding [extension/*tool-event-sink* record-tool-event
-                                          extension/*journal-render-sink* journal-sink
-                                          extension/*channel-render-sink* channel-sink
+                                          extension/*render-sink*         channel-sink
                                           extension/*sink-position*       sink-pos
                                           sci-patches/*def-sink-atom*     def-sink
                                           sci-patches/*lru-atom*          lru
@@ -668,7 +666,6 @@
                             (assoc outcome
                               :stdout  (str stdout-writer)
                               :stderr  (str stderr-writer)
-                              :journal @journal-sink
                               :channel @channel-sink
                               :def-sink @def-sink
                               :lru     @lru))
@@ -677,7 +674,6 @@
                             ;; Whole-block parse path failure (parse-forms returned nil OR
                             ;; eval-string+ threw outside per-form path).
                             {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
-                             :journal @journal-sink
                              :channel @channel-sink
                              :def-sink @def-sink
                              :lru     @lru
@@ -692,7 +688,6 @@
                            (catch Throwable e
                              (reset! thrown e)
                              {:result nil :stdout "" :stderr ""
-                              :journal @journal-sink
                               :channel @channel-sink
                               :def-sink @def-sink
                               :lru     @lru
@@ -722,7 +717,6 @@
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil :stdout "" :stderr ""
-         :journal @journal-sink
          :channel @channel-sink
          :def-sink @def-sink
          :lru     @lru
@@ -781,7 +775,6 @@
                          {:result nil
                           :stdout ""
                           :stderr ""
-                          :journal []
                           :channel []
                           :def-sink []
                           :lru {}
@@ -1050,7 +1043,7 @@
 ;;     self-corrects from the structured error.
 ;;   - `duplicate-fenced-blocks?` + `dedupe-fenced-block-code` +
 ;;     `executable-block-source`/-`sources` — dedup now happens inline
-;;     in the channel-rendered tool-call row`code-entries-preflight` on the block vector directly.
+;;     in `code-entries-preflight` on the block vector directly.
 
 (defn- code-entries-preflight
   "Per-block-eval preflight. One svar Markdown code block becomes one
@@ -1059,7 +1052,7 @@
    — there is no top-level form splitting at this layer.
 
    Gates retained:
-     - `raw-markdown-fence-leak-error` per block. A nested ``` in the channel-rendered tool-call rowthe
+     - `raw-markdown-fence-leak-error` per block. A nested ``` in the
        extracted source means svar's normalizer fell into a recursive shape;
        structured rejection beats a JVM crash.
      - Duplicate-block dedup. Some providers stutter and emit the same
@@ -1122,7 +1115,7 @@
         empty-code-error             (when (zero? parsed-total-blocks)
                                        "LLM returned no executable Clojure code block. Emit a ```clojure``` block; put prose in (done [:ir ...]).")
         ;; Normalized concat of all surviving block sources — also the
-        ;; identity used for iteration-hash dedup in the journal.
+        ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
                                        (remove :vis/preflight-error)
                                        (map (comp str/trim :expr))
@@ -1132,7 +1125,7 @@
         ;; fences per iteration despite the prompt asking for one. Rather
         ;; than reject (which burned an iteration), the engine concatenates
         ;; all valid fences into a single eval source. SCI parses + evals
-        ;; the joined forms in sequence; the journal carries the unified
+        ;; the joined forms in sequence; the trailer carries the unified
         ;; entry.
         multi-fence-merged?          (> parsed-total-blocks 1)
         code-hash                    (when-not (str/blank? normalized-code)
@@ -1204,7 +1197,7 @@
    evidence required). With one form per iteration:
      #1 own-form-error is enforced upstream by `answer-form-error`
         (if the (done …) form itself threw, the answer is dropped).
-     #2 mixing tool + (done …) in the channel-rendered tool-call rowone `(do …)` is the canonical
+     #2 mixing tool + (done …) in one `(do …)` is the canonical
         canonical one-iteration shape — handles return synchronously,
         the answer is composed in the same eval frame.
      #3 evidence-prior gating became a false-positive engine: probe-
@@ -1280,7 +1273,7 @@
 (defn- eval-info
   "Generic canonical info for every top-level form that passes
    through the Vis eval pipeline. Tool calls can add nested info
-   in the channel-rendered tool-call rowtheir returned envelope; this records the outer regular form
+   in their returned envelope; this records the outer regular form
    evaluation so plain calls and tool calls share a common block-level
    trace."
   [turn-prefix iteration form-idx form-count result rendering-kind]
@@ -1406,13 +1399,13 @@
    a9389e1d showed that replaying a long run of assistant messages can
    contaminate the next step, amplify token usage, and make GLM believe a
    previous answer is still active. If preserved thinking is useful, the
-   only state we trust is the last model step in the channel-rendered tool-call rowthe same live user
-   turn. Older iterations remain visible through the journal.
+   only state we trust is the last model step in the same live user
+   turn. Older iterations remain visible through the trailer.
 
    The wire serializer for the active model translates the canonical
    message to its native shape; iteration-loop never branches on provider."
-  [journal-iters]
-  (if-let [msg (some->> journal-iters
+  [trailer-iters]
+  (if-let [msg (some->> trailer-iters
                  reverse
                  (keep #(some-> % second :assistant-message))
                  first)]
@@ -1465,7 +1458,7 @@
 
 (defn- actual-llm-provider
   "Provider that actually served an ask-result. svar may route/fallback
-   in the channel-rendered tool-call rowask-code!, so prefer routed metadata over Vis' pre-call guess."
+   inside ask-code!, so prefer routed metadata over Vis' pre-call guess."
   [resolved-model ask-result]
   (or (:routed/provider-id ask-result)
     (:provider resolved-model)))
@@ -1509,18 +1502,18 @@
       (:cost result)
       (update :cost merge (select-keys actual [:provider :model])))))
 
-(defn- compatible-preserved-thinking-journal-iters
+(defn- compatible-preserved-thinking-trailer-iters
   "Keep only iterations whose provider-native thinking may be replayed into
    the next provider call.
 
-   Cross-turn journal seeds explicitly carry
+   Cross-turn trailer seeds explicitly carry
    `:preserved-thinking/replay? false`; those iterations remain visible in
    persisted iterations as durable evidence, but their opaque provider-native thinking
    state is not replayed into a different user turn. Within a live turn,
    freshly-produced iterations opt in by setting the flag to true. Historical
    in-memory test fixtures that omit the flag are treated as replayable for
    backward compatibility."
-  [journal-iters target]
+  [trailer-iters target]
   (let [{target-provider :provider target-model :model} target]
     (filterv (fn [[_ {:keys [assistant-message llm-provider llm-model]
                       replay? :preserved-thinking/replay?}]]
@@ -1530,7 +1523,7 @@
                  (= target-model llm-model)
                  (assistant-message-compatible-with-replay-target?
                    target assistant-message)))
-      (or journal-iters []))))
+      (or trailer-iters []))))
 
 (defn- append-preserved-thinking-replay
   "Appends svar's canonical assistant-replay messages from prior
@@ -1543,13 +1536,13 @@
    reasoning text, and OpenAI Responses' is a JSON reasoning item.
    Crossing those streams reproduces Anthropic's
    `Invalid signature in thinking block` HTTP 400."
-  ([messages journal-iters]
-   (append-preserved-thinking-replay messages journal-iters nil))
-  ([messages journal-iters target]
+  ([messages trailer-iters]
+   (append-preserved-thinking-replay messages trailer-iters nil))
+  ([messages trailer-iters target]
    (let [messages* (vec (or messages []))
          compatible-iters (if target
-                            (compatible-preserved-thinking-journal-iters journal-iters target)
-                            (or journal-iters []))
+                            (compatible-preserved-thinking-trailer-iters trailer-iters target)
+                            (or trailer-iters []))
          replays   (preserved-thinking-replay-messages compatible-iters)]
      (cond-> messages*
        (seq replays) (into replays)))))
@@ -1756,7 +1749,7 @@
                                         :vis/structurally-silent? (boolean structurally-silent?)
                                         :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
-                           ;; `(done ...)` call in the channel-rendered tool-call rowthis form
+                           ;; `(done ...)` call inside this form
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (reset! current-form-idx-atom idx)
@@ -1844,7 +1837,6 @@
                                           :render-segments   render-segments
                                           :vis/structurally-silent? (boolean structurally-silent?)
                                           :result            (:result result*)
-                                          :journal           (:journal result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
                                           :stdout            (:stdout result*)
@@ -1875,7 +1867,7 @@
           block-silents  (mapv :vis/structurally-silent? executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
-          ;; the block in the persisted/journal stream so the model still
+          ;; the block in the persisted/trailer stream so the model still
           ;; reads the failure on its next iteration.
           preflight-by-idx (zipmap (range) (map (fn [{:vis/keys [preflight-error]}]
                                                   (boolean preflight-error))
@@ -1885,7 +1877,6 @@
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
-                                    :journal (:journal result)
                                     :channel (:channel result)
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
@@ -2133,7 +2124,7 @@
       "Adjust your approach or emit :final with what you have.")))
 
 (def ^:private CHAT_ERROR_BODY_RENDER_CHARS
-  "Cap on raw upstream HTTP body chars surfaced in the channel-rendered tool-call rowthe chat error
+  "Cap on raw upstream HTTP body chars surfaced in the chat error
    bubble. Long enough that Anthropic / OpenAI / z.ai full JSON error
    envelopes (`{\"type\":\"error\",\"error\":{...},\"request_id\":...}`)
    round-trip whole — their structured `error.message` is what the
@@ -2164,16 +2155,42 @@
   (boolean (and (string? message)
              (re-find #"(?i)invalid.*signature.*thinking.*block" message))))
 
+(defn- auth-provider-error?
+  [status message wrapper-message]
+  (let [text (str (or message "") "\n" (or wrapper-message ""))]
+    (boolean
+      (or (contains? #{401 403} status)
+        (re-find #"(?i)(authentication|unauthorized|forbidden|credential|api[ -]?key|access[ -]?token|expired token|invalid token)"
+          text)))))
+
+(defn- auth-provider-next-step
+  [data]
+  (let [provider-id (or (:provider-id data) (:provider data) (:provider/id data))]
+    (str "NEXT STEP: re-authenticate this provider or update its API key, then retry. "
+      "TUI: Ctrl+K -> Model / Providers -> re-authenticate provider. "
+      "CLI: run `vis providers auth"
+      (when provider-id (str " " provider-id))
+      "` for OAuth providers; for API-key providers, fix the configured key/env var and restart Vis.")))
+
 (defn- provider-error-explanation
   [err]
-  (let [data             (:data err)
+  (let [message          (or (:message err) (str err))
+        data             (:data err)
         body-raw         (some-> (:body data) str)
+        status           (:status data)
         provider-message (provider-body-message body-raw)]
     (cond
       (invalid-thinking-signature-message? provider-message)
       (str "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a `thinking` block with a signature that is not valid for Anthropic. "
         "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key. "
-        "Fix: do not replay preserved-thinking unless provider AND model match; retry with only normal transcript/journal context.")
+        "Fix: do not replay preserved-thinking unless provider AND model match; retry with only normal transcript/trailer context.")
+
+      (auth-provider-error? status provider-message message)
+      (str "WHAT HAPPENED: provider rejected credentials before the model ran."
+        (when (seq provider-message)
+          (str " Provider message: " provider-message))
+        " "
+        (auth-provider-next-step data))
 
       (seq provider-message)
       (str "WHAT HAPPENED: provider rejected the request before the model ran. Provider message: " provider-message)
@@ -2421,11 +2438,10 @@
 (declare sync-active-extension-symbols!)
 
 (def ^:private FRESH_ITER_CARRY
-  ;; `:journal-iters` is a vec of `[iteration-position {:thinking :blocks}]`
-  ;; pairs (oldest-first). The prompt renderer trims the rendered
-  ;; journal by token budget (50% of model context), not fixed
-  ;; iteration count.
-  {:journal-iters []})
+  ;; `:trailer-iters` is a vec of `[iteration-position {:thinking :blocks}]`
+  ;; pairs (oldest-first). The prompt renderer trims the rendered trailer
+  ;; by token budget (50% of model context), not fixed iteration count.
+  {:trailer-iters []})
 
 (def ^:private balanced-reasoning :balanced)
 
@@ -2467,7 +2483,7 @@
    {:keys [system-prompt
            conversation-turn-id
            ;; `max-context-tokens` was the legacy `build-iteration-context`
-           ;; token-budget knob. The journal assembler ignores it for now;
+           ;; token-budget knob. The trailer assembler ignores it for now;
            ;; rename / drop pending Phase 8 caller-signature cleanup.
            #_:clj-kondo/ignore max-context-tokens
            hooks cancel-atom current-iteration-atom
@@ -2606,20 +2622,20 @@
     ;; Hot symbol compaction is archive-based and runs only after a
     ;; final successful answer. Failed/cancelled turns keep their live
     ;; scratch symbols for recovery.
-    ;; Cross-turn carry: seed `journal-iters` with persisted iterations
+    ;; Cross-turn carry: seed `trailer-iters` with persisted iterations
     ;; of the current conversation (across every prior turn) so a
     ;; follow-up turn opens with prior context. Rendering trims by token
     ;; budget, so carry is not capped by iteration count. Each entry is
     ;; `[iter-position {:thinking :blocks}]` matching the in-memory shape
     ;; the renderer expects. Failures degrade silently to an empty seed.
     ;;
-    ;; IMPORTANT: cross-turn entries are JOURNAL ONLY. Do not replay their
-    ;; provider-native preserved-thinking assistant messages into the new
-    ;; user turn. In conversation a9389e1d, Z.ai/GLM received prior-turn
+    ;; IMPORTANT: cross-turn entries feed the TRAILER ONLY. Do not replay
+    ;; their provider-native preserved-thinking assistant messages into the
+    ;; new user turn. In conversation a9389e1d, Z.ai/GLM received prior-turn
     ;; assistant replay and opened the next request with "answer already
     ;; accepted", then burned >100k input tokens. Durable cross-turn memory
     ;; must flow through persisted iterations, not hidden reasoning state.
-    (let [seeded-journal-iters
+    (let [seeded-trailer-iters
           (try
             (when-let [conv-id (:conversation-id environment)]
               (let [d (:db-info environment)
@@ -2632,7 +2648,7 @@
                     ;; interrupted iterations are exploration noise that
                     ;; poisoned follow-up turns in conv 2ccde943: 7 handle
                     ;; mistakes from turn 1 were replayed verbatim into
-                    ;; turn 3's journal, teaching the model that probing
+                    ;; turn 3's trailer, teaching the model that probing
                     ;; is unreliable. Carry only the iterations that landed
                     ;; a clean result; defs from earlier exploration
                     ;; survive independently via the def restore path.
@@ -2659,13 +2675,13 @@
                           :llm-model    (some-> (:model it) str)
                           ;; Persisted assistant messages are intentionally NOT
                           ;; replayed across user turns. Keep the row metadata for
-                          ;; diagnostics, but `compatible-preserved-thinking-journal-iters`
+                          ;; diagnostics, but `compatible-preserved-thinking-trailer-iters`
                           ;; rejects this entry before replay.
                           :assistant-message (:llm-assistant-message it)
                           :preserved-thinking/replay? false}])
                   iters)))
             (catch Throwable t
-              (tel/log! {:level :warn :id ::cross-turn-journal-seed-failed
+              (tel/log! {:level :warn :id ::cross-turn-trailer-seed-failed
                          :data  {:error (ex-message t)}
                          :msg   "Cross-turn carry seed failed; first iteration starts with an empty tape"})
               nil))]
@@ -2673,9 +2689,9 @@
         (loop [loop-state (merge {:iteration 0 :messages initial-messages
                                   :trace []}
                             FRESH_ITER_CARRY
-                            (when (seq seeded-journal-iters)
-                              {:journal-iters seeded-journal-iters}))]
-          (let [{:keys [iteration messages trace journal-iters]} loop-state]
+                            (when (seq seeded-trailer-iters)
+                              {:trailer-iters seeded-trailer-iters}))]
+          (let [{:keys [iteration messages trace trailer-iters]} loop-state]
             (when current-iteration-atom (reset! current-iteration-atom (inc (long iteration))))
             (cond
               (when cancel-atom @cancel-atom)
@@ -2702,7 +2718,7 @@
                     _ (env/bind-and-bump! environment 'ctx current-ctx-map)
                     iteration-context (vctx/render-iteration-trailer
                                         {:environment   environment
-                                         :journal-iters journal-iters
+                                         :trailer-iters trailer-iters
                                          :ctx           current-ctx-map})
                       ;; Single canonical preserved-thinking replay path —
                       ;; svar's per-provider wire serializer turns the
@@ -2711,24 +2727,24 @@
                       ;;
                       ;; R3 hybrid message shape (per ADR/conversation
                       ;; 1db62d10): preserved-thinking replays + the
-                      ;; iteration-context journal trailer both APPEND to
+                      ;; iteration-context trailer both APPEND to
                       ;; the end. The original user_initial stays as the
                       ;; ONE user-role anchor near the start (placed there
                       ;; by `assemble-initial-messages`); we never repeat
                       ;; it. Final wire shape:
                       ;;
                       ;;   [system, user_initial,
-                      ;;    asst_iter1, user_journal_after_iter1,
-                      ;;    asst_iter2, user_journal_after_iter2,
+                      ;;    asst_iter1, user_trailer_after_iter1,
+                      ;;    asst_iter2, user_trailer_after_iter2,
                       ;;    ...
-                      ;;    asst_iter(n-1), user_journal_after_iter(n-1)]
+                      ;;    asst_iter(n-1), user_trailer_after_iter(n-1)]
                       ;;
                       ;; This matches z.ai's canonical preserved-thinking
                       ;; example (user → asst → user → asst → user) and
                       ;; stops GLM-5.1 from re-reading the same initial
                       ;; goal every iter and restarting its plan.
                     provider-messages (append-preserved-thinking-replay
-                                        messages journal-iters (replay-context pre-resolved-model))
+                                        messages trailer-iters (replay-context pre-resolved-model))
                     effective-messages (cond-> provider-messages
                                          (not (str/blank? (or iteration-context "")))
                                          (conj {:role "user" :content iteration-context}))
@@ -2745,8 +2761,8 @@
                                         :active-extensions active-exts
                                         :answer-validation-context
                                         {:user-request user-request
-                                         :previous-iterations journal-iters
-                                         :previous-blocks (vec (mapcat (comp :blocks second) journal-iters))}
+                                         :previous-iterations trailer-iters
+                                         :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
                                         :extra-body extra-body})
                                      (catch Exception e
                                        (if (and (stream-truncated-error? e)
@@ -2865,9 +2881,9 @@
                                         vec)
                         ;; Phase 7: merge per-iteration `:lru` stamps
                         ;; (collected by the patched resolve-symbol*)
-                        ;; into the long-lived per-env LRU map. The
-                        ;; journal live-vars renderer reads this to age
-                        ;; user vars out of the discovery line after
+                        ;; into the long-lived per-env LRU map. The trailer's
+                        ;; live-vars view reads this to age user vars out of
+                        ;; the discovery line after
                         ;; `JOURNAL_LRU_TURN_WINDOW` quiet turns.
                         _ (when-let [lru-atom (:def-resolve-lru-atom environment)]
                             (when-let [iteration-lru (not-empty (:lru block))]
@@ -2963,11 +2979,11 @@
                                        :done?            false}))
                           (let [;; Carry forward all observed iterations
                                 ;; as `[pos {:thinking :blocks}]` for the
-                                ;; next iteration's journal. The renderer
+                                ;; next iteration's trailer. The renderer
                                 ;; drops oldest entries by window, not
                                 ;; by token count.
                                 _ blocks
-                                next-recent (conj (vec (or journal-iters []))
+                                next-recent (conj (vec (or trailer-iters []))
                                               [(inc (long iteration))
                                                {:thinking thinking
                                                 :blocks   blocks
@@ -2986,7 +3002,7 @@
                                      {:iteration          (inc iteration)
                                       :messages           messages
                                       :trace              (conj trace trace-entry)
-                                      :journal-iters       next-recent}))))))))))))))))
+                                      :trailer-iters      next-recent}))))))))))))))))
 
 (defn run-turn!
   "Store turn -> iteration-loop -> update turn -> return result.
@@ -3464,7 +3480,7 @@
 
    Forwards `:doc` and `:arglists` from the symbol entry into the SCI var
    metadata so `(clojure.repl/doc v/cat)`, `(:doc (meta #'v/cat))`, and
-   `(:arglists (meta #'v/cat))` all work in the channel-rendered tool-call rowthe sandbox. Without this,
+   `(:arglists (meta #'v/cat))` all work inside the sandbox. Without this,
    docstrings stayed app-side only and the model could not introspect its
    own callable surface."
   [ext-ns sym val sym-entry]
@@ -3729,7 +3745,7 @@
         ;; when relevant. Calling with the wrong arity raises an
         ;; `ArityException` from SCI like any other Clojure fn.
         ;; Returns `:vis/silent`: the title is visible in channel chrome
-        ;; and the model journal, but the host call itself is noise in
+        ;; and the model trailer, but the host call itself is noise in
         ;; live progress / iteration rendering.
         conversation-title-fn    (fn set-conversation-title! [s]
                                    (let [s (str s)]
@@ -3754,9 +3770,9 @@
              :initial-ns-keys                   initial-ns-keys
              ;; Long-lived per-env LRU map: `{var-name-string →
              ;; last-used-turn-pos}`. Merged from each iteration's
-             ;; `:lru` after eval. Read by `prompt/journal-live-vars` to
-             ;; decide which user vars to surface in the live-vars
-             ;; discovery line.
+             ;; `:lru` after eval. Drives the trailer's live-vars
+             ;; surface, which ages user vars out of the discovery
+             ;; line after quiet turns.
              :def-resolve-lru-atom              (atom {})
              :router                            router
              :answer-atom                       answer-atom

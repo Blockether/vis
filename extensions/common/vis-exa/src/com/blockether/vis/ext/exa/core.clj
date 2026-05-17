@@ -434,16 +434,6 @@
      :max-lines (min (positive-long (:max-lines opts) (:max-lines cfg))
                   (:max-lines cfg))}))
 
-(defn- journal-render-exa
-  [result]
-  (let [{:keys [tool query content truncated?]} result
-        n (count (or content ""))
-        head (if (<= n 1500) content (str (subs content 0 1500) "…<+" (- n 1500) " chars>"))]
-    (str "exa/" tool " \"" query "\"— "
-      n " char(s)"
-      (when truncated? " (truncated)")
-      "\n" head)))
-
 (defn- channel-render-exa
   [result]
   (let [{:keys [tool query content truncated? temp-file]} result]
@@ -553,13 +543,11 @@
 
 (def web-search-symbol
   (vis/symbol #'web-search
-    {:journal-render-fn journal-render-exa
-     :channel-render-fn channel-render-exa}))
+    {:render-fn channel-render-exa}))
 
 (def code-context-symbol
   (vis/symbol #'code-context
-    {:journal-render-fn journal-render-exa
-     :channel-render-fn channel-render-exa}))
+    {:render-fn channel-render-exa}))
 
 (def exa-symbols
   [web-search-symbol
