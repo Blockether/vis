@@ -353,8 +353,8 @@
 
 (def voice-extension
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.voice.core
-     :ext/doc       "Native local voice extension: Piper TTS output and Parakeet ASR input through sherpa-onnx."
+    {:ext/name      "voice"
+     :ext/description "Native local voice extension: Piper TTS output and Parakeet ASR input through sherpa-onnx."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

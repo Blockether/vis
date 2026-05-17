@@ -185,8 +185,7 @@
 
 (defdescribe codex-extension-settings-test
   (it "owns its TUI settings metadata"
-    (let [ext (first (filter #(= 'com.blockether.vis.ext.provider-openai-codex
-                                (:ext/namespace %))
+    (let [ext (first (filter #(= "provider-openai-codex" (:ext/name %))
                        (vis/registered-extensions)))]
       (expect (= [{:key :openai-codex-verbosity
                    :type :choice

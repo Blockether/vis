@@ -197,8 +197,8 @@
                                                             (contains? it :error) (assoc :error (:error it))
                                                             (contains? it :channel) (assoc :channel (:channel it))
                                                             (seq segments) (assoc :render-segments segments)
-                                                            (contains? it :execution-time-ms)
-                                                            (assoc :duration-ms (:execution-time-ms it)))]
+                                                            (contains? it :duration-ms)
+                                                            (assoc :duration-ms (:duration-ms it)))]
                                              answer-here? (and produced-answer?
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))

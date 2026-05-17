@@ -6,8 +6,8 @@
 (defdescribe tui-channel-registration-test
   (it "registers a lightweight TUI channel descriptor"
     (let [channel (-> tui/tui-extension :ext/channels first)]
-      (expect (= 'com.blockether.vis.ext.channel-tui.core
-                (:ext/namespace tui/tui-extension)))
+      (expect (= "channel-tui"
+                (:ext/name tui/tui-extension)))
       (expect (= :tui (:channel/id channel)))
       (expect (= "tui" (:channel/cmd channel)))
       (expect (= tui/tui-usage (:channel/usage channel)))

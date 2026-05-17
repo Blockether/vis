@@ -15,8 +15,8 @@
 
 (defdescribe vis-foundation-aggregator-test
   (it "registers the unified v/ alias"
-    (expect (= 'v (get-in foundation/vis-extension [:ext/alias :alias])))
-    (expect (= 'vis.ext.v (get-in foundation/vis-extension [:ext/alias :ns]))))
+    (expect (= 'v (get-in foundation/vis-extension [:ext/sci :ext.sci/alias])))
+    (expect (= 'vis.ext.v (get-in foundation/vis-extension [:ext/sci :ext.sci/ns]))))
 
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
@@ -60,7 +60,7 @@
   ;; of 'md is now covered by the manifest test below.
 
   (it "documents markdown builders on the extension descriptor"
-    (let [doc (:ext/doc foundation/vis-extension)]
+    (let [doc (:ext/description foundation/vis-extension)]
       (expect (str/includes? doc "markdown answer builders"))
       (expect (str/includes? doc "file-link"))))
 

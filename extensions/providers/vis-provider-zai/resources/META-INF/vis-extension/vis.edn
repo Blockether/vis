@@ -1,6 +1,4 @@
-;; Z.ai static-API-key providers. Loading the shared ns registers one
-;; extension/provider entry per Z.ai plan.
-{zai-coding
- {:nses [com.blockether.vis.ext.provider-zai]}
- zai
+;; Z.ai static-API-key providers. Loading the ns registers coding-plan + pass
+;; provider entries under one extension.
+{zai
  {:nses [com.blockether.vis.ext.provider-zai]}}

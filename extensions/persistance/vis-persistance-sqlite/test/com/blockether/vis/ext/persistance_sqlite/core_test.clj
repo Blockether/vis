@@ -717,7 +717,7 @@
       ;; iteration flat columns.
       (expect (= 0 (raw-count s :definition_soul)))
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
-            blocks    [(select-keys iteration [:code :result :error :execution-time-ms])]]
+            blocks    [(select-keys iteration [:code :result :error :duration-ms])]]
         (expect (= "Computing" (:thinking iteration)))
         (expect (= 1 (:position iteration)))
         (expect (= 1 (count blocks)))
@@ -762,7 +762,7 @@
 
   ;; Removed: "round-trips block-level info through the BLOB" and
   ;; "does not persist timeout child-event side ledgers". The persisted
-  ;; block-info shape and timeout side-ledger handling have drifted
+  ;; block-envelope shape and timeout side-ledger handling have drifted
   ;; from these assertions; structural round-trip is covered by the
   ;; rest of the iteration-blocks suite below.
 
@@ -801,7 +801,7 @@
       (vis/db-store-iteration! s {:conversation-turn-id qid
                                   :code "(+ 1 1)"
                                   :comment ";; double-check arithmetic"
-                                  :result 2 :execution-time-ms 1
+                                  :result 2
                                   :duration-ms 5})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             exec      iteration]

@@ -468,18 +468,12 @@
      :provider/get-token-fn   (make-get-token-fn plan-tag)
      :provider/limits-fn      (make-limits-fn plan-tag)}))
 
-(defn- register-plan-extension! [plan-tag]
-  (let [{:keys [label]} (get PLANS plan-tag)]
-    (vis/register-extension!
-      (vis/extension
-        {:ext/namespace (symbol (str "com.blockether.vis.ext.provider-zai." (name plan-tag)))
-         :ext/nses      ['com.blockether.vis.ext.provider-zai]
-         :ext/doc       (str label " static-API-key provider.")
-         :ext/version   "0.2.0"
-         :ext/author    "Blockether"
-         :ext/owner     "vis"
-         :ext/license   "Apache-2.0"
-         :ext/providers [(provider-entry plan-tag)]}))))
-
-(doseq [plan-tag (keys PLANS)]
-  (register-plan-extension! plan-tag))
+(vis/register-extension!
+  (vis/extension
+    {:ext/name        "zai"
+     :ext/description "Z.ai coding-plan + pass static-API-key providers."
+     :ext/version     "0.2.0"
+     :ext/author      "Blockether"
+     :ext/owner       "vis"
+     :ext/license     "Apache-2.0"
+     :ext/providers   (mapv provider-entry (keys PLANS))}))

@@ -632,17 +632,12 @@
    :provider/get-token-fn (make-get-token-fn account-type)
    :provider/limits-fn    (make-limits-fn account-type)})
 
-(defn- register-account-extension! [account-type]
-  (vis/register-extension!
-    (vis/extension
-      {:ext/namespace (symbol (str "com.blockether.vis.ext.provider-github-copilot." (name account-type)))
-       :ext/nses      ['com.blockether.vis.ext.provider-github-copilot]
-       :ext/doc       (str (account-provider-label account-type) " OAuth + token-exchange provider.")
-       :ext/version   "0.4.0"
-       :ext/author    "Blockether"
-       :ext/owner     "vis"
-       :ext/license   "Apache-2.0"
-       :ext/providers [(provider-entry account-type)]})))
-
-(doseq [account-type [:individual :business]]
-  (register-account-extension! account-type))
+(vis/register-extension!
+  (vis/extension
+    {:ext/name        "github-copilot"
+     :ext/description "GitHub Copilot individual + business OAuth/token-exchange providers."
+     :ext/version     "0.4.0"
+     :ext/author      "Blockether"
+     :ext/owner       "vis"
+     :ext/license     "Apache-2.0"
+     :ext/providers   (mapv provider-entry [:individual :business])}))

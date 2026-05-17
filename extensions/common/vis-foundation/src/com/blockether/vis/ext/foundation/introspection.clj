@@ -109,7 +109,7 @@
            :code         (:code iteration)
            :result       (:result iteration)
            :error        (:error iteration)
-           :duration-ms  (:execution-time-ms iteration)})
+           :duration-ms  (:duration-ms iteration)})
     iterations))
 
 (defn- format-provider-model

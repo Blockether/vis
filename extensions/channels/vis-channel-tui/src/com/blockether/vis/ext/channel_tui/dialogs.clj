@@ -1223,14 +1223,14 @@
                          (str/replace #"\s+\(.*\)$" ""))
         channel-label  (or (some-> (first (:ext/channels ext)) :channel/cmd titleize-label)
                          (some-> (first (:ext/channels ext)) :channel/id name titleize-label))
-        alias-label    (some-> (get-in ext [:ext/alias :alias]) name titleize-label)
+        alias-label    (some-> (get-in ext [:ext/sci :ext.sci/alias]) name titleize-label)
         ;; Take the meaningful tail segment of the namespace (drop
         ;; `com.blockether.vis.ext` vendor prefix and the trailing
         ;; `core` / `bot` / `main` registrar entry-point convention)
         ;; and titleize THAT, so `voice` -> `Voice`, `goal` ->
         ;; `Goal`, `channel-tui` -> `Channel Tui` instead of the
         ;; previous `Com.blockether.vis.ext.voice.core`.
-        ns-label       (some-> (:ext/namespace ext)
+        ns-label       (some-> (:ext/name ext)
                          meaningful-namespace-segment
                          titleize-label)]
     (or (not-empty provider-label)
@@ -1252,7 +1252,7 @@
   []
   (->> (vis/registered-extensions)
     (mapcat (fn [ext]
-              (let [ext-id       (:ext/namespace ext)
+              (let [ext-id       (:ext/name ext)
                     ext-kind     (extension-kind ext)
                     ext-label    (extension-display-label ext)
                     provider-ids (set (keep :provider/id (:ext/providers ext)))]
@@ -1289,7 +1289,7 @@
   []
   (->> (vis/registered-extensions)
     (mapcat (fn [ext]
-              (let [ext-id    (:ext/namespace ext)
+              (let [ext-id    (:ext/name ext)
                     ext-kind  (extension-kind ext)
                     ext-label (extension-display-label ext)]
                 (for [decl (:ext/env ext)

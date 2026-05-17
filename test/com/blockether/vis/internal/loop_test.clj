@@ -27,7 +27,7 @@
 (defdescribe iteration-start-hook-test
   (it "collects active :turn.iteration/start hook hints and ignores other phases"
     (let [seen (atom nil)
-          ext {:ext/namespace 'test.nudges
+          ext {:ext/name "test.nudges"
                :ext/hooks [{:id :test/title
                             :doc "title"
                             :phase :turn.iteration/start
@@ -51,10 +51,10 @@
                    :satisfy-with '(satisfy-hint! :test/title)
                    :importance :high}]
                 hints))
-      (expect (= ctx @seen)))))
+      (expect (= ctx @seen))))
 
   (it "filters satisfied hint ids from the next ctx hint set"
-    (let [ext {:ext/namespace 'test.hints
+    (let [ext {:ext/name "test.hints"
                :ext/hooks [{:id :test/title
                             :doc "title"
                             :phase :turn.iteration/start

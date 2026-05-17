@@ -186,8 +186,8 @@
    identifier (e.g. `Apache-2.0`)."
   []
   (mapv (fn [e]
-          {:namespace (short-ext-ns (:ext/namespace e))
-           :doc       (:ext/doc e)
+          {:namespace (short-ext-ns (:ext/name e))
+           :doc       (:ext/description e)
            :kind      (or (:ext/kind e) "uncategorized")
            :group     (per-kind-group e)
            :author    (or (:ext/author e) "-")
@@ -211,7 +211,7 @@
   []
   (into []
     (mapcat (fn [e]
-              (map (fn [c] (assoc c :ext-ns (str (:ext/namespace e))))
+              (map (fn [c] (assoc c :ext-ns (str (:ext/name e))))
                 (or (:ext/cli e) []))))
     (extension/registered-extensions)))
 
@@ -856,7 +856,7 @@
                    (trace-ok "✓ form finished"))
                  " #" (inc (long (or (:form-idx chunk) 0)))
                  (when-let [of (:form-of chunk)] (str "/" of))
-                 (when-let [ms (:execution-time-ms chunk)] (str " " (trace-dim (str ms "ms"))))
+                 (when-let [ms (:duration-ms chunk)] (str " " (trace-dim (str ms "ms"))))
                  (when (:repaired? chunk) (str " " (trace-warn "repaired")))
                  (when (:timeout? chunk) (str " " (trace-bad "timeout")))
                  (if-let [err (trace-error-summary (:error chunk))]
@@ -1896,8 +1896,8 @@
                             "  \"hello from " name "\")\n\n"
                             "(def vis-extension\n"
                             "  (vis/extension\n"
-                            "    {:ext/namespace '" ns-sym "\n"
-                            "     :ext/doc \"User extension " name "\"\n"
+                            "    {:ext/name \"" name "\"\n"
+                            "     :ext/description \"User extension " name "\"\n"
                             "     :ext/version \"0.1.0\"\n"
                             "     :ext/author \"local\"\n"
                             "     :ext/owner \"local\"\n"
@@ -2420,7 +2420,7 @@
       (str "commands=" (count commands)))
     (doseq [ext extensions]
       (startup-measure-line! "extension"
-        (str "ns=" (:ext/namespace ext))
+        (str "ns=" (:ext/name ext))
         (str "kind=" (or (:ext/kind ext) "uncategorized"))
         (str "channels=" (str/join "," (map :channel/cmd (:ext/channels ext))))
         (str "providers=" (str/join "," (map (comp name :provider/id) (:ext/providers ext))))))

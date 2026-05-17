@@ -63,10 +63,11 @@
     (expect (str/includes? exa/exa-prompt "before answering current web facts")))
 
   (it "exports a valid Vis extension"
-    (expect (= 'com.blockether.vis.ext.exa.core (:ext/namespace exa/vis-extension)))
-    (expect (= {:ns 'vis.ext.exa :alias 'exa} (:ext/alias exa/vis-extension)))
+    (expect (= "exa" (:ext/name exa/vis-extension)))
+    (expect (= 'exa (get-in exa/vis-extension [:ext/sci :ext.sci/alias])))
+    (expect (= 'vis.ext.exa (get-in exa/vis-extension [:ext/sci :ext.sci/ns])))
     (expect (= "EXA_API_KEY" (-> exa/vis-extension :ext/env first :name)))
-    (expect (= 2 (count (:ext/symbols exa/vis-extension))))))
+    (expect (= 2 (count (get-in exa/vis-extension [:ext/sci :ext.sci/symbols]))))))
 
 (defdescribe exa-config-test
   (it "resolves env through Vis config-backed extension overrides"
