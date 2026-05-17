@@ -130,13 +130,14 @@
              m)))
 
 (defn error-shape
-  "Normalize an error map / Throwable to `{:message :trace :data}`. Drops
-   blank/empty fields."
+  "Normalize an error map / Throwable to `{:message :trace :data :hint}`.
+   Drops blank/empty fields."
   [err]
   (let [base (cond
                (map? err) {:message (or (:message err) "")
                            :trace   (:trace err)
-                           :data    (:data err)}
+                           :data    (:data err)
+                           :hint    (:hint err)}
                (instance? Throwable err)
                (let [^Throwable t err]
                  {:message (or (.getMessage t) (.. t getClass getSimpleName))
@@ -259,9 +260,17 @@
 (defn- error-lines
   [err]
   (when err
-    (let [{:keys [message trace data]} (error-shape err)]
+    (let [shape   (error-shape err)
+          message (:message shape)
+          trace   (:trace shape)
+          data    (:data shape)
+          ;; Diagnostic catalogue can attach a :hint to a parse / eval error
+          ;; map (parse-diagnose). Lift the hint into its own line so the
+          ;; model sees the precise correction.
+          hint    (or (when (map? err) (:hint err)) (:hint shape))]
       (cond-> []
         (non-blank? message) (conj (str ";; ! ERROR " message))
+        (non-blank? hint)    (conj (str ";; ! hint " hint))
         (non-blank? trace)
         (into (mapv #(str ";;   " %) (str/split-lines trace)))
         (some? data)

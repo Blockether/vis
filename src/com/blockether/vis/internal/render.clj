@@ -95,13 +95,20 @@
   (str/replace s #"\s*\n\s*" " "))
 
 (defn- ensure-attrs
-  "Insert {} attrs at index 1 when absent."
+  "Insert {} attrs at index 1 when absent.
+
+   Also accepts the common LLM heading shorthand `[:h 3 ...]` and
+   normalizes it to `[:h {:level 3} ...]` so the level never leaks as
+   visible heading text."
   [v]
   (cond
-    (not (vector? v))   v
-    (empty? v)          v
-    (map? (second v))   v
-    :else               (into [(first v) {}] (rest v))))
+    (not (vector? v))                v
+    (empty? v)                       v
+    (map? (second v))                v
+    (and (= :h (first v))
+      (integer? (second v)))         (into [:h {:level (max 1 (min 6 (long (second v))))}]
+                                       (nnext v))
+    :else                            (into [(first v) {}] (rest v))))
 
 (defn- has-attrs? [v]
   (and (vector? v) (>= (count v) 2) (map? (second v))))
