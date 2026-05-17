@@ -16,6 +16,7 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.parse-diagnose :as pd]
    [com.blockether.vis.internal.env.sci-patches :as sci-patches]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
@@ -500,19 +501,31 @@
   (or (bare-list-literal-hint form)
     (string-as-fn-hint form)))
 
+(defn- enrich-parse-error
+  "Add a `:hint` to a parse-error map when the catalogue (parse-diagnose)
+   has a precise diagnostic for the underlying source. Returns the original
+   error map unchanged when nothing matches."
+  [parse-error code]
+  (if (or (nil? parse-error) (:hint parse-error))
+    parse-error
+    (if-let [quote-hint (some-> (pd/diagnose-quote-balance (or code "")) :hint)]
+      (assoc parse-error :hint quote-hint)
+      parse-error)))
+
 (defn- parse-top-level-forms
   "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
    for per-form eval + capture.
+
+   Multi-stage repair chain when a parse error is detected:
+     1. parinferish indent-mode delimiter repair (parens, brackets, braces).
+     2. parse-diagnose `diagnose-quote-balance` enriches the surfaced error
+        with a precise hint when an odd number of unescaped quotes is the
+        likely root cause.
 
    Uses edamame's incremental reader so a parse failure on form N still
    yields the parsed prefix [form-1 … form-(N-1)]. The caller evaluates the
    prefix in order and reports the parse error as form N's outcome — model
    loses only the broken form, not the entire iteration.
-
-   When a parse error is present, the engine tries parinferish to repair
-   delimiter mistakes. If repair succeeds, the repaired source is parsed
-   again and the result includes `:repaired-source` so the trailer can show
-   the model what was changed.
 
    Returns {:forms <vec> :parse-error <map|nil> :repaired-source <str|nil>}."
   [code]
@@ -522,11 +535,11 @@
       (if-let [repaired (parinferish-repair-safe code)]
         (let [second-pass (parse-forms-streaming repaired)]
           (if (:parse-error second-pass)
-            ;; Repair didn't actually fix it; surface the original prefix +
-            ;; original error so the model sees its own bad code.
-            first-pass
+            ;; Repair didn't actually fix it; surface the prefix + enriched
+            ;; error so the model sees its own bad code with diagnostics.
+            (update first-pass :parse-error enrich-parse-error code)
             (assoc second-pass :repaired-source repaired)))
-        first-pass))))
+        (update first-pass :parse-error enrich-parse-error code)))))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [stdout-writer (java.io.StringWriter.)
@@ -590,9 +603,17 @@
                         err-map (try (extension/ex->op-error e {:block-source source})
                                   (catch Throwable _
                                     {:message (or (ex-message e)
-                                                (.getName (class e)))}))]
+                                                (.getName (class e)))}))
+                        sandbox-syms (try
+                                       (keys (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
+                                       (catch Throwable _ nil))
+                        sym-hint (when (and (:message err-map) (seq sandbox-syms))
+                                   (pd/unresolved-symbol-hint (:message err-map) sandbox-syms))
+                        err-map+hint (cond-> err-map
+                                       (and sym-hint (not (:hint err-map)))
+                                       (assoc :hint sym-hint))]
                     (reset! thrown e)
-                    (cond-> {:source source :error err-map}
+                    (cond-> {:source source :error err-map+hint}
                       (pos? (.length out)) (assoc :stdout (.toString out))
                       (pos? (.length err)) (assoc :stderr (.toString err)))))))))
         eval-per-form
