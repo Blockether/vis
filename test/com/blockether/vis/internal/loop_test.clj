@@ -21,6 +21,69 @@
 (def ^:private provider-error-explanation
   (deref #'lp/provider-error-explanation))
 
+(def ^:private collect-iteration-start-hints
+  (deref #'lp/collect-iteration-start-hints))
+
+(defdescribe iteration-start-hook-test
+  (it "collects active :turn.iteration/start hook hints and ignores other phases"
+    (let [seen (atom nil)
+          ext {:ext/namespace 'test.nudges
+               :ext/hooks [{:id :test/title
+                            :doc "title"
+                            :phase :turn.iteration/start
+                            :fn (fn [ctx]
+                                  (reset! seen ctx)
+                                  {:hint "set title" :importance :high})}
+                           {:id :test/answer
+                            :doc "answer"
+                            :phase :turn.answer/validate
+                            :fn (fn [_] {:reject true})}
+                           {:id :test/bad
+                            :doc "bad"
+                            :phase :turn.iteration/start
+                            :fn (fn [_] {:importance :high})}]}
+          ctx {:conversation-title nil
+               :title-refresh? true
+               :turn-position 1}
+          hints (collect-iteration-start-hints {} [ext] ctx)]
+      (expect (= [{:id :test/title
+                   :text "set title"
+                   :satisfy-with '(satisfy-hint! :test/title)
+                   :importance :high}]
+                hints))
+      (expect (= ctx @seen)))))
+
+  (it "filters satisfied hint ids from the next ctx hint set"
+    (let [ext {:ext/namespace 'test.hints
+               :ext/hooks [{:id :test/title
+                            :doc "title"
+                            :phase :turn.iteration/start
+                            :fn (fn [_] {:text "set title"})}]}
+          env {:satisfied-hints-atom (atom #{:test/title})}]
+      (expect (= [] (collect-iteration-start-hints env [ext] {})))))
+
+  (it "satisfy-hint! records keyword ids and returns :vis/silent"
+    (let [env (lp/create-environment ::router {:db :memory})]
+      (try
+        (let [r (sci/eval-string+ (:sci-ctx env)
+                  "(satisfy-hint! :test/title)"
+                  {:ns (:sandbox-ns env)})]
+          (expect (= :vis/silent (:val r)))
+          (expect (= #{:test/title} @(:satisfied-hints-atom env))))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "satisfy-hint! rejects non-keyword ids"
+    (let [env (lp/create-environment ::router {:db :memory})]
+      (try
+        (try
+          (sci/eval-string+ (:sci-ctx env) "(satisfy-hint! \"bad\")" {:ns (:sandbox-ns env)})
+          (expect false)
+          (catch Throwable e
+            (expect (str/includes? (ex-message e) "satisfy-hint! requires a keyword hint id"))))
+        (finally
+          (lp/dispose-environment! env))))))
+
 (defdescribe provider-error-explanation-test
   (it "tells users to re-authenticate or update keys on provider auth failures"
     (let [text (provider-error-explanation

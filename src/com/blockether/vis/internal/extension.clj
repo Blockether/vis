@@ -621,8 +621,8 @@
 ;;
 ;; Canonical phase keywords:
 ;;   :turn.iteration/start — every iteration, BEFORE the model call. Returns
-;;                           nil | {:hint :importance?}; hint flows into
-;;                           <iteration_hints>.
+;;                           nil | {:text :importance?} or legacy {:hint ...};
+;;                           hint flows into `(:hints ctx)`.
 ;;   :turn.answer/validate — when a `(done ...)` form produced a candidate
 ;;                           final answer. Return nil to accept or
 ;;                           {:reject true :message ... :hint ...} to reject.
@@ -637,7 +637,7 @@
 ;; loop or starves siblings.
 ;;
 ;; Start hooks do NOT block evaluation. They emit advisory
-;; <iteration_hint> entries. For HARD final-answer rejection, use
+;; `(:hints ctx)` entries. For HARD final-answer rejection, use
 ;; :turn.answer/validate.
 ;; ----------------------------------------------------------------------------
 (def canonical-hook-phases
@@ -658,6 +658,7 @@
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 
 (s/def :ext.hook.return/hint non-blank-string?)
+(s/def :ext.hook.return/text non-blank-string?)
 (s/def :ext.hook.return/reject true?)
 (s/def :ext.hook.return/message non-blank-string?)
 (s/def ::answer-validation-reject

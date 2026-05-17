@@ -1220,6 +1220,77 @@
                (or (:ext/hooks ext) [])))
        (answer-validation-extensions environment active-extensions)))))
 
+(defn- iteration-start-hook-hit
+  [ext id hit]
+  (let [text (when (map? hit) (or (:text hit) (:hint hit)))]
+    (cond
+      (nil? hit) nil
+
+      (and (map? hit)
+        (string? text)
+        (not (str/blank? text)))
+      (cond-> {:id id
+               :text text
+               :satisfy-with (list 'satisfy-hint! id)}
+        (:importance hit) (assoc :importance (:importance hit)))
+
+      :else
+      (do
+        (tel/log! {:level :warn
+                   :id ::iteration-start-hook-invalid-return
+                   :data {:ext (:ext/namespace ext)
+                          :hook id
+                          :returned hit}}
+          "Extension :turn.iteration/start hook returned invalid value")
+        nil))))
+
+(defn- iteration-start-hook-error-hit
+  [ext id t]
+  (tel/log! {:level :warn
+             :id ::iteration-start-hook-threw
+             :data {:ext (:ext/namespace ext)
+                    :hook id
+                    :error (ex-message t)}}
+    "Extension :turn.iteration/start hook threw")
+  nil)
+
+(defn- collect-iteration-start-hints
+  "Run active `:turn.iteration/start` hooks and return model-facing hints."
+  [environment active-extensions ctx]
+  (let [satisfied (or (some-> environment :satisfied-hints-atom deref) #{})]
+    (vec
+      (remove (fn [hint] (contains? satisfied (:id hint)))
+        (mapcat (fn [ext]
+                  (keep (fn [{:keys [id phase] hook-fn :fn}]
+                          (when (= :turn.iteration/start phase)
+                            (binding [extension/*current-extension* ext
+                                      extension/*current-symbol* nil]
+                              (try
+                                (iteration-start-hook-hit ext id (hook-fn ctx))
+                                (catch Throwable t
+                                  (iteration-start-hook-error-hit ext id t))))))
+                    (or (:ext/hooks ext) [])))
+          (answer-validation-extensions environment active-extensions))))))
+
+(defn- conversation-turn-position
+  [environment conversation-turn-id]
+  (or
+    (try
+      (when-let [conv-id (:conversation-id environment)]
+        (some (fn [turn]
+                (when (= (str (:id turn)) (str conversation-turn-id))
+                  (:position turn)))
+          (persistance/db-list-conversation-turns (:db-info environment) conv-id)))
+      (catch Throwable t
+        (tel/log! {:level :warn
+                   :id ::conversation-turn-position-failed
+                   :data {:conversation-id (:conversation-id environment)
+                          :conversation-turn-id conversation-turn-id
+                          :error (ex-message t)}}
+          "Could not resolve conversation turn position for iteration hooks")
+        nil))
+    1))
+
 (defn- runtime-turn-prefix
   [environment]
   (let [id-s (str (or (some-> (:current-conversation-turn-id-atom environment) deref)
@@ -2453,10 +2524,9 @@
   [environment user-request
    {:keys [system-prompt
            conversation-turn-id
-           ;; `max-context-tokens` was the legacy `build-iteration-context`
-           ;; token-budget knob. The trailer assembler ignores it for now;
-           ;; rename / drop pending Phase 8 caller-signature cleanup.
-           #_:clj-kondo/ignore max-context-tokens
+           ;; `max-context-tokens` feeds advisory context-pressure hooks;
+           ;; trailer assembly itself still owns no token trimming.
+           max-context-tokens
            hooks cancel-atom current-iteration-atom
            reasoning-default routing extra-body turn-features allow-copilot-claude-deep?
            workspace]}]
@@ -2473,11 +2543,15 @@
         ;; and the per-iteration ext nudge collector - activation-fn never
         ;; re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
+        extensions-snapshot (prompt/extensions-snapshot active-exts)
         _             (sync-active-extension-symbols! environment active-exts)
-        conversation-base {:id           (:conversation-id environment)
-                           :title        (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
-                           :turn-id      conversation-turn-id
-                           :user-request user-request}
+        conversation-snapshot (fn []
+                                {:id           (:conversation-id environment)
+                                 :title        (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
+                                 :turn-id      conversation-turn-id
+                                 :user-request user-request})
+        conversation-base (conversation-snapshot)
+        turn-position (conversation-turn-position environment conversation-turn-id)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts})
@@ -2582,7 +2656,9 @@
     ;; `ctx` is the single model-visible engine context value; rebuilt fresh
     ;; per iteration.
     (env/bind-and-bump! environment 'ctx
-      (vctx/build {:environment environment :conversation conversation-base}))
+      (vctx/build {:environment environment
+                   :conversation conversation-base
+                   :extensions extensions-snapshot}))
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
@@ -2679,11 +2755,25 @@
                                                               :reasoning reasoning-level
                                                               :requested-reasoning raw-reasoning-level})
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
+                    iteration-position (inc (long iteration))
+                    current-conversation (conversation-snapshot)
+                    iteration-hints (collect-iteration-start-hints environment active-exts
+                                      {:environment environment
+                                       :phase :turn.iteration/start
+                                       :conversation current-conversation
+                                       :iteration iteration-position
+                                       :conversation-title (:title current-conversation)
+                                       :title-refresh? (zero? (long iteration))
+                                       :turn-position turn-position
+                                       :input-tokens (:input-tokens @usage-atom)
+                                       :context-limit (or max-context-tokens 200000)})
                     current-ctx-map (vctx/build
                                       {:environment environment
-                                       :conversation conversation-base
+                                       :conversation current-conversation
                                        :iteration   {:id       (some-> (:current-iteration-id-atom environment) deref)
-                                                     :position (inc (long iteration))}})
+                                                     :position iteration-position}
+                                       :hints       iteration-hints
+                                       :extensions  extensions-snapshot})
                     _ (env/bind-and-bump! environment 'ctx current-ctx-map)
                     iteration-context (vctx/render-iteration-trailer
                                         {:environment   environment
@@ -3720,9 +3810,22 @@
                                        db-info conversation-id
                                        conversation-title-atom s)
                                      :vis/silent))
+        satisfied-hints-atom     (atom #{})
+        ;; `(satisfy-hint! :hint/id)` is silent model-visible bookkeeping.
+        ;; It removes the hint id from `(:hints ctx)` on the next iteration;
+        ;; it does not unregister the extension hook that may emit the hint
+        ;; again if its runtime condition becomes true.
+        satisfy-hint-fn          (fn satisfy-hint! [id]
+                                   (when-not (keyword? id)
+                                     (throw (ex-info "satisfy-hint! requires a keyword hint id"
+                                              {:type :vis/invalid-hint-id
+                                               :id id})))
+                                   (swap! satisfied-hints-atom conj id)
+                                   :vis/silent)
         ;; The current human turn text and engine context flow through ctx.
         env-bindings             {'done            answer-fn
-                                  'set-conversation-title! conversation-title-fn}
+                                  'set-conversation-title! conversation-title-fn
+                                  'satisfy-hint!  satisfy-hint-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
@@ -3750,6 +3853,7 @@
              :current-turn-position-atom        current-turn-position-atom
              :current-user-request-atom         current-user-request-atom
              :conversation-title-atom           conversation-title-atom
+             :satisfied-hints-atom              satisfied-hints-atom
              :extensions                        (atom [])}]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :conversation-id conversation-id)
