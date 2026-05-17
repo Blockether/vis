@@ -78,9 +78,11 @@
                                                            "engine_iteration_position: 1\n"
                                                            "prompt_role: user\n"
                                                            "</current_turn_context>\n\n"
-                                                           "<iteration_hints>\n"
-                                                           "<iteration_hint importance=\"high\">observe before answer</iteration_hint>\n"
-                                                           "</iteration_hints>")}]
+                                                           ";; ctx =\n"
+                                                           (pr-str {:hints [{:id :vis.foundation/conversation-title
+                                                                             :text "observe before answer"
+                                                                             :importance :high
+                                                                             :satisfy-with '(satisfy-hint! :vis.foundation/conversation-title)}]}))}]
                                 :llm-raw-response "```clojure\n(+ 1 1)\n```"
                                 :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
@@ -409,7 +411,8 @@
           (expect (str/includes? out "[3] role=user - per-iteration trailer"))
           (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
           (expect (str/includes? out "<current_turn_context>"))
-          (expect (str/includes? out "<iteration_hints>"))
+          (expect (str/includes? out ":hints"))
+          (expect (not (str/includes? out "<iteration_hints>")))
           (expect (not (str/includes? out "##### Block 0"))))
         (finally (vis/db-dispose-connection! s)))))
 
@@ -490,7 +493,8 @@
             (expect (str/includes? out "[3] role=user - per-iteration trailer"))
             (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
             (expect (str/includes? out "<current_turn_context>"))
-            (expect (str/includes? out "<iteration_hints>")))
+            (expect (str/includes? out ":hints"))
+            (expect (not (str/includes? out "<iteration_hints>"))))
           (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------

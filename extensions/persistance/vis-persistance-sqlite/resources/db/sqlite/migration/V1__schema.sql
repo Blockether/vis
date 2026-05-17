@@ -10,8 +10,8 @@
 --          │         └─ conversation_turn_iteration (one LLM round-trip)
 --          │              │
 --          │              └─ code/result/error/duration_ms columns
---          │                   Single-form iteration payload, directly readable
---          │                   without a Nippy vec wrapper.
+--          │                   Executed form plus result/error timing live inline on
+--          │                   the iteration row.
 --          │
 --          └─ definition_soul (branch-local var identities)
 --               ├─ definition_state (var versions; each row points at the
@@ -22,7 +22,7 @@
 --   *_soul   = immutable identity, branch-local
 --   *_state  = mutable snapshot; retry/fork = new state row
 --   parent_table_child = nested concept (conversation_turn_iteration
---                        = a conversation_turn_iteration nested under a conversation_turn)
+--                        = iteration nested under conversation_turn_state)
 --
 -- Position columns (1-based int) live alongside UUID PKs at every
 -- level. UUIDs are the join key; position is the public/agent-
@@ -32,10 +32,10 @@
 --   user request
 --     -> conversation_turn_soul + conversation_turn_state
 --     -> conversation_turn_iteration(s)
---          each conversation_turn_iteration writes its single code block inline into
---          code/result/error/duration_ms plus one
---          definition_soul + definition_state row per named var
---          `(def ...)` / `(defn ...)` it executed
+--          each conversation_turn_iteration records executed code inline in
+--          code/result/error/duration_ms and writes one
+--          definition_soul + definition_state row per named var touched by
+--          `(def ...)` / `(defn ...)`
 --     -> conversation_turn_state done/error
 --     -> next turn (or branch/fork to new conversation_state)
 --
@@ -92,13 +92,9 @@ CREATE TABLE conversation_turn_soul (
   conversation_state_id  TEXT NOT NULL
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
   position               INTEGER NOT NULL CHECK (position >= 1),
-  -- No `title` column. The single canonical title lives on
-  -- `conversation_state.title` (set via `(set-conversation-title! ...)`
-  -- and mirrored to the CONVERSATION_TITLE SCI var). A per-turn title
-  -- column previously existed but was auto-populated with a literal
-  -- slice of `user_request` — useless labels for trivial turns and
-  -- never written by any model-facing primitive. Removed by design;
-  -- turn rows carry `user_request` for display, nothing else.
+  -- Conversation title lives on `conversation_state.title` (set via
+  -- `(set-conversation-title! ...)` and mirrored to the CONVERSATION_TITLE
+  -- SCI var). Turn rows carry `user_request` for display and replay.
   user_request           TEXT,
   metadata               TEXT,             -- JSON-encoded object/string
   created_at             INTEGER NOT NULL,
@@ -299,26 +295,15 @@ BEGIN
 END;
 
 -- =============================================================================
--- Expression soul - identity for var bindings (and reserved literal
--- slot). Branch-local: belongs to conversation_state.
+-- Definition soul - branch-local identity for persistent user vars.
 --
--- kind:
---   var      - variable identity / binding target (includes function vars)
---              e.g. (def x 42), (def user-name "Ana"), (defn sum [a b] (+ a b))
---   literal  - constant/literal data node (always stateless). Reserved;
---              the loop does not write literal rows today, but the
---              kind enum stays open so a future RLM extension can
---              pin literals without another schema migration.
+-- One row per var name in a conversation_state. Definitions include
+-- normal vars and function vars, e.g. `(def x 42)` and
+-- `(defn sum [a b] (+ a b))`.
 --
--- Per-call rows were removed. Single-form call data now lives directly
--- on conversation_turn_iteration; nothing else queried call rows by id,
--- so the indirection added cost without value.
---
--- Post-pivot scope cut: legacy `kind` + `state_mode` columns dropped
--- (`kind` was always 'var', `state_mode` was always 'stateful', and the
--- 'literal' / 'stateless' branches never landed in the writer). One
--- soul row per persistent user var; one definition_state row per
--- iteration that touched it.
+-- Execution payload lives on conversation_turn_iteration. Var history
+-- lives in definition_state: one versioned row per iteration that writes
+-- the var. Dependency edges live in definition_dependency.
 -- =============================================================================
 CREATE TABLE definition_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
@@ -336,7 +321,7 @@ CREATE INDEX idx_definition_soul_state_created
   ON definition_soul(conversation_state_id, created_at);
 
 -- =============================================================================
--- Expression dependency - downstream depends on upstream (soul-level graph).
+-- Definition dependency - downstream depends on upstream (soul-level graph).
 --
 -- Direction:
 --   upstream_definition_soul_id -> downstream_definition_soul_id
@@ -397,7 +382,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- Expression state - versioned durable state per var. Each row carries
+-- Definition state - versioned durable state per var. Each row carries
 -- the source form (the smallest `(def NAME …)` shape that introduced
 -- this version) and the Nippy-frozen result value, freeze-safe so fn /
 -- lazy-seq / runtime-object values land as `{:vis/ref :expr}` and the
@@ -430,7 +415,7 @@ CREATE INDEX idx_definition_state_soul
 CREATE INDEX idx_definition_state_iteration
   ON definition_state(conversation_turn_iteration_id);
 
--- First row for an definition_soul must start at version = 0.
+-- First row for a definition_soul must start at version = 0.
 CREATE TRIGGER trg_definition_state_first_version_ai
 BEFORE INSERT ON definition_state
 BEGIN
@@ -450,8 +435,9 @@ END;
 -- extension_id is filled by runtime extension helpers from the registered
 -- extension identity. Extension callers should not supply or spoof it.
 --
--- conversation_turn_iteration_block_id is reserved for future first-class block rows.
--- Current iterations are single-form rows, so block_index is normally 0 when present.
+-- Optional block scope belongs to a conversation_turn_iteration. Current
+-- iteration rows store one executed form, so block_index is normally 0
+-- when present.
 -- =============================================================================
 CREATE TABLE extension_aggregate (
   id                          TEXT PRIMARY KEY NOT NULL,

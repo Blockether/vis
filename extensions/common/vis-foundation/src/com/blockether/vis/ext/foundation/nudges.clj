@@ -135,14 +135,14 @@
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks (`:ext/hooks`) — :turn.iteration/start emits MODEL-FACING
-;; <iteration_hint> entries. Answer-time enforcement now lives in the
+;; `(:hints ctx)` entries. Answer-time enforcement now lives in the
 ;; harness gate (`final-answer-structural-criteria-errors`); no
 ;; foundation :turn.answer/validate hooks remain.
 ;; ----------------------------------------------------------------------------
 
 (defn- nudge->hook-hit
   [n]
-  (when n {:hint (:text n) :importance (:importance n)}))
+  (when n {:text (:text n) :importance (:importance n)}))
 
 (def hooks
   "`:ext/hooks` vector for vis-foundation. Each entry conforms to the

@@ -91,9 +91,12 @@
     Read `ctx` first. Engine context keys:
       (:conversation ctx)  -> {:id :title :turn-id :user-request}
       (:iteration ctx)     -> {:id :position}
+      (:extensions ctx)    -> vec of active extension summaries {:alias :namespace :symbols ...}
+      (:hints ctx)         -> vec of host hints {:id :importance :text :satisfy-with}
       (:defs ctx)          -> array-map (newest first): {sym {:doc <str?> :shape <malli>}}
     Current user request: `(get-in ctx [:conversation :user-request])`.
-    `ctx` is a snapshot built BEFORE this iteration runs; new defs land in :defs starting NEXT iteration.
+    Read `(:hints ctx)` before acting. When you satisfy a hint, call `(satisfy-hint! <hint-id>)` in the same Clojure form; it returns `:vis/silent` and should not be mentioned in final answers.
+    `ctx` is a snapshot built BEFORE this iteration runs; new defs and satisfied hints land starting NEXT iteration.
     Use `def` for working memory. Docstrings are optional.
     No separate memory API. Manage state through ctx, defs, and plain Clojure data.
     Tool results are plain Clojure data. Bind them, inspect with Clojure, never copy from previews.
@@ -255,7 +258,7 @@
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Drives
-        environment, extension prompt, and nudge collection.
+        environment, extension prompt, and hint collection.
 
    Optional opts:
      `:system-prompt`            - caller addendum appended to CORE."
