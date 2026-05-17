@@ -10,8 +10,8 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.provider-lmstudio
-     :ext/doc       "LM Studio local OpenAI-compatible provider preset."
+    {:ext/name      "provider-lmstudio"
+     :ext/description "LM Studio local OpenAI-compatible provider preset."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

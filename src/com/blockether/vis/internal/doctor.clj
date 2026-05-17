@@ -76,7 +76,7 @@
     (mapcat
       (fn [ext]
         (when-let [check-fn (:ext/doctor-check-fn ext)]
-          (run-one-extension (:ext/namespace ext) check-fn environment)))
+          (run-one-extension (:ext/name ext) check-fn environment)))
       (extension/registered-extensions))))
 
 (defn exit-code

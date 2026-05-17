@@ -1,4 +1,5 @@
 ;; Lanterna TUI channel. Loading the ns calls
 ;; (channel/register-global! ...). Non-LLM-facing.
 {tui
- {:nses [com.blockether.vis.ext.channel-tui.core]}}
+ {:nses [com.blockether.vis.ext.channel-tui.core
+         com.blockether.vis.ext.channel-tui.builtin-hooks]}}

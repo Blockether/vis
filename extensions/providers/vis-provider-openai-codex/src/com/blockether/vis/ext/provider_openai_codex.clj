@@ -419,8 +419,8 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.provider-openai-codex
-     :ext/doc       "OpenAI Codex / ChatGPT OAuth provider."
+    {:ext/name      "provider-openai-codex"
+     :ext/description "OpenAI Codex / ChatGPT OAuth provider."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

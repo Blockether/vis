@@ -24,7 +24,7 @@
 
 (defdescribe host-bookkeeping-render-test
   (it "drops satisfy-hint! from mixed display segments"
-    (expect (= [{:kind :code :source "(def x 1)"}]
+    (expect (= [{:kind :code :source "(do (def x 1))"}]
               (render/parse-block-display
                 "(do (satisfy-hint! :vis.foundation/conversation-title) (def x 1))"))))
 

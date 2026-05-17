@@ -716,7 +716,7 @@
     (cond-> execution-result
       true (assoc :execution-started-at-ms start-time
              :execution-finished-at-ms finished-time
-             :execution-time-ms execution-time)
+             :duration-ms execution-time)
       (:timeout? execution-result) (assoc :timeout? true)
       (not (:timeout? execution-result)) (assoc :timeout? false))))
 
@@ -765,7 +765,7 @@
                                       :type (-> e ex-data :type)}))
                           :execution-started-at-ms start-time
                           :execution-finished-at-ms (System/currentTimeMillis)
-                          :execution-time-ms (- (System/currentTimeMillis) start-time)
+                          :duration-ms (- (System/currentTimeMillis) start-time)
                           :timeout? false}))]
       exec)))
 
@@ -1144,7 +1144,7 @@
   [ext id ^Throwable t]
   (tel/log! {:level :warn
              :id ::answer-validation-hook-threw
-             :data {:ext (:ext/namespace ext)
+             :data {:ext (:ext/name ext)
                     :hook id
                     :phase :turn.answer/validate
                     :error (ex-message t)}})
@@ -1154,7 +1154,7 @@
   [ext id hit]
   (tel/log! {:level :warn
              :id ::answer-validation-hook-invalid-return
-             :data {:ext (:ext/namespace ext)
+             :data {:ext (:ext/name ext)
                     :hook id
                     :phase :turn.answer/validate
                     :returned hit
@@ -1238,7 +1238,7 @@
       (do
         (tel/log! {:level :warn
                    :id ::iteration-start-hook-invalid-return
-                   :data {:ext (:ext/namespace ext)
+                   :data {:ext (:ext/name ext)
                           :hook id
                           :returned hit}}
           "Extension :turn.iteration/start hook returned invalid value")
@@ -1248,7 +1248,7 @@
   [ext id t]
   (tel/log! {:level :warn
              :id ::iteration-start-hook-threw
-             :data {:ext (:ext/namespace ext)
+             :data {:ext (:ext/name ext)
                     :hook id
                     :error (ex-message t)}}
     "Extension :turn.iteration/start hook threw")
@@ -1330,7 +1330,7 @@
   [turn-prefix iteration form-idx form-count result rendering-kind]
   (let [finished      (long (or (:execution-finished-at-ms result)
                               (System/currentTimeMillis)))
-        duration      (long (or (:execution-time-ms result) 0))
+        duration      (long (or (:duration-ms result) 0))
         started       (long (or (:execution-started-at-ms result)
                               (max 0 (- finished duration))))
         form-position (inc (long form-idx))]
@@ -1357,29 +1357,33 @@
 (s/def ::id nat-int?)
 (s/def ::code string?)
 (s/def ::error (s/nilable map?))                       ; structured :error map
-(s/def ::execution-time-ms nat-int?)
+(s/def ::duration-ms nat-int?)
 (s/def ::timeout? (s/nilable boolean?))
 (s/def ::repaired? (s/nilable boolean?))
 (s/def ::comment string?)
-(s/def ::block-info
-  (s/and
-    map?
-    #(contains? #{:sci/eval :edamame/parse :vis/guard :vis/system :vis/answer} (:op %))
-    #(contains? #{:done :error :timeout} (:status %))
-    #(pos-int? (:iteration %))
-    #(pos-int? (:form-position %))
-    #(pos-int? (:form-count %))
-    #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" (:ref %))))
-(s/def ::info ::block-info)
+(s/def ::op #{:sci/eval :edamame/parse :vis/guard :vis/system :vis/answer})
+(s/def ::status #{:done :error :timeout})
+(s/def ::iteration pos-int?)
+(s/def ::form-position pos-int?)
+(s/def ::form-count pos-int?)
+(s/def ::started-at-ms nat-int?)
+(s/def ::finished-at-ms nat-int?)
+(s/def ::ref
+  (s/and string?
+    #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" %)))
+(s/def ::block-envelope
+  (s/keys :req-un [::op ::status ::iteration ::form-position ::form-count ::ref]
+    :opt-un [::started-at-ms ::finished-at-ms ::duration-ms ::timeout? ::repaired?]))
+(s/def ::envelope ::block-envelope)
 (s/def ::iteration-block
   (s/keys :req-un [::id ::code ::error
-                   ::execution-time-ms ::info]
+                   ::duration-ms ::envelope]
     :opt-un [::result ::timeout? ::repaired? ::comment]))
 
 (defn validate-iteration-blocks!
-  "Fail fast if a stored/evaluated block lost mandatory info.
+  "Fail fast if a stored/evaluated block lost mandatory envelope.
    Tool-result envelopes enforce their nested info separately;
-   this spec enforces the outer block-level eval info for every
+   this spec enforces the outer block-level eval envelope for every
    regular top-level form."
   [blocks]
   (let [blocks (mapv (fn [block]
@@ -1387,7 +1391,7 @@
                          (contains? block :error)
                          (update :error op-error
                            {:code (:code block)
-                            :phase (get-in block [:info :op])})))
+                            :phase (get-in block [:envelope :op])})))
                  (or blocks []))]
     (doseq [block blocks]
       (when-not (s/valid? ::iteration-block block)
@@ -1808,19 +1812,19 @@
                                               {:result nil
                                                :error (op-error preflight-error
                                                         {:code expr :phase :vis/preflight})
-                                               :execution-time-ms 0
+                                               :duration-ms 0
                                                :op :vis/guard}
                                               parse-error
                                               {:result nil
                                                :error (op-error (str "Parse error: " parse-error)
                                                         {:code expr :phase :edamame/parse})
-                                               :execution-time-ms 0
+                                               :duration-ms 0
                                                :op :edamame/parse}
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil
                                                  :error (op-error err {:code expr :phase :vis/guard})
-                                                 :execution-time-ms 0
+                                                 :duration-ms 0
                                                  :op :vis/guard}
                                                 (let [tool-event-fn (when (and on-chunk
                                                                             (not suppress-form-start?)
@@ -1840,7 +1844,7 @@
                                                           (execute-code environment expr))]
                                                   (log-stage! :code-result iteration
                                                     {:idx (inc idx) :total total-blocks
-                                                     :execution-time-ms (:execution-time-ms r)
+                                                     :duration-ms (:duration-ms r)
                                                      :error (:error r) :timeout? (:timeout? r) :result (:result r)})
                                                   r)))
                                  ;; Carry parinfer's whole-source
@@ -1856,9 +1860,9 @@
                                  ;; call path so future display-tweaks have a single seam.
 
                                  block-role (eval-block-role display-result)
-                                 info (eval-info turn-prefix iteration-position idx total-blocks display-result block-role)
+                                 envelope (eval-info turn-prefix iteration-position idx total-blocks display-result block-role)
                                  result* (assoc display-result
-                                           :info info
+                                           :envelope envelope
                                            :role block-role)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
@@ -1888,9 +1892,9 @@
                                           :result            (:result result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
-                                          :execution-time-ms (:execution-time-ms result*)
-                                          :info        (:info result*)
-                                          :role        (:role result*)
+                                          :duration-ms       (:duration-ms result*)
+                                          :envelope          (:envelope result*)
+                                          :role              (:role result*)
                                           ;; :silent? is the channel-facing hide flag. Now the union of:
                                           ;;   - SCI runtime `:vis/silent` sentinel (legacy host primitives)
                                           ;;   - block-level structurally-silent? (block contains only
@@ -1925,9 +1929,9 @@
                                     :code code
                                     :result (:result result)
                                     :channel (:channel result)
-                                    :error (op-error (:error result) {:code code :phase (:op result)})
-                                    :execution-time-ms (:execution-time-ms result)
-                                    :info (:info result)
+                                    :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
+                                    :duration-ms (:duration-ms result)
+                                    :envelope (:envelope result)
                                     :role (:role result)
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)
@@ -2040,9 +2044,9 @@
                                :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
                                :result            (:result b)
                                :error             (:error b)
-                               :execution-time-ms (:execution-time-ms b)
-                               :info        (:info b)
-                               :role        (:role b)
+                               :duration-ms       (:duration-ms b)
+                               :envelope          (:envelope b)
+                               :role              (:role b)
                                :silent?     (boolean (or (:vis/silent b)
                                                        (= :vis/silent (:result b))
                                                        (:vis/structurally-silent? b)))
@@ -2640,10 +2644,10 @@
                                (seq llm-meta) (assoc :llm llm-meta)
                                (seq active-exts)
                                (assoc :extensions (mapv (fn [ext]
-                                                          (let [ns-sym  (:ext/namespace ext)
+                                                          (let [ns-sym  (:ext/name ext)
                                                                 markers (when (zero? (long iter-pos))
                                                                           (extension/extension-source-markers-of ns-sym))]
-                                                            (cond-> {:namespace (str ns-sym)}
+                                                            (cond-> {:name ns-sym}
                                                               (:ext/version ext) (assoc :version (:ext/version ext))
                                                               markers            (merge (select-keys markers
                                                                                           [:source-paths
@@ -2714,8 +2718,8 @@
                                               :code (or (:code it) "")}
                                        (contains? it :result) (assoc :result (:result it))
                                        (contains? it :error) (assoc :error (:error it))
-                                       (contains? it :execution-time-ms)
-                                       (assoc :execution-time-ms (:execution-time-ms it)))]
+                                       (contains? it :duration-ms)
+                                       (assoc :duration-ms (:duration-ms it)))]
                           :llm-provider (:provider it)
                           :llm-model    (some-> (:model it) str)
                           ;; Persisted assistant messages are intentionally NOT
@@ -2915,7 +2919,7 @@
                         {:keys [thinking blocks final-result]} iteration-result
                         block (first blocks)
                         iteration-block-code (or (some-> block :code str/trim not-empty) "")
-                        iteration-time-ms (long (or (:execution-time-ms block) 0))
+                        iteration-time-ms (long (or (:duration-ms block) 0))
                         vars-snapshot (def-sink->vars-snapshot
                                         (vec (:def-sink block))
                                         iteration-block-code
@@ -2954,7 +2958,7 @@
                                                   :code (:code store-block)
                                                   :result (:result store-block)
                                                   :error (:error store-block)
-                                                  :duration-ms (or (:execution-time-ms store-block) (:duration-ms iteration-result) 0)
+                                                  :duration-ms (or (:duration-ms store-block) (:duration-ms iteration-result) 0)
                                                   :vars vars-snapshot
                                                   :dependencies deps-snapshot
                                                   :thinking thinking
@@ -2982,7 +2986,7 @@
                              :iteration-count (inc iteration)})
                         (log-stage! :iteration/stop iteration
                           {:blocks (count blocks) :errors (count (filter :error blocks))
-                           :times (mapv :execution-time-ms blocks)})
+                           :times (mapv :duration-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
                         ;; Per-form chunks already streamed every form
                         ;; result; this is the trim \"iteration is
@@ -3021,7 +3025,7 @@
 
                         (do (log-stage! :iteration/stop iteration
                               {:blocks (count blocks) :errors (count (filter :error blocks))
-                               :times (mapv :execution-time-ms blocks)})
+                               :times (mapv :duration-ms blocks)})
                           ;; Non-terminal iteration-final chunk: per-form
                           ;; chunks already streamed; this is the
                           ;; \"iteration done, more iterations coming\"
@@ -3426,7 +3430,7 @@
       - :trace - Vector of iteration trace entries, each containing:
           {:iteration N
            :response <llm-response-text>
-           :blocks [{:id 0 :code <code-str> :result <value> :error nil :execution-time-ms 5}
+           :blocks [{:id 0 :code <code-str> :result <value> :error nil :duration-ms 5}
                        ...]}
      - :iteration-count - Number of iterations used.
      - :duration-ms - Turn duration in milliseconds.
@@ -3515,7 +3519,7 @@
 (defn- extension-aliases
   [exts]
   (->> (or exts [])
-    (keep :ext/alias)
+    (keep extension/ext-alias)
     (distinct)
     vec))
 
@@ -3528,7 +3532,7 @@
     (catch Throwable t
       (tel/log! {:level :warn :id ::ext-alias-require-failed
                  :data (assoc (format-exception-short t)
-                         :ext (:ext/namespace ext)
+                         :ext (:ext/name ext)
                          :alias alias-sym)}
         (str "Auto-require of alias '" alias-sym "' failed")))))
 
@@ -3560,7 +3564,7 @@
            owners    {}]
       (if-let [ext (first remaining)]
         (let [wrapped (extension/wrap-extension ext environment)
-              entry-by-sym (into {} (map (juxt :ext.symbol/symbol identity)) (:ext/symbols ext))
+              entry-by-sym (into {} (map (juxt :ext.symbol/symbol identity)) (extension/ext-symbols ext))
               ns-bindings (into {}
                             (map (fn [[sym val]]
                                    [sym (sci-binding-var ext-ns sym val
@@ -3569,19 +3573,19 @@
               collisions (vec (filter #(contains? bindings %) (keys ns-bindings)))]
           (when (seq collisions)
             (tel/log! {:level :warn :id ::ext-symbol-collision
-                       :data  {:ext       (:ext/namespace ext)
+                       :data  {:ext       (:ext/name ext)
                                :ns        ns-sym
                                :alias     alias-sym
                                :symbols   collisions
                                :previous  (select-keys owners collisions)}
-                       :msg   (str "Extension '" (:ext/namespace ext)
+                       :msg   (str "Extension '" (:ext/name ext)
                                 "' shadowed " (count collisions)
                                 " active symbol(s) under alias '" alias-sym
                                 "': " (str/join ", " collisions))}))
           (recur (next remaining)
             (merge bindings ns-bindings)
             (merge owners (zipmap (keys ns-bindings)
-                            (repeat (:ext/namespace ext))))))
+                            (repeat (:ext/name ext))))))
         bindings))))
 
 (defn sync-active-extension-symbols!
@@ -3596,11 +3600,11 @@
   ([environment active-extensions]
    (when-let [sci-ctx (:sci-ctx environment)]
      (let [installed (vec (or (some-> (:extensions environment) deref) []))
-           active-set (set (map :ext/namespace active-extensions))]
+           active-set (set (map :ext/name active-extensions))]
        (doseq [{ns-sym :ns alias-sym :alias :as alias} (extension-aliases installed)]
          (let [active-for-alias (filterv (fn [ext]
-                                           (and (contains? active-set (:ext/namespace ext))
-                                             (= alias (:ext/alias ext))))
+                                           (and (contains? active-set (:ext/name ext))
+                                             (= alias (extension/ext-alias ext))))
                                   installed)]
            (if (seq active-for-alias)
              (let [bindings (extension-namespace-bindings environment ns-sym alias-sym active-for-alias)]
@@ -3623,7 +3627,7 @@
    listed extension namespaces must already be registered. Throws on
    missing dependencies.
 
-   If an extension with the same `:ext/namespace` is already registered,
+   If an extension with the same `:ext/name` is already registered,
    it is replaced (not duplicated). Enables hot-swap via
    `reload-extension!`.
 
@@ -3633,31 +3637,31 @@
     (anomaly/incorrect! "Invalid vis environment - missing :extensions atom"
       {:type :vis/invalid-env}))
   (when-let [requires (seq (:ext/requires ext))]
-    (let [registered (into #{} (map :ext/namespace) @(:extensions environment))
+    (let [registered (into #{} (map :ext/name) @(:extensions environment))
           missing    (vec (remove registered requires))]
       (when (seq missing)
         (anomaly/incorrect!
-          (str "Extension '" (:ext/namespace ext)
+          (str "Extension '" (:ext/name ext)
             "' requires " missing " but they are not registered. "
             "Register dependencies first.")
           {:type       :extension/missing-dependencies
-           :extension  (:ext/namespace ext)
+           :extension  (:ext/name ext)
            :requires   (vec requires)
            :missing    missing
            :registered (vec registered)}))))
   (swap! (:extensions environment)
     (fn [exts]
-      (let [ns-sym  (:ext/namespace ext)
-            without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
+      (let [ns-sym  (:ext/name ext)
+            without (vec (remove #(= (:ext/name %) ns-sym) exts))]
         (conj without ext))))
   ;; Extension rows stay installed even when inactive, but callable symbol
   ;; bindings are activation-aware. Java classes/imports remain available once
   ;; an extension is installed because they are passive SCI configuration, not
   ;; model-visible tool affordances.
   (let [sci-ctx (:sci-ctx environment)]
-    (when-let [classes (seq (:ext/classes ext))]
+    (when-let [classes (seq (extension/ext-classes ext))]
       (swap! (:env sci-ctx) update :classes merge (into {} classes)))
-    (when-let [imports (seq (:ext/imports ext))]
+    (when-let [imports (seq (extension/ext-imports ext))]
       (swap! (:env sci-ctx) update :imports merge (into {} imports))))
   (sync-active-extension-symbols! environment)
   environment)
@@ -4006,13 +4010,12 @@
 
 (defn- extension-loader-nses
   "Namespaces that load/register `ext`. Most extensions use their
-   `:ext/namespace` directly. Lightweight registrars and provider bundles
+   `:ext/name` directly. Lightweight registrars and provider bundles
    register one or more logical extension ids from a separate manifest ns;
-   those must declare `:ext/nses` so reload diffs against the loader ns,
+   those must declare `:ext/source-nses` so reload diffs against the loader ns,
    not the logical extension id."
   [ext]
-  (set (or (some-> (:ext/nses ext) seq vec)
-         [(:ext/namespace ext)])))
+  (set (extension/ext-source-nses ext)))
 
 (defn- diff-extensions
   "Compute the F1-lite diff between the current in-memory
@@ -4022,7 +4025,7 @@
    Returns `{:added [...] :removed [...] :reloaded [...]}`.
 
    `:added` / `:reloaded` are manifest loader namespaces to require.
-   `:removed` is logical `:ext/namespace` ids to deregister.
+   `:removed` is logical `:ext/name` ids to deregister.
 
    This distinction is load-bearing: SQLite registers logical extension
    `com.blockether.vis.ext.persistance-sqlite.core` from lightweight loader
@@ -4036,7 +4039,7 @@
         added                (vec (sort (set/difference manifest-ns registered-loader-ns)))
         removed              (->> registered
                                (filter #(empty? (set/intersection (extension-loader-nses %) manifest-ns)))
-                               (map :ext/namespace)
+                               (map :ext/name)
                                sort
                                vec)
         reloaded             (vec (sort (set/intersection registered-loader-ns manifest-ns)))]

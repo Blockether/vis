@@ -10,8 +10,8 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.provider-ollama
-     :ext/doc       "Ollama local OpenAI-compatible provider preset."
+    {:ext/name      "provider-ollama"
+     :ext/description "Ollama local OpenAI-compatible provider preset."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

@@ -111,11 +111,11 @@
       (expect (= :turn.iteration/start (:phase h)))
       (expect (fn? (:fn h)))))
 
-  (it "title hook adapts title-nudge into the {:hint :importance} shape"
+  (it "title hook adapts title-nudge into the {:text :importance} shape"
     (let [h (some #(when (= :vis.foundation/conversation-title (:id %)) %) nudges/hooks)
           hit ((:fn h) {:conversation-title nil :title-refresh? false
                         :turn-position 1 :iteration 1})]
-      (expect (string? (:hint hit)))
+      (expect (string? (:text hit)))
       ;; Blank-title branch is :high (see title-nudge-test).
       (expect (= :high (:importance hit)))))
 

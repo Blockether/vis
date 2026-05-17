@@ -1374,8 +1374,8 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.channel-telegram.bot
-     :ext/doc       "Telegram bot channel - long-poll loop wired into conversations."
+    {:ext/name      "channel-telegram"
+     :ext/description "Telegram bot channel - long-poll loop wired into conversations."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

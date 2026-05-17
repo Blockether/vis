@@ -91,7 +91,7 @@
     Read `ctx` first. Engine context keys:
       (:conversation ctx)  -> {:id :title :turn-id :user-request}
       (:iteration ctx)     -> {:id :position}
-      (:extensions ctx)    -> vec of active extension summaries {:alias :namespace :symbols ...}
+      (:extensions ctx)    -> vec of active extension summaries {:name :alias :symbols ...}
       (:hints ctx)         -> vec of host hints {:id :importance :text :satisfy-with}
       (:defs ctx)          -> array-map (newest first): {sym {:doc <str?> :shape <malli>}}
     Current user request: `(get-in ctx [:conversation :user-request])`.
@@ -132,9 +132,9 @@
                   (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
                   (catch Throwable t
                     (tel/log! {:level :error :id ::ext-activation-error
-                               :data {:ext (:ext/namespace ext)
+                               :data {:ext (:ext/name ext)
                                       :error (ex-message t)}}
-                      (str "Extension '" (:ext/namespace ext) "' activation-fn threw"))
+                      (str "Extension '" (:ext/name ext) "' activation-fn threw"))
                     false)))
         exts))))
 
@@ -151,9 +151,9 @@
    Per element:
      :alias     - short symbol the model calls under (`'v`, `'z`,
                   `'git`, ...). nil when the extension didn't declare
-                  an `:ext/alias`.
+                  an `:ext.sci/alias`.
      :namespace - fully-qualified ns symbol of the extension.
-     :doc       - one-line LLM description from `:ext/doc` (when set).
+     :doc       - one-line LLM description from `:ext/description` (when set).
      :kind      - categorical bucket (providers, channels, foundation,
                   languages, persistance, ...) used as the section
                   label both in this snapshot and in `vis extensions
@@ -170,21 +170,21 @@
     (mapv (fn [ext]
             (let [info (extension/extension-info ext)
                   registry-id (:registry-id info)]
-              (cond-> {:namespace   (:namespace info)
+              (cond-> {:name        (:name info)
                        :alias       (:alias info)
-                       :doc         (:doc info)
+                       :description (:description info)
                        :kind        (:kind info)
                        :registry-id registry-id
-                       :symbols     (mapv :ext.symbol/symbol (:ext/symbols ext))}
+                       :symbols     (mapv :ext.symbol/symbol (extension/ext-symbols ext))}
                 (nil? (:alias info)) (dissoc :alias)
-                (nil? (:doc info)) (dissoc :doc)
+                (nil? (:description info)) (dissoc :description)
                 (nil? (:kind info)) (dissoc :kind)
                 (nil? registry-id) (dissoc :registry-id)))))))
 
 (defn- extension-prompt-id
   [ext]
-  (str (or (get-in ext [:ext/alias :alias])
-         (:ext/namespace ext)
+  (str (or (extension/ext-alias-symbol ext)
+         (:ext/name ext)
          "unknown")))
 
 (defn- extension-prompt-fragment
@@ -210,7 +210,7 @@
                               (catch Throwable t
                                 (tel/log! {:level :warn
                                            :id ::extension-prompt-error
-                                           :data {:ext (:ext/namespace ext)
+                                           :data {:ext (:ext/name ext)
                                                   :error (ex-message t)}}
                                   "Extension :ext/prompt fn threw")
                                 nil))))

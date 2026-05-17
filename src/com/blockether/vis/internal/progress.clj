@@ -19,7 +19,7 @@
 
      :form-result      One block finished evaluating. Carries
                        `:position`, `:code`, `:result`/`:error`,
-                       `:execution-time-ms`. The
+                       `:duration-ms`. The
                        tracker writes per-block data into the
                        iteration entry's parallel vectors at index
                        `:position`. Chunks tagged `:silent?` (or
@@ -240,7 +240,7 @@
                                                        (format-form-result chunk))))
       (update :result-kinds #(assoc (pad-to % need) idx (form-result-kind chunk)))
       (update :result-details #(assoc (pad-to % need) idx (form-result-detail chunk)))
-      (update :durations #(assoc (pad-to % need) idx (or (:execution-time-ms chunk) 0)))
+      (update :durations #(assoc (pad-to % need) idx (or (:duration-ms chunk) 0)))
       (update :successes #(assoc (pad-to % need) idx (nil? (:error chunk))))
       (update :silents   #(assoc (pad-to % need) idx (and (nil? (:error chunk))
                                                        (silent-chunk? chunk)))))))

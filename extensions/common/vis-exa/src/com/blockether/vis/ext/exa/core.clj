@@ -592,16 +592,16 @@
 
 (def vis-extension
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.exa.core
-     :ext/doc "Exa MCP search tools: web search and code/documentation context under `exa/`."
+    {:ext/name "exa"
+     :ext/description "Exa MCP search tools: web search and code/documentation context under `exa/`."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
-     :ext/alias {:ns 'vis.ext.exa :alias 'exa}
+     :ext/sci {:ext.sci/alias 'exa
+               :ext.sci/symbols exa-symbols}
      :ext/kind "search"
      :ext/env exa-env
-     :ext/prompt exa-prompt
-     :ext/symbols exa-symbols}))
+     :ext/prompt exa-prompt}))
 
 (vis/register-extension! vis-extension)

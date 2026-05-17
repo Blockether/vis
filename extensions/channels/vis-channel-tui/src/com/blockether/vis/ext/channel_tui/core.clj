@@ -151,8 +151,8 @@
 
 (def tui-extension
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.channel-tui.core
-     :ext/doc       "Lanterna-based terminal UI channel."
+    {:ext/name      "channel-tui"
+     :ext/description "Lanterna-based terminal UI channel."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"
