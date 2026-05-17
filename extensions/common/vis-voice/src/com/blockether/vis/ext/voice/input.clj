@@ -1,9 +1,7 @@
 (ns com.blockether.vis.ext.voice.input
   "TUI voice input backed by local Parakeet-class ASR."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.voice.recorder :as recorder]
-            [com.blockether.vis.ext.voice.rewrite :as rewrite]
             [com.blockether.vis.ext.voice.asr :as asr]
             [taoensso.telemere :as tel]))
 
@@ -87,16 +85,13 @@
   (future
     (try
       (voice-status! "● Transcribing..." :info)
-      (let [raw (asr/transcribe-file! audio-file)]
-        (voice-status! "● Rewrite..." :info)
-        (let [rewritten (rewrite/rewrite-transcript! raw)
-              text      (if (str/blank? rewritten) raw rewritten)]
-          (publish! (cond-> {:op :input/append
-                             :text text
-                             :source :voice/input}
-                      workspace-id (assoc :workspace-id workspace-id)))
-          (idle-status!)
-          (publish! {:op :notify :text "✓ Voice appended to input" :level :success})))
+      (let [text (asr/transcribe-file! audio-file)]
+        (publish! (cond-> {:op :input/append
+                           :text text
+                           :source :voice/input}
+                    workspace-id (assoc :workspace-id workspace-id)))
+        (idle-status!)
+        (publish! {:op :notify :text "✓ Voice appended to input" :level :success}))
       (catch Throwable t
         (let [message (or (ex-message t) (str t))]
           (log-voice-asr-failed! audio-file t message)

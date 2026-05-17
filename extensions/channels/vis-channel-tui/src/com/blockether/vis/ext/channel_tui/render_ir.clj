@@ -522,43 +522,45 @@
       :p
       (let [ls (inline-block->lines (node-children node) width opts #{} nil)
             ls (if (seq ls) ls [(empty-line)])]
-        (conj (vec (tag-lines ls :p)) (assoc (empty-line) :block-tag :p)))
+        (conj (vec (tag-lines ls :p)) (assoc (empty-line) :block-tag :outer-margin)))
 
       :h
       (let [level (or (:level (node-attrs node)) 1)
             ls (inline-block->lines (node-children node) width opts #{:bold :heading} nil)
             ls (if (seq ls) ls [(empty-line)])]
         (conj (vec (tag-lines ls :h :level level))
-          (assoc (empty-line) :block-tag :h :block-level level)))
+          (assoc (empty-line) :block-tag :outer-margin)))
 
       :code
-      ;; Code blocks have two distinct kinds of blank rows:
-      ;;   :p    outside margin before/after the chip (bubble bg)
-      ;;   :code inside padding above/below content (code bg)
-      ;; Keep both semantic tags so the painter can draw the full
-      ;; code-block chrome without callers manually adding blank lines.
-      (vec (concat [(assoc (empty-line) :block-tag :p)]
+      ;; Code blocks carry two kinds of blank rows:
+      ;;   :outer-margin   bubble-bg spacer above/below the chip
+      ;;   :code           inside padding above/below content (code bg)
+      ;; The outer-margin leader/trailer matches what every other block
+      ;; emits, so the dedup pass in `ir->lines` collapses adjacent
+      ;; outer-margin blanks regardless of which sibling block produced
+      ;; them. The inner :code padding is deliberately preserved.
+      (vec (concat [(assoc (empty-line) :block-tag :outer-margin)]
              (tag-lines (code-block->lines node width opts) :code)
-             [(assoc (empty-line) :block-tag :p)]))
+             [(assoc (empty-line) :block-tag :outer-margin)]))
 
       :ul
       (conj (vec (tag-lines (list->lines :ul (node-children node) width opts) :ul))
-        (assoc (empty-line) :block-tag :ul))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       :ol
       (conj (vec (tag-lines (list->lines :ol (node-children node) width opts) :ol))
-        (assoc (empty-line) :block-tag :ol))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       :quote
       (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
-        (assoc (empty-line) :block-tag :quote))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       :table
       (conj (vec (table->lines node width opts))
-        (assoc (empty-line) :block-tag :p))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       ;; unknown / leftover inline at block position
-      [(assoc (empty-line) :block-tag :p)])))
+      [(assoc (empty-line) :block-tag :outer-margin)])))
 
 ;; =============================================================================
 ;; Public API
@@ -573,11 +575,13 @@
          body   (drop 2 ast)               ; canonical: [:ir {} & blocks]
          lines  (blocks->lines body width (or opts {}))
          lines  (vec lines)
-         ;; collapse runs of duplicate blank lines, but preserve a
-         ;; boundary when the blank rows have different semantic tags.
-         ;; `:p` blank + `:code` blank means outside margin followed by
-         ;; inside code padding; collapsing those made fenced blocks sit
-         ;; flush with surrounding text.
+         ;; Collapse runs of duplicate blank lines. Every block emits
+         ;; its trailing spacer with `:block-tag :outer-margin`, so two
+         ;; adjacent outer-margin blanks (regardless of which sibling
+         ;; produced them — `:p`, `:h`, `:ul`, …, or the `:code`
+         ;; leader/trailer) merge into one. Inside-code padding keeps
+         ;; the `:code` tag and is left untouched so fenced blocks
+         ;; still draw their full chrome.
          lines  (loop [out [] prev-blank-tag nil ls (seq lines)]
                   (if (nil? ls)
                     out
@@ -589,7 +593,7 @@
                                (conj out l))
                         blank-tag
                         (next ls)))))
-         ;; drop leading + trailing neutral blank lines. Preserve
+         ;; Drop leading + trailing outer-margin blanks. Preserve
          ;; `:code` blanks because they are inside-code padding; the
          ;; bookend guard below re-adds neutral outer margin when a
          ;; code block touches the answer edge.
@@ -597,18 +601,18 @@
          lines  (vec (reverse (drop-while #(and (line-blank? %) (not= :code (:block-tag %)))
                                 (reverse lines))))
          ;; Code-block bookend guard: when a `:code` block sits at the
-         ;; very top or bottom of an answer, the surrounding blank-line
-         ;; trim above would have removed every neutral spacer next to
-         ;; it, leaving the code chip flush against the bubble edge.
-         ;; Re-insert a single `:p`-tagged blank so the chip gets one
-         ;; row of bubble-bg padding on each touching edge. Mirrors the
-         ;; `:code` trailer fix in `block->lines`.
+         ;; very top or bottom of an answer, the trim above will have
+         ;; removed every outer-margin spacer next to it, leaving the
+         ;; code chip flush against the bubble edge. Re-insert a single
+         ;; `:outer-margin` blank so the chip gets one row of bubble-bg
+         ;; padding on each touching edge. Mirrors the `:code` leader/
+         ;; trailer emission in `block->lines`.
          lines  (cond->> lines
                   (= :code (:block-tag (first lines)))
-                  (into [(assoc (empty-line) :block-tag :p)]))
+                  (into [(assoc (empty-line) :block-tag :outer-margin)]))
          lines  (cond-> lines
                   (= :code (:block-tag (peek lines)))
-                  (conj (assoc (empty-line) :block-tag :p)))
+                  (conj (assoc (empty-line) :block-tag :outer-margin)))
          lines  (mapv trim-trailing-ws lines)]
      (if-let [n (:max-lines opts)]
        (vec (take n lines))

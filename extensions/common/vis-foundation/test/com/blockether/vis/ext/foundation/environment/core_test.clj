@@ -82,6 +82,29 @@
           (expect (:success? wrapped))
           (expect (= payload (:result wrapped)))))))
 
+  (it "renders reload results as tables with env refresh status"
+    (let [rendered ((deref #'env-core/render-reload-channel)
+                    {:added []
+                     :removed []
+                     :reloaded ['com.acme.changed]
+                     :failed ['com.acme.failed]
+                     :unchanged ['com.acme.same]
+                     :errors [{:ns 'com.acme.failed
+                               :phase :clj-reload
+                               :reason "boom"}]
+                     :reload-engine :clj-reload
+                     :reload-plan :changed
+                     :duration-ms 5
+                     :env-refresh {:status :scheduled
+                                   :scheduled 1
+                                   :when :before-next-turn}})]
+      (expect (= :ir (first rendered)))
+      (expect (= 3 (count (filter #(= :table (first %)) (drop 1 rendered)))))
+      (expect (str/includes? (pr-str rendered) "clj-reload"))
+      (expect (str/includes? (pr-str rendered) "failed"))
+      (expect (str/includes? (pr-str rendered) "boom"))
+      (expect (str/includes? (pr-str rendered) "scheduled / 1 scheduled / before-next-turn"))))
+
   (it "renders foundation environment info separately from prompt extras"
     (let [info (env-core/environment-info {})]
       (expect (string? info))

@@ -207,20 +207,63 @@
     (sequential? row) (mapv #(str (or % " ")) row)
     :else []))
 
+(def ^:private box-horizontal-codepoints
+  ;; U+25xx box-drawing chars whose visual is a horizontal stroke.
+  #{0x2500 0x2501 0x2504 0x2505 0x2508 0x2509 0x254C 0x254D 0x2550
+    0x2574 0x2576 0x2578 0x257A 0x257C 0x257E})
+
+(def ^:private box-vertical-codepoints
+  ;; U+25xx box-drawing chars whose visual is a vertical stroke.
+  #{0x2502 0x2503 0x2506 0x2507 0x250A 0x250B 0x254E 0x254F 0x2551
+    0x2575 0x2577 0x2579 0x257B 0x257D 0x257F})
+
+(defn- translate-box-chars
+  "Map box-drawing glyphs (┌─┬│├┼┘ ...) to ASCII so a copied table
+   pastes back as readable plaintext instead of stray U+25xx bytes.
+   Horizontals -> `-`, verticals -> `|`, every other corner/junction
+   in the box-drawing block -> `+`."
+  [^String s]
+  (str/replace s #"[\u2500-\u257F]"
+    (fn [^String m]
+      (let [cp (int (.charAt m 0))]
+        (cond
+          (box-horizontal-codepoints cp) "-"
+          (box-vertical-codepoints cp)   "|"
+          :else                          "+")))))
+
+(defn- box-border-only?
+  "True when a line is just box-drawing chrome + whitespace, i.e. a
+   top/middle/bottom border row of a rendered :table. Those rows are
+   meaningless once translated to ASCII and only inflate the paste."
+  [^String s]
+  (and (pos? (.length s))
+    (boolean (re-matches #"[\s\-\|\+]+" s))
+    (boolean (re-find #"[\-\+]" s))))
+
 (defn- clean-copied-line
   [s]
-  (-> (or s "")
-    ;; Drop terminal styling/control sequences. Whole-bubble copy can carry
-    ;; actual ESC bytes; pasting those through Lanterna may turn them into the
-    ;; visible control-picture glyph `␛`, so strip both forms.
-    (str/replace #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)" "")
-    (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" "")
-    ;; Defensive: if an external paste path dropped ESC but left a bare SGR
-    ;; tail, do not put color fragments back into prompts.
-    (str/replace #"\[[0-9;:]*m" "")
-    (str/replace #"[\u200B-\u200D\u2060-\u206F\uFEFF\uE000-\uE02C\uE110-\uE119]" "")
-    (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
-    (str/replace #" +$" "")))
+  (let [out (-> (or s "")
+              ;; Drop terminal styling/control sequences. Whole-bubble copy
+              ;; can carry actual ESC bytes; pasting those through Lanterna
+              ;; may turn them into the visible control-picture glyph `␛`,
+              ;; so strip both forms.
+              (str/replace #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)" "")
+              (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" "")
+              ;; Defensive: if an external paste path dropped ESC but left a
+              ;; bare SGR tail, do not put color fragments back into prompts.
+              (str/replace #"\[[0-9;:]*m" "")
+              (str/replace #"[\u200B-\u200D\u2060-\u206F\uFEFF\uE000-\uE02C\uE110-\uE119]" "")
+              (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
+              ;; Translate :table box-drawing chrome to ASCII so a copied
+              ;; cell range pastes back as `| col | col |` rather than a
+              ;; soup of stray U+25xx bytes.
+              (translate-box-chars)
+              (str/replace #" +$" ""))]
+    ;; Drop pure-border rows entirely. A whole-bubble copy of a 3-row
+    ;; table produces 7 rendered lines (top + th + sep + td + ... + bot);
+    ;; collapsing the 3 border-only ones leaves the content rows aligned
+    ;; and readable on paste.
+    (if (box-border-only? out) "" out)))
 
 (defn clean-copied-text
   "Strip render-only markers and terminal control styling from copied text.
