@@ -415,14 +415,39 @@
 
 (defn- parse-top-level-forms
   "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
-   for per-form eval + capture. Returns nil on parse failure so the caller
-   can fall back to whole-block eval and let SCI surface the parse error."
+   for per-form eval + capture.
+
+   Uses edamame's incremental reader so a parse failure on form N still
+   yields the parsed prefix [form-1 … form-(N-1)]. The caller evaluates the
+   prefix in order and reports the parse error as form N's outcome — model
+   loses only the broken form, not the entire iteration.
+
+   Returns {:forms <vec> :parse-error <map|nil>}. `:parse-error` carries
+   `:message` / `:row` / `:col` from the underlying edamame ex-info."
   [code]
-  (try
-    (let [forms (edamame/parse-string-all code {:all true})]
-      (when (seq forms)
-        (mapv (fn [f] {:source (pr-str f) :form f}) forms)))
-    (catch Throwable _ nil)))
+  (let [code (or code "")
+        rdr  (edamame/reader code)
+        opts {:all true}
+        out  (volatile! [])]
+    (loop []
+      (let [next-form (try
+                        (edamame/parse-next rdr opts)
+                        (catch Throwable t
+                          {:vis/parse-error
+                           (let [d (ex-data t)]
+                             (cond-> {:message (or (ex-message t) (.getName (class t)))}
+                               (:row d) (assoc :row (:row d))
+                               (:col d) (assoc :col (:col d))))}))]
+        (cond
+          (and (map? next-form) (:vis/parse-error next-form))
+          {:forms @out :parse-error (:vis/parse-error next-form)}
+
+          (= next-form ::edamame/eof)
+          {:forms @out :parse-error nil}
+
+          :else
+          (do (vswap! out conj {:source (pr-str next-form) :form next-form})
+            (recur)))))))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [stdout-writer (java.io.StringWriter.)
@@ -460,7 +485,7 @@
                                   event* (cond-> event
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
                               (when tool-event-fn (tool-event-fn event*))))
-        parsed-forms (parse-top-level-forms code)
+        {parsed-forms :forms parse-error :parse-error} (parse-top-level-forms code)
         eval-one-form
         (fn [form source]
           (let [pre-out (.length (.getBuffer stdout-writer))
@@ -486,12 +511,20 @@
         eval-per-form
         (fn []
           ;; Walk parsed forms in order, capture per-form outcome; stop at
-          ;; first error. Returns {:result :forms :error}.
+          ;; first eval error. If the iteration had a STREAMING PARSE ERROR
+          ;; (model wrote N good forms then a paren mistake on form N+1),
+          ;; append a synthetic per-form entry for the broken form so the
+          ;; trailer shows exactly which form failed and where.
           (loop [todo parsed-forms
                  acc  []
                  last-result nil]
             (if (empty? todo)
-              {:result last-result :forms acc :error nil}
+              (if parse-error
+                {:result nil
+                 :forms  (conj acc {:source "<unparseable trailing form>"
+                                    :error parse-error})
+                 :error  parse-error}
+                {:result last-result :forms acc :error nil})
               (let [{:keys [source form]} (first todo)
                     entry (eval-one-form form source)]
                 (if-let [err (:error entry)]
@@ -511,7 +544,7 @@
                                   (sci/binding [sci/out stdout-writer
                                                 sci/err err-pw]
                                     (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
-                                      (if (seq parsed-forms)
+                                      (if (or (seq parsed-forms) parse-error)
                                         (sci/with-bindings
                                           {sci/ns ns}
                                           (eval-per-form))
