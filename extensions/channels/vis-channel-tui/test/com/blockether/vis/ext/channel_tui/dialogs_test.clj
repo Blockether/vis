@@ -79,16 +79,16 @@
   (testing "namespace-derived labels titleize the meaningful tail segment, NEVER the vendor prefix"
     (let [label (var-get #'dlg/extension-display-label)]
       (is (= "Voice"
-            (label {:ext/namespace 'com.blockether.vis.ext.voice.core}))
+            (label {:ext/name "voice"}))
         "plain ns -> tail segment titleized; vendor prefix dropped")
       (is (= "Goal"
-            (label {:ext/namespace 'com.blockether.vis.ext.goal.core}))
+            (label {:ext/name "goal"}))
         "trailing 'core' segment is dropped")
       (is (= "Channel Tui"
-            (label {:ext/namespace 'com.blockether.vis.ext.channel-tui.core}))
+            (label {:ext/name "channel-tui"}))
         "hyphenated segment is split + titleized like other labels")
       (is (not (str/starts-with?
-                 (label {:ext/namespace 'com.blockether.vis.ext.voice.core})
+                 (label {:ext/name "voice"})
                  "Com.blockether"))
         "regression: was rendered as 'Com.blockether.vis.ext.voice.core'")))
 
@@ -96,13 +96,13 @@
     (let [label (var-get #'dlg/extension-display-label)]
       (is (= "Anthropic"
             (label {:ext/providers [{:provider/label "Anthropic (API Key)"}]
-                    :ext/namespace 'com.blockether.vis.ext.provider-anthropic})))
+                    :ext/name "provider-anthropic"})))
       (is (= "Tui"
             (label {:ext/channels [{:channel/cmd "tui"}]
-                    :ext/namespace 'com.blockether.vis.ext.channel-tui.core})))
+                    :ext/name "channel-tui"})))
       (is (= "V"
-            (label {:ext/alias {:ns 'vis.ext.v :alias 'v}
-                    :ext/namespace 'com.blockether.vis.ext.foundation.core}))))))
+            (label {:ext/sci {:ext.sci/alias 'v}
+                    :ext/name "foundation"}))))))
 
 (deftest resource-dialog-items-test
   (testing "resources popup rows keep click target fields and rendered labels"
@@ -304,8 +304,8 @@
 
     (testing "extension-declared env vars render under Extensions / Exa without UNKNOWN labels"
       (with-redefs [vis/get-router (constantly nil)
-                    vis/registered-extensions (fn [] [{:ext/namespace 'test.ext
-                                                       :ext/alias {:alias 'exa}
+                    vis/registered-extensions (fn [] [{:ext/name "test.ext"
+                                                       :ext/sci {:ext.sci/alias 'exa}
                                                        :ext/env [{:name "EXA_API_KEY"
                                                                   :label "Exa API key"
                                                                   :description "Optional key."
@@ -329,7 +329,7 @@
 
     (testing "provider-declared settings render under Providers & Models, not Extensions"
       (with-redefs [vis/get-router (constantly nil)
-                    vis/registered-extensions (fn [] [{:ext/namespace 'com.blockether.vis.ext.provider-openai-codex
+                    vis/registered-extensions (fn [] [{:ext/name "provider-openai-codex"
                                                        :ext/providers [{:provider/id :openai-codex
                                                                         :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
                                                        :ext/settings [{:key :openai-codex-verbosity
@@ -339,7 +339,7 @@
                                                                        :description "Output detail."}]}])]
         (let [provider-rows (settings-rows :providers)
               extension-rows (settings-rows :extensions)
-              row  (first (filter #(= [:extension-setting 'com.blockether.vis.ext.provider-openai-codex :openai-codex-verbosity]
+              row  (first (filter #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
                                      (:id %))
                             provider-rows))]
           (is (= ["Models" "Provider Settings"]
@@ -350,7 +350,7 @@
                 (->> provider-rows
                   (filter #(= :subsection (:type %)))
                   (mapv :label))))
-          (is (nil? (first (filter #(= [:extension-setting 'com.blockether.vis.ext.provider-openai-codex :openai-codex-verbosity]
+          (is (nil? (first (filter #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
                                       (:id %))
                              extension-rows))))
           (is (= :choice (:type row)))
@@ -364,7 +364,7 @@
                                                          :reasoning? true
                                                          :reasoning-style :zai-thinking
                                                          :reasoning-effort? false})
-                    vis/registered-extensions (fn [] [{:ext/namespace 'com.blockether.vis.ext.provider-openai-codex
+                    vis/registered-extensions (fn [] [{:ext/name "provider-openai-codex"
                                                        :ext/providers [{:provider/id :openai-codex
                                                                         :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
                                                        :ext/settings [{:key :openai-codex-verbosity
@@ -379,7 +379,7 @@
 
     (testing "channel-declared settings render under Channels, not provider or extension tabs"
       (with-redefs [vis/get-router (constantly nil)
-                    vis/registered-extensions (fn [] [{:ext/namespace 'com.blockether.vis.ext.channel-telegram.bot
+                    vis/registered-extensions (fn [] [{:ext/name "channel-telegram"
                                                        :ext/channels [{:channel/id :telegram
                                                                        :channel/cmd "telegram"}]
                                                        :ext/settings [{:key :telegram-notify
@@ -389,7 +389,7 @@
         (let [channel-rows (settings-rows :channels)
               provider-rows (settings-rows :providers)
               extension-rows (settings-rows :extensions)
-              row-id [:extension-setting 'com.blockether.vis.ext.channel-telegram.bot :telegram-notify]
+              row-id [:extension-setting "channel-telegram" :telegram-notify]
               row (first (filter #(= row-id (:id %)) channel-rows))]
           (is (= ["Terminal UI" "Channel Settings"]
                 (->> channel-rows

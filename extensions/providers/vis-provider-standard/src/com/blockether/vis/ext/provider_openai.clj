@@ -4,8 +4,8 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.provider-openai
-     :ext/doc       "OpenAI API-key provider preset."
+    {:ext/name      "provider-openai"
+     :ext/description "OpenAI API-key provider preset."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

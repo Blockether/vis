@@ -17,9 +17,7 @@
         so the persistance facade's `requiring-resolve` lazy-load path
         knows where to look on the first DB op.
 
-     3. The registrar's `:ext/namespace` matches what manifest discovery
-        already expects, so no other extension code needs to change to
-        opt into the lazy load.
+     3. The registrar captures its source namespace for reload/source tracking.
 
    See `registrar.clj` for the rationale + the per-command load-cost
    numbers, and `com.blockether.vis.internal.persistance/resolve-impl`
@@ -40,14 +38,12 @@
       (expect (= 'com.blockether.vis.ext.persistance-sqlite.core
                 (get-in backends [:sqlite :ns])))))
 
-  (it "is registered as the same :ext/namespace manifest discovery expects"
+  (it "captures registrar source namespace for reload/source tracking"
     (let [exts (vis/registered-extensions)
-          ext  (some #(when (= 'com.blockether.vis.ext.persistance-sqlite.core
-                              (:ext/namespace %)) %)
-                 exts)]
+          ext  (some #(when (= "persistance-sqlite" (:ext/name %)) %) exts)]
       (expect (some? ext))
       (expect (= ['com.blockether.vis.ext.persistance-sqlite.registrar]
-                (:ext/nses ext)))
+                (:ext/source-nses ext)))
       (expect (= [{:persistance/id :sqlite
                    :persistance/ns 'com.blockether.vis.ext.persistance-sqlite.core}]
                 (:ext/persistance ext))))))

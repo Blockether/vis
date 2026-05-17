@@ -280,7 +280,11 @@
 ;; =============================================================================
 ;; Extension contract
 ;; =============================================================================
-(def extension                           extension/extension)
+(defmacro extension
+  "Build extension spec and stamp caller namespace for reload/source tracking."
+  [spec]
+  `(extension/extension
+     (assoc ~spec :ext/source-nses ['~(ns-name *ns*)])))
 (def symbol                              extension/symbol)
 (def value                               extension/value)
 (def render-prompt                       extension/render-prompt)

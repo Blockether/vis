@@ -113,8 +113,8 @@
                        :code (or (:code iter) "")}
                 (contains? iter :result) (assoc :result (:result iter))
                 (contains? iter :error) (assoc :error (:error iter))
-                (contains? iter :execution-time-ms)
-                (assoc :duration-ms (:execution-time-ms iter)))
+                (contains? iter :duration-ms)
+                (assoc :duration-ms (:duration-ms iter)))
         blocks [block]
         vars   (try (vec (vis/db-list-iteration-vars db-info (:id iter)))
                  (catch Throwable _ []))]
@@ -233,7 +233,7 @@
 
 (defn- block-ref
   [turn iteration block]
-  (or (get-in block [:info :ref])
+  (or (get-in block [:envelope :ref])
     (str "turn/" (subs (str (:id turn)) 0 8)
       "/iteration/" (:position iteration)
       "/block/" (inc (long (block-index block))))))

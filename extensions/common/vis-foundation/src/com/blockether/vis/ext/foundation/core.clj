@@ -85,19 +85,19 @@
 
 (def vis-extension
   (vis/extension
-    {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, doctor/reproduction CLI."
+    {:ext/name           "foundation"
+     :ext/description    "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, doctor/reproduction CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
-     :ext/alias       {:ns 'vis.ext.v :alias 'v}
+     :ext/sci            {:ext.sci/alias 'v
+                          :ext.sci/symbols (vec (concat introspection/all-symbols
+                                                  (editing/available-editing-symbols)
+                                                  environment/environment-symbols))}
      :ext/kind           "foundation"
      :ext/hooks          nudges/hooks
      :ext/prompt         combined-prompt
-     :ext/symbols        (vec (concat introspection/all-symbols
-                                (editing/available-editing-symbols)
-                                environment/environment-symbols))
      :ext/doctor-check-fn lazy-doctor-check-fn
      :ext/cli            [(doctor-cli-command)
                           (transcript-cli-command)]}))

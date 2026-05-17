@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.builtin-hooks
   "Built-in TUI channel contributions registered by vis-channel-tui itself.
 
-   Channel-tui is itself an extension (`:ext/namespace`
+   Channel-tui is itself an extension (`:ext/name`
    `com.blockether.vis.ext.channel-tui`), so it can declare its own
    `:ext/channel-contributions` like any external extension. This gives every
    first-party TUI surface (model display, reasoning level, codex
@@ -71,13 +71,12 @@
 
 (def vis-extension
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.channel-tui.builtin-hooks
-     :ext/nses      ['com.blockether.vis.ext.channel-tui.core]
-     :ext/doc       (str "Built-in TUI channel contributions: model/provider "
-                      "display in the footer. Registered as regular extension "
-                      "channel contributions so the user can toggle them via Settings "
-                      "and other channels can read the same data via "
-                      "channel-contributions-for.")
+    {:ext/name      "channel-tui.builtin-hooks"
+     :ext/description (str "Built-in TUI channel contributions: model/provider "
+                        "display in the footer. Registered as regular extension "
+                        "channel contributions so the user can toggle them via Settings "
+                        "and other channels can read the same data via "
+                        "channel-contributions-for.")
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

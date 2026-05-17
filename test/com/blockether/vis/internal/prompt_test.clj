@@ -6,8 +6,8 @@
 
 (defdescribe prompt-assembly-test
   (it "normalizes core addendum and extension prompt text"
-    (let [ext {:ext/namespace 'test.prompt
-               :ext/alias {:alias 't}
+    (let [ext {:ext/name "test.prompt"
+               :ext/sci {:ext.sci/alias 't}
                :ext/prompt (fn [_]
                              "\n\n    Extension line\n\n\n\n      Nested extension line\n")}
           env {:extensions (atom [ext])}
@@ -22,7 +22,7 @@
 (defdescribe extension-activation-test
   (it "assembles from precomputed active extensions without activating again"
     (let [calls (atom 0)
-          ext {:ext/namespace 'test.activation
+          ext {:ext/name "test.activation"
                :ext/activation-fn (fn [_]
                                     (swap! calls inc)
                                     true)

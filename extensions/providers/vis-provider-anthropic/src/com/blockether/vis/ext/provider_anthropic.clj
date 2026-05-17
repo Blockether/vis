@@ -484,8 +484,8 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.provider-anthropic
-     :ext/doc       "Anthropic API-key and Claude subscription OAuth providers."
+    {:ext/name      "provider-anthropic"
+     :ext/description "Anthropic API-key and Claude subscription OAuth providers."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

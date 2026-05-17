@@ -10,7 +10,7 @@
    sub-registry. The same data feeds:
 
      - the active-extensions list every iteration consults
-     - the system-prompt block rendered from `:ext/symbols`
+     - the system-prompt block rendered from `:ext.sci/symbols`
      - the per-iteration `:ext/hooks` checks
      - the parse-error rescue chain
      - the manifest id/namespace catalog used for extension metadata
@@ -592,11 +592,15 @@
 ;; Extension spec
 ;; =============================================================================
 
-;; Fully qualified extension name, e.g. 'com.blockether.vis.ext.common.
-(s/def :ext/namespace symbol?)
+;; Logical extension id, e.g. "foundation" or "github-copilot".
+(s/def :ext/name non-blank-string?)
 
 ;; Extension-level documentation - describes what this bundle provides.
-(s/def :ext/doc non-blank-string?)
+(s/def :ext/description non-blank-string?)
+
+;; Namespace(s) whose source loads/registers this extension. `vis/extension`
+;; captures this from the callsite; generated logical extensions may share it.
+(s/def :ext/source-nses (s/coll-of symbol? :kind vector?))
 
 ;; Top-level kind - the *category* of surface this extension
 ;; contributes. Used for prompt-rendering section labels AND as the
@@ -728,8 +732,8 @@
 ;; string-key settings here for channels to adapt.
 (s/def :ext/theme theme/extension-theme-map?)
 
-;; Optional dependency declaration. Vector of extension namespace symbols.
-(s/def :ext/requires (s/coll-of symbol? :kind vector?))
+;; Optional dependency declaration. Vector of logical extension names.
+(s/def :ext/requires (s/coll-of non-blank-string? :kind vector?))
 
 ;; Semver version string, e.g. "1.0.0", "0.3.1-SNAPSHOT".
 (s/def :ext/version non-blank-string?)
@@ -808,35 +812,34 @@
 ;;    :data {...}}              ; optional; passthrough for callers
 (s/def :ext/doctor-check-fn fn?)
 
-;; Vector of symbol entries this extension binds into the sandbox.
-(s/def :ext/symbols (s/coll-of ::symbol-entry :kind vector?))
+;; SCI sandbox contribution.
+(s/def :ext.sci/symbols (s/coll-of ::symbol-entry :kind vector?))
 
 ;; Map of fully-qualified Java classes to expose in the sandbox.
-(s/def :ext/classes
+(s/def :ext.sci/classes
   (s/and map?
     #(every? symbol? (keys %))
     #(every? class? (vals %))))
 
 ;; Map of short-name imports for Java classes.
-(s/def :ext/imports
+(s/def :ext.sci/imports
   (s/and map?
     #(every? symbol? (keys %))
     #(every? symbol? (vals %))))
 
 ;; Optional SCI namespace alias for this extension's symbols.
-(s/def :ext.ns-alias/ns    (s/and symbol? #(nil? (namespace %))))
-(s/def :ext.ns-alias/alias (s/and symbol? #(nil? (namespace %))))
-(s/def :ext/alias
-  (s/and map?
-    #(s/valid? :ext.ns-alias/ns    (:ns %))
-    #(s/valid? :ext.ns-alias/alias (:alias %))))
+(s/def :ext.sci/ns    (s/and symbol? #(nil? (namespace %))))
+(s/def :ext.sci/alias (s/and symbol? #(nil? (namespace %))))
+(s/def :ext/sci
+  (s/keys :opt [:ext.sci/ns :ext.sci/alias :ext.sci/symbols
+                :ext.sci/classes :ext.sci/imports]))
 
 ;; Canonical source markers attached to registered extensions via the
 ;; sidecar atom. Also surfaced in ctx :extensions / extension summaries
 ;; and stamped onto tool-result info.
 (s/def ::alias symbol?)
-(s/def ::namespace symbol?)
-(s/def ::doc non-blank-string?)
+(s/def ::name non-blank-string?)
+(s/def ::description non-blank-string?)
 (s/def ::kind non-blank-string?)
 (s/def ::version non-blank-string?)
 (s/def ::author non-blank-string?)
@@ -849,25 +852,63 @@
 (s/def ::registry-id symbol?)
 
 (s/def ::extension-info
-  (s/keys :req-un [::namespace ::source-paths ::source-mtime-max ::source-hash-sha256]
-    :opt-un [::alias ::doc ::kind ::version ::author ::owner ::license ::registry-id]))
+  (s/keys :req-un [::name ::source-paths ::source-mtime-max ::source-hash-sha256]
+    :opt-un [::alias ::description ::kind ::version ::author ::owner ::license ::registry-id]))
+
+(defn ext-sci
+  [ext]
+  (or (:ext/sci ext) {}))
+
+(defn ext-symbols
+  [ext]
+  (vec (or (get-in ext [:ext/sci :ext.sci/symbols]) [])))
+
+(defn ext-classes
+  [ext]
+  (or (get-in ext [:ext/sci :ext.sci/classes]) {}))
+
+(defn ext-imports
+  [ext]
+  (or (get-in ext [:ext/sci :ext.sci/imports]) {}))
+
+(defn ext-alias-symbol
+  [ext]
+  (get-in ext [:ext/sci :ext.sci/alias]))
+
+(defn ext-sci-ns
+  [ext]
+  (or (get-in ext [:ext/sci :ext.sci/ns])
+    (when-let [alias (ext-alias-symbol ext)]
+      (clojure.core/symbol (str "vis.ext." (name alias))))))
+
+(defn ext-alias
+  [ext]
+  (when-let [alias (ext-alias-symbol ext)]
+    {:ns (ext-sci-ns ext) :alias alias}))
+
+(defn ext-source-nses
+  [ext]
+  (vec (or (:ext/source-nses ext) [])))
+
+(defn ext-display-name
+  [ext]
+  (:ext/name ext))
 
 (defn- ns-alias-required-when-symbols?
   [ext]
-  (or (empty? (:ext/symbols ext))
-    (some? (:ext/alias ext))))
+  (or (empty? (ext-symbols ext))
+    (some? (ext-alias-symbol ext))))
 
 (defn- kind-required-when-symbols?
   [ext]
-  (or (empty? (:ext/symbols ext))
+  (or (empty? (ext-symbols ext))
     (some? (:ext/kind ext))))
 
 (s/def ::extension
   (s/and
-    (s/keys :req [:ext/namespace :ext/doc]
-      :opt [:ext/kind :ext/activation-fn
-            :ext/symbols :ext/classes :ext/imports
-            :ext/alias :ext/prompt
+    (s/keys :req [:ext/name :ext/description]
+      :opt [:ext/source-nses :ext/kind :ext/activation-fn
+            :ext/sci :ext/prompt
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
@@ -1177,17 +1218,17 @@
   "Render canonical :ext/prompt text from symbol docstrings + arglists.
 
    Accepts an extension map or any map with:
-   - :ext/doc      or :heading
-   - :ext/alias optional {:alias 'v}
-   - :ext/symbols  vector of symbol + value entries
+   - :ext/description      or :heading
+   - :ext.sci/alias optional {:alias 'v}
+   - :ext.sci/symbols  vector of symbol + value entries
    - :usage-note   optional extra note added to the heading
    - :notes        optional string or seq of extra lines appended verbatim
 
    Returns a prompt string suitable for :ext/prompt."
   [{:keys [heading usage-note notes] :as opts}]
-  (let [alias-sym    (get-in opts [:ext/alias :alias])
-        symbols      (or (:symbols opts) (:ext/symbols opts))
-        heading      (or heading (:ext/doc opts) "Extension tools")
+  (let [alias-sym    (ext-alias-symbol opts)
+        symbols      (or (:symbols opts) (ext-symbols opts))
+        heading      (or heading (:ext/description opts) "Extension tools")
         header-notes (vec (remove nil?
                             [(when alias-sym (str "use " alias-sym "/ prefix"))
                              (when (non-blank-string? usage-note) usage-note)]))
@@ -1232,18 +1273,18 @@
    observed tools and remain untagged plain functions/values. Returns `ext`
    unchanged on success; throws `:extension/missing-op-tag` otherwise."
   [ext]
-  (doseq [sym-entry (:ext/symbols ext)
+  (doseq [sym-entry (ext-symbols ext)
           :when    (and (:ext.symbol/fn sym-entry)
                      (not (:ext.symbol/raw? sym-entry)))]
     (let [op (extension-symbol-op-keyword ext sym-entry)]
       (when-not (registered-op? op)
         (anomaly/incorrect!
-          (str "Extension '" (:ext/namespace ext) "' symbol '"
+          (str "Extension '" (:ext/name ext) "' symbol '"
             (:ext.symbol/symbol sym-entry) "' is missing mandatory op tag for " op
             "; register it with (vis/register-op! " (pr-str op)
             " {:tag :op.tag/observation}) or {:tag :op.tag/mutation}.")
           {:type      :extension/missing-op-tag
-           :extension (:ext/namespace ext)
+           :extension (:ext/name ext)
            :symbol    (:ext.symbol/symbol sym-entry)
            :op        op
            :allowed   op-tags}))))
@@ -1254,15 +1295,15 @@
    facing surface is the trailer (real SCI form values); no second
    model-side render is required or accepted."
   [ext]
-  (doseq [sym-entry (:ext/symbols ext)
+  (doseq [sym-entry (ext-symbols ext)
           :when    (and (:ext.symbol/fn sym-entry)
                      (not (:ext.symbol/raw? sym-entry)))]
     (when-not (:ext.symbol/render-fn sym-entry)
       (anomaly/incorrect!
-        (str "Extension '" (:ext/namespace ext) "' symbol '"
+        (str "Extension '" (:ext/name ext) "' symbol '"
           (:ext.symbol/symbol sym-entry) "' is missing :render-fn.")
         {:type      :extension/missing-renderer
-         :extension (:ext/namespace ext)
+         :extension (:ext/name ext)
          :symbol    (:ext.symbol/symbol sym-entry)})))
   ext)
 
@@ -1274,15 +1315,15 @@
   (when (contains? ext :ext/environment-prompt-fn)
     (throw (ex-info ":ext/environment-prompt-fn was removed; put model-facing environment text in :ext/prompt"
              {:type :extension/retired-environment-prompt-fn
-              :namespace (:ext/namespace ext)})))
+              :name (:ext/name ext)})))
   (let [ext (cond-> ext
               (contains? ext :ext/prompt) (update :ext/prompt normalize-prompt))]
     (when-not (s/valid? ::extension ext)
-      (throw (ex-info (str "Invalid extension '" (:ext/namespace ext) "':\n"
+      (throw (ex-info (str "Invalid extension '" (:ext/name ext) "':\n"
                         (with-out-str (s/explain ::extension ext)))
-               {:type      :extension/invalid-spec
-                :namespace (:ext/namespace ext)
-                :explain   (s/explain-data ::extension ext)})))
+               {:type    :extension/invalid-spec
+                :name    (:ext/name ext)
+                :explain (s/explain-data ::extension ext)})))
     (-> ext
       validate-symbol-op-tags!
       validate-symbol-renderers!)))
@@ -1386,7 +1427,7 @@
 
 (defn- tool-call-name
   [ext sym]
-  (if-let [alias (get-in ext [:ext/alias :alias])]
+  (if-let [alias (ext-alias-symbol ext)]
     (str alias "/" sym)
     (str sym)))
 
@@ -1396,7 +1437,7 @@
     {:phase :tool-start
      :status :running
      :op (keyword (tool-call-name ext sym))
-     :extension (:ext/namespace ext)
+     :extension (:ext/name ext)
      :symbol sym
      :started-at-ms (long started-at-ms)}))
 
@@ -1428,8 +1469,8 @@
         (ensure-tool-result-op ext sym-entry result)
         {:tool      (cond-> {:symbol  (:ext.symbol/symbol sym-entry)
                              :call (tool-call-name ext (:ext.symbol/symbol sym-entry))}
-                      (get-in ext [:ext/alias :alias])
-                      (assoc :alias (get-in ext [:ext/alias :alias])))
+                      (ext-alias-symbol ext)
+                      (assoc :alias (ext-alias-symbol ext)))
          :extension (dissoc ext-prov :source-paths :source-mtime-max :source-hash-sha256)
          :source    {:paths       (:source-paths ext-prov)
                      :mtime-max   (:source-mtime-max ext-prov)
@@ -1442,7 +1483,7 @@
    the wrapper); the form reflects the actual call made, not the lexical
    source. Returns a non-blank string suitable for the spec."
   [ext sym-entry args]
-  (let [alias-sym (get-in ext [:ext/alias :alias])
+  (let [alias-sym (ext-alias-symbol ext)
         sym-name  (:ext.symbol/symbol sym-entry)
         head      (if alias-sym
                     (clojure.core/symbol (str alias-sym) (str sym-name))
@@ -1507,7 +1548,7 @@
   *current-extension*)
 
 (defn current-extension-id []
-  (some-> *current-extension* :ext/namespace str))
+  (some-> *current-extension* :ext/name))
 
 (defn- tool-result->public-value
   [result]
@@ -1538,7 +1579,7 @@
   (binding [*current-extension* ext
             *current-symbol* (:ext.symbol/symbol sym-entry)]
     (let [sym          (:ext.symbol/symbol sym-entry)
-          ext-ns       (:ext/namespace ext)
+          ext-ns       (:ext/name ext)
           original-args args
           t0           (System/nanoTime)
           _            (log-hook! :debug ::invoke ext-ns sym nil nil nil)
@@ -1634,7 +1675,7 @@
                                     workspace/*workspace-root* (workspace/workspace-root env)]
                             (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
                [sym (:ext.symbol/val sym-entry)]))))
-    (:ext/symbols ext)))
+    (ext-symbols ext)))
 
 ;; =============================================================================
 ;; Public API - extension builder
@@ -1670,9 +1711,14 @@
     (cond->
       (not (:ext/activation-fn spec))                  (assoc :ext/activation-fn (constantly true))
       (some? (derive-kind spec))                       (assoc :ext/kind (derive-kind spec))
-      (not (:ext/symbols spec))                        (assoc :ext/symbols [])
-      (not (:ext/classes spec))                        (assoc :ext/classes {})
-      (not (:ext/imports spec))                        (assoc :ext/imports {})
+      (not (:ext/sci spec))                            (assoc :ext/sci {})
+      (and (get-in spec [:ext/sci :ext.sci/alias])
+        (nil? (get-in spec [:ext/sci :ext.sci/ns]))) (assoc-in [:ext/sci :ext.sci/ns]
+                                                       (clojure.core/symbol (str "vis.ext."
+                                                                              (name (get-in spec [:ext/sci :ext.sci/alias])))))
+      (nil? (get-in spec [:ext/sci :ext.sci/symbols])) (assoc-in [:ext/sci :ext.sci/symbols] [])
+      (nil? (get-in spec [:ext/sci :ext.sci/classes])) (assoc-in [:ext/sci :ext.sci/classes] {})
+      (nil? (get-in spec [:ext/sci :ext.sci/imports])) (assoc-in [:ext/sci :ext.sci/imports] {})
       (not (:ext/env spec))                            (assoc :ext/env [])
       (not (:ext/settings spec))                       (assoc :ext/settings [])
       (not (:ext/theme spec))                          (assoc :ext/theme {})
@@ -1847,15 +1893,10 @@
          :source-hash-sha256 hash-hex}))))
 
 (defn resolve-markers-for-extension
-  "Convenience wrapper: pull `:nses` (or `:ext/nses`) off the
-   extension map / manifest entry, fall back to `:ext/namespace`
-   when no list is provided. Returns the same shape as
-   [[resolve-markers]]."
+  "Resolve source markers from manifest `:nses` or extension `:ext/source-nses`."
   [ext-or-manifest]
   (let [ns-syms (or (some-> (:nses ext-or-manifest) seq vec)
-                  (some-> (:ext/nses ext-or-manifest) seq vec)
-                  (when-let [n (:ext/namespace ext-or-manifest)]
-                    [n]))]
+                  (some-> (:ext/source-nses ext-or-manifest) seq vec))]
     (resolve-markers (or ns-syms []))))
 
 ;; =============================================================================
@@ -1864,7 +1905,7 @@
 
 (defonce ^:private extension-registry
   ;; Process-level atom holding all globally registered extensions.
-  ;; Keyed by :ext/namespace to prevent duplicates.
+  ;; Keyed by :ext/name to prevent duplicates.
   (atom {}))
 
 (defonce ^:private extension-order
@@ -1875,7 +1916,7 @@
 
 (defonce ^:private extension-source-markers
   ;; Sidecar atom holding source-file markers per registered extension.
-  ;; Keyed by :ext/namespace. Populated at register-time, dropped at
+  ;; Keyed by :ext/name. Populated at register-time, dropped at
   ;; deregister-time. Read by `iteration-metadata` (first iteration of
   ;; each turn) and by `reload-extensions!`'s diff. Kept
   ;; OUT of the extension map itself so `extension/validate!` doesn't have
@@ -1919,7 +1960,7 @@
 
    This is THE single entry point for everything an extension
    contributes to vis. Whatever the extension declares -- SCI sandbox
-   symbols (`:ext/symbols`), CLI commands (`:ext/cli`), channels
+   symbols (`:ext.sci/symbols`), CLI commands (`:ext/cli`), channels
    (`:ext/channels`), LLM providers (`:ext/providers`), persistence
    backends (`:ext/persistance`) -- gets routed here and dispatched into
    the matching sub-registry as a side effect.
@@ -1928,16 +1969,16 @@
    stores them in a sidecar atom for the iteration-metadata writer
    and the v2 change-detector. Plan §5.5.
 
-   Idempotent on `:ext/namespace`. Returns the validated extension."
+   Idempotent on `:ext/name`. Returns the validated extension."
   [ext]
   (let [ext    (extension ext)
-        ns-sym (:ext/namespace ext)]
+        ns-sym (:ext/name ext)]
     (when-not (contains? @extension-registry ns-sym)
       (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
     (tel/log! {:level :info :id ::register-global
                :data {:ext ns-sym
-                      :symbols     (count (:ext/symbols ext))
+                      :symbols     (count (ext-symbols ext))
                       :cli         (count (:ext/cli ext))
                       :channels    (count (:ext/channels ext))
                       :providers   (count (:ext/providers ext))
@@ -1989,12 +2030,12 @@
 
 (defn- source-markers-for-extension
   [ext]
-  (or (extension-source-markers-of (:ext/namespace ext))
+  (or (extension-source-markers-of (:ext/name ext))
     (try
       (resolve-markers-for-extension ext)
       (catch Throwable t
         (tel/log! {:level :warn :id ::source-markers-on-demand-failed
-                   :data  {:ext (:ext/namespace ext)
+                   :data  {:ext (:ext/name ext)
                            :error (ex-message t)}})
         empty-source-markers))
     empty-source-markers))
@@ -2009,18 +2050,20 @@
 
    This is the single info shape used by ctx :extensions and tool-result enrichment."
   [ext]
-  (let [ext-ns     (:ext/namespace ext)
-        alias      (get-in ext [:ext/alias :alias])
-        registry-id (or (try (extension-id-of-ns ext-ns)
-                          (catch Throwable _ nil))
+  (let [name       (:ext/name ext)
+        alias      (ext-alias-symbol ext)
+        registry-id (or (some (fn [ns-sym]
+                                (try (extension-id-of-ns ns-sym)
+                                  (catch Throwable _ nil)))
+                          (ext-source-nses ext))
                       alias)
         markers    (source-markers-for-extension ext)
-        prov       (cond-> {:namespace          ext-ns
+        prov       (cond-> {:name               name
                             :source-paths       (:source-paths markers)
                             :source-mtime-max   (:source-mtime-max markers)
                             :source-hash-sha256 (:source-hash-sha256 markers)}
                      alias                (assoc :alias alias)
-                     (:ext/doc ext)       (assoc :doc (:ext/doc ext))
+                     (:ext/description ext) (assoc :description (:ext/description ext))
                      (:ext/kind ext)      (assoc :kind (:ext/kind ext))
                      (:ext/version ext)   (assoc :version (:ext/version ext))
                      (:ext/author ext)    (assoc :author (:ext/author ext))
@@ -2029,10 +2072,10 @@
                      registry-id          (assoc :registry-id registry-id))]
     (when-not (s/valid? ::extension-info prov)
       (throw (ex-info "Invalid extension info"
-               {:type      :extension/invalid-info
-                :namespace ext-ns
-                :value     prov
-                :explain   (s/explain-data ::extension-info prov)})))
+               {:type    :extension/invalid-info
+                :name    name
+                :value   prov
+                :explain (s/explain-data ::extension-info prov)})))
     prov))
 
 (defn deregister-extension!
@@ -2110,13 +2153,13 @@
   ;; Per PLAN §2.1, `:tool` and `:extension` blobs live under
   ;; `:metadata` on the new flat envelope (they were inside
   ;; `:info` on the old shape).
-  (let [ext-ns (get-in tool-result [:metadata :extension :namespace])
-        sym    (get-in tool-result [:metadata :tool :symbol])]
-    (when (and ext-ns sym)
+  (let [ext-name (get-in tool-result [:metadata :extension :name])
+        sym      (get-in tool-result [:metadata :tool :symbol])]
+    (when (and ext-name sym)
       (some (fn [entry]
               (when (= sym (:ext.symbol/symbol entry))
                 entry))
-        (:ext/symbols (get @extension-registry ext-ns))))))
+        (ext-symbols (get @extension-registry ext-name))))))
 
 (defn- format-error-fields
   "Pull the `:message` (and an inferred `:type` from the trace's first
@@ -2182,7 +2225,7 @@
   "Topologically sort extensions by :ext/requires.
    Throws on missing dependencies or cycles."
   [extensions]
-  (let [by-ns   (into {} (map (juxt :ext/namespace identity)) extensions)
+  (let [by-ns   (into {} (map (juxt :ext/name identity)) extensions)
         visited (volatile! #{})
         path    (volatile! #{})
         result  (volatile! [])]
@@ -2224,19 +2267,23 @@
       (register-fn! environment ext))
     environment))
 
-(defn load-extension!
-  "Dynamically load an extension from a Clojure namespace.
+(defn- registered-extensions-for-source-ns
+  [ns-sym]
+  (vec (filter #(contains? (set (ext-source-nses %)) ns-sym)
+         (registered-extensions))))
 
-   Requires the namespace (which should call `register-extension!` at
-   load time), then returns the extension from the global registry."
+(defn load-extension!
+  "Dynamically load extension namespace and return extensions it registered."
   [ns-sym]
   (require ns-sym)
-  (or (get @extension-registry ns-sym)
-    (throw (ex-info (str "Namespace '" ns-sym
-                      "' was loaded but did not call register-extension!")
-             {:type :extension/no-registration
-              :namespace ns-sym
-              :registered (vec (keys @extension-registry))}))))
+  (let [exts (registered-extensions-for-source-ns ns-sym)]
+    (if (seq exts)
+      exts
+      (throw (ex-info (str "Namespace '" ns-sym
+                        "' was loaded but did not call register-extension!")
+               {:type :extension/no-registration
+                :namespace ns-sym
+                :registered (vec (keys @extension-registry))})))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn reload-extension!
@@ -2257,12 +2304,12 @@
    (reload-extension! ns-sym nil))
   ([ns-sym env-or-envs]
    (require ns-sym :reload)
-   (let [ext (or (get @extension-registry ns-sym)
-               (throw (ex-info (str "Namespace '" ns-sym
-                                 "' was reloaded but did not call register-extension!")
-                        {:type :extension/no-registration
-                         :namespace ns-sym
-                         :registered (vec (keys @extension-registry))})))
+   (let [exts (or (seq (registered-extensions-for-source-ns ns-sym))
+                (throw (ex-info (str "Namespace '" ns-sym
+                                  "' was reloaded but did not call register-extension!")
+                         {:type :extension/no-registration
+                          :namespace ns-sym
+                          :registered (vec (keys @extension-registry))})))
          envs (cond
                 (nil? env-or-envs)        nil
                 (map? env-or-envs)        [env-or-envs]
@@ -2270,13 +2317,14 @@
      (doseq [environment envs]
        (when-let [ext-atom (:extensions environment)]
          (swap! ext-atom
-           (fn [exts]
-             (let [without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
-               (conj without ext))))
+           (fn [installed]
+             (let [names   (set (map :ext/name exts))
+                   without (vec (remove #(contains? names (:ext/name %)) installed))]
+               (into without exts))))
          (tel/log! {:level :info :id ::reload-hot-swap
                     :data {:ext ns-sym :environment-id (:environment-id environment)}
-                    :msg (str "Hot-swapped '" ns-sym "' into environment " (:environment-id environment))})))
-     ext)))
+                    :msg (str "Hot-swapped extensions from '" ns-sym "' into environment " (:environment-id environment))})))
+     (vec exts))))
 
 ;; =============================================================================
 ;; Extension manifest catalog

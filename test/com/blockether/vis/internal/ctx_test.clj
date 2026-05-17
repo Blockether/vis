@@ -34,13 +34,13 @@
 
   (it "includes active extension snapshot when supplied"
     (let [{:keys [sci-ctx initial-ns-keys]} (fresh)
-          ext {:ext/namespace 'test.ctx-extension
-               :ext/alias {:alias 't}
-               :ext/doc "test extension"
+          ext {:ext/name "test.ctx-extension"
+               :ext/description "test extension"
                :ext/kind "testing"
                :ext/activation-fn (constantly true)
-               :ext/symbols [{:ext.symbol/symbol 'lookup}
-                             {:ext.symbol/symbol 'patch}]}
+               :ext/sci {:ext.sci/alias 't
+                         :ext.sci/symbols [{:ext.symbol/symbol 'lookup}
+                                           {:ext.symbol/symbol 'patch}]}}
           env {:sci-ctx sci-ctx
                :initial-ns-keys initial-ns-keys
                :extensions (atom [ext])}
@@ -48,9 +48,9 @@
           out (ctx/build {:environment env
                           :conversation {:id :c}
                           :extensions (prompt/extensions-snapshot active)})]
-      (expect (= [{:namespace 'test.ctx-extension
+      (expect (= [{:name "test.ctx-extension"
                    :alias 't
-                   :doc "test extension"
+                   :description "test extension"
                    :kind "testing"
                    :registry-id 't
                    :symbols ['lookup 'patch]}]

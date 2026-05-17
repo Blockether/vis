@@ -11,12 +11,12 @@
   (it "normalizes string and fn extension prompts"
     (let [prompt-text "\n\n    First line\n\n\n\n      Nested line\n"
           string-ext (extension/extension
-                       {:ext/namespace 'test.prompt-string
-                        :ext/doc "Test prompt string."
+                       {:ext/name "test.prompt-string"
+                        :ext/description "Test prompt string."
                         :ext/prompt prompt-text})
           fn-ext (extension/extension
-                   {:ext/namespace 'test.prompt-fn
-                    :ext/doc "Test prompt fn."
+                   {:ext/name "test.prompt-fn"
+                    :ext/description "Test prompt fn."
                     :ext/prompt (fn [_] prompt-text)})]
       (expect (= "First line\n\n  Nested line" ((:ext/prompt string-ext) {})))
       (expect (= "First line\n\n  Nested line" ((:ext/prompt fn-ext) {}))))))
@@ -24,8 +24,8 @@
 (defdescribe channel-contributions-test
   (it "extension accepts channel contributions and derives channel kind"
     (let [ext (extension/extension
-                {:ext/namespace 'test.channel-contribution
-                 :ext/doc "Test channel contribution."
+                {:ext/name "test.channel-contribution"
+                 :ext/description "Test channel contribution."
                  :ext/channel-contributions
                  {:tui.slot/commands
                   [{:id :test/command
@@ -63,11 +63,12 @@
       (expect (= :extension/missing-renderer
                 (try
                   (extension/extension
-                    {:ext/namespace 'test.missing-renderer
+                    {:ext/name "test.missing-renderer"
                      :ext/kind "test"
-                     :ext/doc "Test missing renderer."
-                     :ext/alias {:ns 'test.missing-renderer :alias 'test.missing-renderer}
-                     :ext/symbols [entry]})
+                     :ext/description "Test missing renderer."
+                     :ext/sci {:ext.sci/ns 'test.missing-renderer
+                               :ext.sci/alias 'test.missing-renderer
+                               :ext.sci/symbols [entry]}})
                   nil
                   (catch clojure.lang.ExceptionInfo e
                     (:type (ex-data e))))))))
@@ -81,11 +82,12 @@
                    :arglists '([])
                    :render-fn (fn [_] [:ir {} [:p {} [:span {} "render-specific"]]])})
           ext   (extension/register-extension!
-                  {:ext/namespace 'test.renderer
+                  {:ext/name "test.renderer"
                    :ext/kind "test"
-                   :ext/doc "Test renderer."
-                   :ext/alias {:ns 'test.renderer :alias 'test.renderer}
-                   :ext/symbols [entry]})
+                   :ext/description "Test renderer."
+                   :ext/sci {:ext.sci/ns 'test.renderer
+                             :ext.sci/alias 'test.renderer
+                             :ext.sci/symbols [entry]}})
           channel (atom [])]
       (try
         (binding [extension/*render-sink*    channel
@@ -94,4 +96,4 @@
         (expect (= [:ir {} [:p {} [:span {} "render-specific"]]]
                   (-> @channel first :result)))
         (finally
-          (extension/deregister-extension! 'test.renderer))))))
+          (extension/deregister-extension! "test.renderer"))))))
