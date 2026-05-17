@@ -544,10 +544,7 @@
         (update first-pass :parse-error enrich-parse-error code)))))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
-  (let [stdout-writer (java.io.StringWriter.)
-        stderr-writer (java.io.StringWriter.)
-        err-pw       (java.io.PrintWriter. stderr-writer true)
-        thrown       (atom nil)
+  (let [thrown       (atom nil)
         tool-counts  (atom {})
         ;; Per-top-level-form channel sink. `invoke-symbol-wrapper` writes
         ;; ONE entry per tool-symbol call; `*sink-position*` stamps each
@@ -589,34 +586,23 @@
             ;; ClassCastException.
             {:source source
              :error {:message hint :data {:phase :vis/lint}}}
-            (let [pre-out (.length (.getBuffer stdout-writer))
-                  pre-err (.length (.getBuffer stderr-writer))]
-              (try
-                (let [v (sci/eval-form sci-ctx form)
-                      out (.substring (.getBuffer stdout-writer) pre-out)
-                      err (.substring (.getBuffer stderr-writer) pre-err)]
-                  (cond-> {:source source :result v}
-                    (pos? (.length out)) (assoc :stdout (.toString out))
-                    (pos? (.length err)) (assoc :stderr (.toString err))))
-                (catch Throwable e
-                  (let [out (.substring (.getBuffer stdout-writer) pre-out)
-                        err (.substring (.getBuffer stderr-writer) pre-err)
-                        err-map (try (extension/ex->op-error e {:block-source source})
-                                  (catch Throwable _
-                                    {:message (or (ex-message e)
-                                                (.getName (class e)))}))
-                        sandbox-syms (try
-                                       (keys (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
-                                       (catch Throwable _ nil))
-                        sym-hint (when (and (:message err-map) (seq sandbox-syms))
-                                   (pd/unresolved-symbol-hint (:message err-map) sandbox-syms))
-                        err-map+hint (cond-> err-map
-                                       (and sym-hint (not (:hint err-map)))
-                                       (assoc :hint sym-hint))]
-                    (reset! thrown e)
-                    (cond-> {:source source :error err-map+hint}
-                      (pos? (.length out)) (assoc :stdout (.toString out))
-                      (pos? (.length err)) (assoc :stderr (.toString err)))))))))
+            (try
+              {:source source :result (sci/eval-form sci-ctx form)}
+              (catch Throwable e
+                (let [err-map (try (extension/ex->op-error e {:block-source source})
+                                (catch Throwable _
+                                  {:message (or (ex-message e)
+                                              (.getName (class e)))}))
+                      sandbox-syms (try
+                                     (keys (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
+                                     (catch Throwable _ nil))
+                      sym-hint (when (and (:message err-map) (seq sandbox-syms))
+                                 (pd/unresolved-symbol-hint (:message err-map) sandbox-syms))
+                      err-map+hint (cond-> err-map
+                                     (and sym-hint (not (:hint err-map)))
+                                     (assoc :hint sym-hint))]
+                  (reset! thrown e)
+                  {:source source :error err-map+hint})))))
         eval-per-form
         (fn []
           ;; Walk parsed forms in order, capture per-form outcome; stop at
@@ -656,18 +642,14 @@
                                           sci-patches/*def-sink-atom*     def-sink
                                           sci-patches/*lru-atom*          lru
                                           sci-patches/*current-turn-position* turn-position]
-                                  (sci/binding [sci/out stdout-writer
-                                                sci/err err-pw]
-                                    (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
-                                      (if (or (seq parsed-forms) parse-error)
-                                        (sci/with-bindings
-                                          {sci/ns ns}
-                                          (eval-per-form))
-                                        (let [v (:val (sci/eval-string+ sci-ctx code (when ns {:ns ns})))]
-                                          {:result v :forms [] :error nil})))))]
+                                  (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
+                                    (if (or (seq parsed-forms) parse-error)
+                                      (sci/with-bindings
+                                        {sci/ns ns}
+                                        (eval-per-form))
+                                      (let [v (:val (sci/eval-string+ sci-ctx code (when ns {:ns ns})))]
+                                        {:result v :forms [] :error nil}))))]
                             (assoc outcome
-                              :stdout  (str stdout-writer)
-                              :stderr  (str stderr-writer)
                               :channel @channel-sink
                               :def-sink @def-sink
                               :lru     @lru))
@@ -675,7 +657,7 @@
                             (reset! thrown e)
                             ;; Whole-block parse path failure (parse-forms returned nil OR
                             ;; eval-string+ threw outside per-form path).
-                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
+                            {:result nil
                              :channel @channel-sink
                              :def-sink @def-sink
                              :lru     @lru
@@ -689,7 +671,7 @@
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
                              (reset! thrown e)
-                             {:result nil :stdout "" :stderr ""
+                             {:result nil
                               :channel @channel-sink
                               :def-sink @def-sink
                               :lru     @lru
@@ -697,8 +679,6 @@
                                          (catch Throwable _
                                            {:message (or (ex-message e)
                                                        (.getName (class e)))}))}))]
-    (.close stdout-writer)
-    (.close stderr-writer)
     ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
     ;; the eval succeeded; on exception/timeout, set `*e` without
     ;; advancing the value stack (the form produced no value).
@@ -718,7 +698,7 @@
                                                "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
-        {:result nil :stdout "" :stderr ""
+        {:result nil
          :channel @channel-sink
          :def-sink @def-sink
          :lru     @lru
@@ -775,8 +755,6 @@
                        (catch Throwable e
                          (env/push-eval-error! environment e)
                          {:result nil
-                          :stdout ""
-                          :stderr ""
                           :channel []
                           :def-sink []
                           :lru {}
@@ -1307,8 +1285,6 @@
 
 (s/def ::id nat-int?)
 (s/def ::code string?)
-(s/def ::stdout string?)
-(s/def ::stderr string?)
 (s/def ::error (s/nilable map?))                       ; structured :error map
 (s/def ::execution-time-ms nat-int?)
 (s/def ::timeout? (s/nilable boolean?))
@@ -1325,7 +1301,7 @@
     #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" (:ref %))))
 (s/def ::info ::block-info)
 (s/def ::iteration-block
-  (s/keys :req-un [::id ::code ::stdout ::stderr ::error
+  (s/keys :req-un [::id ::code ::error
                    ::execution-time-ms ::info]
     :opt-un [::result ::timeout? ::repaired? ::comment]))
 
@@ -1761,19 +1737,19 @@
                                               {:result nil
                                                :error (op-error preflight-error
                                                         {:code expr :phase :vis/preflight})
-                                               :stdout "" :stderr "" :execution-time-ms 0
+                                               :execution-time-ms 0
                                                :op :vis/guard}
                                               parse-error
                                               {:result nil
                                                :error (op-error (str "Parse error: " parse-error)
                                                         {:code expr :phase :edamame/parse})
-                                               :stdout "" :stderr "" :execution-time-ms 0
+                                               :execution-time-ms 0
                                                :op :edamame/parse}
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil
                                                  :error (op-error err {:code expr :phase :vis/guard})
-                                                 :stdout "" :stderr "" :execution-time-ms 0
+                                                 :execution-time-ms 0
                                                  :op :vis/guard}
                                                 (let [tool-event-fn (when (and on-chunk
                                                                             (not suppress-form-start?)
@@ -1841,8 +1817,6 @@
                                           :result            (:result result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
-                                          :stdout            (:stdout result*)
-                                          :stderr            (:stderr result*)
                                           :execution-time-ms (:execution-time-ms result*)
                                           :info        (:info result*)
                                           :role        (:role result*)
@@ -1880,8 +1854,6 @@
                                     :code code
                                     :result (:result result)
                                     :channel (:channel result)
-                                    :stdout (:stdout result)
-                                    :stderr (:stderr result)
                                     :error (op-error (:error result) {:code code :phase (:op result)})
                                     :execution-time-ms (:execution-time-ms result)
                                     :info (:info result)
@@ -1902,8 +1874,7 @@
                                     ;; merges into the long-lived per-env LRU.
                                     :lru (or (:lru result) {})
                                     ;; Per-form outcomes: one entry per parsed
-                                    ;; top-level form with
-                                    ;; {:source :result :stdout :stderr :error}.
+                                    ;; top-level form with {:source :result :error}.
                                     ;; The REPL trailer renders these in order so
                                     ;; the model sees every form's value, not
                                     ;; just the last one. Empty when the parser
@@ -1998,8 +1969,6 @@
                                :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
                                :result            (:result b)
                                :error             (:error b)
-                               :stdout            (:stdout b)
-                               :stderr            (:stderr b)
                                :execution-time-ms (:execution-time-ms b)
                                :info        (:info b)
                                :role        (:role b)
@@ -2014,7 +1983,7 @@
             {:thinking thinking
              :blocks (or (seq blocks*)
                        [{:id 0 :code "(final-answer-validation)"
-                         :result nil :stdout "" :stderr ""
+                         :result nil
                          :error (op-error validation-error
                                   {:code "(final-answer-validation)"
                                    :phase :vis/final-answer-validation})}])
@@ -2669,8 +2638,6 @@
                                               :code (or (:code it) "")}
                                        (contains? it :result) (assoc :result (:result it))
                                        (contains? it :error) (assoc :error (:error it))
-                                       (contains? it :stdout) (assoc :stdout (:stdout it))
-                                       (contains? it :stderr) (assoc :stderr (:stderr it))
                                        (contains? it :execution-time-ms)
                                        (assoc :execution-time-ms (:execution-time-ms it)))]
                           :llm-provider (:provider it)
@@ -2897,8 +2864,6 @@
                                                   :code (:code store-block)
                                                   :result (:result store-block)
                                                   :error (:error store-block)
-                                                  :stdout (:stdout store-block)
-                                                  :stderr (:stderr store-block)
                                                   :duration-ms (or (:execution-time-ms store-block) (:duration-ms iteration-result) 0)
                                                   :vars vars-snapshot
                                                   :dependencies deps-snapshot
@@ -3371,7 +3336,7 @@
       - :trace - Vector of iteration trace entries, each containing:
           {:iteration N
            :response <llm-response-text>
-           :blocks [{:id 0 :code <code-str> :result <value> :stdout <str> :error nil :execution-time-ms 5}
+           :blocks [{:id 0 :code <code-str> :result <value> :error nil :execution-time-ms 5}
                        ...]}
      - :iteration-count - Number of iterations used.
      - :duration-ms - Turn duration in milliseconds.

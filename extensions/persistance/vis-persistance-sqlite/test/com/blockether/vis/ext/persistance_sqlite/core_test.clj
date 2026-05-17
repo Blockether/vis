@@ -717,7 +717,7 @@
       ;; iteration flat columns.
       (expect (= 0 (raw-count s :definition_soul)))
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
-            blocks    [(select-keys iteration [:code :result :error :stdout :stderr :execution-time-ms])]]
+            blocks    [(select-keys iteration [:code :result :error :execution-time-ms])]]
         (expect (= "Computing" (:thinking iteration)))
         (expect (= 1 (:position iteration)))
         (expect (= 1 (count blocks)))
@@ -777,23 +777,20 @@
             {:keys [result]} iteration]
         (expect (= {:vis/ref :expr} result)))))
 
-  (it "errors carry the message + stdout + stderr in the BLOB"
+  (it "errors carry the message in the BLOB"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
-      ;; Per PLAN §2.1 + §7.3.5: :error is the structured :error
-      ;; map ({:message :trace? :hint? :block?}). Single error
-      ;; field, no fallback string.
+      ;; :error is the structured :error map
+      ;; ({:message :trace? :hint? :block?}). Single error field, no
+      ;; fallback string.
       (vis/db-store-iteration! s {:conversation-turn-id qid
                                   :code "(/ 1 0)"
                                   :error {:message "Divide by zero"}
-                                  :stdout "dbg" :stderr "warn"
                                   :duration-ms 5})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             exec      iteration]
         (expect (= {:message "Divide by zero"} (:error exec)))
-        (expect (= "dbg" (:stdout exec)))
-        (expect (= "warn" (:stderr exec)))
         ;; :result intentionally omitted on error - cond-> drops nil.
         (expect (not (contains? exec :result))))))
 

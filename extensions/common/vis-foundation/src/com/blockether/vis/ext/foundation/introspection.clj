@@ -109,7 +109,6 @@
            :code         (:code iteration)
            :result       (:result iteration)
            :error        (:error iteration)
-           :stdout       (:stdout iteration)
            :duration-ms  (:execution-time-ms iteration)})
     iterations))
 
