@@ -310,27 +310,29 @@
    value/shape/stdout/stderr/error. Falls back to whole-block render when the
    parser rejected the source."
   [cache-key {:keys [position blocks]}]
-  (let [block (first blocks)
-        forms (:forms block)
-        header [(str ";; iter " position)]
-        body  (if (seq forms)
-                (mapcat (fn [idx form-entry]
-                          (per-form-block-lines cache-key position idx form-entry))
-                  (range) forms)
+  (let [block    (first blocks)
+        forms    (:forms block)
+        repaired (:repaired-source block)
+        header   (cond-> [(str ";; iter " position)]
+                   repaired (conj ";; ⚠ engine auto-repaired delimiters with parinferish (see iteration code below; verify the fix matches your intent)"))
+        body     (if (seq forms)
+                   (mapcat (fn [idx form-entry]
+                             (per-form-block-lines cache-key position idx form-entry))
+                     (range) forms)
                 ;; Fallback: model emitted code the parser rejected. Show whole
                 ;; block source + iteration-level outcome.
-                (let [code   (or (:code block) "")
-                      result (when (and (not (:error block))
-                                     (not= :vis/no-result (:result block)))
-                               (:result block))
-                      shape  (when result
-                               (value-shape cache-key
-                                 (str "__iter" position "__") result))]
-                  (concat
-                    [code]
-                    (form-result-lines result shape)
-                    (side-effect-lines block)
-                    (error-lines (:error block)))))]
+                   (let [code   (or (:code block) "")
+                         result (when (and (not (:error block))
+                                        (not= :vis/no-result (:result block)))
+                                  (:result block))
+                         shape  (when result
+                                  (value-shape cache-key
+                                    (str "__iter" position "__") result))]
+                     (concat
+                       [code]
+                       (form-result-lines result shape)
+                       (side-effect-lines block)
+                       (error-lines (:error block)))))]
     (str/join "\n" (concat header body))))
 
 (defn render-iteration-trailer
