@@ -413,17 +413,7 @@
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
-(defn- parse-top-level-forms
-  "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
-   for per-form eval + capture.
-
-   Uses edamame's incremental reader so a parse failure on form N still
-   yields the parsed prefix [form-1 … form-(N-1)]. The caller evaluates the
-   prefix in order and reports the parse error as form N's outcome — model
-   loses only the broken form, not the entire iteration.
-
-   Returns {:forms <vec> :parse-error <map|nil>}. `:parse-error` carries
-   `:message` / `:row` / `:col` from the underlying edamame ex-info."
+(defn- parse-forms-streaming
   [code]
   (let [code (or code "")
         rdr  (edamame/reader code)
@@ -448,6 +438,57 @@
           :else
           (do (vswap! out conj {:source (pr-str next-form) :form next-form})
             (recur)))))))
+
+(defn- parinferish-repair-safe
+  "Best-effort delimiter repair via parinferish. Returns nil when the repair
+   library or its dependencies are missing on the classpath (defensive),
+   when the repair did not change anything, or when the repaired source
+   still does not parse cleanly."
+  [code]
+  (when (and (string? code) (not (str/blank? code)))
+    (try
+      (let [par-flatten (requiring-resolve 'parinferish.core/flatten)
+            par-parse   (requiring-resolve 'parinferish.core/parse)]
+        (when (and par-flatten par-parse)
+          (let [repaired (par-flatten (par-parse code {:mode :indent}))]
+            (when (and (string? repaired)
+                    (not= repaired code)
+                    (try
+                      ;; Confirm the repaired source actually parses; we don't
+                      ;; want to silently feed garbage into SCI.
+                      (edamame/parse-string-all repaired {:all true})
+                      true
+                      (catch Throwable _ false)))
+              repaired))))
+      (catch Throwable _ nil))))
+
+(defn- parse-top-level-forms
+  "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
+   for per-form eval + capture.
+
+   Uses edamame's incremental reader so a parse failure on form N still
+   yields the parsed prefix [form-1 … form-(N-1)]. The caller evaluates the
+   prefix in order and reports the parse error as form N's outcome — model
+   loses only the broken form, not the entire iteration.
+
+   When a parse error is present, the engine tries parinferish to repair
+   delimiter mistakes. If repair succeeds, the repaired source is parsed
+   again and the result includes `:repaired-source` so the trailer can show
+   the model what was changed.
+
+   Returns {:forms <vec> :parse-error <map|nil> :repaired-source <str|nil>}."
+  [code]
+  (let [first-pass (parse-forms-streaming code)]
+    (if-not (:parse-error first-pass)
+      first-pass
+      (if-let [repaired (parinferish-repair-safe code)]
+        (let [second-pass (parse-forms-streaming repaired)]
+          (if (:parse-error second-pass)
+            ;; Repair didn't actually fix it; surface the original prefix +
+            ;; original error so the model sees its own bad code.
+            first-pass
+            (assoc second-pass :repaired-source repaired)))
+        first-pass))))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [stdout-writer (java.io.StringWriter.)
@@ -485,7 +526,8 @@
                                   event* (cond-> event
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
                               (when tool-event-fn (tool-event-fn event*))))
-        {parsed-forms :forms parse-error :parse-error} (parse-top-level-forms code)
+        {parsed-forms :forms parse-error :parse-error repaired-source :repaired-source}
+        (parse-top-level-forms code)
         eval-one-form
         (fn [form source]
           (let [pre-out (.length (.getBuffer stdout-writer))
@@ -511,10 +553,14 @@
         eval-per-form
         (fn []
           ;; Walk parsed forms in order, capture per-form outcome; stop at
-          ;; first eval error. If the iteration had a STREAMING PARSE ERROR
-          ;; (model wrote N good forms then a paren mistake on form N+1),
-          ;; append a synthetic per-form entry for the broken form so the
-          ;; trailer shows exactly which form failed and where.
+          ;; first eval error. Two failure shapes propagate to the trailer:
+          ;;   1) eval error mid-iteration → per-form :error on that form.
+          ;;   2) STREAMING PARSE ERROR (model wrote N good forms then a
+          ;;      paren mistake on form N+1) → synthetic trailing entry
+          ;;      showing exactly which form failed and where.
+          ;; If parinferish was able to repair the source, parsed-forms
+          ;; reflect the repaired version and we still mark :repaired-source
+          ;; on the outcome so the trailer can disclose the auto-fix.
           (loop [todo parsed-forms
                  acc  []
                  last-result nil]
@@ -523,12 +569,15 @@
                 {:result nil
                  :forms  (conj acc {:source "<unparseable trailing form>"
                                     :error parse-error})
-                 :error  parse-error}
-                {:result last-result :forms acc :error nil})
+                 :error  parse-error
+                 :repaired-source repaired-source}
+                {:result last-result :forms acc :error nil
+                 :repaired-source repaired-source})
               (let [{:keys [source form]} (first todo)
                     entry (eval-one-form form source)]
                 (if-let [err (:error entry)]
-                  {:result nil :forms (conj acc entry) :error err}
+                  {:result nil :forms (conj acc entry) :error err
+                   :repaired-source repaired-source}
                   (recur (rest todo) (conj acc entry) (:result entry)))))))
         exec-future (cancellation/worker-future "vis-sci-eval"
                       (fn []
@@ -1801,7 +1850,13 @@
                                     ;; just the last one. Empty when the parser
                                     ;; rejected the source (fell back to whole-
                                     ;; block eval).
-                                    :forms (vec (:forms result))}
+                                    :forms (vec (:forms result))
+                                    ;; If the engine auto-repaired delimiter
+                                    ;; mistakes (parinferish) before eval, the
+                                    ;; repaired source flows here so the trailer
+                                    ;; can disclose the diff and the model can
+                                    ;; correct itself if the repair was wrong.
+                                    :repaired-source (:repaired-source result)}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
                              ;; (done …) / (set-conversation-title! …)
