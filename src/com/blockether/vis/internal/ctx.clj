@@ -25,7 +25,6 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [edamame.core :as edamame]
    [com.blockether.vis.internal.workspace :as workspace]
    [malli.provider :as mp])
   (:import
@@ -249,16 +248,6 @@
 ;; own assistant replays, plus the fresh `ctx` snapshot at the end.
 ;; =============================================================================
 
-(defn- parse-forms
-  [code]
-  (when (string? code)
-    (try (vec (edamame/parse-string-all code {:all true}))
-      (catch Throwable _ []))))
-
-(defn- form->source
-  [form]
-  (try (pr-str form) (catch Throwable _ "")))
-
 (defn- side-effect-lines
   [{:keys [stdout stderr]}]
   (cond-> []
@@ -278,40 +267,71 @@
         (some? data)
         (conj (str ";; ! data " (pr-str data)))))))
 
-(defn- form-result-line
-  [shape]
-  (when (some? shape)
-    (str ";; => shape " (pr-str shape))))
+(def ^:private TRAILER_VALUE_MAX_CHARS
+  "Per-form bounded value preview in the REPL trailer. The shape is always
+   shown; the value is shown up to this cap, then truncated with a marker that
+   points the model at the binding for the full value. Generous on purpose:
+   model needs to read its own observations."
+  20000)
+
+(defn- bounded-pr-str
+  [v]
+  (let [s (try (pr-str v) (catch Throwable _ ""))
+        n (count s)]
+    (if (<= n TRAILER_VALUE_MAX_CHARS)
+      s
+      (str (subs s 0 TRAILER_VALUE_MAX_CHARS)
+        "…<+" (- n TRAILER_VALUE_MAX_CHARS) " chars—re-deref the binding for the full value>"))))
+
+(defn- form-result-lines
+  "Render `;; => <pr-str of value>` plus a `;; => shape <malli>` line so the
+   model sees both the data it just produced and a structural view of it."
+  [value shape]
+  (cond-> []
+    (some? shape) (conj (str ";; => shape " (pr-str shape)))
+    (some? value) (conj (str ";; => " (bounded-pr-str value)))))
+
+(defn- per-form-block-lines
+  "Render lines for a single per-form entry (:source :result :stdout :stderr
+   :error). Each form gets its own value preview, shape, stdout, stderr, and
+   error so the model never loses sight of what each form produced."
+  [cache-key position idx {:keys [source result stdout stderr error]}]
+  (let [shape (when (and (some? result) (nil? error))
+                (value-shape cache-key (str "__iter" position "__form" idx) result))]
+    (concat
+      [source]
+      (form-result-lines (when (nil? error) result) shape)
+      (side-effect-lines {:stdout stdout :stderr stderr})
+      (error-lines error))))
 
 (defn- iteration->repl-text
-  "Render one prior iteration as a REPL transcript block."
+  "Render one prior iteration as a REPL transcript block. When the engine
+   captured per-form outcomes (`:forms`), each form is rendered with its own
+   value/shape/stdout/stderr/error. Falls back to whole-block render when the
+   parser rejected the source."
   [cache-key {:keys [position blocks]}]
-  (let [block        (first blocks)
-        code         (or (:code block) "")
-        forms        (parse-forms code)
-        result       (when (and (not (:error block))
-                             (not= :vis/no-result (:result block)))
-                       (:result block))
-        last-shape   (when result
-                       (value-shape cache-key (str "__iter" position "__") result))
-        form-blocks  (if (seq forms)
-                       ;; Only the last form's value is known; intermediate
-                       ;; form values would require per-form eval capture.
-                       (let [head (butlast forms)
-                             tail (last forms)]
-                         (concat
-                           (map (fn [f] [(form->source f) nil]) head)
-                           [[(form->source tail) last-shape]]))
-                       [[code last-shape]])
-        lines        (concat
-                       [(str ";; iter " position)]
-                       (mapcat (fn [[src shape]]
-                                 (cond-> [src]
-                                   shape (conj (form-result-line shape))))
-                         form-blocks)
-                       (side-effect-lines block)
-                       (error-lines (:error block)))]
-    (str/join "\n" lines)))
+  (let [block (first blocks)
+        forms (:forms block)
+        header [(str ";; iter " position)]
+        body  (if (seq forms)
+                (mapcat (fn [idx form-entry]
+                          (per-form-block-lines cache-key position idx form-entry))
+                  (range) forms)
+                ;; Fallback: model emitted code the parser rejected. Show whole
+                ;; block source + iteration-level outcome.
+                (let [code   (or (:code block) "")
+                      result (when (and (not (:error block))
+                                     (not= :vis/no-result (:result block)))
+                               (:result block))
+                      shape  (when result
+                               (value-shape cache-key
+                                 (str "__iter" position "__") result))]
+                  (concat
+                    [code]
+                    (form-result-lines result shape)
+                    (side-effect-lines block)
+                    (error-lines (:error block)))))]
+    (str/join "\n" (concat header body))))
 
 (defn render-iteration-trailer
   "Build the REPL-style user-message body for a model call.
