@@ -18,6 +18,21 @@
       #(lp/ask-code! opts))
     @seen))
 
+(def ^:private provider-error-explanation
+  (deref #'lp/provider-error-explanation))
+
+(defdescribe provider-error-explanation-test
+  (it "tells users to re-authenticate or update keys on provider auth failures"
+    (let [text (provider-error-explanation
+                 {:message "API authentication failed. Check your API key. (Original: Exceptional status code: 401)"
+                  :data {:status 401
+                         :body "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid authentication credentials\"}}"}})]
+      (expect (str/includes? text "provider rejected credentials"))
+      (expect (str/includes? text "Provider message: Invalid authentication credentials"))
+      (expect (str/includes? text "NEXT STEP: re-authenticate this provider or update its API key"))
+      (expect (str/includes? text "Ctrl+K -> Model / Providers"))
+      (expect (str/includes? text "vis providers auth")))))
+
 (defdescribe ask-code-idle-timeout-test
   (it "uses a five-minute ask-code idle timeout by default"
     (expect (= (* 5 60 1000) lp/ASK_CODE_IDLE_TIMEOUT_MS))

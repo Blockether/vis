@@ -107,8 +107,7 @@
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
                     editing/editing-symbols)]
         (expect (some? entry))
-        (expect (fn? (:ext.symbol/journal-render-fn entry)))
-        (expect (fn? (:ext.symbol/channel-render-fn entry)))))))
+        (expect (fn? (:ext.symbol/render-fn entry)))))))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
   ;; The classification table + presentation map live in
@@ -292,27 +291,6 @@
    :truncated-by truncated-by
    :lines (vec lines)})
 
-(defdescribe new-renderer-contract-test
-  (it "v/cat journal renderer emits header + peek block keyed on plain-map keys"
-    (let [journal-render-cat (private-fn "journal-render-cat")
-          r    (cat-result "src/demo.clj" 1
-                 ["alpha" "beta" "gamma" "delta" "epsilon" "zeta"]
-                 nil true :eof)
-          out  (journal-render-cat r)]
-      (expect (string/starts-with? out "v/cat \"src/demo.clj\""))
-      (expect (string/includes? out "6 line(s) from line 1"))
-      (expect (string/includes? out "(eof)"))
-      ;; Peek bakes the absolute line numbers into the journal.
-      (expect (string/includes? out "1: alpha"))
-      (expect (string/includes? out "6: zeta"))))
-
-  (it "v/cat journal renderer reports paging hints when window is partial"
-    (let [journal-render-cat (private-fn "journal-render-cat")
-          r    (cat-result "big.log" 1 ["a" "b" "c" "d"] 5 false :limit)
-          out  (journal-render-cat r)]
-      (expect (string/includes? out "(next-offset 5)"))
-      (expect (not (string/includes? out "(eof)"))))))
-
 (defdescribe channel-renderer-contract-test
   (it "v/cat channel renderer returns canonical [:ir ...] with a :code block, line-numbered from :offset"
     (let [channel-render-cat (private-fn "channel-render-cat")
@@ -347,7 +325,7 @@
 
 (defdescribe error-formatter-contract-test
   (it "engine-default channel error formatter renders failures as canonical [:ir ...]"
-    (let [out (extension/default-channel-error-ir
+    (let [out (extension/default-error-ir
                 {:success? false
                  :symbol :v/cat
                  :error {:message "src/missing.clj (No such file)"

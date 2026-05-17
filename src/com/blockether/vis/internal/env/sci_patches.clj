@@ -176,7 +176,7 @@
    (comment-only / `#_`-discard-only blocks). Iterations that produce
    no evidence cannot carry forward, so the engine rejects them at the
    model boundary instead of round-tripping an empty `:code` through
-   persistence and the next iteration's journal.
+   persistence and the next iteration's trailer.
 
    Multi-form blocks are accepted: SCI's `eval-string+` parses and
    evaluates each top-level form in sequence; the eval-def patch

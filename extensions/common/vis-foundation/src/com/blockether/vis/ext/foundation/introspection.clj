@@ -794,7 +794,7 @@
                 :found? (:found? result)}}))
 
 (defn- engine-symbol-documentation-tool
-  "Return journal-visible documentation for a SCI symbol such as `v/cat`, `v/source`, or `map`."
+  "Return documentation for a SCI symbol such as `v/cat`, `v/source`, or `map`."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
@@ -802,7 +802,7 @@
       (select-keys info [:symbol :resolved-symbol :found? :doc :arglists :macro? :message]))))
 
 (defn- engine-symbol-source-code-tool
-  "Return journal-visible source code for a SCI symbol such as `v/cat` or `v/source`."
+  "Return source code for a SCI symbol such as `v/cat` or `v/source`."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
@@ -810,7 +810,7 @@
       (select-keys info [:symbol :resolved-symbol :found? :source :source-length :message]))))
 
 (defn- engine-symbol-metadata-tool
-  "Return journal-visible metadata for a SCI symbol without dumping bulky source text."
+  "Return metadata for a SCI symbol without dumping bulky source text."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
@@ -855,7 +855,7 @@
       vec)))
 
 (defn- engine-symbol-apropos-tool
-  "Return journal-visible matching SCI symbols by symbol name or doc text."
+  "Return matching SCI symbols by symbol name or doc text."
   [env query]
   (let [matches (apropos-matches env query)]
     (extension/success
@@ -881,10 +881,6 @@
 (defn- ir-code-block
   [lang body]
   [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-
-(defn- render-ir-plain
-  [ir]
-  (vis/render ir :plain))
 
 (defn- arglists-text
   [arglists]
@@ -975,15 +971,10 @@
        (ir-code "v/conversation-report")
        (ir-text " for the full dump."))]))
 
-(defn- conversation-state-journal [result] (render-ir-plain (conversation-state-ir result)))
 (defn- conversation-state-channel [result] (conversation-state-ir result))
-(defn- symbol-doc-journal [result] (render-ir-plain (symbol-doc-ir result)))
 (defn- symbol-doc-channel [result] (symbol-doc-ir result))
-(defn- symbol-source-journal [result] (render-ir-plain (symbol-source-ir result)))
 (defn- symbol-source-channel [result] (symbol-source-ir result))
-(defn- symbol-meta-journal [result] (render-ir-plain (symbol-meta-ir result)))
 (defn- symbol-meta-channel [result] (symbol-meta-ir result))
-(defn- apropos-journal [result] (render-ir-plain (apropos-ir result)))
 (defn- apropos-channel [result] (apropos-ir result))
 
 (defn- inject-environment
@@ -1003,42 +994,36 @@
 (def conversation-state-symbol
   (vis/symbol #'conversation-state
     {:before-fn inject-environment
-     :journal-render-fn conversation-state-journal
-     :channel-render-fn conversation-state-channel}))
+     :render-fn conversation-state-channel}))
 
 (def conversation-report-symbol
   (vis/symbol #'conversation-report
     {:before-fn inject-environment
-     :journal-render-fn vis/render-string-journal
-     :channel-render-fn vis/render-string-channel}))
+     :render-fn vis/render-string}))
 
 (def engine-symbol-documentation-symbol
   (vis/symbol #'engine-symbol-documentation-tool
     {:symbol 'engine-symbol-documentation
      :before-fn inject-environment
-     :journal-render-fn symbol-doc-journal
-     :channel-render-fn symbol-doc-channel}))
+     :render-fn symbol-doc-channel}))
 
 (def engine-symbol-source-code-symbol
   (vis/symbol #'engine-symbol-source-code-tool
     {:symbol 'engine-symbol-source-code
      :before-fn inject-environment
-     :journal-render-fn symbol-source-journal
-     :channel-render-fn symbol-source-channel}))
+     :render-fn symbol-source-channel}))
 
 (def engine-symbol-metadata-symbol
   (vis/symbol #'engine-symbol-metadata-tool
     {:symbol 'engine-symbol-metadata
      :before-fn inject-environment
-     :journal-render-fn symbol-meta-journal
-     :channel-render-fn symbol-meta-channel}))
+     :render-fn symbol-meta-channel}))
 
 (def engine-symbol-apropos-symbol
   (vis/symbol #'engine-symbol-apropos-tool
     {:symbol 'engine-symbol-apropos
      :before-fn inject-environment
-     :journal-render-fn apropos-journal
-     :channel-render-fn apropos-channel}))
+     :render-fn apropos-channel}))
 
 (def all-symbols
   [conversation-state-symbol
@@ -1049,7 +1034,7 @@
    engine-symbol-apropos-symbol])
 
 (def introspection-prompt
-  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough. Use v/engine-symbol-documentation, v/engine-symbol-source-code, v/engine-symbol-metadata, and v/engine-symbol-apropos for journal-visible SCI symbol docs/source/metadata/search.")
+  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough. Use v/engine-symbol-documentation, v/engine-symbol-source-code, v/engine-symbol-metadata, and v/engine-symbol-apropos for SCI symbol docs/source/metadata/search.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,
