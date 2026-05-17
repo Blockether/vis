@@ -366,6 +366,37 @@
     (boolean (and (seq lines)
                (every? markdown-fence-line? lines)))))
 
+(def ^:private direct-answer-string-prefix-re
+  #"(?s)^\s*\(\s*done\s+\[:ir(?:\s+\{[^\n]*?\})?\s+\[:p(?:\s+\{[^\n]*?\})?\s+\"")
+
+(def ^:private closing-delimiters-re #"^[\s\]\)\}]*$")
+
+(defn- parseable-source? [src]
+  (try
+    (edamame/parse-string-all (str src) edamame-opts)
+    true
+    (catch Throwable _ false)))
+
+(defn- repair-malformed-direct-answer
+  "Best-effort rescue for answer-only IR where model forgot to escape a
+   quote inside the paragraph string, e.g. `(done [:ir [:p \"... 9k\"? ...\"]])`.
+   Only rewrites direct `(done [:ir [:p \"TEXT\"]])`-style blocks whose
+   suffix after the final quote is just closing delimiters; never repairs
+   tool/mutation code."
+  [src]
+  (let [s (str src)]
+    (when (and (not (parseable-source? s))
+            (str/includes? s "(done")
+            (str/includes? s ":ir")
+            (str/includes? s ":p"))
+      (when-let [prefix (re-find direct-answer-string-prefix-re s)]
+        (let [start (count prefix)
+              end   (.lastIndexOf s "\"")]
+          (when (and (< start end)
+                  (re-matches closing-delimiters-re (subs s (inc end))))
+            (let [payload (subs s start end)]
+              (str "(done [:ir {} [:p {} " (pr-str payload) "]])"))))))))
+
 (defn- comment-only-block? [^String expr]
   (try
     (zero? (count (edamame/parse-string-all (str/trim expr) edamame-opts)))
@@ -870,7 +901,10 @@
         ;;                       conversation-title! ...)`); channels that
         ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
-                                             (let [src (:source b)]
+                                             (let [source-src (:source b)
+                                                   repaired-src (repair-malformed-direct-answer source-src)
+                                                   src (or repaired-src source-src)
+                                                   repaired? (some? repaired-src)]
                                                (if-let [err (raw-markdown-fence-leak-error src)]
                                                  {:expr "(vis/preflight-error :raw-markdown-fence-leak)"
                                                   :vis/preflight-error err
@@ -879,10 +913,11 @@
                                                        structurally-silent?
                                                        (and (seq segments)
                                                          (not-any? #(= :code (:kind %)) segments))]
-                                                   {:expr       src
-                                                    :block-lang (:lang b)
-                                                    :render-segments segments
-                                                    :vis/structurally-silent? structurally-silent?}))))
+                                                   (cond-> {:expr       src
+                                                            :block-lang (:lang b)
+                                                            :render-segments segments
+                                                            :vis/structurally-silent? structurally-silent?}
+                                                     repaired? (assoc :repaired? true))))))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -910,10 +945,11 @@
                                         :vis/preflight-error empty-code-error}]
 
                                       multi-fence-merged?
-                                      [{:expr normalized-code
-                                        :block-lang "clojure"
-                                        :render-segments (render/parse-block-display normalized-code)
-                                        :multi-fence-merged? true}]
+                                      [(cond-> {:expr normalized-code
+                                                :block-lang "clojure"
+                                                :render-segments (render/parse-block-display normalized-code)
+                                                :multi-fence-merged? true}
+                                         (some :repaired? raw-entries) (assoc :repaired? true))]
 
                                       :else
                                       raw-entries)
@@ -2446,10 +2482,9 @@
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
                     current-ctx-map (vctx/build
                                       {:environment environment
-                                       :conversation
-                                       (assoc conversation-base
-                                         :iteration {:id (some-> (:current-iteration-id-atom environment) deref)
-                                                     :position (inc (long iteration))})})
+                                       :conversation conversation-base
+                                       :iteration   {:id       (some-> (:current-iteration-id-atom environment) deref)
+                                                     :position (inc (long iteration))}})
                     _ (env/bind-and-bump! environment 'ctx current-ctx-map)
                     iteration-context (vctx/render-iteration-trailer
                                         {:environment   environment

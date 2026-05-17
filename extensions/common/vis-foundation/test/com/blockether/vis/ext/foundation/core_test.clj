@@ -39,7 +39,7 @@
         ;; phrasing is now organised under READ / EDIT / RLM TACTICS.
         (expect (str/includes? prompt "v/rg"))
         (expect (str/includes? prompt "v/ls"))
-        (expect (str/includes? prompt "RLM TACTICS"))
+        (expect (str/includes? prompt "RULES"))
         (expect (not (str/includes? prompt "clojure.repl/doc")))
         (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
