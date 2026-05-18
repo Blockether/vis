@@ -12,19 +12,13 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- tool-result
-  [command stdout]
+  [command]
   {:success? true
    :result {:exit 0
             :timed-out? false
             :cwd "."
             :command command
-            :duration-ms 5
-            :stderr-chars 0
-            :stderr ""
-            :stderr-truncated? false
-            :stdout-chars (count stdout)
-            :stdout-truncated? false
-            :stdout stdout}
+            :duration-ms 5}
    :info {:op :v/tool
           :tool {:symbol 'tool :call "v/tool" :alias 'v}
           :command command
@@ -275,7 +269,7 @@
                                                        :user-request "run a tool"
                                                        :status :running})
               code "(def out (v/tool \"echo hi\"))"
-              value (tool-result "echo hi" "hi\n")]
+              value (tool-result "echo hi")]
           (vis/db-store-iteration! s {:conversation-turn-id turn
                                       :code code
                                       :result {:vis/ref :expr}
@@ -296,7 +290,6 @@
             (expect (= code (:code call)))
             (expect (= "echo hi" (:command call)))
             (expect (= 0 (get-in call [:result-summary :exit])))
-            (expect (= "hi\n" (get-in call [:result-summary :stdout-preview])))
             (expect (= (:parent-ref call) (:ref code-row)))
             (expect (= call tool-row))))
         (finally (vis/db-dispose-connection! s)))))
@@ -309,7 +302,7 @@
                                                         :user-request "run a tool"
                                                         :status :running})
               code  "(def out (v/tool \"echo hi\"))"
-              value (tool-result "echo hi" "hi\n")]
+              value (tool-result "echo hi")]
           (vis/db-store-iteration! s {:conversation-turn-id turn
                                       :code code
                                       :result value

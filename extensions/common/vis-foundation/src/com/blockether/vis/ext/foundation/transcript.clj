@@ -262,13 +262,7 @@
       (contains? result :exit)            (assoc :exit (:exit result))
       (contains? result :timed-out?)      (assoc :timed-out? (:timed-out? result))
       (contains? result :command)         (assoc :command (:command result))
-      (contains? result :duration-ms)     (assoc :duration-ms (:duration-ms result))
-      (contains? result :stdout-chars)    (assoc :stdout-chars (:stdout-chars result))
-      (contains? result :stderr-chars)    (assoc :stderr-chars (:stderr-chars result))
-      (contains? result :stdout)          (assoc :stdout-preview (preview-string (:stdout result) 4096))
-      (contains? result :stderr)          (assoc :stderr-preview (preview-string (:stderr result) 4096))
-      (contains? result :stdout-truncated?) (assoc :stdout-truncated? (:stdout-truncated? result))
-      (contains? result :stderr-truncated?) (assoc :stderr-truncated? (:stderr-truncated? result)))
+      (contains? result :duration-ms)     (assoc :duration-ms (:duration-ms result)))
 
     :else
     {:type (cond
