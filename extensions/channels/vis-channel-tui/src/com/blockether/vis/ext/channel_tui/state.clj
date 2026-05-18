@@ -528,6 +528,13 @@
 
 (def ^:private ^:const max-workspace-tabs 8)
 
+(def ^:const untitled-conversation-label
+  "Default label for any workspace tab whose conversation has no title
+   yet. Each tab carries its own conversation, so every tab starts as
+   `Untitled conversation` and is later renamed by `:set-title` when
+   the title becomes available."
+  "Untitled conversation")
+
 (defn- workspace-tab-number
   [tab]
   (when-let [[_ n] (some->> tab :id name (re-matches #"tab-(\d+)"))]
@@ -543,7 +550,7 @@
    :label (let [title (:title db)]
             (if (and (string? title) (not (str/blank? title)))
               title
-              "Main"))})
+              untitled-conversation-label))})
 
 (defn- workspace-tabs-or-base
   [db]
@@ -557,7 +564,7 @@
   (let [title (:title db)]
     (if (and (string? title) (not (str/blank? title)))
       title
-      fallback)))
+      (or fallback untitled-conversation-label))))
 
 (defn- ensure-workspace-tabs
   [db]
@@ -752,7 +759,7 @@
           root      (or (:workspace/root workspace) (:workspace/root opts))
           label     (or (:label opts)
                       (some-> workspace :main :branch)
-                      (str "Tab " n))
+                      untitled-conversation-label)
           tab       (cond-> {:id id :label label :active? true}
                       workspace (assoc :workspace workspace)
                       root      (assoc :workspace/root root))]
@@ -769,14 +776,15 @@
   (fn [db [_ idx]]
     (let [db   (-> db ensure-workspace-tabs sync-active-workspace)
           tabs (vec (:workspace-tabs db))
-          idx  (if (= :next idx)
+          idx  (if (#{:next :prev} idx)
                  (when (seq tabs)
                    (let [active-id (or (:active-workspace-id db)
                                      (:id (some #(when (:active? %) %) tabs))
                                      (:id (first tabs)))
                          current   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) tabs))
-                                     -1)]
-                     (mod (inc current) (count tabs))))
+                                     -1)
+                         delta     (if (= :prev idx) -1 1)]
+                     (mod (+ current delta) (count tabs))))
                  idx)]
       (if-let [tab (and (integer? idx) (nth tabs idx nil))]
         (activate-workspace db (:id tab))
