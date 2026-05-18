@@ -31,12 +31,16 @@
    `screen.clj` registers a watcher on screen mount that bumps the
    render version for any change, so a `(notify! ...)` from anywhere
    nudges this band to repaint immediately."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
-            [com.blockether.vis.ext.channel-tui.theme :as t]))
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            ;; Channel-agnostic header policy (slot ratios, tab
+            ;; padding/cap, glyphs, default labels). Lives in
+            ;; `internal/header.cljc` so a future web/Telegram channel
+            ;; reuses the same values without touching TUI code.
+            [com.blockether.vis.internal.header :as vh]))
 
 ;; -- Channel-contribution conventions consumed by this namespace --------------
 ;;
@@ -68,65 +72,23 @@
 ;;
 ;; See `com.blockether.vis.internal.extension/channel-contributions-for`.
 
-(def ^:private id-display-chars
-  "How many leading characters of the conversation UUID to show in
-   the right region. 8 matches the prefix length already exposed by
-   `vis conversations`, the `--conversation-id` short form, and the
-   `format-conversation-not-found` listing in screen.clj."
-  8)
-
-(def ^:const HEADER_ROWS
-  "Minimum rows reserved by the header band: top rule + content + bottom
-   rule. Use `header-rows` for a concrete app-db, because workspace tabs add
-   a tab row plus one bottom spacer when more than one tab exists, and
-   registered header-row contributors (see `contributors.clj`) add their own
-   rows below the title."
+(def ^:const header-rows-base
+  "Minimum rows reserved by the header band: top rule + content row +
+   bottom rule. `header-rows` adds the height contributed by registered
+   `:tui.slot/header-row` extensions on top of this base."
   3)
-
-(def ^:private placeholder-title
-  "Shown center when the conversation has no title yet (fresh run,
-   first turn not finished yet). Italicised so it reads as a hint."
-  "Untitled conversation")
-
-(def ^:private copy-icon
-  "Compact copy glyph used by the conversation-id affordance in the header."
-  "⧉")
-
-(def ^:private copy-affordance
-  "Compact header affordance painted left of the short conversation id."
-  copy-icon)
 
 (def ^:private status-action-separator
   "Gap between a live channel status (voice recording/transcribing) and
-   persistent right-side copy actions."
+   persistent right-side copy actions. TUI-specific because it sizes to
+   a fixed pair of terminal cells."
   "  ")
 
-(def ^:private tab-arrow-left "‹")
-(def ^:private tab-arrow-right "›")
-
-;; Tab sizing policy:
-;; - Each tab reserves `tab-padding` cells on each side as breathing room
-;;   so labels never crash into the cell border.
-;; - When a label exceeds the inner width it is truncated with
-;;   `tab-ellipsis` so overflow is visible (no silent cuts).
-;; - Visible tab count is clamped to [min-visible-tabs, max-visible-tabs]
-;;   regardless of available width: a wide screen stops growing past 8 so
-;;   tabs do not spread out to the horizon, and a narrow screen still
-;;   shows up to 5 (very narrow screens fall back to the natural fit).
-(def ^:private tab-padding 1)
-(def ^:private tab-ellipsis "…")
-(def ^:private tab-target-width 14)
-(def ^:private min-visible-tabs 5)
-(def ^:private max-visible-tabs 8)
-
 (defn- title-or-placeholder
-  "Conversation title from db, falling back to the shared placeholder
-   when the conversation has not been titled yet."
+  "Visible title for the active conversation. Delegates to the shared
+   helper so every channel reuses the same placeholder text."
   [db]
-  (let [t (:title db)]
-    (if (and (string? t) (not (str/blank? t)))
-      t
-      placeholder-title)))
+  (vh/title-or-placeholder (:title db)))
 
 (defn- workspace-tabs
   "Return tabs to render in the centre slot, ALWAYS non-empty.
@@ -275,14 +237,14 @@
    ;; height on db state only.
    (header-rows db 0))
   ([db cols]
-   (+ HEADER_ROWS
+   (+ header-rows-base
      (reduce + 0 (map #(long (:height (:spec %)))
                    (header-row-specs db cols))))))
 
-(defn- short-id [conversation]
-  (when-let [id (some-> conversation :id str)]
-    (when (seq id)
-      (subs id 0 (min id-display-chars (count id))))))
+(defn- short-id
+  "Project a conversation's UUID onto the shared short-form length."
+  [conversation]
+  (vh/short-id (:id conversation)))
 
 (defn- full-id [conversation]
   (some-> conversation :id str))
@@ -337,7 +299,7 @@
 
 (defn- id-copy-block-text [id-short]
   (if id-short
-    (str copy-affordance " " id-short)
+    (str vh/copy-icon " " id-short)
     ""))
 
 (def ^:dynamic *register-click-regions?*
@@ -361,28 +323,12 @@
   [tabs active-id]
   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) tabs)) 0))
 
-(defn- max-visible-count
-  "How many tabs to show inside `width`.
-
-   Policy:
-   - clamp the natural fit (`width / tab-target-width`) to
-     [min-visible-tabs, max-visible-tabs] so growth stops past 8,
-   - never show more than we have,
-   - if even `min-visible-tabs` cannot fit the natural width budget,
-     fall back to the natural fit so we degrade gracefully on tiny
-     screens instead of stuffing five unreadable tabs in 12 cols."
-  ^long [^long tabs-n ^long width]
-  (let [natural (max 1 (quot width tab-target-width))
-        clamped (clamp-long natural min-visible-tabs max-visible-tabs)
-        cap     (if (< natural min-visible-tabs) natural clamped)]
-    (min tabs-n (long cap))))
-
 (defn- visible-tab-window
   [tabs active-id width]
   (let [tabs (vec tabs)
         n (count tabs)
         width (max 0 (long width))
-        max-visible (max-visible-count n width)
+        max-visible (vh/max-visible-count n width)
         overflow? (> n max-visible)
         active-idx (active-tab-index tabs active-id)
         half (quot max-visible 2)
@@ -398,20 +344,20 @@
 
 (defn- truncate-with-ellipsis
   "Truncate `s` so its display width fits in `max-cols`. When truncation
-   actually happens, append `tab-ellipsis` so overflow is visible."
+   actually happens, append `vh/tab-ellipsis` so overflow is visible."
   ^String [s ^long max-cols]
   (let [s (or s "")]
     (cond
       (<= max-cols 0) ""
       (<= (p/display-width s) max-cols) s
-      (= max-cols 1) (p/truncate-cols tab-ellipsis 1)
-      :else (str (p/truncate-cols s (dec max-cols)) tab-ellipsis))))
+      (= max-cols 1) (p/truncate-cols vh/tab-ellipsis 1)
+      :else (str (p/truncate-cols s (dec max-cols)) vh/tab-ellipsis))))
 
 (defn- center-padded
-  "Place `s` centred inside a `cell-w`-wide cell with `tab-padding`
+  "Place `s` centred inside a `cell-w`-wide cell with `vh/tab-padding`
    reserved on each side; ellipsises overflow."
   ^String [s ^long cell-w]
-  (let [inner (max 0 (- cell-w (* 2 (long tab-padding))))
+  (let [inner (max 0 (- cell-w (* 2 (long vh/tab-padding))))
         text  (truncate-with-ellipsis s inner)
         text-w (p/display-width text)
         pad-total (max 0 (- cell-w text-w))
@@ -446,7 +392,7 @@
 
    Tabs are painted directly here (instead of going through
    `p/draw-tabs!`) because the header needs two things the generic
-   primitive does not offer: a fixed `tab-padding`-cell inner margin and
+   primitive does not offer: a fixed `vh/tab-padding`-cell inner margin and
    an ellipsis on overflow. Each cell still occupies its full width on
    screen — fill-rect paints the active/inactive background — but the
    label itself is centred within the inner area `(cell-w - 2*padding)`."
@@ -458,8 +404,8 @@
         tab-width (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
         n (count tabs)]
     (when overflow?
-      (draw-tab-arrow! g row left tab-arrow-left :prev)
-      (draw-tab-arrow! g row (+ left width (- arrow-w)) tab-arrow-right :next))
+      (draw-tab-arrow! g row left vh/tab-arrow-left :prev)
+      (draw-tab-arrow! g row (+ left width (- arrow-w)) vh/tab-arrow-right :next))
     (when (and (pos? n) (pos? tab-width))
       (let [base (quot tab-width n)
             extra (rem tab-width n)
@@ -484,11 +430,13 @@
                 :when (pos? (long width))]
           (p/clear-styles! g)
           (if active?
-            (do (p/set-colors! g t/header-hover-fg t/dialog-title-bg)
+            ;; Inverted slab: black bg + white fg (BOLD) makes the
+            ;; active tab pop; no BORDERED outline so the slab reads
+            ;; clean. Inactive tabs are dim italic on the header surface.
+            (do (p/set-colors! g t/header-active-tab-fg t/header-active-tab-bg)
               (p/enable! g p/BOLD))
-            (do (p/set-colors! g t/header-fg t/dialog-bg)
+            (do (p/set-colors! g t/border-fg t/dialog-bg)
               (p/enable! g p/ITALIC)))
-          (p/enable! g p/BORDERED)
           (p/fill-rect! g left row width 1)
           (p/put-str! g left row text)
           (p/clear-styles! g)
