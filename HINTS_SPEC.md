@@ -11,7 +11,7 @@ Replace XML-ish iteration hints with EDN data in `ctx`, and add a silent Clojure
   - `nudges.clj` -> `hints.clj`
   - `title-nudge` -> `title-hint`
   - `context-pressure-nudge` -> `context-pressure-hint`
-- Compatibility may keep old vars temporarily only if needed, but prompt/model-facing names are `hint`.
+- No compatibility aliases for touched foundation names; prompt/model-facing names are `hint`.
 
 ## Data model
 
@@ -72,10 +72,8 @@ No XML.
 `:turn.iteration/start` hook returns hint map:
 
 ```clojure
-{:id :vis.foundation/conversation-title
- :hint "..."          ;; legacy input accepted during migration
- :text "..."          ;; preferred
- :importance :high}
+{:text "..."          ;; required
+ :importance :high}   ;; optional
 ```
 
 Collector normalizes to:
@@ -162,7 +160,8 @@ Extension/Foundation prompt should say:
 
 ```text
 Read (:hints ctx) before acting. Hints are host requests for current iteration.
-When you satisfy a hint, call (satisfy-hint! <hint-id>) in the same Clojure form.
+Prefer direct top-level form requested by hint; do not wrap host bookkeeping in `(do ...)`.
+Call `(satisfy-hint! <hint-id>)` only when runtime state cannot prove satisfaction; emit it as its own top-level form.
 `satisfy-hint!` is silent bookkeeping; do not mention it in final answer.
 ```
 
@@ -174,7 +173,7 @@ Add/adjust tests:
 
 1. `ctx` renders hints as EDN under `:hints`.
 2. Trailer contains no `<iteration_hints>` or `<iteration_hint>`.
-3. Hook hit with `:hint` normalizes to `:text`.
+3. Hook hit uses `:text`; legacy `:hint` is invalid.
 4. Hook hit id preserved.
 5. `(satisfy-hint! id)` returns `:vis/silent`.
 6. Satisfied id filters hint out of next `ctx`.
@@ -185,13 +184,13 @@ Add/adjust tests:
 
 1. Add `:hints` support to `ctx/build`.
 2. Preserve `:id` in iteration hook collector.
-3. Normalize `:hint` -> `:text`.
+3. Require hook hit `:text`; reject legacy `:hint`.
 4. Route hints into `ctx`, not `render-iteration-hints`.
 5. Delete XML hint renderer + tests.
 6. Add `satisfy-hint!` primitive returning `:vis/silent`.
 7. Add satisfied-hints state + filter.
-8. Rename foundation nudge namespace/functions to hints.
-9. Update prompt text from nudges/XML to hints/EDN.
+8. Rename foundation hint namespace/functions to hints.
+9. Update prompt text from hints/XML to hints/EDN.
 
 ## Non-goals
 

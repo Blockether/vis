@@ -625,8 +625,8 @@
 ;;
 ;; Canonical phase keywords:
 ;;   :turn.iteration/start — every iteration, BEFORE the model call. Returns
-;;                           nil | {:text :importance?} or legacy {:hint ...};
-;;                           hint flows into `(:hints ctx)`.
+;;                           nil | {:text :importance?}; text flows into
+;;                           `(:hints ctx)`.
 ;;   :turn.answer/validate — when a `(done ...)` form produced a candidate
 ;;                           final answer. Return nil to accept or
 ;;                           {:reject true :message ... :hint ...} to reject.
@@ -661,8 +661,12 @@
 (s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]))
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 
-(s/def :ext.hook.return/hint non-blank-string?)
 (s/def :ext.hook.return/text non-blank-string?)
+(s/def :ext.hook.return/importance keyword?)
+(s/def ::iteration-start-hint
+  (s/keys :req-un [:ext.hook.return/text]
+    :opt-un [:ext.hook.return/importance]))
+(s/def :ext.hook.return/hint non-blank-string?)
 (s/def :ext.hook.return/reject true?)
 (s/def :ext.hook.return/message non-blank-string?)
 (s/def ::answer-validation-reject

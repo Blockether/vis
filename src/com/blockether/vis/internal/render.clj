@@ -1196,78 +1196,6 @@
           (string? (second form)))
     (second form)))
 
-(def ^:private filtered-call-names
-  "Host-bookkeeping call names that must never appear in displayed code,
-   regardless of nesting. Title flows through the sidebar via the SCI side
-   effect; the final answer flows from the persisted answer IR. Showing the
-   literal call in the trace is pure noise."
-  #{"set-conversation-title!" "satisfy-hint!" "done"})
-
-(defn- filtered-call?
-  "True when `x` is `(sym …)` whose unqualified name is in
-   `filtered-call-names`."
-  [x]
-  (and (seq? x)
-    (symbol? (first x))
-    (nil? (namespace (first x)))
-    (contains? filtered-call-names (name (first x)))))
-
-(defn- prune-filtered
-  "Walk a parsed form; remove filtered subcalls.
-
-   Rule:
-     - the form itself IS a filtered call          → `::vanished`
-     - `(quote …)` forms                            → returned untouched (contents
-                                                     are data, not calls)
-     - body of a top-level `do`                    → filtered children DROPPED
-                                                     (sequencing: a removed
-                                                     statement does not change
-                                                     the meaning of the rest)
-     - every other seq / vector / set / map slot   → filtered children REPLACED
-                                                     with `nil` so position-
-                                                     sensitive forms (`if`,
-                                                     `cond`, `case`, `let`
-                                                     binding pairs, map values,
-                                                     function-call args, …)
-                                                     keep their shape
-
-   `clojure+.walk/walk` is used for vector/set sub-trees so unchanged
-   collections stay `identical?`; map entries are walked manually because
-   `cwalk/walk` would hand the inner fn a `MapEntry` pair, not separate k/v.
-   Meta is preserved on every rebuilt collection.
-
-   The form itself returning `::vanished` only matters for nested calls;
-   top-level filtered forms are classified `:title` / `:answer-ref` by
-   `top-level-form-kind` before this function ever runs."
-  [form]
-  (cond
-    (filtered-call? form)                       ::vanished
-    (and (seq? form) (= 'quote (first form)))   form
-
-    (seq? form)
-    (let [head     (first form)
-          do-like? (and (symbol? head) (= 'do head))
-          children (map prune-filtered (rest form))
-          body     (if do-like?
-                     (remove #{::vanished} children)
-                     (map #(if (= ::vanished %) nil %) children))]
-      (with-meta (apply list head body) (meta form)))
-
-    (or (vector? form) (set? form))
-    (cwalk/walk #(let [p (prune-filtered %)] (if (= ::vanished p) nil p))
-      identity form)
-
-    (map? form)
-    (with-meta
-      (into (empty form)
-        (map (fn [[k v]]
-               [(let [p (prune-filtered k)] (if (= ::vanished p) nil p))
-                (let [p (prune-filtered v)] (if (= ::vanished p) nil p))]))
-        form)
-      (meta form))
-
-    :else form))
-
 (defn parse-block-display
   "Parse `block-source` into ordered render segments — each top-level form
    classified as `{:kind :code|:title|:answer-ref ...}`. Consecutive `:code`
@@ -1279,15 +1207,10 @@
      `{:kind :title       :value  \"X\"}`   `(set-conversation-title! \"X\")` form
      `{:kind :answer-ref}`                  `(done …)` form (hide; answer below)
 
-   Top-level forms drive classification; nested `(set-conversation-title! …)`
-   and `(done …)` calls inside compound bodies (`do`/`let`/`when`/
-   `if`/…) are PRUNED from the displayed source via `prune-filtered`:
-   dropped from `do`-body sequencing positions, replaced with `nil` in every
-   position-sensitive slot (so `(if cond X :else)` stays a 3-arg `if`, `let`
-   binding pairs stay paired, etc.). SCI still evaluates the ORIGINAL `:code`
-   field — only the displayed bytes change. A wrapper whose only payload was
-   filtered calls collapses to e.g. `(do)` and drops out entirely, so the
-   whole block reads as structurally silent.
+   Top-level forms drive classification. Legacy top-level `(do ...)`
+   wrappers are normalized before this helper by the loop preflight. Nested
+   host-bookkeeping calls are not a supported display contract; runtime
+   result sentinels (`:vis/silent`, `:vis/answer`) hide standalone host forms.
 
    Pure helper. Never throws — parser failure degrades to one `:code`
    segment with the full source. Empty / blank / nil input returns `[]`."
@@ -1309,11 +1232,9 @@
           :else
           (let [forms  (:forms parsed)
                 bounds (form-bounds-by-meta src forms)
-                ;; Per-form classified entries. `:code` forms with nested
-                ;; filtered subcalls get their source re-printed from the
-                ;; pruned form; forms that wrap ONLY filtered calls (e.g.
-                ;; `(do (set-conversation-title! "X"))`) drop out entirely
-                ;; so `block-structurally-silent?` flags the whole block.
+                ;; Per-form classified entries. Code forms preserve the
+                ;; model-authored slice; source-level host-call pruning is
+                ;; intentionally gone.
                 raw    (vec
                          (mapcat
                            (fn [[idx form]]
@@ -1325,32 +1246,7 @@
                                  :title      [{:kind :title
                                                :value (title-value-from-form form)}]
                                  :code
-                                 (let [pruned (prune-filtered form)]
-                                   (cond
-                                     ;; No nested filtered calls — preserve
-                                     ;; the model's authored slice (comments
-                                     ;; + whitespace) instead of re-printing.
-                                     (= pruned form)
-                                     [{:kind :code :source (str/trim slice)}]
-
-                                     ;; Entire form was a filtered host call.
-                                     (= ::vanished pruned)
-                                     []
-
-                                     ;; Wrapper held ONLY filtered calls.
-                                     ;; After pruning we're left with `(do)`
-                                     ;; / `(let [])` / etc. Drop the segment.
-                                     (and (seq? pruned) (empty? (rest pruned)))
-                                     []
-
-                                     ;; Mixed: re-print the pruned form. The
-                                     ;; TUI re-runs zprint on the source at
-                                     ;; display time, so a one-line pr-str
-                                     ;; here is fine — it gets pretty-printed.
-                                     :else
-                                     [{:kind :code
-                                       :source (binding [*print-meta* false]
-                                                 (pr-str pruned))}])))))
+                                 [{:kind :code :source (str/trim slice)}])))
                            (map-indexed vector forms)))
                 ;; Coalesce consecutive :code segments. The bounds-based slice
                 ;; for the LATER code form already includes the gap from the
@@ -1372,13 +1268,10 @@
             (coalesce raw)))))))
 
 (defn block-structurally-silent?
-  "True when the block source contains nothing the user should see — either
-   only structural forms (`:title` / `:answer-ref`) or a wrapper whose only
-   payload was filtered calls (e.g. `(do (set-conversation-title! \"X\"))`
-   collapses to no segments after `prune-filtered`). Engine stamps the
-   persisted block + stream chunk with `:vis/silent? true` based on this
-   so channels that don't parse segments still drop the entry from default
-   display.
+  "True when the block source contains nothing the user should see: only
+   structural forms (`:title` / `:answer-ref`). Engine stamps the persisted
+   block + stream chunk with `:vis/silent? true` based on this so channels
+   that don't parse segments still drop the entry from default display.
 
    Pure-code blocks and mixed blocks (any `:code` segment present) are
    NOT structurally silent: the prelude is genuinely useful work to show.

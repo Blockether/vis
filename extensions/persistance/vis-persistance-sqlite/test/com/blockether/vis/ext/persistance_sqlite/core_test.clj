@@ -611,14 +611,16 @@
       (expect (= "new" (:system-prompt conversation)))
       (expect (= "claude-4" (:model conversation)))))
 
-  (it "forked state inherits ancestor turns before branch turns"
+  (it "forked state inherits ancestor turns across multiple hops"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})]
       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "Turn 1" :status :done})
       (vis/db-fork-conversation! s cid {:title "Fork"})
       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "Turn 2" :status :done})
+      (vis/db-fork-conversation! s cid {:title "Fork 2"})
+      (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "Turn 3" :status :done})
       (let [turns (vis/db-list-conversation-turns s cid)]
-        (expect (= ["Turn 1" "Turn 2"] (mapv :user-request turns))))))
+        (expect (= ["Turn 1" "Turn 2" "Turn 3"] (mapv :user-request turns))))))
 
   (it "double fork increments version"
     (let [s   (h/store)
@@ -1005,6 +1007,25 @@
       (expect (= 3 (count h)))
       (expect (= [1 50 99] (mapv :value h)))
       (expect (= [0 1 2] (mapv :version h)))))
+
+  (it "forked state inherits ancestor var history and lets branch override"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "parent" :status :done})
+          _   (vis/db-store-iteration! s {:conversation-turn-id q1 :code "" :duration-ms 0
+                                          :vars [{:name "x" :value 1 :code "(def x 1)"}
+                                                 {:name "y" :value 2 :code "(def y 2)"}]})
+          _   (vis/db-fork-conversation! s cid {:title "branch"})
+          q2  (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "branch" :status :done})
+          _   (vis/db-store-iteration! s {:conversation-turn-id q2 :code "" :duration-ms 0
+                                          :vars [{:name "x" :value 9 :code "(def x 9)"}]})
+          reg (vis/db-latest-var-registry s cid)
+          hx  (vis/db-var-history s cid 'x)
+          restored-by-name (into {} (map (juxt :name :result)) (vis/db-restore-blocks s cid))]
+      (expect (= 9 (:value (get reg 'x))))
+      (expect (= 2 (:value (get reg 'y))))
+      (expect (= [1 9] (mapv :value hx)))
+      (expect (= {"x" 9 "y" 2} (select-keys restored-by-name ["x" "y"])))))
 
   (it "builds a compact latest symbol index with info"
     (let [s   (h/store)
