@@ -10,7 +10,7 @@ that percentage as a primary metric.
 |------|---------|
 | `subset.py` | Materializes a deterministic stratified subset of SWE-bench Lite into `instances.json`. Run once; commit the result. |
 | `instances.json` | **Frozen** task list for the inner loop. Never edit by hand. |
-| `vis_agent.py` | Bridge: for one instance, checks out the repo, calls `vis run`, returns the unified diff. |
+| `vis_agent.py` | Bridge: for one instance, checks out the repo, calls root `vis`, returns the unified diff. |
 | `run_subset.sh` | Driver: solves every instance, stores per-instance Vis artifacts, runs the SWE-bench evaluator, writes `results/<iter>/summary.json`. |
 | `metrics.py` | Reduces predictions + SWE-bench report → `summary.json` and `METRIC name=value` lines. |
 | `requirements.txt` | Minimal Python dependencies for the harness. |

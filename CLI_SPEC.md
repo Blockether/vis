@@ -16,7 +16,7 @@ Common actions must be one command:
 vis                         # open TUI
 vis "fix failing tests"      # open TUI, send prompt
 vis -p "explain this repo"   # print answer, exit
-vis run "fix bug"            # one-shot agent, writes files, exits
+vis "fix bug"                # one-shot agent, writes files, exits
 ```
 
 Current Vis exposes internal structure (`channels tui`, `conversations`, `run --persist`). Proposed CLI exposes user intent first.
@@ -26,7 +26,7 @@ Current Vis exposes internal structure (`channels tui`, `conversations`, `run --
 - `vis` starts interactive TUI.
 - `vis "prompt"` starts TUI and submits prompt.
 - `vis -p "prompt"` is answer-only print mode.
-- `vis run "prompt"` is autonomous one-shot mode.
+- `vis "prompt"` is autonomous one-shot mode.
 
 ### 1.3 Short flags mirror other agents
 
@@ -61,14 +61,12 @@ Common:
   vis                         Open TUI
   vis "prompt"                Open TUI and send prompt
   vis -p "prompt"             Print answer and exit
-  vis run "prompt"            Run agent and exit
   vis resume                  Resume session picker
   vis models                  Pick/list models
   vis login                   Authenticate provider
   vis doctor                  Diagnose setup
 
 Commands:
-  run          non-interactive agent work
   tui          terminal UI
   resume       resume session picker
   sessions     list/search/resume/fork/export sessions
@@ -137,9 +135,9 @@ Behavior:
 ### 3.4 Run mode
 
 ```bash
-vis run "fix lint and run tests"
-vis run --yes "update docs"
-vis run --dry "plan migration"
+vis "fix lint and run tests"
+vis --yes "update docs"
+vis --dry "plan migration"
 ```
 
 Behavior:
@@ -335,28 +333,28 @@ Keep current strong provider diagnostics. Improve naming around model list and l
 
 ---
 
-## 8. `run` command
+## 8. One-shot root command
 
 ### 8.1 Usage
 
 ```text
-vis run [options] [@files...] <prompt>
+vis [options] [@files...] <prompt>
 ```
 
 ### 8.2 Examples
 
 ```bash
-vis run "fix failing tests"
-vis run --yes "format code and update snapshots"
-vis run --dry "plan sqlite migration"
-vis run --readonly "review auth code"
-vis run --tools read,rg,bash "investigate slow startup"
-vis run --json "report status"
-vis run --trace "debug agent loop"
-vis run --code "write SQL migration"
+vis "fix failing tests"
+vis --yes "format code and update snapshots"
+vis --dry "plan sqlite migration"
+vis --readonly "review auth code"
+vis --tools read,rg,bash "investigate slow startup"
+vis --json "report status"
+vis --trace "debug agent loop"
+vis --code "write SQL migration"
 ```
 
-### 8.3 Run-specific flags
+### 8.3 One-shot flags
 
 ```text
 -y, --yes                 Auto-approve safe operations.
@@ -709,7 +707,6 @@ Rules:
 |---|---|---|
 | `vis` shows help | `vis` opens TUI | matches agent CLI expectation |
 | `vis help` | `vis help` | unchanged |
-| `vis run "prompt"` | `vis run "prompt"` | unchanged, but flags expanded |
 | no root prompt | `vis "prompt"` | removes ceremony |
 | no `-p` | `vis -p "prompt"` | expected print mode |
 | `vis channels tui` | `vis tui` / `vis` | hides channel plumbing |
@@ -732,7 +729,7 @@ Rules:
 - `vis` -> TUI by default.
 - `vis help` keeps help.
 - `vis "prompt"` -> TUI with prompt.
-- `vis -p "prompt"` -> `vis run --raw/print` equivalent.
+- `vis -p "prompt"` -> `vis --raw/print` equivalent.
 - Add `-c`, `-r`, `-s`, `-m` global aliases.
 
 ### Phase 2: session simplification
@@ -836,7 +833,7 @@ vis doctor
 Power user should still have:
 
 ```bash
-vis run --trace-json --session abc123 --tools read,rg,bash "investigate"
+vis --trace-json --session abc123 --tools read,rg,bash "investigate"
 vis memory show last-plan
 vis transcript abc123 --json
 vis extensions scaffold my-tool

@@ -59,7 +59,7 @@
 ;; signal to stdout at INFO and above. That is loud noise for a CLI:
 ;; every `register-cmd!` / `register-channel!` / `register-extension!`
 ;; that fires at namespace load (this very file does so at the bottom)
-;; would dump a multi-line log entry before the user's `vis run ...`
+;; would dump a multi-line log entry before the user's `vis ...`
 ;; output ever appears. The CLI's `configure-logging!` hook in
 ;; `internal.main` removes the handler too, but it runs AFTER every
 ;; internal namespace has already loaded and emitted -- by then the

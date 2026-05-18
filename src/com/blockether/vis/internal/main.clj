@@ -17,7 +17,6 @@
                         the resolved command's `:cmd/run-fn`.
 
    Built-in commands registered here:
-     vis run                - one-shot agent turn (CLI agent helper)
      vis providers          - provider inspection, auth, and limits
      vis conversations      - list persisted conversations
      vis extensions list    - list registered extensions
@@ -328,7 +327,7 @@
     {:error (str "Unknown command: " cmd-name "\n\n" (extension-help))}))
 
 ;; =============================================================================
-;; Agent helper (one-shot `vis run`)
+;; Agent helper (root one-shot run)
 ;; =============================================================================
 
 ;;; ── Agent Definition ─────────────────────────────────────────────────────
@@ -549,7 +548,7 @@
 (defn- json-key
   "Return a stable string key for CLI JSON output. Runtime trace maps can
    contain non-JSON map keys. Charred correctly rejects those, so normalize
-   keys before writing the public `vis run --json` envelope."
+   keys before writing the public `vis --json` envelope."
   [k]
   (cond
     (string? k)  k
@@ -932,7 +931,7 @@
 ;;      dozens of times with the same thinking text growing slightly each
 ;;      copy.
 ;;
-;;   2. Non-TTY consumers (pi harness, CI logs, `vis run | tee`) silently
+;;   2. Non-TTY consumers (pi harness, CI logs, `vis ... | tee`) silently
 ;;      got nothing. The printer's `else nil` swallowed everything.
 ;;
 ;; The NEW printer is strictly append-only. It dedups iteration headers per
@@ -1170,10 +1169,10 @@
     (stdout! "")
     (stdout! (str "── " label " " (apply str (repeat rule-len \─))))))
 
-;;; ── `vis run` - handler + bespoke arg parser ────────────────────────────
+;;; ── Root one-shot run - handler + bespoke arg parser ─────────────────────
 
 (defn- parse-run-args
-  "Parse `vis run` arguments into {:prompt str :json? bool ...}.
+  "Parse root one-shot run arguments into {:prompt str :json? bool ...}.
 
    Bespoke instead of `commandline.base/parse-args` because everything
    that ISN'T a known flag is glued together as the prompt body."
@@ -1206,7 +1205,7 @@
           (recur more opts (conj prompt-parts arg)))))))
 
 (defn- print-run-usage! []
-  (stdout! "Usage: vis run [FLAGS] \"prompt\"")
+  (stdout! "Usage: vis [FLAGS] \"prompt\"")
   (stdout! "")
   (stdout! "Flags:")
   (stdout! "  --json            Print result as a single JSON envelope.")
@@ -1219,7 +1218,7 @@
   (stdout! "  --raw             Render the answer as raw text (no markdown")
   (stdout! "                    bold/italics/heading bars). This is also the")
   (stdout! "                    auto-default when stdout is not a TTY (piped")
-  (stdout! "                    or redirected), so `vis run ... > out.txt`")
+  (stdout! "                    or redirected), so `vis ... > out.txt`")
   (stdout! "                    produces clean text without ANSI noise.")
   (stdout! "  --full-trace-stream")
   (stdout! "                    Stream a pretty terminal trace while the run is")
@@ -1239,12 +1238,12 @@
   (stdout! "                       no resume, no conversation row on disk.")
   (stdout! "")
   (stdout! "Examples:")
-  (stdout! "  vis run \"Throwaway one-shot probe\"")
-  (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis run --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
+  (stdout! "  vis \"Throwaway one-shot probe\"")
+  (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
+  (stdout! "  vis --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
 (defn- cli-run!
-  "`vis run` handler. `_parsed` is unused - we re-parse the residual
+  "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
@@ -1256,7 +1255,7 @@
       (print-run-usage!)
       (System/exit 0))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
-    ;; Otherwise `vis run ... > out.txt` leaves bold/italic ANSI markers in
+    ;; Otherwise `vis ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
     ;; explicit --raw stays raw. The trace-stream flags own their own
     ;; output path and are unaffected.
@@ -2013,34 +2012,15 @@
 
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
-;; `run`, `providers`, `conversations`, `doctor` are the binary's own
-;; commands. They live at the top of the command tree -- `vis run
-;; "..."`, NOT `vis extensions run "..."` -- so they bypass
+;; `providers`, `conversations`, `doctor` are the binary's own
+;; commands. They live at the top of the command tree -- `vis providers
+;; ...`, NOT `vis extensions providers ...` -- so they bypass
 ;; `:ext/cli` (the extensions-subcommand slot, see below).
 ;; Direct `register-cmd!` is the right plumbing here; vis-runtime
 ;; is the host, not an extension contributing to `vis extensions`.
 
 (doseq [spec
-        [{:cmd/name  "run"
-          :cmd/doc   "Run a one-shot agent turn and print the answer."
-          :cmd/usage "vis run [FLAGS] \"prompt\""
-          :cmd/args  [{:name "json"       :kind :flag :type :boolean :doc "Output result as JSON."}
-                      {:name "edn"        :kind :flag :type :boolean :doc "Output result as EDN."}
-                      {:name "full-trace-stream" :kind :flag :type :boolean :doc "Stream a pretty terminal trace."}
-                      {:name "full-trace-edn-stream" :kind :flag :type :boolean :doc "Stream raw EDN trace frames."}
-                      {:name "full-trace-json-stream" :kind :flag :type :boolean :doc "Stream raw JSON trace frames."}
-                      {:name "debug"      :kind :flag :type :boolean :doc "Enable svar debug logging."}
-                      {:name "model"      :kind :flag :type :string  :doc "Override the LLM model (accepts provider/name syntax)."}
-                      {:name "provider"   :kind :flag :type :string  :doc "Override the LLM provider (e.g. openai, anthropic)."}
-                      {:name "name"       :kind :flag :type :string  :doc "Agent name."}
-                      {:name "db"         :kind :flag :type :string  :doc "DB target: PATH or :memory."}
-                      {:name "persist"    :kind :flag :type :boolean :doc "Persist this run to ~/.vis/vis.mdb as a :cli conversation."}]
-          :cmd/examples ["vis run \"Throwaway one-shot probe\""
-                         "vis run --json --model gpt-4o \"Explain the auth flow\""
-                         "vis run --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this conversation\""]
-          :cmd/run-fn cli-run!}
-
-         {:cmd/name  "providers"
+        [{:cmd/name  "providers"
           :cmd/doc   "Inspect, authenticate, and introspect LLM providers."
           :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
           :cmd/subcommands #(registry/registered-under ["providers"])}
@@ -2370,7 +2350,7 @@
         (seq residual)))))
 
 (defn- root-run-shortcut?
-  "True when bare `vis ...` should behave like `vis run ...`.
+  "True when bare `vis ...` should run the one-shot CLI agent.
    Unknown commands that ask for help stay errors, so typo diagnostics
    remain honest (`vis sessions --help` must not become a prompt)."
   [root args]
@@ -2459,7 +2439,7 @@
      - No args                  -> top-level help
      - `help` / `--help` / `-h` -> help for the resolved command
      - Recognized command       -> invoke its `:cmd/run-fn`
-     - Bare prompt / run flags  -> `vis run ...` shortcut
+     - Bare prompt / run flags  -> one-shot CLI agent
      - Unknown command + help   -> honest unknown-command error
 
    Root prompt shortcut lives here, not in `commandline/dispatch!`, so

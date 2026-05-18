@@ -5,7 +5,7 @@
    Public surface:
      (->ast input)                 ; soft-normalize any input → [:ir & blocks]
      (render input flavor opts)    ; one of :html :markdown :plain
-     (extract-code ast)            ; for vis run --code
+     (extract-code ast)            ; for vis --code
      (extract-text ast)            ; for voice TTS
      (conversation->markdown db conv-ref opts?)
 
@@ -1018,7 +1018,7 @@
 
 (defn extract-code
   "Walk the AST and return a vector of strings, one per [:code ...] block,
-   in source order. Used by `vis run --code`."
+   in source order. Used by `vis --code`."
   [input]
   (let [ast (->ast input)
         out (volatile! [])]
