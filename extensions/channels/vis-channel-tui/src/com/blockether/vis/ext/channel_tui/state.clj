@@ -1306,7 +1306,9 @@
                         (do
                           (dispatch [:message-received workspace-id (:answer result)
                                      (assoc (select-keys result
-                                              [:model :iteration-count :duration-ms :tokens
+                                              [:model :provider :llm-selected :llm-actual
+                                               :llm-fallback? :llm-fallback-trace
+                                               :iteration-count :duration-ms :tokens
                                                :cost :confidence :conversation-turn-id :status])
                                        :client-turn-id client-turn-id)])
                           (when (:voice-response? turn-features)

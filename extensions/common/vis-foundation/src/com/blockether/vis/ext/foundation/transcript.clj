@@ -238,6 +238,20 @@
       "/iteration/" (:position iteration)
       "/block/" (inc (long (block-index block))))))
 
+(defn- envelope-duration-ms
+  [envelope]
+  (when (and (map? envelope)
+          (nat-int? (:started-at-ms envelope))
+          (nat-int? (:finished-at-ms envelope)))
+    (max 0 (- (long (:finished-at-ms envelope))
+             (long (:started-at-ms envelope))))))
+
+(defn- block-duration-ms
+  [block]
+  (or (envelope-duration-ms (:envelope block))
+    (:duration-ms block)
+    0))
+
 (defn- tool-result-envelope?
   [value]
   (and (map? value)
@@ -382,7 +396,7 @@
              :form-position  (inc (long (block-index block)))
              :role (:role block)
              :status         (event-status error true (:timeout? block))
-             :duration-ms    (or (:duration-ms block) 0)
+             :duration-ms    (block-duration-ms block)
              :code           (:code block)}
       (contains? block :result) (assoc :result-summary (result-summary (:result block)))
       error                     (assoc :error error))))
@@ -571,7 +585,7 @@
         suffix      (if (seq flags) (str " [" (str/join ", " flags) "]") "")
         has-result? (and (not error) (contains? block :result) (not= :vis/answer result))]
     (str "##### Block " idx " - " marker " "
-      (long (or (:duration-ms block) 0)) "ms" suffix "\n"
+      (long (block-duration-ms block)) "ms" suffix "\n"
       (when (not (str/blank? comment)) (str comment "\n"))
       (render-block-code-segments code render-segments)
       (when has-result?

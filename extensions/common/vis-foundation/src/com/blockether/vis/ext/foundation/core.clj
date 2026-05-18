@@ -4,7 +4,7 @@
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
-   [com.blockether.vis.ext.foundation.nudges :as nudges]))
+   [com.blockether.vis.ext.foundation.hints :as hints]))
 
 (defn- combined-prompt
   "Stitch the foundation-owned model prompt fragment together.
@@ -96,7 +96,7 @@
                                                   (editing/available-editing-symbols)
                                                   environment/environment-symbols))}
      :ext/kind           "foundation"
-     :ext/hooks          nudges/hooks
+     :ext/hooks          hints/hooks
      :ext/prompt         combined-prompt
      :ext/doctor-check-fn lazy-doctor-check-fn
      :ext/cli            [(doctor-cli-command)

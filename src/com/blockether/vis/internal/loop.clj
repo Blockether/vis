@@ -416,6 +416,47 @@
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
+(defn- unqualified-symbol-named?
+  [x n]
+  (and (symbol? x)
+    (nil? (namespace x))
+    (= n (name x))))
+
+(defn- top-level-do-form?
+  [form]
+  (and (seq? form)
+    (unqualified-symbol-named? (first form) "do")))
+
+(defn- form-source
+  [form]
+  (binding [*print-meta* false]
+    (pr-str form)))
+
+(defn- expand-top-level-do-form
+  "Return executable top-level forms for `form`. A top-level `(do ...)` is
+   syntax noise from old hints; flatten it so SCI eval still runs one real
+   form at a time and result-level sentinels (`:vis/silent`, `:vis/answer`)
+   remain enough for display. Nested `do` stays untouched because it may be
+   semantically positional."
+  [form]
+  (if (top-level-do-form? form)
+    (vec (rest form))
+    [form]))
+
+(defn- unwrap-top-level-do-source
+  "Normalize legacy top-level `(do A B ...)` blocks to sibling top-level
+   forms. Parse errors leave source unchanged so existing diagnostics keep
+   original text."
+  [code]
+  (try
+    (let [forms    (edamame/parse-string-all (or code "") edamame-opts)
+          expanded (mapcat expand-top-level-do-form forms)]
+      (if (= forms expanded)
+        code
+        (str/join "\n" (map form-source expanded))))
+    (catch Throwable _
+      code)))
+
 (defn- parse-forms-streaming
   [code]
   (let [code (or code "")
@@ -439,7 +480,11 @@
           {:forms @out :parse-error nil}
 
           :else
-          (do (vswap! out conj {:source (pr-str next-form) :form next-form})
+          (do
+            (vswap! out into
+              (mapv (fn [form]
+                      {:source (form-source form) :form form})
+                (expand-top-level-do-form next-form)))
             (recur)))))))
 
 (defn- parinferish-repair-safe
@@ -1038,10 +1083,9 @@
      - Duplicate-block dedup. Some providers stutter and emit the same
        block twice; we keep the first copy and drop the rest.
 
-  the answer-with-extension pre-eval gate. With
-  one form per iteration + handle returns, `(do (def h (v/cat …))
-  (done …))` IS the canonical answer shape; rejecting it here was a
-  false positive that re-introduced multi-iteration probe overhead."
+  Legacy top-level `(do ...)` wrappers are unwrapped before eval/display.
+  Direct sibling top-level forms are canonical; nested host bookkeeping is
+  not a supported display contract."
   [_iteration-position blocks]
   (let [blocks                       (vec (or blocks []))
         ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
@@ -1074,8 +1118,10 @@
         raw-entries                  (mapv (fn [b]
                                              (let [source-src (:source b)
                                                    repaired-src (repair-malformed-direct-answer source-src)
-                                                   src (or repaired-src source-src)
-                                                   repaired? (some? repaired-src)]
+                                                   repaired-or-source (or repaired-src source-src)
+                                                   src (unwrap-top-level-do-source repaired-or-source)
+                                                   repaired? (some? repaired-src)
+                                                   unwrapped-do? (not= src repaired-or-source)]
                                                (if-let [err (raw-markdown-fence-leak-error src)]
                                                  {:expr "(vis/preflight-error :raw-markdown-fence-leak)"
                                                   :vis/preflight-error err
@@ -1088,7 +1134,8 @@
                                                             :block-lang (:lang b)
                                                             :render-segments segments
                                                             :vis/structurally-silent? structurally-silent?}
-                                                     repaired? (assoc :repaired? true))))))
+                                                     repaired? (assoc :repaired? true)
+                                                     unwrapped-do? (assoc :vis/unwrapped-do? true))))))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -1222,7 +1269,7 @@
 
 (defn- iteration-start-hook-hit
   [ext id hit]
-  (let [text (when (map? hit) (or (:text hit) (:hint hit)))]
+  (let [text (when (map? hit) (:text hit))]
     (cond
       (nil? hit) nil
 
@@ -1241,7 +1288,7 @@
                    :data {:ext (:ext/name ext)
                           :hook id
                           :returned hit}}
-          "Extension :turn.iteration/start hook returned invalid value")
+          "Extension :turn.iteration/start hook returned invalid value; expected nil or {:text ...}")
         nil))))
 
 (defn- iteration-start-hook-error-hit
@@ -1321,9 +1368,9 @@
     (= :vis/answer (:result result))    :answer
     :else :tool))
 
-(defn- eval-info
-  "Generic canonical info for every top-level form that passes
-   through the Vis eval pipeline. Tool calls can add nested info
+(defn- eval-envelope
+  "Generic canonical envelope for every top-level form that passes
+   through the Vis eval pipeline. Tool calls can add nested metadata
    in their returned envelope; this records the outer regular form
    evaluation so plain calls and tool calls share a common block-level
    trace."
@@ -1334,30 +1381,62 @@
         started       (long (or (:execution-started-at-ms result)
                               (max 0 (- finished duration))))
         form-position (inc (long form-idx))]
-    (extension/normalize-metadata
-      {:op             (or (:op result)
-                         (case rendering-kind
-                           :nudge  :vis/system
-                           :answer :vis/answer
-                           :sci/eval))
-       :started-at-ms  started
-       :finished-at-ms finished
-       :duration-ms    duration
-       :status         (cond
-                         (:timeout? result) :timeout
-                         (:error result) :error
-                         :else :done)
-       :iteration      iteration
-       :form-position  form-position
-       :form-count     form-count
-       :ref            (str "turn/" turn-prefix "/iteration/" iteration "/block/" form-position)
-       :timeout?       (boolean (:timeout? result))
-       :repaired?      (boolean (:repaired? result))})))
+    {:op             (or (:op result)
+                       (case rendering-kind
+                         :nudge  :vis/system
+                         :answer :vis/answer
+                         :sci/eval))
+     :started-at-ms  started
+     :finished-at-ms finished
+     :status         (cond
+                       (:timeout? result) :timeout
+                       (:error result) :error
+                       :else :done)
+     :iteration      iteration
+     :form-position  form-position
+     :form-count     form-count
+     :ref            (str "turn/" turn-prefix "/iteration/" iteration "/block/" form-position)
+     :timeout?       (boolean (:timeout? result))
+     :repaired?      (boolean (:repaired? result))}))
+
+(defn- envelope-timestamps-ordered?
+  [envelope]
+  (<= (long (:started-at-ms envelope))
+    (long (:finished-at-ms envelope))))
+
+(defn- envelope-form-position-valid?
+  [envelope]
+  (<= (long (:form-position envelope))
+    (long (:form-count envelope))))
+
+(defn- envelope-ref-consistent?
+  [envelope]
+  (let [[_ iteration block] (re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/([1-9][0-9]*)/block/([1-9][0-9]*)$"
+                              (:ref envelope))]
+    (and iteration
+      block
+      (= (Long/parseLong iteration) (long (:iteration envelope)))
+      (= (Long/parseLong block) (long (:form-position envelope))))))
+
+(defn- envelope-has-no-derived-duration?
+  [envelope]
+  (not (contains? envelope :duration-ms)))
+
+(defn- envelope-duration-ms
+  [envelope]
+  (when (and (map? envelope)
+          (nat-int? (:started-at-ms envelope))
+          (nat-int? (:finished-at-ms envelope)))
+    (max 0 (- (long (:finished-at-ms envelope))
+             (long (:started-at-ms envelope))))))
+
+(defn- block-duration-ms
+  [block]
+  (or (envelope-duration-ms (:envelope block)) 0))
 
 (s/def ::id nat-int?)
 (s/def ::code string?)
 (s/def ::error (s/nilable map?))                       ; structured :error map
-(s/def ::duration-ms nat-int?)
 (s/def ::timeout? (s/nilable boolean?))
 (s/def ::repaired? (s/nilable boolean?))
 (s/def ::comment string?)
@@ -1372,12 +1451,17 @@
   (s/and string?
     #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" %)))
 (s/def ::block-envelope
-  (s/keys :req-un [::op ::status ::iteration ::form-position ::form-count ::ref]
-    :opt-un [::started-at-ms ::finished-at-ms ::duration-ms ::timeout? ::repaired?]))
+  (s/and
+    (s/keys :req-un [::op ::status ::iteration ::form-position ::form-count
+                     ::started-at-ms ::finished-at-ms ::ref]
+      :opt-un [::timeout? ::repaired?])
+    envelope-timestamps-ordered?
+    envelope-form-position-valid?
+    envelope-ref-consistent?
+    envelope-has-no-derived-duration?))
 (s/def ::envelope ::block-envelope)
 (s/def ::iteration-block
-  (s/keys :req-un [::id ::code ::error
-                   ::duration-ms ::envelope]
+  (s/keys :req-un [::id ::code ::error ::envelope]
     :opt-un [::result ::timeout? ::repaired? ::comment]))
 
 (defn validate-iteration-blocks!
@@ -1860,7 +1944,7 @@
                                  ;; call path so future display-tweaks have a single seam.
 
                                  block-role (eval-block-role display-result)
-                                 envelope (eval-info turn-prefix iteration-position idx total-blocks display-result block-role)
+                                 envelope (eval-envelope turn-prefix iteration-position idx total-blocks display-result block-role)
                                  result* (assoc display-result
                                            :envelope envelope
                                            :role block-role)]
@@ -1892,7 +1976,6 @@
                                           :result            (:result result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
-                                          :duration-ms       (:duration-ms result*)
                                           :envelope          (:envelope result*)
                                           :role              (:role result*)
                                           ;; :silent? is the channel-facing hide flag. Now the union of:
@@ -1930,7 +2013,6 @@
                                     :result (:result result)
                                     :channel (:channel result)
                                     :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
-                                    :duration-ms (:duration-ms result)
                                     :envelope (:envelope result)
                                     :role (:role result)
                                     :timeout? (:timeout? result)
@@ -2044,7 +2126,6 @@
                                :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
                                :result            (:result b)
                                :error             (:error b)
-                               :duration-ms       (:duration-ms b)
                                :envelope          (:envelope b)
                                :role              (:role b)
                                :silent?     (boolean (or (:vis/silent b)
@@ -2544,7 +2625,7 @@
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per conversation turn. Threaded through both
         ;; the prompt message assembler (core, environment, extension messages)
-        ;; and the per-iteration ext nudge collector - activation-fn never
+        ;; and the per-iteration ext hint collector - activation-fn never
         ;; re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         extensions-snapshot (prompt/extensions-snapshot active-exts)
@@ -2717,9 +2798,7 @@
                           :blocks   [(cond-> {:position 0
                                               :code (or (:code it) "")}
                                        (contains? it :result) (assoc :result (:result it))
-                                       (contains? it :error) (assoc :error (:error it))
-                                       (contains? it :duration-ms)
-                                       (assoc :duration-ms (:duration-ms it)))]
+                                       (contains? it :error) (assoc :error (:error it)))]
                           :llm-provider (:provider it)
                           :llm-model    (some-> (:model it) str)
                           ;; Persisted assistant messages are intentionally NOT
@@ -2919,7 +2998,7 @@
                         {:keys [thinking blocks final-result]} iteration-result
                         block (first blocks)
                         iteration-block-code (or (some-> block :code str/trim not-empty) "")
-                        iteration-time-ms (long (or (:duration-ms block) 0))
+                        iteration-time-ms (long (block-duration-ms block))
                         vars-snapshot (def-sink->vars-snapshot
                                         (vec (:def-sink block))
                                         iteration-block-code
@@ -2958,7 +3037,9 @@
                                                   :code (:code store-block)
                                                   :result (:result store-block)
                                                   :error (:error store-block)
-                                                  :duration-ms (or (:duration-ms store-block) (:duration-ms iteration-result) 0)
+                                                  :duration-ms (or (envelope-duration-ms (:envelope store-block))
+                                                                 (:duration-ms iteration-result)
+                                                                 0)
                                                   :vars vars-snapshot
                                                   :dependencies deps-snapshot
                                                   :thinking thinking
@@ -2986,7 +3067,7 @@
                              :iteration-count (inc iteration)})
                         (log-stage! :iteration/stop iteration
                           {:blocks (count blocks) :errors (count (filter :error blocks))
-                           :times (mapv :duration-ms blocks)})
+                           :times (mapv block-duration-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
                         ;; Per-form chunks already streamed every form
                         ;; result; this is the trim \"iteration is
@@ -3025,7 +3106,7 @@
 
                         (do (log-stage! :iteration/stop iteration
                               {:blocks (count blocks) :errors (count (filter :error blocks))
-                               :times (mapv :duration-ms blocks)})
+                               :times (mapv block-duration-ms blocks)})
                           ;; Non-terminal iteration-final chunk: per-form
                           ;; chunks already streamed; this is the
                           ;; \"iteration done, more iterations coming\"
@@ -3430,7 +3511,8 @@
       - :trace - Vector of iteration trace entries, each containing:
           {:iteration N
            :response <llm-response-text>
-           :blocks [{:id 0 :code <code-str> :result <value> :error nil :duration-ms 5}
+           :blocks [{:id 0 :code <code-str> :result <value> :error nil
+                     :envelope {:started-at-ms 10 :finished-at-ms 15 ...}}
                        ...]}
      - :iteration-count - Number of iterations used.
      - :duration-ms - Turn duration in milliseconds.
@@ -3727,7 +3809,7 @@
         ;; Title atom: in-memory cache for the conversation title.
         ;; The DB column on `conversation_state` is the persisted
         ;; truth; this atom is the fast read path for  and
-        ;; the source for the title nudge / channel chrome at iteration
+        ;; the source for the title hint / channel chrome at iteration
         ;; boundaries. `set-title!` writes both, in that order, then
         ;; broadcasts to every registered listener.
         conversation-title-atom               (atom (or title ""))
@@ -3802,7 +3884,7 @@
         ;; ONE-ARITY ONLY. There is no zero-arg reader by design: the
         ;; model has no in-sandbox read path for the title (the
         ;; `CONVERSATION_TITLE` SYSTEM var was retired as redundant).
-        ;; The foundation `title-nudge` surfaces the current value
+        ;; The foundation `title-hint` surfaces the current value
         ;; when relevant. Calling with the wrong arity raises an
         ;; `ArityException` from SCI like any other Clojure fn.
         ;; Returns `:vis/silent`: the title is visible in channel chrome

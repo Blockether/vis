@@ -830,6 +830,40 @@
     (let [soul-id-s (->ref conversation-id)]
       (:id (latest-state-for db-info soul-id-s)))))
 
+(defn- conversation-state-chain
+  "Return active branch state ids from root to latest leaf."
+  [db-info conversation-id]
+  (when (and (ds db-info) conversation-id)
+    (when-let [leaf-id (latest-state-id db-info conversation-id)]
+      (loop [state-id leaf-id
+             acc      []]
+        (if state-id
+          (if-let [row (query-one! db-info
+                         {:select [:id :parent_state_id]
+                          :from   :conversation_state
+                          :where  [:= :id state-id]})]
+            (recur (:parent_state_id row) (conj acc (:id row)))
+            (vec (reverse acc)))
+          (vec (reverse acc)))))))
+
+(defn- latest-visible-definition-rows
+  "Given latest rows per definition soul, keep visible symbol rows on branch.
+   Child states shadow same-name rows inherited from ancestors."
+  [state-ids rows]
+  (let [state-rank (zipmap state-ids (range))
+        score      (fn [r]
+                     [(get state-rank (:conversation_state_id r) -1)
+                      (or (:version r) -1)
+                      (or (:created_at r) 0)])]
+    (vals
+      (reduce (fn [m r]
+                (let [prev (get m (:name r))]
+                  (if (or (nil? prev) (pos? (compare (score r) (score prev))))
+                    (assoc m (:name r) r)
+                    m)))
+        {}
+        rows))))
+
 ;; =============================================================================
 ;; Turn - conversation_turn_soul + conversation_turn_state
 ;; =============================================================================
@@ -1273,13 +1307,18 @@
 
 (defn db-list-conversation-turns [db-info conversation-id]
   (if (and (ds db-info) conversation-id)
-    (let [state-id-s (latest-state-id db-info conversation-id)]
-      (when state-id-s
+    (let [state-ids  (conversation-state-chain db-info conversation-id)
+          state-rank (zipmap state-ids (range))]
+      (if (seq state-ids)
         (mapv (attach-prior-outcome row->turn)
-          (query! db-info
-            (-> (conversation-turn-soul+state-query [:= :qs.conversation_state_id state-id-s])
-              (update :select conj :qst.prior_outcome)
-              (assoc :order-by [[:qs.position :asc]]))))))
+          (sort-by (fn [r]
+                     [(get state-rank (:conversation_state_id r) Long/MAX_VALUE)
+                      (or (:position r) 0)
+                      (or (:soul_created_at r) 0)])
+            (query! db-info
+              (-> (conversation-turn-soul+state-query [:in :qs.conversation_state_id state-ids])
+                (update :select conj :qst.prior_outcome)))))
+        []))
     []))
 
 (defn- row->iteration [row]
@@ -1367,8 +1406,8 @@
   ([db-info conversation-id] (db-latest-var-registry db-info conversation-id {}))
   ([db-info conversation-id _opts]
    (if (and (ds db-info) conversation-id)
-     (let [state-id-s (latest-state-id db-info conversation-id)]
-       (when state-id-s
+     (let [state-ids (conversation-state-chain db-info conversation-id)]
+       (when (seq state-ids)
          (into {}
            (map (fn [r]
                   [(symbol (:name r))
@@ -1377,19 +1416,21 @@
                     :version    (:version r)
                     :conversation-turn-id   (->uuid (:conversation_turn_soul_id r))
                     :created-at (->date (:created_at r))}]))
-           (query! db-info
-             {:select [:es.name :est.result [:est.expression :expr] :est.version :est.created_at
-                       :qst.conversation_turn_soul_id]
-              :from   [[:definition_soul :es]]
-              :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
-                       [:conversation_turn_iteration :it]         [:= :it.id :est.conversation_turn_iteration_id]
-                       [:conversation_turn_state :qst]      [:= :qst.id :it.conversation_turn_state_id]]
-              :where  [:and
-                       [:= :es.conversation_state_id state-id-s]
-                       [:= :est.version
-                        {:select [[[:max :version]]]
-                         :from   [[:definition_state :est2]]
-                         :where  [:= :est2.definition_soul_id :es.id]}]]}))))
+           (latest-visible-definition-rows state-ids
+             (query! db-info
+               {:select [:es.name :es.conversation_state_id
+                         :est.result [:est.expression :expr] :est.version :est.created_at
+                         :qst.conversation_turn_soul_id]
+                :from   [[:definition_soul :es]]
+                :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
+                         [:conversation_turn_iteration :it]         [:= :it.id :est.conversation_turn_iteration_id]
+                         [:conversation_turn_state :qst]      [:= :qst.id :it.conversation_turn_state_id]]
+                :where  [:and
+                         [:in :es.conversation_state_id state-ids]
+                         [:= :est.version
+                          {:select [[[:max :version]]]
+                           :from   [[:definition_state :est2]]
+                           :where  [:= :est2.definition_soul_id :es.id]}]]})))))
      {})))
 
 (defn- var-result-ref?
@@ -1442,34 +1483,36 @@
   ([db-info conversation-id] (db-var-history-index db-info conversation-id {}))
   ([db-info conversation-id {:keys [limit] :or {limit 200}}]
    (if (and (ds db-info) conversation-id)
-     (let [state-id-s (latest-state-id db-info conversation-id)]
-       (if state-id-s
+     (let [state-ids (conversation-state-chain db-info conversation-id)]
+       (if (seq state-ids)
          (mapv row->bindings-entry
-           (query! db-info
-             (cond-> {:select [:es.name :es.conversation_state_id
-                               :est.version :est.result [:est.expression :expr] :est.created_at
-                               [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
-                               [:it.position :iteration_position]
-                               :qst.conversation_turn_soul_id]
-                      :from   [[:definition_soul :es]]
-                      :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
-                               [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
-                               [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
-                      :where  [:and
-                               [:= :es.conversation_state_id state-id-s]
-                               [:= :est.version
-                                {:select [[[:max :version]]]
-                                 :from   [[:definition_state :est2]]
-                                 :where  [:= :est2.definition_soul_id :es.id]}]]
-                      :order-by [[:est.created_at :desc] [:es.name :asc]]}
-               (pos-int? limit) (assoc :limit limit))))
+           (cond->> (sort-by (fn [r] [(- (or (:created_at r) 0)) (:name r)])
+                      (latest-visible-definition-rows state-ids
+                        (query! db-info
+                          {:select [:es.name :es.conversation_state_id
+                                    :est.version :est.result [:est.expression :expr] :est.created_at
+                                    [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
+                                    [:it.position :iteration_position]
+                                    :qst.conversation_turn_soul_id]
+                           :from   [[:definition_soul :es]]
+                           :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
+                                    [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
+                                    [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
+                           :where  [:and
+                                    [:in :es.conversation_state_id state-ids]
+                                    [:= :est.version
+                                     {:select [[[:max :version]]]
+                                      :from   [[:definition_state :est2]]
+                                      :where  [:= :est2.definition_soul_id :es.id]}]]})))
+             (pos-int? limit) (take limit)))
          []))
      [])))
 
 (defn db-var-history [db-info conversation-id var-sym]
   (if (and (ds db-info) conversation-id)
-    (let [state-id-s (latest-state-id db-info conversation-id)]
-      (if state-id-s
+    (let [state-ids  (conversation-state-chain db-info conversation-id)
+          state-rank (zipmap state-ids (range))]
+      (if (seq state-ids)
         (mapv (fn [r]
                 (let [value (<-blob (:result r))]
                   {:version    (:version r)
@@ -1479,20 +1522,23 @@
                    :restorable? (var-restorable? value (:expr r))
                    :created-at (->date (:created_at r))
                    :info (row->var-info r)}))
-          (query! db-info
-            {:select [:est.version :est.result [:est.expression :expr] :est.created_at
-                      [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
-                      [:it.position :iteration_position]
-                      :es.conversation_state_id
-                      :qst.conversation_turn_soul_id]
-             :from   [[:definition_state :est]]
-             :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]
-                      [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
-                      [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
-             :where  [:and
-                      [:= :es.conversation_state_id state-id-s]
-                      [:= :es.name (str var-sym)]]
-             :order-by [[:est.version :asc]]}))
+          (sort-by (fn [r]
+                     [(get state-rank (:conversation_state_id r) Long/MAX_VALUE)
+                      (or (:version r) 0)
+                      (or (:created_at r) 0)])
+            (query! db-info
+              {:select [:est.version :est.result [:est.expression :expr] :est.created_at
+                        [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
+                        [:it.position :iteration_position]
+                        :es.conversation_state_id
+                        :qst.conversation_turn_soul_id]
+               :from   [[:definition_state :est]]
+               :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]
+                        [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
+                        [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
+               :where  [:and
+                        [:in :es.conversation_state_id state-ids]
+                        [:= :es.name (str var-sym)]]})))
         []))
     []))
 
@@ -1505,8 +1551,8 @@
   ([db-info conversation-id {:keys [limit order symbol]
                              :or {limit 100 order :newest-first}}]
    (if (and (ds db-info) conversation-id)
-     (let [state-id-s (latest-state-id db-info conversation-id)]
-       (if state-id-s
+     (let [state-ids (conversation-state-chain db-info conversation-id)]
+       (if (seq state-ids)
          (let [direction (if (= :oldest-first order) :asc :desc)]
            (mapv (fn [r]
                    (let [value (<-blob (:result r))]
@@ -1529,7 +1575,7 @@
                                  [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                                  [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
                         :where  (cond-> [:and
-                                         [:= :es.conversation_state_id state-id-s]]
+                                         [:in :es.conversation_state_id state-ids]]
                                   symbol (conj [:= :es.name (str symbol)]))
                         :order-by [[:est.created_at direction] [:es.name :asc] [:est.version direction]]}
                  (pos-int? limit) (assoc :limit limit)))))
@@ -1866,24 +1912,32 @@
    guaranteed."
   [db-info conversation-id]
   (when (ds db-info)
-    (let [state-id-s (latest-state-id db-info conversation-id)]
-      (when state-id-s
+    (let [state-ids (conversation-state-chain db-info conversation-id)]
+      (when (seq state-ids)
         ;; 1. All var souls with latest state
-        (let [rows (query! db-info
-                     {:select [:es.id :es.name
-                               :est.version [:est.expression :expr] :est.result
-                               :est.created_at]
-                      :from   [[:definition_soul :es]]
-                      :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]]
-                      :where  [:and
-                               [:= :es.conversation_state_id state-id-s]
-                               [:= :est.version
-                                {:select [[[:max :version]]]
-                                 :from   [[:definition_state :est2]]
-                                 :where  [:= :est2.definition_soul_id :es.id]}]]})
+        (let [rows (vec (latest-visible-definition-rows state-ids
+                          (query! db-info
+                            {:select [:es.id :es.name :es.conversation_state_id
+                                      :est.version [:est.expression :expr] :est.result
+                                      :est.created_at]
+                             :from   [[:definition_soul :es]]
+                             :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]]
+                             :where  [:and
+                                      [:in :es.conversation_state_id state-ids]
+                                      [:= :est.version
+                                       {:select [[[:max :version]]]
+                                        :from   [[:definition_state :est2]]
+                                        :where  [:= :est2.definition_soul_id :es.id]}]]})))
               by-id (into {} (map (fn [r] [(:id r) r])) rows)
               ;; 2. Dependencies
-              deps  (db-list-dependencies db-info state-id-s)
+              deps  (mapv (fn [r]
+                            {:id         (:id r)
+                             :downstream (:downstream_definition_soul_id r)
+                             :upstream   (:upstream_definition_soul_id r)})
+                      (query! db-info
+                        {:select [:id :downstream_definition_soul_id :upstream_definition_soul_id]
+                         :from   :definition_dependency
+                         :where  [:in :conversation_state_id state-ids]}))
               ;; Build adjacency: soul-id -> {:depends-on #{} :depended-by #{}}
               adj   (reduce (fn [m {:keys [downstream upstream]}]
                               (-> m
