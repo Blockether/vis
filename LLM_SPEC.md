@@ -7,6 +7,9 @@ Make provider routing observable, durable, queryable. 429 retry/fallback must be
 ## Non-goals
 
 - No opaque routing data only in JSON metadata.
+- No collapsed retry trace that only shows final fallback.
+- No generic catch-all routing metadata or ultra-wide workaround table for core facts.
+- No out-of-band migration file for this branch; update core V1 schema inline until migration policy changes.
 - No TUI-only state as source of truth.
 - No retry after streamed content starts.
 - No silent provider fallback.
@@ -77,7 +80,7 @@ Algorithm:
 
 ### Change
 
-Every retry/fallback produces structured event.
+Every retry/fallback produces structured event. Every retry is persisted and rendered; no trace collapse.
 
 ```clojure
 {:event/id "uuid"
@@ -142,6 +145,8 @@ Retry after partial stream duplicates assistant content and corrupts transcript.
 ### Change
 
 Add core routing columns/tables. Do not store primary routing facts only in metadata.
+
+`llm_routing_event` is core schema, not extension metadata. One retry/fallback event = one row ordered by `position`. Turn summary columns live on `conversation_turn_state`; iteration columns mirror per-iteration truth. Schema edits go inline in `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` until migration policy changes.
 
 ```sql
 ALTER TABLE conversation_turn_state
@@ -254,7 +259,7 @@ Call site already knows final result. One atomic turn update prevents DB/view mi
                  :trace trace}})
 ```
 
-Events with known iteration id store `conversation_turn_iteration_id`; final turn summary also stores turn-state id.
+Events with known iteration id store `conversation_turn_iteration_id`; final turn summary also stores turn-state id. All retry rows attach to iteration when known; TUI reads these rows, not iteration metadata.
 
 ### Rationale
 
@@ -264,7 +269,7 @@ TUI progress is iteration-oriented. Debugging needs answer: which iteration hit 
 
 ### Change
 
-Render routing events as first-class progress rows.
+Render routing events as first-class progress rows. Render every retry row in order; do not collapse retries into only final fallback/footer.
 
 ```text
 ↻ retry same provider: anthropic-coding-plan/claude-opus-4-7 — 429, retry in 2s
@@ -286,7 +291,7 @@ Live user sees hang reason. Footer preserves compact final truth after progress 
 
 ### Change
 
-Conversation rebuild reads core routing fields/events.
+Conversation rebuild reads core routing fields/events. Resume path must use summary columns plus `llm_routing_event`; metadata fallback is transitional diagnostics only.
 
 ```clojure
 {:llm-selected {:provider llm_selected_provider
@@ -374,7 +379,7 @@ Need unit coverage at each seam: router policy, DB durability, TUI live/resume r
 
 1. Add schema to V1 migration inline until migrations policy changes.
 2. Add persistence API + tests.
-3. Add TUI metadata forwarding + resume from core rows.
+3. Replace TUI metadata forwarding with core routing rows + resume from core rows.
 4. Add svar policy + trace events.
 5. Add config pass-through from Vis to svar.
 6. Add CLI diagnostics.
@@ -387,6 +392,17 @@ Need unit coverage at each seam: router policy, DB durability, TUI live/resume r
 - Whether non-429 transient statuses use same policy or immediate fallback.
 
 ## DB metadata analysis
+
+### Source trace scope
+
+Current DB/routing metadata path:
+
+- `src/com/blockether/vis/internal/loop.clj`: builds `llm-routing-metadata`, attaches `:llm-fallback-trace`, writes per-iteration `:metadata`.
+- `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`: writes/reads conversation, turn, iteration metadata; filters JSON fields with `json_extract`.
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj`: rebuild path reads `[:metadata :llm]` and `[:metadata :llm :fallback-trace]`, then maps to message routing fields.
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj`: renders converted `:llm-fallback-trace` fields.
+
+Target: no core DB routing fact depends on `:metadata`. Provider catalog metadata, extension tool envelopes, and `log.data` are separate concepts and may remain.
 
 ### Current metadata columns
 
@@ -716,4 +732,6 @@ SET iteration_count = COALESCE(json_extract(metadata, '$."iteration-count"'), 0)
 If Vis core reads it, filters by it, renders it, resumes from it, or tests it -> column/table.
 If extension owns it and only extension interprets it -> extension sidecar payload.
 If log event owns it -> log.data.
+
+Routing exception: retry/fallback summary and trace are always columns/tables, never metadata.
 ```

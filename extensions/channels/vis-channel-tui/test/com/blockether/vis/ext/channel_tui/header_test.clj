@@ -125,7 +125,10 @@
                   (:bounds copy-hit)))))))
 
 (defdescribe draw-header-color-test
-  (it "renders placeholder/title, conversation id, and copy icon in header foreground"
+  (it "renders the untitled placeholder inside the active tab, not on the left"
+    ;; Fresh conversation has no `:workspace-tabs` in app-db. The
+    ;; header synthesises a single active tab whose label is the
+    ;; placeholder; the LEFT slot stays empty.
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -133,9 +136,23 @@
           db     {:title ""
                   :conversation {:id uuid}}]
       (header/draw-header! g db 0 80)
-      (let [write-by-text (fn [text]
+      (let [placeholder-write
+            (some #(when (and (string? (:text %))
+                           (str/includes? (:text %) "Untitled conversation"))
+                     %)
+              @writes)
+            left-slot-writes
+            (filter #(and (= 1 (:row %))
+                       (string? (:text %))
+                       (not (str/blank? (:text %)))
+                       (< (long (or (:col %) 0)) 16))
+              @writes)
+            write-by-text (fn [text]
                             (some #(when (= text (:text %)) %) @writes))]
-        (expect (= t/header-fg (:fg (write-by-text "Untitled conversation"))))
+        (expect (some? placeholder-write))
+        (expect (= t/header-hover-fg (:fg placeholder-write)))
+        (expect (= t/dialog-title-bg (:bg placeholder-write)))
+        (expect (empty? left-slot-writes))
         (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567")))))))
 
   (it "uses a subtly different foreground for the hovered header copy affordance only"
@@ -155,9 +172,14 @@
         (cr/begin-frame!)
         (header/draw-header! g db 0 80)
         (cr/commit-frame!)
-        (let [write-by-text (fn [text]
+        (let [tab-write (some #(when (and (string? (:text %))
+                                       (str/includes? (:text %) "New Conversation"))
+                                 %)
+                          @writes)
+              write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
-          (expect (= t/header-fg (:fg (write-by-text "New Conversation"))))
+          ;; Title becomes the active tab label — active style applies.
+          (expect (= t/header-hover-fg (:fg tab-write)))
           (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567")))))))))
 
 (defdescribe draw-header-workspace-tabs-test
@@ -177,7 +199,12 @@
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)
       (let [tab-writes (filter #(= 1 (:row %)) @writes)
-            title      (some #(when (= "Chat" (:text %)) %) @writes)
+            ;; LEFT 20% (cols 0..15) stays empty — title lives in the tab now.
+            left-slot-writes (filter #(and (= 1 (:row %))
+                                        (string? (:text %))
+                                        (not (str/blank? (:text %)))
+                                        (< (long (or (:col %) 0)) 16))
+                               @writes)
             layout     (p/tab-layout (:workspace-tabs db) 16 48 :feature {:gap 0})
             expected   (nth layout 1)
             tab-hit    (some #(when (and (= :workspace-tab (:kind %))
@@ -216,7 +243,7 @@
         (expect (contains? (:modifiers active-tab) p/BORDERED))
         (expect (= t/header-fg (:fg verify-tab)))
         (expect (contains? (:modifiers verify-tab) p/BORDERED))
-        (expect (= 1 (:row title)))
+        (expect (empty? left-slot-writes))
         (expect (= {:row 1 :col (:left expected) :width (:width expected)}
                   (:bounds tab-hit)))
         (expect (= :feature (:workspace-id tab-hit)))
