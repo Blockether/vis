@@ -4,7 +4,7 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Conversation title          ● Recording 00:01  ⧉ d8d6a0a1 | ⧉ Transcript
+       ✓ Copied!                 Conversation title          ● Recording 00:01  ⧉ d8d6a0a1
        (notification banner)     (or fallback placeholder)   (channel status + id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
@@ -20,8 +20,7 @@
    - RIGHT: short conversation id (first 8 chars of the UUID, the
      same convention `vis conversations` uses) + a clickable
      `⧉` affordance that drops the FULL UUID onto the system
-     clipboard, followed by `| ⧉ Transcript` for whole-conversation
-     Markdown copy. Visual feedback is the LEFT-slot `✓ Copied!` notification
+     clipboard. Visual feedback is the LEFT-slot `✓ Copied!` notification
      - same mechanism every other cross-channel signal flows through.
 
    Pure draw: reads `:title` and `:conversation` from app-db, the
@@ -100,14 +99,6 @@
 (def ^:private copy-affordance
   "Compact header affordance painted left of the short conversation id."
   copy-icon)
-
-(def ^:private right-block-separator
-  "Visual separator between the UUID-copy affordance and Markdown export action."
-  " | ")
-
-(def ^:private markdown-copy-label
-  "Compact Markdown transcript export affordance painted after the conversation-id copy block."
-  (str copy-icon " Transcript"))
 
 (def ^:private status-action-separator
   "Gap between a live channel status (voice recording/transcribing) and
@@ -331,19 +322,12 @@
    the repaint must not mutate the staged click-region buffer."
   true)
 
-(defn- markdown-copy-block-text [id-short]
-  (if id-short markdown-copy-label ""))
-
 (defn- right-block-text
-  "Compose the right-side text: \"⧉ 4b1ed602 | ⧉ Transcript\" when a
-   conversation id exists, otherwise empty. Single place that knows the layout
-   so `draw-header!` can stay focused on placement math."
+  "Compose the right-side text: \"⧉ 4b1ed602\" when a conversation id
+   exists, otherwise empty. Single place that knows the layout so
+   `draw-header!` can stay focused on placement math."
   [id-short]
-  (let [id-text (id-copy-block-text id-short)
-        md-text (markdown-copy-block-text id-short)]
-    (if (seq id-text)
-      (str id-text right-block-separator md-text)
-      "")))
+  (id-copy-block-text id-short))
 
 (defn draw-header!
   "Paint the header band starting at `header-top`, full width `cols`.
@@ -352,14 +336,12 @@
    every frame.
 
    Layout per the namespace doc: notification banner LEFT, centered
-   conversation title CENTER, short conversation id + `⧉`, separator, plus
-   `⧉ Transcript` RIGHT. When the title would overlap either edge block, the title
-   is truncated with an ellipsis so the diagnostically-important id
-   stays readable.
+   conversation title CENTER, short conversation id + `⧉` RIGHT. When the
+   title would overlap either edge block, the title is truncated with an
+   ellipsis so the diagnostically-important id stays readable.
 
-   Side effect: registers separate click regions for the id-copy block
-   and the Markdown-copy icon. The screen mouse handler (in `screen.clj`)
-   recognises `:kind :copy-id` and `:kind :copy-as-markdown`, copies the
+   Side effect: registers a click region for the id-copy block. The screen
+   mouse handler (in `screen.clj`) recognises `:kind :copy-id`, copies the
    corresponding payload, then pushes a host notification that this band
    surfaces in the LEFT slot."
   [g db header-top cols]
@@ -380,7 +362,6 @@
         id-short     (short-id (:conversation db))
         full-uuid    (full-id  (:conversation db))
         id-copy-text (id-copy-block-text id-short)
-        md-copy-text (markdown-copy-block-text id-short)
         action-text  (right-block-text id-short)
         status       (latest-channel-status db)
         status-raw   (some-> status :text)
@@ -396,12 +377,8 @@
         right-text   (str (or status-text "") status-gap action-text)
         right-w      (p/display-width right-text)
         id-copy-w    (p/display-width id-copy-text)
-        md-copy-w    (p/display-width md-copy-text)
         right-col    (when (pos? right-w) (max 0 (- cols edge-pad right-w)))
         action-col   (when right-col (+ right-col status-w status-gap-w))
-        separator-w  (p/display-width right-block-separator)
-        md-copy-col  (when (and action-col (pos? md-copy-w))
-                       (+ action-col id-copy-w separator-w))
         banner       (latest-notification)
         notif-text   (some-> banner :text)
         notif-level  (some-> banner :level)
@@ -493,18 +470,17 @@
       (p/clear-styles! g))
 
     ;; RIGHT - live channel status (voice recording/transcribing) + copy
-    ;; conversation ID block + Markdown transcript export label. Keeping the
-    ;; live voice status on the right leaves the left notification lane free.
+    ;; conversation ID block. Keeping the live voice status on the right
+    ;; leaves the left notification lane free.
     ;; Visual hover feedback: when either clickable region is hovered,
     ;; that exact affordance shifts to header-hover-fg and gains BOLD. Terminal emulators
     ;; don't allow applications to control the mouse cursor shape, so this
     ;; is the strongest affordance we can offer.
     (when (pos? right-w)
-      (let [hovered-region    (cr/hovered)
-            hovered-kind      (:kind hovered-region)
-            hovered-row?      (= content-row (get-in hovered-region [:bounds :row]))
-            id-hovered?       (and hovered-row? (= :copy-id hovered-kind))
-            markdown-hovered? (and hovered-row? (= :copy-as-markdown hovered-kind))]
+      (let [hovered-region (cr/hovered)
+            hovered-kind   (:kind hovered-region)
+            hovered-row?   (= content-row (get-in hovered-region [:bounds :row]))
+            id-hovered?    (and hovered-row? (= :copy-id hovered-kind))]
         (when (pos? status-w)
           (p/clear-styles! g)
           (p/set-colors! g (level->fg status-level) t/terminal-bg)
@@ -522,23 +498,10 @@
             (p/enable! g p/BOLD))
           (p/put-str! g action-col content-row id-copy-text)
           (p/clear-styles! g)
-          (p/set-colors! g t/header-fg t/terminal-bg)
-          (p/put-str! g (+ action-col id-copy-w) content-row right-block-separator)
-          (p/clear-styles! g)
-          (p/set-colors! g (if markdown-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
-          (when markdown-hovered?
-            (p/enable! g p/BOLD))
-          (p/put-str! g md-copy-col content-row md-copy-text)
-          (p/clear-styles! g)
           (when (and *register-click-regions?* full-uuid)
             (cr/register!
               {:bounds   {:row content-row :col action-col :width id-copy-w}
                :kind     :copy-id
-               :text     full-uuid
-               :enabled? true})
-            (cr/register!
-              {:bounds   {:row content-row :col md-copy-col :width md-copy-w}
-               :kind     :copy-as-markdown
                :text     full-uuid
                :enabled? true})))))
 

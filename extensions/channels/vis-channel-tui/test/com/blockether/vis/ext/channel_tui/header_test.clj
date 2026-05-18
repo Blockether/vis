@@ -52,24 +52,16 @@
          this)))))
 
 (defdescribe right-block-text-test
-  (it "shows separated copy-id and transcript copy actions with copy icons"
-    (expect (= "⧉ 4b1ed602 | ⧉ Transcript" (right-block-text "4b1ed602")))))
+  (it "shows the copy-id affordance only"
+    (expect (= "⧉ 4b1ed602" (right-block-text "4b1ed602")))))
 
 (defdescribe draw-header-copy-region-test
-  (it "registers separate click regions for id copy and Markdown copy"
+  (it "registers a single click region for id copy (no Markdown copy)"
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
-          short-id      "123e4567"
-          rendered      (right-block-text short-id)
           id-rendered   "⧉ 123e4567"
-          separator      " | "
-          md-rendered   "⧉ Transcript"
-          expected-w    (p/display-width rendered)
           id-w          (p/display-width id-rendered)
-          separator-w   (p/display-width separator)
-          md-w          (p/display-width md-rendered)
           cols          60
-          expected-col  (- cols 1 expected-w)
-          expected-md-col (+ expected-col id-w separator-w)
+          expected-col  (- cols 1 id-w)
           db            {:title "Chat"
                          :conversation {:id uuid}}
           writes        (atom [])]
@@ -82,15 +74,7 @@
         (expect (= uuid (:text copy-hit)))
         (expect (= {:row 1 :col expected-col :width id-w}
                   (:bounds copy-hit)))
-        (expect (some #(and (= 1 (:row %))
-                         (= (+ expected-col id-w) (:col %))
-                         (= separator (:text %))
-                         (= t/header-fg (:fg %))
-                         (not (contains? (:modifiers %) p/BOLD)))
-                  @writes))
-        (expect (= uuid (:text md-hit)))
-        (expect (= {:row 1 :col expected-md-col :width md-w}
-                  (:bounds md-hit))))))
+        (expect (nil? md-hit)))))
 
   (it "can repaint header hover chrome without mutating click-region staging"
     (let [uuid "123e4567-e89b-12d3-a456-426614174000"
@@ -137,7 +121,7 @@
                   (:bounds copy-hit)))))))
 
 (defdescribe draw-header-color-test
-  (it "renders placeholder/title, conversation id, transcript label, and copy icons in header foreground"
+  (it "renders placeholder/title, conversation id, and copy icon in header foreground"
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -148,9 +132,7 @@
       (let [write-by-text (fn [text]
                             (some #(when (= text (:text %)) %) @writes))]
         (expect (= t/header-fg (:fg (write-by-text "Untitled conversation"))))
-        (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567"))))
-        (expect (= t/header-fg (:fg (write-by-text " | "))))
-        (expect (= t/header-fg (:fg (write-by-text "⧉ Transcript")))))))
+        (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567")))))))
 
   (it "uses a subtly different foreground for the hovered header copy affordance only"
     (cr/reset!)
@@ -172,9 +154,7 @@
         (let [write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
           (expect (= t/header-fg (:fg (write-by-text "New Conversation"))))
-          (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567"))))
-          (expect (= t/header-fg (:fg (write-by-text " | "))))
-          (expect (= t/header-fg (:fg (write-by-text "⧉ Transcript")))))))))
+          (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567")))))))))
 
 (defdescribe draw-header-workspace-tabs-test
   (it "renders yellow tab top border and normal header top border without spacer"

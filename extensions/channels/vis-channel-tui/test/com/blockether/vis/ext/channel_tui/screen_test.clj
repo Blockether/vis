@@ -66,9 +66,6 @@
 (def ^:private copy-bubble!
   (deref #'screen/copy-bubble!))
 
-(def ^:private copy-conversation-as-markdown!
-  (deref #'screen/copy-conversation-as-markdown!))
-
 (def ^:private activate-workspace-tab-hit!
   (deref #'screen/activate-workspace-tab-hit!))
 
@@ -185,7 +182,7 @@
                 :render-version 1
                 :layout {:total-h 10}}
           bumped (assoc base :render-version 2 :layout {:total-h 10})
-          header-region {:kind :copy-as-markdown
+          header-region {:kind :copy-id
                          :bounds {:row 1 :col 60 :width 12}}
           body-region {:kind :url
                        :bounds {:row 8 :col 4 :width 12}}]
@@ -598,27 +595,6 @@
           (expect (= "typed mistake" (deref copied 1000 ::timeout)))
           (expect (= ["✓ Copied input selection" [:level :success :ttl-ms 1500]]
                     @notified))))))
-
-  (it "conversation Markdown copy exports through the host projection"
-    (let [copied   (promise)
-          notified (promise)]
-      (with-redefs-fn {#'vis/env-for (fn [conversation-id]
-                                       (expect (= "conversation-1" conversation-id))
-                                       {:db-info :db})
-                       #'vis/conversation->markdown (fn [db-info conversation-id]
-                                                      (expect (= :db db-info))
-                                                      (expect (= "conversation-1" conversation-id))
-                                                      "# Conversation")
-                       #'input/clipboard-copy! (fn [text]
-                                                 (deliver copied text)
-                                                 true)
-                       #'vis/notify! (fn [text & kvs]
-                                       (deliver notified [text kvs]))}
-        (fn []
-          (copy-conversation-as-markdown! "conversation-1")
-          (expect (= "# Conversation" (deref copied 1000 ::timeout)))
-          (expect (= ["✓ Copied conversation as Markdown" [:level :success :ttl-ms 1500]]
-                    (deref notified 1000 ::timeout)))))))
 
   (it "file click targets open through the editor path, not the generic URL opener"
     (let [editor-opened (promise)
