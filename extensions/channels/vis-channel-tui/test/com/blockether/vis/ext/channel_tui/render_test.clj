@@ -169,6 +169,21 @@
       (expect (str/includes? (body-of first-line)
                 "Exceptional status code: 429"))))
 
+  (it "formats same-provider retry notices from routing event maps"
+    (let [lines (format-iteration-entry
+                  {:provider-fallbacks
+                   [{:event/type :llm.routing/provider-retry
+                     :provider "anthropic-coding-plan"
+                     :model "claude-opus-4-7"
+                     :reason :rate-limit
+                     :delay-ms 2000}]}
+                  120 1 {})
+          retry-line (first (filter #(str/includes? % "retry same provider") lines))]
+      (expect (some? retry-line))
+      (expect (= p/MARKER_PROVIDER_FALLBACK (marker-of retry-line)))
+      (expect (str/includes? (body-of retry-line)
+                "↻ retry same provider: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s"))))
+
   (it "paints provider fallback rows with warning yellow background"
     (let [captured (atom [])
           active   (atom #{})
@@ -214,9 +229,12 @@
                    :llm-actual {:provider "openai-codex"
                                 :model "gpt-5.3-codex"}
                    :llm-fallback? true
-                   :llm-fallback-trace [{:provider-id "anthropic-coding-plan"
-                                         :model "claude-opus-4-7"
-                                         :error "Exceptional status code: 429"}]}]
+                   :llm-routing-trace [{:event/type :llm.routing/provider-fallback
+                                        :from-provider "anthropic-coding-plan"
+                                        :from-model "claude-opus-4-7"
+                                        :to-provider "openai-codex"
+                                        :to-model "gpt-5.3-codex"
+                                        :error "Exceptional status code: 429"}]}]
       (expect (= "fallback anthropic-coding-plan/claude-opus-4-7 → openai-codex/gpt-5.3-codex — Exceptional status code: 429"
                 (assistant-meta-line message)))))
 

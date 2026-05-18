@@ -313,7 +313,7 @@
                                                            exprs)]
                                          {:position  (when-let [p (:position it)] (dec (long p)))
                                           :thinking  (visible-thinking (:thinking it))
-                                          :provider-fallbacks (get-in it [:metadata :llm :fallback-trace])
+                                          :provider-fallbacks (get-in it [:metadata :llm :trace])
                                           :code      (mapv :code code-exprs)
                                           :comments  (mapv :comment code-exprs)
                                           :render-segments (mapv :render-segments code-exprs)
@@ -340,7 +340,7 @@
                                             (:selected llm-routing) (assoc :llm-selected (:selected llm-routing))
                                             (:actual llm-routing) (assoc :llm-actual (:actual llm-routing))
                                             (contains? llm-routing :fallback?) (assoc :llm-fallback? (:fallback? llm-routing))
-                                            (seq (:fallback-trace llm-routing)) (assoc :llm-fallback-trace (:fallback-trace llm-routing))
+                                            (seq (:trace llm-routing)) (assoc :llm-routing-trace (:trace llm-routing))
                                             iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)
                                             cost   (assoc :cost cost)
@@ -430,7 +430,7 @@
            llm-selected (:llm-selected result)
            llm-actual (:llm-actual result)
            llm-fallback? (:llm-fallback? result)
-           llm-fallback-trace (:llm-fallback-trace result)]
+           llm-routing-trace (:llm-routing-trace result)]
        ;; Return canonical IR on `:answer`. The bubble layer (state
        ;; event handler -> assistant-message -> render-answer) is
        ;; the single rendering chokepoint. Pre-rendering here would
@@ -444,7 +444,7 @@
          llm-selected (assoc :llm-selected llm-selected)
          llm-actual (assoc :llm-actual llm-actual)
          (some? llm-fallback?) (assoc :llm-fallback? llm-fallback?)
-         (seq llm-fallback-trace) (assoc :llm-fallback-trace llm-fallback-trace)
+         (seq llm-routing-trace) (assoc :llm-routing-trace llm-routing-trace)
          tokens     (assoc :tokens tokens)
          cost       (assoc :cost cost)
          confidence (assoc :confidence confidence)

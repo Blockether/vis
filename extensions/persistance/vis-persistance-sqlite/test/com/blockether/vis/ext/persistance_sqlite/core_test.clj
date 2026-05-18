@@ -852,6 +852,51 @@
         (expect (= 600  (:cached-tokens iter)))
         (expect (= 0.0123 (:cost-usd iter))))))
 
+  (it "persists LLM routing trace as first-class rows and rehydrates metadata view"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
+          trace [{:event/type :llm.routing/provider-retry
+                  :provider :p1
+                  :model "m1"
+                  :status 429
+                  :reason :rate-limit
+                  :attempt 1
+                  :delay-ms 2000
+                  :at-ms 1}
+                 {:event/type :llm.routing/provider-fallback
+                  :from-provider :p1
+                  :from-model "m1"
+                  :to-provider :p2
+                  :to-model "m2"
+                  :status 429
+                  :reason :rate-limit-budget-exhausted
+                  :elapsed-ms 30000
+                  :at-ms 2}]
+          iid (vis/db-store-iteration! s {:conversation-turn-id qid
+                                          :code ""
+                                          :duration-ms 5
+                                          :llm-provider :p2
+                                          :llm-model "m2"
+                                          :metadata {:engine-timing {:total-ms 5}
+                                                     :llm {:selected {:provider :p1 :model "m1"}
+                                                           :actual {:provider :p2 :model "m2"}
+                                                           :fallback? true
+                                                           :trace trace}}})]
+      (expect (= 2 (raw-count s :llm_routing_event)))
+      (let [raw-row (first (raw-query s {:select [:metadata :llm_selected_provider :llm_actual_provider :llm_fallback]
+                                         :from :conversation_turn_iteration
+                                         :where [:= :id (str iid)]}))
+            iter (first (vis/db-list-conversation-turn-iterations s qid))]
+        (expect (= "p1" (:llm_selected_provider raw-row)))
+        (expect (= "p2" (:llm_actual_provider raw-row)))
+        (expect (= 1 (:llm_fallback raw-row)))
+        (expect (not (str/includes? (or (:metadata raw-row) "") "llm")))
+        (expect (= [:llm.routing/provider-retry :llm.routing/provider-fallback]
+                  (mapv :event/type (:llm-routing-trace iter))))
+        (expect (= true (:llm-fallback? iter)))
+        (expect (= (:llm-routing-trace iter) (get-in iter [:metadata :llm :trace]))))))
+
   (it "defaults absent token + cost columns to 0 / 0.0 on read"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
