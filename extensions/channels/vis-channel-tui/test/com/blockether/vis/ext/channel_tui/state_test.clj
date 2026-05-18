@@ -107,16 +107,20 @@
 
 (defdescribe workspace-tabs-test
   (it "adds a tab and seeds a base tab when none exist"
+    ;; Base tab inherits the current `:title`; the freshly-added tab
+    ;; starts as `Untitled conversation` because it has no title yet.
     (reset! state/app-db {:title "Current"
                           :render-version 0})
     (state/dispatch [:add-workspace-tab])
     (expect (= [{:id :main :label "Current"}
-                {:id :tab-1 :label "Tab 1" :active? true}]
+                {:id :tab-1 :label state/untitled-conversation-label :active? true}]
               (:workspace-tabs @state/app-db)))
     (expect (= :tab-1 (:active-workspace-id @state/app-db)))
     (expect (= 1 (:render-version @state/app-db))))
 
   (it "adds the next unique tab and makes it active"
+    ;; New tabs default to the untitled placeholder; `:set-title`
+    ;; renames the active tab once a title is generated.
     (reset! state/app-db {:workspace-tabs [{:id :main :label "Main"}
                                            {:id :tab-1 :label "Tab 1" :active? true}]
                           :active-workspace-id :tab-1
@@ -124,7 +128,7 @@
     (state/dispatch [:add-workspace-tab])
     (expect (= [{:id :main :label "Main"}
                 {:id :tab-1 :label "Tab 1"}
-                {:id :tab-2 :label "Tab 2" :active? true}]
+                {:id :tab-2 :label state/untitled-conversation-label :active? true}]
               (:workspace-tabs @state/app-db)))
     (expect (= :tab-2 (:active-workspace-id @state/app-db))))
 
