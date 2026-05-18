@@ -131,8 +131,6 @@ prompt_role: user
 </current_turn_context>
 ```
 
-Most of this belongs in `ctx`:
-
 ```clojure
 {:conversation {:id ... :turn-id ... :user-request ...}
  :iteration {:id ... :position ...}}
