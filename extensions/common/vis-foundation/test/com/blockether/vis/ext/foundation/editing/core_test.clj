@@ -588,7 +588,7 @@
           out (cat-tool path)
           required #{:success? :result :error :symbol :tag :metadata}]
       ;; Envelope keys MUST include the canonical op/* set; extra keys
-      ;; (e.g. :presentation, :stdout when set) may also appear.
+      ;; (e.g. :presentation) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))
       (expect (true? (:success? out)))
       ;; v/cat returns a plain map as :result. :lines is a vec of
