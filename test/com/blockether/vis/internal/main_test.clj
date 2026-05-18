@@ -12,3 +12,15 @@
       (binding [*out* out]
         (expect (true? (#'main/fast-help-dispatched? false ["run" "--help"]))))
       (expect (.contains (str out) "vis run")))))
+
+(defdescribe root-run-shortcut-test
+  (it "treats bare prompt and run flags as root run shortcut"
+    (let [root (#'main/root-command)]
+      (expect (true? (#'main/root-run-shortcut? root ["fix tests"])))
+      (expect (true? (#'main/root-run-shortcut? root ["--json" "summarize"])))))
+
+  (it "keeps known commands and unknown help out of root run shortcut"
+    (let [root (#'main/root-command)]
+      (expect (false? (#'main/root-run-shortcut? root ["run" "fix tests"])))
+      (expect (false? (#'main/root-run-shortcut? root ["sessions" "--help"])))
+      (expect (false? (#'main/root-run-shortcut? root ["--help"]))))))
