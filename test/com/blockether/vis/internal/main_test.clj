@@ -1,7 +1,17 @@
 (ns com.blockether.vis.internal.main-test
   (:require
+   [com.blockether.vis.internal.commandline :as commandline]
    [com.blockether.vis.internal.main :as main]
    [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe root-help-test
+  (it "describes Vis and root one-shot flags"
+    (let [help (commandline/render-tree (#'main/root-command))]
+      (expect (.contains help "Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL."))
+      (expect (.contains help "vis [FLAGS] \"prompt\""))
+      (expect (.contains help "--full-trace-json-stream"))
+      (expect (.contains help "--provider PROVIDER"))
+      (expect (.contains help "COMMANDS")))))
 
 (defdescribe fast-help-test
   (it "does not swallow unknown root commands that also ask for help"
