@@ -389,6 +389,7 @@
   [src]
   (let [s (str src)]
     (when (and (not (parseable-source? s))
+            (pd/diagnose-quote-balance s)
             (str/includes? s "(done")
             (str/includes? s ":ir")
             (str/includes? s ":p"))

@@ -37,6 +37,9 @@
 ;; Header
 (def header-fg       (rgb :header-fg))
 (def header-hover-fg (rgb :header-hover-fg))
+(def header-active-tab-fg (rgb :header-active-tab-fg))
+(def header-active-tab-bg (rgb :header-active-tab-bg))
+(def header-active-tab-accent (rgb :header-active-tab-accent))
 
 ;; Boxes (messages + input)
 (def box-bg         (rgb :box-bg))
@@ -154,6 +157,9 @@
    :text-fg #'text-fg
    :header-fg #'header-fg
    :header-hover-fg #'header-hover-fg
+   :header-active-tab-fg #'header-active-tab-fg
+   :header-active-tab-bg #'header-active-tab-bg
+   :header-active-tab-accent #'header-active-tab-accent
    :box-bg #'box-bg
    :box-fg #'box-fg
    :border-fg #'border-fg

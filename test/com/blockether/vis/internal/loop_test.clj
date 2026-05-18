@@ -127,6 +127,13 @@
       (expect (= 1 (count (edamame/parse-string-all (:expr entry) lp/edamame-opts))))
       (expect (= [{:kind :answer-ref}] (:render-segments entry)))))
 
+  (it "does not rewrite malformed direct-answer IR when quotes are balanced"
+    (let [preflight (var-get #'lp/code-entries-preflight)
+          src "(done [:ir [:p \"Ok\"] [:h {:level} \"Bad heading\"]])"
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+      (expect (nil? (:repaired? entry)))
+      (expect (= src (:expr entry)))))
+
   (it "does not rewrite malformed non-answer code"
     (let [preflight (var-get #'lp/code-entries-preflight)
           src "(println \"a\" broken \"b)"

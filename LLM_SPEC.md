@@ -13,6 +13,7 @@ Make provider routing observable, durable, queryable. 429 retry/fallback must be
 - No TUI-only state as source of truth.
 - No retry after streamed content starts.
 - No silent provider fallback.
+- No `vis conversations routing <turn-id>` CLI command for this feature. TUI shows routing state; DB rows preserve it.
 
 ## Terms
 
@@ -76,11 +77,66 @@ Algorithm:
 
 429 often clears fast. Immediate cross-provider fallback hides quota pressure and burns wrong account/model. Waiting forever hangs tab. Budgeted same-provider retries + bounded fallback gives predictable behavior.
 
+## svar work plan
+
+Target repo: `../svar`. svar owns routing truth. Vis only consumes svar routing trace.
+
+### Contract
+
+One shape only:
+
+```clojure
+:routed/trace [event event event]
+```
+
+`event` is same map everywhere:
+
+- appended to final `:routed/trace`
+- emitted live to caller/TUI when available
+- persisted by Vis into `llm_routing_event`
+- rendered by TUI progress/resume
+
+No second event shape. No separate durable `fallback-trace`. Current `:routed/fallback-trace` becomes temporary compatibility alias only during migration; consumers must move to `:routed/trace`.
+
+### Current svar state
+
+- `src/clj/com/blockether/svar/internal/router.clj` has `fallback-trace` atom in `with-provider-fallback`. It records provider/format fallback only and returns `:routed/fallback-trace`.
+- `src/clj/com/blockether/svar/internal/llm.clj` has `with-retry`, used by `chat-completion-with-retry`. It silently retries 429/502/503/504 with logs only. These retries are not in any trace and not visible to TUI.
+- streaming fallback notifications use `on-chunk {:reset? true ...}`. That is live control state, not durable event contract.
+
+### Svar steps
+
+1. Define routing event normalizer in `internal/router.clj`.
+   - event keys use final trace schema: `:event/id`, `:event/type`, provider/model fields, status/reason, delay/elapsed/attempt, `:at-ms`.
+   - event types: `:llm.routing/provider-retry`, `:llm.routing/provider-fallback`, optionally `:llm.routing/format-fallback`.
+2. Replace `fallback-trace` atom with `trace` atom in `with-provider-fallback`.
+   - append normalized event maps only.
+   - return `:routed/trace`.
+   - add `:routed/fallback-trace` only as deprecated alias while Vis migrates.
+3. Move 429 retry policy to router layer.
+   - add router rate-limit policy defaults: `:same-provider-delays-ms`, `:fallback-after-ms`, `:respect-retry-after?`, `:fallback-provider?`.
+   - on 429 before streamed content, append `:llm.routing/provider-retry`, sleep configured delay, retry same provider/model.
+   - when budget exhausted and provider changes, append `:llm.routing/provider-fallback`.
+4. Stop opaque 429 retry in `llm/with-retry`.
+   - either remove 429 from primitive retry set when call is routed, or make `with-retry` accept trace callback/policy from router.
+   - invariant: every retry that can affect user wait appears in `:routed/trace`.
+5. Preserve streaming safety.
+   - track first content chunk before retry/fallback.
+   - if any content reached caller, throw stream error; do not retry or fallback.
+6. Tests in `test/com/blockether/svar/internal/*`.
+   - p1 429 retry retry retry then p2 success.
+   - trace order equals live event order.
+   - final result has `:routed/trace` with same event maps.
+   - no retry/fallback after first streamed content.
+   - `Retry-After` behavior covered.
+
+Do not implement Vis CLI. Vis consumes svar `:routed/trace` through TUI/live callbacks and persistence.
+
 ## svar trace shape
 
 ### Change
 
-Every retry/fallback produces structured event. Every retry is persisted and rendered; no trace collapse.
+Every retry/fallback produces structured event. Trace is ordered vector of those event maps; no separate trace/event schemas and no trace collapse.
 
 ```clojure
 {:event/id "uuid"
@@ -107,7 +163,7 @@ Every retry/fallback produces structured event. Every retry is persisted and ren
  :at-ms 1779094020000}
 ```
 
-Final ask result carries summary:
+Final ask result carries one trace:
 
 ```clojure
 {:routed/provider-id :openai-codex
@@ -120,9 +176,11 @@ Final ask result carries summary:
  :routed/trace [retry-event retry-event retry-event fallback-event]}
 ```
 
+Live routing notifications reuse the exact event maps later present in `:routed/trace`. Consumers must not read or write a separate `:fallback-trace` shape.
+
 ### Rationale
 
-Flat event maps are durable, renderable, testable. Namespaced `:event/type` avoids guessing. Summary avoids re-deriving selected/actual from trace.
+Flat event maps are durable, renderable, testable. Namespaced `:event/type` avoids guessing. Trace is the canonical event log; summary avoids re-deriving selected/actual from trace.
 
 ## Streaming rule
 
@@ -146,23 +204,49 @@ Retry after partial stream duplicates assistant content and corrupts transcript.
 
 Add core routing columns/tables. Do not store primary routing facts only in metadata.
 
-`llm_routing_event` is core schema, not extension metadata. One retry/fallback event = one row ordered by `position`. Turn summary columns live on `conversation_turn_state`; iteration columns mirror per-iteration truth. Schema edits go inline in `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` until migration policy changes.
+Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` inline. Fresh DB rebuild is acceptable; this spec shows target table shape, not stepwise migration statements.
+
+Target `conversation_turn_state` excerpt:
 
 ```sql
-ALTER TABLE conversation_turn_state
-  ADD COLUMN llm_selected_provider TEXT;
-ALTER TABLE conversation_turn_state
-  ADD COLUMN llm_selected_model TEXT;
-ALTER TABLE conversation_turn_state
-  ADD COLUMN llm_actual_provider TEXT;
-ALTER TABLE conversation_turn_state
-  ADD COLUMN llm_actual_model TEXT;
-ALTER TABLE conversation_turn_state
-  ADD COLUMN llm_fallback INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE conversation_turn_state (
+  id                     TEXT PRIMARY KEY NOT NULL,
+  conversation_turn_soul_id TEXT NOT NULL REFERENCES conversation_turn_soul(id) ON DELETE CASCADE,
+  version                INTEGER NOT NULL CHECK (version >= 0),
+  status                 TEXT NOT NULL CHECK (status IN ('running', 'done', 'error', 'interrupted')),
+  answer                 BLOB,
+  llm_selected_provider  TEXT,
+  llm_selected_model     TEXT,
+  llm_actual_provider    TEXT,
+  llm_actual_model       TEXT,
+  llm_fallback           INTEGER NOT NULL DEFAULT 0 CHECK (llm_fallback IN (0, 1)),
+  created_at             INTEGER NOT NULL,
+  UNIQUE (conversation_turn_soul_id, version)
+);
+```
+
+Target `conversation_turn_iteration` excerpt:
+
+```sql
+CREATE TABLE conversation_turn_iteration (
+  id                         TEXT PRIMARY KEY NOT NULL,
+  conversation_turn_state_id TEXT NOT NULL REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
+  position                   INTEGER NOT NULL CHECK (position >= 1),
+  status                     TEXT NOT NULL CHECK (status IN ('running', 'done', 'error', 'interrupted')),
+  llm_provider               TEXT,
+  llm_model                  TEXT,
+  llm_selected_provider      TEXT,
+  llm_selected_model         TEXT,
+  llm_actual_provider        TEXT,
+  llm_actual_model           TEXT,
+  llm_fallback               INTEGER NOT NULL DEFAULT 0 CHECK (llm_fallback IN (0, 1)),
+  created_at                 INTEGER NOT NULL,
+  UNIQUE (conversation_turn_state_id, position)
+);
 ```
 
 ```sql
-CREATE TABLE IF NOT EXISTS llm_routing_event (
+CREATE TABLE llm_routing_event (
   id TEXT PRIMARY KEY,
   conversation_turn_state_id TEXT NOT NULL REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
   conversation_turn_iteration_id TEXT REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
@@ -184,10 +268,10 @@ CREATE TABLE IF NOT EXISTS llm_routing_event (
   UNIQUE(conversation_turn_state_id, position)
 );
 
-CREATE INDEX IF NOT EXISTS idx_llm_routing_event_turn
+CREATE INDEX idx_llm_routing_event_turn
   ON llm_routing_event(conversation_turn_state_id, position);
 
-CREATE INDEX IF NOT EXISTS idx_llm_routing_event_iteration
+CREATE INDEX idx_llm_routing_event_iteration
   ON llm_routing_event(conversation_turn_iteration_id, position);
 ```
 
@@ -299,39 +383,12 @@ Conversation rebuild reads core routing fields/events. Resume path must use summ
  :llm-actual {:provider llm_actual_provider
               :model llm_actual_model}
  :llm-fallback? (pos? llm_fallback)
- :llm-fallback-trace (db-llm-routing-events db turn-state-id)}
+ :llm-routing-trace (db-llm-routing-events db turn-state-id)}
 ```
 
 ### Rationale
 
 Reopened transcript must match live transcript. DB core facts must reconstruct same bubble/footer without parsing metadata.
-
-## CLI / diagnostics
-
-### Change
-
-Add turn routing inspect helper.
-
-```bash
-vis conversations routing <turn-id>
-```
-
-Output:
-
-```text
-selected: anthropic-coding-plan/claude-opus-4-7
-actual:   openai-codex/gpt-5.3-codex
-fallback: yes
-
-1 retry anthropic-coding-plan/claude-opus-4-7 429 delay=2000ms
-2 retry anthropic-coding-plan/claude-opus-4-7 429 delay=3000ms
-3 retry anthropic-coding-plan/claude-opus-4-7 429 delay=6000ms
-4 fallback anthropic-coding-plan/claude-opus-4-7 -> openai-codex/gpt-5.3-codex elapsed=30000ms
-```
-
-### Rationale
-
-TUI not enough for postmortem. CLI gives grep-able support path.
 
 ## Tests
 
@@ -367,7 +424,7 @@ TUI not enough for postmortem. CLI gives grep-able support path.
 ```clojure
 (it "renders resumed fallback footer from core routing rows"
   ;; rebuild-history reads DB routing rows
-  ;; assistant message has :llm-selected/:llm-actual/:llm-fallback-trace
+  ;; assistant message has :llm-selected/:llm-actual/:llm-routing-trace
   )
 ```
 
@@ -377,12 +434,12 @@ Need unit coverage at each seam: router policy, DB durability, TUI live/resume r
 
 ## Rollout
 
-1. Add schema to V1 migration inline until migrations policy changes.
+1. Edit V1 schema inline; destructive dev DB rebuild is acceptable.
 2. Add persistence API + tests.
-3. Replace TUI metadata forwarding with core routing rows + resume from core rows.
-4. Add svar policy + trace events.
+3. Implement svar `:routed/trace` event contract first.
+4. Replace TUI metadata forwarding with core routing rows + resume from core rows.
 5. Add config pass-through from Vis to svar.
-6. Add CLI diagnostics.
+6. No CLI command; TUI + persisted routing rows are enough.
 
 ## Open decisions
 
@@ -391,347 +448,6 @@ Need unit coverage at each seam: router policy, DB durability, TUI live/resume r
 - Whether fallback-after timer starts at first 429 or request start.
 - Whether non-429 transient statuses use same policy or immediate fallback.
 
-## DB metadata analysis
+## Related specs
 
-### Source trace scope
-
-Current DB/routing metadata path:
-
-- `src/com/blockether/vis/internal/loop.clj`: builds `llm-routing-metadata`, attaches `:llm-fallback-trace`, writes per-iteration `:metadata`.
-- `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`: writes/reads conversation, turn, iteration metadata; filters JSON fields with `json_extract`.
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj`: rebuild path reads `[:metadata :llm]` and `[:metadata :llm :fallback-trace]`, then maps to message routing fields.
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj`: renders converted `:llm-fallback-trace` fields.
-
-Target: no core DB routing fact depends on `:metadata`. Provider catalog metadata, extension tool envelopes, and `log.data` are separate concepts and may remain.
-
-### Current metadata columns
-
-```sql
-conversation_soul.metadata
-conversation_state.metadata
-conversation_turn_soul.metadata
-conversation_turn_state.metadata
-conversation_turn_iteration.metadata
-extension_aggregate.metadata
-log.data
-```
-
-`log.data` is event payload, not same concept. Keep as `data`.
-
-### `conversation_soul.metadata`
-
-Current payload:
-
-```clojure
-{:channel :tui
- :external-id "telegram-chat-id-or-other"}
-```
-
-Current reads:
-
-```clojure
-(db-get-conversation db id)        ;; returns :channel :external-id
-(db-list-conversations db :tui)    ;; filters json_extract(metadata, '$.channel')
-(db-find-conversation-by-external) ;; filters json_extract(metadata, '$.external-id')
-```
-
-Problem:
-
-```sql
-WHERE json_extract(metadata, '$.channel') = 'tui'
-```
-
-Channel and external id are core identity/indexing facts, not aux metadata.
-
-Replacement:
-
-```sql
-ALTER TABLE conversation_soul ADD COLUMN channel TEXT NOT NULL DEFAULT 'tui';
-ALTER TABLE conversation_soul ADD COLUMN external_id TEXT;
-
-CREATE INDEX idx_conversation_soul_channel_created
-  ON conversation_soul(channel, created_at DESC);
-
-CREATE UNIQUE INDEX idx_conversation_soul_channel_external
-  ON conversation_soul(channel, external_id)
-  WHERE external_id IS NOT NULL;
-```
-
-Rationale:
-
-Core selector fields need constraints/indexes. JSON makes common reads slower and hides schema contract.
-
-### `conversation_state.metadata`
-
-Current payload:
-
-```clojure
-{:system-prompt "..."
- :provider :anthropic-coding-plan
- :model "claude-opus-4-7"}
-```
-
-Current reads:
-
-```clojure
-(db-get-conversation db id) ;; :system-prompt :provider :model
-(row->conversation)         ;; title/model/provider display
-```
-
-Problem: all three are core conversation snapshot facts.
-
-Replacement:
-
-```sql
-ALTER TABLE conversation_state ADD COLUMN system_prompt TEXT;
-ALTER TABLE conversation_state ADD COLUMN llm_root_provider TEXT;
-ALTER TABLE conversation_state ADD COLUMN llm_root_model TEXT;
-```
-
-Rationale:
-
-Conversation creation snapshot should be inspectable without JSON decode. Provider/model already became first-class on turn/iteration; state should match.
-
-### `conversation_turn_soul.metadata`
-
-Current payload: none in normal write path.
-
-```clojure
-(db-store-conversation-turn! ...) ;; does not write conversation_turn_soul.metadata
-```
-
-Replacement:
-
-```sql
--- remove metadata column from future schema
-```
-
-Rationale:
-
-Dead column. Turn soul already has `user_request`, `position`, FK, timestamps.
-
-### `conversation_turn_state.metadata`
-
-Current payload:
-
-```clojure
-{:messages [...]
- :iteration-count 3
- :duration-ms 12345
- :input-tokens 100
- :output-tokens 20
- :reasoning-tokens 0
- :cached-tokens 50
- :total-cost 0.0123
- :provider :anthropic-coding-plan
- :model "claude-opus-4-7"}
-```
-
-Current reads:
-
-```clojure
-(row->turn row)
-;; returns :iteration-count :duration-ms tokens/cost/model/provider
-```
-
-Problem: these are canonical turn outcome fields. JSON duplicates `llm_root_provider` / `llm_root_model` fallback behavior already admits column should be canonical.
-
-Replacement:
-
-```sql
-ALTER TABLE conversation_turn_state ADD COLUMN messages TEXT;
-ALTER TABLE conversation_turn_state ADD COLUMN iteration_count INTEGER DEFAULT 0 CHECK (iteration_count >= 0);
-ALTER TABLE conversation_turn_state ADD COLUMN duration_ms INTEGER DEFAULT 0 CHECK (duration_ms >= 0);
-ALTER TABLE conversation_turn_state ADD COLUMN llm_input_tokens INTEGER DEFAULT 0 CHECK (llm_input_tokens >= 0);
-ALTER TABLE conversation_turn_state ADD COLUMN llm_output_tokens INTEGER DEFAULT 0 CHECK (llm_output_tokens >= 0);
-ALTER TABLE conversation_turn_state ADD COLUMN llm_reasoning_tokens INTEGER DEFAULT 0 CHECK (llm_reasoning_tokens >= 0);
-ALTER TABLE conversation_turn_state ADD COLUMN llm_cached_tokens INTEGER DEFAULT 0 CHECK (llm_cached_tokens >= 0);
-ALTER TABLE conversation_turn_state ADD COLUMN llm_total_cost_usd REAL DEFAULT 0 CHECK (llm_total_cost_usd >= 0);
-ALTER TABLE conversation_turn_state ADD COLUMN llm_selected_provider TEXT;
-ALTER TABLE conversation_turn_state ADD COLUMN llm_selected_model TEXT;
-ALTER TABLE conversation_turn_state ADD COLUMN llm_actual_provider TEXT;
-ALTER TABLE conversation_turn_state ADD COLUMN llm_actual_model TEXT;
-ALTER TABLE conversation_turn_state ADD COLUMN llm_fallback INTEGER NOT NULL DEFAULT 0 CHECK (llm_fallback IN (0, 1));
-```
-
-Rationale:
-
-Turn list, transcript, cost summaries, provider summaries, fallback status must not JSON-scan. They are product features, not extension notes.
-
-### `conversation_turn_iteration.metadata`
-
-Current payload:
-
-```clojure
-{:llm {:selected {:provider "..." :model "..."}
-       :actual {:provider "..." :model "..."}
-       :fallback? true
-       :fallback-trace [...]}
- :engine-timing {...}
- :extensions [{:name 'com.blockether.vis.ext.foundation.core
-               :version "..."
-               :source-paths [...]
-               :source-mtime-max 123
-               :source-sha256 "..."}]}
-```
-
-Current reads:
-
-```clojure
-TUI rebuild-history:
-  (get-in it [:metadata :llm])
-  (get-in it [:metadata :llm :fallback-trace])
-
-change detector / diagnostics:
-  (:extensions (:metadata iteration))
-  (:engine-timing (:metadata iteration))
-```
-
-Problem: mixed concerns. `:llm` is core. `:engine-timing` is core diagnostics. `:extensions` is runtime environment snapshot.
-
-Replacement:
-
-```sql
-ALTER TABLE conversation_turn_iteration ADD COLUMN llm_selected_provider TEXT;
-ALTER TABLE conversation_turn_iteration ADD COLUMN llm_selected_model TEXT;
-ALTER TABLE conversation_turn_iteration ADD COLUMN llm_actual_provider TEXT;
-ALTER TABLE conversation_turn_iteration ADD COLUMN llm_actual_model TEXT;
-ALTER TABLE conversation_turn_iteration ADD COLUMN llm_fallback INTEGER NOT NULL DEFAULT 0 CHECK (llm_fallback IN (0, 1));
-ALTER TABLE conversation_turn_iteration ADD COLUMN engine_timing TEXT; -- JSON payload, explicit column name
-```
-
-Routing trace uses table:
-
-```sql
-CREATE TABLE llm_routing_event (...);
-```
-
-Extension snapshots use table:
-
-```sql
-CREATE TABLE runtime_extension_snapshot (
-  id TEXT PRIMARY KEY,
-  conversation_turn_iteration_id TEXT NOT NULL REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
-  extension_name TEXT NOT NULL,
-  extension_version TEXT,
-  source_paths TEXT,
-  source_mtime_max INTEGER,
-  source_sha256 TEXT,
-  created_at INTEGER NOT NULL,
-  UNIQUE(conversation_turn_iteration_id, extension_name)
-);
-```
-
-Rationale:
-
-Iteration metadata now carries core UI state, core timing, and extension provenance in one blob. Split by ownership.
-
-### `extension_aggregate.metadata`
-
-Current payload: extension-owned secondary indexes, e.g.
-
-```clojure
-{:path "src/core.clj"}
-{:source "core/run" :target "db/query" :edge-kind "calls"}
-{:kind "node"}
-```
-
-Current reads:
-
-```clojure
-(extension-list-aggregates env {:kind :bridge/edge
-                                :metadata {:source "core/run"}})
-```
-
-Schema already has JSON indexes:
-
-```sql
-idx_extension_aggregate_metadata
-idx_extension_aggregate_meta_source
-idx_extension_aggregate_meta_target
-idx_extension_aggregate_meta_path
-```
-
-Options:
-
-1. Keep `extension_aggregate.metadata` as extension-owned free-form bag.
-2. Rename to `index_data` / `query_data` to avoid core `metadata` concept.
-3. Add typed extension-specific tables for first-party extensions later.
-
-Recommendation:
-
-Keep for now, but rename conceptually to `index_data`. Do not use it for core Vis facts.
-
-Rationale:
-
-Extensions need schemaless sidecar query fields. Core schema should not mutate for every third-party extension. This is valid extension boundary, unlike LLM routing.
-
-## Verdict on metadata
-
-### Strong yes: remove metadata from core tables
-
-Core tables should not use generic `metadata` for facts Vis depends on.
-
-Remove/migrate:
-
-```text
-conversation_soul.metadata          -> channel, external_id
-conversation_state.metadata         -> system_prompt, llm_root_provider, llm_root_model
-conversation_turn_soul.metadata     -> drop
-conversation_turn_state.metadata    -> messages, counts, tokens, cost, routing columns
-conversation_turn_iteration.metadata-> routing columns, engine_timing, runtime_extension_snapshot
-```
-
-### Keep narrow escape hatches only
-
-Keep:
-
-```text
-extension_aggregate.metadata -> rename/index_data later
-log.data                     -> event payload
-```
-
-Rationale:
-
-Extensibility at extension boundary is useful. Generic metadata inside core domain is schema debt.
-
-## Migration plan
-
-1. Add new columns/tables while keeping old metadata reads as fallback.
-2. Backfill from JSON metadata.
-3. Update writes to new columns/tables.
-4. Update reads to new columns first, metadata fallback only.
-5. Add diagnostics that report rows still relying on metadata fallback.
-6. Remove fallback and columns in next migration window.
-
-Backfill sketch:
-
-```sql
-UPDATE conversation_soul
-SET channel = COALESCE(json_extract(metadata, '$.channel'), 'tui'),
-    external_id = json_extract(metadata, '$."external-id"');
-
-UPDATE conversation_state
-SET system_prompt = json_extract(metadata, '$."system-prompt"'),
-    llm_root_provider = json_extract(metadata, '$.provider'),
-    llm_root_model = json_extract(metadata, '$.model');
-
-UPDATE conversation_turn_state
-SET iteration_count = COALESCE(json_extract(metadata, '$."iteration-count"'), 0),
-    duration_ms = COALESCE(json_extract(metadata, '$."duration-ms"'), 0),
-    llm_input_tokens = COALESCE(json_extract(metadata, '$."input-tokens"'), 0),
-    llm_output_tokens = COALESCE(json_extract(metadata, '$."output-tokens"'), 0),
-    llm_reasoning_tokens = COALESCE(json_extract(metadata, '$."reasoning-tokens"'), 0),
-    llm_cached_tokens = COALESCE(json_extract(metadata, '$."cached-tokens"'), 0),
-    llm_total_cost_usd = COALESCE(json_extract(metadata, '$."total-cost"'), 0.0);
-```
-
-## Rule going forward
-
-```text
-If Vis core reads it, filters by it, renders it, resumes from it, or tests it -> column/table.
-If extension owns it and only extension interprets it -> extension sidecar payload.
-If log event owns it -> log.data.
-
-Routing exception: retry/fallback summary and trace are always columns/tables, never metadata.
-```
+Metadata usage audit lives in `METADATA_SPEC.md`. Keep this file focused on LLM routing/retry/fallback behavior.
