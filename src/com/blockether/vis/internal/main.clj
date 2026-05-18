@@ -2369,6 +2369,14 @@
       (and (= 1 (count path))
         (seq residual)))))
 
+(defn- root-run-shortcut?
+  "True when bare `vis ...` should behave like `vis run ...`.
+   Unknown commands that ask for help stay errors, so typo diagnostics
+   remain honest (`vis sessions --help` must not become a prompt)."
+  [root args]
+  (and (unknown-command? root args)
+    (not-any? #{"--help" "-h"} args)))
+
 (defn- exit-with-user-error!
   [^Throwable t]
   (stdout! (str "vis: " (or (ex-message t) "error")))
@@ -2451,12 +2459,12 @@
      - No args                  -> top-level help
      - `help` / `--help` / `-h` -> help for the resolved command
      - Recognized command       -> invoke its `:cmd/run-fn`
-     - Unknown command          -> top-level help + exit 1
+     - Bare prompt / run flags  -> `vis run ...` shortcut
+     - Unknown command + help   -> honest unknown-command error
 
-   No magical fallback to a `run`-as-prompt shortcut -- the dispatcher
-   is a pure command tree. Anyone who wants the old single-arg
-   ergonomics can register a `:cmd/run-fn` on the root via a custom
-   extension."
+   Root prompt shortcut lives here, not in `commandline/dispatch!`, so
+   the generic dispatcher stays a pure command tree while the binary owns
+   CLI ergonomics (`vis fix this`, `vis --json summarize`)."
   [& raw-args]
   (let [main-started (System/nanoTime)
         measure?     (startup-measure? raw-args)
@@ -2484,10 +2492,15 @@
             (summarize-startup-registries!))
           (timed-startup! measure? "pre-redirect-stderr"
             #(pre-redirect-stderr! args))
-          (let [root      (root-command)
-                full-args (cons "vis" args)]
+          (let [root          (root-command)
+                full-args     (cons "vis" args)
+                unknown-root? (unknown-command? root args)]
             (cond
-              (unknown-command? root args)
+              (and unknown-root? (root-run-shortcut? root args))
+              (timed-startup! measure? "run-shortcut"
+                #(cli-run! {} args))
+
+              unknown-root?
               (do
                 (println (commandline/render-tree root))
                 (println)
