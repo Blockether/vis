@@ -27,13 +27,13 @@
 (defdescribe iteration-start-hook-test
   (it "collects active :turn.iteration/start hook hints and ignores other phases"
     (let [seen (atom nil)
-          ext {:ext/name "test.nudges"
+          ext {:ext/name "test.hints"
                :ext/hooks [{:id :test/title
                             :doc "title"
                             :phase :turn.iteration/start
                             :fn (fn [ctx]
                                   (reset! seen ctx)
-                                  {:hint "set title" :importance :high})}
+                                  {:text "set title" :importance :high})}
                            {:id :test/answer
                             :doc "answer"
                             :phase :turn.answer/validate
@@ -133,6 +133,18 @@
           entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
       (expect (nil? (:repaired? entry)))
       (expect (= src (:expr entry))))))
+
+(defdescribe top-level-do-unwrapping-test
+  (it "unwraps legacy top-level do before display and eval"
+    (let [preflight (var-get #'lp/code-entries-preflight)
+          src "(do (set-conversation-title! \"Triage render noise\") (def x \"doc\" 1))"
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+      (expect (= "(set-conversation-title! \"Triage render noise\")\n(def x \"doc\" 1)"
+                (:expr entry)))
+      (expect (true? (:vis/unwrapped-do? entry)))
+      (expect (= [{:kind :title :value "Triage render noise"}
+                  {:kind :code :source "(def x \"doc\" 1)"}]
+                (:render-segments entry))))))
 
 ;; ---------------------------------------------------------------------------
 ;; def-sink -> vars-snapshot (per-var precise source extraction)

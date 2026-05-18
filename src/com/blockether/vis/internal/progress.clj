@@ -19,7 +19,7 @@
 
      :form-result      One block finished evaluating. Carries
                        `:position`, `:code`, `:result`/`:error`,
-                       `:duration-ms`. The
+                       and `:envelope` timestamps. The
                        tracker writes per-block data into the
                        iteration entry's parallel vectors at index
                        `:position`. Chunks tagged `:silent?` (or
@@ -97,6 +97,14 @@
   (if (< (count v) target-count)
     (into v (repeat (- target-count (count v)) nil))
     v))
+
+(defn- envelope-duration-ms
+  [envelope]
+  (when (and (map? envelope)
+          (nat-int? (:started-at-ms envelope))
+          (nat-int? (:finished-at-ms envelope)))
+    (max 0 (- (long (:finished-at-ms envelope))
+             (long (:started-at-ms envelope))))))
 
 (defn- form-result-kind
   [chunk]
@@ -240,7 +248,7 @@
                                                        (format-form-result chunk))))
       (update :result-kinds #(assoc (pad-to % need) idx (form-result-kind chunk)))
       (update :result-details #(assoc (pad-to % need) idx (form-result-detail chunk)))
-      (update :durations #(assoc (pad-to % need) idx (or (:duration-ms chunk) 0)))
+      (update :durations #(assoc (pad-to % need) idx (or (envelope-duration-ms (:envelope chunk)) 0)))
       (update :successes #(assoc (pad-to % need) idx (nil? (:error chunk))))
       (update :silents   #(assoc (pad-to % need) idx (and (nil? (:error chunk))
                                                        (silent-chunk? chunk)))))))

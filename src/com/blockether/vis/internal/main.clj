@@ -702,6 +702,14 @@
 (defn- trace-bad [s] (ansi "31" s))
 (defn- trace-code [s] (ansi "36" s))
 
+(defn- envelope-duration-ms
+  [envelope]
+  (when (and (map? envelope)
+          (nat-int? (:started-at-ms envelope))
+          (nat-int? (:finished-at-ms envelope)))
+    (max 0 (- (long (:finished-at-ms envelope))
+             (long (:started-at-ms envelope))))))
+
 (def ^:private ansi-sgr-re #"\u001B\[[0-9;]*m")
 
 (defn- strip-ansi [s]
@@ -856,7 +864,8 @@
                    (trace-ok "✓ form finished"))
                  " #" (inc (long (or (:form-idx chunk) 0)))
                  (when-let [of (:form-of chunk)] (str "/" of))
-                 (when-let [ms (:duration-ms chunk)] (str " " (trace-dim (str ms "ms"))))
+                 (when-let [ms (envelope-duration-ms (:envelope chunk))]
+                   (str " " (trace-dim (str ms "ms"))))
                  (when (:repaired? chunk) (str " " (trace-warn "repaired")))
                  (when (:timeout? chunk) (str " " (trace-bad "timeout")))
                  (if-let [err (trace-error-summary (:error chunk))]
