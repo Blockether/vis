@@ -196,8 +196,10 @@
     (expect (= :tab-2 (:active-workspace-id @state/app-db)))
     (state/dispatch [:select-workspace-tab-index :next])
     (expect (= :main (:active-workspace-id @state/app-db)))
+    (state/dispatch [:select-workspace-tab-index :prev])
+    (expect (= :tab-2 (:active-workspace-id @state/app-db)))
     (state/dispatch [:select-workspace-tab-index 99])
-    (expect (= :main (:active-workspace-id @state/app-db))))
+    (expect (= :tab-2 (:active-workspace-id @state/app-db))))
 
   (it "selects an already-open workspace tab by conversation id"
     (reset! state/app-db {:workspace-tabs [{:id :main :label "Main" :active? true}

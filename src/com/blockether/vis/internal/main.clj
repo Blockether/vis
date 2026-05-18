@@ -36,7 +36,6 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.commandline :as commandline]
    [com.blockether.vis.internal.config :as config]
-   [com.blockether.vis.internal.crac-bootstrap :as crac-bootstrap]
    [com.blockether.vis.internal.doctor :as doctor]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
@@ -2463,8 +2462,6 @@
     (when measure?
       (System/setProperty "vis.measure" "1"))
     (try
-      (timed-startup! measure? "pre-extension-bootstrap"
-        #(crac-bootstrap/pre-extension-bootstrap! {:phase :cli}))
       ;; Quiet stdout BEFORE any extension load triggers Telemere registration
       ;; spam - the user only sees logs when they pass --debug / --verbose / -v
       ;; (or set VIS_DEBUG=1).

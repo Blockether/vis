@@ -83,10 +83,6 @@
    rows below the title."
   3)
 
-(def ^:private workspace-tabs-extra-rows
-  "Rows added when workspace tabs are visible: tab top border + tab strip."
-  2)
-
 (def ^:private placeholder-title
   "Shown center when the conversation has no title yet (fresh run,
    first turn not finished yet). Italicised so it reads as a hint."
@@ -105,11 +101,50 @@
    persistent right-side copy actions."
   "  ")
 
-(defn- workspace-tabs
+(def ^:private tab-arrow-left "‹")
+(def ^:private tab-arrow-right "›")
+
+;; Tab sizing policy:
+;; - Each tab reserves `tab-padding` cells on each side as breathing room
+;;   so labels never crash into the cell border.
+;; - When a label exceeds the inner width it is truncated with
+;;   `tab-ellipsis` so overflow is visible (no silent cuts).
+;; - Visible tab count is clamped to [min-visible-tabs, max-visible-tabs]
+;;   regardless of available width: a wide screen stops growing past 8 so
+;;   tabs do not spread out to the horizon, and a narrow screen still
+;;   shows up to 5 (very narrow screens fall back to the natural fit).
+(def ^:private tab-padding 1)
+(def ^:private tab-ellipsis "…")
+(def ^:private tab-target-width 14)
+(def ^:private min-visible-tabs 5)
+(def ^:private max-visible-tabs 8)
+
+(defn- title-or-placeholder
+  "Conversation title from db, falling back to the shared placeholder
+   when the conversation has not been titled yet."
   [db]
-  (let [tabs (:workspace-tabs db)]
-    (when (> (count tabs) 1)
-      (vec tabs))))
+  (let [t (:title db)]
+    (if (and (string? t) (not (str/blank? t)))
+      t
+      placeholder-title)))
+
+(defn- workspace-tabs
+  "Return tabs to render in the centre slot, ALWAYS non-empty.
+
+   Each tab represents a conversation; the active tab's label tracks
+   the conversation title (the state layer updates it on `:set-title`).
+   When the app-db has not initialised its tab list yet — fresh boot,
+   first paint, or stand-alone draw in tests — we synthesise a single
+   active tab labelled with the conversation title (or the
+   `Untitled conversation` placeholder) so the centre slot is never
+   empty and the LEFT slot never needs to fall back to the title."
+  [db]
+  (let [tabs (vec (:workspace-tabs db))]
+    (if (seq tabs)
+      tabs
+      [{:id (or (:active-workspace-id db) :main)
+        :label (title-or-placeholder db)
+        :active? true}])))
 
 (defn- active-workspace-tab-id
   [db tabs]
@@ -241,7 +276,6 @@
    (header-rows db 0))
   ([db cols]
    (+ HEADER_ROWS
-     (if (seq (workspace-tabs db)) workspace-tabs-extra-rows 0)
      (reduce + 0 (map #(long (:height (:spec %)))
                    (header-row-specs db cols))))))
 
@@ -253,19 +287,9 @@
 (defn- full-id [conversation]
   (some-> conversation :id str))
 
-(defn- title-text [db]
-  (let [t (:title db)]
-    (if (and (string? t) (not (str/blank? t)))
-      [t false]
-      [placeholder-title true])))
-
 (defn- ellipsize
-  [text max-chars]
-  (let [text (str text)]
-    (cond
-      (<= max-chars 0) ""
-      (<= (count text) max-chars) text
-      :else (str (subs text 0 (max 0 (dec max-chars))) "..."))))
+  [text max-cols]
+  (p/truncate-cols (str text) (max 0 (long max-cols))))
 
 (defn- latest-notification
   "Most-recently-pushed active notification, or nil. We display ONE
@@ -329,158 +353,231 @@
   [id-short]
   (id-copy-block-text id-short))
 
-(defn draw-header!
-  "Paint the header band starting at `header-top`, full width `cols`.
-   The band is `HEADER_ROWS` rows tall: top rule, content row, bottom
-   rule. Pure draw + ONE click-region registration; safe to call
-   every frame.
+(defn- clamp-long
+  [n lo hi]
+  (max (long lo) (min (long hi) (long n))))
 
-   Layout per the namespace doc: notification banner LEFT, centered
-   conversation title CENTER, short conversation id + `⧉` RIGHT. When the
-   title would overlap either edge block, the title is truncated with an
-   ellipsis so the diagnostically-important id stays readable.
+(defn- active-tab-index
+  [tabs active-id]
+  (or (first (keep-indexed #(when (= (:id %2) active-id) %1) tabs)) 0))
 
-   Side effect: registers a click region for the id-copy block. The screen
-   mouse handler (in `screen.clj`) recognises `:kind :copy-id`, copies the
-   corresponding payload, then pushes a host notification that this band
-   surfaces in the LEFT slot."
-  [g db header-top cols]
-  (let [tabs         (workspace-tabs db)
-        tabs?        (seq tabs)
-        tab-top-rule-row (when tabs? header-top)
-        tabs-row     (when tabs? (inc header-top))
-        top-rule-row (+ header-top (if tabs? 2 0))
-        content-row  (+ header-top (if tabs? 3 1))
-        ;; Extension-contributed rows sit BETWEEN the title content
-        ;; row and the bottom rule. Each `:tui.slot/header-row` contribution
-        ;; returns a row spec or nil; we allocate rows for the
-        ;; non-nil ones and call their `:draw!` to paint. Contributions
-        ;; that return nil cost zero vertical space.
-        contrib-specs (header-row-specs db cols)
-        bottom-row   (dec (+ header-top (header-rows db cols)))
-        edge-pad     1
-        id-short     (short-id (:conversation db))
-        full-uuid    (full-id  (:conversation db))
-        id-copy-text (id-copy-block-text id-short)
-        action-text  (right-block-text id-short)
-        status       (latest-channel-status db)
-        status-raw   (some-> status :text)
-        status-cap   (max 0 (quot cols 3))
-        status-text  (when (seq status-raw)
-                       (ellipsize status-raw status-cap))
-        status-w     (p/display-width (or status-text ""))
-        action-w     (p/display-width action-text)
-        status-gap   (if (and (pos? status-w) (pos? action-w))
-                       status-action-separator
-                       "")
-        status-gap-w (p/display-width status-gap)
-        right-text   (str (or status-text "") status-gap action-text)
-        right-w      (p/display-width right-text)
-        id-copy-w    (p/display-width id-copy-text)
-        right-col    (when (pos? right-w) (max 0 (- cols edge-pad right-w)))
-        action-col   (when right-col (+ right-col status-w status-gap-w))
-        banner       (latest-notification)
-        notif-text   (some-> banner :text)
-        notif-level  (some-> banner :level)
-        status-level (some-> status :level)
-        ;; Reserve up to 1/3 of the row for the LEFT banner so the
-        ;; centered title still has room. Banner truncates with an
-        ;; ellipsis if the notification text is longer.
-        left-cap     (max 0 (quot cols 3))
-        left-trim    (when notif-text
-                       (cond
-                         (zero? left-cap)              ""
-                         (<= (count notif-text) left-cap) notif-text
-                         :else (str (subs notif-text 0 (max 0 (dec left-cap))) "...")))
-        left-w       (or (some-> left-trim count) 0)
-        gap          2
-        title-max    (max 0 (- cols (* 2 edge-pad) right-w left-w
-                              (if (pos? right-w) gap 0)
-                              (if (pos? left-w) gap 0)))
-        [title placeholder?] (title-text db)
-        title-trim   (ellipsize title title-max)
-        title-w      (p/display-width title-trim)
-        title-col-raw (max edge-pad (quot (- cols title-w) 2))
-        title-col    (cond
-                       (and right-col
-                         (> (+ title-col-raw title-w) (- right-col gap)))
-                       (max edge-pad (- right-col gap title-w))
-                       (and (pos? left-w)
-                         (< title-col-raw (+ edge-pad left-w gap)))
-                       (+ edge-pad left-w gap)
-                       :else
-                       title-col-raw)]
+(defn- max-visible-count
+  "How many tabs to show inside `width`.
 
-    ;; Workspace tabs live above the header chrome. They occupy the full width
-    ;; with no left/right padding. The tab strip gets its own yellow top rule;
-    ;; the normal header top rule stays between tabs and title.
-    (when tabs?
-      (draw-rule! g tab-top-rule-row cols t/footer-warning-fg)
-      (p/clear-styles! g)
-      (p/set-colors! g t/dialog-fg t/dialog-bg)
-      (p/fill-rect! g 0 tabs-row cols 1)
-      (let [layout (p/draw-tabs! g tabs
-                     {:left        0
-                      :row         tabs-row
-                      :width       cols
-                      :gap         0
-                      :bordered?   true
-                      :active-id   (active-workspace-tab-id db tabs)
-                      :fg          t/footer-warning-fg
-                      :bg          t/dialog-bg
-                      :active-fg   t/header-hover-fg
-                      :active-bg   t/dialog-title-bg
-                      :inactive-fg t/header-fg
-                      :inactive-bg t/dialog-bg})]
-        (doseq [[idx {:keys [id left width]}] (map-indexed vector layout)
+   Policy:
+   - clamp the natural fit (`width / tab-target-width`) to
+     [min-visible-tabs, max-visible-tabs] so growth stops past 8,
+   - never show more than we have,
+   - if even `min-visible-tabs` cannot fit the natural width budget,
+     fall back to the natural fit so we degrade gracefully on tiny
+     screens instead of stuffing five unreadable tabs in 12 cols."
+  ^long [^long tabs-n ^long width]
+  (let [natural (max 1 (quot width tab-target-width))
+        clamped (clamp-long natural min-visible-tabs max-visible-tabs)
+        cap     (if (< natural min-visible-tabs) natural clamped)]
+    (min tabs-n (long cap))))
+
+(defn- visible-tab-window
+  [tabs active-id width]
+  (let [tabs (vec tabs)
+        n (count tabs)
+        width (max 0 (long width))
+        max-visible (max-visible-count n width)
+        overflow? (> n max-visible)
+        active-idx (active-tab-index tabs active-id)
+        half (quot max-visible 2)
+        start (if overflow?
+                (clamp-long (- active-idx half) 0 (max 0 (- n max-visible)))
+                0)
+        end (min n (+ start max-visible))]
+    {:overflow? overflow?
+     :start start
+     :tabs (mapv (fn [idx tab] (assoc tab :header/original-index idx))
+             (range start end)
+             (subvec tabs start end))}))
+
+(defn- truncate-with-ellipsis
+  "Truncate `s` so its display width fits in `max-cols`. When truncation
+   actually happens, append `tab-ellipsis` so overflow is visible."
+  ^String [s ^long max-cols]
+  (let [s (or s "")]
+    (cond
+      (<= max-cols 0) ""
+      (<= (p/display-width s) max-cols) s
+      (= max-cols 1) (p/truncate-cols tab-ellipsis 1)
+      :else (str (p/truncate-cols s (dec max-cols)) tab-ellipsis))))
+
+(defn- center-padded
+  "Place `s` centred inside a `cell-w`-wide cell with `tab-padding`
+   reserved on each side; ellipsises overflow."
+  ^String [s ^long cell-w]
+  (let [inner (max 0 (- cell-w (* 2 (long tab-padding))))
+        text  (truncate-with-ellipsis s inner)
+        text-w (p/display-width text)
+        pad-total (max 0 (- cell-w text-w))
+        left  (quot pad-total 2)
+        right (- pad-total left)]
+    (str (apply str (repeat left \space))
+      text
+      (apply str (repeat right \space)))))
+
+(defn- draw-tab-arrow!
+  [g row col text direction]
+  (let [hovered (cr/hovered)
+        hovered? (and (= :workspace-tab (:kind hovered))
+                   (= direction (:index hovered))
+                   (= row (get-in hovered [:bounds :row])))]
+    (p/clear-styles! g)
+    (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+    (when hovered? (p/enable! g p/BOLD))
+    (p/put-str! g col row text)
+    (p/clear-styles! g)
+    (when *register-click-regions?*
+      (cr/register!
+        {:bounds {:row row :col col :width (p/display-width text)}
+         :kind :workspace-tab
+         :index direction
+         :workspace-id direction
+         :text direction
+         :enabled? true}))))
+
+(defn- draw-center-tabs!
+  "Paint the visible tab window inside the center 60% slot.
+
+   Tabs are painted directly here (instead of going through
+   `p/draw-tabs!`) because the header needs two things the generic
+   primitive does not offer: a fixed `tab-padding`-cell inner margin and
+   an ellipsis on overflow. Each cell still occupies its full width on
+   screen — fill-rect paints the active/inactive background — but the
+   label itself is centred within the inner area `(cell-w - 2*padding)`."
+  [g tabs active-id row left width]
+  (let [{:keys [overflow? tabs]} (visible-tab-window tabs active-id width)
+        arrow-w 1
+        arrow-gap 1
+        tab-left (if overflow? (+ left arrow-w arrow-gap) left)
+        tab-width (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
+        n (count tabs)]
+    (when overflow?
+      (draw-tab-arrow! g row left tab-arrow-left :prev)
+      (draw-tab-arrow! g row (+ left width (- arrow-w)) tab-arrow-right :next))
+    (when (and (pos? n) (pos? tab-width))
+      (let [base (quot tab-width n)
+            extra (rem tab-width n)
+            cells (loop [idx 0 x tab-left out []]
+                    (if (= idx n)
+                      out
+                      (let [cell-w (+ base (if (< idx extra) 1 0))
+                            tab (nth tabs idx)
+                            label (p/tab-display-label tab)
+                            text (center-padded label cell-w)
+                            active? (= (:id tab) active-id)]
+                        (recur (inc idx)
+                          (+ x cell-w)
+                          (conj out (assoc tab
+                                      :left x
+                                      :width cell-w
+                                      :text text
+                                      :active? active?))))))]
+        (doseq [{:keys [left width active? text id]
+                 idx :header/original-index}
+                cells
                 :when (pos? (long width))]
+          (p/clear-styles! g)
+          (if active?
+            (do (p/set-colors! g t/header-hover-fg t/dialog-title-bg)
+              (p/enable! g p/BOLD))
+            (do (p/set-colors! g t/header-fg t/dialog-bg)
+              (p/enable! g p/ITALIC)))
+          (p/enable! g p/BORDERED)
+          (p/fill-rect! g left row width 1)
+          (p/put-str! g left row text)
+          (p/clear-styles! g)
           (when *register-click-regions?*
             (cr/register!
-              {:bounds       {:row tabs-row :col left :width width}
-               :kind         :workspace-tab
-               :index        idx
+              {:bounds {:row row :col left :width width}
+               :kind :workspace-tab
+               :index idx
                :workspace-id id
-               :text         id
-               :enabled?     true})))))
+               :text id
+               :enabled? true})))
+        cells))))
+
+(defn draw-header!
+  "Paint the header band starting at `header-top`, full width `cols`.
+   Main content row is split 20% / 60% / 20%:
+
+   - LEFT 20%: ephemeral host notifications ONLY. The conversation
+     title does NOT live here — it lives on the active workspace
+     tab. When no notification is active the LEFT slot stays blank.
+   - CENTER 60%: workspace tabs. Always painted: when the app-db
+     has not yet materialised a tab list, `workspace-tabs` synthesises
+     a single placeholder tab so a fresh conversation reads as
+     `Untitled conversation` inside a tab, not as a title in the LEFT
+     slot.
+   - RIGHT 20%: live channel status + conversation-id copy affordance.
+
+   Tabs are part of the header row (no separate band). Overflow shows
+   clickable left/right arrows that cycle through workspace tabs."
+  [g db header-top cols]
+  (let [tabs (workspace-tabs db)
+        top-rule-row header-top
+        content-row (inc header-top)
+        contrib-specs (header-row-specs db cols)
+        bottom-row (dec (+ header-top (header-rows db cols)))
+        edge-pad 1
+        left-w (max 0 (quot cols 5))
+        right-slot-w (max 0 (quot cols 5))
+        center-w (max 0 (- cols left-w right-slot-w))
+        left-x 0
+        center-x left-w
+        right-x (+ left-w center-w)
+        id-short (short-id (:conversation db))
+        full-uuid (full-id (:conversation db))
+        id-copy-text (id-copy-block-text id-short)
+        action-text (right-block-text id-short)
+        status (latest-channel-status db)
+        status-raw (some-> status :text)
+        action-w (p/display-width action-text)
+        status-gap (if (and (seq status-raw) (pos? action-w)) status-action-separator "")
+        status-gap-w (p/display-width status-gap)
+        status-cap (max 0 (- right-slot-w edge-pad action-w status-gap-w))
+        status-text (when (seq status-raw) (ellipsize status-raw status-cap))
+        status-w (p/display-width (or status-text ""))
+        right-text (str (or status-text "") status-gap action-text)
+        right-w (p/display-width right-text)
+        id-copy-w (p/display-width id-copy-text)
+        right-col (max right-x (- cols edge-pad right-w))
+        action-col (+ right-col status-w status-gap-w)
+        banner (latest-notification)
+        notif-text (some-> banner :text)
+        notif-level (some-> banner :level)
+        status-level (some-> status :level)
+        left-cap (max 0 (- left-w edge-pad 1))
+        notif-trim (when notif-text (ellipsize notif-text left-cap))
+        active-id (active-workspace-tab-id db tabs)]
     (draw-rule! g top-rule-row cols)
 
-    ;; Wipe content row to terminal-bg first so the previous frame's
-    ;; characters can't bleed through the gaps between LEFT/CENTER/RIGHT.
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
 
-    ;; LEFT - latest notification banner.
-    (when (pos? left-w)
+    ;; LEFT 20%: notifications only. No title here — title lives on
+    ;; the active tab (see `workspace-tabs`/`:set-title`).
+    (when (seq notif-trim)
       (p/clear-styles! g)
       (p/set-colors! g (level->fg notif-level) t/terminal-bg)
       (p/enable! g p/BOLD)
-      (p/put-str! g edge-pad content-row left-trim)
+      (p/put-str! g (+ left-x edge-pad) content-row notif-trim)
       (p/clear-styles! g))
 
-    ;; CENTER - current conversation title only. Conversation switching lives
-    ;; in the Alt+Shift+↑/↓ picker, not as persistent header tabs.
-    (when (pos? title-w)
-      (p/clear-styles! g)
-      (p/set-colors! g t/header-fg t/terminal-bg)
-      (if placeholder?
-        (p/enable! g p/ITALIC)
-        (p/enable! g p/BOLD))
-      (p/put-str! g title-col content-row title-trim)
-      (p/clear-styles! g))
+    ;; CENTER 60%: workspace tabs (always non-empty).
+    (draw-center-tabs! g tabs active-id content-row center-x center-w)
 
-    ;; RIGHT - live channel status (voice recording/transcribing) + copy
-    ;; conversation ID block. Keeping the live voice status on the right
-    ;; leaves the left notification lane free.
-    ;; Visual hover feedback: when either clickable region is hovered,
-    ;; that exact affordance shifts to header-hover-fg and gains BOLD. Terminal emulators
-    ;; don't allow applications to control the mouse cursor shape, so this
-    ;; is the strongest affordance we can offer.
+    ;; RIGHT 20%: live status + conversation-id copy affordance.
     (when (pos? right-w)
       (let [hovered-region (cr/hovered)
-            hovered-kind   (:kind hovered-region)
-            hovered-row?   (= content-row (get-in hovered-region [:bounds :row]))
-            id-hovered?    (and hovered-row? (= :copy-id hovered-kind))]
+            id-hovered? (and (= content-row (get-in hovered-region [:bounds :row]))
+                          (= :copy-id (:kind hovered-region)))]
         (when (pos? status-w)
           (p/clear-styles! g)
           (p/set-colors! g (level->fg status-level) t/terminal-bg)
@@ -494,21 +591,17 @@
         (when (pos? action-w)
           (p/clear-styles! g)
           (p/set-colors! g (if id-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
-          (when id-hovered?
-            (p/enable! g p/BOLD))
+          (when id-hovered? (p/enable! g p/BOLD))
           (p/put-str! g action-col content-row id-copy-text)
           (p/clear-styles! g)
           (when (and *register-click-regions?* full-uuid)
             (cr/register!
-              {:bounds   {:row content-row :col action-col :width id-copy-w}
-               :kind     :copy-id
-               :text     full-uuid
+              {:bounds {:row content-row :col action-col :width id-copy-w}
+               :kind :copy-id
+               :text full-uuid
                :enabled? true})))))
 
-    ;; Extension-contributed rows. Each `:tui.slot/header-row` contribution gets
-    ;; its allocated row range below the content row. We wipe each
-    ;; row first so previous-frame characters can't bleed through,
-    ;; then hand the painter to the contribution's `:draw!`.
+    ;; Extension-contributed rows.
     (loop [row (inc content-row)
            specs (seq contrib-specs)]
       (when specs
@@ -521,13 +614,9 @@
             (p/fill-rect! g 0 row cols h)
             (when (ifn? draw!)
               (try (draw! g (long row))
-                (catch Throwable _
-                  ;; Hook crashed — leave its row blank. Painter
-                  ;; never crashes the render thread.
-                  nil))))
+                (catch Throwable _ nil))))
           (recur (+ row h) (next specs)))))
 
     (draw-rule! g bottom-row cols)
-
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)))
