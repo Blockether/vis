@@ -347,26 +347,6 @@
   [text]
   (input/paste-text (input/empty-input) (or text "")))
 
-(defn- copy-conversation-as-markdown! [conversation-id]
-  (vis/worker-future "vis-tui-copy-conversation-markdown"
-    #(try
-       (if-not conversation-id
-         (vis/notify! "No conversation to copy as Markdown"
-           :level :warn :ttl-ms copy-success-ttl-ms)
-         (let [env      (vis/env-for conversation-id)
-               markdown (when env
-                          (vis/conversation->markdown (:db-info env) conversation-id))]
-           (if (seq markdown)
-             (do (input/clipboard-copy! markdown)
-               (vis/notify! "✓ Copied conversation as Markdown"
-                 :level :success :ttl-ms copy-success-ttl-ms))
-             (vis/notify! "No persisted turns to copy as Markdown"
-               :level :warn :ttl-ms copy-success-ttl-ms))))
-       (catch Throwable t
-         (vis/notify!
-           (str "Markdown copy failed: " (or (.getMessage t) (.getName (class t))))
-           :level :error :ttl-ms copy-success-ttl-ms)))))
-
 (defn- activate-workspace-tab-hit!
   "Switch to the workspace tab represented by a header click region."
   [refresh-active-workspace! hit]
@@ -979,7 +959,7 @@
     (live-progress-only-change? previous-db db)))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :copy-as-markdown :workspace-tab})
+  #{:copy-id :workspace-tab})
 
 (defn- header-hover-region?
   [region]
@@ -988,7 +968,7 @@
 (defn- header-hover-only-change?
   "True when a render bump only exists to repaint header hover chrome.
 
-   Header affordances (`⧉ <id>` and `⧉ Transcript`) live outside the
+   Header affordance (`⧉ <id>`) lives outside the
    transcript body. Repainting the whole scrollback when the mouse enters
    or leaves those cells makes the body visibly flash. Body link hovers
    still take the full path for now, because their highlight row lives
@@ -2131,9 +2111,6 @@
                                :copy-id
                                (copy-conversation-id! (:text hit))
 
-                               :copy-as-markdown
-                               (copy-conversation-as-markdown! (:text hit))
-
                                :switch-conversation
                                (switch-conversation! {:action :switch :id (:text hit)})
 
@@ -2207,9 +2184,6 @@
                              ;; carries the feedback.
                                :copy-id
                                (copy-conversation-id! (:text hit))
-
-                               :copy-as-markdown
-                               (copy-conversation-as-markdown! (:text hit))
 
                                :switch-conversation
                                (switch-conversation! {:action :switch :id (:text hit)})

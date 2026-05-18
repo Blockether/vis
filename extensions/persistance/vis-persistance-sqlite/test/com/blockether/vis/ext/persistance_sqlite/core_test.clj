@@ -611,15 +611,14 @@
       (expect (= "new" (:system-prompt conversation)))
       (expect (= "claude-4" (:model conversation)))))
 
-  (it "turns on forked state are isolated"
+  (it "forked state inherits ancestor turns before branch turns"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})]
       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "Turn 1" :status :done})
       (vis/db-fork-conversation! s cid {:title "Fork"})
       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "Turn 2" :status :done})
       (let [turns (vis/db-list-conversation-turns s cid)]
-        (expect (= 1 (count turns)))
-        (expect (= "Turn 2" (:user-request (first turns)))))))
+        (expect (= ["Turn 1" "Turn 2"] (mapv :user-request turns))))))
 
   (it "double fork increments version"
     (let [s   (h/store)
