@@ -702,12 +702,12 @@
    Visual shape is:
 
           ┌──────────────────────────┐
-          │ Ctrl+B voice / Ctrl+K menu │
+     ─────│ Ctrl+B voice / Ctrl+K menu │─────
           └──────────────────────────┘
           input text starts here
 
-   The helper owns its top and bottom borders. The input top border is
-   omitted so no extra rule appears between helper and editor text."
+   Helper middle row is also input-top decoration: one horizontal rule
+   spans left/right of the cell, but no extra input top row is drawn."
   ([g db subtitle-row cols now-ms]
    (draw-footer-subtitle! g db subtitle-row cols now-ms nil))
   ([g db subtitle-row cols now-ms hint]
@@ -729,11 +729,19 @@
      (when (pos? rule-w)
        (p/fill-rect! g 0 top-row cols 3))
      (when (and (seq spans) (pos? content-w) (>= rule-w (+ content-w 4)))
-       (let [cell-w   (+ content-w 4)
-             inner-w  (- cell-w 2)
-             left     (+ pad (quot (- rule-w cell-w) 2))
-             text-col (+ left 2)]
+       (let [cell-w           (+ content-w 4)
+             inner-w          (- cell-w 2)
+             left             (+ pad (quot (- rule-w cell-w) 2))
+             text-col         (+ left 2)
+             right-v          (+ text-col content-w 1)
+             right-rule-start (inc right-v)
+             rule-end         (+ pad rule-w)]
          (p/set-colors! g t/border-fg t/terminal-bg)
+         (when (< pad left)
+           (p/put-str! g pad text-row (p/horiz-line (- left pad))))
+         (when (< right-rule-start rule-end)
+           (p/put-str! g right-rule-start text-row
+             (p/horiz-line (- rule-end right-rule-start))))
          (p/put-str! g left top-row
            (str p/BOX_TL (p/horiz-line inner-w) p/BOX_TR))
          (p/put-str! g left text-row (str p/BOX_V " "))
