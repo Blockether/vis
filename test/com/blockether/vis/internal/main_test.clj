@@ -24,3 +24,20 @@
       (expect (false? (#'main/root-run-shortcut? root ["providers" "list"])))
       (expect (false? (#'main/root-run-shortcut? root ["sessions" "--help"])))
       (expect (false? (#'main/root-run-shortcut? root ["--help"]))))))
+
+(defdescribe provider-override-error-test
+  (it "marks unknown --provider as user error"
+    (try
+      (#'main/config-with-provider-override {:providers []} :definitely-nope)
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis.cli/unknown-provider (:type (ex-data e))))
+        (expect (true? (:vis/user-error (ex-data e)))))))
+
+  (it "marks unknown provider/model as user error"
+    (try
+      (#'main/config-with-model-override {:providers []} "definitely-nope/model")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis.cli/unknown-model-provider (:type (ex-data e))))
+        (expect (true? (:vis/user-error (ex-data e))))))))

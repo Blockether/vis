@@ -397,6 +397,7 @@
     (if-not provider
       (throw (ex-info (str "Unknown provider: " (name provider-id))
                {:type :vis.cli/unknown-provider
+                :vis/user-error true
                 :provider provider-id}))
       (assoc config :providers
         (vec (cons provider (remove #(= provider-id (:id %)) providers)))))))
@@ -415,6 +416,7 @@
                          (provider-from-template provider-id)
                          (throw (ex-info (str "Unknown provider in --model: " (name provider-id))
                                   {:type :vis.cli/unknown-model-provider
+                                   :vis/user-error true
                                    :provider provider-id
                                    :model model*})))
               selected (select-model provider model-name)]
@@ -429,7 +431,10 @@
 (defn- router-for-run
   [config use-local-router?]
   (if use-local-router?
-    (svar/make-router (mapv config/->svar-provider (:providers config)))
+    ;; Honor `:router` block in caller's config (rate-limit/network/budget).
+    ;; Single-arity make-router would silently use svar defaults.
+    (svar/make-router (mapv config/->svar-provider (:providers config))
+      (config/router-opts config))
     (lp/get-router)))
 
 (defn run!
