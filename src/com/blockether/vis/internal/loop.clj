@@ -351,6 +351,8 @@
 
 (def edamame-opts
   {:all true
+   :fn true
+   :regex true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
@@ -368,38 +370,6 @@
                 (remove str/blank?))]
     (boolean (and (seq lines)
                (every? markdown-fence-line? lines)))))
-
-(def ^:private direct-answer-string-prefix-re
-  #"(?s)^\s*\(\s*done\s+\[:ir(?:\s+\{[^\n]*?\})?\s+\[:p(?:\s+\{[^\n]*?\})?\s+\"")
-
-(def ^:private closing-delimiters-re #"^[\s\]\)\}]*$")
-
-(defn- parseable-source? [src]
-  (try
-    (edamame/parse-string-all (str src) edamame-opts)
-    true
-    (catch Throwable _ false)))
-
-(defn- repair-malformed-direct-answer
-  "Best-effort rescue for answer-only IR where model forgot to escape a
-   quote inside the paragraph string, e.g. `(done [:ir [:p \"... 9k\"? ...\"]])`.
-   Only rewrites direct `(done [:ir [:p \"TEXT\"]])`-style blocks whose
-   suffix after the final quote is just closing delimiters; never repairs
-   tool/mutation code."
-  [src]
-  (let [s (str src)]
-    (when (and (not (parseable-source? s))
-            (pd/diagnose-quote-balance s)
-            (str/includes? s "(done")
-            (str/includes? s ":ir")
-            (str/includes? s ":p"))
-      (when-let [prefix (re-find direct-answer-string-prefix-re s)]
-        (let [start (count prefix)
-              end   (.lastIndexOf s "\"")]
-          (when (and (< start end)
-                  (re-matches closing-delimiters-re (subs s (inc end))))
-            (let [payload (subs s start end)]
-              (str "(done [:ir {} [:p {} " (pr-str payload) "]])"))))))))
 
 (defn- comment-only-block? [^String expr]
   (try
@@ -462,7 +432,7 @@
   [code]
   (let [code (or code "")
         rdr  (edamame/reader code)
-        opts {:all true}
+        opts edamame-opts
         out  (volatile! [])]
     (loop []
       (let [next-form (try
@@ -487,29 +457,6 @@
                       {:source (form-source form) :form form})
                 (expand-top-level-do-form next-form)))
             (recur)))))))
-
-(defn- parinferish-repair-safe
-  "Best-effort delimiter repair via parinferish. Returns nil when the repair
-   library or its dependencies are missing on the classpath (defensive),
-   when the repair did not change anything, or when the repaired source
-   still does not parse cleanly."
-  [code]
-  (when (and (string? code) (not (str/blank? code)))
-    (try
-      (let [par-flatten (requiring-resolve 'parinferish.core/flatten)
-            par-parse   (requiring-resolve 'parinferish.core/parse)]
-        (when (and par-flatten par-parse)
-          (let [repaired (par-flatten (par-parse code {:mode :indent}))]
-            (when (and (string? repaired)
-                    (not= repaired code)
-                    (try
-                      ;; Confirm the repaired source actually parses; we don't
-                      ;; want to silently feed garbage into SCI.
-                      (edamame/parse-string-all repaired {:all true})
-                      true
-                      (catch Throwable _ false)))
-              repaired))))
-      (catch Throwable _ nil))))
 
 (defn- bare-list-literal-hint
   "Detect `(v1 v2 v3)` where the head is not a callable (not a symbol,
@@ -564,30 +511,21 @@
   "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
    for per-form eval + capture.
 
-   Multi-stage repair chain when a parse error is detected:
-     1. parinferish indent-mode delimiter repair (parens, brackets, braces).
-     2. parse-diagnose `diagnose-quote-balance` enriches the surfaced error
-        with a precise hint when an odd number of unescaped quotes is the
-        likely root cause.
+   Parse errors are surfaced unchanged (plus quote-balance hints when precise).
+   The engine must not auto-rebalance delimiters: answer/output repair can
+   produce valid-but-wrong IR, which is worse than a model-visible retry.
 
    Uses edamame's incremental reader so a parse failure on form N still
    yields the parsed prefix [form-1 … form-(N-1)]. The caller evaluates the
    prefix in order and reports the parse error as form N's outcome — model
    loses only the broken form, not the entire iteration.
 
-   Returns {:forms <vec> :parse-error <map|nil> :repaired-source <str|nil>}."
+   Returns {:forms <vec> :parse-error <map|nil> :repaired-source <nil>}."
   [code]
   (let [first-pass (parse-forms-streaming code)]
     (if-not (:parse-error first-pass)
       first-pass
-      (if-let [repaired (parinferish-repair-safe code)]
-        (let [second-pass (parse-forms-streaming repaired)]
-          (if (:parse-error second-pass)
-            ;; Repair didn't actually fix it; surface the prefix + enriched
-            ;; error so the model sees its own bad code with diagnostics.
-            (update first-pass :parse-error enrich-parse-error code)
-            (assoc second-pass :repaired-source repaired)))
-        (update first-pass :parse-error enrich-parse-error code)))))
+      (update first-pass :parse-error enrich-parse-error code))))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [thrown       (atom nil)
@@ -1057,6 +995,19 @@
   [entry-or-form-or-source]
   (turn-answer-call-form? (parsed-entry-form entry-or-form-or-source)))
 
+(defn- answer-source-like?
+  "Cheap fallback for malformed `(done ...)` answer blocks that cannot parse.
+   They should still be hidden from user-facing progress; parse failure feeds
+   the model retry loop through persisted iteration diagnostics."
+  [entry-or-form-or-source]
+  (or (direct-answer-entry? entry-or-form-or-source)
+    (let [s (str (if (map? entry-or-form-or-source)
+                   (:expr entry-or-form-or-source)
+                   entry-or-form-or-source))]
+      (and (str/includes? s "(done")
+        (or (str/includes? s ":ir")
+          (str/includes? s "needs-input"))))))
+
 ;; `bare-symbol-entry?` removed with `plain-prose-code-error` — the
 ;; per-block-eval cut routes prose into SCI as a parse / unresolved-symbol
 ;; error instead of detecting "every entry is a bare symbol" upfront.
@@ -1118,24 +1069,21 @@
         ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
                                              (let [source-src (:source b)
-                                                   repaired-src (repair-malformed-direct-answer source-src)
-                                                   repaired-or-source (or repaired-src source-src)
-                                                   src (unwrap-top-level-do-source repaired-or-source)
-                                                   repaired? (some? repaired-src)
-                                                   unwrapped-do? (not= src repaired-or-source)]
+                                                   src (unwrap-top-level-do-source source-src)
+                                                   unwrapped-do? (not= src source-src)]
                                                (if-let [err (raw-markdown-fence-leak-error src)]
                                                  {:expr "(vis/preflight-error :raw-markdown-fence-leak)"
                                                   :vis/preflight-error err
                                                   :block-lang (:lang b)}
                                                  (let [segments        (render/parse-block-display src)
                                                        structurally-silent?
-                                                       (and (seq segments)
-                                                         (not-any? #(= :code (:kind %)) segments))]
+                                                       (or (answer-source-like? src)
+                                                         (and (seq segments)
+                                                           (not-any? #(= :code (:kind %)) segments)))]
                                                    (cond-> {:expr       src
                                                             :block-lang (:lang b)
                                                             :render-segments segments
                                                             :vis/structurally-silent? structurally-silent?}
-                                                     repaired? (assoc :repaired? true)
                                                      unwrapped-do? (assoc :vis/unwrapped-do? true))))))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)

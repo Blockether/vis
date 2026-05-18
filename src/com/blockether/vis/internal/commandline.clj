@@ -398,10 +398,18 @@
    (dispatch! root args {:print-fn println}))
   ([root args {:keys [print-fn]}]
    (if-let [{:keys [command path residual]} (find-leaf root args)]
-     (let [help? (some #{"--help" "-h"} residual)]
+     (let [help? (some #{"--help" "-h"} residual)
+           children (registry/resolve-subcommands command)
+           unresolved-before-help (take-while #(not (#{"--help" "-h"} %)) residual)]
        (cond
+         (and help? (seq children) (seq unresolved-before-help))
+         (let [err  (str "Unknown command: " (str/join " " (concat path unresolved-before-help)))
+               help (str err "\n\n" (render-command command path))]
+           (when print-fn (print-fn help))
+           {:status :error :command command :error err :help-text help})
+
          (or help? (and (nil? (:cmd/run-fn command))
-                     (seq (registry/resolve-subcommands command))))
+                     (seq children)))
          (let [help (render-command command path)]
            (when print-fn (print-fn help))
            {:status :help :command command :help-text help})

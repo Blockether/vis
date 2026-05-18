@@ -1,5 +1,8 @@
 (ns com.blockether.vis.ext.channel-tui.footer-test
-  (:require [com.blockether.vis.ext.channel-tui.footer :as footer]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.footer :as footer]
+            [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.git :as git]
@@ -41,6 +44,70 @@
                 [:ir {} [:p {} [:strong {} "bold"] [:span {} "plain"]]])]
         (expect (= "boldplain" s))
         (expect (every? #(not (sentinel-char? %)) s))))))
+
+(defdescribe footer-subtitle-test
+  (let [build-subtitle-segments @#'footer/build-subtitle-segments]
+    (it "builds contextual helpers for the input-border footer subtitle"
+      (let [empty-text (mapv :text (build-subtitle-segments {:input (input/empty-input)} 0))
+            typed-text (mapv :text (build-subtitle-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
+        (expect (some #{"Ctrl+B voice"} empty-text))
+        (expect (some #{"Ctrl+G conversations"} empty-text))
+        (expect (some #{"Ctrl+K menu"} empty-text))
+        (expect (some #{"↑↓ history"} empty-text))
+        (expect (some #{"Ctrl+B voice"} typed-text))
+        (expect (some #{"Ctrl+G conversations"} typed-text))
+        (expect (some #{"Ctrl+K menu"} typed-text))
+        (expect (not (some #{"↑↓ history"} typed-text)))))
+
+    (it "switches subtitle helpers while loading"
+      (expect (= ["Esc cancel" "Ctrl+C quit"]
+                (mapv :text (build-subtitle-segments {:loading? true
+                                                      :input (input/empty-input)} 0))))))
+
+  (it "accepts footer-subtitle contribution segments"
+    (let [extension-subtitle-segments @#'footer/extension-subtitle-segments]
+      (with-redefs-fn {#'vis/channel-contributions-for
+                       (fn [_channel slot]
+                         (case slot
+                           :tui.slot/footer-subtitle-segment
+                           [{:id :demo/subtitle
+                             :fn (fn [_db _now-ms]
+                                   {:ir [:ir {} [:p {} [:span {} "Demo helper"]]]
+                                    :fg-role :muted
+                                    :priority 2
+                                    :region :center})}]
+                           []))}
+        (fn []
+          (expect (= ["Demo helper"]
+                    (mapv :text (extension-subtitle-segments {} 0))))))))
+
+  (it "draws a bordered helper pocket"
+    (let [puts (atom [])
+          g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers [] this)
+              (enableModifiers [_] this)
+              (disableModifiers [_] this)
+              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+              (setForegroundColor [_] this)
+              (setBackgroundColor [_] this)
+              (fillRectangle [_ _ _] this)
+              (setCharacter [_ _ _] this)
+              (putString [col row text]
+                (swap! puts conj {:col col :row row :text text})
+                this))]
+      (with-redefs-fn {#'vis/channel-contributions-for (fn [_ _] [])}
+        (fn []
+          (footer/draw-footer-subtitle! g {:input (input/empty-input)} 4 90 0)
+          (let [painted (str/join "" (map :text @puts))
+                rows    (set (map :row @puts))]
+            (expect (= #{4 5 6} rows))
+            (expect (str/includes? painted "┌"))
+            (expect (str/includes? painted "┐"))
+            (expect (str/includes? painted "└"))
+            (expect (str/includes? painted "┘"))
+            (expect (str/includes? painted "│ "))
+            (expect (str/includes? painted " │"))
+            (expect (str/includes? painted "Ctrl+B voice"))))))))
 
 (defdescribe build-segments-test
   (it "leaves voice recording status out of the footer because header owns channel statuses"

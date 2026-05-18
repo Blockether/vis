@@ -406,13 +406,61 @@
                    :region :left :priority 1}))
       (build-usage-segments db))))
 
+;;; ── Footer subtitle (contextual key helpers) ───────────────────────────────
+
+(defn- input-empty?
+  "True when the input editor has no text."
+  [{:keys [lines]}]
+  (or (empty? lines)
+    (every? str/blank? lines)))
+
+(defn- subtitle-segment
+  [text priority]
+  {:text text
+   :fg t/footer-fg-muted
+   :bold? false
+   :region :center
+   :priority priority})
+
+(defn- build-subtitle-segments
+  "Context-sensitive helper strip below the input box. Kept out of
+   render/draw-input-box! so input text and helper chrome never share
+   one paint surface."
+  [{:keys [loading? cancelling? input]} _now-ms]
+  (cond
+    cancelling?
+    [(subtitle-segment "Cancelling... please wait" 1)
+     (subtitle-segment "Ctrl+C quit" 2)]
+
+    loading?
+    [(subtitle-segment "Esc cancel" 1)
+     (subtitle-segment "Ctrl+C quit" 2)]
+
+    (input-empty? input)
+    [(subtitle-segment "Alt+Enter newline" 2)
+     (subtitle-segment "↑↓ history" 2)
+     (subtitle-segment "Shift+Tab tabs" 3)
+     (subtitle-segment "Ctrl+B voice" 1)
+     (subtitle-segment "Ctrl+G conversations" 1)
+     (subtitle-segment "Ctrl+K menu" 1)]
+
+    :else
+    [(subtitle-segment "Shift+Tab tabs" 3)
+     (subtitle-segment "Ctrl+B voice" 1)
+     (subtitle-segment "Ctrl+G conversations" 1)
+     (subtitle-segment "Ctrl+K menu" 1)]))
+
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
-;; Extensions contribute footer segments by adding entries to their
-;; `:ext/channel-contributions` map:
+;; Extensions contribute footer / subtitle segments by adding entries to
+;; their `:ext/channel-contributions` map:
 ;;
 ;;   {:tui.slot/footer-segment
 ;;    [{:id :my.extension/footer
+;;      :fn (fn [db now-ms]
+;;            -> seg-map | [seg-map seg-map ...] | nil)}]
+;;    :tui.slot/footer-subtitle-segment
+;;    [{:id :my.extension/footer-subtitle
 ;;      :fn (fn [db now-ms]
 ;;            -> seg-map | [seg-map seg-map ...] | nil)}]}
 ;;
@@ -488,26 +536,19 @@
          :priority   (long (or (:priority seg) 3))
          :join-left? (boolean (:join-left? seg))}))))
 
-(defn- extension-footer-segments
-  "Vector of segments contributed by extensions for footer row `row`
-   (0 = top footer row, 1 = limits row).
+(defn- extension-segments
+  "Vector of segments contributed by extensions for `slot` / `row`.
 
    Each contribution fn may return a single seg-map OR a vec of
-   seg-maps (so one contribution can emit multiple related segments).
-   Contribution crashes never propagate — a misbehaving extension just loses
-   its segment that frame. Settings can disable contributions via
-   `:contributors-disabled`."
-  [db now-ms ^long row]
-  ;; `:tui.builtin.model/footer` is core identity (provider /
-  ;; model display) and CANNOT be disabled. Even if a settings round-
-  ;; trip placed it into `:contributors-disabled`, the renderer ignores
-  ;; it for this contribution so the user never accidentally hides the model
-  ;; label (regression: conversation fe6340b0).
-  (let [undisableable #{:tui.builtin.model/footer}
-        disabled (let [s (get-in db [:settings :contributors-disabled])]
+   seg-maps. Contribution crashes never propagate — a misbehaving
+   extension just loses its segment that frame. Settings can disable
+   contributions via `:contributors-disabled`; `undisableable` ids
+   bypass that guard for core identity chrome."
+  [slot undisableable db now-ms row]
+  (let [disabled (let [s (get-in db [:settings :contributors-disabled])]
                    (when (set? s) s))]
     (vec
-      (for [{:keys [id] f :fn} (lp/channel-contributions-for :tui :tui.slot/footer-segment)
+      (for [{:keys [id] f :fn} (lp/channel-contributions-for :tui slot)
             :when (and (ifn? f)
                     (or (contains? undisableable id)
                       (not (and disabled (contains? disabled id)))))
@@ -519,6 +560,20 @@
             :let [packed (seg->packed seg row)]
             :when packed]
         packed))))
+
+(defn- extension-footer-segments
+  [db now-ms ^long row]
+  ;; `:tui.builtin.model/footer` is core identity (provider /
+  ;; model display) and CANNOT be disabled. Even if a settings round-
+  ;; trip placed it into `:contributors-disabled`, the renderer ignores
+  ;; it for this contribution so the user never accidentally hides the model
+  ;; label (regression: conversation fe6340b0).
+  (extension-segments :tui.slot/footer-segment #{:tui.builtin.model/footer}
+    db now-ms row))
+
+(defn- extension-subtitle-segments
+  [db now-ms]
+  (extension-segments :tui.slot/footer-subtitle-segment #{} db now-ms 0))
 
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 
@@ -640,6 +695,57 @@
     (when (seq l) (draw-spans! g l-col row l separator))
     (when (seq c) (draw-spans! g c-col row c separator))
     (when (seq r) (draw-spans! g r-col row r separator))))
+
+(defn draw-footer-subtitle!
+  "Paint closed helper cell above the input body.
+
+   Visual shape is:
+
+          ┌──────────────────────────┐
+          │ Ctrl+B voice / Ctrl+K menu │
+          └──────────────────────────┘
+          input text starts here
+
+   The helper owns its top and bottom borders. The input top border is
+   omitted so no extra rule appears between helper and editor text."
+  ([g db subtitle-row cols now-ms]
+   (draw-footer-subtitle! g db subtitle-row cols now-ms nil))
+  ([g db subtitle-row cols now-ms hint]
+   (p/clear-styles! g)
+   (p/set-colors! g t/border-fg t/terminal-bg)
+   (let [top-row    subtitle-row
+         text-row   (inc subtitle-row)
+         bottom-row (+ subtitle-row 2)
+         pad        2
+         rule-w     (max 0 (- cols (* 2 pad)))
+         built-in   (if-let [hint (some-> hint str/trim not-empty)]
+                      [(subtitle-segment hint 0)]
+                      (build-subtitle-segments db now-ms))
+         ext-segs   (extension-subtitle-segments db now-ms)
+         all-segs   (into (vec built-in) ext-segs)
+         [segs separator] (shrink-to-fit all-segs (max 0 (- rule-w 4)))
+         spans      (region-spans segs :center)
+         content-w  (spans-width spans separator)]
+     (when (pos? rule-w)
+       (p/fill-rect! g 0 top-row cols 3))
+     (when (and (seq spans) (pos? content-w) (>= rule-w (+ content-w 4)))
+       (let [cell-w   (+ content-w 4)
+             inner-w  (- cell-w 2)
+             left     (+ pad (quot (- rule-w cell-w) 2))
+             text-col (+ left 2)]
+         (p/set-colors! g t/border-fg t/terminal-bg)
+         (p/put-str! g left top-row
+           (str p/BOX_TL (p/horiz-line inner-w) p/BOX_TR))
+         (p/put-str! g left text-row (str p/BOX_V " "))
+         (draw-spans! g text-col text-row spans separator)
+         (p/set-colors! g t/border-fg t/terminal-bg)
+         (p/put-str! g (+ text-col content-w) text-row (str " " p/BOX_V))
+         (p/put-str! g left bottom-row
+           (str p/BOX_BL (p/horiz-line inner-w) p/BOX_BR)))))
+
+  ;; Restore neutral state for whatever paints next.
+   (p/clear-styles! g)
+   (p/set-colors! g t/text-fg t/terminal-bg)))
 
 (defn draw-footer!
   "Paint the two footer rows starting at `footer-row`, full width `cols`. Pure draw -

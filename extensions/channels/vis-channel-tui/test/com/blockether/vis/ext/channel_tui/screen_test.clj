@@ -24,9 +24,6 @@
 (def ^:private parse-args
   (deref #'screen/parse-args))
 
-(def ^:private current-hint
-  (deref #'screen/current-hint))
-
 (def ^:private live-progress-only-change?
   (deref #'screen/live-progress-only-change?))
 
@@ -120,30 +117,7 @@
     (catch clojure.lang.ExceptionInfo e
       (true? (:vis/user-error (ex-data e))))))
 
-(defdescribe hint-test
-  (it "empty input advertises arrow-key history and Shift+Tab tabs"
-    (let [hint (current-hint {:input (input/empty-input)})]
-      (expect (re-find #"↑↓ history" hint))
-      (expect (re-find #"Shift\+Tab tabs" hint))
-      (expect (not (re-find #"Ctrl\+P/N" hint)))
-      (expect (not (re-find #"Ctrl\+1-9" hint)))))
-
-  (it "idle hints leave model/reasoning/verbosity shortcuts to the footer"
-    (let [empty-hint (current-hint {:input (input/empty-input)})
-          typed-hint (current-hint {:input (input/paste-text (input/empty-input) "hello")})]
-      (expect (not (re-find #"Ctrl\+R reasoning" empty-hint)))
-      (expect (not (re-find #"Ctrl\+L verbosity" empty-hint)))
-      (expect (not (re-find #"Ctrl\+T model" empty-hint)))
-      (expect (not (re-find #"Ctrl\+R reasoning" typed-hint)))
-      (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
-      (expect (not (re-find #"Ctrl\+T model" typed-hint)))))
-
-  (it "idle hints advertise direct voice toggle"
-    (let [empty-hint (current-hint {:input (input/empty-input)})
-          typed-hint (current-hint {:input (input/paste-text (input/empty-input) "hello")})]
-      (expect (re-find #"Ctrl\+B voice" empty-hint))
-      (expect (re-find #"Ctrl\+B voice" typed-hint))))
-
+(defdescribe render-heartbeat-test
   (it "keeps live render heartbeat at 80ms"
     (expect (= 80 (deref #'screen/spinner-tick-ms))))
 

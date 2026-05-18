@@ -204,15 +204,16 @@
    segments are not silent; channels consume :render-segments to hide only the
    structural subforms."
   [chunk]
-  (boolean
-    (or (:vis/structurally-silent? chunk)
-      (and (not (visible-code-segments? chunk))
-        (let [code (str (:code chunk))]
+  (let [code (str (:code chunk))
+        trimmed (str/triml code)]
+    (boolean
+      (or (:vis/structurally-silent? chunk)
+        (str/starts-with? trimmed "(done")
+        (and (not (visible-code-segments? chunk))
           (or (str/includes? code "(set-conversation-title!")
-            (str/includes? code "(done"))))
-      (and (= :vis/silent (:result chunk))
-        (not (seq (:render-segments chunk)))
-        (let [code (str (:code chunk))]
+            (str/includes? code "(done")))
+        (and (= :vis/silent (:result chunk))
+          (not (seq (:render-segments chunk)))
           (or (str/includes? code "(set-conversation-title!")
             (str/includes? code "(done")))))))
 
@@ -359,10 +360,10 @@
 
     :form-result
     (assoc
-      (if (and (not (:error chunk))
-            (or (and (= :vis/answer (:result chunk))
-                  (not (visible-code-segments? chunk)))
-              (structurally-silent-chunk? chunk)))
+      (if (or (structurally-silent-chunk? chunk)
+            (and (not (:error chunk))
+              (= :vis/answer (:result chunk))
+              (not (visible-code-segments? chunk))))
         (hide-form-slot entry (:position chunk))
         (write-form-slot (unhide-form-slot entry (:position chunk)) chunk))
       :activity nil)

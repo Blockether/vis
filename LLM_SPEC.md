@@ -68,14 +68,16 @@ Algorithm:
 ;; 1. retry same provider after 2s
 ;; 2. retry same provider after 3s
 ;; 3. retry same provider after 6s
-;; 4. if total wait budget remains, wait until fallback-after-ms boundary
-;; 5. fallback to next provider
-;; 6. persist/emit full trace
+;; 4. fallback to next provider once either the configured delay
+;;    vector is exhausted OR elapsed wall time ≥ :fallback-after-ms
+;;    (hard cap on the same-provider phase — each delay is clamped to
+;;    the remaining budget so the loop never overshoots).
+;; 5. persist/emit full trace
 ```
 
 ### Rationale
 
-429 often clears fast. Immediate cross-provider fallback hides quota pressure and burns wrong account/model. Waiting forever hangs tab. Budgeted same-provider retries + bounded fallback gives predictable behavior.
+429 often clears fast. Immediate cross-provider fallback hides quota pressure and burns wrong account/model. Waiting forever hangs tab. Budgeted same-provider retries + bounded fallback gives predictable behavior. `:fallback-after-ms` is a hard cap so a misconfigured delay vector cannot stall the request past the budget; padding to the boundary would just trade a quota error for a deliberate hang.
 
 ## svar work plan
 

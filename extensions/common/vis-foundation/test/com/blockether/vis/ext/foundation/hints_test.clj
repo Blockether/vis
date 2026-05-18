@@ -16,6 +16,8 @@
         (expect (= :high (:importance n)))
         (expect (str/includes? (:text n) "conversation title is currently empty"))
         (expect (str/includes? (:text n) "top-level form"))
+        (expect (str/includes? (:text n) "bare `(set-conversation-title!"))
+        (expect (str/includes? (:text n) "not a foundation `v/` tool"))
         (expect (not (str/includes? (:text n) "(do"))))))
 
   (it "fires on turn 1 (first turn) when host flags :title-refresh?"
@@ -28,6 +30,7 @@
       ;; Text reworded from "refresh the title via ..." to "refresh it
       ;; via ..."; assert the call-to-action via the primitive instead.
       (expect (str/includes? (:text n) "set-conversation-title!"))
+      (expect (str/includes? (:text n) "do not namespace-qualify it"))
       (expect (str/includes? (:text n) "1 turn(s)"))))
 
   (it "fires on every TITLE_REFRESH_TURN_PERIOD-th turn when host flags :title-refresh?"
