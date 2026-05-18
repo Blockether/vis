@@ -152,7 +152,6 @@ def solve(problem: dict[str, Any]) -> dict[str, Any]:
 
         cmd = [
             VIS_BIN,
-            "run",
             "--json",
             "--db",
             ":memory",

@@ -7,7 +7,7 @@ rotation: 4Clojure (`dev/benches/4clojure/problems.json`) and filewrite
 iter scores 2 4clojure tasks + 1 filewrite task, but the offsets advance
 independently so we always see fresh problems.
 
-For each task we run `bin/vis run --full-trace-json-stream` in a fresh
+For each task we run `bin/vis --full-trace-json-stream` in a fresh
 tmp workdir, parse the trace stream for `iteration-count`, `tokens`,
 `cost`, and grade locally:
 
@@ -75,7 +75,7 @@ SENTINEL = "__VIS_4CLOJURE_SOLUTION__"
 # Heuristic for inferring iteration count from wall-clock when neither
 # the envelope nor the trace stream carries one (e.g., on timeout).
 # Calibrated on this machine against glm-5.1 on zai-coding-plan:
-#   `vis run --json` for a 1-iteration trivial answer took 12.5 s wall.
+#   `vis --json` for a 1-iteration trivial answer took 12.5 s wall.
 # Decomposed as: ~5 s JVM bootstrap + ~7 s per iteration.
 WALL_BOOTSTRAP_SECONDS = float(os.environ.get("AUTORESEARCH_WALL_BOOTSTRAP", "5"))
 WALL_SECONDS_PER_ITER  = float(os.environ.get("AUTORESEARCH_WALL_PER_ITER", "7"))
@@ -549,7 +549,7 @@ def run_one(problem: dict, out_dir: Path) -> dict:
         prompt = setup_workdir(problem, workdir)
         prompt_chars = len(prompt)
         cmd = [
-            VIS_BIN, "run", "--full-trace-json-stream",
+            VIS_BIN, "--full-trace-json-stream",
             "--db", ":memory",
             "--provider", VIS_PROVIDER,
             "--model", VIS_MODEL,
