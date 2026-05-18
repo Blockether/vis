@@ -46,9 +46,9 @@ Core metadata writes/reads currently concentrate in:
   - writes per-iteration `:metadata` containing `:llm`, `:engine-timing`, `:extensions`
 - `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj`
   - rebuilds history from iteration metadata `[:metadata :llm]`
-  - forwards fallback trace into rendered assistant message state
+  - forwards routing trace into rendered assistant message state
 - `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj`
-  - renders message fields derived from metadata-backed routing trace
+  - renders message fields derived from public iteration routing fields rehydrated from routing rows
 
 ## Decisions by table
 
@@ -208,7 +208,11 @@ Current payload:
 {:llm {:selected {:provider "..." :model "..."}
        :actual {:provider "..." :model "..."}
        :fallback? true
-       :fallback-trace [...]}
+       :trace [{:event/type :llm.routing/provider-fallback
+                :from-provider "..."
+                :from-model "..."
+                :to-provider "..."
+                :to-model "..."}]}
  :engine-timing {...}
  :extensions [{:name 'com.blockether.vis.ext.foundation.core
                :version "..."
@@ -224,7 +228,7 @@ Where used:
 ```clojure
 ;; TUI rebuild-history
 (get-in it [:metadata :llm])
-(get-in it [:metadata :llm :fallback-trace])
+(get-in it [:metadata :llm :trace])
 
 ;; change detector / diagnostics
 (:extensions (:metadata iteration))

@@ -512,7 +512,7 @@
           (expect (nil? (nth event 8)))
           (expect (string? (nth event 9)))))))
 
-  (it "forwards provider fallback trace from turn result to message metadata"
+  (it "forwards routing trace from turn result to message metadata"
     (let [rlm-turn-fx (-> #'state/fx-registry deref deref (get :rlm-turn))
           received    (atom [])
           trace       [{:provider-id :p1
@@ -532,7 +532,7 @@
                                   :llm-selected {:provider :p1 :model "m1"}
                                   :llm-actual {:provider :p2 :model "m2"}
                                   :llm-fallback? true
-                                  :llm-fallback-trace trace})]
+                                  :llm-routing-trace trace})]
         (rlm-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
         (let [[event-id workspace-id _answer metadata] (last @received)]
           (expect (= :message-received event-id))
@@ -542,7 +542,7 @@
           (expect (= {:provider :p1 :model "m1"} (:llm-selected metadata)))
           (expect (= {:provider :p2 :model "m2"} (:llm-actual metadata)))
           (expect (true? (:llm-fallback? metadata)))
-          (expect (= trace (:llm-fallback-trace metadata)))))))
+          (expect (= trace (:llm-routing-trace metadata)))))))
 
   (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
     (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)

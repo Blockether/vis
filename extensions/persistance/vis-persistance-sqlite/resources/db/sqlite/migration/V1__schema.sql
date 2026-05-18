@@ -188,6 +188,12 @@ CREATE TABLE conversation_turn_iteration (
   llm_user_prompt                 TEXT,    -- JSON envelope for multimodal user input (text/images/audio/files)
   llm_provider                    TEXT,    -- provider id used for this conversation_turn_iteration (e.g. 'openai', 'github-copilot')
   llm_model                       TEXT,
+  llm_selected_provider           TEXT,
+  llm_selected_model              TEXT,
+  llm_actual_provider             TEXT,
+  llm_actual_model                TEXT,
+  llm_fallback                    INTEGER NOT NULL DEFAULT 0
+                                  CHECK (llm_fallback IN (0, 1)),
 
   llm_full_duration_ms            INTEGER CHECK (
                                     llm_full_duration_ms IS NULL OR llm_full_duration_ms >= 0
@@ -262,6 +268,34 @@ CREATE INDEX idx_conversation_turn_iteration_conversation_turn_state
 
 CREATE INDEX idx_conversation_turn_iteration_conversation_turn_state_created
   ON conversation_turn_iteration(conversation_turn_state_id, created_at);
+
+CREATE TABLE llm_routing_event (
+  id                             TEXT PRIMARY KEY NOT NULL,
+  conversation_turn_iteration_id TEXT NOT NULL
+                                 REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
+  position                       INTEGER NOT NULL CHECK (position >= 0),
+  event_type                     TEXT NOT NULL,
+  provider                       TEXT,
+  model                          TEXT,
+  from_provider                  TEXT,
+  from_model                     TEXT,
+  to_provider                    TEXT,
+  to_model                       TEXT,
+  status                         INTEGER,
+  reason                         TEXT,
+  error                          TEXT,
+  attempt                        INTEGER CHECK (attempt IS NULL OR attempt >= 0),
+  delay_ms                       INTEGER CHECK (delay_ms IS NULL OR delay_ms >= 0),
+  elapsed_ms                     INTEGER CHECK (elapsed_ms IS NULL OR elapsed_ms >= 0),
+  at_ms                          INTEGER,
+  event_json                     TEXT NOT NULL,
+  created_at                     INTEGER NOT NULL,
+
+  UNIQUE (conversation_turn_iteration_id, position)
+);
+
+CREATE INDEX idx_llm_routing_event_iteration_position
+  ON llm_routing_event(conversation_turn_iteration_id, position);
 
 CREATE TRIGGER trg_conversation_turn_iteration_position_ai
 BEFORE INSERT ON conversation_turn_iteration

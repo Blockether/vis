@@ -11,7 +11,7 @@
    Tables (V1__schema.sql):
      conversation_soul, conversation_state,
      conversation_turn_soul, conversation_turn_state,
-     conversation_turn_iteration,
+     conversation_turn_iteration, llm_routing_event,
      definition_soul, definition_state, definition_dependency,
      extension_aggregate,
      log
@@ -1054,6 +1054,50 @@
       (some? error)                (assoc :error (->blob (freeze-safe error)))
       (some? duration-ms)          (assoc :duration_ms (long duration-ms)))))
 
+(defn- routing-from-metadata
+  [metadata]
+  (get metadata :llm))
+
+(defn- strip-core-routing-metadata
+  [metadata]
+  (if (map? metadata)
+    (not-empty (dissoc metadata :llm))
+    metadata))
+
+(defn- routing-summary-columns
+  [routing]
+  (let [selected (:selected routing)
+        actual   (:actual routing)]
+    (cond-> {}
+      (:provider selected) (assoc :llm_selected_provider (name (:provider selected)))
+      (:model selected)    (assoc :llm_selected_model (:model selected))
+      (:provider actual)   (assoc :llm_actual_provider (name (:provider actual)))
+      (:model actual)      (assoc :llm_actual_model (:model actual))
+      (contains? routing :fallback?) (assoc :llm_fallback (if (:fallback? routing) 1 0)))))
+
+(defn- routing-event-row
+  [iteration-id-s now position event]
+  (let [event-type (:event/type event)]
+    (cond-> {:id                             (or (:event/id event) (new-id))
+             :conversation_turn_iteration_id iteration-id-s
+             :position                       position
+             :event_type                     (str event-type)
+             :event_json                     (->json event)
+             :created_at                     now}
+      (:provider event)      (assoc :provider (name (:provider event)))
+      (:model event)         (assoc :model (:model event))
+      (:from-provider event) (assoc :from_provider (name (:from-provider event)))
+      (:from-model event)    (assoc :from_model (:from-model event))
+      (:to-provider event)   (assoc :to_provider (name (:to-provider event)))
+      (:to-model event)      (assoc :to_model (:to-model event))
+      (:status event)        (assoc :status (long (:status event)))
+      (:reason event)        (assoc :reason (name (:reason event)))
+      (:error event)         (assoc :error (str (:error event)))
+      (:attempt event)       (assoc :attempt (long (:attempt event)))
+      (:delay-ms event)      (assoc :delay_ms (long (:delay-ms event)))
+      (:elapsed-ms event)    (assoc :elapsed_ms (long (:elapsed-ms event)))
+      (:at-ms event)         (assoc :at_ms (long (:at-ms event))))))
+
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
   "Store one iteration row + per-`(def ...)` definition_soul/definition_state
@@ -1113,6 +1157,8 @@
                                 :from   :conversation_turn_iteration
                                 :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
                           1)
+              routing (routing-from-metadata metadata)
+              metadata* (strip-core-routing-metadata metadata)
               raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the single-form code payload inline.
           ;;    Hard cut: callers pass flat :code/:result/:error.
@@ -1132,7 +1178,7 @@
                                         :llm_full_duration_ms (or duration-ms 0)
                                         :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
                                         :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                        :metadata             (when metadata (->json metadata))
+                                        :metadata             (when metadata* (->json metadata*))
                                         :llm_executable_code_blocks (when (some? llm-executable-blocks)
                                                                       (->json (vec llm-executable-blocks)))
                                         :llm_assistant_message (when (some? llm-assistant-message)
@@ -1154,7 +1200,12 @@
                           (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
                           (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
                           (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
-                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]})
+                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd))
+                          (seq routing)               (merge (routing-summary-columns routing)))]})
+            (doseq [[idx event] (map-indexed vector (:trace routing))]
+              (execute! tx-info
+                {:insert-into :llm_routing_event
+                 :values [(routing-event-row iteration-id-s now idx event)]}))
             ;; Index thinking manually; code itself is indexed by schema triggers.
             (let [thinking-s (str/trim (or thinking ""))]
               (when-not (= "" thinking-s)
@@ -1321,6 +1372,61 @@
         []))
     []))
 
+(defn- normalize-routing-event
+  [event]
+  (cond-> event
+    (string? (:event/type event)) (assoc :event/type (keyword (:event/type event)))
+    (string? (:reason event))     (assoc :reason (keyword (:reason event)))))
+
+(defn- row-routing-summary
+  [row trace]
+  (let [selected (cond-> {}
+                   (:llm_selected_provider row) (assoc :provider (->kw-back (:llm_selected_provider row)))
+                   (:llm_selected_model row)    (assoc :model (:llm_selected_model row)))
+        actual   (cond-> {}
+                   (:llm_actual_provider row) (assoc :provider (->kw-back (:llm_actual_provider row)))
+                   (:llm_actual_model row)    (assoc :model (:llm_actual_model row)))]
+    (cond-> {}
+      (seq selected) (assoc :selected selected)
+      (seq actual)   (assoc :actual actual)
+      (some? (:llm_fallback row)) (assoc :fallback? (= 1 (long (:llm_fallback row))))
+      (seq trace) (assoc :trace trace))))
+
+(defn- routing-events-for-iteration
+  [db-info iteration-id]
+  (try
+    (mapv (fn [row]
+            (normalize-routing-event
+              (or (<-json (:event_json row))
+                (cond-> {:event/type (some-> (:event_type row) keyword)}
+                  (:provider row)      (assoc :provider (->kw-back (:provider row)))
+                  (:model row)         (assoc :model (:model row))
+                  (:from_provider row) (assoc :from-provider (->kw-back (:from_provider row)))
+                  (:from_model row)    (assoc :from-model (:from_model row))
+                  (:to_provider row)   (assoc :to-provider (->kw-back (:to_provider row)))
+                  (:to_model row)      (assoc :to-model (:to_model row))
+                  (:status row)        (assoc :status (:status row))
+                  (:reason row)        (assoc :reason (->kw-back (:reason row)))
+                  (:error row)         (assoc :error (:error row))
+                  (:attempt row)       (assoc :attempt (:attempt row))
+                  (:delay_ms row)      (assoc :delay-ms (:delay_ms row))
+                  (:elapsed_ms row)    (assoc :elapsed-ms (:elapsed_ms row))
+                  (:at_ms row)         (assoc :at-ms (:at_ms row))))))
+      (query! db-info
+        {:select [:*]
+         :from   :llm_routing_event
+         :where  [:= :conversation_turn_iteration_id (->ref iteration-id)]
+         :order-by [[:position :asc]]}))
+    (catch SQLException _ [])))
+
+(defn- attach-routing
+  [iteration routing]
+  (if (seq routing)
+    (-> iteration
+      (assoc :llm-routing-trace (vec (:trace routing)))
+      (assoc-in [:metadata :llm] routing))
+    iteration))
+
 (defn- row->iteration [row]
   (let [iter-error (or (<-blob (:error row))
                      (when (some? (:llm_error row))
@@ -1338,6 +1444,11 @@
       (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
       (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
       (some? (:llm_model row))            (assoc :model (:llm_model row))
+      (some? (:llm_selected_provider row)) (assoc :llm-selected-provider (->kw-back (:llm_selected_provider row)))
+      (some? (:llm_selected_model row))    (assoc :llm-selected-model (:llm_selected_model row))
+      (some? (:llm_actual_provider row))   (assoc :llm-actual-provider (->kw-back (:llm_actual_provider row)))
+      (some? (:llm_actual_model row))      (assoc :llm-actual-model (:llm_actual_model row))
+      (some? (:llm_fallback row))          (assoc :llm-fallback? (= 1 (long (:llm_fallback row))))
       ;; Forensic fields - the full transcript surface needs these on
       ;; the data shape even when callers don't render them by default.
       (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
@@ -1378,7 +1489,10 @@
     (let [soul-id-s (->ref conversation-turn-id)
           state     (latest-conversation-turn-state db-info soul-id-s)]
       (when state
-        (mapv row->iteration
+        (mapv (fn [row]
+                (let [trace (routing-events-for-iteration db-info (:id row))
+                      routing (row-routing-summary row trace)]
+                  (attach-routing (row->iteration row) routing)))
           (query! db-info
             {:select [:*] :from :conversation_turn_iteration
              :where [:= :conversation_turn_state_id (:id state)]
