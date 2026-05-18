@@ -1478,12 +1478,15 @@
     (str (or provider "unknown") (when model (str "/" model)))))
 
 (defn- fallback-summary
-  [{:keys [llm-selected llm-actual llm-fallback? llm-fallback-trace]}]
+  [{:keys [llm-selected llm-actual llm-fallback? llm-routing-trace]}]
   (when llm-fallback?
     (let [from (llm-label llm-selected)
           to   (llm-label llm-actual)
-          why  (or (some-> llm-fallback-trace first :error)
-                 (some-> llm-fallback-trace first :reason name))]
+          fallback-event (first (filter #(contains? #{:llm.routing/provider-fallback
+                                                      :llm.routing/format-fallback}
+                                           (:event/type %))
+                                  llm-routing-trace))
+          why  (or (:error fallback-event) (some-> fallback-event :reason name))]
       (str "fallback"
         (when (or from to)
           (str " " (or from "unknown") " → " (or to "unknown")))
@@ -2323,7 +2326,7 @@
    stale-cache the shorter height before usage arrives."
   [{:keys [text role prewrapped-lines turn-separator?
            iteration-count duration-ms tokens cost status
-           llm-selected llm-actual llm-fallback? llm-fallback-trace] :as message} max-w]
+           llm-selected llm-actual llm-fallback? llm-routing-trace] :as message} max-w]
   (cached* [::bh
             (System/identityHashCode text)
             (System/identityHashCode prewrapped-lines)
@@ -2337,7 +2340,7 @@
             llm-selected
             llm-actual
             llm-fallback?
-            llm-fallback-trace
+            llm-routing-trace
             (long max-w)]
     #(bubble-height* message max-w)))
 
@@ -2913,23 +2916,33 @@
 
 (defn- format-fallback-notice
   [{:keys [reason failed-provider new-provider] :as notice}]
-  (let [failed-provider (or failed-provider notice)
-        failed-id (or (some-> (:id failed-provider) name)
-                    (some-> (:provider-id failed-provider) name)
-                    (some-> (:provider failed-provider) name)
-                    "unknown")
-        failed-model (:model failed-provider)
-        new-id (or (some-> (:id new-provider) name)
-                 (some-> (:provider-id new-provider) name)
-                 (some-> (:provider new-provider) name))
-        new-model (:model new-provider)
+  (let [event? (contains? notice :event/type)
+        failed-provider (or failed-provider notice)
+        retry? (= :llm.routing/provider-retry (:event/type notice))
+        failed-id (if event?
+                    (or (:from-provider notice) (:provider notice))
+                    (or (some-> (:id failed-provider) name)
+                      (some-> (:provider-id failed-provider) name)
+                      (some-> (:provider failed-provider) name)
+                      "unknown"))
+        failed-model (if event? (or (:from-model notice) (:model notice)) (:model failed-provider))
+        new-id (if event?
+                 (:to-provider notice)
+                 (or (some-> (:id new-provider) name)
+                   (some-> (:provider-id new-provider) name)
+                   (some-> (:provider new-provider) name)))
+        new-model (if event? (:to-model notice) (:model new-provider))
         from (str failed-id (when failed-model (str "/" failed-model)))
         to   (when (or new-id new-model)
                (str (or new-id "unknown") (when new-model (str "/" new-model))))
-        why  (or (:error failed-provider) (some-> reason name) "provider fallback")]
-    (str "↪ provider fallback: " from
+        why  (or (:error notice) (:error failed-provider) (some-> reason name) "provider fallback")
+        kind (if retry? "retry same provider" "provider fallback")
+        delay (when (and retry? (:delay-ms notice))
+                (str ", retry in " (long (/ (long (:delay-ms notice)) 1000)) "s"))]
+    (str (if retry? "↻ " "↪ ") kind ": " from
       (when to (str " → " to))
-      " — " why)))
+      " — " why
+      delay)))
 
 (defn- code-source-from-render-segments
   [segments fallback-code]

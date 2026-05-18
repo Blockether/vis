@@ -1618,11 +1618,13 @@
   (let [selected (llm-id (:provider selected-model) (some-> (:name selected-model) str))
         actual   (llm-id (or (:llm-provider iteration-result) (:provider selected-model))
                    (or (:llm-model iteration-result) (some-> (:name selected-model) str)))
-        fallback-trace (vec (or (:llm-fallback-trace iteration-result) []))]
+        routing-trace (vec (or (:llm-routing-trace iteration-result) []))]
     (cond-> {:selected selected
              :actual   actual
-             :fallback? (or (not= selected actual) (seq fallback-trace))}
-      (seq fallback-trace) (assoc :fallback-trace fallback-trace))))
+             :fallback? (boolean
+                          (or (not= selected actual)
+                            (some #(not= :llm.routing/provider-retry (:event/type %)) routing-trace)))}
+      (seq routing-trace) (assoc :trace routing-trace))))
 
 (defn- attach-llm-routing-summary
   [result selected-model iteration-result]
@@ -1635,8 +1637,8 @@
               :llm-selected selected
               :llm-actual actual
               :llm-fallback? (:fallback? routing))
-      (seq (:fallback-trace routing))
-      (assoc :llm-fallback-trace (:fallback-trace routing))
+      (seq (:trace routing))
+      (assoc :llm-routing-trace (:trace routing))
       (:cost result)
       (update :cost merge (select-keys actual [:provider :model])))))
 
@@ -1738,15 +1740,12 @@
           ;; ignore it and read `:thinking` as before.
           reasoning-len-volatile (volatile! 0)
           streaming-fn (when on-chunk
-                         (fn [{:keys [reasoning done? reset? reason failed-provider new-provider] :as chunk}]
+                         (fn [{:keys [reasoning done?] :as chunk}]
                            (cond
-                             reset?
+                             (:event/type chunk)
                              (on-chunk {:phase           :provider-fallback
-                                        :iteration       iteration-position
-                                        :reason          reason
-                                        :failed-provider failed-provider
-                                        :new-provider    new-provider
-                                        :fallback        (select-keys chunk [:reason :failed-provider :new-provider])})
+                                        :iteration-count iteration-position
+                                        :event           chunk})
 
                              (or (some? reasoning) done?)
                              (let [thinking (some-> reasoning str)
@@ -1761,8 +1760,8 @@
                                            (= cur-len prev-len)   ""
                                            :else                  (subs thinking prev-len))]
                                (vreset! reasoning-len-volatile cur-len)
-                               (on-chunk {:phase     :reasoning
-                                          :iteration iteration-position
+                               (on-chunk {:phase           :reasoning
+                                          :iteration-count iteration-position
                                           :thinking  thinking
                                           :delta     delta
                                           :done?     (boolean done?)})))))
@@ -1796,7 +1795,7 @@
                :raw-length (count (or (:raw ask-result-raw) ""))
                :block-count (count (or (:blocks ask-result-raw) []))
                :tokens (:tokens ask-result-raw)
-               :fallback? (boolean (seq (:routed/fallback-trace ask-result-raw)))})
+               :fallback? (boolean (some #(not= :llm.routing/provider-retry (:event/type %)) (:routed/trace ask-result-raw)))})
           parse-started-at-ms (System/currentTimeMillis)
           _ (when on-chunk
               (on-chunk {:phase :response-parse
@@ -2153,7 +2152,7 @@
              :llm-selected-model (some-> (:name resolved-model) str)
              :llm-actual-provider provider
              :llm-actual-model model-name
-             :llm-fallback-trace (:routed/fallback-trace ask-result)
+             :llm-routing-trace (:routed/trace ask-result)
              :llm-raw-response (:raw ask-result)
              :llm-executable-blocks (:blocks ask-result)
              :llm-returned-empty-code? (empty? blocks)
@@ -2180,7 +2179,7 @@
                :llm-selected-model (some-> (:name resolved-model) str)
                :llm-actual-provider provider
                :llm-actual-model model-name
-               :llm-fallback-trace (:routed/fallback-trace ask-result)
+               :llm-routing-trace (:routed/trace ask-result)
                :llm-raw-response (:raw ask-result)
                :llm-executable-blocks (:blocks ask-result)
                :llm-returned-empty-code? (empty? blocks)
@@ -2199,7 +2198,7 @@
          :llm-selected-model (some-> (:name resolved-model) str)
          :llm-actual-provider (actual-llm-provider resolved-model ask-result)
          :llm-actual-model (actual-llm-model resolved-model ask-result)
-         :llm-fallback-trace (:routed/fallback-trace ask-result)
+         :llm-routing-trace (:routed/trace ask-result)
          :llm-raw-response (:raw ask-result)
          :llm-executable-blocks (:blocks ask-result)
          :llm-returned-empty-code? (empty? blocks)
@@ -2959,9 +2958,9 @@
                                                                     (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
                                                                              :actual   (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
                                                                              :fallback? false}
-                                                                      (seq (get-in iteration-error-data [:data :routed/fallback-trace]))
+                                                                      (seq (get-in iteration-error-data [:data :routed/trace]))
                                                                       (assoc :fallback? true
-                                                                        :fallback-trace (vec (get-in iteration-error-data [:data :routed/fallback-trace])))))}
+                                                                        :trace (vec (get-in iteration-error-data [:data :routed/trace])))))}
                                                  tc (assoc :tokens (:tokens tc)
                                                       :cost-usd (:cost-usd tc)))))]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))

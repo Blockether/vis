@@ -96,13 +96,13 @@ One shape only:
 - persisted by Vis into `llm_routing_event`
 - rendered by TUI progress/resume
 
-No second event shape. No separate durable `fallback-trace`. Current `:routed/fallback-trace` becomes temporary compatibility alias only during migration; consumers must move to `:routed/trace`.
+No second event shape. No durable or compatibility `fallback-trace`. Consumers must use `:routed/trace`.
 
-### Current svar state
+### Former svar state (audit notes)
 
-- `src/clj/com/blockether/svar/internal/router.clj` has `fallback-trace` atom in `with-provider-fallback`. It records provider/format fallback only and returns `:routed/fallback-trace`.
+- `src/clj/com/blockether/svar/internal/router.clj` had a `fallback-trace` atom in `with-provider-fallback`. It recorded provider/format fallback only and returned `:routed/fallback-trace`; keep it removed, not aliased.
 - `src/clj/com/blockether/svar/internal/llm.clj` has `with-retry`, used by `chat-completion-with-retry`. It silently retries 429/502/503/504 with logs only. These retries are not in any trace and not visible to TUI.
-- streaming fallback notifications use `on-chunk {:reset? true ...}`. That is live control state, not durable event contract.
+- streaming fallback notifications used `on-chunk {:reset? true ...}`. That was live control state, not durable event contract.
 
 ### Svar steps
 
@@ -112,7 +112,7 @@ No second event shape. No separate durable `fallback-trace`. Current `:routed/fa
 2. Replace `fallback-trace` atom with `trace` atom in `with-provider-fallback`.
    - append normalized event maps only.
    - return `:routed/trace`.
-   - add `:routed/fallback-trace` only as deprecated alias while Vis migrates.
+   - do not emit `:routed/fallback-trace`; remove compatibility alias.
 3. Move 429 retry policy to router layer.
    - add router rate-limit policy defaults: `:same-provider-delays-ms`, `:fallback-after-ms`, `:respect-retry-after?`, `:fallback-provider?`.
    - on 429 before streamed content, append `:llm.routing/provider-retry`, sleep configured delay, retry same provider/model.
@@ -206,25 +206,6 @@ Add core routing columns/tables. Do not store primary routing facts only in meta
 
 Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` inline. Fresh DB rebuild is acceptable; this spec shows target table shape, not stepwise migration statements.
 
-Target `conversation_turn_state` excerpt:
-
-```sql
-CREATE TABLE conversation_turn_state (
-  id                     TEXT PRIMARY KEY NOT NULL,
-  conversation_turn_soul_id TEXT NOT NULL REFERENCES conversation_turn_soul(id) ON DELETE CASCADE,
-  version                INTEGER NOT NULL CHECK (version >= 0),
-  status                 TEXT NOT NULL CHECK (status IN ('running', 'done', 'error', 'interrupted')),
-  answer                 BLOB,
-  llm_selected_provider  TEXT,
-  llm_selected_model     TEXT,
-  llm_actual_provider    TEXT,
-  llm_actual_model       TEXT,
-  llm_fallback           INTEGER NOT NULL DEFAULT 0 CHECK (llm_fallback IN (0, 1)),
-  created_at             INTEGER NOT NULL,
-  UNIQUE (conversation_turn_soul_id, version)
-);
-```
-
 Target `conversation_turn_iteration` excerpt:
 
 ```sql
@@ -247,43 +228,43 @@ CREATE TABLE conversation_turn_iteration (
 
 ```sql
 CREATE TABLE llm_routing_event (
-  id TEXT PRIMARY KEY,
-  conversation_turn_state_id TEXT NOT NULL REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  conversation_turn_iteration_id TEXT REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
-  position INTEGER NOT NULL,
-  event_type TEXT NOT NULL,
-  status INTEGER,
-  reason TEXT,
-  provider TEXT,
-  model TEXT,
-  from_provider TEXT,
-  from_model TEXT,
-  to_provider TEXT,
-  to_model TEXT,
-  attempt INTEGER,
-  delay_ms INTEGER,
-  elapsed_ms INTEGER,
-  error TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(conversation_turn_state_id, position)
+  id                             TEXT PRIMARY KEY NOT NULL,
+  conversation_turn_iteration_id TEXT NOT NULL
+                                 REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
+  position                       INTEGER NOT NULL CHECK (position >= 0),
+  event_type                     TEXT NOT NULL,
+  provider                       TEXT,
+  model                          TEXT,
+  from_provider                  TEXT,
+  from_model                     TEXT,
+  to_provider                    TEXT,
+  to_model                       TEXT,
+  status                         INTEGER,
+  reason                         TEXT,
+  error                          TEXT,
+  attempt                        INTEGER CHECK (attempt IS NULL OR attempt >= 0),
+  delay_ms                       INTEGER CHECK (delay_ms IS NULL OR delay_ms >= 0),
+  elapsed_ms                     INTEGER CHECK (elapsed_ms IS NULL OR elapsed_ms >= 0),
+  at_ms                          INTEGER,
+  event_json                     TEXT NOT NULL,
+  created_at                     INTEGER NOT NULL,
+
+  UNIQUE (conversation_turn_iteration_id, position)
 );
 
-CREATE INDEX idx_llm_routing_event_turn
-  ON llm_routing_event(conversation_turn_state_id, position);
-
-CREATE INDEX idx_llm_routing_event_iteration
+CREATE INDEX idx_llm_routing_event_iteration_position
   ON llm_routing_event(conversation_turn_iteration_id, position);
 ```
 
 ### Rationale
 
-Core columns answer common questions cheaply:
+Iteration columns answer common questions cheaply:
 
 ```sql
 SELECT llm_selected_provider, llm_selected_model,
        llm_actual_provider, llm_actual_model,
        llm_fallback
-FROM conversation_turn_state
+FROM conversation_turn_iteration
 WHERE id = ?;
 ```
 
@@ -292,7 +273,7 @@ Event table preserves full timeline:
 ```sql
 SELECT *
 FROM llm_routing_event
-WHERE conversation_turn_state_id = ?
+WHERE conversation_turn_iteration_id = ?
 ORDER BY position;
 ```
 
@@ -302,33 +283,7 @@ Metadata remains extension/supplement field only, not canonical routing store.
 
 ### Change
 
-Extend turn update payload.
-
-```clojure
-(db-update-conversation-turn! db turn-id
-  {:status :success
-   :answer answer
-   :tokens tokens
-   :cost cost
-   :llm-routing {:selected {:provider "anthropic-coding-plan"
-                            :model "claude-opus-4-7"}
-                 :actual {:provider "openai-codex"
-                          :model "gpt-5.3-codex"}
-                 :fallback? true
-                 :trace [retry-event fallback-event]}})
-```
-
-Persist summary to `conversation_turn_state` columns. Persist trace to `llm_routing_event` rows.
-
-### Rationale
-
-Call site already knows final result. One atomic turn update prevents DB/view mismatch.
-
-## Iteration persistence
-
-### Change
-
-`db-store-iteration!` may receive same routing trace for per-iteration event attachment.
+`db-store-iteration!` receives routing summary/trace for per-iteration event attachment.
 
 ```clojure
 (db-store-iteration! db
@@ -343,7 +298,7 @@ Call site already knows final result. One atomic turn update prevents DB/view mi
                  :trace trace}})
 ```
 
-Events with known iteration id store `conversation_turn_iteration_id`; final turn summary also stores turn-state id. All retry rows attach to iteration when known; TUI reads these rows, not iteration metadata.
+Events store `conversation_turn_iteration_id`. TUI reads public iteration fields rehydrated from routing rows, not raw metadata JSON.
 
 ### Rationale
 
@@ -375,7 +330,7 @@ Live user sees hang reason. Footer preserves compact final truth after progress 
 
 ### Change
 
-Conversation rebuild reads core routing fields/events. Resume path must use summary columns plus `llm_routing_event`; metadata fallback is transitional diagnostics only.
+Conversation rebuild reads public iteration routing fields rehydrated from core routing columns/events. Metadata is not canonical routing storage.
 
 ```clojure
 {:llm-selected {:provider llm_selected_provider
@@ -383,7 +338,7 @@ Conversation rebuild reads core routing fields/events. Resume path must use summ
  :llm-actual {:provider llm_actual_provider
               :model llm_actual_model}
  :llm-fallback? (pos? llm_fallback)
- :llm-routing-trace (db-llm-routing-events db turn-state-id)}
+ :llm-routing-trace (db-llm-routing-events db iteration-id)}
 ```
 
 ### Rationale
@@ -413,8 +368,8 @@ Reopened transcript must match live transcript. DB core facts must reconstruct s
 
 ```clojure
 (it "persists routing summary in core columns and trace rows"
-  ;; db-update-conversation-turn! with :llm-routing
-  ;; assert conversation_turn_state llm_* columns
+  ;; db-store-iteration! with routing trace
+  ;; assert conversation_turn_iteration llm_* columns
   ;; assert llm_routing_event rows ordered by position
   )
 ```
@@ -437,7 +392,7 @@ Need unit coverage at each seam: router policy, DB durability, TUI live/resume r
 1. Edit V1 schema inline; destructive dev DB rebuild is acceptable.
 2. Add persistence API + tests.
 3. Implement svar `:routed/trace` event contract first.
-4. Replace TUI metadata forwarding with core routing rows + resume from core rows.
+4. Rehydrate TUI routing fields from core routing rows on resume.
 5. Add config pass-through from Vis to svar.
 6. No CLI command; TUI + persisted routing rows are enough.
 

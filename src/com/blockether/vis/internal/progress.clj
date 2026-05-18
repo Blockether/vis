@@ -352,7 +352,7 @@
     (-> entry
       (assoc :activity :provider-call)
       (update :provider-fallbacks conj
-        (select-keys chunk [:reason :failed-provider :new-provider :fallback])))
+        (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :form-start
     (assoc (write-form-start-slot entry chunk) :activity nil)
