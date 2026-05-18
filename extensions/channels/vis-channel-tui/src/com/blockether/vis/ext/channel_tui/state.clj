@@ -4,6 +4,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.theme :as shared-theme]
+            [com.blockether.vis.internal.header :as vh]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
@@ -528,12 +529,14 @@
 
 (def ^:private ^:const max-workspace-tabs 8)
 
-(def ^:const untitled-conversation-label
-  "Default label for any workspace tab whose conversation has no title
-   yet. Each tab carries its own conversation, so every tab starts as
-   `Untitled conversation` and is later renamed by `:set-title` when
-   the title becomes available."
-  "Untitled conversation")
+(def untitled-conversation-label
+  "Default tab label for a conversation without a title yet.
+
+   Aliases the channel-agnostic value in `internal/header` so the TUI,
+   web, Telegram, etc. all show the same placeholder. Kept exported
+   here for callers (and tests) that already reach in via the state
+   namespace."
+  vh/untitled-conversation-label)
 
 (defn- workspace-tab-number
   [tab]

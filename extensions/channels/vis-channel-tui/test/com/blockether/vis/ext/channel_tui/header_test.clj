@@ -150,7 +150,7 @@
             write-by-text (fn [text]
                             (some #(when (= text (:text %)) %) @writes))]
         (expect (some? placeholder-write))
-        (expect (= t/header-hover-fg (:fg placeholder-write)))
+        (expect (= t/header-active-tab-fg (:fg placeholder-write)))
         (expect (= t/dialog-title-bg (:bg placeholder-write)))
         (expect (empty? left-slot-writes))
         (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567")))))))
@@ -179,7 +179,9 @@
               write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
           ;; Title becomes the active tab label — active style applies.
-          (expect (= t/header-hover-fg (:fg tab-write)))
+          ;; Active tab fg switched to the high-contrast yellow so the
+          ;; light-theme grey-on-grey contrast bug stays fixed.
+          (expect (= t/header-active-tab-fg (:fg tab-write)))
           (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567")))))))))
 
 (defdescribe draw-header-workspace-tabs-test
@@ -233,16 +235,16 @@
         (expect (some? verify-tab))
         (expect (= 16 (:col main-tab)))
         (expect (= (:left expected) (:col active-tab)))
-        (expect (= t/header-fg (:fg main-tab)))
+        (expect (= t/border-fg (:fg main-tab)))
         (expect (= t/dialog-bg (:bg main-tab)))
         (expect (contains? (:modifiers main-tab) p/ITALIC))
-        (expect (contains? (:modifiers main-tab) p/BORDERED))
-        (expect (= t/header-hover-fg (:fg active-tab)))
-        (expect (= t/dialog-title-bg (:bg active-tab)))
+        (expect (not (contains? (:modifiers main-tab) p/BORDERED)))
+        (expect (= t/header-active-tab-fg (:fg active-tab)))
+        (expect (= t/header-active-tab-bg (:bg active-tab)))
         (expect (contains? (:modifiers active-tab) p/BOLD))
-        (expect (contains? (:modifiers active-tab) p/BORDERED))
-        (expect (= t/header-fg (:fg verify-tab)))
-        (expect (contains? (:modifiers verify-tab) p/BORDERED))
+        (expect (not (contains? (:modifiers active-tab) p/BORDERED)))
+        (expect (= t/border-fg (:fg verify-tab)))
+        (expect (not (contains? (:modifiers verify-tab) p/BORDERED)))
         (expect (empty? left-slot-writes))
         (expect (= {:row 1 :col (:left expected) :width (:width expected)}
                   (:bounds tab-hit)))

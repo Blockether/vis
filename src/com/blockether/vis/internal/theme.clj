@@ -107,6 +107,12 @@
    :text-fg [30 30 30]
    :header-fg [30 30 30]
    :header-hover-fg [70 70 70]
+   ;; Active workspace tab in the header. Inverted slab: black bg
+   ;; with white fg makes the active tab pop against the light header
+   ;; surface; inactive tabs are rendered dim+italic from `border-fg`.
+   :header-active-tab-fg [255 255 255]
+   :header-active-tab-bg [0 0 0]
+   :header-active-tab-accent [0 0 0]
    :box-bg [255 255 255]
    :box-fg [30 30 30]
    :border-fg [80 80 80]
@@ -141,7 +147,11 @@
    :code-success-fg [40 160 60]
    :code-error-fg [220 50 50]
    :code-duration-fg [130 130 130]
-   :code-result-fg [70 70 70]
+   ;; Result text inside code/output blocks. Yellow on both themes
+   ;; for a consistent "this is the answer/output" signal that no
+   ;; longer collides with the lavender used for syntax-special
+   ;; tokens. Amber-700 keeps contrast on the light `code-block-bg`.
+   :code-result-fg [161 98 7]
    :code-error-result-fg [180 40 40]
    :code-syntax-special-fg [120 70 170]
    :code-syntax-keyword-fg [25 110 120]
@@ -190,6 +200,11 @@
    :text-fg [226 232 240]
    :header-fg [226 232 240]
    :header-hover-fg [255 255 255]
+   ;; Inverted slab (see light palette): pure white-on-black for the
+   ;; active tab; inactive tabs read as dim italic via `border-fg`.
+   :header-active-tab-fg [255 255 255]
+   :header-active-tab-bg [0 0 0]
+   :header-active-tab-accent [255 255 255]
    :box-bg [18 22 28]
    :box-fg [226 232 240]
    :border-fg [100 116 139]
@@ -224,7 +239,9 @@
    :code-success-fg [74 222 128]
    :code-error-fg [248 113 113]
    :code-duration-fg [148 163 184]
-   :code-result-fg [203 213 225]
+   ;; See light palette: result text picks up the yellow signal in
+   ;; dark mode too. Yellow-300 contrasts on `code-block-bg`.
+   :code-result-fg [250 204 21]
    :code-error-result-fg [252 165 165]
    :code-syntax-special-fg [216 180 254]
    :code-syntax-keyword-fg [94 234 212]
