@@ -133,7 +133,7 @@ def solve(instance: dict) -> dict:
         # readable trace artifact. The final summary frame mirrors --json
         # output; we reconstruct it from the JSONL when present.
         cmd = [
-            VIS_BIN, "run",
+            VIS_BIN,
             "--full-trace-json-stream",
             "--db", ":memory",
             "--provider", PROVIDER,

@@ -10,8 +10,8 @@
   (it "still handles known built-in help without full extension discovery"
     (let [out (java.io.StringWriter.)]
       (binding [*out* out]
-        (expect (true? (#'main/fast-help-dispatched? false ["run" "--help"]))))
-      (expect (.contains (str out) "vis run")))))
+        (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
+      (expect (.contains (str out) "vis providers")))))
 
 (defdescribe root-run-shortcut-test
   (it "treats bare prompt and run flags as root run shortcut"
@@ -21,6 +21,6 @@
 
   (it "keeps known commands and unknown help out of root run shortcut"
     (let [root (#'main/root-command)]
-      (expect (false? (#'main/root-run-shortcut? root ["run" "fix tests"])))
+      (expect (false? (#'main/root-run-shortcut? root ["providers" "list"])))
       (expect (false? (#'main/root-run-shortcut? root ["sessions" "--help"])))
       (expect (false? (#'main/root-run-shortcut? root ["--help"]))))))
