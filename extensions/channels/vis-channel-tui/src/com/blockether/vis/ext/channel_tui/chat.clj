@@ -220,15 +220,16 @@
                                                (boolean (some #(= :code (:kind %)) (:render-segments b))))
                                              structurally-silent-block?
                                              (fn [b]
-                                               (boolean
-                                                 (or (:vis/structurally-silent? b)
-                                                   (and (not (visible-code-segments? b))
-                                                     (let [code (str (:code b))]
+                                               (let [code (str (:code b))
+                                                     trimmed (str/triml code)]
+                                                 (boolean
+                                                   (or (:vis/structurally-silent? b)
+                                                     (str/starts-with? trimmed "(done")
+                                                     (and (not (visible-code-segments? b))
                                                        (or (str/includes? code "(set-conversation-title!")
-                                                         (str/includes? code "(done"))))
-                                                   (and (= :vis/silent (:result b))
-                                                     (not (seq (:render-segments b)))
-                                                     (let [code (str (:code b))]
+                                                         (str/includes? code "(done")))
+                                                     (and (= :vis/silent (:result b))
+                                                       (not (seq (:render-segments b)))
                                                        (or (str/includes? code "(set-conversation-title!")
                                                          (str/includes? code "(done")))))))
                                              preflight-idxs (into #{}

@@ -96,6 +96,7 @@
       (:defs ctx)          -> array-map (newest first): {sym {:doc <str?> :shape <malli>}}
     Current user request: `(get-in ctx [:conversation :user-request])`.
     Read `(:hints ctx)` before acting. Prefer the direct top-level form requested by each hint; do not wrap host bookkeeping in `(do ...)`. Call `(satisfy-hint! <hint-id>)` only when runtime state cannot prove satisfaction; emit it as its own top-level form. It returns `:vis/silent` and should not be mentioned in final answers.
+    Engine-owned control forms are bare symbols: `(done ...)`, `(set-conversation-title! ...)`, `(satisfy-hint! ...)`. Never namespace-qualify them; they are not extension tools.
     `ctx` is a snapshot built BEFORE this iteration runs; new defs and satisfied hints land starting NEXT iteration.
     Use `def` for working memory. Docstrings are optional.
     No separate memory API. Manage state through ctx, defs, and plain Clojure data.

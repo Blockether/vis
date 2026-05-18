@@ -2352,20 +2352,22 @@
     (discover-fast-help-deps! args)
     (let [root      (root-command)
           full-args (cons "vis" args)
-          {:keys [status]} (commandline/dispatch! root full-args)]
-      (= :help status))))
+          {:keys [residual]} (commandline/find-leaf root full-args)
+          unresolved (take-while #(not (#{"--help" "-h"} %)) residual)]
+      (when-not (seq unresolved)
+        (let [{:keys [status]} (commandline/dispatch! root full-args)]
+          (= :help status))))))
 
 (defn- unknown-command?
   "True when the user typed something the tree doesn't recognize.
    Detected by walking the tree: if `find-leaf` resolves only to the
-   ROOT (path length 1) AND there's a residual that isn't a help
-   request, the user gave us an unknown command."
+   ROOT (path length 1) AND there's residual input, the user gave us
+   an unknown command. Pure root help is handled before this check."
   [root args]
   (when (seq args)
     (let [{:keys [path residual]} (commandline/find-leaf root (cons (:cmd/name root) args))]
       (and (= 1 (count path))
-        (seq residual)
-        (not-any? #{"--help" "-h"} residual)))))
+        (seq residual)))))
 
 (defn- exit-with-user-error!
   [^Throwable t]
