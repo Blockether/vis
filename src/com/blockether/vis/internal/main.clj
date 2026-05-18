@@ -2253,14 +2253,44 @@
 ;; Root command
 ;;
 ;; The dispatcher's root has NO hard-coded subcommands. Every entry
-;; comes from the global commandline registry. Built-ins (run, auth,
-;; doctor, ...) are registered by vis-runtime; the `vis channel` and
+;; comes from the global commandline registry. Built-ins (providers,
+;; conversations, doctor, ...) are registered by vis-runtime; the `vis channel` and
 ;; `vis ext` parents are registered by the channel and extension
 ;; facades. Add a third-party jar with its own `register-cmd!`
 ;; calls and its commands appear here without any code change.
 ;; =============================================================================
 
-(def ^:private DEFAULT_DOC "vis - iterative coding agent CLI")
+(def ^:private DEFAULT_DOC
+  (str "Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL.\n"
+    "\n"
+    "USAGE\n"
+    "  vis [FLAGS] \"prompt\"          Run one-shot agent work.\n"
+    "  vis [FLAGS]                    Show this help.\n"
+    "  vis <command> [args...]        Run a command.\n"
+    "  vis <command> --help           Show command help.\n"
+    "\n"
+    "EXAMPLES\n"
+    "  vis \"fix failing tests\"\n"
+    "  vis --json \"summarize this repo\"\n"
+    "  vis --full-trace-json-stream --db :memory \"debug startup\"\n"
+    "  vis providers status\n"
+    "  vis conversations search sqlite\n"
+    "\n"
+    "ONE-SHOT FLAGS\n"
+    "  --json                       Print result as JSON.\n"
+    "  --edn                        Print result as EDN.\n"
+    "  --code                       Print only final answer code blocks.\n"
+    "  --raw                        Print plain text, no markdown styling.\n"
+    "  --full-trace-stream          Stream pretty human trace.\n"
+    "  --full-trace-edn-stream      Stream raw EDN trace frames.\n"
+    "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
+    "  --provider PROVIDER          Override provider.\n"
+    "  --model MODEL                Override model or use provider/model.\n"
+    "  --name NAME                  Agent name for this run.\n"
+    "  --db PATH|:memory            SQLite DB path or in-memory DB.\n"
+    "  --persist                    Persist as a :cli conversation.\n"
+    "  --debug                      Enable verbose debug logging.\n"
+    "  --help, -h                   Show help."))
 
 (defn root-command
   "Build the root `vis` command tree. Subcommands are pulled fresh on
