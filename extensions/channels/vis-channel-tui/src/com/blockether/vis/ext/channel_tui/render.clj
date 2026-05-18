@@ -432,11 +432,14 @@
        ;; on each end so the rule doesn't kiss the screen edges.
        ;; `pad` cols of empty space on each side; bar spans the inner
        ;; (cols - 2*pad) columns. No corners, no side rails. Top hint
-       ;; embeds inside the padded bar.
+       ;; embeds inside the padded bar. `:tui.input/omit-top-border`
+       ;; lets footer/subtitle own that row while this painter keeps the
+       ;; editor interior and bottom rule.
        (let [pad        INPUT_BORDER_HORIZONTAL_PAD
              rule-w     (max 0 (- cols (* 2 pad)))
              padded-bar (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)]
-         (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint))
+         (when-not (= :tui.input/omit-top-border top-hint)
+           (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint)))
          (.putString g (int pad) (int box-bottom) padded-bar))))))
 
 (defn- fill-box-interior!
@@ -573,15 +576,13 @@
    the line horizontally. The logical model (`{:lines :crow :ccol}`)
    is unchanged - wrapping is a render-time projection only.
 
-   `hint` is the keybinding strip embedded in the TOP border. The
-   bottom border is always a plain horizontal rule - live status
-   (model / run-state / ctx %) lives in the dedicated footer row
-   below this box (see `footer/draw-footer!`).
+   `hint` optionally embeds a short label in the top border. Runtime
+   keybinding helpers live in `footer/draw-footer-subtitle!`, not here,
+   so input/editor paint stays isolated from footer chrome.
 
-   No left/right side rails: the input area is framed by the top
-   keybinding strip and the bottom rule only, so the typing zone
-   sits flush with the message column on either side and the eye
-   tracks the prompt directly without `│`-noise on the edges."
+   No left/right side rails: the input area is framed by top and bottom
+   rules only, so the typing zone sits flush with the message column on
+   either side and the eye tracks the prompt directly without `│`-noise."
   [^TextGraphics g input box-top text-rows cols hint]
   (let [box-bottom (+ box-top (* 2 input-pad-y) text-rows 1)
         text-top   (+ (inc box-top) input-pad-y)

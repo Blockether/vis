@@ -84,10 +84,11 @@
       blank?
       {:importance :high
        :text (str "The conversation title is currently empty. "
-               "Set it via `(set-conversation-title! \"...\")` (3-7-word noun phrase, "
+               "Set it via bare `(set-conversation-title! \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
                "the conversation is discoverable in the sidebar. "
                "Emit that call as its own top-level form before your first real probe. "
+               "Do not namespace-qualify it; it is engine-owned, not a foundation `v/` tool. "
                "Keep host bookkeeping as direct sibling forms so traces stay clean.")}
 
       ;; Periodic refresh stays :low — the existing title already labels
@@ -97,8 +98,8 @@
       {:importance :low
        :text (str "Current conversation title is \"" conversation-title "\". "
                "You are " turn-position " turn(s) into this conversation. "
-               "If the focus has shifted, refresh it via "
-               "`(set-conversation-title! \"...\")`.")})))
+               "If the focus has shifted, refresh it via bare "
+               "`(set-conversation-title! \"...\")`; do not namespace-qualify it.")})))
 
 (defn context-pressure-hint
   "Return a `:high`-importance hint when the estimated input tokens

@@ -1136,6 +1136,8 @@
 
 (def ^:private code-block-edamame-opts
   {:all true
+   :fn true
+   :regex true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
 (defn- top-level-form-kind

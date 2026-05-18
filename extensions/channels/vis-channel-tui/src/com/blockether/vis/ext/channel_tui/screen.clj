@@ -75,28 +75,6 @@
 (def ^:private mouse-double-click-ms
   "Maximum time between two selection clicks on the same row for line-select."
   500)
-;; Hint strip rules
-;;
-;; Idle, input EMPTY    -> show newline + history cycle + menu. The
-;;                       empty box is the moment someone is deciding
-;;                       what to type, so we surface `↑↓` for
-;;                       cycling through prior prompts and `Alt+Enter`
-;;                       for multi-line composition right where the
-;;                       eye lands.
-;; Idle, input NON-EMPTY -> just menu. \"Enter send\" is monkey-obvious; once
-;;                        someone has typed the hint is redundant,
-;;                        and history-cycle would clobber the buffer.
-;; Loading              -> cancel + quit. Same as before.
-;; Cancelling            -> progress message + quit.
-;;
-;; Removed from idle: `Enter send` (universally obvious). PageUp/PageDown
-;; remain available for transcript scrolling. Model/reasoning/verbosity
-;; shortcuts live in the footer next to the values they change.
-(def ^:private hint-idle-empty " Alt+Enter newline / ↑↓ history / Shift+Tab tabs / Ctrl+B voice / Ctrl+G conversations / Ctrl+K menu ")
-(def ^:private hint-idle-typed " Shift+Tab tabs / Ctrl+B voice / Ctrl+G conversations / Ctrl+K menu ")
-(def ^:private hint-loading    " Esc cancel / Ctrl+C quit ")
-(def ^:private hint-cancelling " Cancelling... please wait / Ctrl+C quit ")
-
 (def ^:private prewarm-sync-tail-count
   "How many newest bubbles to warm synchronously before launching
    the background pre-warm worker. Covers the region users hit on
@@ -115,13 +93,6 @@
   [{:keys [lines]}]
   (or (empty? lines)
     (every? str/blank? lines)))
-
-(defn- current-hint [{:keys [loading? cancelling? input]}]
-  (cond
-    cancelling?         hint-cancelling
-    loading?            hint-loading
-    (input-empty? input) hint-idle-empty
-    :else               hint-idle-typed))
 
 (def ^:private drag-autoscroll-max-coalesce-factor
   "Upper bound for per-loop drag auto-scroll amplification."
@@ -798,7 +769,7 @@
 
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box,
-   and two footer rows.
+   isolated footer-subtitle row, and two footer rows.
 
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
@@ -813,18 +784,15 @@
         g            (.newTextGraphics screen)
         text-rows    (input-text-rows input cols)
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
-        ;; Reserve the bottom-most two rows for the dedicated footer
-        ;; (model/status first, provider limits second) and the top-most
-        ;; band for the dedicated header. Header height is data-dependent:
-        ;; workspace tabs add one row only when more than one exists. The input
-        ;; box sits directly above the footer; the
-        ;; messages area fills everything from `messages-top` down to the
-        ;; input-box top.
+        ;; Reserve bottom rows for footer proper (model/status + provider
+        ;; limits). Shortcut chrome is a closed 3-row helper cell above
+        ;; the editor; input top border is omitted.
         header-top   0
         footer-row   (- rows 2)
         input-top    (- rows input-box-h 2)
+        subtitle-row (- input-top 2)
         messages-top    (header/header-rows db)
-        messages-bottom input-top
+        messages-bottom subtitle-row
         ;; Single source of truth for the gutter math lives in
         ;; `render.clj` (`MESSAGE_SIDE_PAD`). Reference it directly; do
         ;; NOT inline a literal here. Two layers disagreeing by even
@@ -880,8 +848,8 @@
     ;; ticking).
     (render/draw-messages-area! g layout messages-top messages-bottom cols)
     (header/draw-header! g db header-top cols)
-    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
-                    (current-hint db))]
+    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
+      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
       (footer/draw-footer! g db footer-row cols now-ms)
       (render/draw-slash-command-suggestions! g slash-suggestions input-top cols slash-command-index)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
@@ -1037,18 +1005,16 @@
         text-rows      (input-text-rows input cols)
         input-box-h    (+ text-rows 2 (* 2 render/input-pad-y))
         input-top      (- rows input-box-h 2)
+        subtitle-row   (- input-top 2)
         messages-top   (header/header-rows db)
-        messages-bottom input-top
+        messages-bottom subtitle-row
         bubble-w       (max 1 (- cols render/MESSAGE_SIDE_PAD))
         inner-h        (max 0 (- messages-bottom messages-top 2))
         text-top       (+ messages-top render/MESSAGE_MARGIN_TOP)
         header-top     0
-        ;; Footer is two rows tall (model row + limits/subscription row),
-        ;; drawn starting at `footer-row`. Using `(dec rows)` here painted
-        ;; the model row over the bottom row and pushed the limits row
-        ;; off-screen, so during streaming the subscription line was
-        ;; replaced by a duplicate of the model line. Must match the full
-        ;; render path: `(- rows 2)`.
+        ;; Footer is two rows tall (model + limits). Shortcut chrome is a
+        ;; closed helper cell above input; input top border is omitted. Must
+        ;; match full render geometry.
         footer-row     (- rows 2)
         progress-extra {:now-ms        now-ms
                         :turn-start-ms turn-start-ms
@@ -1125,8 +1091,8 @@
     ;; serving lookups; header click rectangles registered there
     ;; remain valid the whole turn.
     (header/draw-header! g db header-top cols)
-    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
-                    (current-hint db))]
+    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
+      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
       (footer/draw-footer! g db footer-row cols now-ms)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (render-scrollbar! g cols messages-top inner-h (- messages-bottom messages-top)

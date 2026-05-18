@@ -161,6 +161,8 @@
    the validation here counts forms exactly the same way the engine
    does at execution time."
   {:all true
+   :fn true
+   :regex true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
 (defn count-top-level-forms

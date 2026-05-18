@@ -129,7 +129,15 @@ for arg in "$@"; do
     args+=("$arg")
   fi
 done
-set -- "${args[@]}"
+if (( ${#args[@]} > 0 )); then
+  set -- "${args[@]}"
+else
+  set --
+fi
 
 measure_log "exec cold clojure -M:vis"
-run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${vis_extension_sdeps[@]}" -M:vis "$@"
+if (( ${#vis_extension_sdeps[@]} > 0 )); then
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${vis_extension_sdeps[@]}" -M:vis "$@"
+else
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+fi

@@ -4,7 +4,6 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.env.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
-   [edamame.core :as edamame]
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci]))
 
@@ -82,6 +81,24 @@
           (catch Throwable e
             (expect (str/includes? (ex-message e) "satisfy-hint! requires a keyword hint id"))))
         (finally
+          (lp/dispose-environment! env)))))
+
+  (it "set-conversation-title! is a bare engine symbol, not a v/ tool"
+    (let [env (lp/create-environment ::router {:db :memory})]
+      (try
+        (expect (= :vis/silent
+                  (:val (sci/eval-string+ (:sci-ctx env)
+                          "(set-conversation-title! \"Liveness check\")"
+                          {:ns (:sandbox-ns env)}))))
+        (try
+          (sci/eval-string+ (:sci-ctx env)
+            "(v/set-conversation-title! \"Liveness check\")"
+            {:ns (:sandbox-ns env)})
+          (expect false)
+          (catch Throwable e
+            (expect (str/includes? (ex-message e)
+                      "Unable to resolve symbol: v/set-conversation-title!"))))
+        (finally
           (lp/dispose-environment! env))))))
 
 (defdescribe provider-error-explanation-test
@@ -116,22 +133,16 @@
       (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))))
 
 (defdescribe malformed-direct-answer-repair-test
-  (it "repairs unescaped quotes inside direct done IR paragraph blocks"
+  (it "does not auto-repair malformed direct answer blocks"
     (let [preflight (var-get #'lp/code-entries-preflight)
-          src "(done [:ir [:p \"Cześć! 🙂  Nie do końca rozumiem pytanie — możesz doprecyzować, o co chodzi z tym „9k\"? Chętnie pomogę, jeśli powiesz w jakim kontekście (kod, repo, coś innego).\"]])"
-          {:keys [code-entries]} (preflight 1 [{:source src :lang "clojure"}])
-          entry (first code-entries)]
-      (expect (= 1 (count code-entries)))
-      (expect (true? (:repaired? entry)))
-      (expect (str/includes? (:expr entry) "„9k\\\"?"))
-      (expect (= 1 (count (edamame/parse-string-all (:expr entry) lp/edamame-opts))))
-      (expect (= [{:kind :answer-ref}] (:render-segments entry)))))
-
-  (it "does not rewrite malformed direct-answer IR when quotes are balanced"
-    (let [preflight (var-get #'lp/code-entries-preflight)
-          src "(done [:ir [:p \"Ok\"] [:h {:level} \"Bad heading\"]])"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          src "(done [:ir [:p \"Hotword biasing - add \" [:c \"setHotwordsFile\") \"/\" [:c \"setHotwordsScore\"]]])"
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))
+          parsed (parse-forms (:expr entry))]
       (expect (nil? (:repaired? entry)))
+      (expect (nil? (:repaired-source parsed)))
+      (expect (some? (:parse-error parsed)))
+      (expect (true? (:vis/structurally-silent? entry)))
       (expect (= src (:expr entry)))))
 
   (it "does not rewrite malformed non-answer code"
@@ -139,7 +150,13 @@
           src "(println \"a\" broken \"b)"
           entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
       (expect (nil? (:repaired? entry)))
-      (expect (= src (:expr entry))))))
+      (expect (= src (:expr entry)))))
+
+  (it "streams fn shorthand and regex literals through parser instead of rejecting them"
+    (let [parse-forms (var-get #'lp/parse-top-level-forms)
+          regex-src (str "(re-find #" "\"v\" \"voice\")")]
+      (expect (nil? (:parse-error (parse-forms "(filter #(= % 1) [1 2])"))))
+      (expect (nil? (:parse-error (parse-forms regex-src)))))))
 
 (defdescribe top-level-do-unwrapping-test
   (it "unwraps legacy top-level do before display and eval"
