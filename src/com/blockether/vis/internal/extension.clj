@@ -618,6 +618,11 @@
 ;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt fn?)
 
+;; Optional structured data merged into engine `ctx` before every model call.
+;; Return a map such as `{:project {...}}`; engine-owned keys still win on
+;; collision.
+(s/def :ext/ctx fn?)
+
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
 ;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
@@ -912,7 +917,7 @@
   (s/and
     (s/keys :req [:ext/name :ext/description]
       :opt [:ext/source-nses :ext/kind :ext/activation-fn
-            :ext/sci :ext/prompt
+            :ext/sci :ext/prompt :ext/ctx
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
@@ -1553,6 +1558,50 @@
 
 (defn current-extension-id []
   (some-> *current-extension* :ext/name))
+
+(defn- deep-merge
+  [& maps]
+  (letfn [(merge-entry [a b]
+            (if (and (map? a) (map? b))
+              (merge-with merge-entry a b)
+              b))]
+    (apply merge-with merge-entry maps)))
+
+(defn ctx-contributions
+  "Return merged structured `ctx` contributions for active extensions.
+
+   Each active extension may declare `:ext/ctx` as `(fn [env] -> map)`.
+   Exceptions and non-map returns are logged and ignored so bad optional
+   context never blocks a turn."
+  [environment active-extensions]
+  (reduce
+    (fn [acc ext]
+      (if-let [f (:ext/ctx ext)]
+        (let [contribution
+              (try
+                (binding [*current-extension* ext
+                          *current-symbol* nil]
+                  (f environment))
+                (catch Throwable t
+                  (tel/log! {:level :warn
+                             :id ::ctx-contribution-error
+                             :data {:ext (:ext/name ext)
+                                    :error (ex-message t)}}
+                    "Extension :ext/ctx fn threw")
+                  nil))]
+          (if (map? contribution)
+            (deep-merge acc contribution)
+            (do
+              (when (some? contribution)
+                (tel/log! {:level :warn
+                           :id ::ctx-contribution-invalid
+                           :data {:ext (:ext/name ext)
+                                  :returned (type contribution)}}
+                  "Extension :ext/ctx fn returned non-map"))
+              acc)))
+        acc))
+    {}
+    (or active-extensions [])))
 
 (defn- tool-result->public-value
   [result]

@@ -7,13 +7,10 @@
    [com.blockether.vis.ext.foundation.hints :as hints]))
 
 (defn- combined-prompt
-  "Stitch the foundation-owned model prompt fragment together.
-   Foundation owns environment facts directly here; core only orders active
-   extension prompt fragments."
+  "Stitch foundation-owned tool strategy prompt text. Structured runtime,
+   project guidance, and scan warnings flow through `ctx`, not prompt labels."
   [env]
-  (str (environment/environment-info env)
-    "\n\n"
-    (environment/environment-prompt env)
+  (str (environment/environment-prompt env)
     "\n\n"
     introspection/introspection-prompt
     "\n\n"
@@ -96,6 +93,7 @@
                                                   environment/environment-symbols))}
      :ext/kind           "foundation"
      :ext/hooks          hints/hooks
+     :ext/ctx            environment/environment-ctx
      :ext/prompt         combined-prompt
      :ext/doctor-check-fn lazy-doctor-check-fn
      :ext/cli            [(doctor-cli-command)
