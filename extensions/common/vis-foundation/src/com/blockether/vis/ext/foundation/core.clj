@@ -4,7 +4,8 @@
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
-   [com.blockether.vis.ext.foundation.hints :as hints]))
+   [com.blockether.vis.ext.foundation.hints :as hints]
+   [com.blockether.vis.ext.foundation.workspace :as workspace]))
 
 (defn- combined-prompt
   "Stitch foundation-owned tool strategy prompt text. Structured runtime,
@@ -41,6 +42,7 @@
                   [:v/monorepo :op.tag/observation]
                   [:v/main-agent-instructions :op.tag/observation]
                   [:v/scan-warnings :op.tag/observation]
+                  [:v/workspace.diff :op.tag/observation]
                   [:v/patch :op.tag/mutation]
                   [:v/create-dirs :op.tag/mutation]
                   [:v/copy :op.tag/mutation]
@@ -90,7 +92,8 @@
      :ext/sci            {:ext.sci/alias 'v
                           :ext.sci/symbols (vec (concat introspection/all-symbols
                                                   (editing/available-editing-symbols)
-                                                  environment/environment-symbols))}
+                                                  environment/environment-symbols
+                                                  workspace/workspace-symbols))}
      :ext/kind           "foundation"
      :ext/hooks          hints/hooks
      :ext/ctx            environment/environment-ctx
