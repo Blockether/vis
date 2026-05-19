@@ -441,8 +441,8 @@
 (def assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages)
 (def build-system-prompt              prompt/build-system-prompt)
 (def stable-prompt-text               prompt/stable-prompt-text)
-;; `vis.core/build-iteration-context` re-exported the legacy XML
-;; assembly. Replaced with
+;; `vis.core/build-iteration-context` previously re-exported a
+;; retired prompt-control assembly. Replaced with
 ;; `prompt/build-iteration-context`; the re-export is dropped
 ;; rather than aliased so any straggler caller fails loud.
 

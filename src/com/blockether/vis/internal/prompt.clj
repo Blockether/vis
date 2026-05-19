@@ -51,12 +51,12 @@
   (let [answer (some-> answer str str/trim)]
     (when (and answer (not (str/blank? answer)))
       (prompt-block
-        "previous_turn_context"
+        "previous-turn-context"
         (str
           (when-not (str/blank? (str user-request))
-            (str (prompt-block "previous_user_request" user-request)
+            (str (prompt-block "previous-user-request" user-request)
               "\n\n"))
-          (prompt-block "previous_assistant_answer" answer))))))
+          (prompt-block "previous-assistant-answer" answer))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
@@ -132,7 +132,7 @@
     HINTS
     Read `(get-in ctx [:session :hints])` before acting. Prefer the direct top-level form requested
     by each hint; do not wrap host bookkeeping in `(do ...)`. Call
-    `(satisfy-hint! <hint-id>)` only when runtime state cannot prove satisfaction;
+    `(satisfy-hint! :hint/id)` only when runtime state cannot prove satisfaction;
     emit it as its own top-level form. It returns `:vis/silent` and must not be
     mentioned in final answers.
 
@@ -295,7 +295,7 @@
    a second extension/context message."
   [environment active-extensions]
   (when-let [extensions-block (extensions-prompt-block environment active-extensions)]
-    (prompt-block "turn_system_context" extensions-block)))
+    (prompt-block "turn-system-context" extensions-block)))
 
 (defn- stable-prompt-message
   [content]
@@ -332,7 +332,7 @@
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [core-block (prompt-block "system_prompt"
+  (let [core-block (prompt-block "system-prompt"
                      (build-system-prompt {:system-prompt system-prompt}))
         turn-system-block (turn-system-context-block environment active-extensions)]
     (vec

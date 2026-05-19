@@ -316,7 +316,7 @@
 
    Returns the full trailer string: prior iterations as REPL transcripts,
    followed by `;; ctx = <edn>` for the fresh state. Hint data lives inside
-   `(get-in ctx [:session :hints])`; there is no XML hint side-channel."
+   `(get-in ctx [:session :hints])`; there is no separate hint side-channel."
   [{:keys [environment trailer-iters ctx]}]
   (let [cache-key (System/identityHashCode (:env (:sci-ctx environment)))
         prior     (mapv (fn [[pos data]] (iteration->repl-text cache-key
