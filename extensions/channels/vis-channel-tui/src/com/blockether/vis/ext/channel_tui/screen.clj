@@ -321,11 +321,11 @@
   [text]
   (input/paste-text (input/empty-input) (or text "")))
 
-(defn- activate-workspace-tab-hit!
+(defn- activate-workspace-entry-hit!
   "Switch to the workspace tab represented by a header click region."
   [refresh-active-workspace! hit]
   (let [before (:active-workspace-id @state/app-db)]
-    (state/dispatch [:select-workspace-tab-index (:index hit)])
+    (state/dispatch [:select-workspace-index (:index hit)])
     (when-not (= before (:active-workspace-id @state/app-db))
       (refresh-active-workspace! false))))
 
@@ -931,7 +931,7 @@
     (live-progress-only-change? previous-db db)))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :workspace-tab})
+  #{:copy-id :workspace-entry})
 
 (defn- header-hover-region?
   [region]
@@ -1303,7 +1303,7 @@
 (defn- workspace-sessions
   []
   (let [db @state/app-db]
-    (->> (concat (keep :session (vals (:workspaces db)))
+    (->> (concat (keep :session (vals (:workspace-locals db)))
            [(:session db)])
       (filter :id)
       (reduce (fn [{:keys [seen out] :as acc} session]
@@ -1747,7 +1747,7 @@
                                     (= :switch (:action choice))
                                     (let [target-id (:id choice)]
                                       (when-not (= (str target-id) (current-session-id))
-                                        (state/dispatch [:select-workspace-tab-session-id target-id])
+                                        (state/dispatch [:select-workspace-by-session target-id])
                                         (if (= (str target-id) (current-session-id))
                                           (refresh-active-workspace! true)
                                           (if-let [session-result (chat/resume-session target-id)]
@@ -2085,8 +2085,8 @@
                                :switch-session
                                (switch-session! {:action :switch :id (:text hit)})
 
-                               :workspace-tab
-                               (activate-workspace-tab-hit! refresh-active-workspace! hit)
+                               :workspace-entry
+                               (activate-workspace-entry-hit! refresh-active-workspace! hit)
 
                                :toggle-details
                                (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)])
@@ -2159,8 +2159,8 @@
                                :switch-session
                                (switch-session! {:action :switch :id (:text hit)})
 
-                               :workspace-tab
-                               (activate-workspace-tab-hit! refresh-active-workspace! hit)
+                               :workspace-entry
+                               (activate-workspace-entry-hit! refresh-active-workspace! hit)
 
                                :toggle-details
                                (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)])
@@ -2314,9 +2314,9 @@
 
                                    :new-tab
                                    (when-let [config (:config @state/app-db)]
-                                     (let [before-count (count (:workspace-tabs @state/app-db))]
-                                       (state/dispatch [:add-workspace-tab])
-                                       (if (= before-count (count (:workspace-tabs @state/app-db)))
+                                     (let [before-count (count (:workspaces @state/app-db))]
+                                       (state/dispatch [:create-workspace])
+                                       (if (= before-count (count (:workspaces @state/app-db)))
                                          (vis/notify! "Maximum 8 tabs open"
                                            :level :warn :ttl-ms copy-success-ttl-ms)
                                          (install-session! (chat/make-session config) true))))
@@ -2441,9 +2441,9 @@
                                (recur))))
                          (recur))
 
-                       :select-workspace-tab
+                       :select-workspace-index
                        (do (let [before (:active-workspace-id @state/app-db)]
-                             (state/dispatch [:select-workspace-tab-index tab-index])
+                             (state/dispatch [:select-workspace-index tab-index])
                              (when-not (= before (:active-workspace-id @state/app-db))
                                (refresh-active-workspace! false)))
                          (recur))

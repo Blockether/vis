@@ -90,25 +90,43 @@
   [db]
   (vh/title-or-placeholder (:title db)))
 
-(defn- workspace-tabs
-  "Return tabs to render in the centre slot, ALWAYS non-empty.
+(def ^:private active-workspace-states
+  "PLAN.md decision 12 — header strip shows live workspaces only.
+   Merged + discarded rows stay in DB for transcript references but
+   never appear in any list, panel, or overlay."
+  #{:active :merging})
 
-   Each tab represents a session; the active tab's label tracks
-   the session title (the state layer updates it on `:set-title`).
-   When the app-db has not initialised its tab list yet — fresh boot,
-   first paint, or stand-alone draw in tests — we synthesise a single
-   active tab labelled with the session title (or the
-   `Untitled session` placeholder) so the centre slot is never
-   empty and the LEFT slot never needs to fall back to the title."
+(defn- workspace-strip-visible?
+  "True for entries that should appear in the header strip. Entries
+   without an attached :workspace record (synthetic fallback) are
+   always visible. Entries with a workspace record are visible only
+   when its state is :active or :merging."
+  [entry]
+  (let [state (some-> entry :workspace :state)]
+    (or (nil? state)
+      (contains? active-workspace-states state))))
+
+(defn- workspace-entries
+  "Return entries to render in the centre strip, ALWAYS non-empty.
+
+   Each entry represents a workspace (1:1 with its session under
+   PLAN.md decision 1); the active entry's label tracks the session
+   title (the state layer updates it on `:set-title`). Entries are
+   filtered to PLAN.md decision 12 — finished (merged + discarded)
+   workspaces never reach the strip. When the app-db has not yet
+   initialised its workspace list — fresh boot, first paint, or
+   stand-alone draw in tests — we synthesise a single active entry
+   labelled with the session title (or the `Untitled session`
+   placeholder) so the centre slot is never empty."
   [db]
-  (let [tabs (vec (:workspace-tabs db))]
-    (if (seq tabs)
-      tabs
+  (let [entries (filterv workspace-strip-visible? (:workspaces db))]
+    (if (seq entries)
+      entries
       [{:id (or (:active-workspace-id db) :main)
         :label (title-or-placeholder db)
         :active? true}])))
 
-(defn- active-workspace-tab-id
+(defn- active-workspace-entry-id
   [db tabs]
   (or (:active-workspace-id db)
     (:id (some #(when (:active? %) %) tabs))
@@ -319,7 +337,7 @@
   [n lo hi]
   (max (long lo) (min (long hi) (long n))))
 
-(defn- active-tab-index
+(defn- active-strip-index
   [tabs active-id]
   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) tabs)) 0))
 
@@ -330,7 +348,7 @@
         width (max 0 (long width))
         max-visible (vh/max-visible-count n width)
         overflow? (> n max-visible)
-        active-idx (active-tab-index tabs active-id)
+        active-idx (active-strip-index tabs active-id)
         half (quot max-visible 2)
         start (if overflow?
                 (clamp-long (- active-idx half) 0 (max 0 (- n max-visible)))
@@ -370,7 +388,7 @@
 (defn- draw-tab-arrow!
   [g row col text direction]
   (let [hovered (cr/hovered)
-        hovered? (and (= :workspace-tab (:kind hovered))
+        hovered? (and (= :workspace-entry (:kind hovered))
                    (= direction (:index hovered))
                    (= row (get-in hovered [:bounds :row])))]
     (p/clear-styles! g)
@@ -381,7 +399,7 @@
     (when *register-click-regions?*
       (cr/register!
         {:bounds {:row row :col col :width (p/display-width text)}
-         :kind :workspace-tab
+         :kind :workspace-entry
          :index direction
          :workspace-id direction
          :text direction
@@ -443,7 +461,7 @@
           (when *register-click-regions?*
             (cr/register!
               {:bounds {:row row :col left :width width}
-               :kind :workspace-tab
+               :kind :workspace-entry
                :index idx
                :workspace-id id
                :text id
@@ -458,7 +476,7 @@
      title does NOT live here — it lives on the active workspace
      tab. When no notification is active the LEFT slot stays blank.
    - CENTER 60%: workspace tabs. Always painted: when the app-db
-     has not yet materialised a tab list, `workspace-tabs` synthesises
+     has not yet materialised a tab list, `workspace-entries` synthesises
      a single placeholder tab so a fresh session reads as
      `Untitled session` inside a tab, not as a title in the LEFT
      slot.
@@ -467,7 +485,7 @@
    Tabs are part of the header row (no separate band). Overflow shows
    clickable left/right arrows that cycle through workspace tabs."
   [g db header-top cols]
-  (let [tabs (workspace-tabs db)
+  (let [tabs (workspace-entries db)
         top-rule-row header-top
         content-row (inc header-top)
         contrib-specs (header-row-specs db cols)
@@ -502,7 +520,7 @@
         status-level (some-> status :level)
         left-cap (max 0 (- left-w edge-pad 1))
         notif-trim (when notif-text (ellipsize notif-text left-cap))
-        active-id (active-workspace-tab-id db tabs)]
+        active-id (active-workspace-entry-id db tabs)]
     (draw-rule! g top-rule-row cols)
 
     (p/clear-styles! g)
@@ -510,7 +528,7 @@
     (p/fill-rect! g 0 content-row cols 1)
 
     ;; LEFT 20%: notifications only. No title here — title lives on
-    ;; the active tab (see `workspace-tabs`/`:set-title`).
+    ;; the active tab (see `workspace-entries`/`:set-title`).
     (when (seq notif-trim)
       (p/clear-styles! g)
       (p/set-colors! g (level->fg notif-level) t/terminal-bg)

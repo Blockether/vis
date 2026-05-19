@@ -124,26 +124,26 @@
 (defn- current-workspace-id
   [db]
   (or (:active-workspace-id db)
-    (:id (some #(when (:active? %) %) (:workspace-tabs db)))
-    (:id (first (:workspace-tabs db)))))
+    (:id (some #(when (:active? %) %) (:workspaces db)))
+    (:id (first (:workspaces db)))))
 
-(defn- active-workspace-tab
+(defn- active-workspace-entry
   [db]
   (let [active-id (current-workspace-id db)]
-    (some #(when (= (:id %) active-id) %) (:workspace-tabs db))))
+    (some #(when (= (:id %) active-id) %) (:workspaces db))))
 
 (defn- active-workspace
   [db]
   (or (:workspace db)
-    (some-> (active-workspace-tab db) :workspace)
+    (some-> (active-workspace-entry db) :workspace)
     (when-let [root (or (:workspace/root db)
-                      (some-> (active-workspace-tab db) :workspace/root))]
+                      (some-> (active-workspace-entry db) :workspace/root))]
       {:workspace/root root})))
 
 (defn- sync-active-workspace
   [db]
   (if-let [id (current-workspace-id db)]
-    (assoc-in db [:workspaces id] (workspace-snapshot db))
+    (assoc-in db [:workspace-locals id] (workspace-snapshot db))
     db))
 
 (defn- finalize-db
@@ -529,7 +529,7 @@
   []
   (:provider (current-model-info)))
 
-(def ^:private ^:const max-workspace-tabs 8)
+(def ^:private ^:const max-workspaces 8)
 
 (def untitled-session-label
   "Default tab label for a session without a title yet.
@@ -540,16 +540,16 @@
    namespace."
   vh/untitled-session-label)
 
-(defn- workspace-tab-number
+(defn- workspace-number
   [tab]
   (when-let [[_ n] (some->> tab :id name (re-matches #"tab-(\d+)"))]
     (Long/parseLong n)))
 
-(defn- next-workspace-tab-number
+(defn- next-workspace-number
   [tabs]
-  (inc (reduce max 0 (keep workspace-tab-number tabs))))
+  (inc (reduce max 0 (keep workspace-number tabs))))
 
-(defn- base-workspace-tab
+(defn- base-workspace-entry
   [db]
   {:id    (or (:active-workspace-id db) :main)
    :label (let [title (:title db)]
@@ -557,12 +557,12 @@
               title
               untitled-session-label))})
 
-(defn- workspace-tabs-or-base
+(defn- workspaces-or-base
   [db]
-  (let [tabs (vec (:workspace-tabs db))]
+  (let [tabs (vec (:workspaces db))]
     (if (seq tabs)
       tabs
-      [(base-workspace-tab db)])))
+      [(base-workspace-entry db)])))
 
 (defn- active-tab-label
   [db fallback]
@@ -571,13 +571,13 @@
       title
       (or fallback untitled-session-label))))
 
-(defn- ensure-workspace-tabs
+(defn- ensure-workspaces
   [db]
-  (let [tabs (workspace-tabs-or-base db)
-        active-id (or (current-workspace-id (assoc db :workspace-tabs tabs))
+  (let [tabs (workspaces-or-base db)
+        active-id (or (current-workspace-id (assoc db :workspaces tabs))
                     (:id (first tabs)))]
     (assoc db
-      :workspace-tabs (mapv (fn [tab]
+      :workspaces (mapv (fn [tab]
                               (cond-> (dissoc tab :active?)
                                 (= (:id tab) active-id) (assoc :active? true)))
                         tabs)
@@ -585,7 +585,7 @@
 
 (defn- restore-workspace
   [db workspace-id]
-  (merge db (or (get-in db [:workspaces workspace-id])
+  (merge db (or (get-in db [:workspace-locals workspace-id])
               (empty-workspace-state))))
 
 (defn- activate-workspace
@@ -593,7 +593,7 @@
   (-> db
     sync-active-workspace
     (assoc :active-workspace-id workspace-id)
-    (update :workspace-tabs
+    (update :workspaces
       (fn [tabs]
         (mapv (fn [tab]
                 (cond-> (dissoc tab :active?)
@@ -605,7 +605,7 @@
   [db workspace-id f]
   (let [workspace-id (or workspace-id (current-workspace-id db))]
     (if (and workspace-id (not= workspace-id (current-workspace-id db)))
-      (update-in db [:workspaces workspace-id]
+      (update-in db [:workspace-locals workspace-id]
         (fn [snapshot]
           (workspace-snapshot
             (f (merge db (or snapshot (empty-workspace-state)))))))
@@ -613,7 +613,7 @@
 
 (defn- workspace-session-id
   [db workspace-id]
-  (some-> (get-in db [:workspaces workspace-id :session :id]) str))
+  (some-> (get-in db [:workspace-locals workspace-id :session :id]) str))
 
 (defn- reasoning-effort-configurable?
   []
@@ -657,9 +657,9 @@
                     :provider-limits nil
                     :channel-status {}
                     :detail-expansions {}
-                    :workspace-tabs []
+                    :workspaces []
                     :active-workspace-id nil
-                    :workspaces {}
+                    :workspace-locals {}
                     :dialog-open? false
                   ;; Render thread coordination - see render-monitor docstring.
                     :render-version 0
@@ -754,11 +754,11 @@
     ;; chrome row repainted with its hover background.
     db))
 
-(reg-event-db :add-workspace-tab
+(reg-event-db :create-workspace
   (fn [db [_ opts]]
-    (let [db        (-> db ensure-workspace-tabs sync-active-workspace)
-          tabs      (vec (:workspace-tabs db))
-          n         (next-workspace-tab-number tabs)
+    (let [db        (-> db ensure-workspaces sync-active-workspace)
+          tabs      (vec (:workspaces db))
+          n         (next-workspace-number tabs)
           id        (keyword (str "tab-" n))
           workspace (:workspace opts)
           root      (or (:workspace/root workspace) (:workspace/root opts))
@@ -768,19 +768,19 @@
           tab       (cond-> {:id id :label label :active? true}
                       workspace (assoc :workspace workspace)
                       root      (assoc :workspace/root root))]
-      (if (>= (count tabs) max-workspace-tabs)
+      (if (>= (count tabs) max-workspaces)
         db
         (cond-> (-> db
-                  (assoc :workspace-tabs (conj (mapv #(dissoc % :active?) tabs) tab)
+                  (assoc :workspaces (conj (mapv #(dissoc % :active?) tabs) tab)
                     :active-workspace-id id)
                   (merge (empty-workspace-state)))
           workspace (assoc :workspace workspace)
           root      (assoc :workspace/root root))))))
 
-(reg-event-db :select-workspace-tab-index
+(reg-event-db :select-workspace-index
   (fn [db [_ idx]]
-    (let [db   (-> db ensure-workspace-tabs sync-active-workspace)
-          tabs (vec (:workspace-tabs db))
+    (let [db   (-> db ensure-workspaces sync-active-workspace)
+          tabs (vec (:workspaces db))
           idx  (if (#{:next :prev} idx)
                  (when (seq tabs)
                    (let [active-id (or (:active-workspace-id db)
@@ -795,11 +795,11 @@
         (activate-workspace db (:id tab))
         db))))
 
-(reg-event-db :select-workspace-tab-session-id
+(reg-event-db :select-workspace-by-session
   (fn [db [_ session-id]]
     (let [target-id (some-> session-id str)
-          db        (-> db ensure-workspace-tabs sync-active-workspace)
-          tabs      (vec (:workspace-tabs db))
+          db        (-> db ensure-workspaces sync-active-workspace)
+          tabs      (vec (:workspaces db))
           tab       (when target-id
                       (some #(when (= target-id (workspace-session-id db (:id %))) %)
                         tabs))]
@@ -835,7 +835,7 @@
                          (filter #(= :user (:role %)))
                          (mapv :text))]
       (-> db
-        ensure-workspace-tabs
+        ensure-workspaces
         (assoc :session session
           :title nil
           :messages (or history [])
@@ -859,7 +859,7 @@
           active-id (current-workspace-id db')]
       (cond-> db'
         active-id
-        (update :workspace-tabs
+        (update :workspaces
           (fn [tabs]
             (mapv (fn [tab]
                     (cond-> tab
@@ -1128,7 +1128,7 @@
   [db workspace-id]
   (if (= workspace-id (current-workspace-id db))
     db
-    (merge db (or (get-in db [:workspaces workspace-id])
+    (merge db (or (get-in db [:workspace-locals workspace-id])
                 (empty-workspace-state)))))
 
 (defn- enqueue-message-result
