@@ -525,29 +525,21 @@
   "One-line strategy for environment fns under the `v/` alias."
   "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change; use v/reload-extensions! only after extension changes.")
 
-(defn environment-info
-  "Render the foundation-owned model-facing environment contribution.
-   The extension owns this prompt fragment; the core prompt assembler only
-   places returned fragments in send order and does not wrap them."
+(defn environment-ctx
+  "Foundation-owned structured ctx contribution. Runtime facts, project
+   guidance, and scan warnings live under `(:project ctx)`."
   [_environment]
   (try
-    (render/render (snapshot))
+    (render/project-context (snapshot) (agents/instructions) (combined-scan-warnings))
     (catch Throwable t
-      (tel/log! {:level :error :id ::environment-info-render-failed
+      (tel/log! {:level :error :id ::environment-ctx-failed
                  :data  {:error (ex-message t)}})
-      "")))
+      {})))
 
 (defn environment-prompt
   [_environment]
   (try
-    (let [pg-block       (render/format-project-guidance-block (agents/instructions))
-          warnings       (combined-scan-warnings)
-          warnings-block (render/format-scan-warnings-block warnings)
-          parts          (cond-> []
-                           pg-block       (conj pg-block)
-                           warnings-block (conj warnings-block)
-                           true           (conj FN_INDEX))]
-      (string/join "\n\n" parts))
+    FN_INDEX
     (catch Throwable t
       (tel/log! {:level :error :id ::prompt-render-failed
                  :data  {:error (ex-message t)}})

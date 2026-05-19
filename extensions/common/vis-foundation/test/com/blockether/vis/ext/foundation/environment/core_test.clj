@@ -105,11 +105,11 @@
       (expect (str/includes? (pr-str rendered) "boom"))
       (expect (str/includes? (pr-str rendered) "scheduled / 1 scheduled / before-next-turn"))))
 
-  (it "renders foundation environment info separately from prompt extras"
-    (let [info (env-core/environment-info {})]
-      (expect (string? info))
-      (expect (str/includes? info ";; ctx.runtime ="))
-      (expect (str/includes? info ":git"))))
+  (it "provides foundation environment info through ctx"
+    (let [ctx (env-core/environment-ctx {})]
+      (expect (contains? ctx :project))
+      (expect (contains? (:project ctx) :host))
+      (expect (contains? (:project ctx) :root))))
 
   (it "uses active workspace root instead of JVM cwd for v/git snapshots"
     (let [root   (make-tmp-dir)

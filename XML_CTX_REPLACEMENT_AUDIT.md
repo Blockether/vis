@@ -23,7 +23,12 @@ Target model-facing shape:
                 :routing ...
                 :error ...}
  :project {:root ...
-           :guidance {:present? true :source :agents-md :path "AGENTS.md"}
+           :host {...}
+           :git {...}
+           :languages {...}
+           :monorepo {...}
+           :repositories {...}
+           :guidance {:source :agents-md :path "AGENTS.md" :content "..."}
            :warnings [...]}
  :extensions [...]
  :defs {...}}
@@ -65,7 +70,7 @@ Hints already moved from legacy hint wrappers into EDN under session state:
 ;;      :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]
 ```
 
-Remaining work is to finish removing legacy wrappers, fake `ctx.*` comment labels, and provider-error markup from prompt-control paths.
+Remaining work is to persist explicit transcript message kinds and keep regression tests around retired wrappers/fake `ctx.*` labels.
 
 ## Audit table
 
@@ -75,7 +80,7 @@ Remaining work is to finish removing legacy wrappers, fake `ctx.*` comment label
 | Current turn context | `extensions/common/vis-foundation/.../transcript.clj`, transcript tests | Legacy `current_turn_context` wrapper in old fixtures/fallback detection | yes in stored old prompts | Duplicates `ctx`; transcript parser sniffs text | Per-iteration trailer ends with `;; ctx =` EDN; later persist message kind |
 | Provider error nudges | `src/com/blockether/vis/internal/loop.clj` | Provider failure text wrapped as markup | yes | Model may copy markup; no structured state | `;; llm-provider-error =` EDN trailer comment plus `(:llm-provider ctx) {:error ...}` |
 | Extension prompt docs | `src/com/blockether/vis/internal/prompt.clj`, foundation core docs | Stale names from retired XML blocks | docs mostly | Docs can reintroduce wrong protocol | Comment-section wording: `SYSTEM-PROMPT`, `TURN-SYSTEM-CONTEXT`, `EXTENSIONS` |
-| Environment prompt docs | foundation environment docs/tests | Stale environment/project-guidance/scan-warning wrapper language; fake `ctx.*` labels | maybe | Docs lie; fake ctx labels imply data exists when not bound | Long prose = comment sections; small dynamic facts = `(:project ctx)` |
+| Environment/project ctx | foundation environment docs/tests | Runtime/project-guidance/scan-warning data previously rode prompt labels | yes | Prompt labels fake ctx and drift from real state | `:ext/ctx` contributes runtime facts, guidance content, and warnings under `(:project ctx)` |
 | Manifest scan warnings | `src/com/blockether/vis/internal/manifest.clj`, `main.clj` | Stale scan-warning wrapper comments | no direct output | Misstates current surface | Say “foundation scan warning section” or `(:project ctx) :warnings` |
 | Transcript markdown | foundation transcript renderer | Human Markdown disclosure markup | no | Human rendering only | Keep, clearly mark not prompt-control |
 | IR HTML renderers | `src/com/blockether/vis/internal/render.clj` | Final-answer HTML/Telegram tags | no | Output renderer only | Keep if escaped |
@@ -189,17 +194,35 @@ Recommended split:
 ```clojure
 (:project ctx)
 ;; => {:root ...
-;;     :guidance {:present? true :source :agents-md :path "AGENTS.md"}
+;;     :host {...}
+;;     :git {...}
+;;     :languages {...}
+;;     :monorepo {...}
+;;     :repositories {...}
+;;     :guidance {:source :agents-md :path "AGENTS.md" :content "..."}
 ;;     :warnings [...]}
 ```
 
-- Small dynamic facts and warnings: `(:project ctx)`.
-- Long AGENTS.md / CLAUDE.md prose: static prompt comment section.
+- Runtime facts, project guidance, and warnings: `(:project ctx)`.
+- AGENTS.md / CLAUDE.md content is `(:project ctx) :guidance :content`, not prompt-control prose.
 - Warning summaries relevant every iteration: `(:project ctx) :warnings`.
 
 ### 6. Human rendering is allowed
 
 Markdown/HTML in final renderers is not prompt-control protocol. Keep human-facing Markdown disclosure and HTML/Telegram output tags if escaped and isolated from provider prompts.
+
+## Cross-validation against source
+
+| Idea | Source check | Verdict | Next action |
+|---|---|---:|---|
+| `ctx` top domain is `:session` | `ctx/build` accepts `:session`; core prompt documents `(:session ctx)`; loop passes `:session current-session` into `vctx/build`. | ✅ implemented | Keep. |
+| `:iteration` and `:hints` live under `:session` | `ctx/build` nests both; prompt tells model to read `(get-in ctx [:session :hints])`. | ✅ implemented | Keep tests around top-level absence. |
+| Current user request absent from ctx | `ctx/build` strips `:user-request`; prompt says use `CURRENT-USER-MESSAGE`. | ✅ implemented | Keep. |
+| `:llm-provider` is domain for selected/routing/error | `ctx/build` accepts `:llm-provider`; loop now passes selected provider/model, routing request, and previous provider error into `vctx/build`. | ✅ implemented | Add `:actual` after provider call if/when a later ctx needs last successful routing. |
+| `:project` owns runtime/project facts/warnings | Foundation contributes `{:project {:root :host :git :languages :monorepo :repositories :guidance :warnings}}` through `:ext/ctx`; loop merges active extension ctx into `vctx/build`; fake prompt labels are gone. | ✅ implemented | Keep prompt free of runtime/project data labels. |
+| Provider errors become EDN-ish | `loop.clj` emits `;; llm-provider-error =` EDN feedback and threads `[:llm-provider :error]` into next ctx. | ✅ implemented | Keep tests around absence of provider-error markup. |
+| Transcript no longer depends on wrappers | Transcript renderer classifies new comment-section messages; fixtures use `CURRENT-USER-MESSAGE` and `;; ctx =`. | ✅ implemented | Persist explicit message kind later to avoid sniffing. |
+| Human Markdown/HTML renderers stay out of prompt protocol | Final renderers are separate from provider prompt assembly. | ✅ acceptable | Do not include in prompt-control cleanup. |
 
 ## Proposed migration order
 
@@ -210,20 +233,19 @@ Low risk.
 - Replace stale XML-ish wording with comment-section or ctx-domain wording.
 - Replace fake `ctx.project-guidance` / `ctx.scan-warnings` labels unless backed by real `(:project ctx)` data.
 
-### Phase 2 — transcript classifier fallback
+### Phase 2 — transcript classifier
 
-Keep historical transcript support, but make new path tag-free:
+New path is tag-free and fixtures use comment sections:
 
 ```clojure
-(or (str/includes? content ";; ctx =")
-    (legacy-current-turn-wrapper? content))
+(str/includes? content ";; ctx =")
 ```
 
-Then update fixtures to use comment sections, with one clearly named legacy fallback test.
+Later improvement: persist message kind and stop classifying by content strings.
 
-### Phase 3 — provider error tags
+### Phase 3 — provider error EDN
 
-Replace provider-error markup with:
+Provider-error feedback now uses:
 
 ```clojure
 ;; llm-provider-error =
@@ -231,25 +253,21 @@ Replace provider-error markup with:
  :message "..."}
 ```
 
-and add `[:llm-provider :error]` to next-iteration ctx where recovery needs structured state.
+and threads `[:llm-provider :error]` into next-iteration ctx where recovery needs structured state.
 
 ### Phase 4 — remove remaining prompt-control wrappers
 
-Search target should find only legacy fallback tests/docs and human renderers:
+Search target should find no live model-facing prompt-control wrappers:
 
 ```bash
 rg -n "current_user_message|current_turn_context|llm-provider-error|system_prompt|turn_system_context|scan-warnings|project-guidance" src extensions test XML_CTX_REPLACEMENT_AUDIT.md
 ```
 
-Allowed leftovers:
-
-- legacy transcript fallback tests, explicitly named `legacy`.
-- human Markdown/HTML rendering code.
-- migration docs naming retired legacy identifiers without showing wrapper syntax.
+Any match must be classified at review time as either non-prompt human rendering or a migration target to remove. Do not keep an `Allowed leftovers` bucket in this audit.
 
 ## Acceptance criteria
 
-- No model-facing prompt-control XML except legacy transcript fallback.
+- No model-facing prompt-control XML in live prompt paths.
 - Dynamic per-iteration facts live in `ctx` under domain keys: `:session`, `:llm-provider`, `:project`.
 - Static extension prose lives in comment sections.
 - Human markdown/HTML rendering remains allowed.
@@ -257,7 +275,6 @@ Allowed leftovers:
 
 ## Next concrete edits
 
-1. Replace provider-error markup in `loop.clj` with EDN comment text.
-2. Thread `:llm-provider {:error ...}` into `ctx/build` for recovery iterations.
-3. Update transcript fixtures away from legacy current-user/current-turn wrappers.
-4. Clean stale environment/project-guidance/scan-warning docstrings and fake ctx labels.
+1. Add tests for provider-error EDN feedback and next-iteration `[:llm-provider :error]`.
+2. Persist explicit provider-message kind to remove transcript content sniffing.
+3. Clean remaining stale scan-warning/project-guidance comments in non-prompt docs.

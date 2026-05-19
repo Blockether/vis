@@ -58,25 +58,18 @@
                                 :llm-model    "gpt-4o"
                                 :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
                                                {:role "user"
-                                                :content "<current_user_message>\nUSER_TURN_TEXT_FIXTURE\n</current_user_message>"}
+                                                :content ";; -- CURRENT-USER-MESSAGE --\nUSER_TURN_TEXT_FIXTURE\n"}
                                                {:role "assistant"
                                                 :content "ASSISTANT_REPLAY_FIXTURE"}
                                                {:role "user"
-                                                :content (str "<current_turn_context>\n"
-                                                           "engine_state: turn.iteration/start\n"
-                                                           "engine_phase: model_think\n"
-                                                           "session_id: session-fixture\n"
-                                                           "engine_turn_id: turn-fixture\n"
-                                                           "engine_turn_position: 1\n"
-                                                           "current_engine_iteration_id: turn/turn-fix/iteration/1\n"
-                                                           "engine_iteration_position: 1\n"
-                                                           "prompt_role: user\n"
-                                                           "</current_turn_context>\n\n"
-                                                           ";; ctx =\n"
-                                                           (pr-str {:hints [{:id :vis.foundation/session-title
-                                                                             :text "observe before answer"
-                                                                             :importance :high
-                                                                             :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]}))}]
+                                                :content (str ";; ctx =\n"
+                                                           (pr-str {:session {:id "session-fixture"
+                                                                              :turn-id "turn-fixture"
+                                                                              :iteration {:position 1}
+                                                                              :hints [{:id :vis.foundation/session-title
+                                                                                       :text "observe before answer"
+                                                                                       :importance :high
+                                                                                       :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]}}))}]
                                 :llm-raw-response "```clojure\n(+ 1 1)\n```"
                                 :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
@@ -406,7 +399,7 @@
           (expect (str/includes? out "[2] role=assistant - assistant optional replay"))
           (expect (str/includes? out "[3] role=user - per-iteration trailer"))
           (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
-          (expect (str/includes? out "<current_turn_context>"))
+          (expect (str/includes? out ";; ctx ="))
           (expect (str/includes? out ":hints"))
           (expect (not (str/includes? out "<iteration_hints>")))
           (expect (not (str/includes? out "##### Block 0"))))
@@ -506,7 +499,7 @@
             (expect (str/includes? out "[2] role=assistant - assistant optional replay"))
             (expect (str/includes? out "[3] role=user - per-iteration trailer"))
             (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
-            (expect (str/includes? out "<current_turn_context>"))
+            (expect (str/includes? out ";; ctx ="))
             (expect (str/includes? out ":hints"))
             (expect (not (str/includes? out "<iteration_hints>"))))
           (finally (vis/db-dispose-connection! s))))))
