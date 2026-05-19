@@ -248,16 +248,16 @@
 (defdescribe workspace-entry-click-test
   (it "switches to the clicked workspace tab and refreshes active session state"
     (reset! state/app-db {:workspaces [{:id :main :label "Main" :active? true}
-                                           {:id :tab-1 :label "Tab 1"}]
+                                       {:id :tab-1 :label "Tab 1"}]
                           :active-workspace-id :main
                           :session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")
                           :input-history ["main prompt"]
                           :workspace-locals {:tab-1 {:session {:id "tab-c"}
-                                               :messages [{:role :user :text "tab prompt"}]
-                                               :input (input/paste-text (input/empty-input) "tab draft")
-                                               :input-history ["tab prompt"]}}})
+                                                     :messages [{:role :user :text "tab prompt"}]
+                                                     :input (input/paste-text (input/empty-input) "tab draft")
+                                                     :input-history ["tab prompt"]}}})
     (let [refreshes (atom [])]
       (activate-workspace-entry-hit! #(swap! refreshes conj %) {:kind :workspace-entry :index 1})
       (expect (= :tab-1 (:active-workspace-id @state/app-db)))

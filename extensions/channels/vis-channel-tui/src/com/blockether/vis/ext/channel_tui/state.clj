@@ -578,9 +578,9 @@
                     (:id (first tabs)))]
     (assoc db
       :workspaces (mapv (fn [tab]
-                              (cond-> (dissoc tab :active?)
-                                (= (:id tab) active-id) (assoc :active? true)))
-                        tabs)
+                          (cond-> (dissoc tab :active?)
+                            (= (:id tab) active-id) (assoc :active? true)))
+                    tabs)
       :active-workspace-id active-id)))
 
 (defn- restore-workspace
