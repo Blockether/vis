@@ -275,6 +275,18 @@
 ;; --- Logging ---
 (defdelegate db-log! [db-info opts])
 
+;; --- Workspace (PLAN.md §2-§4) ---
+(defdelegate db-workspace-insert!            [db-info opts])
+(defdelegate db-workspace-update-state!      [db-info workspace-id new-state])
+(defdelegate db-workspace-get                [db-info workspace-id])
+(defn db-workspace-list-by-repo
+  ([db-info repo-id]
+   ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id))
+  ([db-info repo-id state-set]
+   ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id state-set)))
+(defdelegate db-workspace-for-session        [db-info session-state-id])
+(defdelegate db-session-state-set-workspace! [db-info session-state-id workspace-id])
+
 ;; --- Session lifecycle ---
 (defdelegate db-store-session! [db-info opts])
 (defdelegate db-get-session [db-info ref])
