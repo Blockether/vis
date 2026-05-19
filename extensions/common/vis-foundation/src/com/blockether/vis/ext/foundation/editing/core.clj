@@ -43,6 +43,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
+   (com.github.difflib DiffUtils UnifiedDiffUtils)
    (java.io File)
    (org.eclipse.jgit.ignore IgnoreNode IgnoreNode$MatchResult)))
 
@@ -131,7 +132,6 @@
 (doseq [[op tag] [[:v/cat :op.tag/observation]
                   [:v/ls :op.tag/observation]
                   [:v/rg :op.tag/observation]
-                  [:v/patch-check :op.tag/observation]
                   [:v/exists? :op.tag/observation]
                   [:v/patch :op.tag/mutation]
                   [:v/create-dirs :op.tag/mutation]
@@ -622,13 +622,6 @@
                 :checks checks})))
     plans))
 
-(defn patch-check
-  [edits]
-  (let [{:keys [checks failures valid?]} (patch-analysis edits)]
-    {:valid? valid?
-     :checks checks
-     :failures failures}))
-
 (defn patch-safe
   [edits]
   (let [plans (vec (patch-plan edits))]
@@ -734,8 +727,8 @@
 
 (defn patch-envelope-check
   "Plan a Codex envelope without writing. Returns the same shape as
-   `patch-envelope-safe` plus `:valid?` and `:failures` for parity with
-   `v/patch-check`."
+   `patch-envelope-safe` plus `:valid?` and `:failures` for callers that
+   need read-only envelope validation."
   [^String patch-text]
   (try
     (let [{:keys [hunks]} (patch/parse-patch patch-text)
@@ -916,38 +909,92 @@
             {:type :ext.foundation.editing/invalid-rg-arity
              :expected '([spec-map])}))))
 
-(defn- diff-line-ops
-  "LCS-based line ops between two line vectors. Returns a seq of
-   `[:eq|:add|:del line]`. O(m*n) DP — fine for typical edits; the
-   caller is expected to gate by size."
-  [a b]
-  (let [a (vec a) b (vec b)
-        m (count a) n (count b)
-        dp (make-array Long/TYPE (inc m) (inc n))]
-    (dotimes [i m]
-      (dotimes [j n]
-        (aset dp (inc i) (inc j)
-          (long (if (= (a i) (b j))
-                  (inc (aget dp i j))
-                  (max (aget dp i (inc j))
-                    (aget dp (inc i) j)))))))
-    (loop [i m j n ops ()]
-      (cond
-        (and (pos? i) (pos? j) (= (a (dec i)) (b (dec j))))
-        (recur (dec i) (dec j) (cons [:eq (a (dec i))] ops))
-        (and (pos? j)
-          (or (zero? i) (>= (aget dp i (dec j)) (aget dp (dec i) j))))
-        (recur i (dec j) (cons [:add (b (dec j))] ops))
-        (pos? i)
-        (recur (dec i) j (cons [:del (a (dec i))] ops))
-        :else ops))))
+(def ^:private patch-diff-context-lines 3)
+(def ^:private patch-diff-max-render-lines 240)
+(def ^:private patch-java-diff-max-lines 5000)
 
-(def ^:private patch-diff-max-lines 4000)
+(defn- cap-diff-lines
+  [lines]
+  (let [lines   (vec lines)
+        n       (count lines)
+        shown-n (min n patch-diff-max-render-lines)
+        shown   (subvec lines 0 shown-n)
+        omitted (- n shown-n)]
+    (cond-> shown
+      (pos? omitted)
+      (conj (str "... diff truncated; " omitted " line(s) omitted")))))
+
+(defn- common-prefix-count
+  [a b]
+  (let [limit (min (count a) (count b))]
+    (loop [i 0]
+      (if (and (< i limit) (= (a i) (b i)))
+        (recur (inc i))
+        i))))
+
+(defn- common-suffix-count
+  [a b prefix-count]
+  (let [a-count (count a)
+        b-count (count b)
+        limit   (- (min a-count b-count) prefix-count)]
+    (loop [i 0]
+      (if (and (< i limit)
+            (= (a (- a-count i 1)) (b (- b-count i 1))))
+        (recur (inc i))
+        i))))
+
+(defn- prefixed-diff-lines
+  [prefix lines]
+  (let [lines   (vec lines)
+        n       (count lines)
+        shown-n (min n patch-diff-max-render-lines)
+        shown   (subvec lines 0 shown-n)
+        omitted (- n shown-n)]
+    (cond-> (mapv #(str prefix %) shown)
+      (pos? omitted)
+      (conj (str prefix "... (" omitted " line(s) omitted)")))))
+
+(defn- compact-diff-lines
+  "Linear fallback for very large files. It is a bounded preview, not a
+   minimal diff: for normal-sized files `java-diff-utils` renders real
+   unified hunks."
+  [a b]
+  (let [prefix-count (common-prefix-count a b)
+        suffix-count (common-suffix-count a b prefix-count)
+        a-count      (count a)
+        b-count      (count b)
+        a-change-end (- a-count suffix-count)
+        b-change-end (- b-count suffix-count)
+        pre-start    (max 0 (- prefix-count patch-diff-context-lines))
+        post-end     (min a-count (+ a-change-end patch-diff-context-lines))
+        pre-lines    (subvec a pre-start prefix-count)
+        del-lines    (subvec a prefix-count a-change-end)
+        add-lines    (subvec b prefix-count b-change-end)
+        post-lines   (subvec a a-change-end post-end)
+        before-skip  pre-start
+        after-skip   (- a-count post-end)]
+    (vec
+      (concat
+        ["--- before"
+         "+++ after"]
+        (when (pos? before-skip)
+          [(str "... " before-skip " unchanged line(s) before")])
+        (map #(str " " %) pre-lines)
+        (prefixed-diff-lines "-" del-lines)
+        (prefixed-diff-lines "+" add-lines)
+        (map #(str " " %) post-lines)
+        (when (pos? after-skip)
+          [(str "... " after-skip " unchanged line(s) after")])))))
+
+(defn- java-unified-diff-lines
+  [a b]
+  (let [patch (DiffUtils/diff a b)]
+    (vec (UnifiedDiffUtils/generateUnifiedDiff "before" "after" a patch patch-diff-context-lines))))
 
 (defn- unified-diff-text
-  "Compact unified-ish diff for two file blobs. Returns nil when both
-   sides are equal. For oversized inputs returns a summary line so the
-   channel preview stays bounded."
+  "Unified diff preview for two file blobs. Normal-sized files use
+   `java-diff-utils` for real hunks. Very large files use a linear bounded
+   fallback to keep `v/patch` result rendering from becoming the slow path."
   [before after]
   (cond
     (= before after) nil
@@ -956,19 +1003,13 @@
     (nil? after)  (str "--- (deleted, "
                     (count (str/split-lines (or before ""))) " lines)")
     :else
-    (let [a (str/split-lines before)
-          b (str/split-lines after)]
-      (if (or (> (count a) patch-diff-max-lines)
-            (> (count b) patch-diff-max-lines))
-        (str "(diff too large to render inline: "
-          (count a) " -> " (count b) " lines)")
-        (str/join "\n"
-          (map (fn [[kind line]]
-                 (case kind
-                   :eq  (str "  " line)
-                   :add (str "+ " line)
-                   :del (str "- " line)))
-            (diff-line-ops a b)))))))
+    (let [a (vec (str/split-lines before))
+          b (vec (str/split-lines after))
+          diff-lines (if (and (<= (count a) patch-java-diff-max-lines)
+                           (<= (count b) patch-java-diff-max-lines))
+                       (java-unified-diff-lines a b)
+                       (compact-diff-lines a b))]
+      (str/join "\n" (cap-diff-lines diff-lines)))))
 
 (defn- patch-result-file-summary
   "Build a per-file summary map that lives on `:result` of `v/patch`.
@@ -1029,37 +1070,6 @@
          :info  {:mode          :exact-replace
                  :file-count    (count summaries)
                  :changed-count (count (filter :changed? summaries))}}))))
-
-(defn- patch-check-tool
-  "Preflight a patch without writing. Accepts the same two input shapes
-   as v/patch (Codex envelope string OR exact-replace vec). For exact
-   mode returns match counts per edit; for envelope mode returns
-   per-hunk validity plus parse/path errors."
-  [edits]
-  (cond
-    (patch/looks-like-patch? edits)
-    (let [out (patch-envelope-check edits)]
-      (tool-success
-        {:op :v/patch-check
-         :path (or (:path (first (:checks out))) ".")
-         :kind :file
-         :result out
-         :info {:mode :codex-apply-patch
-                :valid? (:valid? out)
-                :edit-count (count (:checks out))
-                :failure-count (count (:failures out))}}))
-
-    :else
-    (let [out (patch-check edits)]
-      (tool-success
-        {:op :v/patch-check
-         :path (or (:path (first (:checks out))) ".")
-         :kind :file
-         :result out
-         :info {:mode :exact-replace
-                :valid? (:valid? out)
-                :edit-count (count (:checks out))
-                :failure-count (count (:failures out))}}))))
 
 (defn- create-dirs-tool
   "Ensure dir exists. Tool result."
@@ -1150,10 +1160,6 @@
     (map ir-inline (filter some? parts))))
 (defn- ir-root [& blocks]
   (into [:ir {}] (filter some? blocks)))
-
-(defn- render-edn-block
-  [value]
-  (ir-root (ir-code-block "edn" (bounded-render-text (pr-str value)))))
 
 (defn- tree-entry-line
   [depth {:keys [name path type size] :as entry}]
@@ -1248,24 +1254,26 @@
       (ir-p "Patched " (count files) " file(s)"
         (when (pos? changed) (str ", " changed " changed")) ".")
       (mapcat
-        (fn [{:keys [path op lines-before lines-after delta-lines diff move-to changed?]}]
-          (let [delta-str (cond
+        (fn [{:keys [path op diff move-to changed?]
+              raw-lines-before :lines-before
+              raw-lines-after :lines-after
+              raw-delta-lines :delta-lines}]
+          (let [lines-before (long (or raw-lines-before 0))
+                lines-after  (long (or raw-lines-after 0))
+                delta-lines  (long (or raw-delta-lines (- lines-after lines-before)))
+                delta-str (cond
                             (pos? delta-lines) (str " +" delta-lines)
                             (neg? delta-lines) (str " " delta-lines)
                             :else              "")
                 header    (str (name (or op :update))
-                            " " path
+                            " " (or path "?")
                             (when move-to (str " -> " move-to))
-                            " [" (or lines-before 0) " -> " (or lines-after 0)
+                            " [" lines-before " -> " lines-after
                             " lines" delta-str "]"
                             (when (false? changed?) " (no-op)"))]
             (cond-> [(ir-p (ir-code header))]
               diff (conj (ir-code-block "diff" (bounded-render-text diff))))))
         files))))
-
-(defn- channel-render-patch-check
-  [result]
-  (render-edn-block result))
 
 (defn- channel-render-create-dirs
   [result]
@@ -1332,12 +1340,6 @@
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
 
-(def patch-check-symbol
-  (vis/symbol #'patch-check-tool
-    {:symbol 'patch-check
-     :render-fn channel-render-patch-check
-     :on-error-fn (tool-failure-on-error :v/patch-check :file nil)}))
-
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
@@ -1380,7 +1382,6 @@
    ls-symbol
    rg-symbol
    patch-symbol
-   patch-check-symbol
    create-dirs-symbol
    copy-symbol
    move-symbol
@@ -1422,8 +1423,8 @@
      "  (v/patch [{:path :search :replace}])  — exact-replace; each :search must match exactly once."
      "  (v/patch \"*** Begin Patch\\n... *** End Patch\\n\")  — Codex envelope (Add/Update/Delete/Move)."
      "  Both modes validate the full plan before any write; one failure aborts the batch."
+     "  On failure, v/patch reports match counts in :checks/:failures and writes nothing."
      "  v/patch returns diff + post-image — that IS the write evidence. Do NOT v/cat to verify."
-     "  v/patch-check accepts the same two shapes (no writes)."
      ""
      "PATH OPS"
      "  v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?."

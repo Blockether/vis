@@ -60,9 +60,9 @@
               :duration-ms :timeout? :repaired?}]}]}]}
 
    The Markdown renderer renders thinking, iteration-level errors,
-   vars, the per-block forensic dump, final answer text, plus a compact
-   raw-response diagnostics section. Prompt bodies render inline too:
-   the reproduction artifact is intentionally complete and flag-free."
+   vars, per-block forensic previews, final answer text, plus compact
+   raw-response diagnostics. Prompt bodies render only in prompt/debug
+   modes. Large fields are bounded so reports stay safe to open."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis])
@@ -496,6 +496,11 @@
 ;; shape - no DB calls, no side effects.
 ;; =============================================================================
 
+(def ^:private markdown-code-preview-chars 20000)
+(def ^:private markdown-raw-preview-chars 1200)
+(def ^:private markdown-executable-blocks-preview-chars 4000)
+(def ^:private markdown-answer-preview-chars 12000)
+
 (defn- truncate
   [s n]
   (let [s (str s)]
@@ -558,13 +563,14 @@
                  (keep (fn [{:keys [kind source value]}]
                          (case kind
                            :code (when-not (str/blank? (str source))
-                                   (render-fenced "clojure" source))
+                                   (render-fenced "clojure"
+                                     (truncate source markdown-code-preview-chars)))
                            :title (str "_conversation title:_ `" (or value "") "`\n")
                            :answer-ref nil
                            nil))
                    render-segments))]
       (when-not (str/blank? body) body))
-    (render-fenced "clojure" code)))
+    (render-fenced "clojure" (truncate code markdown-code-preview-chars))))
 
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
@@ -658,8 +664,12 @@
         content (str content)]
     (cond
       (= "system" role) "stable system prompt"
-      (and (= "user" role) (str/includes? content "<current_turn_context>")) "per-iteration trailer"
-      (and (= "user" role) (str/includes? content "<current_user_message>")) "current user message"
+      (and (= "user" role)
+        (or (str/includes? content ";; ctx =")
+          (str/includes? content "<current_turn_context>"))) "per-iteration trailer"
+      (and (= "user" role)
+        (or (str/includes? content ";; -- CURRENT-USER-MESSAGE --")
+          (str/includes? content "<current_user_message>"))) "current user message"
       (= "assistant" role) "assistant optional replay"
       :else nil)))
 
@@ -743,10 +753,12 @@
       " / iteration " iteration
       (when raw-length (str " (" raw-length " chars total)")))
     (str
-      (render-fenced "text" raw-preview)
+      (render-fenced "text" (truncate raw-preview markdown-raw-preview-chars))
       (when (seq executable-blocks)
         (str "\n\nExecutable Markdown code blocks selected by svar:\n\n"
-          (render-fenced "clojure" (pr-str executable-blocks)))))))
+          (render-fenced "clojure"
+            (truncate (pr-str executable-blocks)
+              markdown-executable-blocks-preview-chars)))))))
 
 (defn- render-raw-diagnostics
   "Compact raw LLM response diagnostics for the whole report. The
@@ -898,7 +910,7 @@
   [answer]
   (when (not (str/blank? (str answer)))
     (str "\n#### Final answer\n\n"
-      (render-fenced "text" answer))))
+      (render-fenced "text" (truncate answer markdown-answer-preview-chars)))))
 
 (defn- render-turn-block
   [include-prompts?
@@ -977,8 +989,8 @@
    `transcript`'s canonical data shape. Returns a string.
 
    Modes:
-   - `:full`               - complete forensic transcript, including prompt bodies (default).
-   - `:debug`              - alias for the complete forensic transcript.
+   - `:full`               - bounded diagnostic report (default).
+   - `:debug`              - diagnostic report plus prompt bodies (still bounded).
    - `:dialog`             - user/assistant dialog only.
    - `:system-prompts`     - persisted system prompt snapshots only.
    - `:prompts`            - exact persisted provider prompt envelopes."
@@ -1018,11 +1030,11 @@
 (defn- reproduction-usage! []
   (println-original! "Usage: vis extensions reproduction <CONVERSATION-ID>")
   (println-original! "")
-  (println-original! "Prints one complete Markdown reproduction artifact:")
-  (println-original! "  every turn, iteration, prompt body, message envelope, executed code block,")
-  (println-original! "  vars, reasoning trace, final answer, and raw LLM diagnostics.")
+  (println-original! "Prints one bounded Markdown diagnostic artifact:")
+  (println-original! "  every turn, iteration, executed code preview,")
+  (println-original! "  vars, reasoning trace, final answer, and raw LLM diagnostics with bounded previews.")
   (println-original! "")
-  (println-original! "No mode flags are supported. The artifact is always complete.")
+  (println-original! "No mode flags are supported. The artifact is bounded by default.")
   (println-original! "")
   (println-original! "List conversations with:  vis conversations"))
 
@@ -1068,7 +1080,7 @@
 
 (defn cli-command []
   {:cmd/name  "reproduction"
-   :cmd/doc   "Print a complete, flag-free Markdown reproduction artifact for a conversation. It is always complete: every turn, iteration, prompt body, message envelope, executed code block, var, reasoning trace, final answer, and raw LLM diagnostic. Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
+   :cmd/doc   "Print a flag-free Markdown diagnostic artifact for a conversation. It is bounded by default so huge transcripts stay safe to open: every turn, iteration, executed code preview, var summary, reasoning preview, final answer preview, and raw LLM diagnostic summary. Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
    :cmd/usage "vis extensions reproduction <CONVERSATION-ID>"
    :cmd/args  [{:name "conversation-id" :kind :positional :type :string
                 :doc  "Conversation id (full UUID or unambiguous prefix)."}]

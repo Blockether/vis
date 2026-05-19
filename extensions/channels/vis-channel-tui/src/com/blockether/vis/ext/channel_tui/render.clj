@@ -1479,6 +1479,17 @@
     (str (or provider "unknown") (when model (str "/" model)))))
 
 (defn- fallback-summary
+  "Compact assistant-footer line describing the routing fallback.
+
+   The resumed/live footer surfaces:
+     - provider-id/model pair `from → to`
+     - retry count (`:llm.routing/provider-retry` events in the trace)
+     - reason / status that triggered the fallback (HTTP status
+       preferred over the free-form `:error` string so it matches the
+       spec example `— 3 retries, 429`).
+
+   Falls back to the textual `:error` from the fallback event when no
+   status is present (e.g. format-fallback paths)."
   [{:keys [llm-selected llm-actual llm-fallback? llm-routing-trace]}]
   (when llm-fallback?
     (let [from (llm-label llm-selected)
@@ -1487,12 +1498,25 @@
                                                       :llm.routing/format-fallback}
                                            (:event/type %))
                                   llm-routing-trace))
-          why  (or (:error fallback-event) (some-> fallback-event :reason name))]
+          retry-count (count (filter #(= :llm.routing/provider-retry (:event/type %))
+                               llm-routing-trace))
+          status (:status fallback-event)
+          ;; Prefer HTTP status (matches spec example "3 retries, 429")
+          ;; over the free-form error message. Fall back to the reason
+          ;; keyword name or the error text for format-fallback paths.
+          why (cond
+                (some? status) (str status)
+                (some? (:reason fallback-event)) (name (:reason fallback-event))
+                :else (:error fallback-event))
+          retries (when (pos? retry-count)
+                    (str retry-count " retr" (if (= 1 retry-count) "y" "ies")))
+          suffix-parts (->> [retries why]
+                         (remove (fn [s] (or (nil? s) (str/blank? (str s))))))]
       (str "fallback"
         (when (or from to)
           (str " " (or from "unknown") " → " (or to "unknown")))
-        (when-not (str/blank? (or why ""))
-          (str " — " why))))))
+        (when (seq suffix-parts)
+          (str " — " (str/join ", " suffix-parts)))))))
 
 (defn- assistant-meta-line
   [{:keys [iteration-count duration-ms tokens cost] :as message}]
@@ -1604,7 +1628,7 @@
                     :else      t/ai-role-fg)
         time-str   (vis/format-date timestamp)
         ;; Below-message meta (assistant only): "blockether/glm-5.1 /
-        ;; 1 iter / ↑11461 / ↓35 / ~$0.006954 / 4.9s". Same surface
+        ;; 1 iter / tok 11461→35 / ~$0.006954 / 4.9s". Same surface
         ;; form `format-meta-line` produces for the CLI bracket and
         ;; the Telegram tagline. Provider + model auto-extract from
         ;; `:cost :provider` / `:cost :model` (where the iteration
@@ -2481,7 +2505,7 @@
   ;; User-facing badge displayed at the right edge of disclosure rows.
   ;; Per PLAN §2.8 + §2.9 + §2.10 + §5.1:
   ;;   - Render positions (ints), never UUIDs.
-  ;;   - Format: `[turn 7 · iteration 3 · block 0 · tool · z/patch]`
+  ;;   - Format: `[turn 7 · iteration 3 · block 0 · tool · v/patch]`
   ;;   - Lowercase level words, dot separator (·) per PLAN §2.10.
   ;;   - Optional :role and :op-symbol segments after the positions.
   ;;   - No abbreviations: "iteration" not "iter".

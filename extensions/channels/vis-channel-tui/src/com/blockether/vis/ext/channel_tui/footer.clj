@@ -4,7 +4,7 @@
    Codex-style three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       glm-5.1 (balanced)              total ↑12000 (cached 8000) ↓800  $0.04
+       glm-5.1 (balanced)              total tok 12000→800 (cached 8000)  $0.04
 
    Each region holds a list of `{:text :fg :bold? :region :priority}`
    spans separated by ' / ' in muted color. The full segment list is
@@ -426,29 +426,34 @@
   "Context-sensitive helper strip below the input box. Kept out of
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
-  [{:keys [loading? cancelling? input]} _now-ms]
-  (cond
-    cancelling?
-    [(subtitle-segment "Cancelling... please wait" 1)
-     (subtitle-segment "Ctrl+C quit" 2)]
+  [{:keys [loading? cancelling? input pending-sends]} _now-ms]
+  (let [queued-count (count (or pending-sends []))
+        queued-seg   (when (pos? queued-count)
+                       (subtitle-segment (str "Queued: " queued-count) 0))]
+    (cond
+      cancelling?
+      (cond-> [(subtitle-segment "Cancelling... please wait" 1)]
+        queued-seg (conj queued-seg))
 
-    loading?
-    [(subtitle-segment "Esc cancel" 1)
-     (subtitle-segment "Ctrl+C quit" 2)]
+      loading?
+      (cond-> [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
+        queued-seg (conj queued-seg))
 
-    (input-empty? input)
-    [(subtitle-segment "Alt+Enter newline" 2)
-     (subtitle-segment "↑↓ history" 2)
-     (subtitle-segment "Shift+Tab tabs" 3)
-     (subtitle-segment "Ctrl+B voice" 1)
-     (subtitle-segment "Ctrl+G conversations" 1)
-     (subtitle-segment "Ctrl+K menu" 1)]
+      (input-empty? input)
+      (cond-> [(subtitle-segment "Alt+Enter newline" 2)
+               (subtitle-segment "↑↓ history" 2)
+               (subtitle-segment "Shift+Tab tabs" 3)
+               (subtitle-segment "Ctrl+B voice" 1)
+               (subtitle-segment "Ctrl+G conversations" 1)
+               (subtitle-segment "Ctrl+K menu" 1)]
+        queued-seg (conj queued-seg))
 
-    :else
-    [(subtitle-segment "Shift+Tab tabs" 3)
-     (subtitle-segment "Ctrl+B voice" 1)
-     (subtitle-segment "Ctrl+G conversations" 1)
-     (subtitle-segment "Ctrl+K menu" 1)]))
+      :else
+      (cond-> [(subtitle-segment "Shift+Tab tabs" 3)
+               (subtitle-segment "Ctrl+B voice" 1)
+               (subtitle-segment "Ctrl+G conversations" 1)
+               (subtitle-segment "Ctrl+K menu" 1)]
+        queued-seg (conj queued-seg)))))
 
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
@@ -702,12 +707,12 @@
    Visual shape is:
 
           ┌──────────────────────────┐
-     ─────│ Ctrl+B voice / Ctrl+K menu │─────
-          └──────────────────────────┘
+          │ Ctrl+B voice / Ctrl+K menu │
+     ─────└──────────────────────────┘─────
           input text starts here
 
-   Helper middle row is also input-top decoration: one horizontal rule
-   spans left/right of the cell, but no extra input top row is drawn."
+   Helper bottom row is also input-top decoration: one horizontal rule
+   spans left/right of the cell, so no rule cuts through the helper text."
   ([g db subtitle-row cols now-ms]
    (draw-footer-subtitle! g db subtitle-row cols now-ms nil))
   ([g db subtitle-row cols now-ms hint]
@@ -737,19 +742,19 @@
              right-rule-start (inc right-v)
              rule-end         (+ pad rule-w)]
          (p/set-colors! g t/border-fg t/terminal-bg)
-         (when (< pad left)
-           (p/put-str! g pad text-row (p/horiz-line (- left pad))))
-         (when (< right-rule-start rule-end)
-           (p/put-str! g right-rule-start text-row
-             (p/horiz-line (- rule-end right-rule-start))))
          (p/put-str! g left top-row
            (str p/BOX_TL (p/horiz-line inner-w) p/BOX_TR))
          (p/put-str! g left text-row (str p/BOX_V " "))
          (draw-spans! g text-col text-row spans separator)
          (p/set-colors! g t/border-fg t/terminal-bg)
          (p/put-str! g (+ text-col content-w) text-row (str " " p/BOX_V))
+         (when (< pad left)
+           (p/put-str! g pad bottom-row (p/horiz-line (- left pad))))
          (p/put-str! g left bottom-row
-           (str p/BOX_BL (p/horiz-line inner-w) p/BOX_BR)))))
+           (str p/BOX_BL (p/horiz-line inner-w) p/BOX_BR))
+         (when (< right-rule-start rule-end)
+           (p/put-str! g right-rule-start bottom-row
+             (p/horiz-line (- rule-end right-rule-start)))))))
 
   ;; Restore neutral state for whatever paints next.
    (p/clear-styles! g)

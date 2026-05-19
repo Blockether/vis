@@ -8,8 +8,8 @@
 
 (defn- combined-prompt
   "Stitch the foundation-owned model prompt fragment together.
-   Foundation owns its `<environment>` block directly here; core only
-   wraps all active extension fragments in `<extensions>`."
+   Foundation owns environment facts directly here; core only orders active
+   extension prompt fragments."
   [env]
   (str (environment/environment-info env)
     "\n\n"
@@ -36,7 +36,6 @@
                   [:v/cat :op.tag/observation]
                   [:v/ls :op.tag/observation]
                   [:v/rg :op.tag/observation]
-                  [:v/patch-check :op.tag/observation]
                   [:v/exists? :op.tag/observation]
                   [:v/snapshot :op.tag/observation]
                   [:v/repositories :op.tag/observation]
