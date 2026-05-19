@@ -66,3 +66,26 @@
   "Thaw a nippy BLOB from a raw query result."
   [^bytes bs]
   (when bs (nippy/thaw bs)))
+
+(defn store-session!
+  "Test wrapper for `vis/db-store-session!` that injects a fresh trunk
+   workspace per call (PLAN.md decision 1 — session_state.workspace_id
+   is NOT NULL, 1:1 with workspace). Calls
+   `vis/workspace-ensure-trunk!` against the live vis repo when no
+   `:workspace-id` was supplied.
+
+   Use everywhere the test would have called `vis/db-store-session!`
+   directly with a plain opts map."
+  [store opts]
+  (let [ws-id (or (:workspace-id opts)
+                (:id (vis/workspace-ensure-trunk! store {})))]
+    (vis/db-store-session! store (assoc opts :workspace-id ws-id))))
+
+(defn fork-session!
+  "Test wrapper for `vis/db-fork-session!` that injects a fresh trunk
+   workspace when no `:workspace-id` was supplied. Each fork gets its
+   own trunk row to satisfy `UNIQUE(session_state.workspace_id)`."
+  [store session-id opts]
+  (let [ws-id (or (:workspace-id opts)
+                (:id (vis/workspace-ensure-trunk! store {})))]
+    (vis/db-fork-session! store session-id (assoc opts :workspace-id ws-id))))

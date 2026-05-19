@@ -42,6 +42,7 @@
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.workspace :as workspace]
    [com.blockether.vis.internal.progress :as progress]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry :as registry]
@@ -1394,7 +1395,11 @@
         (System/exit 1))
 
       :else
-      (let [opts      (cond-> {} (and title (not (str/blank? title)))
+      (let [;; PLAN.md decision 1 — fork = new session_state = new
+            ;; workspace pin (1:1). Mint a fresh trunk for the fork.
+            ws-id     (:id (workspace/ensure-trunk! d {}))
+            opts      (cond-> {:workspace-id ws-id}
+                        (and title (not (str/blank? title)))
                         (assoc :title title))
             new-state (persistance/db-fork-session! d resolved opts)]
         (if new-state
