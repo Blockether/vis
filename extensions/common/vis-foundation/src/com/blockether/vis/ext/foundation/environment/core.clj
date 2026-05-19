@@ -461,7 +461,8 @@
 
 (defn- combined-scan-warnings []
   ;; Two sources, all `{:source :reason :path}` shaped so the
-  ;; renderer can splice them into one `<scan-warnings>` block:
+  ;; renderer can splice them into one `(:project ctx) :warnings`
+  ;; vec:
   ;;
   ;;   (a) AGENTS.md / CLAUDE.md read failures              — agents/scan-warnings
   ;;   (b) Extension namespace `(require)` failures collected
