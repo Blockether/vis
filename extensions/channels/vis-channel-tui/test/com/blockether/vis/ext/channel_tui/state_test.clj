@@ -38,17 +38,17 @@
           input-state       (fn [text] {:lines [text] :crow 0 :ccol (count text)})
           db                {:active-workspace-id :second
                              :workspaces [{:id :first :label "First"}
-                                              {:id :second :label "Second" :active? true}]
+                                          {:id :second :label "Second" :active? true}]
                              :input (input-state "second draft")
                              :input-history-index :second-index
                              :input-history-draft "second-draft"
                              :slash-command-index 7
                              :slash-command-hidden? true
                              :workspace-locals {:first {:input (input-state "first draft")
-                                                  :input-history-index :first-index
-                                                  :input-history-draft "first-draft"
-                                                  :slash-command-index 3
-                                                  :slash-command-hidden? true}}}
+                                                        :input-history-index :first-index
+                                                        :input-history-draft "first-draft"
+                                                        :slash-command-index 3
+                                                        :slash-command-hidden? true}}}
           next-db           (external-input-fn db [:external-input :append "rewrite" :first])]
       (expect (= "second draft" (input/input->text (:input next-db))))
       (expect (= :second-index (:input-history-index next-db)))
@@ -122,7 +122,7 @@
     ;; New tabs default to the untitled placeholder; `:set-title`
     ;; renames the active tab once a title is generated.
     (reset! state/app-db {:workspaces [{:id :main :label "Main"}
-                                           {:id :tab-1 :label "Tab 1" :active? true}]
+                                       {:id :tab-1 :label "Tab 1" :active? true}]
                           :active-workspace-id :tab-1
                           :render-version 0})
     (state/dispatch [:create-workspace])
@@ -184,8 +184,8 @@
 
   (it "selects workspace tabs by zero-based index and cycles to the next tab"
     (reset! state/app-db {:workspaces [{:id :main :label "Main"}
-                                           {:id :tab-1 :label "Tab 1" :active? true}
-                                           {:id :tab-2 :label "Tab 2"}]
+                                       {:id :tab-1 :label "Tab 1" :active? true}
+                                       {:id :tab-2 :label "Tab 2"}]
                           :active-workspace-id :tab-1
                           :render-version 0})
     (state/dispatch [:select-workspace-index 0])
@@ -207,16 +207,16 @@
 
   (it "selects an already-open workspace tab by session id"
     (reset! state/app-db {:workspaces [{:id :main :label "Main" :active? true}
-                                           {:id :tab-1 :label "Tab 1"}]
+                                       {:id :tab-1 :label "Tab 1"}]
                           :active-workspace-id :main
                           :session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")
                           :input-history ["main prompt"]
                           :workspace-locals {:tab-1 {:session {:id "tab-c"}
-                                               :messages [{:role :user :text "tab prompt"}]
-                                               :input (input/paste-text (input/empty-input) "tab draft")
-                                               :input-history ["tab prompt"]}}
+                                                     :messages [{:role :user :text "tab prompt"}]
+                                                     :input (input/paste-text (input/empty-input) "tab draft")
+                                                     :input-history ["tab prompt"]}}
                           :render-version 0})
     (state/dispatch [:select-workspace-by-session "tab-c"])
     (expect (= :tab-1 (:active-workspace-id @state/app-db)))
@@ -585,11 +585,11 @@
                       :pastes {}
                       :paste-counter 0
                       :workspace-locals {:a {:session {:id "a"}
-                                       :loading? true
-                                       :pending-sends []
-                                       :input-history []
-                                       :pastes {1 {:id 1 :content "payload"}}
-                                       :paste-counter 1}}}
+                                             :loading? true
+                                             :pending-sends []
+                                             :input-history []
+                                             :pastes {1 {:id 1 :content "payload"}}
+                                             :paste-counter 1}}}
           result     (enqueue-fn db [:enqueue-message "queued" :a])
           queued     (get-in result [:db :workspace-locals :a :pending-sends])]
       (expect (= ["queued"] (mapv :text queued)))

@@ -131,8 +131,8 @@
        value
        (let [value (working-tree-status)]
          (reset! working-tree-status-cache {:cwd cwd
-                                         :expires-at (+ (long now-ms) (long ttl-ms))
-                                         :value value})
+                                            :expires-at (+ (long now-ms) (long ttl-ms))
+                                            :value value})
          value))))
   ([^File start now-ms ttl-ms]
    (let [cwd (.getPath (.getCanonicalFile start))
@@ -142,6 +142,6 @@
        value
        (let [value (working-tree-status start)]
          (reset! working-tree-status-cache {:cwd cwd
-                                         :expires-at (+ (long now-ms) (long ttl-ms))
-                                         :value value})
+                                            :expires-at (+ (long now-ms) (long ttl-ms))
+                                            :value value})
          value)))))

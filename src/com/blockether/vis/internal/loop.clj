@@ -377,6 +377,35 @@
     (zero? (count (edamame/parse-string-all (str/trim expr) edamame-opts)))
     (catch Throwable _ false)))
 
+(defn- multi-fence-hint
+  "Model-facing reminder when several ```clojure``` fences were merged into
+   one eval source and that source then failed to parse / lint / eval.
+   The merge is intentional tolerance (cheap fix for the common 2-3 fence
+   case), but each extra fence is a fresh chance for a brace/quote to open
+   in one fence and close in another, producing parser surprises like
+   `the map literal contains 7 forms` on a source that LOOKS balanced.
+   Returns nil when the entry was a single fence."
+  [{:keys [multi-fence-merged? multi-fence-count]}]
+  (when multi-fence-merged?
+    (str "You emitted " (or multi-fence-count "multiple") " ```clojure``` fences in this iteration; "
+      "the engine merged them into one eval source and that source failed. "
+      "System prompt rule: emit exactly ONE ```clojure``` block per iteration. "
+      "Fix: keep one fence; move secondary computation to defs inside the same block.")))
+
+(defn- attach-multi-fence-hint
+  "If `entry` was a multi-fence merge, splice the rule reminder into
+   `error-map` as `:hint` (preserves an upstream hint by appending). The
+   hint surfaces in the iteration trailer next to the original error so
+   the model sees both the parser message and the systemic cause."
+  [error-map entry]
+  (if-let [hint (multi-fence-hint entry)]
+    (let [existing (:hint error-map)]
+      (assoc error-map :hint
+        (if (and (string? existing) (not (str/blank? existing)))
+          (str existing " " hint)
+          hint)))
+    error-map))
+
 (defn- literal-code-block-error [expr]
   (cond
     (bare-string-code-block? expr)
@@ -1116,7 +1145,8 @@
                                       [(cond-> {:expr normalized-code
                                                 :block-lang "clojure"
                                                 :render-segments (render/parse-block-display normalized-code)
-                                                :multi-fence-merged? true}
+                                                :multi-fence-merged? true
+                                                :multi-fence-count parsed-total-blocks}
                                          (some :repaired? raw-entries) (assoc :repaired? true))]
 
                                       :else
@@ -1893,7 +1923,14 @@
                                  ;; rescue); both paths converge on
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
-                                          form-repaired? (assoc :repaired? true))
+                                          form-repaired? (assoc :repaired? true)
+                                          ;; If the merged-fence source produced ANY error
+                                          ;; (parse, lint, eval, timeout), attach the
+                                          ;; single-fence rule reminder so the model knows
+                                          ;; the merge itself is a candidate root cause.
+                                          (and (:multi-fence-merged? entry)
+                                            (:error raw-result))
+                                          (update :error attach-multi-fence-hint entry))
                                  display-result (def-display-result environment expr result)
                                  ;; def-display-result is now a pass-through; kept on the
                                  ;; call path so future display-tweaks have a single seam.
@@ -3955,32 +3992,32 @@
               ;; root the very first time it fires (PLAN.md §5).
               active-workspace
               (assoc :workspace        active-workspace
-                     :workspace/id     (:id active-workspace)
-                     :workspace/root   (:root active-workspace)
-                     :workspace/kind   (:kind active-workspace)
-                     :workspace/branch (:branch active-workspace)))
+                :workspace/id     (:id active-workspace)
+                :workspace/root   (:root active-workspace)
+                :workspace/kind   (:kind active-workspace)
+                :workspace/branch (:branch active-workspace)))
         env (assoc env
-             :state-atom                        state-atom
-             :sci-ctx                           sci-ctx
-             :sandbox-ns                        sandbox-ns
-             :initial-ns-keys                   initial-ns-keys
+              :state-atom                        state-atom
+              :sci-ctx                           sci-ctx
+              :sandbox-ns                        sandbox-ns
+              :initial-ns-keys                   initial-ns-keys
              ;; Long-lived per-env LRU map: `{var-name-string →
              ;; last-used-turn-pos}`. Merged from each iteration's
              ;; `:lru` after eval. Drives the trailer's live-vars
              ;; surface, which ages user vars out of the discovery
              ;; line after quiet turns.
-             :def-resolve-lru-atom              (atom {})
-             :router                            router
-             :answer-atom                       answer-atom
-             :current-form-idx-atom             current-form-idx-atom
-             :current-iteration-atom            current-iteration-atom
-             :current-iteration-id-atom         current-iteration-id-atom
-             :current-session-turn-id-atom current-session-turn-id-atom
-             :current-turn-position-atom        current-turn-position-atom
-             :current-user-request-atom         current-user-request-atom
-             :session-title-atom           session-title-atom
-             :satisfied-hints-atom              satisfied-hints-atom
-             :extensions                        (atom []))]
+              :def-resolve-lru-atom              (atom {})
+              :router                            router
+              :answer-atom                       answer-atom
+              :current-form-idx-atom             current-form-idx-atom
+              :current-iteration-atom            current-iteration-atom
+              :current-iteration-id-atom         current-iteration-id-atom
+              :current-session-turn-id-atom current-session-turn-id-atom
+              :current-turn-position-atom        current-turn-position-atom
+              :current-user-request-atom         current-user-request-atom
+              :session-title-atom           session-title-atom
+              :satisfied-hints-atom              satisfied-hints-atom
+              :extensions                        (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
     ;; Restore persisted vars when resuming an existing session.

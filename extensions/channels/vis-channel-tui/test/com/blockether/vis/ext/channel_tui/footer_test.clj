@@ -252,18 +252,18 @@
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
                        #'git/cached-working-tree-status (fn
-                                                       ([] {:workspace? false})
-                                                       ([root]
-                                                        (reset! seen-root (.getPath root))
-                                                        {:workspace? true
-                                                         :repo "vis"
-                                                         :branch "feature/ws"
-                                                         :modified 0
-                                                         :created 0
-                                                         :deleted 0
-                                                         :upstream? false
-                                                         :ahead 0
-                                                         :behind 0}))}
+                                                          ([] {:workspace? false})
+                                                          ([root]
+                                                           (reset! seen-root (.getPath root))
+                                                           {:workspace? true
+                                                            :repo "vis"
+                                                            :branch "feature/ws"
+                                                            :modified 0
+                                                            :created 0
+                                                            :deleted 0
+                                                            :upstream? false
+                                                            :ahead 0
+                                                            :behind 0}))}
         (fn []
           (expect (= ["git ~/vis (feature/ws)" "files: clean" "(no upstream)"]
                     (->> (build-segments {:messages []
@@ -278,14 +278,14 @@
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
                        #'git/cached-working-tree-status (fn [] {:workspace? true
-                                                             :repo "vis"
-                                                             :branch "main"
-                                                             :modified 2
-                                                             :created 3
-                                                             :deleted 1
-                                                             :upstream? true
-                                                             :ahead 4
-                                                             :behind 0})}
+                                                                :repo "vis"
+                                                                :branch "main"
+                                                                :modified 2
+                                                                :created 3
+                                                                :deleted 1
+                                                                :upstream? true
+                                                                :ahead 4
+                                                                :behind 0})}
         (fn []
           (expect (= ["git ~/vis (main)" "6 modified" "commits: ⇡4"]
                     (->> (build-segments {:messages [] :settings {}} 0)
@@ -309,14 +309,14 @@
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
                        #'git/cached-working-tree-status (fn [] {:workspace? true
-                                                             :repo "vis"
-                                                             :branch "main"
-                                                             :modified 0
-                                                             :created 0
-                                                             :deleted 0
-                                                             :upstream? true
-                                                             :ahead 0
-                                                             :behind 0})}
+                                                                :repo "vis"
+                                                                :branch "main"
+                                                                :modified 0
+                                                                :created 0
+                                                                :deleted 0
+                                                                :upstream? true
+                                                                :ahead 0
+                                                                :behind 0})}
         (fn []
           (expect (= ["git ~/vis (main)" "files: clean" "(up to date)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
@@ -328,14 +328,14 @@
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
                        #'git/cached-working-tree-status (fn [] {:workspace? true
-                                                             :repo "vis"
-                                                             :branch "main"
-                                                             :modified 0
-                                                             :created 0
-                                                             :deleted 0
-                                                             :upstream? false
-                                                             :ahead 0
-                                                             :behind 0})}
+                                                                :repo "vis"
+                                                                :branch "main"
+                                                                :modified 0
+                                                                :created 0
+                                                                :deleted 0
+                                                                :upstream? false
+                                                                :ahead 0
+                                                                :behind 0})}
         (fn []
           (expect (= ["git ~/vis (main)" "files: clean" "(no upstream)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
