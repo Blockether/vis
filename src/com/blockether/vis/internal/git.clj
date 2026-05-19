@@ -15,7 +15,7 @@
 
 (def ^:private default-cache-ms 5000)
 
-(defonce ^:private workspace-status-cache
+(defonce ^:private working-tree-status-cache
   (atom {:cwd nil :expires-at 0 :value nil}))
 
 (defn cwd-file
@@ -80,7 +80,7 @@
        :behind (.getBehindCount tracking)})
     (catch Throwable _ nil)))
 
-(defn workspace-status
+(defn working-tree-status
   "Return git facts for `start` (default cwd).
 
    Outside git, returns `{:workspace? false}` so callers can explicitly
@@ -91,7 +91,7 @@
       :branch <branch-name>
       :modified 2 :created 1 :deleted 0
       :upstream? true :ahead 4 :behind 0}"
-  ([] (workspace-status (cwd-file)))
+  ([] (working-tree-status (cwd-file)))
   ([^File start]
    (if-let [^Repository repo (open-repository start)]
      (try
@@ -114,34 +114,34 @@
          (try (.close repo) (catch Throwable _ nil))))
      {:workspace? false})))
 
-(defn cached-workspace-status
-  "Cached `workspace-status` for hot render paths.
+(defn cached-working-tree-status
+  "Cached `working-tree-status` for hot render paths.
 
    The TUI footer repaints often, and other surfaces will need the same
    git workspace facts. Keep the cache here so every caller shares one
    resolved view instead of each UI namespace running JGit independently."
-  ([] (cached-workspace-status (System/currentTimeMillis) default-cache-ms))
+  ([] (cached-working-tree-status (System/currentTimeMillis) default-cache-ms))
   ([^File start]
-   (cached-workspace-status start (System/currentTimeMillis) default-cache-ms))
+   (cached-working-tree-status start (System/currentTimeMillis) default-cache-ms))
   ([now-ms ttl-ms]
    (let [cwd (.getPath (cwd-file))
-         {:keys [expires-at value]} @workspace-status-cache]
-     (if (and (= cwd (:cwd @workspace-status-cache))
+         {:keys [expires-at value]} @working-tree-status-cache]
+     (if (and (= cwd (:cwd @working-tree-status-cache))
            (< (long now-ms) (long expires-at)))
        value
-       (let [value (workspace-status)]
-         (reset! workspace-status-cache {:cwd cwd
+       (let [value (working-tree-status)]
+         (reset! working-tree-status-cache {:cwd cwd
                                          :expires-at (+ (long now-ms) (long ttl-ms))
                                          :value value})
          value))))
   ([^File start now-ms ttl-ms]
    (let [cwd (.getPath (.getCanonicalFile start))
-         {:keys [expires-at value]} @workspace-status-cache]
-     (if (and (= cwd (:cwd @workspace-status-cache))
+         {:keys [expires-at value]} @working-tree-status-cache]
+     (if (and (= cwd (:cwd @working-tree-status-cache))
            (< (long now-ms) (long expires-at)))
        value
-       (let [value (workspace-status start)]
-         (reset! workspace-status-cache {:cwd cwd
+       (let [value (working-tree-status start)]
+         (reset! working-tree-status-cache {:cwd cwd
                                          :expires-at (+ (long now-ms) (long ttl-ms))
                                          :value value})
          value)))))
