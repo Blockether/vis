@@ -8,7 +8,7 @@
      `format-date`      - `java.util.Date` to `dd-MM-yyyy HH:mm` (local TZ)
      `format-clojure`   - pretty-print a Clojure source string with zprint
      `format-duration`  - millisecond duration to `2.3s`, `1m 15s`, etc.
-     `format-tokens`    - `:input`/`:output` token counts to '↑11461 ↓35'
+     `format-tokens`    - `:input`/`:output` token counts to 'tok 11461→35'
      `format-cost`      - dollar cost to '~$0.006954'
      `format-iterations`- iteration count to '1 iter' / '3 iters'
      `format-meta-line` - canonical ' / '-joined turn-summary line
@@ -201,8 +201,8 @@
 ;; its own `String/format` for the cost. These helpers are the single
 ;; source of truth for the canonical surface form:
 ;;
-;;   tokens   ->  "↑11461 (cached 4096) ↓35" (input, cached input, output)
-;;              or "↑11461 ↓35" when cached input is zero / unknown
+;;   tokens   ->  "tok 11461→35 (cached 4096)" (input, output, cached input)
+;;              or "tok 11461→35" when cached input is zero / unknown
 ;;   cost     ->  "~$0.006954"             (six decimal places, US locale)
 ;;   iters    ->  "1 iter" / "3 iters"    (unit auto-pluralized)
 ;;   line     ->  "<iters> / <tokens> / ~$<cost> / <duration>"
@@ -214,16 +214,15 @@
 ;; =============================================================================
 
 (defn format-tokens
-  "Render token counts in the canonical compact form:
-   '↑<input> (cached <cached-input>) ↓<output>' when cached input is positive,
-   otherwise '↑<input> ↓<output>'.
+  "Render token counts in the canonical compact grouped form:
+   'tok <input>→<output> (cached <cached-input>)' when cached input is
+   positive, otherwise 'tok <input>→<output>'.
 
-   Up arrow = tokens fed INTO the model (prompt); down arrow = tokens
-   the model produced. Cached is cached input tokens, displayed next
-   to input because provider APIs report cache hits inside prompt
-   usage. `:cached` is the provider field; `:cached-input` /
-   `:input-cached` are accepted aliases so usage maps can name the
-   direction explicitly.
+   The arrow reads 'prompt produced completion'. Cached is cached
+   input tokens, parenthesized because provider APIs report cache
+   hits inside prompt usage. `:cached` is the provider field;
+   `:cached-input` / `:input-cached` are accepted aliases so usage
+   maps can name the direction explicitly.
 
    Cache visibility: the `(cached N)` segment renders only when N is
    positive. Zero / missing cache info stays hidden so meta lines do
@@ -237,25 +236,23 @@
                       (when (number? v) v)))
               ks))]
     (let [cached-input (or (first-number [:cached-input :input-cached :cached]) 0)
-          cached-part  (when (pos? cached-input)
-                         (str " (cached " cached-input ")"))
-          input-part (cond
-                       (number? input)
-                       (str "↑" input cached-part)
-
-                       (pos? cached-input)
-                       (str "↑0 (cached " cached-input ")"))
-          parts (cond-> []
-                  input-part       (conj input-part)
-                  (number? output) (conj (str "↓" output)))]
-      (when (seq parts) (str/join " " parts)))))
+          in-n  (when (number? input) input)
+          out-n (when (number? output) output)]
+      (when (or in-n out-n (pos? cached-input))
+        (let [head (str "tok " (or in-n 0) "→" (or out-n 0))]
+          (if (pos? cached-input)
+            (str head " (cached " cached-input ")")
+            head))))))
 
 (defn format-cost
   "Render a dollar cost as '~$0.006954' (six decimal places, US
    locale). Returns nil when `cost` is nil, zero, negative, or
    non-numeric. Accepts either the bare number or a `:total-cost`
-   map. Detailed cost maps render the requested split in order:
-   input, input cached, cache write, output, then total."
+   map. Detailed cost maps render the total first and the breakdown
+   parenthesized, in order: in, cached, write, out — e.g.
+   '~$0.006954 (in ~$0.001200, cached ~$0.000400, out ~$0.005354)'.
+   The parenthesized breakdown renders only when at least two of
+   those slots carry a positive value; otherwise just the total."
   [cost]
   (letfn [(cost-number [k]
             (let [v (get cost k)]
@@ -277,22 +274,20 @@
         (if (map? cost)
           (let [details (cond-> []
                           (positive-cost-number :input-uncached-cost)
-                          (conj (detail "input" :input-uncached-cost))
+                          (conj (detail "in" :input-uncached-cost))
 
                           (positive-cost-number :input-cached-cost)
-                          (conj (detail "input cached" :input-cached-cost))
+                          (conj (detail "cached" :input-cached-cost))
 
                           (positive-cost-number :input-cache-write-cost)
-                          (conj (detail "input cache write" :input-cache-write-cost))
+                          (conj (detail "write" :input-cache-write-cost))
 
                           (positive-cost-number :output-cost)
-                          (conj (detail "output" :output-cost))
-
-                          true
-                          (conj (str "total " (format-cost-number n))))]
+                          (conj (detail "out" :output-cost)))
+                total   (format-cost-number n)]
             (if (> (count details) 1)
-              (str/join ", " details)
-              (format-cost-number n)))
+              (str total " (" (str/join ", " details) ")")
+              total))
           (format-cost-number n))))))
 
 (defn format-iterations

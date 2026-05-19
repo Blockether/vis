@@ -689,7 +689,10 @@
                   (empty? (:models provider))
                   (assoc :models [{:name "probe"}]))
           svar-provider (vis/->svar-provider probe)
-          router        (svar/make-router [svar-provider])
+          ;; Honor `:router` opts from `~/.vis/config.edn` so /models
+          ;; probes use the same retry/network policy as real turns.
+          router        (svar/make-router [svar-provider]
+                          (vis/router-opts (vis/current-config)))
           raw           (svar/models! router)]
       (->> raw
         (map (fn [m] (or (:id m) (:name m) (:slug m))))

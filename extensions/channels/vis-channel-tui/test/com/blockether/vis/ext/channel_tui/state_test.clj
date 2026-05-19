@@ -564,10 +564,10 @@
       (with-redefs [vis/cancellation-token (fn [] :token)]
         (let [sent-db      (:db (send-message-fn db [:send-message text]))
               reset-db     (reset-input-fn sent-db [:reset-input])
-              restored-db  (message-received-fn reset-db
-                             [:message-received
-                              [:ir {} [:p {} [:span {} "Cancelled by user."]]]
-                              {:status :cancelled}])]
+              restored-db  (:db (message-received-fn reset-db
+                                  [:message-received
+                                   [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                                   {:status :cancelled}]))]
           (expect (= initial-messages (:messages restored-db)))
           (expect (= text (input/input->text (:input restored-db))))
           (expect (= {1 {:id 1 :content "hello"}} (:pastes restored-db)))
@@ -576,3 +576,57 @@
           (expect (false? (:loading? restored-db)))
           (expect (not-any? #(= "Cancelled by user." (:text %))
                     (:messages restored-db))))))))
+
+(defdescribe pending-send-queue-test
+  (it "keeps queued submissions on their workspace snapshot"
+    (let [enqueue-fn (-> #'state/event-registry deref deref (get :enqueue-message) :fn)
+          db         {:active-workspace-id :b
+                      :input-history []
+                      :pastes {}
+                      :paste-counter 0
+                      :workspaces {:a {:conversation {:id "a"}
+                                       :loading? true
+                                       :pending-sends []
+                                       :input-history []
+                                       :pastes {1 {:id 1 :content "payload"}}
+                                       :paste-counter 1}}}
+          result     (enqueue-fn db [:enqueue-message "queued" :a])
+          queued     (get-in result [:db :workspaces :a :pending-sends])]
+      (expect (= ["queued"] (mapv :text queued)))
+      (expect (= {1 {:id 1 :content "payload"}} (:pastes (first queued))))
+      (expect (empty? (:pending-sends (:db result))))))
+
+  (it "schedules queue drain as an effect after message commit"
+    (let [message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
+          pending-id          "turn-1"
+          db                  {:active-workspace-id :main
+                               :conversation {:id "c1"}
+                               :loading? true
+                               :messages [{:role :user :text "first" :client-turn-id pending-id}
+                                          {:role :assistant :pending? true :client-turn-id pending-id}]
+                               :progress {:iterations []}
+                               :pending-sends [{:text "second"
+                                                :pastes {}
+                                                :paste-counter 0}]}
+          {:keys [db fx]}      (message-received-fn db
+                                 [:message-received :main
+                                  [:ir {} [:p {} [:span {} "ok"]]]
+                                  {:client-turn-id pending-id}])]
+      (expect (= [[:dispatch [:drain-pending :main]]] fx))
+      (expect (false? (:loading? db)))
+      (expect (= ["second"] (mapv :text (:pending-sends db))))))
+
+  (it "drains one queued item without nested provider dispatch"
+    (let [drain-fn       (-> #'state/event-registry deref deref (get :drain-pending) :fn)
+          db             {:active-workspace-id :main
+                          :pending-sends [{:text "second"
+                                           :pastes {2 {:id 2 :content "p"}}
+                                           :paste-counter 2}
+                                          {:text "third"
+                                           :pastes {}
+                                           :paste-counter 0}]}
+          {:keys [db fx]} (drain-fn db [:drain-pending :main])]
+      (expect (= [[:dispatch [:send-message "second" :main]]] fx))
+      (expect (= ["third"] (mapv :text (:pending-sends db))))
+      (expect (= {2 {:id 2 :content "p"}} (:pastes db)))
+      (expect (= 2 (:paste-counter db))))))

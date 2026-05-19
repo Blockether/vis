@@ -62,7 +62,11 @@
                          (empty? (:models provider))
                          (assoc :models [{:name "probe"}]))
           svar-provider (vis/->svar-provider probe)
-          router        (svar/make-router [svar-provider])
+          ;; Honor `:router` opts (retry/network/budget) so the probe
+          ;; respects the same policy a real turn would. Falls back to
+          ;; svar defaults when the user has no `:router` block.
+          router        (svar/make-router [svar-provider]
+                          (vis/router-opts (vis/current-config)))
           raw           (svar/models! router)]
       (->> raw
         (map (fn [m] (or (:id m) (:name m) (str m))))

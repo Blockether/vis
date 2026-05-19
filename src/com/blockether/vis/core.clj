@@ -363,6 +363,7 @@
 (def resolve-config                      config/resolve-config)
 (def resolve-db-spec                     config/resolve-db-spec)
 (def current-config                      config/current-config)
+(def router-opts                         config/router-opts)
 (def active-provider                     config/active-provider)
 (def active-model                        config/active-model)
 (def provider-ids                        config/provider-ids)

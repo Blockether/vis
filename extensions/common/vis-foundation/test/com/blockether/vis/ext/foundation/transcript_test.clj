@@ -342,7 +342,7 @@
       (expect (not (str/includes? help "FLAGS")))
       (expect (not (str/includes? help "--prompts")))
       (expect (not (str/includes? help "--dialog")))
-      (expect (str/includes? help "always complete"))))
+      (expect (str/includes? help "bounded by default"))))
 
   (it "resolves an unambiguous short id prefix end-to-end (regression for the CLI — the help text advertises prefix support, the code must deliver)"
     (let [s (vis/db-create-connection! :memory)]
@@ -407,6 +407,24 @@
           (expect (str/includes? out ":hints"))
           (expect (not (str/includes? out "<iteration_hints>")))
           (expect (not (str/includes? out "##### Block 0"))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "bounds huge code blocks in default Markdown reports"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [huge (apply str (repeat 50000 "x"))
+              cid  (vis/db-store-conversation! s {:channel :tui :title "Huge"})
+              qid  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                       :user-request "huge"
+                                                       :status :running})]
+          (vis/db-store-iteration! s {:conversation-turn-id qid
+                                      :code huge
+                                      :result :ok})
+          (vis/db-update-conversation-turn! s qid {:status :done})
+          (let [out (transcript/transcript-md s cid)]
+            (expect (string? out))
+            (expect (< (count out) 30000))
+            (expect (str/includes? out "..."))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "renders flat mixed-block code when render segments are not persisted"

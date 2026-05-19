@@ -49,14 +49,12 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 11 (count editing/editing-symbols)))
+    (expect (= 10 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize 'bash}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (some #{'patch}
-              (map :ext.symbol/symbol editing/editing-symbols)))
-    (expect (some #{'patch-check}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'write-lines 'update-file}
               (map :ext.symbol/symbol editing/editing-symbols)))
@@ -103,7 +101,7 @@
     (expect (not (string/includes? editing/editing-prompt "(v/rg :include/:exclude"))))
 
   (it "registers observed fn-symbols with tool-specific renderers"
-    (doseq [sym-name '[cat ls rg patch patch-check create-dirs copy move delete delete-if-exists exists?]]
+    (doseq [sym-name '[cat ls rg patch create-dirs copy move delete delete-if-exists exists?]]
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
                     editing/editing-symbols)]
         (expect (some? entry))
@@ -147,6 +145,8 @@
                 "Codex `apply_patch` envelope"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "validate the full plan against the live filesystem\n   before any write"))
+      (expect (string/includes? editing/editing-prompt
+                "On failure, v/patch reports match counts"))
       (expect (string/includes? editing/editing-prompt
                 "Do NOT v/cat to verify"))
       (expect (string/includes? editing/editing-prompt "RULES"))
@@ -494,34 +494,27 @@
         (expect (some? err))
         (expect (= 2 (-> err ex-data :failures first :matches))))))
 
-  (it "patch diagnostics report failing edit index, all failures, bounded previews, and write nothing"
-    (let [path  (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\ngamma\n")
+  (it "patch diagnostics report failing edit index, all match counts, bounded previews, and write nothing"
+    (let [path  (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
           patch (private-fn "patch-safe")
           long-search (apply str (repeat 80 "missing "))
           err   (try
                   (patch [{:path path :search "alpha" :replace "ALPHA"}
+                          {:path path :search "beta" :replace "BETA"}
                           {:path path :search long-search :replace "x"}
                           {:path path :search "other missing" :replace "y"}])
                   nil
                   (catch clojure.lang.ExceptionInfo e e))
           data  (ex-data err)
+          checks (:checks data)
           failures (:failures data)]
       (expect (some? err))
       (expect (string/includes? (ex-message err) "first edit 1"))
-      (expect (= [1 2] (mapv :edit-index failures)))
-      (expect (= [0 0] (mapv :matches failures)))
+      (expect (= [0 1 2 3] (mapv :edit-index checks)))
+      (expect (= [1 2 0 0] (mapv :matches checks)))
+      (expect (= [1 2 3] (mapv :edit-index failures)))
+      (expect (= [2 0 0] (mapv :matches failures)))
       (expect (every? #(<= (count (:search-preview %)) 200) failures))
-      (expect (= "alpha\nbeta\ngamma\n" (slurp path)))))
-
-  (it "patch-check reports match counts without writing"
-    (let [path        (write-temp! "bbfs/patch-check.txt" "alpha\nbeta\nbeta\n")
-          patch-check (private-fn "patch-check")
-          out         (patch-check [{:path path :search "alpha" :replace "ALPHA"}
-                                    {:path path :search "beta" :replace "BETA"}
-                                    {:path path :search "missing" :replace "x"}])]
-      (expect (= [1 2 0] (mapv :matches (:checks out))))
-      (expect (= [1 2] (mapv :edit-index (:failures out))))
-      (expect (false? (:valid? out)))
       (expect (= "alpha\nbeta\nbeta\n" (slurp path)))))
 
   (it "exists? and delete-if-exists work on cwd-relative paths"
@@ -542,11 +535,37 @@
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "journal-render-bash"))))))
 
 (defdescribe editing-renderer-guidance-test
-  (it "patch renderer reports patched paths"
+  (it "patch renderer reports patched paths as IR and tolerates sparse summaries"
     (let [render-patch (private-fn "channel-render-patch")
-          rendered (render-patch [{:path "target/editing-test/out.txt"}])]
-      (expect (string/includes? rendered "Patched"))
-      (expect (string/includes? rendered "target/editing-test/out.txt"))))
+          rendered (render-patch [{:path "target/editing-test/out.txt"}])
+          text-leaves (filter string? (tree-seq sequential? seq rendered))
+          joined (string/join " " text-leaves)]
+      (expect (vector? rendered))
+      (expect (= :ir (first rendered)))
+      (expect (string/includes? joined "Patched"))
+      (expect (string/includes? joined "target/editing-test/out.txt"))))
+  (it "patch diff stays compact for large files"
+    (let [diff-fn (private-fn "unified-diff-text")
+          before  (string/join "\n" (map #(str "line-" %) (range 1500)))
+          after   (string/replace before "line-750" "LINE-750")
+          out     (diff-fn before after)
+          lines   (string/split-lines out)]
+      (expect (< (count lines) 50))
+      (expect (string/includes? out "@@"))
+      (expect (string/includes? out "-line-750"))
+      (expect (string/includes? out "+LINE-750"))))
+  (it "patch diff handles insert, delete, and all-different cases as bounded previews"
+    (let [diff-fn (private-fn "unified-diff-text")
+          inserted (diff-fn "a\nb\nc" "a\nX\nb\nc")
+          deleted  (diff-fn "a\nb\nc" "a\nb")
+          before   (string/join "\n" (map #(str "line-" %) (range 300)))
+          after    (string/join "\n" (map #(str "other-" %) (range 300)))
+          changed  (diff-fn before after)]
+      (expect (string/includes? inserted "+X"))
+      (expect (not (string/includes? inserted "-a")))
+      (expect (string/includes? deleted "-c"))
+      (expect (< (count (string/split-lines changed)) 260))
+      (expect (string/includes? changed "diff truncated"))))
   (it "search-hits renderer formats partial-projection hits without raw EDN fallback"
     (let [render-hits (private-fn "channel-render-rg")
           rg-result {:vis.op :v/rg

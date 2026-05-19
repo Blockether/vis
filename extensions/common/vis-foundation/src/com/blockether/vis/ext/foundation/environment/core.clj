@@ -1,9 +1,8 @@
 (ns com.blockether.vis.ext.foundation.environment.core
   "vis-foundation — the agent's environment-awareness layer.
 
-   Owns the `<environment>` block that used to live hard-coded in
-   `com.blockether.vis.internal.prompt`. Everything in there
-   (cwd, user, platform, shell) is still reported, plus:
+   Owns the environment facts that used to live hard-coded in
+   `com.blockether.vis.internal.prompt`: cwd, user, platform, shell, plus:
 
      * git repository facts via JGit (root, branch, dirty status,
        submodules, worktree),
@@ -527,9 +526,9 @@
   "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change; use v/reload-extensions! only after extension changes.")
 
 (defn environment-info
-  "Render the foundation-owned model-facing `<environment>` contribution.
-   The extension owns this envelope; the core prompt assembler only places
-   returned fragments in send order and does not wrap them."
+  "Render the foundation-owned model-facing environment contribution.
+   The extension owns this prompt fragment; the core prompt assembler only
+   places returned fragments in send order and does not wrap them."
   [_environment]
   (try
     (render/render (snapshot))

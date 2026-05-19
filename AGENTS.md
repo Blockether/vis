@@ -73,7 +73,7 @@ Use `v/patch` for all text edits, including `.clj`/`.cljc`/`.cljs`/`.edn`. The
 
 - Prefer one vector of edit maps.
 - `:search` must match exactly once in the current file; all edits validate
-  before any write. Use `v/patch-check` to preflight match counts.
+  before any write; failed `v/patch` reports match counts and writes nothing.
 - Multiple same-file edits are applied in order and written once.
 - Avoid `(declare ...)`; sort defs by dependency. If unavoidable, add nearby reason.
 - If delimiters break, run `clj-paren-repair <files>`; do not hand-balance.

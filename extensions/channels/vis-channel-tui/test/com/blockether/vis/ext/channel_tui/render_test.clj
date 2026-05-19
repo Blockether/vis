@@ -238,6 +238,42 @@
       (expect (= "fallback anthropic-coding-plan/claude-opus-4-7 → openai-codex/gpt-5.3-codex — Exceptional status code: 429"
                 (assistant-meta-line message)))))
 
+  (it "surfaces retry count + HTTP status when the trace carries provider-retry events"
+    ;; TUI footer example: `— 3 retries, 429`. Counts every
+    ;; `:llm.routing/provider-retry` in the trace and prefers the
+    ;; fallback event's `:status` over the free-form `:error` text so
+    ;; the footer matches the spec verbatim.
+    (let [message {:role :assistant
+                   :llm-selected {:provider "anthropic-coding-plan"
+                                  :model "claude-opus-4-7"}
+                   :llm-actual {:provider "openai-codex"
+                                :model "gpt-5.3-codex"}
+                   :llm-fallback? true
+                   :llm-routing-trace
+                   [{:event/type :llm.routing/provider-retry :status 429 :attempt 1 :delay-ms 2000}
+                    {:event/type :llm.routing/provider-retry :status 429 :attempt 2 :delay-ms 3000}
+                    {:event/type :llm.routing/provider-retry :status 429 :attempt 3 :delay-ms 6000}
+                    {:event/type :llm.routing/provider-fallback
+                     :status 429
+                     :reason :rate-limit-budget-exhausted
+                     :from-provider "anthropic-coding-plan"
+                     :from-model "claude-opus-4-7"
+                     :to-provider "openai-codex"
+                     :to-model "gpt-5.3-codex"}]}]
+      (expect (= "fallback anthropic-coding-plan/claude-opus-4-7 → openai-codex/gpt-5.3-codex — 3 retries, 429"
+                (assistant-meta-line message)))))
+
+  (it "singular `1 retry` when only one retry preceded the fallback"
+    (let [message {:role :assistant
+                   :llm-selected {:provider "a" :model "m1"}
+                   :llm-actual   {:provider "b" :model "m2"}
+                   :llm-fallback? true
+                   :llm-routing-trace
+                   [{:event/type :llm.routing/provider-retry :status 429 :attempt 1 :delay-ms 2000}
+                    {:event/type :llm.routing/provider-fallback :status 429 :reason :rate-limit-budget-exhausted}]}]
+      (expect (= "fallback a/m1 → b/m2 — 1 retry, 429"
+                (assistant-meta-line message)))))
+
   (it "counts fallback-only footer height so the footer is not overwritten"
     (let [base {:role :assistant
                 :text "Done."
@@ -1503,7 +1539,7 @@
                       :tokens {:input 100 :output 20 :cached 70}}
                      4 2 60 {:viewport-h 40})]
       (expect (= 5 height))
-      (expect (some #(str/includes? (:text %) "↑100 (cached 70) ↓20")
+      (expect (some #(str/includes? (:text %) "tok 100→20 (cached 70)")
                 @puts))))
 
   (it "omits zero cached token usage in the assistant bubble footer"
@@ -1527,7 +1563,7 @@
                       :tokens {:input 100 :output 20 :cached 0}}
                      4 2 60 {:viewport-h 40})]
       (expect (= 5 height))
-      (expect (some #(str/includes? (:text %) "↑100 ↓20")
+      (expect (some #(str/includes? (:text %) "tok 100→20")
                 @puts))
       (expect (not-any? #(str/includes? (:text %) "cached 0")
                 @puts))))
@@ -1553,7 +1589,7 @@
                       :tokens {:input 100 :output 20}}
                      4 2 60 {:viewport-h 40})
           answer-row (:row (first (filter #(= "hello" (:text %)) @puts)))
-          footer-row (:row (first (filter #(str/includes? (:text %) "↑100 ↓20") @puts)))]
+          footer-row (:row (first (filter #(str/includes? (:text %) "tok 100→20") @puts)))]
       (expect (= 5 height))
       (expect (= 2 (- footer-row answer-row)))))
 

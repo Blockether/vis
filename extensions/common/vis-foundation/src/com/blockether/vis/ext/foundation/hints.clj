@@ -130,8 +130,8 @@
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks (`:ext/hooks`) — :turn.iteration/start emits MODEL-FACING
-;; `(:hints ctx)` entries. Answer-time enforcement now lives in the
-;; harness gate (`final-answer-structural-criteria-errors`); no
+;; `(get-in ctx [:conversation :hints])` entries. Answer-time enforcement now
+;; lives in the harness gate (`final-answer-structural-criteria-errors`); no
 ;; foundation :turn.answer/validate hooks remain.
 ;; ----------------------------------------------------------------------------
 

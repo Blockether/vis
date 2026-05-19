@@ -2,7 +2,7 @@
 
 ## Goal
 
-Find every remaining XML-ish prompt-control surface, explain why it exists, what is wrong with it, and how to replace it with Clojure/EDN `ctx` data.
+Remove XML-ish prompt-control protocol from Vis. Model-facing state should be Clojure data (`ctx`) plus plain Clojure-comment sections, not ad-hoc markup wrappers.
 
 `ctx` is real model-visible sandbox data. Host binds it before each model call:
 
@@ -10,17 +10,38 @@ Find every remaining XML-ish prompt-control surface, explain why it exists, what
 (env/bind-and-bump! environment 'ctx current-ctx-map)
 ```
 
-Model can read:
+Target model-facing shape:
+
+```clojure
+{:conversation {:id ...
+                :title ...
+                :turn-id ...
+                :iteration {:id ... :position ...}
+                :hints [{:id ... :importance ... :text ... :satisfy-with ...}]}
+ :llm-provider {:selected ...
+                :actual ...
+                :routing ...
+                :error ...}
+ :project {:root ...
+           :guidance {:present? true :source :agents-md :path "AGENTS.md"}
+           :warnings [...]}
+ :extensions [...]
+ :defs {...}}
+```
+
+Model reads:
 
 ```clojure
 (:conversation ctx)
-(:iteration ctx)
-(:hints ctx)
+(get-in ctx [:conversation :iteration])
+(get-in ctx [:conversation :hints])
+(:llm-provider ctx)
+(:project ctx)
 (:extensions ctx)
 (:defs ctx)
 ```
 
-`ctx` is host-owned and hidden from `(:defs ctx)`.
+Current user request is deliberately **not** duplicated in `ctx`; it lives in the current user-role provider message.
 
 ## Principle
 
@@ -34,163 +55,118 @@ Prompt-control data should be:
 
 ## Current state
 
-Hints already moved from XML:
-
-```xml
-<iteration_hints>
-<iteration_hint importance="high">...</iteration_hint>
-</iteration_hints>
-```
-
-into EDN:
+Hints already moved from legacy hint wrappers into EDN under conversation state:
 
 ```clojure
-(:hints ctx)
+(get-in ctx [:conversation :hints])
 ;; => [{:id :vis.foundation/conversation-title
 ;;      :importance :high
 ;;      :text "..."
 ;;      :satisfy-with '(satisfy-hint! :vis.foundation/conversation-title)}]
 ```
 
-Remaining XML-ish places below.
+Remaining work is to finish removing legacy wrappers, fake `ctx.*` comment labels, and provider-error markup from prompt-control paths.
 
 ## Audit table
 
-| Area | Files | Current XML-ish thing | Model-facing? | Why it likely existed | Problem | Better shape |
-|---|---|---:|---:|---|---|---|
-| Current user wrapper | `src/com/blockether/vis/internal/prompt.clj`, transcript tests | old `<current_user_message>` fixtures / labels | yes, via stored older prompts and maybe history | visually section current request; transcript classifier can label message | duplicates user role + `ctx`; teaches tag protocol; model may emit tags | user role carries request; `ctx[:conversation :user-request]`; transcript labels by message position/metadata |
-| Current turn context | `extensions/common/vis-foundation/.../transcript.clj`, transcript tests | `<current_turn_context>` fixture/detection | yes in stored older prompt envelopes | identify per-iteration trailer; pack turn/iteration metadata | duplicates `ctx`; transcript parser sniffs text; XML+Clojure mixing | trailer starts with `;; ctx =`; transcript labels by role+position or persisted `message-kind` |
-| Provider error nudges | `src/com/blockether/vis/internal/loop.clj` | `<error>...</error>` | yes, sent after provider failure / incomplete output | force salience; clear non-code error block | XML in Clojure prompt; model may copy tags; no structured fields | `;; ! provider-error ...` comment or `ctx[:last-error]` EDN |
-| Extension prompt wrapper docs | `src/com/blockether/vis/internal/prompt.clj`, `extensions/common/vis-foundation/src/.../core.clj` | docstrings say `<extensions>`, `<turn_system_context>`, `<system_prompt>` | mostly docs stale; output is now `;; -- ... --` | old prompt-block tags | confusing docs; future code may reintroduce XML | update wording to "comment sections" / "extension prompt section" |
-| Environment prompt docs | `extensions/common/vis-foundation/src/.../environment/core.clj`, `agents.clj`, tests | docs mention `<environment>`, `<project-guidance>`, `<scan-warnings>` | maybe model-facing concept, but tests assert tags absent | old environment was XML block; later moved to comment/EDN style | docs lie; agents think XML still exists | rename docs to `ctx.runtime`, `ctx.project-guidance`, `ctx.scan-warnings` / comment sections |
-| Manifest scan warnings | `src/com/blockether/vis/internal/manifest.clj`, `main.clj` | comments mention `<scan-warnings>` | no direct output | old foundation renderer contract | stale comment hides actual surface | update comments to foundation environment warning section |
-| Transcript markdown | `extensions/common/vis-foundation/src/.../transcript.clj` | `<details><summary>...</summary>` | human markdown only | collapsible sections in GitHub markdown | acceptable; not prompt-control | keep; clearly mark as markdown rendering, not model prompt |
-| IR HTML renderers | `src/com/blockether/vis/internal/render.clj` | `<pre>`, `<code>`, `<blockquote>`, etc. | final answer renderer, not control prompt | HTML/Telegram/Markdown output formatting | acceptable if escaped | keep; not part of `ctx` migration |
+| Area | Files | Current issue | Model-facing? | Problem | Replacement |
+|---|---|---:|---:|---|---|
+| Current user wrapper | `src/com/blockether/vis/internal/prompt.clj`, transcript tests | Legacy `current_user_message` wrapper in old fixtures/fallback detection | yes in stored old prompts | Duplicates user role; teaches tag protocol | User-role message with `;; -- CURRENT-USER-MESSAGE --`; ctx omits request |
+| Current turn context | `extensions/common/vis-foundation/.../transcript.clj`, transcript tests | Legacy `current_turn_context` wrapper in old fixtures/fallback detection | yes in stored old prompts | Duplicates `ctx`; transcript parser sniffs text | Per-iteration trailer ends with `;; ctx =` EDN; later persist message kind |
+| Provider error nudges | `src/com/blockether/vis/internal/loop.clj` | Provider failure text wrapped as markup | yes | Model may copy markup; no structured state | `;; llm-provider-error =` EDN trailer comment plus `(:llm-provider ctx) {:error ...}` |
+| Extension prompt docs | `src/com/blockether/vis/internal/prompt.clj`, foundation core docs | Stale names from retired XML blocks | docs mostly | Docs can reintroduce wrong protocol | Comment-section wording: `SYSTEM-PROMPT`, `TURN-SYSTEM-CONTEXT`, `EXTENSIONS` |
+| Environment prompt docs | foundation environment docs/tests | Stale environment/project-guidance/scan-warning wrapper language; fake `ctx.*` labels | maybe | Docs lie; fake ctx labels imply data exists when not bound | Long prose = comment sections; small dynamic facts = `(:project ctx)` |
+| Manifest scan warnings | `src/com/blockether/vis/internal/manifest.clj`, `main.clj` | Stale scan-warning wrapper comments | no direct output | Misstates current surface | Say “foundation scan warning section” or `(:project ctx) :warnings` |
+| Transcript markdown | foundation transcript renderer | Human Markdown disclosure markup | no | Human rendering only | Keep, clearly mark not prompt-control |
+| IR HTML renderers | `src/com/blockether/vis/internal/render.clj` | Final-answer HTML/Telegram tags | no | Output renderer only | Keep if escaped |
 
 ## Detailed findings
 
-### 1. `<current_user_message>`
+### 1. Current user request
 
-Observed in tests/fixtures:
+Old fixtures still contain a legacy current-user wrapper. Live prompt assembly now uses comment headers:
 
 ```clojure
-:content "<current_user_message>\nUSER_TURN_TEXT_FIXTURE\n</current_user_message>"
+{:role "user"
+ :content ";; -- CURRENT-USER-MESSAGE --\n..."}
 ```
-
-Likely old live output came from `prompt-block "current_user_message"` in `prompt.clj`. Today `prompt-block` renders comment headers:
-
-```text
-;; -- CURRENT-USER-MESSAGE --
-...
-```
-
-Wrong part: transcript tests and classifier still recognize old tag bodies.
 
 Recommended path:
 
-- Do not wrap current user message in XML.
+- Do not wrap current user message in XML-ish syntax.
 - Keep provider role = `user` as main semantic marker.
-- Put request into `ctx`:
+- Do not put request into `ctx`; user text already lives in the user-role provider message.
+- Transcript classifier should prefer persisted role/index/kind, with legacy fallback only for old rows.
 
-```clojure
-(get-in ctx [:conversation :user-request])
-```
-
-- Update transcript classifier to prefer persisted message role/index/kind, with fallback for old transcripts:
+New classifier intent:
 
 ```clojure
 (cond
-  (= idx 0) "stable system prompt"
+  (= role "system") "stable system prompt"
   (and (= role "user") first-user?) "current user message"
   (and (= role "user") (str/includes? content ";; ctx =")) "per-iteration trailer"
-  ...)
+  (= role "assistant") "assistant optional replay")
 ```
 
-Keep backwards detection for old `<current_user_message>` only in transcript rendering.
+### 2. Current turn / iteration context
 
-### 2. `<current_turn_context>`
-
-Observed in transcript classification:
+Old fixtures carried separate turn metadata in a wrapper. That is now duplicate state. The trailer should carry prior REPL observations plus fresh ctx:
 
 ```clojure
-(str/includes? content "<current_turn_context>")
+;; iter 1
+(def x (+ 2 2))
+;; => 4
+
+;; ctx =
+{:conversation {:id ...
+                :turn-id ...
+                :iteration {:id ... :position 2}
+                :hints [...]}
+ :llm-provider {...}
+ :project {...}
+ :extensions [...]
+ :defs {...}}
 ```
-
-Old fixture carries:
-
-```text
-<current_turn_context>
-engine_state: turn.iteration/start
-engine_phase: model_think
-conversation_id: conv-fixture
-engine_turn_id: turn-fixture
-engine_turn_position: 1
-current_engine_iteration_id: turn/turn-fix/iteration/1
-engine_iteration_position: 1
-prompt_role: user
-</current_turn_context>
-```
-
-```clojure
-{:conversation {:id ... :turn-id ... :user-request ...}
- :iteration {:id ... :position ...}}
-```
-
-Wrong part: dual source of truth. Model sees `ctx` and tag block. Transcript depends on tag string.
 
 Recommended path:
 
-- Delete `<current_turn_context>` emission if any live path remains.
-- Ensure per-iteration trailer always contains:
-
-```clojure
-;; ctx =
-{...}
-```
-
-- Transcript classifier should detect `;; ctx =` for new messages.
-- Persist explicit message kind later:
+- Delete live emission of legacy turn-context wrappers if any remains.
+- Detect `;; ctx =` for new transcripts.
+- Keep legacy wrapper detection only as fallback for historical transcript rendering.
+- Later persist explicit message kind:
 
 ```clojure
 :llm-message/kind :vis.message/per-iteration-trailer
 ```
 
-Fallback only for old transcripts.
+### 3. Provider failure feedback
 
-### 3. `<error>...</error>` provider failure messages
+Current live path still sends provider errors as markup. Replace it with EDN-ish data.
 
-Observed in `src/com/blockether/vis/internal/loop.clj`:
-
-```clojure
-"<error>Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens).</error>\n"
-"<error>LLM call failed: ...</error>\n"
-```
-
-Why it existed: strong salience. Tell model previous provider call failed.
-
-Wrong part: XML tag inside Clojure loop. Model may copy `<error>` or treat as markup instead of data.
-
-Better comment style:
+Trailer form:
 
 ```clojure
-;; ! provider-error :incomplete-output
-;; ! message Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens).
+;; llm-provider-error =
+{:phase :llm-provider/generate
+ :type :llm-provider/incomplete-output
+ :message "Provider stopped the response as incomplete because output budget was exhausted."
+ :hint "Use compact recovery: one small probe if essential; avoid dumping large maps, file contents, diffs, or repeated diagnostics."}
 ```
 
-Better `ctx` style:
+Next-iteration ctx form when recovery needs structured state:
 
 ```clojure
-{:last-error {:phase :provider-call
-              :type :provider/incomplete-output
-              :message "Provider stopped ..."
-              :hint "Retry with shorter answer or lower output demand."}}
+{:llm-provider {:error {:phase :llm-provider/generate
+                        :type :llm-provider/incomplete-output
+                        :message "Provider stopped ..."
+                        :hint "Use compact recovery."}}}
 ```
 
-Recommendation: use `ctx[:last-error]` if error should affect next model step. Use comment transcript if it is only prior iteration tape.
+Recommendation: use both. Trailer preserves historical evidence; `ctx` gives current structured provider state.
 
-### 4. `<extensions>` / `<turn_system_context>` / `<system_prompt>` docs
+### 4. Extension/system prompt sections
 
-`prompt-block` no longer emits XML. It emits:
+Runtime section headers are comment sections, not XML:
 
 ```text
 ;; -- SYSTEM-PROMPT --
@@ -198,174 +174,90 @@ Recommendation: use `ctx[:last-error]` if error should affect next model step. U
 ;; -- EXTENSIONS --
 ```
 
-But docstrings still say XML-style names.
+Cleanup:
 
-Wrong part: docs stale. Code is mostly okay.
+- Replace stale XML-ish docstrings with “comment section” wording.
+- Rename “block” docs to “section” where they describe prompt-control text.
+- Do not change runtime unless tests prove old tags are emitted.
 
-Recommended cleanup:
+### 5. Project/environment state
 
-- Replace backticked XML names in docstrings with comment-section names.
-- Rename "block" docs to "section".
-- Do not change runtime unless tests prove old tags still emitted.
+Do not fake ctx in comments. If text says `ctx`, it should be real data in `ctx`.
 
-### 5. `<environment>`, `<project-guidance>`, `<scan-warnings>` docs
-
-Foundation environment docs/comments still describe XML blocks. Tests already assert tags are absent:
+Recommended split:
 
 ```clojure
-(expect (not (string/includes? out "<environment>")))
-(expect (not (string/includes? out "<project-guidance")))
-(expect (not (string/includes? out "<scan-warnings")))
+(:project ctx)
+;; => {:root ...
+;;     :guidance {:present? true :source :agents-md :path "AGENTS.md"}
+;;     :warnings [...]}
 ```
 
-Wrong part: comments/docstrings describe retired protocol.
+- Small dynamic facts and warnings: `(:project ctx)`.
+- Long AGENTS.md / CLAUDE.md prose: static prompt comment section.
+- Warning summaries relevant every iteration: `(:project ctx) :warnings`.
 
-Recommended cleanup:
+### 6. Human rendering is allowed
 
-- Rename docs to foundation environment prompt sections.
-- If data is dynamic and useful in code, consider `ctx` keys:
-
-```clojure
-(:runtime ctx)
-(:project-guidance ctx)
-(:scan-warnings ctx)
-```
-
-But beware: large project guidance may bloat every `ctx`. Static extension prompt may be better.
-
-Decision needed:
-
-- Small dynamic state -> `ctx`.
-- Long static prose -> extension prompt section.
-- Warnings relevant every iteration -> maybe `ctx[:warnings]` with small summaries.
-
-### 6. Transcript markdown `<details>`
-
-This is human-facing Markdown, not model prompt protocol:
-
-```html
-<details><summary>LLM messages (...)</summary>
-...
-</details>
-```
-
-Keep. It is output format, not `ctx` replacement target.
-
-### 7. Answer render HTML tags
-
-`render.clj` emits HTML-ish tags for final output targets:
-
-```html
-<pre><code>...</code></pre>
-<blockquote>...</blockquote>
-```
-
-Keep if escaped. Not prompt-control XML.
+Markdown/HTML in final renderers is not prompt-control protocol. Keep human-facing Markdown disclosure and HTML/Telegram output tags if escaped and isolated from provider prompts.
 
 ## Proposed migration order
 
 ### Phase 1 — docs/comments truth pass
 
-Low risk. No runtime change.
+Low risk.
 
-- Update stale references:
-  - `<extensions>` -> extension prompt section
-  - `<environment>` -> foundation environment section
-  - `<scan-warnings>` -> scan warnings section
-  - `<project-guidance>` -> project guidance section
+- Replace stale XML-ish wording with comment-section or ctx-domain wording.
+- Replace fake `ctx.project-guidance` / `ctx.scan-warnings` labels unless backed by real `(:project ctx)` data.
 
 ### Phase 2 — transcript classifier fallback
 
-Keep old transcript support, add new detection.
-
-Current:
-
-```clojure
-(str/includes? content "<current_turn_context>")
-```
-
-Better:
+Keep historical transcript support, but make new path tag-free:
 
 ```clojure
 (or (str/includes? content ";; ctx =")
-    (str/includes? content "<current_turn_context>")) ; legacy fallback
+    (legacy-current-turn-wrapper? content))
 ```
 
-Then change tests to fixture new form.
+Then update fixtures to use comment sections, with one clearly named legacy fallback test.
 
 ### Phase 3 — provider error tags
 
-Replace:
-
-```xml
-<error>...</error>
-```
-
-with comment or EDN. Preferred:
+Replace provider-error markup with:
 
 ```clojure
-;; ! provider-error {:type :provider/incomplete-output
-;;                   :message "..."}
+;; llm-provider-error =
+{:type :llm-provider/incomplete-output
+ :message "..."}
 ```
 
-or in next `ctx`:
+and add `[:llm-provider :error]` to next-iteration ctx where recovery needs structured state.
 
-```clojure
-:last-error {:type ... :message ...}
-```
+### Phase 4 — remove remaining prompt-control wrappers
 
-Need inspect exact control path before editing.
-
-### Phase 4 — remove remaining prompt-control tags
-
-Search target:
+Search target should find only legacy fallback tests/docs and human renderers:
 
 ```bash
-rg -n "<current_user_message>|<current_turn_context>|<error>|</error>|<system_prompt>|<turn_system_context>|<extensions>|<environment>|<scan-warnings>|<project-guidance>" src extensions test
+rg -n "current_user_message|current_turn_context|llm-provider-error|system_prompt|turn_system_context|scan-warnings|project-guidance" src extensions test XML_CTX_REPLACEMENT_AUDIT.md
 ```
 
 Allowed leftovers:
 
-- old transcript fallback tests only, marked `legacy`
-- Markdown/HTML output renderers
-- examples documenting legacy behavior
-
-## Open design questions
-
-1. Should `ctx` gain `:last-error`?
-   - Pro: structured recovery.
-   - Con: errors already visible in iteration transcript comments.
-
-2. Should `ctx` gain environment/project guidance?
-   - Pro: unified state access.
-   - Con: large static docs inside `ctx` every iteration wastes tokens.
-
-3. Should transcripts persist message kind?
-   - Pro: no tag/string sniffing.
-   - Con: DB/schema/API change.
-   - Middle path: infer now, persist later.
-
-4. Should prompt block names use comments forever?
-   - Proposed yes:
-
-```text
-;; -- CURRENT-USER-MESSAGE --
-;; -- EXTENSIONS --
-```
-
-No XML-like brackets.
+- legacy transcript fallback tests, explicitly named `legacy`.
+- human Markdown/HTML rendering code.
+- migration docs naming retired legacy identifiers without showing wrapper syntax.
 
 ## Acceptance criteria
 
 - No model-facing prompt-control XML except legacy transcript fallback.
-- Dynamic per-iteration facts live in `ctx`.
+- Dynamic per-iteration facts live in `ctx` under domain keys: `:conversation`, `:llm-provider`, `:project`.
 - Static extension prose lives in comment sections.
 - Human markdown/HTML rendering remains allowed.
-- Tests assert absence of retired tags in live prompt/trailer paths.
+- Tests assert absence of retired wrappers in live prompt/trailer paths.
 
 ## Next concrete edits
 
-1. Update transcript classification to detect `;; ctx =` and mark old tags legacy.
-2. Update transcript fixtures away from `<current_user_message>` / `<current_turn_context>`.
-3. Replace `<error>...</error>` in loop with comment/EDN form.
-4. Clean stale docstrings/comments for environment/extensions scan warning blocks.
+1. Replace provider-error markup in `loop.clj` with EDN comment text.
+2. Thread `:llm-provider {:error ...}` into `ctx/build` for recovery iterations.
+3. Update transcript fixtures away from legacy current-user/current-turn wrappers.
+4. Clean stale environment/project-guidance/scan-warning docstrings and fake ctx labels.

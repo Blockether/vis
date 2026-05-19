@@ -4,7 +4,7 @@
 
 Document every generic metadata payload in core persistence: where it is written, where it is read, why it exists, and whether that use is correct.
 
-This spec is about metadata ownership. LLM retry/routing behavior lives in `LLM_SPEC.md`; this file only judges whether routing facts belong in metadata. They do not.
+This spec is about metadata ownership. LLM retry/routing behavior is implemented in svar's router and Vis's persistence/TUI layers (see `CHANGELOG.md` for the trace contract); this file only judges whether routing facts belong in metadata. They do not.
 
 ## Rule
 
@@ -237,7 +237,7 @@ Where used:
 
 Judgment: mixed, mostly incorrect.
 
-- `:llm` is core routing/resume state -> columns + `llm_routing_event` table from `LLM_SPEC.md`.
+- `:llm` is core routing/resume state -> dedicated `conversation_turn_iteration.llm_*` columns + `llm_routing_event` table (V1 schema).
 - `:engine-timing` is core diagnostics -> explicit `engine_timing` column is acceptable JSON because timing shape may evolve but ownership is named.
 - `:extensions` is runtime provenance -> separate `runtime_extension_snapshot` rows.
 
