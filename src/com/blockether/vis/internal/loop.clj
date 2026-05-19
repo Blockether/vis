@@ -4008,12 +4008,30 @@
 ;; In-process session cache + channel utilities
 ;; ---------------------------------------------------------------------------
 
-(defonce cache (atom {}))
+(defonce
+  ^{:doc "In-process env cache.
 
-(defn cache-env! [id env]
-  (swap! cache assoc id {:environment env
-                         :lock (java.util.concurrent.locks.ReentrantLock.)})
-  {:id id :environment env})
+   Keyed by session-soul-id (the user-facing session UUID). Under the
+   1:1 session ↔ workspace invariant (PLAN.md decision 1) this key is
+   isomorphic to `(:workspace/id env)` — one cache entry = one
+   session = one workspace = one SCI sandbox lineage.
+
+   PLAN.md decision 9 calls out `workspace_id` as the conceptually
+   correct cache key. We keep session-id as the literal key because
+   every channel caller (TUI screen, CLI, telegram) already holds a
+   session-id; rekeying would force a session→workspace resolve at
+   every lookup with no behavioural change. The semantics are
+   workspace-scoped; the index is session-id-shaped."}
+  cache (atom {}))
+
+(defn cache-env!
+  "Insert `env` into the cache under `session-id`. The cached entry
+   transitively pins a single SCI sandbox to the session's workspace
+   (1:1 — see `cache` docstring)."
+  [session-id env]
+  (swap! cache assoc session-id {:environment env
+                                 :lock (java.util.concurrent.locks.ReentrantLock.)})
+  {:id session-id :environment env})
 
 (defn refresh-cached-routers!
   "Reseat `:router` on every cached env's environment map.
