@@ -4,9 +4,12 @@
 
 ### Backlog
 
-- T-001
 - T-002
 - T-003
+
+### Done
+
+- T-001
 
 ### Carol
 
@@ -26,22 +29,11 @@
 
 ## Tasks
 
-### T-001 — Remove XML tags and canonicalize `ctx`
+### T-001 — Remove prompt-control tag protocol and canonicalize `ctx`
 
-**Status:** `backlog`
+**Status:** `done`
 
-**Intro:** Replace XML-tagged context prompt shape with one canonical `ctx` model across Vis.
-
-**Rationale:** Prompt context should have one source of truth. `ctx` should be canonical, routed through Vart, and used as foundation for next turns. Prompt must not imply separate `previous turn context` path or competing context concepts.
-
-**Acceptance criteria:**
-
-- XML tags removed from context prompt surfaces.
-- Only canonical `ctx` concept remains in Vis prompt/context flow.
-- All context flows through Vart path.
-- Prompt copy states clearly: current `ctx` is foundation for next turns.
-- No `previous turn context` prompt concept remains unless explicitly mapped into canonical `ctx`.
-- Regression test or diagnostic verifies canonical `ctx` construction.
+**Outcome:** Prompt-control tag protocol fully retired. Per-turn dynamic state lives in `ctx` under `:session` / `:llm-provider` / `:project` / `:extensions` / `:defs`. Static prose lives in `;; -- TAG --` comment sections. Per-iteration trailer carries prior REPL observations plus `;; ctx = <edn>` for fresh state. Provider failures emit `;; llm-provider-error = <edn>` and thread `[:llm-provider :error]` into next-iteration `ctx`. Regression tests in `test/com/blockether/vis/internal/ctx_test.clj` and `extensions/common/vis-foundation/test/.../transcript_test.clj` assert the retired wrappers stay out of live prompt/trailer paths.
 
 ### T-002 — Strengthen tool prompts from codebase source
 

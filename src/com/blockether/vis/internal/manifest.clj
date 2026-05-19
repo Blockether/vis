@@ -76,13 +76,13 @@
   ;; ::ext-load-failure entries collected during the most recent
   ;; classpath scan. Each entry: {:source :reason :path :extension-id
   ;; :extension-ns :class}. `:source` is the literal keyword
-  ;; `:extension-load` so the foundation `<scan-warnings>` block can
+  ;; `:extension-load` so the foundation scan-warnings surface can
   ;; tag every line with its origin and the user reads "the
   ;; extension-load-failure warnings come from manifest discovery,
   ;; not from runtime features". Public via `load-failures` (read-only); cleared
   ;; on every `scan!`. The atom is the single point that lets us
-  ;; surface the failure to TWO consumers - the system prompt's
-  ;; `<scan-warnings>` block (so the LLM sees "foundation extension
+  ;; surface the failure to TWO consumers - the per-turn
+  ;; `(:project ctx) :warnings` slice (so the LLM sees "foundation extension
   ;; failed; v/cat will be unbound") and the launcher's stderr banner
   ;; (so the user running `bin/vis` notices before they spend an
   ;; iteration loop on phantom errors). Pre-fix: `discover-extension-failed`
@@ -98,8 +98,9 @@
    merged manifest map.
 
    Side effect: appends every load-failure entry to
-   `load-failures-atom` so consumers (foundation `<scan-warnings>`
-   block, startup launcher banner) can surface them. The atom is
+   `load-failures-atom` so consumers (foundation scan-warnings
+   surface in `(:project ctx) :warnings`, startup launcher banner)
+   can surface them. The atom is
    reset to `[]` on entry so consecutive scans don't compound stale
    warnings."
   []
@@ -216,7 +217,7 @@
    loaded cleanly.
 
    The shape of each entry matches what
-   `vis-foundation`'s `<scan-warnings>` renderer expects so callers
-   can splice the result straight into the user-facing block."
+   `vis-foundation`'s scan-warnings renderer expects so callers can
+   splice the result straight into `(:project ctx) :warnings`."
   []
   @load-failures-atom)

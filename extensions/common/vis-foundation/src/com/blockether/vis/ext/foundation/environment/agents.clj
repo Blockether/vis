@@ -1,8 +1,8 @@
 (ns com.blockether.vis.ext.foundation.environment.agents
-  "Project-guidance discovery: reads `<repo>/AGENTS.md` (preferred)
-   or `<repo>/CLAUDE.md` (fallback) and exposes its contents as the
-   data behind `(vis/main-agent-instructions)` plus the
-   `<project-guidance>` block in the system prompt.
+  "Project-guidance discovery: reads `AGENTS.md` (preferred) or
+   `CLAUDE.md` (fallback) at the repo root and exposes its contents
+   as the data behind `(vis/main-agent-instructions)` plus
+   `(:project ctx) :guidance` in the per-iteration `ctx` snapshot.
 
    Strict precedence: AGENTS.md wins; CLAUDE.md is only consulted
    when AGENTS.md is absent. No user-global merge - the rules a

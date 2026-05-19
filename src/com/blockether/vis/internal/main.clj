@@ -2239,9 +2239,9 @@
 
    Prints a stderr banner enumerating every extension namespace
    whose `(require)` failed during discovery. The same warnings are
-   also fed into the per-turn `<scan-warnings>` system-prompt block
-   by `vis-foundation/combined-scan-warnings`, so both the user (at
-   the terminal) and the LLM (in its prompt) see the failure
+   also fed into the per-turn `(:project ctx) :warnings` slice via
+   `vis-foundation/combined-scan-warnings`, so both the user (at
+   the terminal) and the LLM (reading `ctx`) see the failure
    immediately instead of bouncing off `Unable to resolve symbol`
    for an entire session."
   []
