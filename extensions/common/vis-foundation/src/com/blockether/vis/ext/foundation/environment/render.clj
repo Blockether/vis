@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation.environment.render
-  "Render foundation environment prompt fragments as Clojure data comments. No XML.")
+  "Build compact foundation environment data for `ctx`. No prompt labels.")
 
 (set! *warn-on-reflection* true)
 
@@ -32,25 +32,17 @@
                                                     :behind :stash-count])
                                (take 10 (:repositories repositories))))))))
 
-(defn render
-  "Build a model-facing Clojure data snapshot of runtime environment."
-  [snapshot]
-  (str ";; ctx.runtime =\n"
-    (pr-str (compact-runtime snapshot))
-    "\n"))
-
-(defn format-project-guidance-block
-  "Render project guidance as comments."
-  [{:keys [found? source path content]}]
-  (when found?
-    (str ";; ctx.project-guidance = "
-      (pr-str {:source source :path path})
-      "\n"
-      content
-      (when-not (.endsWith ^String content "\n") "\n"))))
-
-(defn format-scan-warnings-block
-  "Render scan warnings as comments."
-  [warnings]
-  (when (seq warnings)
-    (str ";; ctx.scan-warnings = " (pr-str (vec warnings)))))
+(defn project-context
+  "Build foundation-owned `(:project ctx)` data from runtime snapshot, project
+   guidance, and scan warnings."
+  [snapshot guidance warnings]
+  (let [runtime (compact-runtime snapshot)
+        root    (or (get-in runtime [:git :root])
+                  (get-in runtime [:host :cwd]))
+        guidance* (when (:found? guidance)
+                    (select-keys guidance [:source :path :content]))
+        warnings* (vec (or warnings []))]
+    {:project
+     (cond-> (assoc runtime :root root)
+       guidance* (assoc :guidance guidance*)
+       (seq warnings*) (assoc :warnings warnings*))}))

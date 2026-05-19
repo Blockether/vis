@@ -2193,16 +2193,34 @@
     (and (contains? stream-truncated-types (:type data))
       (zero? (or (:content-acc-len data) 0)))))
 
+(defn- llm-provider-error-context
+  [iteration iteration-error-data]
+  (let [output-overflow? (stream-output-overflow? iteration-error-data)
+        message (if output-overflow?
+                  "Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens)."
+                  (str "LLM call failed: " (:message iteration-error-data)))
+        hint (if output-overflow?
+               "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
+               "Adjust your approach or finish with `(done ...)` using only observed evidence.")]
+    (cond-> {:phase     :llm-provider/generate
+             :type      (if output-overflow?
+                          :llm-provider/output-budget-exhausted
+                          :llm-provider/call-failed)
+             :iteration (inc (long iteration))
+             :message   message
+             :hint      hint}
+      (and (not output-overflow?) (:type iteration-error-data))
+      (assoc :source-type (:type iteration-error-data)))))
+
 (defn- iteration-error-feedback
   [iteration iteration-error-data user-request]
-  (if (stream-output-overflow? iteration-error-data)
-    (str "[Iteration " (inc (long iteration)) "]\n"
-      "<error>Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens).</error>\n"
-      "Recovery policy: do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics.\n"
-      "Original request: " user-request)
-    (str "[Iteration " (inc iteration) "]\n"
-      "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
-      "Adjust your approach or emit :final with what you have.")))
+  (let [llm-provider-error (llm-provider-error-context iteration iteration-error-data)]
+    (str "[Iteration " (:iteration llm-provider-error) "]\n"
+      ";; llm-provider-error =\n"
+      (pr-str llm-provider-error)
+      "\n"
+      (when (stream-output-overflow? iteration-error-data)
+        (str "Original request: " user-request)))))
 
 (def ^:private CHAT_ERROR_BODY_RENDER_CHARS
   "Cap on raw upstream HTTP body chars surfaced in the chat error
@@ -2717,6 +2735,7 @@
     (env/bind-and-bump! environment 'ctx
       (vctx/build {:environment environment
                    :session session-base
+                   :extension-ctx (extension/ctx-contributions environment active-exts)
                    :extensions extensions-snapshot}))
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-session-turn-id-atom environment)] (reset! a session-turn-id))
@@ -2793,7 +2812,7 @@
                             FRESH_ITER_CARRY
                             (when (seq seeded-trailer-iters)
                               {:trailer-iters seeded-trailer-iters}))]
-          (let [{:keys [iteration messages trace trailer-iters]} loop-state]
+          (let [{:keys [iteration messages trace trailer-iters llm-provider]} loop-state]
             (when current-iteration-atom (reset! current-iteration-atom (inc (long iteration))))
             (cond
               (when cancel-atom @cancel-atom)
@@ -2812,6 +2831,12 @@
                                                               :reasoning reasoning-level
                                                               :requested-reasoning raw-reasoning-level})
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
+                    llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
+                                                              (some-> (:name pre-resolved-model) str))
+                                                  :routing  (cond-> {:fallback? false}
+                                                              (seq routing) (assoc :request routing))}
+                                           (:error llm-provider)
+                                           (assoc :error (:error llm-provider)))
                     iteration-position (inc (long iteration))
                     current-session (session-snapshot)
                     iteration-hints (collect-iteration-start-hints environment active-exts
@@ -2830,6 +2855,8 @@
                                        :iteration   {:id       (some-> (:current-iteration-id-atom environment) deref)
                                                      :position iteration-position}
                                        :hints       iteration-hints
+                                       :llm-provider llm-provider-context
+                                       :extension-ctx (extension/ctx-contributions environment active-exts)
                                        :extensions  extensions-snapshot})
                     _ (env/bind-and-bump! environment 'ctx current-ctx-map)
                     iteration-context (vctx/render-iteration-trailer
@@ -2917,7 +2944,8 @@
                                            :trace trace :iteration-count iteration}
                                      (finalize-cost))]
                         result))
-                    (let [error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
+                    (let [llm-provider-error (llm-provider-error-context iteration iteration-error-data)
+                          error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
                           trace-entry {:iteration iteration :error iteration-error-data :final? false}
                           empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
                                             (:reasoning (:data iteration-error-data)))
@@ -2967,6 +2995,7 @@
                         (recur (assoc loop-state
                                  :iteration (inc iteration)
                                  :messages (conj messages {:role "user" :content error-feedback})
+                                 :llm-provider {:error llm-provider-error}
                                  :trace (conj trace trace-entry))))))
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
@@ -3116,7 +3145,7 @@
                                                   ;; `:preserved-thinking/replay? false`.
                                                 :assistant-message (:assistant-message iteration-result)
                                                 :preserved-thinking/replay? true}])]
-                            (recur (merge loop-state
+                            (recur (merge (dissoc loop-state :llm-provider)
                                      {:iteration          (inc iteration)
                                       :messages           messages
                                       :trace              (conj trace trace-entry)

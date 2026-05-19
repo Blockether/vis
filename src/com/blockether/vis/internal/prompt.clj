@@ -62,14 +62,14 @@
   "Initial provider messages for one turn. Deliberately excludes full prior
    dialog transcript: Vis state flows through persisted iterations,
    defs, and DB-backed tools. The current user message is tagged as
-   `current_user_message`.
+   `CURRENT-USER-MESSAGE`.
 
    One full previous-turn context block may be prepended so short follow-ups
    can inspect the prior exchange without replaying the whole session."
   [{:keys [stable-prompt-messages initial-user-content previous-turn-context]}]
   (let [previous-block (previous-turn-context-block previous-turn-context)
         user-block     (when initial-user-content
-                         (prompt-block "current_user_message" initial-user-content))]
+                         (prompt-block "current-user-message" initial-user-content))]
     (vec
       (concat
         (or stable-prompt-messages [])
@@ -83,7 +83,7 @@
 (def ^:private CORE_SYSTEM_PROMPT
   (extension/normalize-prompt-text
     "
-    Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL. You operate in the context of a single session.
+    Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL.
     Session:
      N TURNS - each turn has one user message and one (done [:ir ...]) assistant answer.
        K ITERATIONS - to construct the answer YOU must conclude your reasoning in the REPL.
@@ -123,7 +123,7 @@
       (:session ctx)  -> {:id :title :turn-id :iteration {:id :position}
                                :hints [{:id :importance :text :satisfy-with}]}
       (:llm-provider ctx)  -> optional {:selected :actual :routing :error}
-      (:project ctx)       -> optional {:root :warnings ...}
+      (:project ctx)       -> optional {:root :host :git :languages :monorepo :repositories :guidance :warnings}
       (:extensions ctx)    -> vec of active extension summaries {:name :alias :symbols ...}
       (:defs ctx)          -> array-map (newest first): {sym {:doc <str?> :shape <malli>}}
     Current user request is not duplicated in ctx; read the `CURRENT-USER-MESSAGE`
@@ -137,8 +137,8 @@
     mentioned in final answers.
 
     Engine-owned control forms are bare symbols: `(done ...)`,
-    `(set-session-title! ...)`, `(satisfy-hint! ...)`. Never
-    namespace-qualify them; they are not extension tools.
+    `(set-session-title! ...)`, `(satisfy-hint! ...)`. Never namespace-qualify
+    them; they are not extension tools.
 
     `ctx` is a snapshot built BEFORE this iteration runs; new defs and satisfied
     hints land starting NEXT iteration.

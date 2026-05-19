@@ -8,7 +8,7 @@
                     :iteration {:id :position}
                     :hints [{:id :importance :text :satisfy-with}]}
      :llm-provider {:selected :actual :routing :error}
-     :project      {:root :warnings}
+     :project      {:root :host :git :languages :monorepo :repositories :guidance :warnings}
      :extensions   [{:namespace :alias :doc :kind :registry-id :symbols}]
      :defs         {sym {:doc <string?> :shape <malli|fn-shape>}}
 
@@ -155,22 +155,25 @@
       `:user-request` is stripped; current user text lives in the provider
       message, not duplicated in ctx.
    `:llm-provider` — optional provider/model routing and last-error state.
-   `:project`      — optional project facts and warnings.
+   `:project`      — optional project/runtime facts, guidance, and warnings.
+   `:extension-ctx` — optional structured ctx data from active extensions.
    `:extensions`   — compact active extension summary from prompt/extensions-snapshot."
-  [{:keys [environment session iteration hints llm-provider project extensions]}]
+  [{:keys [environment session iteration hints llm-provider project extension-ctx extensions]}]
   (let [iteration* (prune (or iteration {}))
         hints* (vec (or hints []))
+        extension-ctx* (prune (or extension-ctx {}))
         session* (cond-> (dissoc (or session {}) :user-request)
                    (seq iteration*) (assoc :iteration iteration*)
                    (seq hints*)     (assoc :hints hints*))]
     (prune
-      {:session (prune session*)
-       :llm-provider (prune (or llm-provider {}))
-       :project      (prune (or project {}))
-       :extensions   (vec (or extensions []))
-       :defs         (or (build-defs (:sci-ctx environment)
-                           (:initial-ns-keys environment))
-                       {})})))
+      (merge extension-ctx*
+        {:session (prune session*)
+         :llm-provider (prune (or llm-provider {}))
+         :project      (prune (merge (:project extension-ctx*) (or project {})))
+         :extensions   (vec (or extensions []))
+         :defs         (or (build-defs (:sci-ctx environment)
+                             (:initial-ns-keys environment))
+                         {})}))))
 
 (defn forget!
   "Drop the shape + order caches for a sci-ctx."

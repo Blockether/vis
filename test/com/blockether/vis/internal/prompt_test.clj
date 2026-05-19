@@ -24,7 +24,7 @@
     (let [text (prompt/build-system-prompt {})]
       (expect (str/includes? text "Engine-owned control forms are bare symbols"))
       (expect (str/includes? text "(set-session-title! ...)"))
-      (expect (str/includes? text "Never namespace-qualify them")))))
+      (expect (str/includes? text "Never namespace-qualify")))))
 
 (defdescribe extension-activation-test
   (it "assembles from precomputed active extensions without activating again"

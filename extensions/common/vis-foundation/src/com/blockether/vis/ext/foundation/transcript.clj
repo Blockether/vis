@@ -669,11 +669,9 @@
     (cond
       (= "system" role) "stable system prompt"
       (and (= "user" role)
-        (or (str/includes? content ";; ctx =")
-          (str/includes? content "<current_turn_context>"))) "per-iteration trailer"
+        (str/includes? content ";; ctx =")) "per-iteration trailer"
       (and (= "user" role)
-        (or (str/includes? content ";; -- CURRENT-USER-MESSAGE --")
-          (str/includes? content "<current_user_message>"))) "current user message"
+        (str/includes? content ";; -- CURRENT-USER-MESSAGE --")) "current user message"
       (= "assistant" role) "assistant optional replay"
       :else nil)))
 
