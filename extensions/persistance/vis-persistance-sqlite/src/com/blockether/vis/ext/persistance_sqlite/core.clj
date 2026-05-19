@@ -665,6 +665,11 @@
   "Create session_soul + initial session_state (version 0).
    Returns the session-soul UUID.
 
+   Required opt: `:workspace-id` — session_state.workspace_id is NOT NULL
+   after V1, enforcing the 1:1 invariant (PLAN.md §1 decision 1). The
+   caller (loop/create-environment) calls `workspace/ensure-trunk!` to
+   mint a trunk workspace before invoking this fn.
+
    Metadata layout:
      session_soul.metadata  -> {:channel :tui, :external-id \"...\"}
      session_state.metadata -> {:system-prompt \"...\", :provider :openai,
@@ -674,7 +679,11 @@
    `:provider` is stored as a keyword (e.g. `:openai`, `:github-copilot`)
    so the snapshot is a faithful round-trip of the provider id; the
    reader (`db-get-session`) re-keywordizes it on the way back."
-  [db-info {:keys [channel external-id title system-prompt provider model]}]
+  [db-info {:keys [channel external-id title system-prompt provider model
+                   workspace-id]}]
+  (when-not workspace-id
+    (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
+             {:type :persistance/missing-workspace-id})))
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
@@ -691,6 +700,7 @@
             {:insert-into :session_state
              :values [{:id                   (str state-id)
                        :session_soul_id (str soul-id)
+                       :workspace_id    (->ref workspace-id)
                        :title                title
                        :version              0
                        :metadata             (->json (cond-> {:system-prompt (or system-prompt "")
@@ -915,8 +925,16 @@
    parent_state_id pointing to the current latest state.
    The forked state gets a '(fork)' suffix when no title is supplied.
    The parent state gets a '[forked]' suffix to mark the divergence point.
-   Returns the new state UUID."
-  [db-info session-id {:keys [system-prompt provider model title]}]
+   Returns the new state UUID.
+
+   Required opt: `:workspace-id` — every session_state must be pinned to
+   exactly one workspace (1:1, PLAN.md decision 1). Callers (screen
+   handlers, cli) call `workspace/spawn-branch!` or
+   `workspace/ensure-trunk!` first and pass the returned id here."
+  [db-info session-id {:keys [system-prompt provider model title workspace-id]}]
+  (when-not workspace-id
+    (throw (ex-info "db-fork-session! requires :workspace-id (1:1 invariant)"
+             {:type :persistance/missing-workspace-id})))
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
@@ -933,6 +951,7 @@
                  :values [{:id                   (str new-id)
                            :session_soul_id soul-id-s
                            :parent_state_id      (:id current)
+                           :workspace_id         (->ref workspace-id)
                            :title                fork-title
                            :version              new-version
                            :metadata             (->json
