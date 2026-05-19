@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation.transcript
-  "Full conversation transcript - DATA first, presentation second.
+  "Full session transcript - DATA first, presentation second.
 
    `transcript` returns one canonical Clojure map with every turn,
    every iteration, every executed block plus the LLM-side context
@@ -12,23 +12,23 @@
    analytics extension consumes the same shape.
 
    Lives in foundation because it's an introspection surface, not host
-   plumbing. The sandbox-visible public surface is `(v/conversation-state)`
-   for data and `(v/conversation-report)` for Markdown; this namespace
+   plumbing. The sandbox-visible public surface is `(v/session-state)`
+   for data and `(v/session-report)` for Markdown; this namespace
    owns the transcript portion behind that deeper interface.
 
    Public Clojure surface:
 
-     `(transcript      db-info conv-id)`  -> transcript data map
+     `(transcript      db-info session-id)`  -> transcript data map
      `(transcript->md  data)`             -> Markdown string
-     `(transcript-md   db-info conv-id)`  -> DB lookup + Markdown string
+     `(transcript-md   db-info session-id)`  -> DB lookup + Markdown string
 
-     `cli-command` mounts `vis extensions reproduction <CONVERSATION-ID>`
+     `cli-command` mounts `vis extensions reproduction <SESSION-ID>`
      through `:ext/cli`, keeping extension-owned commands under
      `vis extensions`.
 
    Canonical data shape:
 
-     {:conversation {:id :title :channel :model :provider :created-at}
+     {:session {:id :title :channel :model :provider :created-at}
       :totals       {:turns N :iterations N
                      :tokens {:input :output :reasoning :cached}
                      :cost-usd D}
@@ -91,10 +91,11 @@
             (-> a
               (update-in [:tokens :input]     + (long   (or (:input-tokens it) 0)))
               (update-in [:tokens :output]    + (long   (or (:output-tokens it) 0)))
-              (update-in [:tokens :reasoning] + (long   (or (:reasoning-tokens it) 0)))
-              (update-in [:tokens :cached]    + (long   (or (:cached-tokens it) 0)))
-              (update    :cost-usd            + (double (or (:cost-usd it) 0.0)))))
-    {:tokens {:input 0 :output 0 :reasoning 0 :cached 0}
+              (update-in [:tokens :reasoning]     + (long   (or (:reasoning-tokens it) 0)))
+              (update-in [:tokens :cached]        + (long   (or (:cached-tokens it) 0)))
+              (update-in [:tokens :cache-created] + (long   (or (:cache-created-tokens it) 0)))
+              (update    :cost-usd                + (double (or (:cost-usd it) 0.0)))))
+    {:tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
      :cost-usd 0.0}
     iterations))
 
@@ -125,10 +126,10 @@
       (assoc :failure-count (count (filter :error blocks))))))
 
 (defn- build-turn
-  "Pure projection: one conversation_turn_soul row + its iterations -> the
+  "Pure projection: one session_turn_soul row + its iterations -> the
    turn-shaped data map the public `transcript` returns."
   [db-info turn]
-  (let [raw-iters (try (vis/db-list-conversation-turn-iterations db-info (:id turn))
+  (let [raw-iters (try (vis/db-list-session-turn-iterations db-info (:id turn))
                     (catch Throwable _ []))
         iters     (mapv (partial enrich-iteration db-info) raw-iters)
         totals    (iteration-rollup iters)
@@ -148,7 +149,7 @@
       model          (assoc :model model)
       (:answer turn) (assoc :answer (:answer turn)))))
 
-(defn- conversation-totals
+(defn- session-totals
   "Sum tokens + cost + iteration counts across every turn."
   [turns]
   (reduce (fn [a t]
@@ -156,20 +157,21 @@
               (update :iterations + (long (or (:iteration-count t) 0)))
               (update-in [:tokens :input]     + (long   (or (:input     (:tokens t)) 0)))
               (update-in [:tokens :output]    + (long   (or (:output    (:tokens t)) 0)))
-              (update-in [:tokens :reasoning] + (long   (or (:reasoning (:tokens t)) 0)))
-              (update-in [:tokens :cached]    + (long   (or (:cached    (:tokens t)) 0)))
-              (update :cost-usd               + (double (or (:cost-usd  t) 0.0)))))
+              (update-in [:tokens :reasoning]     + (long   (or (:reasoning     (:tokens t)) 0)))
+              (update-in [:tokens :cached]        + (long   (or (:cached        (:tokens t)) 0)))
+              (update-in [:tokens :cache-created] + (long   (or (:cache-created (:tokens t)) 0)))
+              (update :cost-usd                   + (double (or (:cost-usd      t) 0.0)))))
     {:turns      (count turns)
      :iterations 0
-     :tokens     {:input 0 :output 0 :reasoning 0 :cached 0}
+     :tokens     {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
      :cost-usd   0.0}
     turns))
 
 (def ^:private transcript-known-channels
   [:tui :telegram :cli])
 
-(defn- resolve-conversation-ref
-  "Resolve one transcript/conversation reference to the canonical UUID.
+(defn- resolve-session-ref
+  "Resolve one transcript/session reference to the canonical UUID.
 
    Accepted shapes:
      - UUID           => returned only when it exists
@@ -177,25 +179,25 @@
      - unique prefix  => scanned across every channel and expanded
 
    Returns nil on miss or ambiguous prefix. Unlike
-   `db-resolve-conversation-id`, this helper is existence-aware - a
+   `db-resolve-session-id`, this helper is existence-aware - a
    well-formed but unknown UUID string must not masquerade as a real
-   conversation."
-  [db-info conversation-ref]
+   session."
+  [db-info session-ref]
   (letfn [(existing-id [id]
-            (when (and id (try (vis/db-get-conversation db-info id)
+            (when (and id (try (vis/db-get-session db-info id)
                             (catch Throwable _ nil)))
               id))]
     (cond
-      (nil? conversation-ref) nil
-      (uuid? conversation-ref) (existing-id conversation-ref)
+      (nil? session-ref) nil
+      (uuid? session-ref) (existing-id session-ref)
       :else
-      (let [s (str conversation-ref)]
-        (or (existing-id (try (vis/db-resolve-conversation-id db-info s)
+      (let [s (str session-ref)]
+        (or (existing-id (try (vis/db-resolve-session-id db-info s)
                            (catch Throwable _ nil)))
           (let [matches (->> transcript-known-channels
-                          (mapcat #(or (vis/db-list-conversations db-info %) []))
-                          (filter (fn [conversation]
-                                    (str/starts-with? (str (:id conversation)) s)))
+                          (mapcat #(or (vis/db-list-sessions db-info %) []))
+                          (filter (fn [session]
+                                    (str/starts-with? (str (:id session)) s)))
                           vec)]
             (when (= 1 (count matches))
               (:id (first matches)))))))))
@@ -459,31 +461,31 @@
       turns)))
 
 (defn transcript
-  "Full conversation transcript as one Clojure data map. See ns
+  "Full session transcript as one Clojure data map. See ns
    docstring for the canonical shape. Returns nil when the
-   conversation id does not resolve.
+   session id does not resolve.
 
-   `conversation-id` accepts either the canonical UUID or an
+   `session-id` accepts either the canonical UUID or an
    unambiguous string prefix.
 
    Pure with respect to the database - no writes, no logging.
    `(:db-info env)` is the standard handle; the SCI-bound symbol
    variant uses the live env automatically."
-  [db-info conversation-id]
-  (when-let [resolved-id (resolve-conversation-ref db-info conversation-id)]
-    (when-let [conv (try (vis/db-get-conversation db-info resolved-id)
-                      (catch Throwable _ nil))]
-      (let [turn-rows (try (vis/db-list-conversation-turns db-info resolved-id)
+  [db-info session-id]
+  (when-let [resolved-id (resolve-session-ref db-info session-id)]
+    (when-let [session (try (vis/db-get-session db-info resolved-id)
+                         (catch Throwable _ nil))]
+      (let [turn-rows (try (vis/db-list-session-turns db-info resolved-id)
                         (catch Throwable _ []))
             turns     (mapv (partial build-turn db-info) turn-rows)
-            totals    (conversation-totals turns)
+            totals    (session-totals turns)
             calls     (transcript-calls turns)]
-        {:conversation     (cond-> {:id         resolved-id
-                                    :title      (:title conv)
-                                    :channel    (:channel conv)
-                                    :model      (:model conv)
-                                    :created-at (:created-at conv)}
-                             (:provider conv) (assoc :provider (:provider conv)))
+        {:session     (cond-> {:id         resolved-id
+                               :title      (:title session)
+                               :channel    (:channel session)
+                               :model      (:model session)
+                               :created-at (:created-at session)}
+                        (:provider session) (assoc :provider (:provider session)))
          :totals           totals
          :dialog           (dialog-events turns)
          :calls            calls
@@ -519,13 +521,15 @@
     (String/format Locale/US "$%.4f" (object-array [v]))))
 
 (defn- format-tokens
-  [{:keys [input output reasoning cached]}]
+  [{:keys [input output reasoning cached cache-created]}]
   (let [base (str (long (or input 0)) "/" (long (or output 0)))
         suff (cond-> []
                (and reasoning (pos? (long reasoning)))
                (conj (str "r=" reasoning))
                (and cached (pos? (long cached)))
-               (conj (str "c=" cached)))]
+               (conj (str "c=" cached))
+               (and cache-created (pos? (long cache-created)))
+               (conj (str "w=" cache-created)))]
     (if (seq suff)
       (str base " (" (str/join ", " suff) ")")
       base)))
@@ -565,7 +569,7 @@
                            :code (when-not (str/blank? (str source))
                                    (render-fenced "clojure"
                                      (truncate source markdown-code-preview-chars)))
-                           :title (str "_conversation title:_ `" (or value "") "`\n")
+                           :title (str "_session title:_ `" (or value "") "`\n")
                            :answer-ref nil
                            nil))
                    render-segments))]
@@ -708,7 +712,7 @@
   "Flatten transcript turns/iterations into compact raw-response
    diagnostic rows. Rows exist only when the iteration has persisted
    raw-response or executable-block forensic data. This is presentation
-   support for `v/conversation-report`; `v/conversation-state` builds its public convenience
+   support for `v/session-report`; `v/session-state` builds its public convenience
    view from the same underlying transcript fields."
   [turns]
   (vec
@@ -763,7 +767,7 @@
 (defn- render-raw-diagnostics
   "Compact raw LLM response diagnostics for the whole report. The
    table is always small; bounded previews live in collapsed details
-   blocks so `v/conversation-report` answers the first diagnostic question without
+   blocks so `v/session-report` answers the first diagnostic question without
    forcing users into logs or SQLite."
   [turns]
   (let [rows (raw-diagnostic-rows turns)]
@@ -800,12 +804,12 @@
 
 (defn- prompt-report-heading
   [data report-title]
-  ;; Per PLAN §2.9 + §5.1: header NEVER prints the conversation UUID.
+  ;; Per PLAN §2.9 + §5.1: header NEVER prints the session UUID.
   ;; Title is the user-facing identifier; UUID stays programmatic-only
   ;; (introspection callers read `:id` directly from the data map).
-  (let [{:keys [channel provider model created-at]} (:conversation data)
-        conv-title (get-in data [:conversation :title])]
-    (str "# " report-title (when conv-title (str " - " conv-title)) "\n\n"
+  (let [{:keys [channel provider model created-at]} (:session data)
+        session-title (get-in data [:session :title])]
+    (str "# " report-title (when session-title (str " - " session-title)) "\n\n"
       "- **Channel:** " (or (some-> channel name) "-") "\n"
       "- **Provider/model:** " (or (some-> provider name) "-") "/" (or model "-") "\n"
       "- **Created:** " (or created-at "-") "\n\n")))
@@ -904,7 +908,7 @@
 
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted on
-   `conversation_turn_state.metadata.answer`. Rendered after every iteration so
+   `session_turn_state.metadata.answer`. Rendered after every iteration so
    the reader sees the trajectory that led to it. nil/blank -> nothing
    emitted."
   [answer]
@@ -944,14 +948,14 @@
     (render-final-answer answer)
     "\n"))
 
-(defn- render-header [{:keys [conversation totals]}]
+(defn- render-header [{:keys [session totals]}]
   (str
-    "# Diagnostic report" (when-let [t (:title conversation)] (str " - " t)) "\n"
+    "# Diagnostic report" (when-let [t (:title session)] (str " - " t)) "\n"
     "\n"
-    "- **Title:** "    (or (:title    conversation) "-") "\n"
-    "- **Channel:** "  (or (some-> (:channel conversation) name) "-") "\n"
-    "- **Model:** "    (or (:model    conversation) "-") "\n"
-    "- **Created:** "  (or (:created-at conversation) "-") "\n"
+    "- **Title:** "    (or (:title    session) "-") "\n"
+    "- **Channel:** "  (or (some-> (:channel session) name) "-") "\n"
+    "- **Model:** "    (or (:model    session) "-") "\n"
+    "- **Created:** "  (or (:created-at session) "-") "\n"
     "- **Total turns:** "      (:turns totals) "\n"
     "- **Total iterations:** " (:iterations totals) "\n"
     "- **Total cost (USD):** " (format-cost-usd (:cost-usd totals)) "\n"
@@ -969,8 +973,8 @@
     "\n"))
 
 (defn- render-dialog-md
-  [{:keys [conversation dialog]}]
-  (str "# Dialog" (when-let [t (:title conversation)] (str " - " t)) "\n\n"
+  [{:keys [session dialog]}]
+  (str "# Dialog" (when-let [t (:title session)] (str " - " t)) "\n\n"
     (if (seq dialog)
       (apply str (map render-dialog-message dialog))
       "_No dialog messages._\n")))
@@ -1006,19 +1010,19 @@
      (render-full-md data))))
 
 (defn transcript-md
-  "Render the conversation as Markdown. Single transformation over
+  "Render the session as Markdown. Single transformation over
    `transcript`'s data. Returns a string; returns
-   `\"Conversation not found: <id>\\n\"` (no throw) on a missing id so
+   `\"Session not found: <id>\\n\"` (no throw) on a missing id so
    shell pipelines stay clean."
-  ([db-info conversation-id]
-   (transcript-md db-info conversation-id {:mode :full}))
-  ([db-info conversation-id opts]
-   (if-let [data (transcript db-info conversation-id)]
+  ([db-info session-id]
+   (transcript-md db-info session-id {:mode :full}))
+  ([db-info session-id opts]
+   (if-let [data (transcript db-info session-id)]
      (transcript->md data opts)
-     (str "Conversation not found: " conversation-id "\n"))))
+     (str "Session not found: " session-id "\n"))))
 
 ;; =============================================================================
-;; CLI command - `vis extensions reproduction <CONVERSATION-ID>`. Foundation owns
+;; CLI command - `vis extensions reproduction <SESSION-ID>`. Foundation owns
 ;; it, mounted through `:ext/cli` rather than direct global registration.
 ;; =============================================================================
 
@@ -1028,7 +1032,7 @@
   (.flush ^java.io.PrintStream vis/original-stdout))
 
 (defn- reproduction-usage! []
-  (println-original! "Usage: vis extensions reproduction <CONVERSATION-ID>")
+  (println-original! "Usage: vis extensions reproduction <SESSION-ID>")
   (println-original! "")
   (println-original! "Prints one bounded Markdown diagnostic artifact:")
   (println-original! "  every turn, iteration, executed code preview,")
@@ -1036,7 +1040,7 @@
   (println-original! "")
   (println-original! "No mode flags are supported. The artifact is bounded by default.")
   (println-original! "")
-  (println-original! "List conversations with:  vis conversations"))
+  (println-original! "List sessions with:  vis sessions"))
 
 (defn- parse-reproduction-residual
   [residual]
@@ -1045,16 +1049,16 @@
               (cond
                 (:error acc) acc
                 (str/starts-with? s "--") (assoc acc :error (str "Flags are not supported: " s))
-                (:conversation-id acc) (assoc acc :error (str "Unexpected extra argument: " s))
-                :else (assoc acc :conversation-id (str/trim s)))))
+                (:session-id acc) (assoc acc :error (str "Unexpected extra argument: " s))
+                :else (assoc acc :session-id (str/trim s)))))
     {}
     residual))
 
 (defn- cli-reproduction-run!
   [_parsed residual]
   (vis/init-cli!)
-  (let [{:keys [conversation-id error]} (parse-reproduction-residual residual)
-        cid-input (some-> conversation-id str/trim not-empty)]
+  (let [{:keys [session-id error]} (parse-reproduction-residual residual)
+        cid-input (some-> session-id str/trim not-empty)]
     (cond
       error
       (do (println-original! error)
@@ -1067,23 +1071,23 @@
         (System/exit 1))
 
       :else
-      ;; `resolve-conversation-ref` is prefix-aware and existence-checks the
-      ;; result; `vis/db-resolve-conversation-id` only accepts full UUIDs and
+      ;; `resolve-session-ref` is prefix-aware and existence-checks the
+      ;; result; `vis/db-resolve-session-id` only accepts full UUIDs and
       ;; would silently fail on the very prefixes the help text advertises.
       (let [d        (vis/db-info)
-            resolved (resolve-conversation-ref d cid-input)]
+            resolved (resolve-session-ref d cid-input)]
         (if (nil? resolved)
-          (do (println-original! (str "Conversation not found: " cid-input))
+          (do (println-original! (str "Session not found: " cid-input))
             (System/exit 1))
           (do (println-original! (transcript-md d resolved))
             (System/exit 0)))))))
 
 (defn cli-command []
   {:cmd/name  "reproduction"
-   :cmd/doc   "Print a flag-free Markdown diagnostic artifact for a conversation. It is bounded by default so huge transcripts stay safe to open: every turn, iteration, executed code preview, var summary, reasoning preview, final answer preview, and raw LLM diagnostic summary. Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
-   :cmd/usage "vis extensions reproduction <CONVERSATION-ID>"
-   :cmd/args  [{:name "conversation-id" :kind :positional :type :string
-                :doc  "Conversation id (full UUID or unambiguous prefix)."}]
+   :cmd/doc   "Print a flag-free Markdown diagnostic artifact for a session. It is bounded by default so huge transcripts stay safe to open: every turn, iteration, executed code preview, var summary, reasoning preview, final answer preview, and raw LLM diagnostic summary. Resolves an unambiguous id prefix the same way `vis sessions --fork` does."
+   :cmd/usage "vis extensions reproduction <SESSION-ID>"
+   :cmd/args  [{:name "session-id" :kind :positional :type :string
+                :doc  "Session id (full UUID or unambiguous prefix)."}]
    :cmd/examples ["vis extensions reproduction eeaf9651-06c7-4dda-9e97-877fcef06337"
                   "vis extensions reproduction eeaf9651"
                   "vis extensions reproduction eeaf9651 > REPRODUCTION.md"]

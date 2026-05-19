@@ -5,23 +5,23 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe title-hint-test
-  (it "hints :high when the conversation title is blank (regardless of turn position)"
+  (it "hints :high when the session title is blank (regardless of turn position)"
     ;; :high — a blank title is a real gap, not soft advice. Models
     ;; routinely skip :low hints; :high makes the title call happen.
     (doseq [tp [1 2 5 10 17 100]]
-      (let [n (hints/title-hint {:conversation-title nil
+      (let [n (hints/title-hint {:session-title nil
                                  :title-refresh? false
                                  :turn-position tp
                                  :iteration 1})]
         (expect (= :high (:importance n)))
-        (expect (str/includes? (:text n) "conversation title is currently empty"))
+        (expect (str/includes? (:text n) "session title is currently empty"))
         (expect (str/includes? (:text n) "top-level form"))
-        (expect (str/includes? (:text n) "bare `(set-conversation-title!"))
+        (expect (str/includes? (:text n) "bare `(set-session-title!"))
         (expect (str/includes? (:text n) "not a foundation `v/` tool"))
         (expect (not (str/includes? (:text n) "(do"))))))
 
   (it "fires on turn 1 (first turn) when host flags :title-refresh?"
-    (let [n (hints/title-hint {:conversation-title "Refactor auth flow"
+    (let [n (hints/title-hint {:session-title "Refactor auth flow"
                                :title-refresh? true
                                :turn-position 1
                                :iteration 1})]
@@ -29,7 +29,7 @@
       (expect (str/includes? (:text n) "Refactor auth flow"))
       ;; Text reworded from "refresh the title via ..." to "refresh it
       ;; via ..."; assert the call-to-action via the primitive instead.
-      (expect (str/includes? (:text n) "set-conversation-title!"))
+      (expect (str/includes? (:text n) "set-session-title!"))
       (expect (str/includes? (:text n) "do not namespace-qualify it"))
       (expect (str/includes? (:text n) "1 turn(s)"))))
 
@@ -37,7 +37,7 @@
     (doseq [tp [hints/TITLE_REFRESH_TURN_PERIOD
                 (* 2 hints/TITLE_REFRESH_TURN_PERIOD)
                 (* 5 hints/TITLE_REFRESH_TURN_PERIOD)]]
-      (let [n (hints/title-hint {:conversation-title "Triage 148 path failures"
+      (let [n (hints/title-hint {:session-title "Triage 148 path failures"
                                  :title-refresh? true
                                  :turn-position tp
                                  :iteration 1})]
@@ -47,7 +47,7 @@
 
   (it "stays silent on non-cadence turns even when refresh is flagged"
     (doseq [tp [2 3 4 5 6 7 8 9 11 19 21 99]]
-      (expect (nil? (hints/title-hint {:conversation-title "Stable"
+      (expect (nil? (hints/title-hint {:session-title "Stable"
                                        :title-refresh? true
                                        :turn-position tp
                                        :iteration 1})))))
@@ -58,7 +58,7 @@
     ;; cadence turn is silent — mid-turn iterations never re-fire.
     (doseq [tp [1 hints/TITLE_REFRESH_TURN_PERIOD
                 (* 2 hints/TITLE_REFRESH_TURN_PERIOD)]]
-      (expect (nil? (hints/title-hint {:conversation-title "Stable"
+      (expect (nil? (hints/title-hint {:session-title "Stable"
                                        :title-refresh? false
                                        :turn-position tp
                                        :iteration 1})))))
@@ -68,7 +68,7 @@
     ;; New behavior: iteration position is ignored for cadence; only
     ;; turn-position matters.
     (doseq [it [3 6 9 12 24 36 100]]
-      (expect (nil? (hints/title-hint {:conversation-title "Stable"
+      (expect (nil? (hints/title-hint {:session-title "Stable"
                                        :title-refresh? false
                                        :turn-position 5
                                        :iteration it}))))))
@@ -105,7 +105,7 @@
     ;; Evidence/blind-answer guards were removed; their job is now the
     ;; harness's structural gate inside `(done ...)`.
     (let [ids (set (map :id hints/hooks))]
-      (expect (= #{:vis.foundation/conversation-title
+      (expect (= #{:vis.foundation/session-title
                    :vis.foundation/context-pressure}
                 ids))))
 
@@ -117,17 +117,17 @@
       (expect (fn? (:fn h)))))
 
   (it "title hook adapts title-hint into the {:text :importance} shape"
-    (let [h (some #(when (= :vis.foundation/conversation-title (:id %)) %) hints/hooks)
-          hit ((:fn h) {:conversation-title nil :title-refresh? false
+    (let [h (some #(when (= :vis.foundation/session-title (:id %)) %) hints/hooks)
+          hit ((:fn h) {:session-title nil :title-refresh? false
                         :turn-position 1 :iteration 1})]
       (expect (string? (:text hit)))
       ;; Blank-title branch is :high (see title-hint-test).
       (expect (= :high (:importance hit)))))
 
   (it "hooks return nil when their underlying condition is absent"
-    (let [title-h    (some #(when (= :vis.foundation/conversation-title (:id %)) %) hints/hooks)
+    (let [title-h    (some #(when (= :vis.foundation/session-title (:id %)) %) hints/hooks)
           pressure-h (some #(when (= :vis.foundation/context-pressure (:id %)) %) hints/hooks)]
-      (expect (nil? ((:fn title-h)    {:conversation-title "Set" :title-refresh? false
+      (expect (nil? ((:fn title-h)    {:session-title "Set" :title-refresh? false
                                        :turn-position 5 :iteration 1})))
       (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000}))))))
 

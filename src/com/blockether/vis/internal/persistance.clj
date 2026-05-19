@@ -268,33 +268,33 @@
   [db-info opts]
   (when-not (map? opts)
     (throw (ex-info "db-store-iteration! opts must be a map" {:got (type opts)})))
-  (when-not (:conversation-turn-id opts)
-    (throw (ex-info "db-store-iteration! requires :conversation-turn-id" {:opts (keys opts)})))
+  (when-not (:session-turn-id opts)
+    (throw (ex-info "db-store-iteration! requires :session-turn-id" {:opts (keys opts)})))
   ((deref (resolve-impl db-info 'db-store-iteration!)) db-info opts))
 
 ;; --- Logging ---
 (defdelegate db-log! [db-info opts])
 
-;; --- Conversation lifecycle ---
-(defdelegate db-store-conversation! [db-info opts])
-(defdelegate db-get-conversation [db-info ref])
-(defdelegate db-resolve-conversation-id [db-info sel])
-(defdelegate db-list-conversations [db-info channel])
-(defdelegate db-find-conversation-by-external [db-info channel ext-id])
-(defdelegate db-update-conversation-title! [db-info ref title])
-(defdelegate db-delete-conversation-tree! [db-info id])
-(defdelegate db-fork-conversation! [db-info conversation-id opts])
-(defdelegate db-list-conversation-states [db-info conversation-id])
-(defdelegate db-latest-conversation-state-id [db-info conversation-id])
+;; --- Session lifecycle ---
+(defdelegate db-store-session! [db-info opts])
+(defdelegate db-get-session [db-info ref])
+(defdelegate db-resolve-session-id [db-info sel])
+(defdelegate db-list-sessions [db-info channel])
+(defdelegate db-find-session-by-external [db-info channel ext-id])
+(defdelegate db-update-session-title! [db-info ref title])
+(defdelegate db-delete-session-tree! [db-info id])
+(defdelegate db-fork-session! [db-info session-id opts])
+(defdelegate db-list-session-states [db-info session-id])
+(defdelegate db-latest-session-state-id [db-info session-id])
 
 ;; --- Turn lifecycle ---
-(defdelegate db-store-conversation-turn! [db-info opts])
-(defdelegate db-update-conversation-turn! [db-info conversation-turn-id opts])
-(defdelegate db-list-conversation-turns-by-status [db-info status])
-(defdelegate db-list-conversation-turns [db-info conversation-ref])
-(defdelegate db-retry-conversation-turn! [db-info conversation-turn-soul-id opts])
-(defdelegate db-list-conversation-turn-states [db-info conversation-turn-id])
-(defdelegate db-list-conversation-turn-iterations [db-info conversation-turn-ref])
+(defdelegate db-store-session-turn! [db-info opts])
+(defdelegate db-update-session-turn! [db-info session-turn-id opts])
+(defdelegate db-list-session-turns-by-status [db-info status])
+(defdelegate db-list-session-turns [db-info session-ref])
+(defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
+(defdelegate db-list-session-turn-states [db-info session-turn-id])
+(defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 (defdelegate db-list-iteration-vars [db-info iteration-ref])
 
 ;; --- Full-text search ---
@@ -302,20 +302,20 @@
 
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
-  ([db-info conversation-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref))
-  ([db-info conversation-ref opts] ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref opts)))
+  ([db-info session-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info session-ref))
+  ([db-info session-ref opts] ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info session-ref opts)))
 
-(defdelegate db-var-history-index [db-info conversation-ref opts])
-(defdelegate db-var-history [db-info conversation-ref sym])
-(defdelegate db-var-history-timeline [db-info conversation-ref opts])
-(defdelegate db-turn-history [db-info conversation-ref])
+(defdelegate db-var-history-index [db-info session-ref opts])
+(defdelegate db-var-history [db-info session-ref sym])
+(defdelegate db-var-history-timeline [db-info session-ref opts])
+(defdelegate db-turn-history [db-info session-ref])
 
 ;; --- Dependencies ---
 (defdelegate db-store-dependency! [db-info opts])
-(defdelegate db-list-dependencies [db-info conversation-state-id])
+(defdelegate db-list-dependencies [db-info session-state-id])
 
 ;; --- Restore ---
-(defdelegate db-restore-blocks [db-info conversation-id])
+(defdelegate db-restore-blocks [db-info session-id])
 
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])

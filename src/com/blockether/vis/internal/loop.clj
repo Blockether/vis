@@ -719,7 +719,7 @@
 
    Every call performs a real SCI eval. There is no result cache:
    forms with side effects (e.g. host primitives `(done ...)` and
-   `(set-conversation-title! ...)`) MUST run their bodies on every
+   `(set-session-title! ...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [sci-ctx sandbox-ns] :as environment} code
@@ -871,7 +871,7 @@
   "Pass-through seam for future display tweaks. Silent system-call
    elision now happens explicitly on progress chunks (`:silent?`) and
    via the `:vis/silent` return sentinel for host primitives such as
-   `conversation-title`; normal value-bearing forms remain visible."
+   `session-title`; normal value-bearing forms remain visible."
   [_environment _code result]
   result)
 
@@ -953,12 +953,12 @@
   (let [form (parsed-entry-form entry-or-form-or-source)]
     (boolean (some turn-answer-call-form? (tree-seq coll? seq form)))))
 
-(defn- conversation-title-meta-form?
+(defn- session-title-meta-form?
   [entry-or-form-or-source]
   (let [form (parsed-entry-form entry-or-form-or-source)]
     (and (seq? form)
       (symbol? (first form))
-      (= 'set-conversation-title! (first form)))))
+      (= 'set-session-title! (first form)))))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -1065,7 +1065,7 @@
         ;;   :vis/structurally-silent?
         ;;                     — true iff the block contains ONLY structural
         ;;                       forms (`(done ...)` / `(set-
-        ;;                       conversation-title! ...)`); channels that
+        ;;                       session-title! ...)`); channels that
         ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
                                              (let [source-src (:source b)
@@ -1268,28 +1268,28 @@
                     (or (:ext/hooks ext) [])))
           (answer-validation-extensions environment active-extensions))))))
 
-(defn- conversation-turn-position
-  [environment conversation-turn-id]
+(defn- session-turn-position
+  [environment session-turn-id]
   (or
     (try
-      (when-let [conv-id (:conversation-id environment)]
+      (when-let [session-id (:session-id environment)]
         (some (fn [turn]
-                (when (= (str (:id turn)) (str conversation-turn-id))
+                (when (= (str (:id turn)) (str session-turn-id))
                   (:position turn)))
-          (persistance/db-list-conversation-turns (:db-info environment) conv-id)))
+          (persistance/db-list-session-turns (:db-info environment) session-id)))
       (catch Throwable t
         (tel/log! {:level :warn
-                   :id ::conversation-turn-position-failed
-                   :data {:conversation-id (:conversation-id environment)
-                          :conversation-turn-id conversation-turn-id
+                   :id ::session-turn-position-failed
+                   :data {:session-id (:session-id environment)
+                          :session-turn-id session-turn-id
                           :error (ex-message t)}}
-          "Could not resolve conversation turn position for iteration hooks")
+          "Could not resolve session turn position for iteration hooks")
         nil))
     1))
 
 (defn- runtime-turn-prefix
   [environment]
-  (let [id-s (str (or (some-> (:current-conversation-turn-id-atom environment) deref)
+  (let [id-s (str (or (some-> (:current-session-turn-id-atom environment) deref)
                     (:environment-id environment)
                     "00000000"))
         prefix (subs id-s 0 (min 8 (count id-s)))]
@@ -1450,7 +1450,13 @@
   {:prompt_tokens (long (or (token-number tokens [:input]) 0))
    :completion_tokens (long (or (token-number tokens [:output]) 0))
    :completion_tokens_details {:reasoning_tokens (long (or (token-number tokens [:reasoning]) 0))}
-   :prompt_tokens_details {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached]) 0))}})
+   :prompt_tokens_details {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached]) 0))
+                           :cache_creation_tokens (long (or (token-number tokens [:cache-created
+                                                                                  :cache-created-input
+                                                                                  :cache-creation
+                                                                                  :cache-write
+                                                                                  :cache_creation])
+                                                          0))}})
 
 (defn- reasoning-effort-configurable?
   "True when a model accepts a caller-selected reasoning effort.
@@ -1481,7 +1487,7 @@
    canonical `:assistant-message` from the immediately previous compatible
    iteration; empty vec when none.
 
-   This is intentionally conservative for Z.ai/GLM. Conversation
+   This is intentionally conservative for Z.ai/GLM. Session
    a9389e1d showed that replaying a long run of assistant messages can
    contaminate the next step, amplify token usage, and make GLM believe a
    previous answer is still active. If preserved thinking is useful, the
@@ -1724,7 +1730,7 @@
                          :started-at-ms provider-started-at-ms}))
           provider-start-ns (System/nanoTime)
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
-                                                            :conversation-turn-id (:environment-id environment)
+                                                            :session-turn-id (:environment-id environment)
                                                             :iteration iteration-position)]
                            (svar/ask-code! (:router environment)
                              (with-default-ask-code-idle-timeout
@@ -1822,7 +1828,7 @@
                              {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk
                                    (not suppress-form-start?)
-                                   (not (conversation-title-meta-form? entry))
+                                   (not (session-title-meta-form? entry))
                                    (not (form-contains-turn-answer-call? entry)))
                              (on-chunk {:phase           :form-start
                                         :iteration-count iteration-position
@@ -1994,7 +2000,7 @@
                                     :repaired-source (:repaired-source result)}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
-                             ;; (done …) / (set-conversation-title! …)
+                             ;; (done …) / (set-session-title! …)
                              ;; forms while keeping the prelude visible.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
@@ -2489,10 +2495,10 @@
   "Archive eligible live user symbols after a final successful answer.
    Archive means removing bindings from the live SCI sandbox only; DB
    rows remain the source of truth for automatic sandbox restore."
-  [{:keys [db-info conversation-id sci-ctx initial-ns-keys]}]
-  (when (and db-info conversation-id sci-ctx)
+  [{:keys [db-info session-id sci-ctx initial-ns-keys]}]
+  (when (and db-info session-id sci-ctx)
     (try
-      (let [var-registry (persistance/db-latest-var-registry db-info conversation-id)
+      (let [var-registry (persistance/db-latest-var-registry db-info session-id)
             sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
             candidates   (auto-archive-candidates sandbox-map initial-ns-keys
                            var-registry HOT_SYMBOL_COMPACTION_TARGET)]
@@ -2566,7 +2572,7 @@
    until the model emits `:answer` or the user cancels."
   [environment user-request
    {:keys [system-prompt
-           conversation-turn-id
+           session-turn-id
            ;; `max-context-tokens` feeds advisory context-pressure hooks;
            ;; trailer assembly itself still owns no token trimming.
            max-context-tokens
@@ -2581,20 +2587,20 @@
         _ (assert effective-model "Router must resolve a root model")
         has-reasoning? (reasoning-effort-configurable? resolved-model)
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
-        ;; Activate extensions ONCE per conversation turn. Threaded through both
+        ;; Activate extensions ONCE per session turn. Threaded through both
         ;; the prompt message assembler (core, environment, extension messages)
         ;; and the per-iteration ext hint collector - activation-fn never
         ;; re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         extensions-snapshot (prompt/extensions-snapshot active-exts)
         _             (sync-active-extension-symbols! environment active-exts)
-        conversation-snapshot (fn []
-                                {:id           (:conversation-id environment)
-                                 :title        (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
-                                 :turn-id      conversation-turn-id
-                                 :user-request user-request})
-        conversation-base (conversation-snapshot)
-        turn-position (conversation-turn-position environment conversation-turn-id)
+        session-snapshot (fn []
+                           {:id           (:session-id environment)
+                            :title        (some-> (:session-title-atom environment) deref str str/trim not-empty)
+                            :turn-id      session-turn-id
+                            :user-request user-request})
+        session-base (session-snapshot)
+        turn-position (session-turn-position environment session-turn-id)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts})
@@ -2634,6 +2640,9 @@
                                        cach (long (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
                                                     (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
                                                     0))
+                                       cache-created (long (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
+                                                             (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
+                                                             0))
                                        ;; svar's `estimate-cost` returns a MAP
                                        ;; `{:input-cost :output-cost :total-cost
                                        ;; :model :pricing}`, NOT a bare number.
@@ -2643,7 +2652,8 @@
                                        ;; side defaults to 0.0.
                                        cost-map (estimate-token-cost effective-model in out {:api-usage api-usage})
                                        total    (when (map? cost-map) (:total-cost cost-map))]
-                                   {:tokens   {:input in :output out :reasoning reas :cached cach}
+                                   {:tokens   {:input in :output out :reasoning reas :cached cach
+                                               :cache-created cache-created}
                                     :cost-usd (when (number? total) (double total))})))
         finalize-cost (fn []
                         (let [{:keys [input-tokens output-tokens reasoning-tokens
@@ -2654,6 +2664,7 @@
                                       :cache-creation-tokens cache-creation-tokens})]
                           {:tokens {:input input-tokens :output output-tokens
                                     :reasoning reasoning-tokens :cached cached-tokens
+                                    :cache-created cache-creation-tokens
                                     :total total-tokens}
                            :cost cost}))
         ;; `:on-chunk` is a per-reasoning-chunk streaming hook fired
@@ -2692,7 +2703,12 @@
                                                                                           [:source-paths
                                                                                            :source-mtime-max
                                                                                            :source-hash-sha256])))))
-                                                    active-exts))))]
+                                                    active-exts))))
+        iteration-metadata-with-usage (fn [iter-pos llm-meta token-cost]
+                                        (let [cache-created (long (or (get-in token-cost [:tokens :cache-created]) 0))]
+                                          (cond-> (iteration-metadata iter-pos llm-meta)
+                                            (pos? cache-created)
+                                            (assoc-in [:usage :cache-created-tokens] cache-created))))]
     ;; -----------------------------------------------------------------
     ;; Turn-start SYSTEM-var bindings.
     ;;
@@ -2700,10 +2716,10 @@
     ;; per iteration.
     (env/bind-and-bump! environment 'ctx
       (vctx/build {:environment environment
-                   :conversation conversation-base
+                   :session session-base
                    :extensions extensions-snapshot}))
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
-    (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
+    (when-let [a (:current-session-turn-id-atom environment)] (reset! a session-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
@@ -2713,7 +2729,7 @@
     ;; final successful answer. Failed/cancelled turns keep their live
     ;; scratch symbols for recovery.
     ;; Cross-turn carry: seed `trailer-iters` with persisted iterations
-    ;; of the current conversation (across every prior turn) so a
+    ;; of the current session (across every prior turn) so a
     ;; follow-up turn opens with prior context. Rendering trims by token
     ;; budget, so carry is not capped by iteration count. Each entry is
     ;; `[iter-position {:thinking :blocks}]` matching the in-memory shape
@@ -2721,22 +2737,22 @@
     ;;
     ;; IMPORTANT: cross-turn entries feed the TRAILER ONLY. Do not replay
     ;; their provider-native preserved-thinking assistant messages into the
-    ;; new user turn. In conversation a9389e1d, Z.ai/GLM received prior-turn
+    ;; new user turn. In session a9389e1d, Z.ai/GLM received prior-turn
     ;; assistant replay and opened the next request with "answer already
     ;; accepted", then burned >100k input tokens. Durable cross-turn memory
     ;; must flow through persisted iterations, not hidden reasoning state.
     (let [seeded-trailer-iters
           (try
-            (when-let [conv-id (:conversation-id environment)]
+            (when-let [session-id (:session-id environment)]
               (let [d (:db-info environment)
-                    queries (persistance/db-list-conversation-turns d conv-id)
-                    current-turn-id-str (str conversation-turn-id)
+                    queries (persistance/db-list-session-turns d session-id)
+                    current-turn-id-str (str session-turn-id)
                     ;; Drop CURRENT turn rows (defensive: they should not
                     ;; exist yet at seed time, but a restart/recover path
                     ;; could leave partial rows) and PRIOR-turn iterations
                     ;; whose status is NOT :done. Erroring / running /
                     ;; interrupted iterations are exploration noise that
-                    ;; poisoned follow-up turns in conv 2ccde943: 7 handle
+                    ;; poisoned follow-up turns in session 2ccde943: 7 handle
                     ;; mistakes from turn 1 were replayed verbatim into
                     ;; turn 3's trailer, teaching the model that probing
                     ;; is unreliable. Carry only the iterations that landed
@@ -2745,7 +2761,7 @@
                     iters (->> queries
                             (remove #(= (str (:id %)) current-turn-id-str))
                             (mapcat (fn [q]
-                                      (try (persistance/db-list-conversation-turn-iterations d (:id q))
+                                      (try (persistance/db-list-session-turn-iterations d (:id q))
                                         (catch Throwable _ []))))
                             (filter #(= :done (:status %)))
                             (sort-by :created-at)
@@ -2797,20 +2813,20 @@
                                                               :requested-reasoning raw-reasoning-level})
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
                     iteration-position (inc (long iteration))
-                    current-conversation (conversation-snapshot)
+                    current-session (session-snapshot)
                     iteration-hints (collect-iteration-start-hints environment active-exts
                                       {:environment environment
                                        :phase :turn.iteration/start
-                                       :conversation current-conversation
+                                       :session current-session
                                        :iteration iteration-position
-                                       :conversation-title (:title current-conversation)
+                                       :session-title (:title current-session)
                                        :title-refresh? (zero? (long iteration))
                                        :turn-position turn-position
                                        :input-tokens (:input-tokens @usage-atom)
                                        :context-limit (or max-context-tokens 200000)})
                     current-ctx-map (vctx/build
                                       {:environment environment
-                                       :conversation current-conversation
+                                       :session current-session
                                        :iteration   {:id       (some-> (:current-iteration-id-atom environment) deref)
                                                      :position iteration-position}
                                        :hints       iteration-hints
@@ -2825,7 +2841,7 @@
                       ;; canonical assistant messages into native
                       ;; Anthropic / z.ai / Responses shapes.
                       ;;
-                      ;; R3 hybrid message shape (per ADR/conversation
+                      ;; R3 hybrid message shape (per ADR/session
                       ;; 1db62d10): preserved-thinking replays + the
                       ;; iteration-context trailer both APPEND to
                       ;; the end. The original user_initial stays as the
@@ -2907,18 +2923,19 @@
                                             (:reasoning (:data iteration-error-data)))
                           err-iteration-id (persistance/db-store-iteration! (:db-info environment)
                                              (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                                               (cond-> {:conversation-turn-id conversation-turn-id :vars [] :code ""
+                                               (cond-> {:session-turn-id session-turn-id :vars [] :code ""
                                                         :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
                                                         :llm-messages effective-messages
                                                         :llm-provider (:provider resolved-model)
                                                         :llm-model (str (:name resolved-model))
-                                                        :metadata (iteration-metadata iteration
+                                                        :metadata (iteration-metadata-with-usage iteration
                                                                     (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
                                                                              :actual   (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
                                                                              :fallback? false}
                                                                       (seq (get-in iteration-error-data [:data :routed/trace]))
                                                                       (assoc :fallback? true
-                                                                        :trace (vec (get-in iteration-error-data [:data :routed/trace])))))}
+                                                                        :trace (vec (get-in iteration-error-data [:data :routed/trace]))))
+                                                                    tc)}
                                                  tc (assoc :tokens (:tokens tc)
                                                       :cost-usd (:cost-usd tc)))))]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
@@ -2991,7 +3008,7 @@
                         store-block (or block {:code "" :error {:message "empty iteration"}})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                                         (cond-> {:conversation-turn-id conversation-turn-id
+                                         (cond-> {:session-turn-id session-turn-id
                                                   :code (:code store-block)
                                                   :result (:result store-block)
                                                   :error (:error store-block)
@@ -3009,8 +3026,9 @@
                                                   :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                   :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
                                                   :llm-assistant-message (:assistant-message iteration-result)
-                                                  :metadata (cond-> (iteration-metadata iteration
-                                                                      (llm-routing-metadata pre-resolved-model iteration-result))
+                                                  :metadata (cond-> (iteration-metadata-with-usage iteration
+                                                                      (llm-routing-metadata pre-resolved-model iteration-result)
+                                                                      tc)
                                                               (seq (:engine-timing iteration-result))
                                                               (assoc :engine-timing (:engine-timing iteration-result)))}
                                            tc (assoc :tokens (:tokens tc)
@@ -3109,28 +3127,28 @@
 
    Derives `:prior-outcome` (one of `:complete`, `:cancelled`, `:error`)
    from the loop result and
-   persists it on the `conversation_turn_state` row. The next turn's
+   persists it on the `session_turn_state` row. The next turn's
    `<system_state>` digest reads it."
   [env user-request loop-opts]
   (when-not (map? env)
     (throw (ex-info "run-turn! requires an env map" {:got (type env)})))
   (when (clojure.string/blank? user-request)
     (throw (ex-info "run-turn! requires a non-blank user request" {:got user-request})))
-  (let [conversation-turn-id (persistance/db-store-conversation-turn! (:db-info env)
-                               {:parent-conversation-id (:conversation-id env)
-                                :user-request user-request
-                                :messages nil
-                                :status :running})
-        result (iteration-loop env user-request (assoc loop-opts :conversation-turn-id conversation-turn-id))
+  (let [session-turn-id (persistance/db-store-session-turn! (:db-info env)
+                          {:parent-session-id (:session-id env)
+                           :user-request user-request
+                           :messages nil
+                           :status :running})
+        result (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
-        _ (persistance/db-update-conversation-turn! (:db-info env) conversation-turn-id
+        _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
             {;; Coerce through `answer-str` so the persisted answer is
              ;; ALWAYS the plain-text rendering, never a stringified
              ;; IR vector. Some terminal paths (e.g. error/cancel
              ;; fallbacks) feed `:answer` in as the raw value passed
              ;; to `(done ...)`; without this coercion the TUI
              ;; resume path showed literal `[:ir [:p "..."]]` to
-             ;; the user (convo b7ba1d93 regression).
+             ;; the user (session b7ba1d93 regression).
              :answer          (when-let [a (:answer result)] (answer-str a))
              :iteration-count (:iteration-count result)
              :duration-ms     (:duration-ms result)
@@ -3138,7 +3156,7 @@
              :tokens          (:tokens result)
              :cost            (:cost result)
              :prior-outcome   prior-outcome})]
-    (assoc result :conversation-turn-id conversation-turn-id :prior-outcome prior-outcome)))
+    (assoc result :session-turn-id session-turn-id :prior-outcome prior-outcome)))
 
 (defn custom-bindings
   "Current custom SCI bindings {sym -> value}."
@@ -3180,7 +3198,7 @@
           ;;      each turn instead of reflecting the current ask. Surface now
           ;;      flows through ctx.
           ;;   3. The synthetic `{:requirement ...}` frame the LLM sees
-          ;;      restated the whole conversation as the "requirement".
+          ;;      restated the whole session as the "requirement".
           ;;
           ;; Prior dialog transcript is dropped here. `user-request` is
           ;; ONLY the current turn - one ask, one value.
@@ -3217,14 +3235,14 @@
                                    (when val
                                      (env/sci-update-binding! sci-ctx sym val)))
           current-iteration-id-atom (:current-iteration-id-atom env)
-          current-conversation-turn-id-atom (:current-conversation-turn-id-atom env)
+          current-session-turn-id-atom (:current-session-turn-id-atom env)
           workspace              (select-keys opts [:workspace/root :workspace/id
                                                     :workspace/repo-id :workspace/state
                                                     :workspace])
           environment            (cond-> (assoc env
                                            :current-iteration-atom current-iteration-atom
                                            :current-iteration-id-atom current-iteration-id-atom
-                                           :current-conversation-turn-id-atom current-conversation-turn-id-atom)
+                                           :current-session-turn-id-atom current-session-turn-id-atom)
                                    (seq workspace) (merge workspace))
           environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom
@@ -3256,7 +3274,7 @@
 
 (defn- run-iteration-phase
   "Runs the main iteration loop via run-turn!.
-   Returns iteration-result, conversation-turn-id, cost atoms, and merge-cost! fn."
+   Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
   [{:keys [environment user-request spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
@@ -3273,7 +3291,7 @@
                              extra-body    (assoc :extra-body extra-body)
                              turn-features (assoc :turn-features turn-features)
                              (seq workspace) (assoc :workspace workspace)))
-        conversation-turn-id         (:conversation-turn-id iteration-result)
+        session-turn-id         (:session-turn-id iteration-result)
         {iteration-tokens :tokens
          iteration-cost   :cost} iteration-result
         total-tokens-atom (atom (or iteration-tokens {}))
@@ -3289,7 +3307,7 @@
                                 (fn [acc]
                                   (merge-cost-maps acc extra-cost)))))]
     {:iteration-result  iteration-result
-     :conversation-turn-id         conversation-turn-id
+     :session-turn-id         session-turn-id
      :total-tokens-atom total-tokens-atom
      :total-cost-atom   total-cost-atom
      :merge-cost!       merge-cost!}))
@@ -3297,75 +3315,75 @@
 ;; =============================================================================
 ;; Title listeners + set-title! broadcast
 ;;
-;; Channels (TUI, Telegram, ...) that want to react to a conversation
-;; title change - typically because the model emitted `(set-conversation-title! "...")`
+;; Channels (TUI, Telegram, ...) that want to react to a session
+;; title change - typically because the model emitted `(set-session-title! "...")`
 ;; mid-turn - register a listener via `add-title-listener!`. The
 ;; listener fn receives the new title; it MUST be cheap (typically a
 ;; `state/dispatch` into the channel's app-db). Listeners are stored
-;; per conversation-id so a TUI watching conversation A doesn't get
-;; woken by a Telegram bot updating conversation B.
+;; per session-id so a TUI watching session A doesn't get
+;; woken by a Telegram bot updating session B.
 ;;
 ;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
-;; `(set-conversation-title! "...")` fn (model-driven) funnel through
+;; `(set-session-title! "...")` fn (model-driven) funnel through
 ;; `set-title-with-broadcast!`, which is the single mutation point.
 ;; That keeps the in-memory env atom + DB column + listener fan-out
 ;; in lockstep - no path can update one without the others.
 ;; =============================================================================
 
 (defonce ^:private title-listeners
-  ;; {conversation-id-uuid #{listener-fn ...}}
+  ;; {session-id-uuid #{listener-fn ...}}
   (atom {}))
 
 (defn add-title-listener!
-  "Register `listener-fn` for `conversation-id`. The fn is invoked with
+  "Register `listener-fn` for `session-id`. The fn is invoked with
    the new title (a string) every time the title changes. Multiple
    listeners are supported; they fire in unspecified order.
 
    Returns the listener fn so callers can pass it to
    `remove-title-listener!` later."
-  [conversation-id listener-fn]
-  (let [cid (persistance/->uuid conversation-id)]
+  [session-id listener-fn]
+  (let [cid (persistance/->uuid session-id)]
     (swap! title-listeners update cid (fnil conj #{}) listener-fn))
   listener-fn)
 
 (defn remove-title-listener!
   "Deregister a previously added listener. Idempotent."
-  [conversation-id listener-fn]
-  (let [cid (persistance/->uuid conversation-id)]
+  [session-id listener-fn]
+  (let [cid (persistance/->uuid session-id)]
     (swap! title-listeners update cid
       (fn [existing] (disj (or existing #{}) listener-fn))))
   nil)
 
 (defn- broadcast-title-change!
-  "Fire every registered listener for `conversation-id` with `title`.
+  "Fire every registered listener for `session-id` with `title`.
    Listeners that throw are swallowed and logged - a misbehaving
    channel must NOT block the iteration loop."
-  [conversation-id title]
-  (let [cid (persistance/->uuid conversation-id)]
+  [session-id title]
+  (let [cid (persistance/->uuid session-id)]
     (doseq [f (get @title-listeners cid)]
       (try (f title)
         (catch Throwable t
           (tel/log! {:level :warn :id ::title-listener-failed
-                     :data {:conversation-id cid
+                     :data {:session-id cid
                             :error (ex-message t)}
                      :msg (str "Title listener threw: " (ex-message t))}))))))
 
 (defn set-title-with-broadcast!
-  "Single mutation point for conversation titles.
+  "Single mutation point for session titles.
 
-   1. Writes the title to the persisted `conversation_state` row.
-   2. Updates the env's in-memory `:conversation-title-atom` so the next iteration's
-      `:conversation-title-atom` mirror sees the new value AND so a
+   1. Writes the title to the persisted `session_state` row.
+   2. Updates the env's in-memory `:session-title-atom` so the next iteration's
+      `:session-title-atom` mirror sees the new value AND so a
       read from the SCI sandbox returns the fresh string immediately,
       without a DB round-trip.
    3. Broadcasts to every registered listener.
 
-   `conversation-title-atom` may be nil (host-driven path with no live env)."
-  [db-info conversation-id conversation-title-atom title]
+   `session-title-atom` may be nil (host-driven path with no live env)."
+  [db-info session-id session-title-atom title]
   (let [t (str title)]
-    (persistance/db-update-conversation-title! db-info conversation-id t)
-    (when conversation-title-atom (reset! conversation-title-atom t))
-    (broadcast-title-change! conversation-id t)
+    (persistance/db-update-session-title! db-info session-id t)
+    (when session-title-atom (reset! session-title-atom t))
+    (broadcast-title-change! session-id t)
     nil))
 
 ;; -----------------------------------------------------------------------------
@@ -3379,7 +3397,7 @@
    map so the web footer / meta layer can render `provider/model / N
    iteration / duration / tokens / $total` after a restart."
   [{:keys [db-info root-model root-provider]}
-   {:keys [conversation-turn-id start-time iteration-count status status-id trace locals
+   {:keys [session-turn-id start-time iteration-count status status-id trace locals
            answer confidence reasoning total-tokens-atom total-cost-atom]}]
   (let [duration-ms (util/elapsed-since start-time)
         cost-with-model (cond-> @total-cost-atom
@@ -3397,7 +3415,7 @@
           {:duration-ms duration-ms :iteration-count iteration-count :status status})
         (let [fallback-answer (:result answer answer)]
           (try
-            (persistance/db-update-conversation-turn! db-info conversation-turn-id
+            (persistance/db-update-session-turn! db-info session-turn-id
               {:answer          fallback-answer
                :iteration-count iteration-count
                :duration-ms     duration-ms
@@ -3422,7 +3440,7 @@
           {:duration-ms duration-ms :iteration-count iteration-count
            :cost (str (:total-cost cost-with-model))})
         (try
-          (persistance/db-update-conversation-turn! db-info conversation-turn-id
+          (persistance/db-update-session-turn! db-info session-turn-id
             {:answer          answer
              :iteration-count iteration-count
              :duration-ms     duration-ms
@@ -3446,7 +3464,7 @@
 ;; -----------------------------------------------------------------------------
 
 (defn turn!
-  "Runs one conversation turn on an RLM environment using iterative LLM code evaluation.
+  "Runs one session turn on an RLM environment using iterative LLM code evaluation.
 
     Params:
     `environment` - RLM environment from create-environment.
@@ -3490,18 +3508,18 @@
      (binding [*rlm-context*       {:rlm-environment-id environment-id :rlm-type :main
                                     :rlm-debug? debug? :rlm-phase :turn
                                     :db-info db-info
-                                    :conversation-soul-id (:conversation-id environment)}
+                                    :session-soul-id (:session-id environment)}
                *eval-timeout-ms*  (clamp-eval-timeout-ms
                                     (or eval-timeout-ms *eval-timeout-ms*))]
        (tel/with-ctx+ {:db-info db-info
-                       :conversation-soul-id (:conversation-id environment)}
+                       :session-soul-id (:session-id environment)}
          (log-stage! :turn/open 0
            {:model root-model
             :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))
             :user-request user-request})
          (let [start-time   (System/nanoTime)
                phase2       (run-iteration-phase ctx)
-               {:keys [iteration-result conversation-turn-id
+               {:keys [iteration-result session-turn-id
                        total-tokens-atom total-cost-atom]} phase2
                {iteration-answer :answer
                 trace            :trace
@@ -3515,7 +3533,7 @@
                (if status
                  (finalize-turn-result
                    ctx
-                   {:conversation-turn-id          conversation-turn-id
+                   {:session-turn-id          session-turn-id
                     :start-time        start-time
                     :iteration-count   iteration-count
                     :status            status
@@ -3527,7 +3545,7 @@
                     :total-cost-atom   total-cost-atom})
                  (finalize-turn-result
                    ctx
-                   {:conversation-turn-id          conversation-turn-id
+                   {:session-turn-id          session-turn-id
                     :start-time        start-time
                     :iteration-count   iteration-count
                     :trace             trace
@@ -3711,7 +3729,7 @@
 ;; =============================================================================
 
 (defn create-environment
-  "Creates a vis environment (component) for conversation lifecycle and
+  "Creates a vis environment (component) for session lifecycle and
    querying.
 
    The environment holds:
@@ -3722,7 +3740,7 @@
 
    Params:
      `router` - Required. Result of `llm/make-router`.
-     `opts`   - Map with `:db` and optional `:conversation`,
+     `opts`   - Map with `:db` and optional `:session`,
                  `:channel`, `:external-id`, `:title`.
 
      `:db` accepted forms:
@@ -3733,14 +3751,14 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db conversation channel external-id title]}]
+  [router {:keys [db session channel external-id title]}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
         db-info                  (persistance/db-create-connection! db)
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
-                                        :conversation-id nil})
+                                        :session-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
         ;; Iteration-final-answer signal. The SCI sandbox's `(done
@@ -3761,33 +3779,33 @@
         ;; being introduced only on the transient turn env.
         current-iteration-atom    (atom 1)
         current-iteration-id-atom (atom nil)
-        current-conversation-turn-id-atom (atom nil)
+        current-session-turn-id-atom (atom nil)
         current-turn-position-atom (atom nil)
         current-user-request-atom (atom nil)
-        ;; Title atom: in-memory cache for the conversation title.
-        ;; The DB column on `conversation_state` is the persisted
+        ;; Title atom: in-memory cache for the session title.
+        ;; The DB column on `session_state` is the persisted
         ;; truth; this atom is the fast read path for  and
         ;; the source for the title hint / channel chrome at iteration
         ;; boundaries. `set-title!` writes both, in that order, then
         ;; broadcasts to every registered listener.
-        conversation-title-atom               (atom (or title ""))
+        session-title-atom               (atom (or title ""))
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
-        ;; Snapshot a base system prompt for the conversation row so the
+        ;; Snapshot a base system prompt for the session row so the
         ;; sidebar / DB inspectors have something stable to display.
         ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
         ;; with `:active-extensions`, so this snapshot is just metadata.
         system-prompt            (prompt/build-system-prompt {})
-        resolved-conversation-id (persistance/db-resolve-conversation-id db-info conversation)
-        conversation-id          (or resolved-conversation-id
-                                   (persistance/db-store-conversation! db-info
-                                     (cond-> {:channel       (or channel :tui)
-                                              :external-id   external-id
-                                              :model         root-model
-                                              :title         title
-                                              :system-prompt system-prompt}
-                                       root-provider (assoc :provider root-provider))))
+        resolved-session-id (persistance/db-resolve-session-id db-info session)
+        session-id          (or resolved-session-id
+                              (persistance/db-store-session! db-info
+                                (cond-> {:channel       (or channel :tui)
+                                         :external-id   external-id
+                                         :model         root-model
+                                         :title         title
+                                         :system-prompt system-prompt}
+                                  root-provider (assoc :provider root-provider))))
         ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
@@ -3830,8 +3848,8 @@
                                                   (render/->ast s))
                                       :position @current-form-idx-atom})
                                    :vis/answer)
-        ;; SCI binding for the conversation title:
-        ;;   `(set-conversation-title! \"...\")` - writes the title through
+        ;; SCI binding for the session title:
+        ;;   `(set-session-title! \"...\")` - writes the title through
         ;;                              to DB, syncs the in-memory
         ;;                              atom, and broadcasts
         ;;                              `:title-changed` to every
@@ -3841,22 +3859,22 @@
         ;;                              polling.
         ;; ONE-ARITY ONLY. There is no zero-arg reader by design: the
         ;; model has no in-sandbox read path for the title (the
-        ;; `CONVERSATION_TITLE` SYSTEM var was retired as redundant).
+        ;; `SESSION_TITLE` SYSTEM var was retired as redundant).
         ;; The foundation `title-hint` surfaces the current value
         ;; when relevant. Calling with the wrong arity raises an
         ;; `ArityException` from SCI like any other Clojure fn.
         ;; Returns `:vis/silent`: the title is visible in channel chrome
         ;; and the model trailer, but the host call itself is noise in
         ;; live progress / iteration rendering.
-        conversation-title-fn    (fn set-conversation-title! [s]
-                                   (let [s (str s)]
-                                     (set-title-with-broadcast!
-                                       db-info conversation-id
-                                       conversation-title-atom s)
-                                     :vis/silent))
+        session-title-fn    (fn set-session-title! [s]
+                              (let [s (str s)]
+                                (set-title-with-broadcast!
+                                  db-info session-id
+                                  session-title-atom s)
+                                :vis/silent))
         satisfied-hints-atom     (atom #{})
         ;; `(satisfy-hint! :hint/id)` is silent model-visible bookkeeping.
-        ;; It removes the hint id from `(get-in ctx [:conversation :hints])` on the next iteration;
+        ;; It removes the hint id from `(get-in ctx [:session :hints])` on the next iteration;
         ;; it does not unregister the extension hook that may emit the hint
         ;; again if its runtime condition becomes true.
         satisfy-hint-fn          (fn satisfy-hint! [id]
@@ -3868,13 +3886,13 @@
                                    :vis/silent)
         ;; The current human turn text and engine context flow through ctx.
         env-bindings             {'done            answer-fn
-                                  'set-conversation-title! conversation-title-fn
+                                  'set-session-title! session-title-fn
                                   'satisfy-hint!  satisfy-hint-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
         env {:environment-id                    environment-id
-             :conversation-id                   conversation-id
+             :session-id                   session-id
              :channel                           (or channel :tui)
              :depth-atom                        depth-atom
              :db-info                           db-info
@@ -3893,22 +3911,22 @@
              :current-form-idx-atom             current-form-idx-atom
              :current-iteration-atom            current-iteration-atom
              :current-iteration-id-atom         current-iteration-id-atom
-             :current-conversation-turn-id-atom current-conversation-turn-id-atom
+             :current-session-turn-id-atom current-session-turn-id-atom
              :current-turn-position-atom        current-turn-position-atom
              :current-user-request-atom         current-user-request-atom
-             :conversation-title-atom           conversation-title-atom
+             :session-title-atom           session-title-atom
              :satisfied-hints-atom              satisfied-hints-atom
              :extensions                        (atom [])}]
     (reset! environment-atom env)
-    (swap! state-atom assoc :environment env :conversation-id conversation-id)
-    ;; Restore persisted vars when resuming an existing conversation.
-    (when resolved-conversation-id
+    (swap! state-atom assoc :environment env :session-id session-id)
+    ;; Restore persisted vars when resuming an existing session.
+    (when resolved-session-id
       (try
-        (env/restore-sandbox! sci-ctx db-info conversation-id)
+        (env/restore-sandbox! sci-ctx db-info session-id)
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-sandbox-failed
                      :data {:error (ex-message t)
-                            :conversation-id conversation-id}
+                            :session-id session-id}
                      :msg "Failed to restore sandbox from DB - starting empty"}))))
     ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
     ;; classpath, then install extensions in dependency order. The
@@ -3928,11 +3946,11 @@
     (persistance/db-dispose-connection! db-info)))
 
 ;; =============================================================================
-;; Conversation env cache
+;; Session env cache
 ;; =============================================================================
 
 ;; ---------------------------------------------------------------------------
-;; In-process conversation cache + channel utilities
+;; In-process session cache + channel utilities
 ;; ---------------------------------------------------------------------------
 
 (defonce cache (atom {}))
@@ -3954,7 +3972,7 @@
   *previous* model until disposed.
 
   Call this immediately after `rebuild-router!` so the
-  next `send!` on any cached conversation picks up the new router."
+  next `send!` on any cached session picks up the new router."
   [router]
   (when router
     (swap! cache
@@ -3969,7 +3987,7 @@
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates
    in-memory state, rebuilds the global router, and reseats cached
-   conversation envs. `provider` is a svar-native provider map
+   session envs. `provider` is a svar-native provider map
    `{:id :base-url :api-key :models [...]}`. Replaces an existing
    provider with the same `:id` or appends a new entry."
   [provider]
@@ -4145,7 +4163,7 @@
   id)
 
 (defn- refresh-cached-env-if-needed!
-  "Called with the conversation lock held, immediately before a turn starts.
+  "Called with the session lock held, immediately before a turn starts.
    If `reload-extensions!` marked this env dirty, rebuild the SCI env now so
    the just-finished IR/render path never races its own symbol table."
   [id entry]
@@ -4153,10 +4171,10 @@
         refresh (:env-refresh entry*)]
     (if (= :scheduled (:status refresh))
       (let [old-env (:environment entry*)
-            title   (some-> (:conversation-title-atom old-env) deref)
+            title   (some-> (:session-title-atom old-env) deref)
             new-env (create-environment (get-router)
                       (cond-> {:db (config/resolve-db-spec)
-                               :conversation id}
+                               :session id}
                         (:channel old-env) (assoc :channel (:channel old-env))
                         title              (assoc :title title)))
             updated (assoc entry*
@@ -4167,7 +4185,7 @@
         (try (dispose-environment! old-env)
           (catch Throwable t
             (tel/log! {:level :warn :id ::env-refresh-dispose-failed
-                       :data {:conversation-id id
+                       :data {:session-id id
                               :error (ex-message t)}})))
         (swap! cache assoc id updated)
         updated)
@@ -4273,7 +4291,7 @@
   (let [router (get-router)
         env    (create-environment router
                  (cond-> {:db (config/resolve-db-spec)}
-                   id          (assoc :conversation id)
+                   id          (assoc :session id)
                    channel     (assoc :channel channel)
                    external-id (assoc :external-id external-id)
                    title       (assoc :title title)))]
@@ -4306,7 +4324,7 @@
    (let [env  (open-env! nil {:channel     channel
                               :external-id (some-> external-id str)
                               :title       title})
-         id   (str (:conversation-id env))
+         id   (str (:session-id env))
          _    (cache-env! id env)]
      {:id          id
       :channel     channel
@@ -4315,14 +4333,14 @@
 
 (defn by-id
   [id]
-  (when-let [conversation (persistance/db-get-conversation (db-info) id)]
-    {:id            (str (:id conversation))
-     :channel       (:channel conversation)
-     :external-id   (:external-id conversation)
-     :system-prompt (:system-prompt conversation)
-     :model         (:model conversation)
-     :title         (:title conversation)
-     :created-at    (:created-at conversation)}))
+  (when-let [session (persistance/db-get-session (db-info) id)]
+    {:id            (str (:id session))
+     :channel       (:channel session)
+     :external-id   (:external-id session)
+     :system-prompt (:system-prompt session)
+     :model         (:model session)
+     :title         (:title session)
+     :created-at    (:created-at session)}))
 
 (defn by-channel
   [channel]
@@ -4332,12 +4350,12 @@
            :external-id (:external-id c)
            :title       (:title c)
            :created-at  (:created-at c)})
-    (persistance/db-list-conversations (db-info) channel)))
+    (persistance/db-list-sessions (db-info) channel)))
 
 (defn for-telegram-chat!
   [chat-id]
   (let [ext (str chat-id)]
-    (or (when-let [id (persistance/db-find-conversation-by-external (db-info) :telegram ext)]
+    (or (when-let [id (persistance/db-find-session-by-external (db-info) :telegram ext)]
           (by-id (str id)))
       (create! :telegram {:external-id ext}))))
 
@@ -4352,13 +4370,13 @@
 (defn set-title!
   "Host-driven title change. Resolves the live env (if any) so the
    in-memory atom + listener fan-out stay in sync; falls back to a
-   plain DB write when no env is live for this conversation (e.g.
-   `vis conversations` rename ops)."
+   plain DB write when no env is live for this session (e.g.
+   `vis sessions` rename ops)."
   [id title]
   (let [env (env-for id)]
     (set-title-with-broadcast! (or (:db-info env) (db-info))
       id
-      (:conversation-title-atom env)
+      (:session-title-atom env)
       title))
   nil)
 
@@ -4368,7 +4386,7 @@
    (let [{:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
          (ensure-env! id)
          message-vec (if (string? messages) [(svar/user messages)] messages)]
-     ;; ReentrantLock keeps one turn per conversation. Extension reload marks
+     ;; ReentrantLock keeps one turn per session. Extension reload marks
      ;; envs dirty; actual SCI reset happens here, after prior IR/render is
      ;; finished and before the next user code executes.
      (.lock lock)
@@ -4391,7 +4409,7 @@
   [id]
   (close! id)
   (let [d (db-info)]
-    (try (persistance/db-delete-conversation-tree! d id)
+    (try (persistance/db-delete-session-tree! d id)
       (catch Exception _ nil))))
 
 (def ^:private ORPHAN_INTERRUPTED_ANSWER
@@ -4404,11 +4422,11 @@
    Returns the number of turns swept."
   ([] (db-sweep-orphaned-running-turns! (db-info)))
   ([db]
-   (let [orphans (try (persistance/db-list-conversation-turns-by-status db :running)
+   (let [orphans (try (persistance/db-list-session-turns-by-status db :running)
                    (catch Exception _ []))]
      (doseq [{:keys [id iteration-count duration-ms]} orphans]
        (try
-         (persistance/db-update-conversation-turn! db id
+         (persistance/db-update-session-turn! db id
            {:answer          ORPHAN_INTERRUPTED_ANSWER
             :iteration-count (or iteration-count 0)
             :duration-ms     (or duration-ms 0)

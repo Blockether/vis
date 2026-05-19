@@ -121,16 +121,16 @@
       (expect (= :scroll-down
                 (:action (input/handle-key (special-key KeyType/PageDown) state))))))
 
-  (it "Ctrl+G and Alt+Shift+Up/Down open the conversation switcher"
+  (it "Ctrl+G and Alt+Shift+Up/Down open the session switcher"
     (let [state (-> (input/empty-input)
                   (input/paste-text "draft"))]
-      (expect (= {:action :show-conversations :state state}
+      (expect (= {:action :show-sessions :state state}
                 (input/handle-key (ctrl-key (Character. \g)) state)))
-      (expect (= {:action :show-conversations :state state}
+      (expect (= {:action :show-sessions :state state}
                 (input/handle-key (ctrl-key (Character. \G)) state)))
-      (expect (= {:action :show-conversations :state state}
+      (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowUp) state)))
-      (expect (= {:action :show-conversations :state state}
+      (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
 
   (it "Ctrl+O stays unbound because BSD/macOS terminals reserve it as VDISCARD"

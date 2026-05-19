@@ -3,7 +3,7 @@
    built-in CLI commands, and the `-main` dispatcher entry point.
 
    Everything in this file is binary-only. The library surface
-   (iteration loop, turn engine, environment lifecycle, conversation
+   (iteration loop, turn engine, environment lifecycle, session
    cache) lives in `com.blockether.vis.internal.loop`; this namespace requires
    that one and wires it into the command tree the `vis` binary
    exposes.
@@ -18,7 +18,7 @@
 
    Built-in commands registered here:
      vis providers          - provider inspection, auth, and limits
-     vis conversations      - list persisted conversations
+     vis sessions      - list persisted sessions
      vis extensions list    - list registered extensions
      vis channels <name>    - auto-mounted via the channel registry
 
@@ -78,8 +78,8 @@
     (cond-> {:level level
              :event event
              :data  data}
-      (:conversation-soul-id ctx) (assoc :conversation-soul-id (:conversation-soul-id ctx))
-      (:conversation-turn-id ctx) (assoc :conversation-turn-soul-id (:conversation-turn-id ctx))
+      (:session-soul-id ctx) (assoc :session-soul-id (:session-soul-id ctx))
+      (:session-turn-id ctx) (assoc :session-turn-soul-id (:session-turn-id ctx))
       (:iteration-id ctx)         (assoc :iteration-id (:iteration-id ctx)))))
 
 ;; =============================================================================
@@ -98,7 +98,7 @@
    Usage:
      (tel/add-handler! :db (handler:db))
 
-     (tel/with-ctx+ {:db-info db-info :conversation-soul-id conversation-id}
+     (tel/with-ctx+ {:db-info db-info :session-soul-id session-id}
        (tel/log! :info \"something happened\"))"
   ([] (handler:db nil))
   ([_opts]
@@ -441,10 +441,10 @@
   "Execute a one-shot agent turn.
 
    Runs one turn. Default is ephemeral: in-memory SQLite only, no
-   `:cli` conversation written to disk.
+   `:cli` session written to disk.
 
    Returns map with:
-   - :conversation-id - Conversation ID (UUID string) when persisted;
+   - :session-id - Session ID (UUID string) when persisted;
                         nil for default ephemeral runs
    - :answer       - The agent's response
    - :iteration-count - Number of iterations executed
@@ -465,17 +465,17 @@
    - :config      - Provider config override (skips ~/.vis/config.edn)
    - :db          - DB target for ephemeral runs (`:memory`, path, or db spec)
    - :persist?    - Write the run to ~/.vis/vis.mdb as a `:cli`
-                    conversation. Default false.
+                    session. Default false.
    - :no-persist? - Backward-compatible override; when true, forces
                     ephemeral execution even if `:persist?` is true.
 
    Ephemeral runs use an in-memory SQLite DB (`:db :memory`), run the
    turn, then dispose the env (which vaporizes the DB). Result has
-   `:conversation-id nil`. Useful for CI, scripting, sensitive prompts.
+   `:session-id nil`. Useful for CI, scripting, sensitive prompts.
 
-   Persistent calls (`:persist? true`) create a fresh conversation in
+   Persistent calls (`:persist? true`) create a fresh session in
    the `:cli` channel. Past runs are browsable via
-   `(conversations/by-channel :cli)`."
+   `(sessions/by-channel :cli)`."
   [agent-def prompt & [{:keys [spec model provider on-chunk
                                debug? config db persist? no-persist?]
                         :as _opts}]]
@@ -502,7 +502,7 @@
       ;; Ephemeral path: build a fresh env on a `:memory` SQLite DB so
       ;; nothing touches `~/.vis/vis.mdb`. Disposing the env tears the
       ;; in-memory DB down with it. Bypasses `lp/create!`/`lp/send!`
-      ;; (both go through the shared conversations cache + the on-disk
+      ;; (both go through the shared sessions cache + the on-disk
       ;; SQLite handle) on purpose. We use `:memory` instead of nil
       ;; because the iteration loop requires a non-nil `:db-info` (it
       ;; persists turns + iterations + expression history; nil would
@@ -510,7 +510,7 @@
       (let [env (lp/create-environment (router-for-run cfg local-router?) {:db (or db :memory)})]
         (try
           (let [result (lp/turn! env messages q-opts)]
-            (cond-> {:conversation-id nil
+            (cond-> {:session-id nil
                      :answer          (:answer result)
                      :iteration-count (:iteration-count result)
                      :duration-ms     (:duration-ms result)
@@ -520,20 +520,20 @@
               (:status result)     (assoc :status (:status result))
               (:confidence result) (assoc :confidence (:confidence result))))
           (catch Exception e
-            {:conversation-id nil
+            {:session-id nil
              :error           (persistance/db-error->user-message e)
              :type            (str (type e))
              :exception       e})
           (finally
             (try (lp/dispose-environment! env) (catch Exception _ nil)))))
-      ;; Persistent path: route through the shared conversation cache
-      ;; so the run shows up in `(conversations/by-channel :cli)` and
+      ;; Persistent path: route through the shared session cache
+      ;; so the run shows up in `(sessions/by-channel :cli)` and
       ;; survives process restarts.
       (let [_ (when local-router? (lp/rebuild-router! cfg))
-            {conversation-id :id} (lp/create! :cli {:title title})]
+            {session-id :id} (lp/create! :cli {:title title})]
         (try
-          (let [result (lp/send! conversation-id messages q-opts)]
-            (cond-> {:conversation-id conversation-id
+          (let [result (lp/send! session-id messages q-opts)]
+            (cond-> {:session-id session-id
                      :answer          (:answer result)
                      :iteration-count (:iteration-count result)
                      :duration-ms     (:duration-ms result)
@@ -543,7 +543,7 @@
               (:status result)     (assoc :status (:status result))
               (:confidence result) (assoc :confidence (:confidence result))))
           (catch Exception e
-            {:conversation-id conversation-id
+            {:session-id session-id
              :error           (persistance/db-error->user-message e)
              :type            (str (type e))
              :exception       e}))))))
@@ -1239,8 +1239,8 @@
   (stdout! "  --name NAME          Set the agent name (default: cli).")
   (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
   (stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
-  (stdout! "                       `:cli` conversation. Default is ephemeral:")
-  (stdout! "                       no resume, no conversation row on disk.")
+  (stdout! "                       `:cli` session. Default is ephemeral:")
+  (stdout! "                       no resume, no session row on disk.")
   (stdout! "")
   (stdout! "Examples:")
   (stdout! "  vis \"Throwaway one-shot probe\"")
@@ -1289,7 +1289,7 @@
                                       (if (= db ":memory") :memory
                                         {:backend :sqlite :path db}))))
           result    (run! agent-def prompt run-opts)
-          trace-result (select-keys result [:conversation-id :answer :trace
+          trace-result (select-keys result [:session-id :answer :trace
                                             :iteration-count :duration-ms
                                             :tokens :cost :confidence
                                             :status :error :type])]
@@ -1356,70 +1356,70 @@
             (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents))))
 
-;;; ── `vis conversations` ─────────────────────────────────────────────────
+;;; ── `vis sessions` ─────────────────────────────────────────────────
 
 (def ^:private known-channels #{"tui" "telegram" "cli"})
 (def ^:private known-channel-filters (conj known-channels "all"))
-(def ^:private default-conversation-channels [:tui :telegram :cli])
+(def ^:private default-session-channels [:tui :telegram :cli])
 
-(defn- resolve-conversation-by-prefix
-  "Resolve a user-supplied conversation reference (full UUID or an
+(defn- resolve-session-by-prefix
+  "Resolve a user-supplied session reference (full UUID or an
    unambiguous prefix) to the canonical UUID. Scans every channel
    because forks are channel-agnostic; the user typed an id, we find
    it. Returns nil on miss or ambiguous prefix."
   [d input]
   (let [s (str input)]
-    (or (try (persistance/db-resolve-conversation-id d s) (catch Throwable _ nil))
+    (or (try (persistance/db-resolve-session-id d s) (catch Throwable _ nil))
       (let [all     (mapcat #(lp/by-channel %) [:tui :telegram :cli])
             matches (vec (filter #(str/starts-with? (str (:id %)) s) all))]
         (when (= 1 (count matches))
-          (persistance/db-resolve-conversation-id d (str (:id (first matches)))))))))
+          (persistance/db-resolve-session-id d (str (:id (first matches)))))))))
 
-(defn- cli-fork-conversation!
-  "Fork a conversation by id. Creates a new `conversation_state` row
+(defn- cli-fork-session!
+  "Fork a session by id. Creates a new `session_state` row
    that points at the latest state as its parent, optionally with a
-   user-supplied title. Prints the new state UUID; the conversation
-   id (soul-id) stays the same so `vis channels tui --conversation-id
+   user-supplied title. Prints the new state UUID; the session
+   id (soul-id) stays the same so `vis channels tui --session-id
    <ID>` keeps working and now resumes from the fork."
   [cid-input title]
   (let [d        (lp/db-info)
-        resolved (resolve-conversation-by-prefix d cid-input)]
+        resolved (resolve-session-by-prefix d cid-input)]
     (cond
       (nil? resolved)
-      (do (stdout! (str "Conversation not found: " cid-input))
+      (do (stdout! (str "Session not found: " cid-input))
         (stdout! "")
-        (stdout! "List existing conversations with:")
-        (stdout! "  vis conversations")
+        (stdout! "List existing sessions with:")
+        (stdout! "  vis sessions")
         (shutdown-agents)
         (System/exit 1))
 
       :else
       (let [opts      (cond-> {} (and title (not (str/blank? title)))
                         (assoc :title title))
-            new-state (persistance/db-fork-conversation! d resolved opts)]
+            new-state (persistance/db-fork-session! d resolved opts)]
         (if new-state
           (do (stdout! "")
-            (stdout! (str "  Forked conversation " resolved))
+            (stdout! (str "  Forked session " resolved))
             (when title (stdout! (str "  Title:        " title)))
             (stdout! (str "  New state-id: " new-state))
             (stdout! "")
-            (stdout! (str "  Resume with: vis channels tui --conversation-id " resolved))
+            (stdout! (str "  Resume with: vis channels tui --session-id " resolved))
             (stdout! ""))
-          (do (stdout! (str "Failed to fork conversation " resolved
+          (do (stdout! (str "Failed to fork session " resolved
                          "; no existing state to fork from."))
             (shutdown-agents)
             (System/exit 1)))
         (shutdown-agents)))))
 
-(defn- conversation-sort-key
+(defn- session-sort-key
   [{:keys [last-turn-at created-at id]}]
   [(- (long (or (some-> last-turn-at inst-ms) 0)))
    (- (long (or (some-> created-at inst-ms) 0)))
    (str id)])
 
-(defn- conversation-row
+(defn- session-row
   [d c]
-  (let [turns        (or (persistance/db-list-conversation-turns d (:id c)) [])
+  (let [turns        (or (persistance/db-list-session-turns d (:id c)) [])
         last-turn    (last turns)
         channel-name (name (or (:channel c) :unknown))]
     {:id           (str (:id c))
@@ -1432,35 +1432,35 @@
      :created-at   (:created-at c)
      :created      (or (fmt/format-date (:created-at c)) "-")}))
 
-(defn- conversation-rows
-  [d convs]
-  (->> convs
-    (mapv #(conversation-row d %))
-    (sort-by conversation-sort-key)
+(defn- session-rows
+  [d sessions]
+  (->> sessions
+    (mapv #(session-row d %))
+    (sort-by session-sort-key)
     vec))
 
-(defn- conversations-for-listing
+(defn- sessions-for-listing
   [channel-input]
-  (let [channels (if channel-input [(keyword channel-input)] default-conversation-channels)]
+  (let [channels (if channel-input [(keyword channel-input)] default-session-channels)]
     (mapcat lp/by-channel channels)))
 
-(defn- cli-list-conversations!
-  "List persisted conversations. `channel-input` filters to one channel;
+(defn- cli-list-sessions!
+  "List persisted sessions. `channel-input` filters to one channel;
    nil lists every known channel. Rows sort by most recent turn first,
-   with empty conversations after conversations that have turns."
+   with empty sessions after sessions that have turns."
   [channel-input]
   (let [channel-label (or channel-input "all")
-        convs         (conversations-for-listing channel-input)
+        sessions         (sessions-for-listing channel-input)
         d             (lp/db-info)]
-    (if (empty? convs)
+    (if (empty? sessions)
       (stdout! (if channel-input
-                 (str "No " channel-input " conversations found.")
-                 "No conversations found."))
-      (let [rows (conversation-rows d convs)]
+                 (str "No " channel-input " sessions found.")
+                 "No sessions found."))
+      (let [rows (session-rows d sessions)]
         (stdout! (str "\n  " (if channel-input
                                (str/upper-case channel-label)
                                "All")
-                   " Conversations\n"))
+                   " Sessions\n"))
         (print-table!
           [{:key :id           :label "ID"           :width 36 :align :left}
            {:key :title        :label "Title"        :width 24 :align :left :grow? true}
@@ -1470,10 +1470,10 @@
            {:key :last-turn    :label "Last Turn"    :width 16 :align :left}
            {:key :created      :label "Created"      :width 16 :align :left}]
           rows)
-        (stdout! (str "\n  " (count rows) " conversation(s)\n"))
-        (stdout! "  Resume with: vis channels tui --conversation-id <ID>  (full or short)")
+        (stdout! (str "\n  " (count rows) " session(s)\n"))
+        (stdout! "  Resume with: vis channels tui --session-id <ID>  (full or short)")
         (stdout! "  Or latest:   vis channels tui --resume")
-        (stdout! "  Fork:        vis conversations --fork <ID> [--title TITLE]"))))
+        (stdout! "  Fork:        vis sessions --fork <ID> [--title TITLE]"))))
   (shutdown-agents))
 
 (def ^:private search-field-labels
@@ -1483,13 +1483,13 @@
    "user_request"  "prompt"
    "expression"    "expression"})
 
-(defn- cli-conversations-search!
-  "`vis conversations search <query>` handler. Runs an FTS5 search
+(defn- cli-sessions-search!
+  "`vis sessions search <query>` handler. Runs an FTS5 search
    across user prompts, assistant answers, model thinking, per-block
    comments, and persisted expression source. Hits print one per
    line:
 
-     <conversation-id-prefix>  <field>  <snippet>
+     <session-id-prefix>  <field>  <snippet>
 
    Snippets carry `[match]` markers around hit terms so the user can
    see context. `--limit N` caps the result count (default 25)."
@@ -1499,9 +1499,9 @@
         limit (or (some-> (get parsed "limit") str/trim Long/parseLong) 25)]
     (cond
       (str/blank? query)
-      (do (stdout! "vis conversations search <query> [--limit N]")
+      (do (stdout! "vis sessions search <query> [--limit N]")
         (stdout! "")
-        (stdout! "Searches conversation answers, thinking, comments,")
+        (stdout! "Searches session answers, thinking, comments,")
         (stdout! "prompts, and persisted expression source.")
         (shutdown-agents)
         (System/exit 1))
@@ -1530,12 +1530,12 @@
                     "  " snippet))))
             (shutdown-agents)))))))
 
-(defn- cli-conversations!
-  "`vis conversations` handler.
+(defn- cli-sessions!
+  "`vis sessions` handler.
 
    Two modes:
-   - List   --  `vis conversations [all|tui|telegram|cli]`
-   - Fork   --  `vis conversations --fork <CONVERSATION-ID> [--title TITLE]`
+   - List   --  `vis sessions [all|tui|telegram|cli]`
+   - Fork   --  `vis sessions --fork <SESSION-ID> [--title TITLE]`
 
    The `parsed` map carries the spec'd flags; the bare positional
    `channel` (if present) is also in `parsed`. Anything not in the
@@ -1547,7 +1547,7 @@
         channel     (get parsed "channel")]
     (cond
       (and (some? fork-target) (not (str/blank? fork-target)))
-      (cli-fork-conversation! fork-target title)
+      (cli-fork-session! fork-target title)
 
       :else
       (let [ch (when (and channel (not= "all" channel))
@@ -1555,9 +1555,9 @@
         (when (and channel (not (contains? known-channel-filters channel)))
           (stdout! (str "Unknown channel: " channel
                      ". Expected one of: " (str/join ", " (sort known-channel-filters))
-                     ". Showing all conversations."))
+                     ". Showing all sessions."))
           (stdout! ""))
-        (cli-list-conversations! ch)))))
+        (cli-list-sessions! ch)))))
 
 ;;; ── `vis providers` ─────────────────────────────────────────────────────
 
@@ -2017,7 +2017,7 @@
 
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
-;; `providers`, `conversations`, `doctor` are the binary's own
+;; `providers`, `sessions`, `doctor` are the binary's own
 ;; commands. They live at the top of the command tree -- `vis providers
 ;; ...`, NOT `vis extensions providers ...` -- so they bypass
 ;; `:ext/cli` (the extensions-subcommand slot, see below).
@@ -2030,22 +2030,22 @@
           :cmd/usage "vis providers <list|status|limits|auth|logout> [...]"
           :cmd/subcommands #(registry/registered-under ["providers"])}
 
-         {:cmd/name  "conversations"
-          :cmd/doc   "List conversations stored on disk, or fork / search them."
-          :cmd/usage "vis conversations [all|tui|telegram|cli] [--fork ID [--title TITLE]]"
+         {:cmd/name  "sessions"
+          :cmd/doc   "List sessions stored on disk, or fork / search them."
+          :cmd/usage "vis sessions [all|tui|telegram|cli] [--fork ID [--title TITLE]]"
           :cmd/args  [{:name "channel" :kind :positional :type :string
                        :doc  "Optional channel filter (all|tui|telegram|cli; default all)."}
                       {:name "fork"  :kind :flag :type :string
-                       :doc  "Fork the conversation with the given id (full UUID or unambiguous prefix)."}
+                       :doc  "Fork the session with the given id (full UUID or unambiguous prefix)."}
                       {:name "title" :kind :flag :type :string
                        :doc  "Title to set on the new fork (used with --fork)."}]
-          :cmd/examples ["vis conversations"
-                         "vis conversations telegram"
-                         "vis conversations --fork 3a7b2c1d-..."
-                         "vis conversations --fork 3a7b2c1d --title \"Branch A\""
-                         "vis conversations search \"foo bar\""]
-          :cmd/subcommands #(registry/registered-under ["conversations"])
-          :cmd/run-fn cli-conversations!}
+          :cmd/examples ["vis sessions"
+                         "vis sessions telegram"
+                         "vis sessions --fork 3a7b2c1d-..."
+                         "vis sessions --fork 3a7b2c1d --title \"Branch A\""
+                         "vis sessions search \"foo bar\""]
+          :cmd/subcommands #(registry/registered-under ["sessions"])
+          :cmd/run-fn cli-sessions!}
 
          {:cmd/name  "doctor"
           :cmd/doc   "Run cross-extension diagnostics."
@@ -2111,17 +2111,17 @@
                            "vis providers logout openai-codex"]
             :cmd/run-fn cli-providers-logout!}
            {:cmd/name   "search"
-            :cmd/parent ["conversations"]
+            :cmd/parent ["sessions"]
             :cmd/doc    "Full-text search across answers, thinking, comments, prompts, and expressions."
-            :cmd/usage  "vis conversations search <query> [--limit N]"
+            :cmd/usage  "vis sessions search <query> [--limit N]"
             :cmd/args   [{:name "query" :kind :positional :type :string
                           :doc  "FTS5 query (`foo bar` for AND, `foo OR bar`, `foo*` for prefix)."}
                          {:name "limit" :kind :flag :type :string
                           :doc  "Max hits to print (default 25)."}]
-            :cmd/examples ["vis conversations search \"znajduje nodes\""
-                           "vis conversations search \"refactor*\""
-                           "vis conversations search \"foo OR bar\" --limit 100"]
-            :cmd/run-fn cli-conversations-search!}
+            :cmd/examples ["vis sessions search \"znajduje nodes\""
+                           "vis sessions search \"refactor*\""
+                           "vis sessions search \"foo OR bar\" --limit 100"]
+            :cmd/run-fn cli-sessions-search!}
            {:cmd/name   "list"
             :cmd/parent ["extensions"]
             :cmd/doc    "List every registered extension with metadata."
@@ -2169,7 +2169,7 @@
 (defn- configure-logging!
   "Route Telemere signals: file handler always on, persistence-backed
    `:db` handler always on (so the loop's `tel/with-ctx+ {:db-info ...}`
-   bindings land in the conversation_log table), and the
+   bindings land in the session_log table), and the
    `:default/console` handler is OFF by default - it was removed by
    `internal.registry` at namespace load so boot-time registration
    logs never spray to stdout. We re-add it here only when `--debug`
@@ -2191,7 +2191,7 @@
              (tel/handler:console))
         (catch Throwable _ nil)))
     ;; Persistence handler: scopes signals to the right DB rows via
-    ;; `:db-info` / `:conversation-soul-id` / `:conversation-turn-id` /
+    ;; `:db-info` / `:session-soul-id` / `:session-turn-id` /
     ;; `:iteration-id` carried in telemere `*ctx*`. Wrapped because
     ;; the persistence facade is loaded lazily; if no backend has
     ;; registered yet, the handler will silently drop signals until
@@ -2243,7 +2243,7 @@
    by `vis-foundation/combined-scan-warnings`, so both the user (at
    the terminal) and the LLM (in its prompt) see the failure
    immediately instead of bouncing off `Unable to resolve symbol`
-   for an entire conversation."
+   for an entire session."
   []
   (extension/discover-extensions!)
   (print-extension-load-failures!)
@@ -2254,7 +2254,7 @@
 ;;
 ;; The dispatcher's root has NO hard-coded subcommands. Every entry
 ;; comes from the global commandline registry. Built-ins (providers,
-;; conversations, doctor, ...) are registered by vis-runtime; the `vis channel` and
+;; sessions, doctor, ...) are registered by vis-runtime; the `vis channel` and
 ;; `vis ext` parents are registered by the channel and extension
 ;; facades. Add a third-party jar with its own `register-cmd!`
 ;; calls and its commands appear here without any code change.
@@ -2274,7 +2274,7 @@
     "  vis --json \"summarize this repo\"\n"
     "  vis --full-trace-json-stream --db :memory \"debug startup\"\n"
     "  vis providers status\n"
-    "  vis conversations search sqlite\n"
+    "  vis sessions search sqlite\n"
     "\n"
     "ONE-SHOT FLAGS\n"
     "  --json                       Print result as JSON.\n"
@@ -2288,7 +2288,7 @@
     "  --model MODEL                Override model or use provider/model.\n"
     "  --name NAME                  Agent name for this run.\n"
     "  --db PATH|:memory            SQLite DB path or in-memory DB.\n"
-    "  --persist                    Persist as a :cli conversation.\n"
+    "  --persist                    Persist as a :cli session.\n"
     "  --debug                      Enable verbose debug logging.\n"
     "  --help, -h                   Show help."))
 

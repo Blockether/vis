@@ -27,8 +27,8 @@
                      :symbol sym})))
     args))
 
-(doseq [[op tag] [[:v/conversation-state :op.tag/observation]
-                  [:v/conversation-report :op.tag/observation]
+(doseq [[op tag] [[:v/session-state :op.tag/observation]
+                  [:v/session-report :op.tag/observation]
                   [:v/engine-symbol-documentation :op.tag/observation]
                   [:v/engine-symbol-source-code :op.tag/observation]
                   [:v/engine-symbol-metadata :op.tag/observation]
@@ -73,10 +73,10 @@
 (defn- transcript-cli-command
   []
   {:cmd/name  "reproduction"
-   :cmd/doc   "Print a complete, flag-free Markdown reproduction artifact for a conversation. It is always complete: every turn, iteration, prompt body, message envelope, executed code block, var, reasoning trace, final answer, and raw LLM diagnostic. Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
-   :cmd/usage "vis extensions reproduction <CONVERSATION-ID>"
-   :cmd/args  [{:name "conversation-id" :kind :positional :type :string
-                :doc  "Conversation id (full UUID or unambiguous prefix)."}]
+   :cmd/doc   "Print a complete, flag-free Markdown reproduction artifact for a session. It is always complete: every turn, iteration, prompt body, message envelope, executed code block, var, reasoning trace, final answer, and raw LLM diagnostic. Resolves an unambiguous id prefix the same way `vis sessions --fork` does."
+   :cmd/usage "vis extensions reproduction <SESSION-ID>"
+   :cmd/args  [{:name "session-id" :kind :positional :type :string
+                :doc  "Session id (full UUID or unambiguous prefix)."}]
    :cmd/examples ["vis extensions reproduction eeaf9651-06c7-4dda-9e97-877fcef06337"
                   "vis extensions reproduction eeaf9651"
                   "vis extensions reproduction eeaf9651 > REPRODUCTION.md"]
@@ -85,7 +85,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation"
-     :ext/description    "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, doctor/reproduction CLI."
+     :ext/description    "Foundation `v/`: session-state/session-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, doctor/reproduction CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

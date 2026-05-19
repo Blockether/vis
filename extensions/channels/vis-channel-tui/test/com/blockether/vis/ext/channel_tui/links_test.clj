@@ -76,7 +76,7 @@
     (expect (= [] (links/parse-md-refs nil)))
     (expect (= [] (links/parse-md-refs ""))))
 
-  ;; Regression: conversation 954bf315 froze the TUI on open because
+  ;; Regression: session 954bf315 froze the TUI on open because
   ;; this regex's text portion (`[^\\]]*?`) ate newlines, matching
   ;; phantom links across paragraph boundaries. The captured `:text`
   ;; carried a literal `\n`, `chrome-display-text` joined it into a
@@ -86,7 +86,7 @@
   ;; silently failed to paint, the user saw a blank scrollback.
   ;; Anchor the regex to single lines and the cascade stops at the
   ;; source.
-  (it "never matches across newlines (regression: conv 954bf315 froze TUI)"
+  (it "never matches across newlines (regression: session 954bf315 froze TUI)"
     ;; Multi-line prose where a naive regex would match
     ;; `[params](url)` then continue to a *different* `](url)` on a
     ;; later line, eating the entire intervening paragraph as `:text`.

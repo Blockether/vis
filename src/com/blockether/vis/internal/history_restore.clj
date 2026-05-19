@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.history-restore
-  "Common helpers for displaying persisted conversation history.
+  "Common helpers for displaying persisted session history.
 
    Persistence may store an iteration block result as `{:vis/ref :expr}` when
    the live return value is runtime-only (for example a SCI Var returned by a
@@ -23,17 +23,17 @@
       second)))
 
 (defn restored-var-values
-  "Map persisted var name string -> durable value for a conversation.
+  "Map persisted var name string -> durable value for a session.
 
    Runtime-ref values are omitted because they cannot improve a history
    display. Callers can use this once per resume/render pass, then feed the
    resulting map to `restored-def-result`."
-  [db-info conversation-id]
+  [db-info session-id]
   (into {}
     (keep (fn [{:keys [name result]}]
             (when (and name (not (runtime-ref? result)))
               [(str name) result])))
-    (persistance/db-restore-blocks db-info conversation-id)))
+    (persistance/db-restore-blocks db-info session-id)))
 
 (defn restored-def-result
   "Return a bounded display string for `code` when it is a `(def ...)` whose

@@ -2,8 +2,8 @@
   "Programmatic introspection of the agent's own state from inside
    `:code`. The public state surface is deliberately small:
 
-   - `(v/conversation-state [conversation-id])` -> data map, including raw LLM diagnostics
-   - `(v/conversation-report [conversation-id])` -> Markdown rendered from that data
+   - `(v/session-state [session-id])` -> data map, including raw LLM diagnostics
+   - `(v/session-report [session-id])` -> Markdown rendered from that data
 
    Everything else in this namespace is implementation detail. The agent
    gets the data once, manipulates it via plain Clojure (`get-in`,
@@ -28,18 +28,18 @@
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
 ;; registry (`vis/registered-channels`) so any third-party channel jar
-;; on the classpath surfaces in the inspect conversation index automatically -
+;; on the classpath surfaces in the inspect session index automatically -
 ;; no edits to this file when a new front-end ships.
 ;;
 ;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
-;; its conversations-channel namespace WITHOUT registering a channel
+;; its sessions-channel namespace WITHOUT registering a channel
 ;; descriptor (the `vis` dispatcher itself is the surface; there is no
 ;; `vis channels cli` sub-command, so it has no `:channel/cmd`). Every
 ;; other channel id comes from the registry.
 ;; ---------------------------------------------------------------------------
 
 (defn- known-channels
-  "Vec of conversations-channel keywords known to this process. Derived
+  "Vec of sessions-channel keywords known to this process. Derived
    from the global channel registry plus the implicit `:cli` namespace."
   []
   (->> (vis/registered-channels)
@@ -55,21 +55,21 @@
 (defn- safe-deref [a]
   (when a (try (deref a) (catch Throwable _ nil))))
 
-(defn- current-conversation-id [env]
-  (:conversation-id env))
+(defn- current-session-id [env]
+  (:session-id env))
 
-(defn- current-conversation-turn-id
+(defn- current-session-turn-id
   "UUID of the in-flight turn, or nil when no turn is running yet.
 
-   Internally this is the `conversation_turn_soul` id - hence the
-   `:current-conversation-turn-id-atom` env key and this helper's `conversation-turn-id`
+   Internally this is the `session_turn_soul` id - hence the
+   `:current-session-turn-id-atom` env key and this helper's `session-turn-id`
    suffix. The product concept is *turn*; everywhere this id is
    surfaced to the model (e.g. inspect current-turn results, the
    `:in-flight-turn-id` slot) it's labelled `turn`. Mirrors the
    SCI-visible `TURN_ID` SYSTEM var so meta-fns can filter
    it without round-tripping through SCI."
   [env]
-  (some-> (:current-conversation-turn-id-atom env) deref))
+  (some-> (:current-session-turn-id-atom env) deref))
 
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
@@ -80,10 +80,10 @@
   (and a b (= (str a) (str b))))
 
 (defn- iteration-rows
-  "Fetch the iteration rows for `conversation-turn-id`; returns [] on any failure."
-  [db-info conversation-turn-id]
+  "Fetch the iteration rows for `session-turn-id`; returns [] on any failure."
+  [db-info session-turn-id]
   (try
-    (vis/db-list-conversation-turn-iterations db-info conversation-turn-id)
+    (vis/db-list-session-turn-iterations db-info session-turn-id)
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@
 
 (defn- turn-cost-summary
   "Pull the token / cost / provider / model map persisted on
-   `conversation_turn_state.metadata` (with `llm_root_provider` /
+   `session_turn_state.metadata` (with `llm_root_provider` /
    `llm_root_model` as the canonical typed columns). Returns a map
    with the :input-tokens / :output-tokens / :total-cost / :provider
    / :model / :provider-model keys when present, or an empty map.
@@ -298,9 +298,9 @@
                 (concat provider (expression-failures-for-iteration db-info iteration))))
       iterations)))
 
-(defn- latest-turn [db-info conversation-id]
-  (when (and db-info conversation-id)
-    (last (try (vis/db-list-conversation-turns db-info conversation-id)
+(defn- latest-turn [db-info session-id]
+  (when (and db-info session-id)
+    (last (try (vis/db-list-session-turns db-info session-id)
             (catch Throwable _ [])))))
 
 (defn- turn-snapshot
@@ -310,8 +310,8 @@
    iteration pointer. The agent picks what it needs by map key
    instead of querying SQLite manually."
   [env]
-  (let [{:keys [db-info conversation-id]} env]
-    (when-let [turn (latest-turn db-info conversation-id)]
+  (let [{:keys [db-info session-id]} env]
+    (when-let [turn (latest-turn db-info session-id)]
       (let [iterations (iteration-rows db-info (:id turn))
             attempts   (attempts-from-iterations db-info iterations)]
         (cond-> {:id           (:id turn)
@@ -324,19 +324,19 @@
                  :cost         (turn-cost-summary turn)}
           (elapsed-ms turn) (assoc :elapsed-ms (elapsed-ms turn)))))))
 
-(defn- conversation-snapshot
-  "Map for a single conversation: identity + every turn rolled up to a
+(defn- session-snapshot
+  "Map for a single session: identity + every turn rolled up to a
    compact `{:id :user-request :outcome :answer :iteration-count :status}`
-   shape. Used by the conversation-summary portion of inspect.
+   shape. Used by the session-summary portion of inspect.
 
    `:iteration-count` is the integer number of LLM rounds the turn
    consumed. Spelled out so it never gets confused with the vector
    shape that the runtime trace uses for per-iteration entries."
-  [db-info conversation-id]
-  (when (and db-info conversation-id)
+  [db-info session-id]
+  (when (and db-info session-id)
     (try
-      (when-let [conversation (vis/db-get-conversation db-info conversation-id)]
-        (let [turn-rows (vis/db-list-conversation-turns db-info conversation-id)
+      (when-let [session (vis/db-get-session db-info session-id)]
+        (let [turn-rows (vis/db-list-session-turns db-info session-id)
               turns (mapv (fn [turn]
                             (cond-> {:id (:id turn)
                                      :outcome (or (:prior-outcome turn)
@@ -346,18 +346,18 @@
                               (:iteration-count turn)  (assoc :iteration-count (:iteration-count turn))
                               (:total-cost turn)       (assoc :total-cost      (:total-cost turn))))
                       turn-rows)]
-          (cond-> {:id          conversation-id
-                   :channel     (:channel conversation)
-                   :title       (:title conversation)
-                   :model       (:model conversation)
-                   :created-at  (:created-at conversation)
+          (cond-> {:id          session-id
+                   :channel     (:channel session)
+                   :title       (:title session)
+                   :model       (:model session)
+                   :created-at  (:created-at session)
                    :turns       turns
                    :turn-count  (count turns)}
-            (:provider conversation)
-            (assoc :provider (:provider conversation))
-            (format-provider-model (:provider conversation) (:model conversation))
+            (:provider session)
+            (assoc :provider (:provider session))
+            (format-provider-model (:provider session) (:model session))
             (assoc :provider-model
-              (format-provider-model (:provider conversation) (:model conversation))))))
+              (format-provider-model (:provider session) (:model session))))))
       (catch Throwable _ nil))))
 
 ;; ---------------------------------------------------------------------------
@@ -369,22 +369,22 @@
 (defn- foundation-turn [env]
   (turn-snapshot env))
 
-(defn- foundation-conversation
-  "Snapshot for a conversation. The in-flight turn (= current `TURN_ID`)
+(defn- foundation-session
+  "Snapshot for a session. The in-flight turn (= current `TURN_ID`)
    is automatically excluded from `:turns` because its `:iteration-count` /
    `:total-cost` haven't been finalized yet - listing it would render
    as `null | $null` and confuse downstream summaries. The excluded id
    is surfaced as `:in-flight-turn-id` so callers can opt into seeing
    it. Filtering happens only when the in-flight turn belongs to this
-   conversation; foreign conversations are returned verbatim."
+   session; foreign sessions are returned verbatim."
   ([env]
-   (foundation-conversation env (current-conversation-id env)))
-  ([env conversation-id]
-   (when-let [snapshot (conversation-snapshot (:db-info env) conversation-id)]
-     (let [in-flight-id (current-conversation-turn-id env)
-           same-conv?   (and in-flight-id
-                          (same-uuid? conversation-id (current-conversation-id env)))]
-       (if-not same-conv?
+   (foundation-session env (current-session-id env)))
+  ([env session-id]
+   (when-let [snapshot (session-snapshot (:db-info env) session-id)]
+     (let [in-flight-id (current-session-turn-id env)
+           same-session?   (and in-flight-id
+                             (same-uuid? session-id (current-session-id env)))]
+       (if-not same-session?
          snapshot
          (let [filtered (filterv #(not (same-uuid? in-flight-id (:id %)))
                           (:turns snapshot))]
@@ -393,8 +393,8 @@
              (assoc :turn-count (count filtered))
              (assoc :in-flight-turn-id in-flight-id))))))))
 
-(defn- foundation-conversations
-  "List every conversation the DB knows about, newest-first. With no
+(defn- foundation-sessions
+  "List every session the DB knows about, newest-first. With no
    arg, scans every channel surfaced by `known-channels`. With a
    channel kw, filters to that channel. Returns `[]` (never nil) when
    the env is missing a `:db-info` handle so callers can chain seq
@@ -408,73 +408,73 @@
                            :else        0)
                          0)
                   identity)
-         (mapcat #(foundation-conversations env %) (known-channels))))
+         (mapcat #(foundation-sessions env %) (known-channels))))
      []))
   ([env channel]
    (if (:db-info env)
      (try
-       (mapv (fn [conversation]
-               (let [conversation-id (:id conversation)
-                     turns (try (vis/db-list-conversation-turns (:db-info env) conversation-id)
+       (mapv (fn [session]
+               (let [session-id (:id session)
+                     turns (try (vis/db-list-session-turns (:db-info env) session-id)
                              (catch Throwable _ []))]
-                 (cond-> {:id          conversation-id
-                          :channel     (:channel conversation)
-                          :title       (:title conversation)
-                          :created-at  (:created-at conversation)
+                 (cond-> {:id          session-id
+                          :channel     (:channel session)
+                          :title       (:title session)
+                          :created-at  (:created-at session)
                           :turn-count  (count turns)}
-                   (:external-id conversation) (assoc :external-id (:external-id conversation)))))
-         (vis/db-list-conversations (:db-info env) channel))
+                   (:external-id session) (assoc :external-id (:external-id session)))))
+         (vis/db-list-sessions (:db-info env) channel))
        (catch Throwable _ []))
      [])))
 
-(defn- foundation-conversation-forks
-  "List every `conversation_state` row for the conversation soul behind
-   `conversation-id`, oldest version first. Each row maps to
+(defn- foundation-session-forks
+  "List every `session_state` row for the session soul behind
+   `session-id`, oldest version first. Each row maps to
    `{:state-id :version :parent-state-id :title :system-prompt :provider
      :model :created-at :turn-count}`. The trunk is `:version 0` with
    `:parent-state-id nil`; any later row with non-nil `:parent-state-id`
    is a fork off the referenced state. Returns `[]` (never nil) when
-   the conversation has no rows OR the env is missing handles - lets
+   the session has no rows OR the env is missing handles - lets
    callers chain `(group-by :parent-state-id ...)` without nil-guards.
 
-   No-arg form uses the current-conversation-id from the env."
+   No-arg form uses the current-session-id from the env."
   ([env]
-   (foundation-conversation-forks env (current-conversation-id env)))
-  ([env conversation-id]
-   (if (and (:db-info env) conversation-id)
+   (foundation-session-forks env (current-session-id env)))
+  ([env session-id]
+   (if (and (:db-info env) session-id)
      (try
-       (vec (vis/db-list-conversation-states (:db-info env) conversation-id))
+       (vec (vis/db-list-session-states (:db-info env) session-id))
        (catch Throwable _ []))
      [])))
 
 (defn- meta-turn-retries
-  "List every `conversation_turn_state` row (= every retry version) for the turn
-   soul behind `conversation-turn-id`, oldest version first. Each row maps to
-   `{:state-id :version :forked-from-conversation-turn-state-id :status :prior-outcome
+  "List every `session_turn_state` row (= every retry version) for the turn
+   soul behind `session-turn-id`, oldest version first. Each row maps to
+   `{:state-id :version :forked-from-session-turn-state-id :status :prior-outcome
      :provider :model :created-at :iteration-count}`. Version 0 with
-   `:forked-from-conversation-turn-state-id nil` is the original run; any higher
-   version is a retry. `conversation-turn-id` is a `conversation_turn_soul` UUID - the same id
+   `:forked-from-session-turn-state-id nil` is the original run; any higher
+   version is a retry. `session-turn-id` is a `session_turn_soul` UUID - the same id
    surfaced as `:turn-id` by attempt search, `:id` by the current-turn
-   snapshot, or `:turns[].id` by the conversation summary. Returns `[]` (never nil)
+   snapshot, or `:turns[].id` by the session summary. Returns `[]` (never nil)
    when the turn is unknown or the env is missing handles."
-  [env conversation-turn-id]
-  (if (and (:db-info env) conversation-turn-id)
+  [env session-turn-id]
+  (if (and (:db-info env) session-turn-id)
     (try
-      (vec (vis/db-list-conversation-turn-states (:db-info env) conversation-turn-id))
+      (vec (vis/db-list-session-turn-states (:db-info env) session-turn-id))
       (catch Throwable _ []))
     []))
 
 (defn- foundation-failures
   "Provider/schema and code/tool failures, normalized into one
-   chronological vector. No arg = current turn. Pass a conversation id
-   to scan every turn in that conversation. To scan EVERY conversation
+   chronological vector. No arg = current turn. Pass a session id
+   to scan every turn in that session. To scan EVERY session
    in the DB use the DB-wide helper instead. Returns `[]`
    (never nil) when there is nothing to report or the env is missing
    handles."
   ([env]
    (or (:failures (turn-snapshot env)) []))
-  ([env conversation-id]
-   (if (and (:db-info env) conversation-id)
+  ([env session-id]
+   (if (and (:db-info env) session-id)
      (try
        (vec
          (mapcat (fn [turn]
@@ -482,7 +482,7 @@
                      (mapv #(assoc % :turn-id (:id turn)
                               :user-request (:user-request turn))
                        (failures-from-iterations (:db-info env) iterations))))
-           (vis/db-list-conversation-turns (:db-info env) conversation-id)))
+           (vis/db-list-session-turns (:db-info env) session-id)))
        (catch Throwable _ []))
      [])))
 
@@ -497,7 +497,7 @@
    floor: agents that miss a path 2-3x and pivot stay below; agents
    that emit 5+ identical-root-cause errors are stuck and not learning.
    Anchored to the worst-case in the self-analyze report for
-   conversation 89ea9c98-21d4-4483-a962-f8ccb1d8232d (148 'src/tui not
+   session 89ea9c98-21d4-4483-a962-f8ccb1d8232d (148 'src/tui not
    found' failures in one turn - the failure mode this catches)."
   5)
 
@@ -553,7 +553,7 @@
             clusters))
 
         (contains? classes :provider-schema-rejected)
-        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/conversation-state)) and retry/switch model only if it repeats.")
+        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/session-state)) and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
         (conj (str "v/rg takes one spec map with literal vectors, not regex strings or positional args. "
@@ -573,7 +573,7 @@
   "Compact current-turn diagnosis built from failure data. Returns a
    map with counts, repetition-loop detection, and next actions so the
    agent can stop burning iterations on DB spelunking. Pass a
-   conversation id to diagnose all turns in that conversation.
+   session id to diagnose all turns in that session.
 
    `:repetition-loop?` is `true` when any error signature repeats at
    least `REPETITION_THRESHOLD` times in the failure list - the
@@ -593,10 +593,10 @@
       :repetition-clusters clusters
       :failures            failures
       :next-actions        (next-actions failures clusters)}))
-  ([env conversation-id]
-   (let [failures (vec (foundation-failures env conversation-id))
+  ([env session-id]
+   (let [failures (vec (foundation-failures env session-id))
          clusters (repetition-clusters failures)]
-     {:conversation-id     conversation-id
+     {:session-id     session-id
       :failure-count       (count failures)
       :by-classification   (classification-counts failures)
       :repetition-loop?    (boolean (seq clusters))
@@ -650,7 +650,7 @@
 
 (defn- llm-diagnostics
   "Flatten the full transcript into the raw LLM diagnostics view exposed
-   by `v/conversation-state`. This is a convenience index over the canonical
+   by `v/session-state`. This is a convenience index over the canonical
    transcript payload, not another storage read."
   [transcript-data]
   (vec
@@ -659,60 +659,60 @@
       (:turns transcript-data))))
 
 (defn- foundation-inspect-data
-  "Canonical conversation-state data surface. One read returns the
+  "Canonical session-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
    diagnosis, fork/retry metadata, raw LLM diagnostics, and the full
-   transcript payload. Default target is the current conversation;
-   pass a conversation id or unambiguous prefix to inspect another
-   conversation."
-  [env conversation-id]
-  (let [target-id            (or conversation-id (:conversation-id env))
+   transcript payload. Default target is the current session;
+   pass a session id or unambiguous prefix to inspect another
+   session."
+  [env session-id]
+  (let [target-id            (or session-id (:session-id env))
         transcript-data      (safe-call #(transcript/transcript (:db-info env) target-id) nil)
-        resolved-id          (or (get-in transcript-data [:conversation :id]) target-id)
-        conversation-summary (safe-call #(foundation-conversation env resolved-id) nil)
+        resolved-id          (or (get-in transcript-data [:session :id]) target-id)
+        session-summary (safe-call #(foundation-session env resolved-id) nil)
         failures             (safe-call #(foundation-failures env resolved-id) [])
         diagnosis            (safe-call #(foundation-diagnose env resolved-id) {})
-        forks                (safe-call #(foundation-conversation-forks env resolved-id) [])
+        forks                (safe-call #(foundation-session-forks env resolved-id) [])
         turn-retries         (safe-call #(retries-by-turn env (:turns transcript-data)) {})]
     {:schema-version      1
-     :scope               :conversation
-     :conversation-id     resolved-id
-     :conversation-index  (safe-call #(foundation-conversations env) [])
-     :conversation        conversation-summary
+     :scope               :session
+     :session-id     resolved-id
+     :session-index  (safe-call #(foundation-sessions env) [])
+     :session        session-summary
      :current-turn        (safe-call #(foundation-turn env) nil)
      :failures            failures
      :diagnosis           diagnosis
-     :conversation-forks  forks
+     :session-forks  forks
      :turn-retries        turn-retries
      :llm-diagnostics    (safe-call #(llm-diagnostics transcript-data) [])
      :transcript          transcript-data}))
 
-(defn- conversation-envelope
+(defn- session-envelope
   [op result]
   (extension/success {:op op
                       :result result}))
 
 (defn- foundation-inspect
-  "Canonical conversation-state data surface. Returns a Vis tool envelope;
+  "Canonical session-state data surface. Returns a Vis tool envelope;
    SCI callers receive the unwrapped data map."
   ([env]
-   (foundation-inspect env (:conversation-id env)))
-  ([env conversation-id]
-   (conversation-envelope :v/conversation-state
-     (foundation-inspect-data env conversation-id))))
+   (foundation-inspect env (:session-id env)))
+  ([env session-id]
+   (session-envelope :v/session-state
+     (foundation-inspect-data env session-id))))
 
 (defn- foundation-report
   "Render the same canonical data returned by `foundation-inspect` as
    Markdown. Returns a Vis tool envelope; SCI callers receive the
    unwrapped string."
   ([env]
-   (foundation-report env (:conversation-id env)))
-  ([env conversation-id]
-   (let [data (foundation-inspect-data env conversation-id)
+   (foundation-report env (:session-id env)))
+  ([env session-id]
+   (let [data (foundation-inspect-data env session-id)
          report (if-let [transcript-data (:transcript data)]
                   (transcript/transcript->md transcript-data)
-                  (str "Conversation not found: " (:conversation-id data) "\n"))]
-     (conversation-envelope :v/conversation-report report))))
+                  (str "Session not found: " (:session-id data) "\n"))]
+     (session-envelope :v/session-report report))))
 
 ;; Removed extra workflow surfaces.
 
@@ -937,25 +937,25 @@
                                 (str " — " (truncate-text line 180))))))])
            (take apropos-render-limit matches)))])))
 
-(defn- conversation-state-ir
-  [{:keys [conversation-id conversation-index conversation current-turn failures diagnosis
-           conversation-forks turn-retries llm-diagnostics transcript]}]
+(defn- session-state-ir
+  [{:keys [session-id session-index session current-turn failures diagnosis
+           session-forks turn-retries llm-diagnostics transcript]}]
   (let [turns      (vec (:turns transcript))
         iterations (reduce + 0 (map (comp count :iterations) turns))
         total-cost (get-in transcript [:totals :cost-usd])
         tokens     (get-in transcript [:totals :tokens])]
     [:ir {}
-     (ir-p (ir-code "v/conversation-state")
+     (ir-p (ir-code "v/session-state")
        (ir-text " returned full data; rendered summary only."))
      [:ul {}
-      [:li {} (ir-p (ir-code ":conversation-id") (ir-text (str " " conversation-id)))]
-      [:li {} (ir-p (ir-code ":conversation-index") (ir-text (str " " (count conversation-index) " conversation(s)")))]
-      [:li {} (ir-p (ir-code ":conversation") (ir-text (str " " (or (:title conversation) "<none>"))))]
+      [:li {} (ir-p (ir-code ":session-id") (ir-text (str " " session-id)))]
+      [:li {} (ir-p (ir-code ":session-index") (ir-text (str " " (count session-index) " session(s)")))]
+      [:li {} (ir-p (ir-code ":session") (ir-text (str " " (or (:title session) "<none>"))))]
       [:li {} (ir-p (ir-code ":current-turn") (ir-text (str " " (or (:id current-turn) "<none>"))))]
       [:li {} (ir-p (ir-code ":transcript") (ir-text (str " " (count turns) " turn(s), " iterations " iteration(s)")))]
       [:li {} (ir-p (ir-code ":failures") (ir-text (str " " (count failures))))]
       [:li {} (ir-p (ir-code ":diagnosis") (ir-text (str " " (count diagnosis) " key(s)")))]
-      [:li {} (ir-p (ir-code ":conversation-forks") (ir-text (str " " (count conversation-forks))))]
+      [:li {} (ir-p (ir-code ":session-forks") (ir-text (str " " (count session-forks))))]
       [:li {} (ir-p (ir-code ":turn-retries") (ir-text (str " " (count turn-retries) " turn(s)")))]
       [:li {} (ir-p (ir-code ":llm-diagnostics") (ir-text (str " " (count llm-diagnostics) " row(s)")))]
       (when tokens
@@ -967,10 +967,10 @@
        (ir-text " / ")
        (ir-code "select-keys")
        (ir-text " or ")
-       (ir-code "v/conversation-report")
+       (ir-code "v/session-report")
        (ir-text " for the full dump."))]))
 
-(defn- conversation-state-channel [result] (conversation-state-ir result))
+(defn- session-state-channel [result] (session-state-ir result))
 (defn- symbol-doc-channel [result] (symbol-doc-ir result))
 (defn- symbol-source-channel [result] (symbol-source-ir result))
 (defn- symbol-meta-channel [result] (symbol-meta-ir result))
@@ -985,18 +985,18 @@
 ;; private and named for clarity inside this ns. Re-export them under their
 ;; SCI-visible names with `:doc` and `:arglists` baked into the var meta so
 ;; `vis/symbol` can read both straight off the var.
-(def ^{:doc "Full conversation state: conversation index, current turn snapshot, classified failures, diagnosis, fork/retry metadata, raw LLM diagnostics, and complete transcript. Default target = current conversation; pass a conversation-id or unambiguous prefix to inspect another."
-       :arglists '([] [conversation-id])} conversation-state foundation-inspect)
-(def ^{:doc "Complete Markdown report for a conversation: every turn, iteration, code block, result, answer, and LLM diagnostic rendered as a single Markdown artifact. Same underlying data as `v/conversation-state`. Default target = current conversation."
-       :arglists '([] [conversation-id])} conversation-report foundation-report)
+(def ^{:doc "Full session state: session index, current turn snapshot, classified failures, diagnosis, fork/retry metadata, raw LLM diagnostics, and complete transcript. Default target = current session; pass a session-id or unambiguous prefix to inspect another."
+       :arglists '([] [session-id])} session-state foundation-inspect)
+(def ^{:doc "Complete Markdown report for a session: every turn, iteration, code block, result, answer, and LLM diagnostic rendered as a single Markdown artifact. Same underlying data as `v/session-state`. Default target = current session."
+       :arglists '([] [session-id])} session-report foundation-report)
 
-(def conversation-state-symbol
-  (vis/symbol #'conversation-state
+(def session-state-symbol
+  (vis/symbol #'session-state
     {:before-fn inject-environment
-     :render-fn conversation-state-channel}))
+     :render-fn session-state-channel}))
 
-(def conversation-report-symbol
-  (vis/symbol #'conversation-report
+(def session-report-symbol
+  (vis/symbol #'session-report
     {:before-fn inject-environment
      :render-fn vis/render-string}))
 
@@ -1025,15 +1025,15 @@
      :render-fn apropos-channel}))
 
 (def all-symbols
-  [conversation-state-symbol
-   conversation-report-symbol
+  [session-state-symbol
+   session-report-symbol
    engine-symbol-documentation-symbol
    engine-symbol-source-code-symbol
    engine-symbol-metadata-symbol
    engine-symbol-apropos-symbol])
 
 (def introspection-prompt
-  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough. Use v/engine-symbol-documentation, v/engine-symbol-source-code, v/engine-symbol-metadata, and v/engine-symbol-apropos for SCI symbol docs/source/metadata/search.")
+  "`v/` session strategy: use v/session-state for data you will combine/filter, v/session-report when a rendered forensic report is enough. Use v/engine-symbol-documentation, v/engine-symbol-source-code, v/engine-symbol-metadata, and v/engine-symbol-apropos for SCI symbol docs/source/metadata/search.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

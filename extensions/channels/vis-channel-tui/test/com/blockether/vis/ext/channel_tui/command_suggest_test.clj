@@ -3,7 +3,7 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe slash-command-suggestions-test
-  (let [commands [{:id :new-conversation :label "New Conversation"}
+  (let [commands [{:id :new-session :label "New Session"}
                   {:id :new-tab :label "New Tab"}
                   {:id :worktree
                    :label "New Worktree"
@@ -19,7 +19,7 @@
                           {:name "limit" :kind :flag :type :int :required false}]}]]
 
     (it "shows menu commands when the prompt starts with slash"
-      (expect (= ["new-conversation" "new-tab" "worktree"]
+      (expect (= ["new-session" "new-tab" "worktree"]
                 (->> (suggest/suggestions "/" commands {:limit 3})
                   (mapv :slash/name)))))
 

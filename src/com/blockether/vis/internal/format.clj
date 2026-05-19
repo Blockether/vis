@@ -236,12 +236,16 @@
                       (when (number? v) v)))
               ks))]
     (let [cached-input (or (first-number [:cached-input :input-cached :cached]) 0)
+          cache-created (or (first-number [:cache-created :cache-created-input :cache-creation :cache-write]) 0)
           in-n  (when (number? input) input)
           out-n (when (number? output) output)]
-      (when (or in-n out-n (pos? cached-input))
-        (let [head (str "tok " (or in-n 0) "→" (or out-n 0))]
-          (if (pos? cached-input)
-            (str head " (cached " cached-input ")")
+      (when (or in-n out-n (pos? cached-input) (pos? cache-created))
+        (let [head (str "tok " (or in-n 0) "→" (or out-n 0))
+              parts (cond-> []
+                      (pos? cached-input) (conj (str "cached " cached-input))
+                      (pos? cache-created) (conj (str "cache-write " cache-created)))]
+          (if (seq parts)
+            (str head " (" (str/join ", " parts) ")")
             head))))))
 
 (defn format-cost

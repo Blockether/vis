@@ -126,7 +126,7 @@
 ;;; ── Selection marker ("> " cursor) ───────────────────────────
 ;;
 ;; Universal cursor glyph for every up/down navigable list in the
-;; TUI: dialogs (select, settings, conversations, file picker,
+;; TUI: dialogs (select, settings, sessions, file picker,
 ;; resources, providers, models), command palette, slash overlay,
 ;; etc.
 ;;
@@ -165,7 +165,7 @@
    Use this for rows where the marker can be inlined into the body
    text (simple list items, checkbox rows, slash-command rows). For
    rows where the marker must live OUTSIDE a fixed-column body
-   (file/conversation pickers, provider/model cards) call
+   (file/session pickers, provider/model cards) call
    `draw-selection-marker!` from the caller's row loop instead."
   [selected?]
   (if selected? SELECTION_GLYPH SELECTION_BLANK))
@@ -264,7 +264,7 @@
    don't pay a StringBuilder allocation on every grapheme-width
    call.
 
-   Conversation 954bf315 was the live trigger: a buggy
+   Session 954bf315 was the live trigger: a buggy
    `parse-md-refs` regex pulled multi-line prose into a `:text`
    field, `chrome-display-text` joined it into a chrome row,
    `display-width` was called on it, Lanterna's

@@ -108,12 +108,12 @@
 (defdescribe workspace-tabs-test
   (it "adds a tab and seeds a base tab when none exist"
     ;; Base tab inherits the current `:title`; the freshly-added tab
-    ;; starts as `Untitled conversation` because it has no title yet.
+    ;; starts as `Untitled session` because it has no title yet.
     (reset! state/app-db {:title "Current"
                           :render-version 0})
     (state/dispatch [:add-workspace-tab])
     (expect (= [{:id :main :label "Current"}
-                {:id :tab-1 :label state/untitled-conversation-label :active? true}]
+                {:id :tab-1 :label state/untitled-session-label :active? true}]
               (:workspace-tabs @state/app-db)))
     (expect (= :tab-1 (:active-workspace-id @state/app-db)))
     (expect (= 1 (:render-version @state/app-db))))
@@ -128,7 +128,7 @@
     (state/dispatch [:add-workspace-tab])
     (expect (= [{:id :main :label "Main"}
                 {:id :tab-1 :label "Tab 1"}
-                {:id :tab-2 :label state/untitled-conversation-label :active? true}]
+                {:id :tab-2 :label state/untitled-session-label :active? true}]
               (:workspace-tabs @state/app-db)))
     (expect (= :tab-2 (:active-workspace-id @state/app-db))))
 
@@ -156,8 +156,8 @@
               (mapv :id (:workspace-tabs @state/app-db))))
     (expect (= :tab-7 (:active-workspace-id @state/app-db))))
 
-  (it "switches the full transcript, draft, prompt history, and conversation by tab"
-    (reset! state/app-db {:conversation {:id "main-c"}
+  (it "switches the full transcript, draft, prompt history, and session by tab"
+    (reset! state/app-db {:session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")
                           :input-history ["main prompt"]
@@ -169,15 +169,15 @@
                           :workspaces {}
                           :render-version 0})
     (state/dispatch [:add-workspace-tab])
-    (state/dispatch [:init-conversation {:id "tab-c"} [{:role :user :text "tab prompt"}]])
+    (state/dispatch [:init-session {:id "tab-c"} [{:role :user :text "tab prompt"}]])
     (state/dispatch [:update-input (input/paste-text (input/empty-input) "tab draft")])
     (state/dispatch [:select-workspace-tab-index 0])
-    (expect (= {:id "main-c"} (:conversation @state/app-db)))
+    (expect (= {:id "main-c"} (:session @state/app-db)))
     (expect (= [{:role :user :text "main prompt"}] (:messages @state/app-db)))
     (expect (= "main draft" (input/input->text (:input @state/app-db))))
     (expect (= ["main prompt"] (:input-history @state/app-db)))
     (state/dispatch [:select-workspace-tab-index 1])
-    (expect (= {:id "tab-c"} (:conversation @state/app-db)))
+    (expect (= {:id "tab-c"} (:session @state/app-db)))
     (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
     (expect (= "tab draft" (input/input->text (:input @state/app-db))))
     (expect (= ["tab prompt"] (:input-history @state/app-db))))
@@ -205,24 +205,24 @@
     (state/dispatch [:select-workspace-tab-index 99])
     (expect (= :tab-2 (:active-workspace-id @state/app-db))))
 
-  (it "selects an already-open workspace tab by conversation id"
+  (it "selects an already-open workspace tab by session id"
     (reset! state/app-db {:workspace-tabs [{:id :main :label "Main" :active? true}
                                            {:id :tab-1 :label "Tab 1"}]
                           :active-workspace-id :main
-                          :conversation {:id "main-c"}
+                          :session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")
                           :input-history ["main prompt"]
-                          :workspaces {:tab-1 {:conversation {:id "tab-c"}
+                          :workspaces {:tab-1 {:session {:id "tab-c"}
                                                :messages [{:role :user :text "tab prompt"}]
                                                :input (input/paste-text (input/empty-input) "tab draft")
                                                :input-history ["tab prompt"]}}
                           :render-version 0})
-    (state/dispatch [:select-workspace-tab-conversation-id "tab-c"])
+    (state/dispatch [:select-workspace-tab-session-id "tab-c"])
     (expect (= :tab-1 (:active-workspace-id @state/app-db)))
-    (expect (= {:id "tab-c"} (:conversation @state/app-db)))
+    (expect (= {:id "tab-c"} (:session @state/app-db)))
     (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
-    (state/dispatch [:select-workspace-tab-conversation-id "missing"])
+    (state/dispatch [:select-workspace-tab-session-id "missing"])
     (expect (= :tab-1 (:active-workspace-id @state/app-db)))))
 
 (defdescribe init-settings-test
@@ -488,7 +488,7 @@
 (defdescribe send-message-test
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
-          db              {:conversation {:id "c1"}
+          db              {:session {:id "c1"}
                            :active-workspace-id :main
                            :messages []
                            :messages-scroll 0
@@ -525,7 +525,7 @@
                     vis/cancellation-set-future! (fn [_token _future])
                     state/dispatch (fn [event]
                                      (swap! received conj event))
-                    chat/turn! (fn [_conversation _text _opts]
+                    chat/turn! (fn [_session _text _opts]
                                  {:answer [:ir {} [:p {} [:span {} "ok"]]]
                                   :model "m2"
                                   :provider :p2
@@ -551,7 +551,7 @@
           token              (input/format-paste-placeholder {:id 1 :content "hello"})
           text               (str "edit me " token)
           initial-messages   [{:role :assistant :text "previous"}]
-          db                 {:conversation {:id "c1"}
+          db                 {:session {:id "c1"}
                               :messages initial-messages
                               :messages-scroll 9
                               :input-history ["prior"]
@@ -584,7 +584,7 @@
                       :input-history []
                       :pastes {}
                       :paste-counter 0
-                      :workspaces {:a {:conversation {:id "a"}
+                      :workspaces {:a {:session {:id "a"}
                                        :loading? true
                                        :pending-sends []
                                        :input-history []
@@ -600,7 +600,7 @@
     (let [message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
           pending-id          "turn-1"
           db                  {:active-workspace-id :main
-                               :conversation {:id "c1"}
+                               :session {:id "c1"}
                                :loading? true
                                :messages [{:role :user :text "first" :client-turn-id pending-id}
                                           {:role :assistant :pending? true :client-turn-id pending-id}]

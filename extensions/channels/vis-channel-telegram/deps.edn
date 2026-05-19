@@ -1,9 +1,9 @@
 {:paths ["src" "resources"]
  ;; Telegram channel - Bot API long-poll loop wired into the
- ;; conversation runtime. Optional channel package.
+ ;; session runtime. Optional channel package.
  ;;
- ;; Depends on vis-sdk for `conversations/for-telegram-chat!` and
- ;; `conversations/send!`. The CLI dispatcher resolves
+ ;; Depends on vis-sdk for `sessions/for-telegram-chat!` and
+ ;; `sessions/send!`. The CLI dispatcher resolves
  ;; `com.blockether.vis.ext.channel-telegram.bot/-main` lazily via
  ;; `requiring-resolve`, so omitting this jar still leaves the rest
  ;; of vis usable.

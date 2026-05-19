@@ -13,7 +13,7 @@ Remove XML-ish prompt-control protocol from Vis. Model-facing state should be Cl
 Target model-facing shape:
 
 ```clojure
-{:conversation {:id ...
+{:session {:id ...
                 :title ...
                 :turn-id ...
                 :iteration {:id ... :position ...}
@@ -32,9 +32,9 @@ Target model-facing shape:
 Model reads:
 
 ```clojure
-(:conversation ctx)
-(get-in ctx [:conversation :iteration])
-(get-in ctx [:conversation :hints])
+(:session ctx)
+(get-in ctx [:session :iteration])
+(get-in ctx [:session :hints])
 (:llm-provider ctx)
 (:project ctx)
 (:extensions ctx)
@@ -55,14 +55,14 @@ Prompt-control data should be:
 
 ## Current state
 
-Hints already moved from legacy hint wrappers into EDN under conversation state:
+Hints already moved from legacy hint wrappers into EDN under session state:
 
 ```clojure
-(get-in ctx [:conversation :hints])
-;; => [{:id :vis.foundation/conversation-title
+(get-in ctx [:session :hints])
+;; => [{:id :vis.foundation/session-title
 ;;      :importance :high
 ;;      :text "..."
-;;      :satisfy-with '(satisfy-hint! :vis.foundation/conversation-title)}]
+;;      :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]
 ```
 
 Remaining work is to finish removing legacy wrappers, fake `ctx.*` comment labels, and provider-error markup from prompt-control paths.
@@ -118,7 +118,7 @@ Old fixtures carried separate turn metadata in a wrapper. That is now duplicate 
 ;; => 4
 
 ;; ctx =
-{:conversation {:id ...
+{:session {:id ...
                 :turn-id ...
                 :iteration {:id ... :position 2}
                 :hints [...]}
@@ -250,7 +250,7 @@ Allowed leftovers:
 ## Acceptance criteria
 
 - No model-facing prompt-control XML except legacy transcript fallback.
-- Dynamic per-iteration facts live in `ctx` under domain keys: `:conversation`, `:llm-provider`, `:project`.
+- Dynamic per-iteration facts live in `ctx` under domain keys: `:session`, `:llm-provider`, `:project`.
 - Static extension prose lives in comment sections.
 - Human markdown/HTML rendering remains allowed.
 - Tests assert absence of retired wrappers in live prompt/trailer paths.

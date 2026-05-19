@@ -37,7 +37,7 @@ Useful runtime probes:
 (require '[com.blockether.vis.core :as vis] :reload)
 (require '[com.blockether.vis.ext.foundation.transcript :as tr] :reload)
 
-(tr/transcript db conversation-id)
+(tr/transcript db session-id)
 
 {:active-provider (vis/active-provider)
  :provider-ids (vis/provider-ids)
@@ -84,7 +84,7 @@ Use `v/patch` for all text edits, including `.clj`/`.cljc`/`.cljs`/`.edn`. The
 - `CORE_SYSTEM_PROMPT` in `src/com/blockether/vis/internal/prompt.clj` is the
   ENGINE contract only: loop, def discipline, answer shape, banned heads,
   IR primitives. It MUST NOT name any extension symbol (`v/cat`, `v/rg`,
-  `v/patch`, `v/ls`, `v/conversation-state`, …) and MUST NOT explain any
+  `v/patch`, `v/ls`, `v/session-state`, …) and MUST NOT explain any
   extension-owned concept (handles, RLM tactics, tool strategies, mutation
   invalidation, …).
 - Extension-facing prompt copy lives behind `:ext/prompt` on each

@@ -81,7 +81,7 @@
 ;; =============================================================================
 
 ;; Stable identity key for the channel, e.g. :tui, :telegram, :web.
-;; Used as the conversation-soul `channel` column and as the dedup key
+;; Used as the session-soul `channel` column and as the dedup key
 ;; in the registry.
 (s/def :channel/id keyword?)
 

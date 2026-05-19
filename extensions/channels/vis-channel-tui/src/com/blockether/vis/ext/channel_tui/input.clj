@@ -907,7 +907,7 @@
           ;; before Lanterna sees a KeyStroke. Ctrl+G is not a POSIX special
           ;; char and survives Lanterna's UnixTerminal stty setup.
           (and ctrl (= (Character/toLowerCase c) \g))
-          {:action :show-conversations :state state}
+          {:action :show-sessions :state state}
 
           (and ctrl (= (Character/toLowerCase c) \r))
           {:action :cycle-reasoning :state state}
@@ -951,12 +951,12 @@
                                                      (move-right state))}
       KeyType/Home       {:action :continue :state (move-line-start state)}
       KeyType/End        {:action :continue :state (move-line-end state)}
-      ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ conversation switcher
+      ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ session switcher
       KeyType/ArrowUp    (if (and (.isAltDown key) (.isShiftDown key))
-                           {:action :show-conversations :state state}
+                           {:action :show-sessions :state state}
                            {:action :history-up :state state})
       KeyType/ArrowDown  (if (and (.isAltDown key) (.isShiftDown key))
-                           {:action :show-conversations :state state}
+                           {:action :show-sessions :state state}
                            {:action :history-down :state state})
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
