@@ -57,7 +57,8 @@
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry     :as registry]
-   [com.blockether.vis.internal.theme        :as theme]))
+   [com.blockether.vis.internal.theme        :as theme]
+   [com.blockether.vis.internal.workspace    :as workspace]))
 
 ;; =============================================================================
 ;; Cancellation
@@ -71,6 +72,25 @@
 (def virtual-threads-available? cancellation/virtual-threads-available?)
 (def worker-runtime             cancellation/worker-runtime)
 (def worker-future              cancellation/worker-future)
+
+;; =============================================================================
+;; Workspace (PLAN.md §3)
+;; =============================================================================
+(def workspace-cwd               workspace/cwd)
+(def workspace-root              workspace/workspace-root)
+(def workspace-normalize-root    workspace/normalize-root)
+(def workspace-get               workspace/get)
+(def workspace-list-active       workspace/list-active)
+(def workspace-list-finished     workspace/list-finished)
+(def workspace-for-session       workspace/for-session)
+(def workspace-status            workspace/status)
+(def workspace-trunk-info        workspace/trunk-info)
+(def workspace-ensure-trunk!     workspace/ensure-trunk!)
+(def workspace-spawn-branch!     workspace/spawn-branch!)
+(def workspace-apply-to-trunk!   workspace/apply-to-trunk!)
+(def workspace-discard!          workspace/discard!)
+(def workspace-register-hook!    workspace/register-hook!)
+(def workspace-delete-legacy-edn! workspace/delete-legacy-edn!)
 
 ;; =============================================================================
 ;; Theme facade
