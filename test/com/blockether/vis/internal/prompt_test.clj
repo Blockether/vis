@@ -23,7 +23,7 @@
   (it "documents engine-owned forms as bare, not extension tools"
     (let [text (prompt/build-system-prompt {})]
       (expect (str/includes? text "Engine-owned control forms are bare symbols"))
-      (expect (str/includes? text "(set-conversation-title! ...)"))
+      (expect (str/includes? text "(set-session-title! ...)"))
       (expect (str/includes? text "Never namespace-qualify them")))))
 
 (defdescribe extension-activation-test

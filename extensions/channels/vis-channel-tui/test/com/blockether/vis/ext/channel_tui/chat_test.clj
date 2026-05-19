@@ -10,7 +10,7 @@
 
 (defdescribe rebuild-history-renders-answer-test
   (it "resumed assistant message routes the stored IR answer through render-answer"
-    ;; Regression for convo b7ba1d93: resume path used to pass the
+    ;; Regression for session b7ba1d93: resume path used to pass the
     ;; persisted answer straight into the bubble without going through
     ;; the channel renderer chokepoint. Both live and resume paths now
     ;; share `chat/render-answer`, which dispatches via the
@@ -19,12 +19,12 @@
     ;; Normal persisted answers are Nippy-frozen canonical IR; the
     ;; legacy/string terminal-answer fallback is covered below.
     (with-redefs [vis/db-info (fn [] :db)
-                  vis/db-list-conversation-turns
+                  vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "siema"
                       :answer [:ir {} [:p {} [:span {} "Siema! 👋 What can I do for you?"]]]}])
-                  vis/db-list-conversation-turn-iterations
+                  vis/db-list-session-turn-iterations
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             assistant (second history)
@@ -40,12 +40,12 @@
 
   (it "rebuild-history coerces legacy persisted string answers"
     (with-redefs [vis/db-info (fn [] :db)
-                  vis/db-list-conversation-turns
+                  vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-legacy
                       :user-request "siema"
                       :answer "Cancelled by user."}])
-                  vis/db-list-conversation-turn-iterations
+                  vis/db-list-session-turn-iterations
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             assistant (second history)
@@ -56,15 +56,15 @@
 
   (it "rebuild-history marks persisted silent system calls for the TUI visibility toggle"
     (with-redefs [vis/db-info (fn [] :db)
-                  vis/db-list-conversation-turns
+                  vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "siema"
                       :answer [:ir {} [:p {} [:span {} "Siema!"]]]}])
-                  vis/db-list-conversation-turn-iterations
+                  vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
-                      :code "(set-conversation-title! \"Greeting\")"
+                      :code "(set-session-title! \"Greeting\")"
                       :result :vis/silent}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
@@ -74,16 +74,16 @@
 
   (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
     (with-redefs [vis/db-info (fn [] :db)
-                  vis/db-list-conversation-turns
+                  vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "mixed"
                       :answer [:ir {} [:p {} [:span {} "Done"]]]}])
-                  vis/db-list-conversation-turn-iterations
+                  vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
                       :code (str "(def x 1)\n"
-                              "(set-conversation-title! \"Mixed\")\n"
+                              "(set-session-title! \"Mixed\")\n"
                               "(done [:ir [:p \"Done\"]])")
                       :render-segments [{:kind :code :source "(def x 1)"}
                                         {:kind :title :value "Mixed"}
@@ -103,12 +103,12 @@
     ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's
     ;; channel-rendered text is durable and should be shown on resume.
     (with-redefs [vis/db-info (fn [] :db)
-                  vis/db-list-conversation-turns
+                  vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "read file"
                       :answer [:ir {}]}])
-                  vis/db-list-conversation-turn-iterations
+                  vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
                       :code "(def prompt-lines (v/cat \"src/foo.clj\"))"
@@ -132,12 +132,12 @@
                   history-restore/restored-var-values
                   (fn [_db _cid]
                     {"prompt-slice" ["alpha" "beta"]})
-                  vis/db-list-conversation-turns
+                  vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "derive"
                       :answer [:ir {}]}])
-                  vis/db-list-conversation-turn-iterations
+                  vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
                       :code "(def prompt-slice (subvec xs 0 2))"
@@ -168,12 +168,12 @@
                       :metadata {:target {:path "x.txt"}}})]
       (with-redefs [extension/render-tool-result (fn [_] "rendered tool")
                     vis/db-info (fn [] :db)
-                    vis/db-list-conversation-turns
+                    vis/db-list-session-turns
                     (fn [_db _cid]
                       [{:id :turn-1
                         :user-request "run"
                         :answer [:ir {}]}])
-                    vis/db-list-conversation-turn-iterations
+                    vis/db-list-session-turn-iterations
                     (fn [_db _turn-id]
                       [{:id :iter-1
                         :code "(v/cat \"x.txt\")"

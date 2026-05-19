@@ -2,8 +2,8 @@
   "Foundation-shipped :turn.iteration/start hints.
 
    Two soft hints remain:
-     - `title-hint`           — set/refresh the conversation title via
-                                  `(set-conversation-title! \"...\")`
+     - `title-hint`           — set/refresh the session title via
+                                  `(set-session-title! \"...\")`
      - `context-pressure-hint` — warn when prompt size crosses ~50% of window
 
    Previously this namespace also shipped two evidence-related hints
@@ -19,13 +19,13 @@
 
 (def ^:const TITLE_REFRESH_TURN_PERIOD
   "Turn cadence at which `title-hint` re-asks the model to refresh
-   the conversation title when it is already set. The hint fires on
-   iteration 0 of turn 1 (first turn of the conversation), then on
+   the session title when it is already set. The hint fires on
+   iteration 0 of turn 1 (first turn of the session), then on
    iteration 0 of every Nth turn after that (10, 20, 30, ...).
 
    Why turn-cadence instead of iteration-cadence:
    the previous iteration-mod-12 rule never fired across a string of
-   short single-iteration turns (conversation 9a55ca1a reproduced
+   short single-iteration turns (session 9a55ca1a reproduced
    this). A turn-cadence rule fires once per visible focus shift
    and stays quiet inside any single turn no matter how long it
    runs."
@@ -51,19 +51,19 @@
         (zero? (mod tp TITLE_REFRESH_TURN_PERIOD))))))
 
 (defn title-hint
-  "Return a hint map when the conversation title needs attention,
+  "Return a hint map when the session title needs attention,
    otherwise nil. The model's only write path is the host primitive
-   `(set-conversation-title! \"...\")`; there is no in-sandbox read
+   `(set-session-title! \"...\")`; there is no in-sandbox read
    binding for the current title (retired as redundant) — this hint
    carries the current value in its text body when refresh-cadence
    fires.
 
    Inputs are pulled from the host-supplied hint ctx:
 
-     `:conversation-title` - current trimmed title (nil/blank if unset)
+     `:session-title` - current trimmed title (nil/blank if unset)
      `:title-refresh?`     - host signalled a turn-boundary refresh check
                              (true on iteration 0 of every turn)
-     `:turn-position`      - 1-based turn position inside the conversation
+     `:turn-position`      - 1-based turn position inside the session
      `:iteration`          - 1-based iteration position inside the turn
                              (retained for callers that probe the fn,
                               no longer used for cadence)
@@ -73,33 +73,33 @@
      refresh-tick : fires when the host flagged `:title-refresh?` AND
                     `turn-position` is the first turn or a multiple of
                     `TITLE_REFRESH_TURN_PERIOD`."
-  [{:keys [conversation-title title-refresh? turn-position]}]
-  (let [blank? (or (nil? conversation-title) (str/blank? conversation-title))]
+  [{:keys [session-title title-refresh? turn-position]}]
+  (let [blank? (or (nil? session-title) (str/blank? session-title))]
     (cond
       ;; Blank title is a real gap, not a soft suggestion. The title
-      ;; is the only label the sidebar / persisted conversation row
-      ;; carries; without it the conversation is anonymous. :high
-      ;; makes the model actually call `(set-conversation-title! ...)`
+      ;; is the only label the sidebar / persisted session row
+      ;; carries; without it the session is anonymous. :high
+      ;; makes the model actually call `(set-session-title! ...)`
       ;; instead of skipping the hint as low-priority advisory noise.
       blank?
       {:importance :high
-       :text (str "The conversation title is currently empty. "
-               "Set it via bare `(set-conversation-title! \"...\")` (3-7-word noun phrase, "
+       :text (str "The session title is currently empty. "
+               "Set it via bare `(set-session-title! \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
-               "the conversation is discoverable in the sidebar. "
+               "the session is discoverable in the sidebar. "
                "Emit that call as its own top-level form before your first real probe. "
                "Do not namespace-qualify it; it is engine-owned, not a foundation `v/` tool. "
                "Keep host bookkeeping as direct sibling forms so traces stay clean.")}
 
       ;; Periodic refresh stays :low — the existing title already labels
-      ;; the conversation; this branch only hints when focus may have
+      ;; the session; this branch only hints when focus may have
       ;; shifted, and is fine to skip.
       (and title-refresh? (turn-cadence-tick? turn-position))
       {:importance :low
-       :text (str "Current conversation title is \"" conversation-title "\". "
-               "You are " turn-position " turn(s) into this conversation. "
+       :text (str "Current session title is \"" session-title "\". "
+               "You are " turn-position " turn(s) into this session. "
                "If the focus has shifted, refresh it via bare "
-               "`(set-conversation-title! \"...\")`; do not namespace-qualify it.")})))
+               "`(set-session-title! \"...\")`; do not namespace-qualify it.")})))
 
 (defn context-pressure-hint
   "Return a `:high`-importance hint when the estimated input tokens
@@ -130,7 +130,7 @@
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks (`:ext/hooks`) — :turn.iteration/start emits MODEL-FACING
-;; `(get-in ctx [:conversation :hints])` entries. Answer-time enforcement now
+;; `(get-in ctx [:session :hints])` entries. Answer-time enforcement now
 ;; lives in the harness gate (`final-answer-structural-criteria-errors`); no
 ;; foundation :turn.answer/validate hooks remain.
 ;; ----------------------------------------------------------------------------
@@ -138,8 +138,8 @@
 (def hooks
   "`:ext/hooks` vector for vis-foundation. Each entry conforms to the
    `::hook` spec in `com.blockether.vis.internal.extension`."
-  [{:id    :vis.foundation/conversation-title
-    :doc   "Hint the model to set / refresh the conversation title when it's blank, refresh-flagged, or stale."
+  [{:id    :vis.foundation/session-title
+    :doc   "Hint the model to set / refresh the session title when it's blank, refresh-flagged, or stale."
     :phase :turn.iteration/start
     :fn    title-hint}
    {:id    :vis.foundation/context-pressure

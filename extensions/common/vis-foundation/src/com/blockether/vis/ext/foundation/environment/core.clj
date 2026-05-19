@@ -470,7 +470,7 @@
   ;; (b) is load-bearing. Pre-fix a single typo in any
   ;; extension source file silently disabled its alias namespace
   ;; (`v/`, …). The user saw nothing; the LLM saw
-  ;; "Unable to resolve symbol" forever (conversation
+  ;; "Unable to resolve symbol" forever (session
   ;; d8aff512-d60d-42b6-a009-041f1bec3891 burned 200+ blocks on this).
   ;; Surfacing the failure here puts the actual root cause — "foundation.core
   ;; failed to load: Syntax error reading source at markdown.clj:328:17" —

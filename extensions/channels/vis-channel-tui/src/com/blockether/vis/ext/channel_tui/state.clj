@@ -66,7 +66,7 @@
   (update db :render-version (fnil inc 0)))
 
 (def ^:private workspace-state-keys
-  [:conversation
+  [:session
    :workspace
    :workspace/root
    :title
@@ -92,7 +92,7 @@
 
 (defn- empty-workspace-state
   []
-  {:conversation nil
+  {:session nil
    :workspace nil
    :workspace/root nil
    :title nil
@@ -176,11 +176,11 @@
 ;;; ── State shape ────────────────────────────────────────────────────────────
 ;;
 ;; {:config     nil              ;; provider config map or nil
-;;  :conversation nil            ;; {:id conversation-id} or nil - handle to the shared conversations cache
+;;  :session nil            ;; {:id session-id} or nil - handle to the shared sessions cache
 ;;  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
 ;;  :messages-scroll nil              ;; row offset into bubbles, nil = auto-bottom
 ;;  :input      {:lines [""] :crow 0 :ccol 0}
-;;  :input-history []            ;; persisted user queries for this conversation
+;;  :input-history []            ;; persisted user queries for this session
 ;;  :input-history-index nil     ;; nil = editing live draft, 0 = newest history entry
 ;;  :input-history-draft nil     ;; unsent draft preserved while browsing history
 ;;  :submitted-input nil         ;; prompt/paste snapshot for restoring cancelled turns
@@ -422,7 +422,7 @@
   ;; Settings (show-thinking?, show-iterations?, etc.) are part of
   ;; every format-answer cache key, so toggling them already
   ;; invalidates cache entries naturally. But the OLD entries
-  ;; linger until the cache fills - which on a quiet conversation
+  ;; linger until the cache fills - which on a quiet session
   ;; never happens. Drop them now so memory stays bounded across
   ;; many toggles.
   (render/invalidate-cache!)
@@ -531,14 +531,14 @@
 
 (def ^:private ^:const max-workspace-tabs 8)
 
-(def untitled-conversation-label
-  "Default tab label for a conversation without a title yet.
+(def untitled-session-label
+  "Default tab label for a session without a title yet.
 
    Aliases the channel-agnostic value in `internal/header` so the TUI,
    web, Telegram, etc. all show the same placeholder. Kept exported
    here for callers (and tests) that already reach in via the state
    namespace."
-  vh/untitled-conversation-label)
+  vh/untitled-session-label)
 
 (defn- workspace-tab-number
   [tab]
@@ -555,7 +555,7 @@
    :label (let [title (:title db)]
             (if (and (string? title) (not (str/blank? title)))
               title
-              untitled-conversation-label))})
+              untitled-session-label))})
 
 (defn- workspace-tabs-or-base
   [db]
@@ -569,7 +569,7 @@
   (let [title (:title db)]
     (if (and (string? title) (not (str/blank? title)))
       title
-      (or fallback untitled-conversation-label))))
+      (or fallback untitled-session-label))))
 
 (defn- ensure-workspace-tabs
   [db]
@@ -611,9 +611,9 @@
             (f (merge db (or snapshot (empty-workspace-state)))))))
       (f db))))
 
-(defn- workspace-conversation-id
+(defn- workspace-session-id
   [db workspace-id]
-  (some-> (get-in db [:workspaces workspace-id :conversation :id]) str))
+  (some-> (get-in db [:workspaces workspace-id :session :id]) str))
 
 (defn- reasoning-effort-configurable?
   []
@@ -629,7 +629,7 @@
   (let [settings (load-persisted-settings)]
     (tui-theme/apply-theme! (:theme-name settings))
     (reset! app-db {:config     nil
-                    :conversation nil
+                    :session nil
                     :title      nil
                     :messages   []
                     :messages-scroll nil
@@ -731,8 +731,8 @@
     (assoc db :layout layout)))
 
 (reg-event-db :toggle-detail
-  (fn [db [_ conversation-id node-id]]
-    (let [k [(str conversation-id) (str node-id)]]
+  (fn [db [_ session-id node-id]]
+    (let [k [(str session-id) (str node-id)]]
       (update db :detail-expansions
         (fn [m]
           (let [expanded? (true? (get m k false))]
@@ -741,8 +741,8 @@
               (assoc (or m {}) k true))))))))
 
 (reg-event-db :select-preview-mode
-  (fn [db [_ conversation-id node-id mode]]
-    (assoc-in db [:detail-expansions [(str conversation-id) (str node-id)]] mode)))
+  (fn [db [_ session-id node-id mode]]
+    (assoc-in db [:detail-expansions [(str session-id) (str node-id)]] mode)))
 
 (reg-event-db :bump-render-version
   (fn [db _]
@@ -764,7 +764,7 @@
           root      (or (:workspace/root workspace) (:workspace/root opts))
           label     (or (:label opts)
                       (some-> workspace :main :branch)
-                      untitled-conversation-label)
+                      untitled-session-label)
           tab       (cond-> {:id id :label label :active? true}
                       workspace (assoc :workspace workspace)
                       root      (assoc :workspace/root root))]
@@ -795,13 +795,13 @@
         (activate-workspace db (:id tab))
         db))))
 
-(reg-event-db :select-workspace-tab-conversation-id
-  (fn [db [_ conversation-id]]
-    (let [target-id (some-> conversation-id str)
+(reg-event-db :select-workspace-tab-session-id
+  (fn [db [_ session-id]]
+    (let [target-id (some-> session-id str)
           db        (-> db ensure-workspace-tabs sync-active-workspace)
           tabs      (vec (:workspace-tabs db))
           tab       (when target-id
-                      (some #(when (= target-id (workspace-conversation-id db (:id %))) %)
+                      (some #(when (= target-id (workspace-session-id db (:id %))) %)
                         tabs))]
       (if tab
         (activate-workspace db (:id tab))
@@ -829,14 +829,14 @@
   (fn [db _]
     (assoc db :shutdown? true)))
 
-(reg-event-db :init-conversation
-  (fn [db [_ conversation history]]
+(reg-event-db :init-session
+  (fn [db [_ session history]]
     (let [user-history (->> (or history [])
                          (filter #(= :user (:role %)))
                          (mapv :text))]
       (-> db
         ensure-workspace-tabs
-        (assoc :conversation conversation
+        (assoc :session session
           :title nil
           :messages (or history [])
           :messages-scroll nil
@@ -980,11 +980,11 @@
    we keep the cancelled bubble (with its `:traces`) in the
    transcript so the user can see what the agent did, AND we
    refill the input box with the original prompt so they can
-   tweak/resubmit without retyping. The conversation-turn row,
+   tweak/resubmit without retyping. The session-turn row,
    each completed iteration, and any blocks they wrote already
    landed in SQLite via the iteration loop's per-iteration
    `db-store-iteration!` calls and `finalize-turn-result`'s
-   `db-update-conversation-turn!`, so reopening the conversation
+   `db-update-session-turn!`, so reopening the session
    shows the same partial trace."
   [db {:keys [text pastes paste-counter]}]
   ;; See note in restore-submitted-input: leave :input-history alone.
@@ -1071,7 +1071,7 @@
     (assoc db :messages-scroll scroll)))
 
 (reg-event-db :scroll-to-message
-  ;; In-conversation search lands here after the user picks a hit.
+  ;; In-session search lands here after the user picks a hit.
   ;; The painter doesn't get told an exact :messages-scroll Y value
   ;; (which it would need to compute heights for); instead it sees
   ;; `:scroll-to-message-pending` and re-resolves the scroll target
@@ -1169,7 +1169,7 @@
         (:loading? source-db)
         (enqueue-message-result db workspace-id text)
 
-        (nil? (:conversation source-db))
+        (nil? (:session source-db))
         {:db db}
 
         :else
@@ -1213,15 +1213,15 @@
            ;; `visible-text` (un-expanded `@path` token) is the user's
            ;; original line - flowed in as `display-text` so it lands in
            ;; the persisted `user_request` column. Without the split,
-           ;; reopening a conversation re-rendered the verbose attachment
+           ;; reopening a session re-rendered the verbose attachment
            ;; directive in the user bubble.
-           :fx [[:rlm-turn workspace-id (:conversation source-db) agent-text token
+           :fx [[:rlm-turn workspace-id (:session source-db) agent-text token
                  reasoning-level extra-body turn-features workspace client-turn-id
                  visible-text]]})))))
 
 (reg-event-fx :enqueue-message
   ;; Capture a user submission while a previous turn is still processing.
-  ;; Queue lives on that workspace/conversation and drains after the
+  ;; Queue lives on that workspace/session and drains after the
   ;; in-flight turn commits. No provider call happens from this handler.
   (fn [db [_ text workspace-id]]
     (enqueue-message-result db workspace-id text)))
@@ -1281,7 +1281,7 @@
 
 (reg-event-fx :message-received
   (fn [db [_ a b c]]
-    (let [[workspace-id answer {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count duration-ms tokens cost confidence conversation-turn-id status client-turn-id]}]
+    (let [[workspace-id answer {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count duration-ms tokens cost confidence session-turn-id status client-turn-id]}]
           (if (keyword? a)
             [a b c]
             [(current-workspace-id db) a b])
@@ -1308,7 +1308,7 @@
                               ;; render chokepoint.
                                answer-ir (or answer chat/empty-ir)
                                response (-> (chat/assistant-message answer-ir)
-                                          (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
+                                          (cond-> session-turn-id                (assoc :session-turn-id session-turn-id)
                                             (seq trace)
                                             (assoc :traces trace :ir answer-ir)
                                             (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
@@ -1382,7 +1382,7 @@
         (vis/refresh-cached-routers! router)))))
 
 (reg-fx :rlm-turn
-  (fn [workspace-id conversation text token reasoning-level extra-body turn-features workspace client-turn-id
+  (fn [workspace-id session text token reasoning-level extra-body turn-features workspace client-turn-id
        & [display-text]]
     (let [fut (vis/worker-future "vis-tui-turn"
                 (fn []
@@ -1394,7 +1394,7 @@
                           {:keys [on-chunk]}
                           (vis/make-progress-tracker
                             {:on-update progress-update!})
-                          result (chat/turn! conversation text
+                          result (chat/turn! session text
                                    {:on-chunk          on-chunk
                                     :cancel-atom       (vis/cancellation-atom token)
                                     :reasoning-default reasoning-level
@@ -1412,7 +1412,7 @@
                                               [:model :provider :llm-selected :llm-actual
                                                :llm-fallback? :llm-routing-trace
                                                :iteration-count :duration-ms :tokens
-                                               :cost :confidence :conversation-turn-id :status])
+                                               :cost :confidence :session-turn-id :status])
                                        :client-turn-id client-turn-id)])
                           (when (:voice-response? turn-features)
                             (speak-answer-async! (:answer result))))))

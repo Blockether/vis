@@ -168,7 +168,7 @@
         (expect (<= ratio 4.0))))))
 
 (defdescribe layout-test
-  (describe "empty conversation"
+  (describe "empty session"
     (it "returns empty visible + zero total-h"
       (let [{:keys [total-h eff-scroll visible]}
             (virtual/layout [] bubble-w settings nil 20 {})]
@@ -216,7 +216,7 @@
         (expect (seq visible))
         (expect (not (some #(= last-idx (:idx %)) visible)))))
 
-    (it "passes conversation context to live progress so huge blocks collapse while streaming"
+    (it "passes session context to live progress so huge blocks collapse while streaming"
       (render/invalidate-cache!)
       (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
             m           {:role :assistant :text "Sending request to provider..."}
@@ -230,7 +230,7 @@
               {:loading?       true
                :progress       {:iterations trace}
                :progress-extra {:now-ms 1000 :turn-start-ms 0}}
-              {:conversation-id    "conversation"
+              {:session-id    "session"
                :detail-expansions {}})
             projected (:projected (first visible))]
         (expect (str/includes? (:text projected) "RESULT"))
@@ -256,7 +256,7 @@
                                         {:loading? true
                                          :progress progress
                                          :progress-extra {:now-ms 100000 :turn-start-ms 0}}
-                                        {:conversation-id "conversation"
+                                        {:session-id "session"
                                          :detail-expansions {}})
                                    dt (/ (- (System/nanoTime) t0) 1000000.0)]
                                {:ms dt
@@ -287,7 +287,7 @@
     ;; The whole point of the namespace. Count projections by
     ;; intercepting `render/format-answer-with-thinking` with a
     ;; counter wrap. Off-screen bubbles must not bump the counter.
-    (it "10-message conversation, only the bottom few intersect a 5-row viewport"
+    (it "10-message session, only the bottom few intersect a 5-row viewport"
       (let [msgs (vec (concat
                         (mapv #(trace-assistant-msg 3 2 (str "answer " %))
                           (range 10))))
@@ -366,7 +366,7 @@
 
 (defdescribe sticky-height-cache-test
   (describe "once a message has been measured, layout returns its REAL height forever"
-    ;; Regression: conversation 7b18414d. Before the sticky cache,
+    ;; Regression: session 7b18414d. Before the sticky cache,
     ;; off-screen messages reverted to `estimated-height` on every
     ;; layout call - `total-h` jittered as visible <-> off-screen
     ;; flipped per scroll, scrollbar thumb drifted, click-to-position
@@ -439,10 +439,10 @@
       (render/invalidate-cache!)
       (let [msgs [(plain-assistant-msg "<details>\n<summary>D</summary>\n\nbody\n\n</details>")]]
         (virtual/layout msgs bubble-w settings nil 20 {}
-          {:conversation-id "cid" :detail-expansions {}})
+          {:session-id "cid" :detail-expansions {}})
         (expect (= 1 (virtual/height-cache-size)))
         (virtual/layout msgs bubble-w settings nil 20 {}
-          {:conversation-id "cid"
+          {:session-id "cid"
            :detail-expansions {["cid" "answer:d1"] true}})
         (expect (= 1 (virtual/height-cache-size)))))
 
@@ -506,9 +506,9 @@
 (defdescribe turn-identity-test
   ;; Regression: during live streaming, the assistant bubble has
   ;; only `:client-turn-id` (the server hasn't assigned
-  ;; `:conversation-turn-id` yet). When the turn lands, the
+  ;; `:session-turn-id` yet). When the turn lands, the
   ;; completed message has BOTH ids - and they're different
-  ;; values. Picking `:conversation-turn-id` for the disclosure
+  ;; values. Picking `:session-turn-id` for the disclosure
   ;; node-id (REASONING toggle, <details>, ...) would change the
   ;; node-id at the live -> done flip and silently reset every
   ;; expansion the user opened mid-stream. The contract: prefer
@@ -519,8 +519,8 @@
     (it "prefers :client-turn-id when present (live and done)"
       (expect (= "abc12345" (turn-identity {:client-turn-id "abc12345"})))
       (expect (= "abc12345" (turn-identity {:client-turn-id "abc12345"
-                                            :conversation-turn-id "server-xyz"}))))
-    (it "falls back to :conversation-turn-id for legacy DB messages"
-      (expect (= "server-only" (turn-identity {:conversation-turn-id "server-only"}))))
+                                            :session-turn-id "server-xyz"}))))
+    (it "falls back to :session-turn-id for legacy DB messages"
+      (expect (= "server-only" (turn-identity {:session-turn-id "server-only"}))))
     (it "returns nil when neither id is present"
       (expect (nil? (turn-identity {}))))))

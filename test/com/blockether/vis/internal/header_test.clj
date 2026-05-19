@@ -31,12 +31,12 @@
     (expect (= 2 (vh/max-visible-count 8 30))))
 
   (it "picks the placeholder for blank/missing titles, real title otherwise"
-    (expect (= vh/untitled-conversation-label (vh/title-or-placeholder nil)))
-    (expect (= vh/untitled-conversation-label (vh/title-or-placeholder "")))
-    (expect (= vh/untitled-conversation-label (vh/title-or-placeholder "   ")))
+    (expect (= vh/untitled-session-label (vh/title-or-placeholder nil)))
+    (expect (= vh/untitled-session-label (vh/title-or-placeholder "")))
+    (expect (= vh/untitled-session-label (vh/title-or-placeholder "   ")))
     (expect (= "Real title" (vh/title-or-placeholder "Real title"))))
 
-  (it "shortens a conversation id to the shared display length"
+  (it "shortens a session id to the shared display length"
     (expect (= "123e4567" (vh/short-id "123e4567-e89b-12d3-a456-426614174000")))
     ;; Short input — returns as-is, never throws.
     (expect (= "abc" (vh/short-id "abc")))

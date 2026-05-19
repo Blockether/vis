@@ -28,14 +28,14 @@
                 {:kind :code :source "(def x 1)"}
                 {:kind :answer-ref}]
               (render/parse-block-display
-                "(set-conversation-title! \"Render cleanup\")\n(def x 1)\n(done [:ir [:p \"ok\"]])"))))
+                "(set-session-title! \"Render cleanup\")\n(def x 1)\n(done [:ir [:p \"ok\"]])"))))
 
   (it "does not source-prune nested host calls"
     (expect (= [{:kind :code
-                 :source "(do (satisfy-hint! :vis.foundation/conversation-title) (def x 1))"}]
+                 :source "(do (satisfy-hint! :vis.foundation/session-title) (def x 1))"}]
               (render/parse-block-display
-                "(do (satisfy-hint! :vis.foundation/conversation-title) (def x 1))"))))
+                "(do (satisfy-hint! :vis.foundation/session-title) (def x 1))"))))
 
   (it "does not treat satisfy-hint! source as structurally silent"
     (expect (false? (render/block-structurally-silent?
-                      "(satisfy-hint! :vis.foundation/conversation-title)")))))
+                      "(satisfy-hint! :vis.foundation/session-title)")))))

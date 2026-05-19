@@ -7,7 +7,7 @@
    EDN records with stable paths.
 
    Vis never mutates JVM user.dir. Channels attach :workspace/root to the
-   active conversation/turn; extension wrappers bind that root dynamically so
+   active session/turn; extension wrappers bind that root dynamically so
    tools can resolve cwd-relative paths against the workspace explicitly."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]

@@ -8,9 +8,9 @@
    EVERY frame, even ones scrolled far off-screen. For finalized
    bubbles the outer `format-answer-with-thinking` LRU made each
    per-frame call ~315 ns once warm, but cold-opening a long
-   conversation paid the full ~500 ms format cost per big trace
+   session paid the full ~500 ms format cost per big trace
    bubble before the FIRST frame ever made it to the terminal.
-   Conversation 954bf315 (2 x ~500ms bubbles -> ~870 ms cold paint
+   Session 954bf315 (2 x ~500ms bubbles -> ~870 ms cold paint
    plus a separate `parse-md-refs` regex bug - see `links.clj`)
    was the live trigger: the screen stayed bg-fill until both big
    bubbles formatted, which read as \"frozen TUI on open\".
@@ -71,13 +71,13 @@
 ;; every scroll frame, and click-to-position landed somewhere else
 ;; than where the user clicked because the click computed a target
 ;; against the OLD total-h while the next paint used a different
-;; one. Conversation 7b18414d showed the symptom on first click.
+;; one. Session 7b18414d showed the symptom on first click.
 ;;
 ;; The fix: ONCE we've measured a message's real bubble-height we
 ;; remember it forever (or until LRU eviction). Off-screen messages
 ;; we've already seen keep their real height; only never-seen
 ;; messages fall back to the estimate. The pre-warmer writes here
-;; too, so within ~1 s of opening a conversation EVERY assistant
+;; too, so within ~1 s of opening a session EVERY assistant
 ;; has its real height pinned and the scrollbar is perfectly
 ;; stable.
 ;;
@@ -186,7 +186,7 @@
          + answer-chars / 60       (rough wrap, narrower)
      * plain assistant -> add  text-len / content-w  rows
 
-   The constants are tuned against conversation 954bf315; they
+   The constants are tuned against session 954bf315; they
    over-estimate slightly on dense bubbles and under-estimate on
    answer-heavy bubbles, but stay within ~2x of real either way."
   ^long [message ^long bubble-w]
@@ -262,21 +262,21 @@
 
 (defn- turn-identity
   "Stable per-turn key for detail-disclosure node ids. The progress
-   bubble live-streams while `:conversation-turn-id` is still nil
+   bubble live-streams while `:session-turn-id` is still nil
    (the server only assigns it once the turn lands), so we MUST
    prefer `:client-turn-id` - that one exists from the moment the
    user submits, and gets carried through into the persisted
-   assistant message. Picking conversation-turn-id here would
+   assistant message. Picking session-turn-id here would
    change the disclosure node id at the live -> done flip; every
    open <details> / REASONING toggle the user expanded during
    streaming would silently snap back to its default state.
 
-   Old conversations loaded from disk lack `:client-turn-id`
-   entirely, so we fall back to `:conversation-turn-id` for them.
+   Old sessions loaded from disk lack `:client-turn-id`
+   entirely, so we fall back to `:session-turn-id` for them.
    Both still scope the click region by turn so a click on one
    answer can't toggle a disclosure in another."
   [message]
-  (or (:client-turn-id message) (:conversation-turn-id message)))
+  (or (:client-turn-id message) (:session-turn-id message)))
 
 (defn project-message
   "Apply the same `:text` projection `screen/apply-settings` used to
@@ -291,7 +291,7 @@
    autoresearch."
   ([message ^long bubble-w settings] (project-message message bubble-w settings nil))
   ([message ^long bubble-w settings
-    {:keys [conversation-id detail-expansions tail-lines
+    {:keys [session-id detail-expansions tail-lines
             window-start window-num window-total-h]}]
    (let [show-timestamps? (boolean (get settings :show-timestamps false))
          strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
@@ -346,8 +346,8 @@
                (:ir message) (:traces message) bubble-w settings
                (:confidence message)
                (= :cancelled (:status message))
-               (cond-> {:conversation-id      conversation-id
-                        :conversation-turn-id (turn-identity message)
+               (cond-> {:session-id      session-id
+                        :session-turn-id (turn-identity message)
                         :detail-expansions   detail-expansions}
                  tail-lines (assoc :tail-lines tail-lines)))]
          (-> message
@@ -364,8 +364,8 @@
              {:keys [text lines line-meta]}
              (render/format-answer-markdown-data
                ir bubble-w
-               (cond-> {:conversation-id      conversation-id
-                        :conversation-turn-id (turn-identity message)
+               (cond-> {:session-id      session-id
+                        :session-turn-id (turn-identity message)
                         :detail-expansions   detail-expansions
                         :section             (:role message)}
                  tail-lines (assoc :tail-lines tail-lines)))]
@@ -436,7 +436,7 @@
    plain Object args here - we cast with `long` inside the body."
   [messages bubble-w settings scroll inner-h
    {:keys [progress loading? progress-extra] :or {progress nil loading? false}}
-   & [{:keys [conversation-id detail-expansions]}]]
+   & [{:keys [session-id detail-expansions]}]]
   (let [bubble-w          (long bubble-w)
         inner-h           (long inner-h)
         detail-expansions detail-expansions
@@ -479,7 +479,7 @@
                        (let [{:keys [text lines line-meta]}
                              (render/progress->lines-data progress bubble-w settings
                                (assoc progress-extra
-                                 :conversation-id conversation-id
+                                 :session-id session-id
                                  ;; Live progress bubble must use the
                                  ;; same turn key the completed answer
                                  ;; will use a moment later; otherwise
@@ -488,7 +488,7 @@
                                  ;; flip and the user's expansion state
                                  ;; resets to its default. See
                                  ;; `turn-identity` for the precedence.
-                                 :conversation-turn-id (turn-identity m)
+                                 :session-turn-id (turn-identity m)
                                  :detail-expansions detail-expansions))]
                          (assoc m
                            :text text
@@ -529,7 +529,7 @@
                              tail-n         (when bottom-locked?
                                               (long (* 2 inner-h)))]
                          (project-message m bubble-w settings
-                           (cond-> {:conversation-id conversation-id
+                           (cond-> {:session-id session-id
                                     :detail-expansions detail-expansions}
                              tail-n         (assoc :tail-lines tail-n)
                              window-start   (assoc :window-start  window-start
@@ -587,7 +587,7 @@
 ;;; ── Background pre-warmer ────────────────────────────────────────────────────
 ;;
 ;; Why this exists, top of mind: with virtualisation alone, scrolling
-;; UP through a long conversation pays the FULL
+;; UP through a long session pays the FULL
 ;; `format-answer-with-thinking*` cost (~500 ms / big trace bubble)
 ;; on the render thread the FIRST time a never-seen bubble enters
 ;; the viewport - the user feels that as a frame-stall mid-scroll.
@@ -609,11 +609,11 @@
 ;;     to interrupt a CPU-bound function mid-call without
 ;;     instrumenting the tokenizer, which is way more invasive than
 ;;     the win is worth).
-;;   * Returns the `Thread`. Caller stores it; on conversation
+;;   * Returns the `Thread`. Caller stores it; on session
 ;;     switch / shutdown, call `stop-pre-warm!` to interrupt.
 
 (defn- warm-message-height!
-  [messages idx bubble-w settings conversation-id detail-expansions]
+  [messages idx bubble-w settings session-id detail-expansions]
   ;; Warm EVERY message, not just assistants. User-message
   ;; bubble-height is cheap, but the *real* value is
   ;; `chrome+lines+refs+1` while `estimated-height` can undershoot
@@ -621,7 +621,7 @@
   ;; first time they scroll into view.
   (let [m  (nth messages idx)
         pm (project-message m bubble-w settings
-             {:conversation-id conversation-id
+             {:session-id session-id
               :detail-expansions detail-expansions})
         pm (with-turn-separator pm messages settings idx)
         h  (long (render/bubble-height pm bubble-w))]
@@ -629,11 +629,11 @@
     h))
 
 (defn pre-warm-recent!
-  "Synchronously warm the RECENT tail of a conversation before the
+  "Synchronously warm the RECENT tail of a session before the
    background worker kicks in.
 
    Why: `pre-warm!` is async by design (fast startup), but if the
-   user wheel-scrolls immediately after opening a heavy conversation,
+   user wheel-scrolls immediately after opening a heavy session,
    they can still hit a cold big-trace bubble before the daemon gets
    there. Warming the newest tail on the caller thread eliminates that
    first-scroll cliff while still keeping the full-history warm async.
@@ -646,7 +646,7 @@
   ([messages bubble-w settings]
    (pre-warm-recent! messages bubble-w settings nil))
   ([messages bubble-w settings
-    {:keys [conversation-id detail-expansions] :as opts}]
+    {:keys [session-id detail-expansions] :as opts}]
    (let [tail-count* (long (or (:count opts) 16))
          tail-count  (if (neg? tail-count*) 0 tail-count*)
          budget-ms   (long (if (contains? opts :budget-ms)
@@ -666,7 +666,7 @@
          warmed
          (do
            (warm-message-height!
-             messages i bubble-w settings conversation-id detail-expansions)
+             messages i bubble-w settings session-id detail-expansions)
            (recur (dec i) (inc warmed))))))))
 
 (defn pre-warm!
@@ -676,15 +676,15 @@
    user almost always scrolls UP from the bottom, so the next-to-
    last message warms first, the FIRST message last.
 
-   Returns the `Thread` so the caller can stop it on conversation
+   Returns the `Thread` so the caller can stop it on session
    switch / shutdown via `stop-pre-warm!`. Returns `nil` for an
-   empty conversation (nothing to warm).
+   empty session (nothing to warm).
 
    Settings parity with `layout`: pass the SAME settings map so the
    cached entries match the keys subsequent layout passes will
    look up. Mismatched settings = wasted compute (the layout pass
    will format again with different cache keys)."
-  ^Thread [messages bubble-w settings & [{:keys [conversation-id detail-expansions]}]]
+  ^Thread [messages bubble-w settings & [{:keys [session-id detail-expansions]}]]
   (let [n (long (count messages))]
     (when (pos? n)
       (let [bubble-w (long bubble-w)
@@ -695,7 +695,7 @@
                     (loop [i (dec n)]
                       (when (and (>= i 0) (not (.isInterrupted (Thread/currentThread))))
                         (warm-message-height!
-                          messages i bubble-w settings conversation-id detail-expansions)
+                          messages i bubble-w settings session-id detail-expansions)
                         (recur (dec i))))
                     (catch InterruptedException _
                       ;; Cooperative cancellation - nothing to do.
@@ -729,7 +729,7 @@
    in-flight bubble and write one more cache entry AFTER this returns,
    which (a) flakes the next test that just called `invalidate-heights!`
    and (b) in production silently leaks one cache entry for the
-   previous conversation across a conv switch. Joining with a tight
+   previous session across a session switch. Joining with a tight
    budget bounds both: a typical interrupt lands within microseconds;
    the 200 ms ceiling covers the worst-case bubble already mid-format.
 

@@ -106,7 +106,7 @@
    renderer reads this map to decide which user vars to surface in
    the discovery line and which have aged past the 10-turn LRU window.
 
-   Per-iteration atoms (vs per-conversation) are intentional: each
+   Per-iteration atoms (vs per-session) are intentional: each
    iteration sees a clean snapshot of \"vars referenced THIS iteration\";
    the engine merges into the long-lived per-env LRU after eval. That
    isolation keeps a runaway iteration's symbol noise from polluting

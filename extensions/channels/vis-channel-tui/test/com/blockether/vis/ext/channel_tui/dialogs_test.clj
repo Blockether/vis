@@ -58,20 +58,20 @@
         (finally
           (.stopScreen screen))))))
 
-(deftest conversation-dialog-wheel-test
-  (testing "conversation picker coalesces wheel floods and moves selection"
+(deftest session-dialog-wheel-test
+  (testing "session picker coalesces wheel floods and moves selection"
     (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
-          conversations (mapv (fn [idx]
-                                {:id idx
-                                 :title (str "Conversation " idx)
-                                 :turn-count idx})
-                          (range 20))]
+          sessions (mapv (fn [idx]
+                           {:id idx
+                            :title (str "Session " idx)
+                            :turn-count idx})
+                     (range 20))]
       (try
         (dotimes [_ 5]
           (.addInput terminal (wheel-down)))
         (.addInput terminal (KeyStroke. KeyType/Enter))
         (is (= {:action :switch :id "1"}
-              (dlg/conversation-picker-dialog! screen conversations nil)))
+              (dlg/session-picker-dialog! screen sessions nil)))
         (finally
           (.stopScreen screen))))))
 
@@ -207,7 +207,7 @@
         settings-rows          (var-get #'dlg/settings-rows)
         theme-picker-items     (var-get #'dlg/theme-picker-items)
         palette-commands       (var-get #'dlg/palette-commands)
-        conversation-items      dlg/conversation-dialog-items]
+        session-items      dlg/session-dialog-items]
     (testing "toggle rows flip booleans"
       (is (= {:show-thinking false}
             (apply-settings-option {:show-thinking true}
@@ -403,25 +403,25 @@
           (is (nil? (first (filter #(= row-id (:id %)) provider-rows))))
           (is (nil? (first (filter #(= row-id (:id %)) extension-rows)))))))
 
-    (testing "conversation picker keeps new/fork out of the table and renders justified cells"
+    (testing "session picker keeps new/fork out of the table and renders justified cells"
       (let [body-w 96
-            header (dlg/conversation-dialog-header body-w)
-            rows (conversation-items [{:id "123e4567-e89b-12d3-a456-426614174000"
-                                       :title (str "Title " (apply str (repeat 80 "汉")))
-                                       :turn-count 2
-                                       :fork-count 3
-                                       :modified-at #inst "2024-01-03T04:05:00.000-00:00"
-                                       :created-at #inst "2024-01-01T01:02:00.000-00:00"}
-                                      {:id "abcdef00-e89b-12d3-a456-426614174000"
-                                       :title ""
-                                       :turn-count 0
-                                       :modified-at nil
-                                       :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
+            header (dlg/session-dialog-header body-w)
+            rows (session-items [{:id "123e4567-e89b-12d3-a456-426614174000"
+                                  :title (str "Title " (apply str (repeat 80 "汉")))
+                                  :turn-count 2
+                                  :fork-count 3
+                                  :modified-at #inst "2024-01-03T04:05:00.000-00:00"
+                                  :created-at #inst "2024-01-01T01:02:00.000-00:00"}
+                                 {:id "abcdef00-e89b-12d3-a456-426614174000"
+                                  :title ""
+                                  :turn-count 0
+                                  :modified-at nil
+                                  :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
                    "123e4567-e89b-12d3-a456-426614174000"
                    body-w)
             active-label (:label (nth rows 0))
             inactive-label (:label (nth rows 1))
-            fork-label (dlg/conversation-dialog-label
+            fork-label (dlg/session-dialog-label
                          {:id "fedcba00-e89b-12d3-a456-426614174000"
                           :title "Forkable"
                           :turn-count 4
@@ -432,7 +432,7 @@
                          body-w)]
         (is (= [:switch :switch] (mapv :action rows)))
         (is (not-any? #{:new :fork} (map :action rows)))
-        (is (= [] (conversation-items [] nil body-w)))
+        (is (= [] (session-items [] nil body-w)))
         (is (= [body-w body-w body-w body-w]
               (mapv p/display-width [header active-label inactive-label fork-label])))
         (is (every? #(str/includes? % "│") [header active-label inactive-label]))
@@ -449,14 +449,14 @@
         (is (str/includes? inactive-label "│ abcdef00 │"))
         (is (str/includes? inactive-label "│     0 │"))
         (is (str/includes? inactive-label "-"))
-        (is (str/includes? inactive-label "Untitled conversation"))))
+        (is (str/includes? inactive-label "Untitled session"))))
 
     (testing "command palette keeps Configure Providers separate from Settings"
-      (is (= ["New Conversation"
+      (is (= ["New Session"
               "New Tab"
               "New Worktree"
-              "Fork Conversation"
-              "Switch Conversation"
+              "Fork Session"
+              "Switch Session"
               "Configure Providers"
               "Settings"]
             (mapv :label palette-commands))))

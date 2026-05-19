@@ -15,7 +15,7 @@
 
 (defdescribe fast-help-test
   (it "does not swallow unknown root commands that also ask for help"
-    (expect (nil? (#'main/fast-help-dispatched? false ["sessions" "--help"]))))
+    (expect (nil? (#'main/fast-help-dispatched? false ["missing" "--help"]))))
 
   (it "still handles known built-in help without full extension discovery"
     (let [out (java.io.StringWriter.)]

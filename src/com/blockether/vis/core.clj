@@ -8,13 +8,13 @@
    not stable; the names exposed here are the host contract.
 
    Canonical runtime language:
-     Conversation -> Turn -> Iteration -> Block.
+     Session -> Turn -> Iteration -> Block.
 
-   A Turn is one user request plus assistant answer inside a Conversation.
+   A Turn is one user request plus assistant answer inside a Session.
    New code and documentation should use turn/user-request language.
 
    Primary surfaces:
-     - Conversation / turn runtime: create!, send!, turn!, by-id,
+     - Session / turn runtime: create!, send!, turn!, by-id,
        by-channel, env-for, close!, delete!, set-title!.
      - Environment runtime: create-environment, dispose-environment!,
        get-router, rebuild-router!, resolve-effective-model.
@@ -132,14 +132,14 @@
 ;; =============================================================================
 ;; Markdown export
 ;;
-;; Single host-runtime helper for projecting a persisted conversation
+;; Single host-runtime helper for projecting a persisted session
 ;; (every turn: user prompt + final answer + optional metadata) into a
 ;; Markdown string. Lives in the runtime so EVERY channel - TUI,
 ;; Telegram, CLI agent, third-party plug-ins - can ship a `Copy as
-;; Markdown` / `Export conversation` affordance without re-implementing
+;; Markdown` / `Export session` affordance without re-implementing
 ;; the projection. Lives in `internal.render` alongside the IR pipeline.
 ;; =============================================================================
-(def conversation->markdown ir/conversation->markdown)
+(def session->markdown ir/session->markdown)
 
 ;; =============================================================================
 ;; Answer IR rendering — pure-Clojure walker for the 21-tag Hiccup-EDN IR.
@@ -227,29 +227,29 @@
 ;; Logging
 (def db-log!                             persistance/db-log!)
 
-;; Conversation lifecycle (storage facade)
-(def db-store-conversation!                 persistance/db-store-conversation!)
-(def db-get-conversation                 persistance/db-get-conversation)
-(def db-resolve-conversation-id          persistance/db-resolve-conversation-id)
-(def db-list-conversations               persistance/db-list-conversations)
-(def db-find-conversation-by-external    persistance/db-find-conversation-by-external)
-(def db-update-conversation-title!       persistance/db-update-conversation-title!)
-(def db-delete-conversation-tree!           persistance/db-delete-conversation-tree!)
-(def db-fork-conversation!                  persistance/db-fork-conversation!)
-(def db-list-conversation-states            persistance/db-list-conversation-states)
-(def db-latest-conversation-state-id        persistance/db-latest-conversation-state-id)
+;; Session lifecycle (storage facade)
+(def db-store-session!                 persistance/db-store-session!)
+(def db-get-session                 persistance/db-get-session)
+(def db-resolve-session-id          persistance/db-resolve-session-id)
+(def db-list-sessions               persistance/db-list-sessions)
+(def db-find-session-by-external    persistance/db-find-session-by-external)
+(def db-update-session-title!       persistance/db-update-session-title!)
+(def db-delete-session-tree!           persistance/db-delete-session-tree!)
+(def db-fork-session!                  persistance/db-fork-session!)
+(def db-list-session-states            persistance/db-list-session-states)
+(def db-latest-session-state-id        persistance/db-latest-session-state-id)
 
 ;; Turn lifecycle
-(def db-store-conversation-turn!                        persistance/db-store-conversation-turn!)
-(def db-update-conversation-turn!                       persistance/db-update-conversation-turn!)
-(def db-list-conversation-turns-by-status           persistance/db-list-conversation-turns-by-status)
-(def db-list-conversation-turns        persistance/db-list-conversation-turns)
-(def db-retry-conversation-turn!                        persistance/db-retry-conversation-turn!)
-(def db-list-conversation-turn-states                   persistance/db-list-conversation-turn-states)
+(def db-store-session-turn!                        persistance/db-store-session-turn!)
+(def db-update-session-turn!                       persistance/db-update-session-turn!)
+(def db-list-session-turns-by-status           persistance/db-list-session-turns-by-status)
+(def db-list-session-turns        persistance/db-list-session-turns)
+(def db-retry-session-turn!                        persistance/db-retry-session-turn!)
+(def db-list-session-turn-states                   persistance/db-list-session-turn-states)
 
 ;; Iteration lifecycle
 (def db-store-iteration!                    persistance/db-store-iteration!)
-(def db-list-conversation-turn-iterations            persistance/db-list-conversation-turn-iterations)
+(def db-list-session-turn-iterations            persistance/db-list-session-turn-iterations)
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 
 ;; Full-text search
@@ -388,7 +388,7 @@
 (def bind-and-bump!     env/bind-and-bump!)
 
 ;; =============================================================================
-;; Turn runtime / iteration loop / environment / conversations
+;; Turn runtime / iteration loop / environment / sessions
 ;; =============================================================================
 (def turn!                        lp/turn!)
 (def ask-code!                    lp/ask-code!)
@@ -415,7 +415,7 @@
 (def auto-archive-candidates       lp/auto-archive-candidates)
 (def auto-archive-hot-symbols!     lp/auto-archive-hot-symbols!)
 
-;; Conversations
+;; Sessions
 (def db-info                      lp/db-info)
 (def custom-bindings              lp/custom-bindings)
 (def get-locals                   lp/get-locals)

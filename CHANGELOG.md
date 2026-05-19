@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `vis!` -> `query!`
 - `register-env-def!` removed (use extensions)
 - Nudges moved from `loop/nudges.clj` to `loop/runtime/prompt.clj`
-- `conversation/shared.clj` folded into `conversation/core.clj`
+- `session/shared.clj` folded into `session/core.clj`
 
 ### Removed
 - `var-diff` (dead code)

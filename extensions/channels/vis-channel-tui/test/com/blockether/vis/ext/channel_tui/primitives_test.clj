@@ -32,7 +32,7 @@
     (it "Mixed ASCII + emoji line is six columns"
       (expect (= 6 (p/display-width MIXED)))))
 
-  (describe "control characters are sanitized, NEVER throw (regression: conv 954bf315)"
+  (describe "control characters are sanitized, NEVER throw (regression: session 954bf315)"
     ;; Pre-sanitizer, Lanterna's `TextCharacter.fromString` threw on
     ;; any C0 byte (0x00-0x1F), the render thread's catch-all
     ;; swallowed it, the bubble silently failed to paint, the user

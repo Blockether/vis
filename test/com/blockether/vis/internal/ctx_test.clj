@@ -14,21 +14,21 @@
   (sci/find-ns sci-ctx 'sandbox))
 
 (defdescribe build-test
-  (it "returns :conversation passthrough + :defs from sandbox state"
+  (it "returns :session passthrough + :defs from sandbox state"
     (let [{:keys [sci-ctx initial-ns-keys]} (fresh)
           _ (sci/eval-string+ sci-ctx
               "(def hits \"rg results\" {:hit-count 7 :hits []})
                (def hit-count 7)
                (defn hits-fn \"filter\" [pred] (filter pred [1 2 3]))"
               {:ns (ns-obj sci-ctx)})
-          conv {:id :c :turn-id :t :title "T" :user-request "q"}
+          session {:id :c :turn-id :t :title "T" :user-request "q"}
           iteration {:id :i :position 2}
           out  (ctx/build {:environment {:sci-ctx sci-ctx :initial-ns-keys initial-ns-keys}
-                           :conversation conv
+                           :session session
                            :iteration iteration})]
       (expect (= {:id :c :turn-id :t :title "T" :iteration iteration}
-                (:conversation out)))
-      (expect (not (contains? (:conversation out) :user-request)))
+                (:session out)))
+      (expect (not (contains? (:session out) :user-request)))
       (expect (not (contains? out :iteration)))
       (expect (not (contains? out :tree)))
       (expect (some? (get-in out [:defs 'hits :doc])))
@@ -51,7 +51,7 @@
                :extensions (atom [ext])}
           active (prompt/active-extensions env)
           out (ctx/build {:environment env
-                          :conversation {:id :c}
+                          :session {:id :c}
                           :extensions (prompt/extensions-snapshot active)})]
       (expect (= [{:name "test.ctx-extension"
                    :alias 't
@@ -63,22 +63,22 @@
 
   (it "renders iteration hints as EDN inside ctx"
     (let [{:keys [sci-ctx initial-ns-keys]} (fresh)
-          hint {:id :vis.foundation/conversation-title
+          hint {:id :vis.foundation/session-title
                 :text "set <title> & go"
                 :importance :high
-                :satisfy-with '(satisfy-hint! :vis.foundation/conversation-title)}
+                :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}
           ctx-map (ctx/build {:environment {:sci-ctx sci-ctx
                                             :initial-ns-keys initial-ns-keys}
-                              :conversation {:id :c}
+                              :session {:id :c}
                               :hints [hint]})
           out (ctx/render-iteration-trailer
                 {:environment {:sci-ctx sci-ctx}
                  :ctx ctx-map})]
-      (expect (= [hint] (get-in ctx-map [:conversation :hints])))
+      (expect (= [hint] (get-in ctx-map [:session :hints])))
       (expect (not (contains? ctx-map :hints)))
       (expect (str/includes? out ":hints"))
       (expect (str/includes? out "set <title> & go"))
-      (expect (str/includes? out "(satisfy-hint! :vis.foundation/conversation-title)"))
+      (expect (str/includes? out "(satisfy-hint! :vis.foundation/session-title)"))
       (expect (not (str/includes? out "<iteration_hints>")))
       (expect (not (str/includes? out "<iteration_hint")))))
 
@@ -88,7 +88,7 @@
               "(def ctx {:user {:request \"hi\"}}) (def satisfy-hint! :bad) (def my-var 1)"
               {:ns (ns-obj sci-ctx)})
           out (ctx/build {:environment {:sci-ctx sci-ctx :initial-ns-keys initial-ns-keys}
-                          :conversation {}})]
+                          :session {}})]
       (expect (contains? (:defs out) 'my-var))
       (expect (not (contains? (:defs out) 'ctx)))
       (expect (not (contains? (:defs out) 'satisfy-hint!)))
@@ -98,7 +98,7 @@
     (let [{:keys [sci-ctx initial-ns-keys]} (fresh)
           _ (sci/eval-string+ sci-ctx "(def hits {:hit-count 1})" {:ns (ns-obj sci-ctx)})
           env {:sci-ctx sci-ctx :initial-ns-keys initial-ns-keys}
-          a (ctx/build {:environment env :conversation {}})
-          b (ctx/build {:environment env :conversation {}})]
+          a (ctx/build {:environment env :session {}})
+          b (ctx/build {:environment env :session {}})]
       (expect (= (get-in a [:defs 'hits :shape])
                 (get-in b [:defs 'hits :shape]))))))

@@ -256,7 +256,7 @@
   (when (true? (get-in env [:turn/features :voice-response?]))
     (str "<voice_response_mode>\n"
       "The user may receive your final answer through text-to-speech audio.\n\n"
-      "Still produce the canonical final answer as plain text. This text is saved to the conversation database.\n\n"
+      "Still produce the canonical final answer as plain text. This text is saved to the session database.\n\n"
       "Optimize the final answer for spoken delivery:\n"
       "- speak like a manager update, not a developer handoff;\n"
       "- be concise, direct, and outcome-focused;\n"

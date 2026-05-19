@@ -3,11 +3,11 @@
 --
 -- Hierarchy:
 --
---   conversation_soul (identity)
---     └─ conversation_state (branch/fork)
---          ├─ conversation_turn_soul (user ask, branch-local)
---          │    └─ conversation_turn_state (one run/retry of the turn)
---          │         └─ conversation_turn_iteration (one LLM round-trip)
+--   session_soul (identity)
+--     └─ session_state (branch/fork)
+--          ├─ session_turn_soul (user ask, branch-local)
+--          │    └─ session_turn_state (one run/retry of the turn)
+--          │         └─ session_turn_iteration (one LLM round-trip)
 --          │              │
 --          │              └─ code/result/error/duration_ms columns
 --          │                   Executed form plus result/error timing live inline on
@@ -21,8 +21,8 @@
 -- Naming convention:
 --   *_soul   = immutable identity, branch-local
 --   *_state  = mutable snapshot; retry/fork = new state row
---   parent_table_child = nested concept (conversation_turn_iteration
---                        = iteration nested under conversation_turn_state)
+--   parent_table_child = nested concept (session_turn_iteration
+--                        = iteration nested under session_turn_state)
 --
 -- Position columns (1-based int) live alongside UUID PKs at every
 -- level. UUIDs are the join key; position is the public/agent-
@@ -30,122 +30,122 @@
 --
 -- Flow per turn:
 --   user request
---     -> conversation_turn_soul + conversation_turn_state
---     -> conversation_turn_iteration(s)
---          each conversation_turn_iteration records executed code inline in
+--     -> session_turn_soul + session_turn_state
+--     -> session_turn_iteration(s)
+--          each session_turn_iteration records executed code inline in
 --          code/result/error/duration_ms and writes one
 --          definition_soul + definition_state row per named var touched by
 --          `(def ...)` / `(defn ...)`
---     -> conversation_turn_state done/error
---     -> next turn (or branch/fork to new conversation_state)
+--     -> session_turn_state done/error
+--     -> next turn (or branch/fork to new session_state)
 --
 -- Fork flow:
---   conversation_state(v1)
---        └─ fork -> conversation_state(v2, parent_state_id=v1)
---   Each fork keeps isolated branch-local conversation_turn_soul +
+--   session_state(v1)
+--        └─ fork -> session_state(v2, parent_state_id=v1)
+--   Each fork keeps isolated branch-local session_turn_soul +
 --   definition_soul identity.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
 
 -- =============================================================================
--- Conversation soul - pure identity.
+-- Session soul - pure identity.
 -- metadata is a JSON blob for channel bindings and external IDs.
 -- =============================================================================
-CREATE TABLE conversation_soul (
+CREATE TABLE session_soul (
   id           TEXT PRIMARY KEY NOT NULL,
   metadata     TEXT,                       -- JSON-encoded object/string
   created_at   INTEGER NOT NULL
 );
 
-CREATE INDEX idx_conv_soul_created
-  ON conversation_soul(created_at DESC);
+CREATE INDEX idx_session_soul_created
+  ON session_soul(created_at DESC);
 
 -- =============================================================================
--- Conversation state - forkable mutable snapshot.
+-- Session state - forkable mutable snapshot.
 -- =============================================================================
-CREATE TABLE conversation_state (
+CREATE TABLE session_state (
   id                    TEXT PRIMARY KEY NOT NULL,
-  conversation_soul_id  TEXT NOT NULL
-                        REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  session_soul_id  TEXT NOT NULL
+                        REFERENCES session_soul(id) ON DELETE CASCADE,
   parent_state_id       TEXT
-                        REFERENCES conversation_state(id) ON DELETE CASCADE,
+                        REFERENCES session_state(id) ON DELETE CASCADE,
   title                 TEXT,
   version               INTEGER NOT NULL CHECK (version >= 0),
   metadata              TEXT,              -- JSON-encoded object/string
   created_at            INTEGER NOT NULL,
 
-  UNIQUE (conversation_soul_id, version)
+  UNIQUE (session_soul_id, version)
 );
 
-CREATE INDEX idx_conv_state_soul
-  ON conversation_state(conversation_soul_id, version);
+CREATE INDEX idx_session_state_soul
+  ON session_state(session_soul_id, version);
 
-CREATE INDEX idx_conv_state_parent
-  ON conversation_state(parent_state_id);
+CREATE INDEX idx_session_state_parent
+  ON session_state(parent_state_id);
 
 -- =============================================================================
 -- Turn soul - immutable identity of a user request, branch-local.
 -- =============================================================================
-CREATE TABLE conversation_turn_soul (
+CREATE TABLE session_turn_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
-  conversation_state_id  TEXT NOT NULL
-                         REFERENCES conversation_state(id) ON DELETE CASCADE,
+  session_state_id  TEXT NOT NULL
+                         REFERENCES session_state(id) ON DELETE CASCADE,
   position               INTEGER NOT NULL CHECK (position >= 1),
-  -- Conversation title lives on `conversation_state.title` (set via
-  -- `(set-conversation-title! ...)` and mirrored to the CONVERSATION_TITLE
+  -- Session title lives on `session_state.title` (set via
+  -- `(set-session-title! ...)` and mirrored to the SESSION_TITLE
   -- SCI var). Turn rows carry `user_request` for display and replay.
   user_request           TEXT,
   metadata               TEXT,             -- JSON-encoded object/string
   created_at             INTEGER NOT NULL,
 
-  UNIQUE (conversation_state_id, position)
+  UNIQUE (session_state_id, position)
 );
 
-CREATE INDEX idx_conversation_turn_soul_state
-  ON conversation_turn_soul(conversation_state_id, position);
+CREATE INDEX idx_session_turn_soul_state
+  ON session_turn_soul(session_state_id, position);
 
-CREATE TRIGGER trg_conversation_turn_soul_position_ai
-BEFORE INSERT ON conversation_turn_soul
+CREATE TRIGGER trg_session_turn_soul_position_ai
+BEFORE INSERT ON session_turn_soul
 BEGIN
   SELECT CASE
     WHEN NOT EXISTS (
-           SELECT 1 FROM conversation_turn_soul s
-           WHERE s.conversation_state_id = NEW.conversation_state_id)
+           SELECT 1 FROM session_turn_soul s
+           WHERE s.session_state_id = NEW.session_state_id)
          AND NEW.position <> 1
-    THEN RAISE(ABORT, 'first conversation_turn_soul position must be 1')
+    THEN RAISE(ABORT, 'first session_turn_soul position must be 1')
   END;
 
   SELECT CASE
     WHEN EXISTS (
-           SELECT 1 FROM conversation_turn_soul s
-           WHERE s.conversation_state_id = NEW.conversation_state_id)
+           SELECT 1 FROM session_turn_soul s
+           WHERE s.session_state_id = NEW.session_state_id)
          AND NEW.position <> (
-           SELECT max(s.position) + 1 FROM conversation_turn_soul s
-           WHERE s.conversation_state_id = NEW.conversation_state_id)
-    THEN RAISE(ABORT, 'conversation_turn_soul position must increment by 1')
+           SELECT max(s.position) + 1 FROM session_turn_soul s
+           WHERE s.session_state_id = NEW.session_state_id)
+    THEN RAISE(ABORT, 'session_turn_soul position must increment by 1')
   END;
 END;
 
-CREATE TRIGGER trg_conversation_turn_soul_position_au
-BEFORE UPDATE ON conversation_turn_soul
+CREATE TRIGGER trg_session_turn_soul_position_au
+BEFORE UPDATE ON session_turn_soul
 BEGIN
   SELECT CASE
-    WHEN NEW.conversation_state_id <> OLD.conversation_state_id OR NEW.position <> OLD.position
-    THEN RAISE(ABORT, 'conversation_turn_soul state/position are immutable')
+    WHEN NEW.session_state_id <> OLD.session_state_id OR NEW.position <> OLD.position
+    THEN RAISE(ABORT, 'session_turn_soul state/position are immutable')
   END;
 END;
 
 -- =============================================================================
--- Conversation turn state - one run of conversation_turn_soul.
+-- Session turn state - one run of session_turn_soul.
 -- Retry = new state version.
 -- =============================================================================
-CREATE TABLE conversation_turn_state (
+CREATE TABLE session_turn_state (
   id                           TEXT PRIMARY KEY NOT NULL,
-  conversation_turn_soul_id                TEXT NOT NULL
-                               REFERENCES conversation_turn_soul(id) ON DELETE CASCADE,
-  forked_from_conversation_turn_state_id   TEXT
-                               REFERENCES conversation_turn_state(id) ON DELETE SET NULL,
+  session_turn_soul_id                TEXT NOT NULL
+                               REFERENCES session_turn_soul(id) ON DELETE CASCADE,
+  forked_from_session_turn_state_id   TEXT
+                               REFERENCES session_turn_state(id) ON DELETE SET NULL,
   version                      INTEGER NOT NULL CHECK (version >= 0),
   llm_root_provider            TEXT,    -- provider id (e.g. 'openai', 'github-copilot')
   llm_root_model               TEXT,
@@ -155,30 +155,30 @@ CREATE TABLE conversation_turn_state (
   answer                       BLOB,        -- Nippy-frozen IR `[:ir & nodes]`. NULL while running.
   -- Per-turn final outcome, derived at turn end. Lets the next turn's
   -- handover digest say "previous turn complete | cancelled | error"
-  -- without scanning every conversation_turn_iteration. Set by the conversation_turn_iteration
-  -- loop on the terminal conversation_turn_iteration and by
+  -- without scanning every session_turn_iteration. Set by the session_turn_iteration
+  -- loop on the terminal session_turn_iteration and by
   -- sweep-orphaned-running-turns! for cancelled / orphaned turns.
   prior_outcome                TEXT
                                CHECK (prior_outcome IS NULL OR
                                       prior_outcome IN ('complete', 'cancelled', 'error')),
   created_at                   INTEGER NOT NULL,
 
-  UNIQUE (conversation_turn_soul_id, version)
+  UNIQUE (session_turn_soul_id, version)
 );
 
-CREATE INDEX idx_conversation_turn_state_soul
-  ON conversation_turn_state(conversation_turn_soul_id, version);
+CREATE INDEX idx_session_turn_state_soul
+  ON session_turn_state(session_turn_soul_id, version);
 
-CREATE INDEX idx_conversation_turn_state_forked_from
-  ON conversation_turn_state(forked_from_conversation_turn_state_id);
+CREATE INDEX idx_session_turn_state_forked_from
+  ON session_turn_state(forked_from_session_turn_state_id);
 
 -- =============================================================================
--- Iteration - one LLM round-trip within a conversation_turn_state.
+-- Iteration - one LLM round-trip within a session_turn_state.
 -- =============================================================================
-CREATE TABLE conversation_turn_iteration (
+CREATE TABLE session_turn_iteration (
   id                              TEXT PRIMARY KEY NOT NULL,
-  conversation_turn_state_id                  TEXT NOT NULL
-                                  REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
+  session_turn_state_id                  TEXT NOT NULL
+                                  REFERENCES session_turn_state(id) ON DELETE CASCADE,
   position                        INTEGER NOT NULL CHECK (position >= 1),
 
   status                          TEXT NOT NULL
@@ -186,7 +186,7 @@ CREATE TABLE conversation_turn_iteration (
 
   llm_system_prompt               TEXT,
   llm_user_prompt                 TEXT,    -- JSON envelope for multimodal user input (text/images/audio/files)
-  llm_provider                    TEXT,    -- provider id used for this conversation_turn_iteration (e.g. 'openai', 'github-copilot')
+  llm_provider                    TEXT,    -- provider id used for this session_turn_iteration (e.g. 'openai', 'github-copilot')
   llm_model                       TEXT,
   llm_selected_provider           TEXT,
   llm_selected_model              TEXT,
@@ -224,7 +224,7 @@ CREATE TABLE conversation_turn_iteration (
   -- this column to rebuild the per-turn replay buffer.
   llm_assistant_message           TEXT,
 
-  -- Per-conversation_turn_iteration token accounting + estimated USD cost. NULL when
+  -- Per-session_turn_iteration token accounting + estimated USD cost. NULL when
   -- the provider response did not surface usage (e.g. the LLM call
   -- itself failed before a response was returned). Reasoning /
   -- cached tokens are subsets of completion / prompt respectively;
@@ -248,7 +248,7 @@ CREATE TABLE conversation_turn_iteration (
                                     llm_cost_usd IS NULL OR llm_cost_usd >= 0
                                   ),
 
-  metadata                        TEXT,    -- JSON-encoded per-conversation_turn_iteration context (active extensions, etc.)
+  metadata                        TEXT,    -- JSON-encoded per-session_turn_iteration context (active extensions, etc.)
 
   -- Single-form iteration payload. `result` and `error` are Nippy-encoded
   -- Clojure values.
@@ -260,19 +260,19 @@ CREATE TABLE conversation_turn_iteration (
   created_at                      INTEGER NOT NULL,
   finished_at                     INTEGER,
 
-  UNIQUE (conversation_turn_state_id, position)
+  UNIQUE (session_turn_state_id, position)
 );
 
-CREATE INDEX idx_conversation_turn_iteration_conversation_turn_state
-  ON conversation_turn_iteration(conversation_turn_state_id, position);
+CREATE INDEX idx_session_turn_iteration_session_turn_state
+  ON session_turn_iteration(session_turn_state_id, position);
 
-CREATE INDEX idx_conversation_turn_iteration_conversation_turn_state_created
-  ON conversation_turn_iteration(conversation_turn_state_id, created_at);
+CREATE INDEX idx_session_turn_iteration_session_turn_state_created
+  ON session_turn_iteration(session_turn_state_id, created_at);
 
 CREATE TABLE llm_routing_event (
   id                             TEXT PRIMARY KEY NOT NULL,
-  conversation_turn_iteration_id TEXT NOT NULL
-                                 REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
+  session_turn_iteration_id TEXT NOT NULL
+                                 REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
   position                       INTEGER NOT NULL CHECK (position >= 0),
   event_type                     TEXT NOT NULL,
   provider                       TEXT,
@@ -291,68 +291,68 @@ CREATE TABLE llm_routing_event (
   event_json                     TEXT NOT NULL,
   created_at                     INTEGER NOT NULL,
 
-  UNIQUE (conversation_turn_iteration_id, position)
+  UNIQUE (session_turn_iteration_id, position)
 );
 
 CREATE INDEX idx_llm_routing_event_iteration_position
-  ON llm_routing_event(conversation_turn_iteration_id, position);
+  ON llm_routing_event(session_turn_iteration_id, position);
 
-CREATE TRIGGER trg_conversation_turn_iteration_position_ai
-BEFORE INSERT ON conversation_turn_iteration
+CREATE TRIGGER trg_session_turn_iteration_position_ai
+BEFORE INSERT ON session_turn_iteration
 BEGIN
   SELECT CASE
     WHEN NOT EXISTS (
-           SELECT 1 FROM conversation_turn_iteration i
-           WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
+           SELECT 1 FROM session_turn_iteration i
+           WHERE i.session_turn_state_id = NEW.session_turn_state_id)
          AND NEW.position <> 1
-    THEN RAISE(ABORT, 'first conversation_turn_iteration position must be 1')
+    THEN RAISE(ABORT, 'first session_turn_iteration position must be 1')
   END;
 
   SELECT CASE
     WHEN EXISTS (
-           SELECT 1 FROM conversation_turn_iteration i
-           WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
+           SELECT 1 FROM session_turn_iteration i
+           WHERE i.session_turn_state_id = NEW.session_turn_state_id)
          AND NEW.position <> (
-           SELECT max(i.position) + 1 FROM conversation_turn_iteration i
-           WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
-    THEN RAISE(ABORT, 'conversation_turn_iteration position must increment by 1')
+           SELECT max(i.position) + 1 FROM session_turn_iteration i
+           WHERE i.session_turn_state_id = NEW.session_turn_state_id)
+    THEN RAISE(ABORT, 'session_turn_iteration position must increment by 1')
   END;
 END;
 
-CREATE TRIGGER trg_conversation_turn_iteration_position_au
-BEFORE UPDATE ON conversation_turn_iteration
+CREATE TRIGGER trg_session_turn_iteration_position_au
+BEFORE UPDATE ON session_turn_iteration
 BEGIN
   SELECT CASE
-    WHEN NEW.conversation_turn_state_id <> OLD.conversation_turn_state_id OR NEW.position <> OLD.position
-    THEN RAISE(ABORT, 'conversation_turn_iteration turn-state/position are immutable')
+    WHEN NEW.session_turn_state_id <> OLD.session_turn_state_id OR NEW.position <> OLD.position
+    THEN RAISE(ABORT, 'session_turn_iteration turn-state/position are immutable')
   END;
 END;
 
 -- =============================================================================
 -- Definition soul - branch-local identity for persistent user vars.
 --
--- One row per var name in a conversation_state. Definitions include
+-- One row per var name in a session_state. Definitions include
 -- normal vars and function vars, e.g. `(def x 42)` and
 -- `(defn sum [a b] (+ a b))`.
 --
--- Execution payload lives on conversation_turn_iteration. Var history
+-- Execution payload lives on session_turn_iteration. Var history
 -- lives in definition_state: one versioned row per iteration that writes
 -- the var. Dependency edges live in definition_dependency.
 -- =============================================================================
 CREATE TABLE definition_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
-  conversation_state_id  TEXT NOT NULL
-                         REFERENCES conversation_state(id) ON DELETE CASCADE,
+  session_state_id  TEXT NOT NULL
+                         REFERENCES session_state(id) ON DELETE CASCADE,
 
   name                   TEXT NOT NULL CHECK (trim(name) <> ''),
   created_at             INTEGER NOT NULL
 );
 
 CREATE UNIQUE INDEX uq_definition_soul_state_name
-  ON definition_soul(conversation_state_id, name);
+  ON definition_soul(session_state_id, name);
 
 CREATE INDEX idx_definition_soul_state_created
-  ON definition_soul(conversation_state_id, created_at);
+  ON definition_soul(session_state_id, created_at);
 
 -- =============================================================================
 -- Definition dependency - downstream depends on upstream (soul-level graph).
@@ -365,8 +365,8 @@ CREATE INDEX idx_definition_soul_state_created
 -- =============================================================================
 CREATE TABLE definition_dependency (
   id                             TEXT PRIMARY KEY NOT NULL,
-  conversation_state_id          TEXT NOT NULL
-                                 REFERENCES conversation_state(id) ON DELETE CASCADE,
+  session_state_id          TEXT NOT NULL
+                                 REFERENCES session_state(id) ON DELETE CASCADE,
   downstream_definition_soul_id  TEXT NOT NULL
                                  REFERENCES definition_soul(id) ON DELETE CASCADE,
   upstream_definition_soul_id    TEXT NOT NULL
@@ -384,21 +384,21 @@ CREATE INDEX idx_def_dep_upstream
   ON definition_dependency(upstream_definition_soul_id);
 
 CREATE INDEX idx_def_dep_state
-  ON definition_dependency(conversation_state_id);
+  ON definition_dependency(session_state_id);
 
 CREATE TRIGGER trg_def_dep_same_state_ai
 BEFORE INSERT ON definition_dependency
 BEGIN
   SELECT
     CASE
-      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) IS NULL
-        OR (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id) IS NULL
+      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) IS NULL
+        OR (SELECT session_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id) IS NULL
       THEN RAISE(ABORT, 'definition_dependency endpoint not found')
-      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
-           (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
-      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same conversation_state')
-      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.conversation_state_id
-      THEN RAISE(ABORT, 'definition_dependency conversation_state_id mismatch')
+      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
+           (SELECT session_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
+      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same session_state')
+      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.session_state_id
+      THEN RAISE(ABORT, 'definition_dependency session_state_id mismatch')
     END;
 END;
 
@@ -407,11 +407,11 @@ BEFORE UPDATE ON definition_dependency
 BEGIN
   SELECT
     CASE
-      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
-           (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
-      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same conversation_state')
-      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.conversation_state_id
-      THEN RAISE(ABORT, 'definition_dependency conversation_state_id mismatch')
+      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
+           (SELECT session_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
+      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same session_state')
+      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.session_state_id
+      THEN RAISE(ABORT, 'definition_dependency session_state_id mismatch')
     END;
 END;
 
@@ -426,8 +426,8 @@ CREATE TABLE definition_state (
   id                              TEXT PRIMARY KEY NOT NULL,
   definition_soul_id              TEXT NOT NULL
                                   REFERENCES definition_soul(id) ON DELETE CASCADE,
-  conversation_turn_iteration_id  TEXT NOT NULL
-                                  REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
+  session_turn_iteration_id  TEXT NOT NULL
+                                  REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
 
   version                         INTEGER NOT NULL CHECK (version >= 0),
 
@@ -447,7 +447,7 @@ CREATE INDEX idx_definition_state_soul
   ON definition_state(definition_soul_id, version);
 
 CREATE INDEX idx_definition_state_iteration
-  ON definition_state(conversation_turn_iteration_id);
+  ON definition_state(session_turn_iteration_id);
 
 -- First row for a definition_soul must start at version = 0.
 CREATE TRIGGER trg_definition_state_first_version_ai
@@ -469,7 +469,7 @@ END;
 -- extension_id is filled by runtime extension helpers from the registered
 -- extension identity. Extension callers should not supply or spoof it.
 --
--- Optional block scope belongs to a conversation_turn_iteration. Current
+-- Optional block scope belongs to a session_turn_iteration. Current
 -- iteration rows store one executed form, so block_index is normally 0
 -- when present.
 -- =============================================================================
@@ -483,19 +483,19 @@ CREATE TABLE extension_aggregate (
   metadata                    TEXT,            -- JSON-encoded object/string
   content                     BLOB,            -- Nippy-encoded extension-owned payload
 
-  conversation_soul_id        TEXT
-                              REFERENCES conversation_soul(id) ON DELETE CASCADE,
-  conversation_state_id       TEXT
-                              REFERENCES conversation_state(id) ON DELETE CASCADE,
-  conversation_turn_state_id  TEXT
-                              REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  conversation_turn_iteration_id                TEXT
-                              REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
-  conversation_turn_iteration_block_index       INTEGER CHECK (
-                                conversation_turn_iteration_block_index IS NULL OR conversation_turn_iteration_block_index >= 0
+  session_soul_id        TEXT
+                              REFERENCES session_soul(id) ON DELETE CASCADE,
+  session_state_id       TEXT
+                              REFERENCES session_state(id) ON DELETE CASCADE,
+  session_turn_state_id  TEXT
+                              REFERENCES session_turn_state(id) ON DELETE CASCADE,
+  session_turn_iteration_id                TEXT
+                              REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
+  session_turn_iteration_block_index       INTEGER CHECK (
+                                session_turn_iteration_block_index IS NULL OR session_turn_iteration_block_index >= 0
                               ),
-  conversation_turn_iteration_block_id          TEXT CHECK (
-                                conversation_turn_iteration_block_id IS NULL OR trim(conversation_turn_iteration_block_id) <> ''
+  session_turn_iteration_block_id          TEXT CHECK (
+                                session_turn_iteration_block_id IS NULL OR trim(session_turn_iteration_block_id) <> ''
                               ),
 
   -- Singleton dedupe key for upsert. Generated from FK scope columns
@@ -503,18 +503,18 @@ CREATE TABLE extension_aggregate (
   -- otherwise defeat ON CONFLICT against the FK columns directly.
   scope_key                   TEXT GENERATED ALWAYS AS (
                                 CASE
-                                  WHEN conversation_turn_iteration_block_id IS NOT NULL
-                                    THEN 'block-id:' || conversation_turn_iteration_block_id
-                                  WHEN conversation_turn_iteration_id IS NOT NULL AND conversation_turn_iteration_block_index IS NOT NULL
-                                    THEN 'block:' || conversation_turn_iteration_id || ':' || conversation_turn_iteration_block_index
-                                  WHEN conversation_turn_iteration_id IS NOT NULL
-                                    THEN 'conversation_turn_iteration:' || conversation_turn_iteration_id
-                                  WHEN conversation_turn_state_id IS NOT NULL
-                                    THEN 'turn-state:' || conversation_turn_state_id
-                                  WHEN conversation_state_id IS NOT NULL
-                                    THEN 'conversation-state:' || conversation_state_id
-                                  WHEN conversation_soul_id IS NOT NULL
-                                    THEN 'conversation-soul:' || conversation_soul_id
+                                  WHEN session_turn_iteration_block_id IS NOT NULL
+                                    THEN 'block-id:' || session_turn_iteration_block_id
+                                  WHEN session_turn_iteration_id IS NOT NULL AND session_turn_iteration_block_index IS NOT NULL
+                                    THEN 'block:' || session_turn_iteration_id || ':' || session_turn_iteration_block_index
+                                  WHEN session_turn_iteration_id IS NOT NULL
+                                    THEN 'session_turn_iteration:' || session_turn_iteration_id
+                                  WHEN session_turn_state_id IS NOT NULL
+                                    THEN 'turn-state:' || session_turn_state_id
+                                  WHEN session_state_id IS NOT NULL
+                                    THEN 'session-state:' || session_state_id
+                                  WHEN session_soul_id IS NOT NULL
+                                    THEN 'session-soul:' || session_soul_id
                                   ELSE 'global'
                                 END
                               ) STORED NOT NULL,
@@ -522,8 +522,8 @@ CREATE TABLE extension_aggregate (
   created_at                  INTEGER NOT NULL,
   updated_at                  INTEGER NOT NULL CHECK (updated_at >= created_at),
 
-  CHECK ((conversation_turn_iteration_block_index IS NULL AND conversation_turn_iteration_block_id IS NULL)
-         OR conversation_turn_iteration_id IS NOT NULL),
+  CHECK ((session_turn_iteration_block_index IS NULL AND session_turn_iteration_block_id IS NULL)
+         OR session_turn_iteration_id IS NOT NULL),
   UNIQUE (extension_id, aggregate_key, kind, scope_key)
 );
 
@@ -536,29 +536,29 @@ CREATE INDEX idx_extension_aggregate_ext_key
 CREATE INDEX idx_extension_aggregate_ext_kind_updated
   ON extension_aggregate(extension_id, kind, updated_at);
 
-CREATE INDEX idx_extension_aggregate_conversation_soul
-  ON extension_aggregate(conversation_soul_id)
-  WHERE conversation_soul_id IS NOT NULL;
+CREATE INDEX idx_extension_aggregate_session_soul
+  ON extension_aggregate(session_soul_id)
+  WHERE session_soul_id IS NOT NULL;
 
-CREATE INDEX idx_extension_aggregate_conversation_state
-  ON extension_aggregate(conversation_state_id)
-  WHERE conversation_state_id IS NOT NULL;
+CREATE INDEX idx_extension_aggregate_session_state
+  ON extension_aggregate(session_state_id)
+  WHERE session_state_id IS NOT NULL;
 
-CREATE INDEX idx_extension_aggregate_conversation_turn_state
-  ON extension_aggregate(conversation_turn_state_id)
-  WHERE conversation_turn_state_id IS NOT NULL;
+CREATE INDEX idx_extension_aggregate_session_turn_state
+  ON extension_aggregate(session_turn_state_id)
+  WHERE session_turn_state_id IS NOT NULL;
 
 CREATE INDEX idx_extension_aggregate_iteration
-  ON extension_aggregate(conversation_turn_iteration_id)
-  WHERE conversation_turn_iteration_id IS NOT NULL;
+  ON extension_aggregate(session_turn_iteration_id)
+  WHERE session_turn_iteration_id IS NOT NULL;
 
 CREATE INDEX idx_extension_aggregate_iteration_block
-  ON extension_aggregate(conversation_turn_iteration_id, conversation_turn_iteration_block_index)
-  WHERE conversation_turn_iteration_id IS NOT NULL AND conversation_turn_iteration_block_index IS NOT NULL;
+  ON extension_aggregate(session_turn_iteration_id, session_turn_iteration_block_index)
+  WHERE session_turn_iteration_id IS NOT NULL AND session_turn_iteration_block_index IS NOT NULL;
 
 CREATE INDEX idx_extension_aggregate_iteration_block_id
-  ON extension_aggregate(conversation_turn_iteration_block_id)
-  WHERE conversation_turn_iteration_block_id IS NOT NULL;
+  ON extension_aggregate(session_turn_iteration_block_id)
+  WHERE session_turn_iteration_block_id IS NOT NULL;
 
 -- Supports metadata JSON field filtering for extension aggregate queries.
 -- Extensions pass {:metadata {:field value}} to extension-list-aggregates/extension-delete-aggregate!;
@@ -586,7 +586,7 @@ CREATE INDEX idx_extension_aggregate_meta_path
 -- =============================================================================
 -- Log - structured logs.
 -- Event envelope:
---   - event: machine-stable event key (e.g. "conversation_turn_iteration.llm.error")
+--   - event: machine-stable event key (e.g. "session_turn_iteration.llm.error")
 --   - data: JSON-encoded object/string with all event payload fields
 -- =============================================================================
 CREATE TABLE log (
@@ -596,16 +596,16 @@ CREATE TABLE log (
   event                  TEXT NOT NULL,
   data                   TEXT,  -- JSON-encoded object/string
 
-  conversation_soul_id   TEXT
-                         REFERENCES conversation_soul(id) ON DELETE CASCADE,
-  conversation_state_id  TEXT
-                         REFERENCES conversation_state(id) ON DELETE CASCADE,
-  conversation_turn_soul_id          TEXT
-                         REFERENCES conversation_turn_soul(id) ON DELETE CASCADE,
-  conversation_turn_state_id         TEXT
-                         REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  conversation_turn_iteration_id           TEXT
-                         REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
+  session_soul_id   TEXT
+                         REFERENCES session_soul(id) ON DELETE CASCADE,
+  session_state_id  TEXT
+                         REFERENCES session_state(id) ON DELETE CASCADE,
+  session_turn_soul_id          TEXT
+                         REFERENCES session_turn_soul(id) ON DELETE CASCADE,
+  session_turn_state_id         TEXT
+                         REFERENCES session_turn_state(id) ON DELETE CASCADE,
+  session_turn_iteration_id           TEXT
+                         REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
   definition_soul_id     TEXT
                          REFERENCES definition_soul(id) ON DELETE CASCADE,
   definition_state_id    TEXT
@@ -623,25 +623,25 @@ CREATE INDEX idx_log_created
 CREATE INDEX idx_log_event_created
   ON log(event, created_at);
 
-CREATE INDEX idx_log_conv_soul
-  ON log(conversation_soul_id, created_at)
-  WHERE conversation_soul_id IS NOT NULL;
+CREATE INDEX idx_log_session_soul
+  ON log(session_soul_id, created_at)
+  WHERE session_soul_id IS NOT NULL;
 
-CREATE INDEX idx_log_conv_state
-  ON log(conversation_state_id, created_at)
-  WHERE conversation_state_id IS NOT NULL;
+CREATE INDEX idx_log_session_state
+  ON log(session_state_id, created_at)
+  WHERE session_state_id IS NOT NULL;
 
-CREATE INDEX idx_log_conversation_turn_soul
-  ON log(conversation_turn_soul_id, created_at)
-  WHERE conversation_turn_soul_id IS NOT NULL;
+CREATE INDEX idx_log_session_turn_soul
+  ON log(session_turn_soul_id, created_at)
+  WHERE session_turn_soul_id IS NOT NULL;
 
-CREATE INDEX idx_log_conversation_turn_state
-  ON log(conversation_turn_state_id, created_at)
-  WHERE conversation_turn_state_id IS NOT NULL;
+CREATE INDEX idx_log_session_turn_state
+  ON log(session_turn_state_id, created_at)
+  WHERE session_turn_state_id IS NOT NULL;
 
 CREATE INDEX idx_log_iteration
-  ON log(conversation_turn_iteration_id, created_at)
-  WHERE conversation_turn_iteration_id IS NOT NULL;
+  ON log(session_turn_iteration_id, created_at)
+  WHERE session_turn_iteration_id IS NOT NULL;
 
 CREATE INDEX idx_log_definition_soul
   ON log(definition_soul_id, created_at)
@@ -663,41 +663,41 @@ CREATE VIRTUAL TABLE search USING fts5(
 );
 
 -- Turn soul indexing
-CREATE TRIGGER trg_conversation_turn_soul_ai AFTER INSERT ON conversation_turn_soul BEGIN
+CREATE TRIGGER trg_session_turn_soul_ai AFTER INSERT ON session_turn_soul BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'conversation_turn_soul', new.id, 'user_request', new.user_request
+    SELECT 'session_turn_soul', new.id, 'user_request', new.user_request
     WHERE new.user_request IS NOT NULL AND new.user_request <> '';
 END;
 
-CREATE TRIGGER trg_conversation_turn_soul_au AFTER UPDATE ON conversation_turn_soul BEGIN
-  DELETE FROM search WHERE owner_table='conversation_turn_soul' AND owner_id=old.id;
+CREATE TRIGGER trg_session_turn_soul_au AFTER UPDATE ON session_turn_soul BEGIN
+  DELETE FROM search WHERE owner_table='session_turn_soul' AND owner_id=old.id;
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'conversation_turn_soul', new.id, 'user_request', new.user_request
+    SELECT 'session_turn_soul', new.id, 'user_request', new.user_request
     WHERE new.user_request IS NOT NULL AND new.user_request <> '';
 END;
 
-CREATE TRIGGER trg_conversation_turn_soul_ad AFTER DELETE ON conversation_turn_soul BEGIN
-  DELETE FROM search WHERE owner_table='conversation_turn_soul' AND owner_id=old.id;
+CREATE TRIGGER trg_session_turn_soul_ad AFTER DELETE ON session_turn_soul BEGIN
+  DELETE FROM search WHERE owner_table='session_turn_soul' AND owner_id=old.id;
 END;
 
 -- Definition state indexing
 
 -- Iteration code indexing
-CREATE TRIGGER trg_conversation_turn_iteration_ai AFTER INSERT ON conversation_turn_iteration BEGIN
+CREATE TRIGGER trg_session_turn_iteration_ai AFTER INSERT ON session_turn_iteration BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'conversation_turn_iteration', new.id, 'code', new.code
+    SELECT 'session_turn_iteration', new.id, 'code', new.code
     WHERE new.code IS NOT NULL AND new.code <> '';
 END;
 
-CREATE TRIGGER trg_conversation_turn_iteration_au AFTER UPDATE ON conversation_turn_iteration BEGIN
-  DELETE FROM search WHERE owner_table='conversation_turn_iteration' AND owner_id=old.id AND field='code';
+CREATE TRIGGER trg_session_turn_iteration_au AFTER UPDATE ON session_turn_iteration BEGIN
+  DELETE FROM search WHERE owner_table='session_turn_iteration' AND owner_id=old.id AND field='code';
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'conversation_turn_iteration', new.id, 'code', new.code
+    SELECT 'session_turn_iteration', new.id, 'code', new.code
     WHERE new.code IS NOT NULL AND new.code <> '';
 END;
 
-CREATE TRIGGER trg_conversation_turn_iteration_ad AFTER DELETE ON conversation_turn_iteration BEGIN
-  DELETE FROM search WHERE owner_table='conversation_turn_iteration' AND owner_id=old.id AND field='code';
+CREATE TRIGGER trg_session_turn_iteration_ad AFTER DELETE ON session_turn_iteration BEGIN
+  DELETE FROM search WHERE owner_table='session_turn_iteration' AND owner_id=old.id AND field='code';
 END;
 
 CREATE TRIGGER trg_definition_state_ai AFTER INSERT ON definition_state BEGIN

@@ -1,9 +1,9 @@
 (ns com.blockether.vis.ext.channel-tui.chat
-  "TUI-side projections over the shared conversations API.
+  "TUI-side projections over the shared sessions API.
 
-   On startup the TUI creates a fresh `:tui` conversation by default.
-   Pass `--conversation-id ID` or `--resume` to pick up an existing one.
-   Conversation data is persisted in `~/.vis/vis.mdb` so you can come
+   On startup the TUI creates a fresh `:tui` session by default.
+   Pass `--session-id ID` or `--resume` to pick up an existing one.
+   Session data is persisted in `~/.vis/vis.mdb` so you can come
    back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -55,7 +55,7 @@
    {:role      :user
     :ir        (vis/text->ir text)
     ;; Keep the raw text so resume paths (input-history arrow cycling in
-    ;; state/:init-conversation, search, etc.) can recover the exact string
+    ;; state/:init-session, search, etc.) can recover the exact string
     ;; the user typed without re-rendering IR back to markdown.
     :text      (or text "")
     :timestamp timestamp}))
@@ -133,20 +133,20 @@
       :timestamp timestamp})))
 
 (defn- rebuild-history
-  "Reconstruct message history from DB for a conversation.
+  "Reconstruct message history from DB for a session.
    Returns a vec of {:role :user|:assistant :text str :timestamp #inst ...}.
    Assistant messages include the code execution trace from all iterations."
-  [conversation-id]
+  [session-id]
   (try
     (let [d               (vis/db-info)
           restored-values (try
-                            (history-restore/restored-var-values d conversation-id)
+                            (history-restore/restored-var-values d session-id)
                             (catch Throwable e
                               (t/log! {:level :warn :id ::restore-values-for-history-failed
                                        :data  (exception->log-data e)
                                        :msg   (str "Failed to read restored var values for history: " (ex-message e))})
                               {}))
-          turns           (vis/db-list-conversation-turns d conversation-id)]
+          turns           (vis/db-list-session-turns d session-id)]
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
@@ -170,11 +170,11 @@
                         ;; The answer-bearing form (last expression of
                         ;; the answer iteration, per rule b') is
                         ;; ELIDED from the per-iteration parallel
-                        ;; vectors so resumed conversations render the
+                        ;; vectors so resumed sessions render the
                         ;; same way live ones do - just the answer
                         ;; text below the iteration trace, never the
                         ;; `(done "...")` call as code above it.
-                        turn-iterations (vis/db-list-conversation-turn-iterations d (:id q))
+                        turn-iterations (vis/db-list-session-turn-iterations d (:id q))
                         last-iteration-id (some-> (last turn-iterations) :id)
                         llm-routing (some-> (last turn-iterations) :metadata :llm)
                         ;; Empty IR is `[:ir {}]` (count 2 — just root tag
@@ -209,7 +209,7 @@
                                              ;;    synthetic gate rejections, model-facing only,
                                              ;;    never displayed to the user.
                                              ;; 3. structurally-silent host bookkeeping such as
-                                             ;;    `(set-conversation-title! ...)` and answer
+                                             ;;    `(set-session-title! ...)` and answer
                                              ;;    emission forms. They affect chrome/final answer,
                                              ;;    but should not render as normal trace code.
                                              ;; Other successful `:vis/silent` forms are retained
@@ -226,11 +226,11 @@
                                                    (or (:vis/structurally-silent? b)
                                                      (str/starts-with? trimmed "(done")
                                                      (and (not (visible-code-segments? b))
-                                                       (or (str/includes? code "(set-conversation-title!")
+                                                       (or (str/includes? code "(set-session-title!")
                                                          (str/includes? code "(done")))
                                                      (and (= :vis/silent (:result b))
                                                        (not (seq (:render-segments b)))
-                                                       (or (str/includes? code "(set-conversation-title!")
+                                                       (or (str/includes? code "(set-session-title!")
                                                          (str/includes? code "(done")))))))
                                              preflight-idxs (into #{}
                                                               (keep-indexed
@@ -335,7 +335,7 @@
                         ;; on bare terminal-bg, no bubble-wide fill.
                         cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message answer-ir (or (:created-at q) (java.util.Date.)))
-                                            true       (assoc :conversation-turn-id (:id q))
+                                            true       (assoc :session-turn-id (:id q))
                                             (seq trace) (assoc :traces trace :ir answer-ir)
                                             model  (assoc :model model)
                                             (:selected llm-routing) (assoc :llm-selected (:selected llm-routing))
@@ -355,17 +355,17 @@
                :msg   (str "Failed to rebuild history: " (ex-message e))})
       [])))
 
-(defn make-conversation
-  "Create a fresh `:tui` conversation. Returns `{:id conversation-id :history []}`."
+(defn make-session
+  "Create a fresh `:tui` session. Returns `{:id session-id :history []}`."
   [_provider-config]
   (let [{:keys [id]} (vis/create! :tui)]
     {:id id :history []}))
 
 (defn- resolve-resume-id
   "Resolve a resume id. Accepts full UUID or an unambiguous prefix
-   among :tui conversations. Returns full UUID string or nil."
-  [conversation-id]
-  (let [cid (some-> conversation-id str str/trim)]
+   among :tui sessions. Returns full UUID string or nil."
+  [session-id]
+  (let [cid (some-> session-id str str/trim)]
     (when (seq cid)
       (or (some-> (vis/by-id cid) :id str)
         (let [matches (->> (vis/by-channel :tui)
@@ -375,17 +375,17 @@
           (when (= 1 (count matches))
             (str (first matches))))))))
 
-(defn resume-conversation
-  "Resume an existing conversation by id.
+(defn resume-session
+  "Resume an existing session by id.
    Accepts full UUID or unambiguous short UUID prefix.
-   Returns `{:id conversation-id :history [...]}` with persisted messages."
-  [conversation-id]
-  (when-let [resolved-id (resolve-resume-id conversation-id)]
-    (when-let [conversation (vis/by-id resolved-id)]
-      {:id (str (:id conversation)) :history (rebuild-history (str (:id conversation)))})))
+   Returns `{:id session-id :history [...]}` with persisted messages."
+  [session-id]
+  (when-let [resolved-id (resolve-resume-id session-id)]
+    (when-let [session (vis/by-id resolved-id)]
+      {:id (str (:id session)) :history (rebuild-history (str (:id session)))})))
 
 (defn turn!
-  "Send a user request through the shared conversations cache. Blocking.
+  "Send a user request through the shared sessions cache. Blocking.
    Returns `{:answer [:ir ...]}` or `{:error str}`.
 
    `opts` may contain:
@@ -405,7 +405,7 @@
      :extra-body        - provider-specific request-body overrides forwarded to
                           `vis/send!` unchanged.
      :turn-features     - per-turn feature flags consumed by extension prompts."
-  ([conversation text] (turn! conversation text {}))
+  ([session text] (turn! session text {}))
   ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body turn-features workspace]}]
    (try
      (let [send-opts (cond-> {}
@@ -439,7 +439,7 @@
        (cond-> {:answer          answer
                 :iteration-count (or (:iteration-count result) 1)
                 :duration-ms     (:duration-ms result)
-                :conversation-turn-id        (:conversation-turn-id result)}
+                :session-turn-id        (:session-turn-id result)}
          model      (assoc :model model)
          provider   (assoc :provider provider)
          llm-selected (assoc :llm-selected llm-selected)
@@ -473,8 +473,8 @@
            {:error (vis/db-error->user-message e)}))))))
 
 (defn dispose!
-  "Release the TUI's env handle. Conversation data stays in
+  "Release the TUI's env handle. Session data stays in
    `~/.vis/vis.mdb` so other consumers of the `:tui` channel
-   (e.g. `vis conversations tui`, future inspectors) still see it."
+   (e.g. `vis sessions tui`, future inspectors) still see it."
   [{:keys [id]}]
   (when id (vis/close! id)))

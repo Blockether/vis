@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Bridge CLI launcher.
+#
+# Wraps the bridge submodule at tools/bridge so users can run
+#   `bridge <subcommand>`
+# from anywhere, with relative --profile / --changed-file paths
+# resolved against the caller's cwd (not the submodule dir).
+#
+# Prefers babashka (fast startup) and falls back to Clojure CLI.
+#
+# Install:
+#   1. Ensure submodule present:
+#        git submodule update --init tools/bridge
+#   2. Put this repo's bin/ on PATH (same as bin/vis).
+#   3. Run `bridge help` to confirm.
+
+set -euo pipefail
+
+invocation_cwd="$PWD"
+
+# Resolve the directory of this script, following symlinks.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ "$src" != /* ]] && src="$dir/$src"
+done
+bin_dir="$(cd -P "$(dirname "$src")" && pwd)"
+repo_root="$(cd -P "$bin_dir/.." && pwd)"
+bridge_dir="$repo_root/tools/bridge"
+
+if [[ ! -f "$bridge_dir/deps.edn" ]]; then
+  echo "bridge: submodule missing at $bridge_dir" >&2
+  echo "fix:   git -C \"$repo_root\" submodule update --init tools/bridge" >&2
+  exit 1
+fi
+
+# Preserve caller cwd so user-supplied relative paths resolve correctly.
+cd "$invocation_cwd"
+
+if command -v bb >/dev/null 2>&1; then
+  # bb resolves :paths in bb.edn relative to its config file, so we can
+  # stay in invocation_cwd and still load bridge's src + resources.
+  exec bb --config "$bridge_dir/bb.edn" bridge "$@"
+fi
+
+# Fallback: Clojure CLI. Inject bridge classpath + deps via -Sdeps and
+# pin user.dir so anything Clojure-side reads matches the caller's cwd.
+sdeps="{:paths [\"$bridge_dir/src\" \"$bridge_dir/resources\"]
+        :deps {org.clojure/clojure {:mvn/version \"1.12.0\"}
+               clj-commons/clj-yaml {:mvn/version \"1.0.29\"}
+               cheshire/cheshire {:mvn/version \"5.13.0\"}}}"
+
+exec clojure "-J-Duser.dir=$invocation_cwd" -Sdeps "$sdeps" -M -m bridge.cli "$@"

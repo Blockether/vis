@@ -5,7 +5,7 @@ Status: in-progress. No backward compat. No legacy. No migrations.
 ## Why
 
 SCI sandbox currently captures `*out*`/`*err*` per form, stores them in
-`conversation_turn_iteration.stdout`/`stderr`, renders them in transcript +
+`session_turn_iteration.stdout`/`stderr`, renders them in transcript +
 TUI, and lets the model see them. Two problems:
 
 1. stdout is an ambient I/O channel — invisible state, hard to test.

@@ -33,21 +33,21 @@
    clean turn with comment / result / a `(def ...)` var /
    thinking trace / answer-form-idx, and one failing turn with a
    prose-in-code error block + a clean follow-up block.
-   Returns the conversation id."
+   Returns the session id."
   [s]
-  (let [cid (vis/db-store-conversation! s {:channel :tui
-                                           :title "Transcript fixture"
-                                           :provider :openai
-                                           :model "gpt-4o"
-                                           :system-prompt "sys"})
-        q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                :user-request "First turn"
-                                                :status :running})]
+  (let [cid (vis/db-store-session! s {:channel :tui
+                                      :title "Transcript fixture"
+                                      :provider :openai
+                                      :model "gpt-4o"
+                                      :system-prompt "sys"})
+        q1  (vis/db-store-session-turn! s {:parent-session-id cid
+                                           :user-request "First turn"
+                                           :status :running})]
     ;; Turn 1: terminal iteration with a `(def ...)` var, an `(done ...)`
     ;; block (idx 1), thinking trace, system prompt, and a full LLM
     ;; message envelope. The persistance layer derives :llm_system_prompt
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
-    (vis/db-store-iteration! s {:conversation-turn-id q1
+    (vis/db-store-iteration! s {:session-turn-id q1
                                 :code          "(+ 1 1)"
                                 :result        2
                                 :answer        "42"
@@ -65,7 +65,7 @@
                                                 :content (str "<current_turn_context>\n"
                                                            "engine_state: turn.iteration/start\n"
                                                            "engine_phase: model_think\n"
-                                                           "conversation_id: conv-fixture\n"
+                                                           "session_id: session-fixture\n"
                                                            "engine_turn_id: turn-fixture\n"
                                                            "engine_turn_position: 1\n"
                                                            "current_engine_iteration_id: turn/turn-fix/iteration/1\n"
@@ -73,28 +73,30 @@
                                                            "prompt_role: user\n"
                                                            "</current_turn_context>\n\n"
                                                            ";; ctx =\n"
-                                                           (pr-str {:hints [{:id :vis.foundation/conversation-title
+                                                           (pr-str {:hints [{:id :vis.foundation/session-title
                                                                              :text "observe before answer"
                                                                              :importance :high
-                                                                             :satisfy-with '(satisfy-hint! :vis.foundation/conversation-title)}]}))}]
+                                                                             :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]}))}]
                                 :llm-raw-response "```clojure\n(+ 1 1)\n```"
                                 :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
+                                :metadata {:usage {:cache-created-tokens 700}}
                                 :cost-usd 0.0042})
-    (vis/db-update-conversation-turn! s q1 {:status :done :answer "42"})
+    (vis/db-update-session-turn! s q1 {:status :done :answer "42"})
     ;; Turn 2: failure iteration. No vars, no answer.
-    (let [q2 (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                 :user-request "Second turn that fails"
-                                                 :status :running})]
-      (vis/db-store-iteration! s {:conversation-turn-id q2
+    (let [q2 (vis/db-store-session-turn! s {:parent-session-id cid
+                                            :user-request "Second turn that fails"
+                                            :status :running})]
+      (vis/db-store-iteration! s {:session-turn-id q2
                                   :code "Let"
                                   :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}
                                   :duration-ms 1
                                   :llm-provider :blockether
                                   :llm-model    "gpt-4o"
                                   :tokens   {:input 80 :output 10 :reasoning 0 :cached 20}
+                                  :metadata {:usage {:cache-created-tokens 300}}
                                   :cost-usd 0.0021})
-      (vis/db-update-conversation-turn! s q2 {:status :error}))
+      (vis/db-update-session-turn! s q2 {:status :error}))
     cid))
 
 ;; ---------------------------------------------------------------------------
@@ -103,25 +105,25 @@
 ;; ---------------------------------------------------------------------------
 
 (defdescribe transcript-data-test
-  (it "returns nil for a missing conversation id"
+  (it "returns nil for a missing session id"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (expect (nil? (transcript/transcript s "00000000-0000-0000-0000-000000000000")))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "returns the canonical {:conversation :totals :turns} shape"
+  (it "returns the canonical {:session :totals :turns} shape"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid  (seed! s)
               data (transcript/transcript s cid)]
           (expect (map? data))
-          (expect (= #{:conversation :totals :turns :dialog :calls :timeline :llm-diagnostics}
+          (expect (= #{:session :totals :turns :dialog :calls :timeline :llm-diagnostics}
                     (set (keys data))))
-          ;; Conversation header carries the canonical fields.
-          (expect (= cid    (:id    (:conversation data))))
-          (expect (= "Transcript fixture" (:title (:conversation data))))
-          (expect (= :tui   (:channel (:conversation data))))
-          (expect (= "gpt-4o" (:model (:conversation data)))))
+          ;; Session header carries the canonical fields.
+          (expect (= cid    (:id    (:session data))))
+          (expect (= "Transcript fixture" (:title (:session data))))
+          (expect (= :tui   (:channel (:session data))))
+          (expect (= "gpt-4o" (:model (:session data)))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "accepts an unambiguous string id prefix and normalizes back to the full UUID"
@@ -131,16 +133,16 @@
               prefix (subs (str cid) 0 8)
               data   (transcript/transcript s prefix)]
           (expect (map? data))
-          (expect (= cid (:id (:conversation data))))
+          (expect (= cid (:id (:session data))))
           (expect (= 2 (count (:turns data)))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "returns nil for an ambiguous string prefix instead of picking an arbitrary conversation"
+  (it "returns nil for an ambiguous string prefix instead of picking an arbitrary session"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (doseq [_ (range 17)]
-          (vis/db-store-conversation! s {:channel :tui}))
-        (let [ids     (mapv :id (vis/db-list-conversations s :tui))
+          (vis/db-store-session! s {:channel :tui}))
+        (let [ids     (mapv :id (vis/db-list-sessions s :tui))
               buckets (vals (group-by #(subs (str %) 0 1) ids))
               matches (first (filter #(> (count %) 1) buckets))
               prefix  (subs (str (first matches)) 0 1)]
@@ -157,8 +159,9 @@
           (expect (= 2 (:turns totals)))
           (expect (= 2 (:iterations totals)))
           ;; Tokens summed across both turns.
-          (expect (= 180 (:input  (:tokens totals))))
-          (expect (= 30  (:output (:tokens totals))))
+          (expect (= 180  (:input (:tokens totals))))
+          (expect (= 30   (:output (:tokens totals))))
+          (expect (= 1000 (:cache-created (:tokens totals))))
           ;; Cost summed across both turns: 0.0042 + 0.0021 = 0.0063.
           ;; Compare with epsilon - IEEE 754 doubles don't land
           ;; exactly on 0.0063.
@@ -245,16 +248,16 @@
   (it "surfaces :returned-empty-code? as a typed boolean"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid (vis/db-store-conversation! s {:channel :tui :title "empty" :model "x"})
-              q   (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                      :user-request "empty turn"
-                                                      :status :running})
-              _   (vis/db-store-iteration! s {:conversation-turn-id q :code ""
+        (let [cid (vis/db-store-session! s {:channel :tui :title "empty" :model "x"})
+              q   (vis/db-store-session-turn! s {:parent-session-id cid
+                                                 :user-request "empty turn"
+                                                 :status :running})
+              _   (vis/db-store-iteration! s {:session-turn-id q :code ""
                                               :llm-returned-empty-code? true
                                               :duration-ms 1
                                               :tokens {:input 10 :output 0}
                                               :cost-usd 0.0001})
-              _   (vis/db-update-conversation-turn! s q {:status :done})
+              _   (vis/db-update-session-turn! s q {:status :done})
               iter (-> (transcript/transcript s cid)
                      :turns first :iterations first)]
           ;; Empty-code? is true when the model returned zero executable blocks.
@@ -264,19 +267,19 @@
   (it "normalizes dialog, code blocks, and def-wrapped tool calls into transcript-level timelines"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid  (vis/db-store-conversation! s {:channel :tui :title "tool transcript" :model "x"})
-              turn (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                       :user-request "run a tool"
-                                                       :status :running})
+        (let [cid  (vis/db-store-session! s {:channel :tui :title "tool transcript" :model "x"})
+              turn (vis/db-store-session-turn! s {:parent-session-id cid
+                                                  :user-request "run a tool"
+                                                  :status :running})
               code "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi")]
-          (vis/db-store-iteration! s {:conversation-turn-id turn
+          (vis/db-store-iteration! s {:session-turn-id turn
                                       :code code
                                       :result {:vis/ref :expr}
                                       :vars [{:name "out" :value value :code code}]
                                       :answer "done"
                                       :duration-ms 10})
-          (vis/db-update-conversation-turn! s turn {:status :done :answer "done"})
+          (vis/db-update-session-turn! s turn {:status :done :answer "done"})
           (let [data      (transcript/transcript s cid)
                 call      (first (:calls data))
                 code-row  (first (filter #(= :code (:kind %)) (:timeline data)))
@@ -297,19 +300,19 @@
   (it "dedupes one visible tool call when a tool result is both the block result and a var binding"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid   (vis/db-store-conversation! s {:channel :tui :title "tool transcript" :model "x"})
-              turn  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                        :user-request "run a tool"
-                                                        :status :running})
+        (let [cid   (vis/db-store-session! s {:channel :tui :title "tool transcript" :model "x"})
+              turn  (vis/db-store-session-turn! s {:parent-session-id cid
+                                                   :user-request "run a tool"
+                                                   :status :running})
               code  "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi")]
-          (vis/db-store-iteration! s {:conversation-turn-id turn
+          (vis/db-store-iteration! s {:session-turn-id turn
                                       :code code
                                       :result value
                                       :vars [{:name "out" :value value :code code}]
                                       :answer "done"
                                       :duration-ms 10})
-          (vis/db-update-conversation-turn! s turn {:status :done :answer "done"})
+          (vis/db-update-session-turn! s turn {:status :done :answer "done"})
           (let [data  (transcript/transcript s cid)
                 calls (:calls data)]
             (expect (= 1 (count calls)))
@@ -325,19 +328,19 @@
 ;; ---------------------------------------------------------------------------
 
 (defdescribe transcript-md-test
-  (it "returns a 'Conversation not found' line for a missing id (no throw)"
+  (it "returns a 'Session not found' line for a missing id (no throw)"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [out (transcript/transcript-md s "00000000-0000-0000-0000-000000000000")]
           (expect (string? out))
-          (expect (str/includes? out "Conversation not found")))
+          (expect (str/includes? out "Session not found")))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "exposes a flag-free reproduction CLI command"
     (let [cmd  (transcript/cli-command)
           help (vis/render-command cmd ["vis" "extensions" (:cmd/name cmd)])]
       (expect (= "reproduction" (:cmd/name cmd)))
-      (expect (= "vis extensions reproduction <CONVERSATION-ID>" (:cmd/usage cmd)))
+      (expect (= "vis extensions reproduction <SESSION-ID>" (:cmd/usage cmd)))
       (expect (not (str/includes? (:cmd/usage cmd) "--")))
       (expect (not (str/includes? help "FLAGS")))
       (expect (not (str/includes? help "--prompts")))
@@ -348,7 +351,7 @@
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid    (seed! s)
-              resolve (var-get (resolve 'com.blockether.vis.ext.foundation.transcript/resolve-conversation-ref))
+              resolve (var-get (resolve 'com.blockether.vis.ext.foundation.transcript/resolve-session-ref))
               prefix (subs (str cid) 0 8)
               full   (str cid)
               md     (transcript/transcript-md s prefix)]
@@ -357,10 +360,10 @@
           (expect (= (str cid) (str (resolve s full))))
           ;; And the prefix flows through `transcript-md` so the reproduction
           ;; CLI (which calls the same helper now) renders a real artifact
-          ;; instead of the "Conversation not found" fallback string.
+          ;; instead of the "Session not found" fallback string.
           (expect (string? md))
           (expect (str/includes? md "# Diagnostic report"))
-          (expect (not (str/includes? md "Conversation not found")))
+          (expect (not (str/includes? md "Session not found")))
           ;; Unknown well-formed UUIDs still miss; bogus garbage still misses.
           (expect (nil? (resolve s "00000000-0000-0000-0000-000000000000")))
           (expect (nil? (resolve s "definitely-not-a-uuid-prefix"))))
@@ -413,14 +416,14 @@
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [huge (apply str (repeat 50000 "x"))
-              cid  (vis/db-store-conversation! s {:channel :tui :title "Huge"})
-              qid  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                       :user-request "huge"
-                                                       :status :running})]
-          (vis/db-store-iteration! s {:conversation-turn-id qid
+              cid  (vis/db-store-session! s {:channel :tui :title "Huge"})
+              qid  (vis/db-store-session-turn! s {:parent-session-id cid
+                                                  :user-request "huge"
+                                                  :status :running})]
+          (vis/db-store-iteration! s {:session-turn-id qid
                                       :code huge
                                       :result :ok})
-          (vis/db-update-conversation-turn! s qid {:status :done})
+          (vis/db-update-session-turn! s qid {:status :done})
           (let [out (transcript/transcript-md s cid)]
             (expect (string? out))
             (expect (< (count out) 30000))
@@ -430,32 +433,32 @@
   (it "renders flat mixed-block code when render segments are not persisted"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid (vis/db-store-conversation! s {:channel :tui :title "Mixed"})
-              qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                      :user-request "mixed"
-                                                      :status :running})]
-          (vis/db-store-iteration! s {:conversation-turn-id qid
+        (let [cid (vis/db-store-session! s {:channel :tui :title "Mixed"})
+              qid (vis/db-store-session-turn! s {:parent-session-id cid
+                                                 :user-request "mixed"
+                                                 :status :running})]
+          (vis/db-store-iteration! s {:session-turn-id qid
                                       :code (str "(def x 1)\n"
-                                              "(set-conversation-title! \"Mixed\")\n"
+                                              "(set-session-title! \"Mixed\")\n"
                                               "(done [:ir [:p \"Done\"]])")
                                       :result :vis/answer
                                       :answer "Done"})
-          (vis/db-update-conversation-turn! s qid {:status :done :answer "Done"})
+          (vis/db-update-session-turn! s qid {:status :done :answer "Done"})
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "(def x 1)"))
-            (expect (str/includes? out "set-conversation-title!"))
+            (expect (str/includes? out "set-session-title!"))
             (expect (str/includes? out "(done [:ir"))))
         (finally (vis/db-dispose-connection! s)))))
 
   ;; Removed: "renders header + per-turn block + per-iteration block
   ;; dump". The full diagnostic-md header text drifted from this
-  ;; fixture (top-level conversation backtick block).
+  ;; fixture (top-level session backtick block).
   #_(it "renders header + per-turn block + per-iteration block dump"
       (let [s (vis/db-create-connection! :memory)]
         (try
           (let [cid (seed! s)
                 out (transcript/transcript-md s cid)]
-            (expect (str/includes? out (str "conversation `" cid "`")))
+            (expect (str/includes? out (str "session `" cid "`")))
             (expect (str/includes? out "Total turns:** 2"))
             (expect (str/includes? out "Total iterations:** 2"))
           ;; Per-turn header.

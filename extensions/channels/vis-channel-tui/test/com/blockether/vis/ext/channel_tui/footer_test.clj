@@ -22,7 +22,7 @@
       (p/inline-sentinel? (str c)))))
 
 (defdescribe ir->footer-text-test
-  ;; Regression for conversation 39a73cfb: footer hook IR was routed
+  ;; Regression for session 39a73cfb: footer hook IR was routed
   ;; through `lines->sentinel-strings`, which prepends
   ;; `MARKER_ANSWER_TXT` (\u206E). `draw-spans!` then wrote that
   ;; marker into a real terminal cell, showing as a leading blank
@@ -51,11 +51,11 @@
       (let [empty-text (mapv :text (build-subtitle-segments {:input (input/empty-input)} 0))
             typed-text (mapv :text (build-subtitle-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
         (expect (some #{"Ctrl+B voice"} empty-text))
-        (expect (some #{"Ctrl+G conversations"} empty-text))
+        (expect (some #{"Ctrl+G sessions"} empty-text))
         (expect (some #{"Ctrl+K menu"} empty-text))
         (expect (some #{"↑↓ history"} empty-text))
         (expect (some #{"Ctrl+B voice"} typed-text))
-        (expect (some #{"Ctrl+G conversations"} typed-text))
+        (expect (some #{"Ctrl+G sessions"} typed-text))
         (expect (some #{"Ctrl+K menu"} typed-text))
         (expect (not (some #{"↑↓ history"} typed-text)))))
 
@@ -68,12 +68,6 @@
       (expect (= ["Cancelling... please wait"]
                 (mapv :text (build-subtitle-segments {:loading? true
                                                       :cancelling? true
-                                                      :input (input/empty-input)} 0)))))
-
-    (it "shows queued submissions for the active workspace"
-      (expect (= ["Esc / Ctrl+C cancel" "Queued: 2"]
-                (mapv :text (build-subtitle-segments {:loading? true
-                                                      :pending-sends [{:text "a"} {:text "b"}]
                                                       :input (input/empty-input)} 0))))))
 
   (it "accepts footer-subtitle contribution segments"

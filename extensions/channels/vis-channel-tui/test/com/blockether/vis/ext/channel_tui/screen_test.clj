@@ -2,9 +2,9 @@
   "Tests for the TUI channel entry point. The bulk of the namespace
    is Lanterna-bound and exercised by the integration smoke + render
    benchmark; this suite focuses on the pure helpers - currently the
-   `--conversation-id` / `--resume` argument parser, where a silent
+   `--session-id` / `--resume` argument parser, where a silent
    accept of unknown flags previously masked typos like
-   `--conversations-id`."
+   `--sessions-id`."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
@@ -54,8 +54,8 @@
 (def ^:private menu-commands
   (deref #'screen/menu-commands))
 
-(def ^:private copy-conversation-id!
-  (deref #'screen/copy-conversation-id!))
+(def ^:private copy-session-id!
+  (deref #'screen/copy-session-id!))
 
 (def ^:private copy-selection!
   (deref #'screen/copy-selection!))
@@ -84,17 +84,17 @@
 (def ^:private input-selectable-ranges
   (deref #'screen/input-selectable-ranges))
 
-(def ^:private conversation-summary
-  (deref #'screen/conversation-summary))
+(def ^:private session-summary
+  (deref #'screen/session-summary))
 
 (def ^:private latest-modified-first
   (deref #'screen/latest-modified-first))
 
-(def ^:private conversation-sort-key
-  (deref #'screen/conversation-sort-key))
+(def ^:private session-sort-key
+  (deref #'screen/session-sort-key))
 
-(def ^:private pre-resolve-conversation-id!
-  (deref #'screen/pre-resolve-conversation-id!))
+(def ^:private pre-resolve-session-id!
+  (deref #'screen/pre-resolve-session-id!))
 
 (def ^:private terminal-ctrl-c-behaviour
   (deref #'screen/terminal-ctrl-c-behaviour))
@@ -105,8 +105,8 @@
 (def ^:private handle-terminal-interrupt!
   (deref #'screen/handle-terminal-interrupt!))
 
-(def ^:private print-conversation-id-on-exit!
-  (deref #'screen/print-conversation-id-on-exit!))
+(def ^:private print-session-id-on-exit!
+  (deref #'screen/print-session-id-on-exit!))
 
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag -
@@ -246,22 +246,22 @@
          (expect (not-any? #{:model} (mapv :id dlg/palette-commands)))))))
 
 (defdescribe workspace-tab-click-test
-  (it "switches to the clicked workspace tab and refreshes active conversation state"
+  (it "switches to the clicked workspace tab and refreshes active session state"
     (reset! state/app-db {:workspace-tabs [{:id :main :label "Main" :active? true}
                                            {:id :tab-1 :label "Tab 1"}]
                           :active-workspace-id :main
-                          :conversation {:id "main-c"}
+                          :session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")
                           :input-history ["main prompt"]
-                          :workspaces {:tab-1 {:conversation {:id "tab-c"}
+                          :workspaces {:tab-1 {:session {:id "tab-c"}
                                                :messages [{:role :user :text "tab prompt"}]
                                                :input (input/paste-text (input/empty-input) "tab draft")
                                                :input-history ["tab prompt"]}}})
     (let [refreshes (atom [])]
       (activate-workspace-tab-hit! #(swap! refreshes conj %) {:kind :workspace-tab :index 1})
       (expect (= :tab-1 (:active-workspace-id @state/app-db)))
-      (expect (= {:id "tab-c"} (:conversation @state/app-db)))
+      (expect (= {:id "tab-c"} (:session @state/app-db)))
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (expect (= "tab draft" (input/input->text (:input @state/app-db))))
       (expect (= [false] @refreshes))
@@ -307,7 +307,7 @@
       (with-redefs [screen/redirect-stdio-to-log! (fn [] (swap! calls conj :redirect))
                     vis/init!                    (fn [] (swap! calls conj :init))
                     screen/run-chat!             (fn [_opts] (swap! calls conj :run))
-                    screen/print-conversation-id-on-exit! (fn [] (swap! calls conj :print-id))
+                    screen/print-session-id-on-exit! (fn [] (swap! calls conj :print-id))
                     vis/shutdown!                (fn [] (swap! calls conj :vis-shutdown))
                     clojure.core/shutdown-agents (fn [] (swap! calls conj :shutdown-agents))]
         (screen/channel-main []))
@@ -318,7 +318,7 @@
       (expect (= [:redirect :init :run :print-id :vis-shutdown :shutdown-agents] @calls)))))
 
 (defdescribe startup-resume-test
-  (it "--conversation-id sweeps orphaned running turns before rebuilding history"
+  (it "--session-id sweeps orphaned running turns before rebuilding history"
     (let [calls   (atom [])
           resumed {:id "c1" :history [{:role :assistant :text "interrupted"}]}]
       (with-redefs [vis/db-info (fn []
@@ -328,25 +328,25 @@
                                                            (swap! calls conj [:sweep db])
                                                            (expect (= :db db))
                                                            1)
-                    chat/resume-conversation (fn [cid]
-                                               (swap! calls conj [:resume cid])
-                                               (expect (= "c1" cid))
-                                               resumed)]
-        (expect (= resumed (pre-resolve-conversation-id! {:conversation-id "c1"})))
+                    chat/resume-session (fn [cid]
+                                          (swap! calls conj [:resume cid])
+                                          (expect (= "c1" cid))
+                                          resumed)]
+        (expect (= resumed (pre-resolve-session-id! {:session-id "c1"})))
         (expect (= [:db-info [:sweep :db] [:resume "c1"]] @calls))))))
 
-(defdescribe conversation-switcher-data-test
+(defdescribe session-switcher-data-test
   (it "uses latest turn creation time as modification time and sorts newest first"
-    (with-redefs [vis/db-list-conversation-turns (fn [_db-info conversation-id]
-                                                   (case conversation-id
-                                                     "old" [{:created-at #inst "2024-01-04T00:00:00.000-00:00"}]
-                                                     "new" [{:created-at #inst "2024-01-02T00:00:00.000-00:00"}
-                                                            {:created-at #inst "2024-01-08T00:00:00.000-00:00"}]
-                                                     []))]
-      (let [old-summary (conversation-summary :db {:id "old"
-                                                   :created-at #inst "2024-01-01T00:00:00.000-00:00"})
-            new-summary (conversation-summary :db {:id "new"
-                                                   :created-at #inst "2024-01-03T00:00:00.000-00:00"})]
+    (with-redefs [vis/db-list-session-turns (fn [_db-info session-id]
+                                              (case session-id
+                                                "old" [{:created-at #inst "2024-01-04T00:00:00.000-00:00"}]
+                                                "new" [{:created-at #inst "2024-01-02T00:00:00.000-00:00"}
+                                                       {:created-at #inst "2024-01-08T00:00:00.000-00:00"}]
+                                                []))]
+      (let [old-summary (session-summary :db {:id "old"
+                                              :created-at #inst "2024-01-01T00:00:00.000-00:00"})
+            new-summary (session-summary :db {:id "new"
+                                              :created-at #inst "2024-01-03T00:00:00.000-00:00"})]
         (expect (= 1 (:turn-count old-summary)))
         (expect (= 2 (:turn-count new-summary)))
         (expect (= #inst "2024-01-08T00:00:00.000-00:00"
@@ -362,7 +362,7 @@
           input-state (input/paste-text (input/empty-input) (str "context " token))]
       (with-redefs [state/dispatch (fn [event]
                                      (swap! events conj event))]
-        (submit-input! {:conversation {:id "c1"}
+        (submit-input! {:session {:id "c1"}
                         :loading? false}
           input-state)
         (expect (= [[:send-message (str "context " token)]
@@ -404,7 +404,7 @@
                                         :text "siema"}}]}
                 4 6 20))))
 
-  (it "sorts conversations by real turns, latest modified time, then turn count by default"
+  (it "sorts sessions by real turns, latest modified time, then turn count by default"
     (let [old-with-turns {:id :old
                           :turn-count 1
                           :modified-at #inst "2024-01-02T00:00:00.000-00:00"
@@ -422,7 +422,7 @@
                                   :modified-at #inst "2024-01-03T00:00:00.000-00:00"
                                   :created-at #inst "2024-01-01T00:00:00.000-00:00"}]
       (expect (= [1 1704240000000 2]
-                (conversation-sort-key latest-with-turns)))
+                (session-sort-key latest-with-turns)))
       (expect (= [:more-turns :latest :old :empty]
                 (mapv :id
                   (latest-modified-first
@@ -485,7 +485,7 @@
               (input-selectable-ranges 10 2 20)))))
 
 (defdescribe clipboard-copy-actions-test
-  (it "conversation-id copy uses the same icon-era notification TTL"
+  (it "session-id copy uses the same icon-era notification TTL"
     (let [copied   (promise)
           notified (atom nil)]
       (with-redefs-fn {#'input/clipboard-copy! (fn [text]
@@ -494,10 +494,10 @@
                        #'vis/notify!           (fn [text & kvs]
                                                  (reset! notified [text kvs]))}
         (fn []
-          (copy-conversation-id! "123e4567-e89b-12d3-a456-426614174000")
+          (copy-session-id! "123e4567-e89b-12d3-a456-426614174000")
           (expect (= "123e4567-e89b-12d3-a456-426614174000"
                     (deref copied 1000 ::timeout)))
-          (expect (= ["✓ Copied conversation ID" [:level :success :ttl-ms 1500]]
+          (expect (= ["✓ Copied session ID" [:level :success :ttl-ms 1500]]
                     @notified))))))
 
   (it "mouse selection copy uses the shared success notification contract"
@@ -552,7 +552,7 @@
                          :traces trace
                          :ir [:ir {} [:p {} [:span {} "done"]]]}
                         96 {:show-iterations true}
-                        {:conversation-id "conversation"})]
+                        {:session-id "session"})]
       (expect (str/includes? copied "abcdefghij"))
       (expect (not (str/includes? copied "chars hidden")))))
 
@@ -593,17 +593,17 @@
           (open-click-target! {:kind :url :url "https://example.com"})
           (expect (= "https://example.com" (deref url-opened 1000 ::timeout))))))))
 
-(defdescribe conversation-id-exit-print-test
-  (it "prints the active conversation id after the TUI exits"
+(defdescribe session-id-exit-print-test
+  (it "prints the active session id after the TUI exits"
     (let [bytes (java.io.ByteArrayOutputStream.)
           ps    (java.io.PrintStream. bytes true "UTF-8")]
-      (with-redefs-fn {#'screen/current-conversation-id (fn [] "abc123")
+      (with-redefs-fn {#'screen/current-session-id (fn [] "abc123")
                        #'vis/original-stdout ps}
         (fn []
-          (print-conversation-id-on-exit!)
+          (print-session-id-on-exit!)
           (.flush ps)
           (let [out (.toString bytes "UTF-8")]
-            (expect (= "Resume with:\nvis channels tui --conversation-id abc123\n" out))))))))
+            (expect (= "Resume with:\nvis channels tui --session-id abc123\n" out))))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"
@@ -612,36 +612,36 @@
   (it "--resume sets :resume true"
     (expect (= {:resume true} (parse-args ["--resume"]))))
 
-  (it "--conversation-id captures the next token as the id"
-    (expect (= {:conversation-id "abc123"}
-              (parse-args ["--conversation-id" "abc123"]))))
+  (it "--session-id captures the next token as the id"
+    (expect (= {:session-id "abc123"}
+              (parse-args ["--session-id" "abc123"]))))
 
-  (it "--conversation-id + --resume coexist (caller decides precedence)"
-    (expect (= {:conversation-id "abc123" :resume true}
-              (parse-args ["--conversation-id" "abc123" "--resume"]))))
+  (it "--session-id + --resume coexist (caller decides precedence)"
+    (expect (= {:session-id "abc123" :resume true}
+              (parse-args ["--session-id" "abc123" "--resume"]))))
 
   (it "unknown flag throws :vis/user-error (regression: typo silently swallowed)"
-    ;; `vis channels tui --conversations-id <uuid>` used to succeed
-    ;; silently and start a fresh conversation. The user reported it
+    ;; `vis channels tui --sessions-id <uuid>` used to succeed
+    ;; silently and start a fresh session. The user reported it
     ;; explicitly: the flag with a stray "s" must blow up.
     (expect (user-error?
-              #(parse-args ["--conversations-id" "d8aff512-d60d-42b6-a009-041f1bec3891"]))))
+              #(parse-args ["--sessions-id" "d8aff512-d60d-42b6-a009-041f1bec3891"]))))
 
   (it "unknown flag error message names the bad flag and shows usage"
-    (try (parse-args ["--conversations-id" "x"])
+    (try (parse-args ["--sessions-id" "x"])
       (expect false "expected ex-info")
       (catch clojure.lang.ExceptionInfo e
         (let [msg (.getMessage e)]
-          (expect (re-find #"--conversations-id" msg))
+          (expect (re-find #"--sessions-id" msg))
           (expect (re-find #"Usage:" msg))))))
 
-  (it "--conversation-id without a value -> :vis/user-error"
-    (expect (user-error? #(parse-args ["--conversation-id"]))))
+  (it "--session-id without a value -> :vis/user-error"
+    (expect (user-error? #(parse-args ["--session-id"]))))
 
-  (it "--conversation-id followed by another flag -> :vis/user-error (no value)"
-    ;; Catches the case where the user types `--conversation-id --resume`
+  (it "--session-id followed by another flag -> :vis/user-error (no value)"
+    ;; Catches the case where the user types `--session-id --resume`
     ;; and `--resume` would otherwise be silently treated as the id.
-    (expect (user-error? #(parse-args ["--conversation-id" "--resume"]))))
+    (expect (user-error? #(parse-args ["--session-id" "--resume"]))))
 
   (it "non-flag positional arg also errors (no positional API today)"
     (expect (user-error? #(parse-args ["stray-positional"])))))

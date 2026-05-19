@@ -46,7 +46,7 @@
    control chars (0x0a), and the render thread's catch-all
    swallows the throw - net effect: the bubble silently fails
    to paint and the user sees a blank/white scrollback area.
-   Conversation 954bf315 hit this in production; the regression
+   Session 954bf315 hit this in production; the regression
    net for the failure mode lives in `links_test`.
 
    We use a non-greedy quantifier on the text portion so
