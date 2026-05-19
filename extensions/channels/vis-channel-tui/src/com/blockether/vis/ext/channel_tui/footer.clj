@@ -339,9 +339,16 @@
         codex-provider? (= :openai-codex provider)
         codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)
         git-spans  (git-footer-spans
+                     ;; PLAN.md §3/§5 dropped the user.dir fallback in
+                     ;; workspace/cwd, so the no-arg form of
+                     ;; cached-working-tree-status would now throw at cold
+                     ;; start (footer renders outside tool boundaries, so
+                     ;; *workspace-root* is not bound here). Short-circuit
+                     ;; to "no workspace" when the active root is not yet
+                     ;; on app-db.
                      (if-let [root (:workspace/root db)]
-                       (git/cached-workspace-status (File. (str root)))
-                       (git/cached-workspace-status)))]
+                       (git/cached-working-tree-status (File. (str root)))
+                       {:workspace? false}))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj

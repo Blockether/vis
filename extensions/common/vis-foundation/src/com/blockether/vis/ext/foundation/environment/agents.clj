@@ -32,8 +32,10 @@
   16384)
 
 (defn- repo-cwd ^java.io.File []
-  ;; Treat the active workspace root as the repo root. Falls back to
-  ;; process cwd when no workspace is bound; never mutates JVM cwd.
+  ;; Treat the active workspace root as the repo root. PLAN.md §3
+  ;; removed the process-cwd fallback; (workspace/cwd) throws if
+  ;; *workspace-root* is unbound — that's a channel-layer bug, not a
+  ;; silent degradation.
   (workspace/cwd))
 
 (defn- read-bytes-safely
@@ -157,10 +159,8 @@
   (atom {:cwd nil :marker nil :result nil :warnings nil}))
 
 (defn- canonical-cwd ^String []
-  (try (.getCanonicalPath ^java.io.File (repo-cwd))
-    (catch Throwable _
-      (or workspace/*workspace-root*
-        (System/getProperty "user.dir")))))
+  ;; PLAN.md §3/§5: process-cwd fallback removed (see repo-cwd note).
+  (.getCanonicalPath ^java.io.File (repo-cwd)))
 
 (defn- file-marker
   [^java.io.File f]
