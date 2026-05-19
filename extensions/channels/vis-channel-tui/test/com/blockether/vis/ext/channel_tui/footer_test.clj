@@ -142,7 +142,7 @@
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5"
                                                           :provider :openai})
-                       #'git/cached-workspace-status (fn [] {:workspace? false})}
+                       #'git/cached-working-tree-status (fn [] {:workspace? false})}
         (fn []
           (expect (not-any? #(= "cancelling..." (:text %))
                     (build-segments {:messages []
@@ -163,7 +163,7 @@
                                                      :window {:resets-at-ms (+ now-ms (* (+ (* 3 24) 18) 60 60 1000))}}]}}]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5.5"
                                                           :provider :openai-codex})
-                       #'git/cached-workspace-status (fn [] {:workspace? false})}
+                       #'git/cached-working-tree-status (fn [] {:workspace? false})}
         (fn []
           (let [text (->> (build-limits-segments {:messages []
                                                   :settings {}
@@ -251,7 +251,7 @@
           seen-root      (atom nil)]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
-                       #'git/cached-workspace-status (fn
+                       #'git/cached-working-tree-status (fn
                                                        ([] {:workspace? false})
                                                        ([root]
                                                         (reset! seen-root (.getPath root))
@@ -277,7 +277,7 @@
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
-                       #'git/cached-workspace-status (fn [] {:workspace? true
+                       #'git/cached-working-tree-status (fn [] {:workspace? true
                                                              :repo "vis"
                                                              :branch "main"
                                                              :modified 2
@@ -296,7 +296,7 @@
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
-                       #'git/cached-workspace-status (fn [] {:workspace? false})}
+                       #'git/cached-working-tree-status (fn [] {:workspace? false})}
         (fn []
           (let [spans (->> (build-segments {:messages [] :settings {}} 0)
                         (filter #(= :right (:region %))))]
@@ -308,7 +308,7 @@
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
-                       #'git/cached-workspace-status (fn [] {:workspace? true
+                       #'git/cached-working-tree-status (fn [] {:workspace? true
                                                              :repo "vis"
                                                              :branch "main"
                                                              :modified 0
@@ -327,7 +327,7 @@
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
-                       #'git/cached-workspace-status (fn [] {:workspace? true
+                       #'git/cached-working-tree-status (fn [] {:workspace? true
                                                              :repo "vis"
                                                              :branch "main"
                                                              :modified 0
