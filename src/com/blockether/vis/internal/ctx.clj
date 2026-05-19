@@ -2,16 +2,19 @@
   "Engine-owned `ctx` snapshot bound under sandbox name `ctx` before every
    model call.
 
-   Five keys, every nil/blank field stripped:
+   Domain keys, every nil/blank field stripped:
 
-     :conversation {:id :title :turn-id :user-request}
-     :iteration    {:id :position}
-     :hints        [{:id :importance :text :satisfy-with}]
+     :conversation {:id :title :turn-id
+                    :iteration {:id :position}
+                    :hints [{:id :importance :text :satisfy-with}]}
+     :llm-provider {:selected :actual :routing :error}
+     :project      {:root :warnings}
      :extensions   [{:namespace :alias :doc :kind :registry-id :symbols}]
      :defs         {sym {:doc <string?> :shape <malli|fn-shape>}}
 
-   `:iteration` lives at the top level so `(:iteration ctx)` works directly
-   and the per-iteration scope is not buried inside the conversation.
+   `:iteration` and `:hints` are nested under `(:conversation ctx)`. The
+   current user request is intentionally not duplicated in ctx; it is already
+   delivered as the current user message.
 
    `:defs` is an ordered map; newest sym first. History (prior turns,
    iterations, code, errors) is reachable via foundation tools,
@@ -147,19 +150,27 @@
 (defn build
   "Build the engine ctx snapshot.
 
-   `:conversation` — pre-pruned map `{:id :title :turn-id :user-request}`.
-   `:iteration`    — pre-pruned map `{:id :position}`.
-   `:hints`        — model-facing host hints for the upcoming iteration.
+   `:conversation` — pre-pruned map `{:id :title :turn-id}`, with nested
+      `:iteration {:id :position}` and `:hints [...]` when supplied.
+      `:user-request` is stripped; current user text lives in the provider
+      message, not duplicated in ctx.
+   `:llm-provider` — optional provider/model routing and last-error state.
+   `:project`      — optional project facts and warnings.
    `:extensions`   — compact active extension summary from prompt/extensions-snapshot."
-  [{:keys [environment conversation iteration hints extensions]}]
-  (prune
-    {:conversation (prune (or conversation {}))
-     :iteration    (prune (or iteration {}))
-     :hints        (vec (or hints []))
-     :extensions   (vec (or extensions []))
-     :defs         (or (build-defs (:sci-ctx environment)
-                         (:initial-ns-keys environment))
-                     {})}))
+  [{:keys [environment conversation iteration hints llm-provider project extensions]}]
+  (let [iteration* (prune (or iteration {}))
+        hints* (vec (or hints []))
+        conversation* (cond-> (dissoc (or conversation {}) :user-request)
+                        (seq iteration*) (assoc :iteration iteration*)
+                        (seq hints*)     (assoc :hints hints*))]
+    (prune
+      {:conversation (prune conversation*)
+       :llm-provider (prune (or llm-provider {}))
+       :project      (prune (or project {}))
+       :extensions   (vec (or extensions []))
+       :defs         (or (build-defs (:sci-ctx environment)
+                           (:initial-ns-keys environment))
+                       {})})))
 
 (defn forget!
   "Drop the shape + order caches for a sci-ctx."
@@ -298,11 +309,11 @@
 
    `:trailer-iters` — vec of `[position {:blocks [...]}]` ordered ascending.
    `:ctx`          — the engine ctx snapshot map for the upcoming iteration,
-                    including any `:hints` for that iteration.
+                    including any conversation `:hints` for that iteration.
 
    Returns the full trailer string: prior iterations as REPL transcripts,
    followed by `;; ctx = <edn>` for the fresh state. Hint data lives inside
-   `(:hints ctx)`; there is no XML hint side-channel."
+   `(get-in ctx [:conversation :hints])`; there is no XML hint side-channel."
   [{:keys [environment trailer-iters ctx]}]
   (let [cache-key (System/identityHashCode (:env (:sci-ctx environment)))
         prior     (mapv (fn [[pos data]] (iteration->repl-text cache-key

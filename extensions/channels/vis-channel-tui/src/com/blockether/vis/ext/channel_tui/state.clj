@@ -79,6 +79,7 @@
    :slash-command-index
    :slash-command-hidden?
    :submitted-input
+   :pending-sends
    :pastes
    :paste-counter
    :loading?
@@ -104,6 +105,7 @@
    :slash-command-index 0
    :slash-command-hidden? false
    :submitted-input nil
+   :pending-sends []
    :pastes {}
    :paste-counter 0
    :loading? false
@@ -951,25 +953,26 @@
    - the user pressed Esc fast, no trace exists, so dropping the
    placeholder bubble keeps the transcript clean."
   [db {:keys [text pastes paste-counter]}]
-  ;; NOTE: :input-history is intentionally NOT touched here. The live
-  ;; app-db value already includes the just-sent entry (conj'd in
-  ;; :send-message). Overwriting it from a pre-send snapshot would
-  ;; drop the cancelled message from Arrow-Up recall.
-  (-> db
-    (assoc :messages (drop-pending-turn-messages (:messages db))
-      :messages-scroll nil
-      :input (text->input-state text)
-      :input-history-index nil
-      :input-history-draft nil
-      :slash-command-index 0
-      :slash-command-hidden? false
-      :pastes (or pastes {})
-      :paste-counter (or paste-counter 0)
-      :loading? false
-      :progress nil
-      :cancel-token nil
-      :cancelling? false)
-    (dissoc :turn-start-ms :submitted-input)))
+  (let [visible-text (input/expand-paste-placeholders text pastes)]
+    (-> db
+      (assoc :messages (drop-pending-turn-messages (:messages db))
+        :messages-scroll nil
+        :input (text->input-state text)
+        :input-history-index nil
+        :input-history-draft nil
+        :slash-command-index 0
+        :slash-command-hidden? false
+        :pastes (or pastes {})
+        :paste-counter (or paste-counter 0)
+        :loading? false
+        :progress nil
+        :cancel-token nil
+        :cancelling? false)
+      (update :input-history
+        (fn [xs]
+          (let [xs (vec (or xs []))]
+            (if (= visible-text (peek xs)) (pop xs) xs))))
+      (dissoc :turn-start-ms :submitted-input))))
 
 (defn- restore-editor-only
   "Repopulate the editor without touching `:messages`. Used when
@@ -1121,6 +1124,34 @@
   (when (= :openai-codex (current-provider-id))
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
 
+(defn- db-for-workspace
+  [db workspace-id]
+  (if (= workspace-id (current-workspace-id db))
+    db
+    (merge db (or (get-in db [:workspaces workspace-id])
+                (empty-workspace-state)))))
+
+(defn- enqueue-message-result
+  [db workspace-id text]
+  (let [workspace-id (or workspace-id (current-workspace-id db))
+        source-db    (db-for-workspace db workspace-id)
+        entry        {:text          text
+                      :pastes        (:pastes source-db)
+                      :paste-counter (:paste-counter source-db)
+                      :queued-at-ms  (System/currentTimeMillis)}]
+    {:db (update-workspace db workspace-id
+           (fn [w]
+             (-> w
+               (update :pending-sends
+                 (fn [q]
+                   (let [q (vec (or q []))]
+                     (if (= text (:text (peek q))) q (conj q entry)))))
+               (update :input-history
+                 (fn [xs]
+                   (let [xs (vec (or xs []))]
+                     (if (= text (last xs)) xs (conj xs text))))))))
+     :fx [[:notify "Queued — will send after current turn" :info 1500]]}))
+
 (reg-event-fx :send-message
   ;; `text` is the input-buffer string - it may carry two shorthand
   ;; surfaces:
@@ -1131,51 +1162,99 @@
   ;;      stay concise in the visible transcript, but expand into
   ;;      a short read-now directive for the AGENT; the model picks
   ;;      the right tool (`v/cat`, `z/symbols`, etc.) itself.
-  (fn [db [_ text]]
-    (let [visible-text (input/expand-paste-placeholders text (:pastes db))
-          workspace-id (current-workspace-id db)
-          workspace    (active-workspace db)
-          agent-text   (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
-                         (input/expand-file-mentions visible-text))
-          token        (vis/cancellation-token)
-          extra-body   (turn-extra-body db)
-          turn-features (cond-> {}
-                          (get-in db [:settings :voice/respond?])
-                          (assoc :voice-response? true))
-          reasoning-level (when (reasoning-effort-configurable?)
-                            (get-in db [:settings :reasoning-level]))
-          client-turn-id (str (java.util.UUID/randomUUID))]
-      {:db (-> db
-             (update :messages conj (assoc (chat/user-message visible-text)
-                                      :client-turn-id client-turn-id))
-             (update :messages conj (assoc (chat/assistant-message pending-assistant-ir)
-                                      :pending? true
-                                      :client-turn-id client-turn-id))
-             (update :input-history (fn [xs]
-                                      (let [xs (vec (or xs []))]
-                                        (if (= visible-text (last xs)) xs (conj xs visible-text)))))
-             (assoc :messages-scroll nil :loading? true
-               :cancel-token token
-               :cancelling? false
-               :progress {:iterations []}
-               :turn-start-ms (System/currentTimeMillis)
-               :submitted-input {:text text
-                                 :pastes (:pastes db)
-                                 :paste-counter (:paste-counter db)}
-               :input-history-index nil
-               :input-history-draft nil
-               :slash-command-index 0
-               :slash-command-hidden? false))
-       ;; `agent-text` (LLM-facing, with `@path` expanded into a
-       ;; `[Attached File: ...]` directive) drives the model.
-       ;; `visible-text` (un-expanded `@path` token) is the user's
-       ;; original line - flowed in as `display-text` so it lands in
-       ;; the persisted `user_request` column. Without the split,
-       ;; reopening a conversation re-rendered the verbose attachment
-       ;; directive in the user bubble.
-       :fx [[:rlm-turn workspace-id (:conversation db) agent-text token
-             reasoning-level extra-body turn-features workspace client-turn-id
-             visible-text]]})))
+  (fn [db [_ text workspace-id]]
+    (let [workspace-id (or workspace-id (current-workspace-id db))
+          source-db    (db-for-workspace db workspace-id)]
+      (cond
+        (:loading? source-db)
+        (enqueue-message-result db workspace-id text)
+
+        (nil? (:conversation source-db))
+        {:db db}
+
+        :else
+        (let [visible-text (input/expand-paste-placeholders text (:pastes source-db))
+              workspace    (active-workspace source-db)
+              agent-text   (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
+                             (input/expand-file-mentions visible-text))
+              token        (vis/cancellation-token)
+              extra-body   (turn-extra-body db)
+              turn-features (cond-> {}
+                              (get-in db [:settings :voice/respond?])
+                              (assoc :voice-response? true))
+              reasoning-level (when (reasoning-effort-configurable?)
+                                (get-in db [:settings :reasoning-level]))
+              client-turn-id (str (java.util.UUID/randomUUID))]
+          {:db (update-workspace db workspace-id
+                 (fn [w]
+                   (-> w
+                     (update :messages conj (assoc (chat/user-message visible-text)
+                                              :client-turn-id client-turn-id))
+                     (update :messages conj (assoc (chat/assistant-message pending-assistant-ir)
+                                              :pending? true
+                                              :client-turn-id client-turn-id))
+                     (update :input-history (fn [xs]
+                                              (let [xs (vec (or xs []))]
+                                                (if (= visible-text (last xs)) xs (conj xs visible-text)))))
+                     (assoc :messages-scroll nil :loading? true
+                       :cancel-token token
+                       :cancelling? false
+                       :progress {:iterations []}
+                       :turn-start-ms (System/currentTimeMillis)
+                       :submitted-input {:text text
+                                         :pastes (:pastes source-db)
+                                         :paste-counter (:paste-counter source-db)}
+                       :input-history-index nil
+                       :input-history-draft nil
+                       :slash-command-index 0
+                       :slash-command-hidden? false))))
+           ;; `agent-text` (LLM-facing, with `@path` expanded into a
+           ;; `[Attached File: ...]` directive) drives the model.
+           ;; `visible-text` (un-expanded `@path` token) is the user's
+           ;; original line - flowed in as `display-text` so it lands in
+           ;; the persisted `user_request` column. Without the split,
+           ;; reopening a conversation re-rendered the verbose attachment
+           ;; directive in the user bubble.
+           :fx [[:rlm-turn workspace-id (:conversation source-db) agent-text token
+                 reasoning-level extra-body turn-features workspace client-turn-id
+                 visible-text]]})))))
+
+(reg-event-fx :enqueue-message
+  ;; Capture a user submission while a previous turn is still processing.
+  ;; Queue lives on that workspace/conversation and drains after the
+  ;; in-flight turn commits. No provider call happens from this handler.
+  (fn [db [_ text workspace-id]]
+    (enqueue-message-result db workspace-id text)))
+
+(reg-event-db :clear-pending-sends
+  ;; Explicit user action - escape hatch when the queued items are no
+  ;; longer wanted. Cancelling the in-flight turn must NOT auto-drop
+  ;; them; that would reintroduce silent loss.
+  (fn [db _]
+    (update-workspace db (current-workspace-id db)
+      (fn [w] (assoc w :pending-sends [])))))
+
+(reg-event-fx :drain-pending
+  ;; Pop one queued submission for `workspace-id`, restore its paste
+  ;; snapshot onto that workspace, then schedule `:send-message` as an
+  ;; effect after this DB update commits. Never dispatch from inside DB
+  ;; mutation: swap! may retry and duplicate provider turns.
+  (fn [db [_ workspace-id]]
+    (let [head-atom (atom nil)
+          db'       (update-workspace db workspace-id
+                      (fn [w]
+                        (let [q (vec (or (:pending-sends w) []))]
+                          (if-let [h (first q)]
+                            (do (reset! head-atom h)
+                              (assoc w
+                                :pending-sends (vec (rest q))
+                                :pastes (or (:pastes h) {})
+                                :paste-counter (or (:paste-counter h) 0)))
+                            w))))]
+      {:db db'
+       :fx (if-let [h @head-atom]
+             [[:dispatch [:send-message (:text h) workspace-id]]]
+             [])})))
 
 (reg-event-fx :cancel-turn
   (fn [db _]
@@ -1200,70 +1279,79 @@
             workspace
             (assoc-in workspace [:progress :iterations] (vec (or iterations [])))))))))
 
-(reg-event-db :message-received
+(reg-event-fx :message-received
   (fn [db [_ a b c]]
     (let [[workspace-id answer {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count duration-ms tokens cost confidence conversation-turn-id status client-turn-id]}]
           (if (keyword? a)
             [a b c]
-            [(current-workspace-id db) a b])]
-      (update-workspace db workspace-id
-        (fn [workspace]
-          (let [trace (get-in workspace [:progress :iterations])
-                cancelled? (= :cancelled status)
-                ;; A cancellation that captured zero iterations is
-                ;; usually a stray Esc - drop the placeholder pair
-                ;; and restore the editor as before. A cancellation
-                ;; with a non-empty trace means the agent already
-                ;; did visible work (and persisted those iterations
-                ;; to SQLite); KEEP the bubble so the user can read
-                ;; what happened, and only repopulate the editor.
-                no-work? (empty? trace)]
-            (if (and cancelled? (:submitted-input workspace) no-work?)
-              (restore-submitted-input workspace (:submitted-input workspace))
-              (let [start    (:turn-start-ms workspace)
-                    wall-ms  (when start (- (System/currentTimeMillis) start))
-                    ;; `answer` arrives as canonical IR from `chat/turn!`
-                    ;; (loop result coerced + lifted there). NULL/missing
-                    ;; collapses to empty IR; we never feed strings to the
-                    ;; render chokepoint.
-                    answer-ir (or answer chat/empty-ir)
-                    response (-> (chat/assistant-message answer-ir)
-                               (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
-                                 (seq trace)
-                                 (assoc :traces trace :ir answer-ir)
-                                 (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
-                                 model      (assoc :model model)
-                                 provider   (assoc :provider provider)
-                                 llm-selected (assoc :llm-selected llm-selected)
-                                 llm-actual (assoc :llm-actual llm-actual)
-                                 (some? llm-fallback?) (assoc :llm-fallback? llm-fallback?)
-                                 (seq llm-routing-trace) (assoc :llm-routing-trace llm-routing-trace)
-                                 iteration-count (assoc :iteration-count iteration-count)
-                                 tokens     (assoc :tokens tokens)
-                                 cost       (assoc :cost cost)
-                                 confidence (assoc :confidence confidence)
-                                 status     (assoc :status status)
-                                 client-turn-id (assoc :client-turn-id client-turn-id)))
-                    messages'      (replace-pending-assistant (:messages workspace) response)
-                    still-pending? (boolean (some pending-assistant-message? messages'))
-                    workspace'     (cond-> (assoc workspace
-                                             :messages messages'
-                                             :messages-scroll nil
-                                             :loading? still-pending?
-                                             :cancelling? false)
-                                     (not still-pending?)
-                                     (assoc :progress nil :cancel-token nil)
+            [(current-workspace-id db) a b])
+          drain? (volatile! false)
+          db'    (update-workspace db workspace-id
+                   (fn [workspace]
+                     (let [trace (get-in workspace [:progress :iterations])
+                           cancelled? (= :cancelled status)
+                          ;; A cancellation that captured zero iterations is
+                          ;; usually a stray Esc - drop the placeholder pair
+                          ;; and restore the editor as before. A cancellation
+                          ;; with a non-empty trace means the agent already
+                          ;; did visible work (and persisted those iterations
+                          ;; to SQLite); KEEP the bubble so the user can read
+                          ;; what happened, and only repopulate the editor.
+                           no-work? (empty? trace)]
+                       (if (and cancelled? (:submitted-input workspace) no-work?)
+                         (restore-submitted-input workspace (:submitted-input workspace))
+                         (let [start    (:turn-start-ms workspace)
+                               wall-ms  (when start (- (System/currentTimeMillis) start))
+                              ;; `answer` arrives as canonical IR from `chat/turn!`
+                              ;; (loop result coerced + lifted there). NULL/missing
+                              ;; collapses to empty IR; we never feed strings to the
+                              ;; render chokepoint.
+                               answer-ir (or answer chat/empty-ir)
+                               response (-> (chat/assistant-message answer-ir)
+                                          (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
+                                            (seq trace)
+                                            (assoc :traces trace :ir answer-ir)
+                                            (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
+                                            model      (assoc :model model)
+                                            provider   (assoc :provider provider)
+                                            llm-selected (assoc :llm-selected llm-selected)
+                                            llm-actual (assoc :llm-actual llm-actual)
+                                            (some? llm-fallback?) (assoc :llm-fallback? llm-fallback?)
+                                            (seq llm-routing-trace) (assoc :llm-routing-trace llm-routing-trace)
+                                            iteration-count (assoc :iteration-count iteration-count)
+                                            tokens     (assoc :tokens tokens)
+                                            cost       (assoc :cost cost)
+                                            confidence (assoc :confidence confidence)
+                                            status     (assoc :status status)
+                                            client-turn-id (assoc :client-turn-id client-turn-id)))
+                               messages'      (replace-pending-assistant (:messages workspace) response)
+                               still-pending? (boolean (some pending-assistant-message? messages'))
+                               workspace'     (cond-> (assoc workspace
+                                                        :messages messages'
+                                                        :messages-scroll nil
+                                                        :loading? still-pending?
+                                                        :cancelling? false)
+                                                (not still-pending?)
+                                                (assoc :progress nil :cancel-token nil)
 
-                                     (not still-pending?)
-                                     (dissoc :turn-start-ms))]
-                ;; Cancelled-with-work: keep the bubble we just
-                ;; built AND refill the editor from the snapshot so
-                ;; the user can edit/resubmit the prompt that
-                ;; produced this trace without retyping.
-                (if (and cancelled? (:submitted-input workspace) (not no-work?))
-                  (restore-editor-only workspace' (:submitted-input workspace))
-                  (cond-> workspace'
-                    (not still-pending?) (dissoc :submitted-input)))))))))))
+                                                (not still-pending?)
+                                                (dissoc :turn-start-ms))
+                              ;; Cancelled-with-work: keep the bubble we just
+                              ;; built AND refill the editor from the snapshot so
+                              ;; the user can edit/resubmit the prompt that
+                              ;; produced this trace without retyping.
+                               ws-final (if (and cancelled? (:submitted-input workspace) (not no-work?))
+                                          (restore-editor-only workspace' (:submitted-input workspace))
+                                          (cond-> workspace'
+                                            (not still-pending?) (dissoc :submitted-input)))]
+                           (when (and (not (:loading? ws-final))
+                                   (seq (:pending-sends ws-final)))
+                             (vreset! drain? true))
+                           ws-final)))))]
+      {:db db'
+       :fx (if @drain?
+             [[:dispatch [:drain-pending workspace-id]]]
+             [])})))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
@@ -1275,6 +1363,10 @@
     (catch Throwable t
       (vis/notify! (str "Voice response failed: " (or (ex-message t) t))
         :level :error :ttl-ms 5000))))
+
+(reg-fx :dispatch
+  (fn [event]
+    (dispatch event)))
 
 (reg-fx :notify
   (fn [text level ttl-ms]

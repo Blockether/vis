@@ -460,6 +460,41 @@
      (throw (ex-info "No provider config. Create ~/.vis/config.edn or add one through the provider dialog."
               {})))))
 
+(def ^:private router-opts-keys
+  "Keys forwarded from Vis config `:router` block into `svar/make-router`'s
+   opts map. Anything else is silently dropped so unknown keys can't crash
+   the router build."
+  #{:rate-limit :network :budget :tokens
+    :failure-threshold :recovery-ms :transient-status-codes
+    :window-ms :cooldown-ms :max-wait-ms})
+
+(defn router-opts
+  "Extracts `svar/make-router` opts from a Vis config map.
+
+   Reads the `:router` block from `~/.vis/config.edn`:
+
+   ```clojure
+   {:router
+    {:rate-limit {:same-provider-delays-ms [2000 3000 6000]
+                  :fallback-after-ms 30000
+                  :respect-retry-after? true
+                  :fallback-provider? true}
+     :network    {:timeout-ms 300000 :idle-timeout-ms 45000}
+     :budget     {:max-tokens 1000000 :max-cost 5.0}}}
+   ```
+
+   Returns `{}` when no `:router` block is present so svar's built-in
+   defaults win. Unknown keys are dropped — only the keys svar's
+   `make-router` knows about flow through.
+
+   See `com.blockether.svar.internal.router/make-router` for the
+   authoritative key reference."
+  [config]
+  (let [block (:router config)]
+    (if (map? block)
+      (select-keys block router-opts-keys)
+      {})))
+
 (def ^:private extension-env-config-key :environment)
 
 (defn extension-env-overrides

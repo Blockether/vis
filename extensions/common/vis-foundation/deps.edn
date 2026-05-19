@@ -4,6 +4,8 @@
         ;; filesystem wrappers.
         babashka/fs                       {:mvn/version "0.5.20"}
         babashka/process                  {:mvn/version "0.6.25"}
+        ;; java-diff-utils - real unified diff hunks for `v/patch` previews.
+        io.github.java-diff-utils/java-diff-utils {:mvn/version "4.12"}
         ;; JGit - repository discovery + branch/HEAD inspection. Used by
         ;; both `(vis/ls)` / `(vis/rg)` (gitignore parsing) and the
         ;; environment ext's git-snapshot reader.

@@ -2314,18 +2314,28 @@
   (mapv config/->svar-provider (:providers config)))
 
 (defn get-router
-  "Get or create the shared LLM router."
+  "Get or create the shared LLM router.
+
+   Honors `:router` opts from `~/.vis/config.edn` (`:rate-limit`,
+   `:network`, `:budget`, ...). Without that block svar's built-in
+   defaults apply. See `config/router-opts` for the supported keys."
   []
   (or @router-atom
     (let [cfg (config/resolve-config)
-          r   (svar/make-router (runtime-router-providers cfg))]
+          r   (svar/make-router (runtime-router-providers cfg)
+                (config/router-opts cfg))]
       (reset! router-atom r)
       r)))
 
 (defn rebuild-router!
-  "Rebuild the router from the given config. Used when provider settings change."
+  "Rebuild the router from the given config. Used when provider settings change.
+
+   Forwards `:router` opts so live config edits (e.g. tuning
+   `:same-provider-delays-ms`) take effect on the next `set-provider!`
+   without restarting the JVM."
   [config]
-  (let [r (svar/make-router (runtime-router-providers config))]
+  (let [r (svar/make-router (runtime-router-providers config)
+            (config/router-opts config))]
     (reset! router-atom r)
     r))
 
@@ -3846,7 +3856,7 @@
                                      :vis/silent))
         satisfied-hints-atom     (atom #{})
         ;; `(satisfy-hint! :hint/id)` is silent model-visible bookkeeping.
-        ;; It removes the hint id from `(:hints ctx)` on the next iteration;
+        ;; It removes the hint id from `(get-in ctx [:conversation :hints])` on the next iteration;
         ;; it does not unregister the extension hook that may emit the hint
         ;; again if its runtime condition becomes true.
         satisfy-hint-fn          (fn satisfy-hint! [id]

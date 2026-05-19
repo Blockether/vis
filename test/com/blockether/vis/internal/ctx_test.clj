@@ -21,10 +21,15 @@
                (def hit-count 7)
                (defn hits-fn \"filter\" [pred] (filter pred [1 2 3]))"
               {:ns (ns-obj sci-ctx)})
-          conv {:id :c :turn-id :t :iteration-id :i :user-request "q"}
+          conv {:id :c :turn-id :t :title "T" :user-request "q"}
+          iteration {:id :i :position 2}
           out  (ctx/build {:environment {:sci-ctx sci-ctx :initial-ns-keys initial-ns-keys}
-                           :conversation conv})]
-      (expect (= conv (:conversation out)))
+                           :conversation conv
+                           :iteration iteration})]
+      (expect (= {:id :c :turn-id :t :title "T" :iteration iteration}
+                (:conversation out)))
+      (expect (not (contains? (:conversation out) :user-request)))
+      (expect (not (contains? out :iteration)))
       (expect (not (contains? out :tree)))
       (expect (some? (get-in out [:defs 'hits :doc])))
       (expect (= "rg results" (get-in out [:defs 'hits :doc])))
@@ -69,7 +74,8 @@
           out (ctx/render-iteration-trailer
                 {:environment {:sci-ctx sci-ctx}
                  :ctx ctx-map})]
-      (expect (= [hint] (:hints ctx-map)))
+      (expect (= [hint] (get-in ctx-map [:conversation :hints])))
+      (expect (not (contains? ctx-map :hints)))
       (expect (str/includes? out ":hints"))
       (expect (str/includes? out "set <title> & go"))
       (expect (str/includes? out "(satisfy-hint! :vis.foundation/conversation-title)"))

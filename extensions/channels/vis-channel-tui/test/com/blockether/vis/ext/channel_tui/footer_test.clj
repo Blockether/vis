@@ -60,8 +60,20 @@
         (expect (not (some #{"↑↓ history"} typed-text)))))
 
     (it "switches subtitle helpers while loading"
-      (expect (= ["Esc cancel" "Ctrl+C quit"]
+      (expect (= ["Esc / Ctrl+C cancel"]
                 (mapv :text (build-subtitle-segments {:loading? true
+                                                      :input (input/empty-input)} 0)))))
+
+    (it "does not advertise quit while cancelling a live turn"
+      (expect (= ["Cancelling... please wait"]
+                (mapv :text (build-subtitle-segments {:loading? true
+                                                      :cancelling? true
+                                                      :input (input/empty-input)} 0)))))
+
+    (it "shows queued submissions for the active workspace"
+      (expect (= ["Esc / Ctrl+C cancel" "Queued: 2"]
+                (mapv :text (build-subtitle-segments {:loading? true
+                                                      :pending-sends [{:text "a"} {:text "b"}]
                                                       :input (input/empty-input)} 0))))))
 
   (it "accepts footer-subtitle contribution segments"
@@ -107,6 +119,12 @@
             (expect (str/includes? painted "┘"))
             (expect (str/includes? painted "│ "))
             (expect (str/includes? painted " │"))
+            (expect (not-any? #(and (= 5 (:row %))
+                                 (re-matches #"─+" (:text %)))
+                      @puts))
+            (expect (some #(and (= 6 (:row %))
+                             (re-matches #"─+" (:text %)))
+                      @puts))
             (expect (str/includes? painted "Ctrl+B voice"))))))))
 
 (defdescribe build-segments-test
@@ -336,8 +354,8 @@
                                                           :provider :openai
                                                           :reasoning? false})}
         (fn []
-          (expect (= ["total ↑150 (cached 70) ↓45"
-                      "cost input ~$0.006000, input cached ~$0.002000, output ~$0.007000, total ~$0.015000"]
+          (expect (= ["total tok 150→45 (cached 70)"
+                      "cost ~$0.015000 (in ~$0.006000, cached ~$0.002000, out ~$0.007000)"]
                     (->> (build-limits-segments {:messages [{:role :assistant
                                                              :tokens {:input 100 :output 30 :cached 60}
                                                              :cost {:total-cost 0.01

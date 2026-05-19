@@ -206,10 +206,13 @@
    `[Pasted #N: ...]` token to the provider instead of the payload."
   [db input-state]
   (let [text (input/input->text input-state)]
-    (when (and (seq (str/trim text))
-            (:conversation db)
-            (not (:loading? db)))
-      (state/dispatch [:send-message text]))
+    ;; T-003: never silently drop a non-empty submission while a turn
+    ;; is in flight. Idle -> send-message. Busy -> enqueue with visible
+    ;; feedback; drained from `:message-received` once :loading? clears.
+    (when (and (seq (str/trim text)) (:conversation db))
+      (if (:loading? db)
+        (state/dispatch [:enqueue-message text])
+        (state/dispatch [:send-message text])))
     (state/dispatch [:reset-input])))
 
 (def ^:private copy-success-ttl-ms 1500)
