@@ -22,6 +22,7 @@
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.workspace :as workspace]
    [edamame.core :as edamame]
    [sci.core :as sci]
    [taoensso.telemere :as tel])
@@ -2596,10 +2597,10 @@
            max-context-tokens
            hooks cancel-atom current-iteration-atom
            reasoning-default routing extra-body turn-features allow-copilot-claude-deep?
-           workspace]}]
+           workspace-overrides]}]
   (let [environment (cond-> environment
                       (seq turn-features) (assoc :turn/features turn-features)
-                      (seq workspace) (merge workspace))
+                      (seq workspace-overrides) (merge workspace-overrides))
         resolved-model (resolve-effective-model (:router environment))
         effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
@@ -3265,14 +3266,17 @@
                                      (env/sci-update-binding! sci-ctx sym val)))
           current-iteration-id-atom (:current-iteration-id-atom env)
           current-session-turn-id-atom (:current-session-turn-id-atom env)
-          workspace              (select-keys opts [:workspace/root :workspace/id
-                                                    :workspace/repo-id :workspace/state
-                                                    :workspace])
+          ;; Workspace pin lives on the env itself (set in create-environment).
+          ;; Opts may carry namespaced `:workspace/*` overrides for unusual
+          ;; per-turn cases; the legacy bare `:workspace` key was removed
+          ;; (PLAN.md §5 — pure :workspace/* keys, never a bare :workspace).
+          workspace-overrides    (select-keys opts [:workspace/root :workspace/id
+                                                    :workspace/kind :workspace/branch])
           environment            (cond-> (assoc env
                                            :current-iteration-atom current-iteration-atom
                                            :current-iteration-id-atom current-iteration-id-atom
                                            :current-session-turn-id-atom current-session-turn-id-atom)
-                                   (seq workspace) (merge workspace))
+                                   (seq workspace-overrides) (merge workspace-overrides))
           environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom
        :user-request           user-request
@@ -3294,7 +3298,7 @@
        :routing                routing
        :extra-body             extra-body
        :turn-features          (get opts :turn/features)
-       :workspace              workspace
+       :workspace-overrides    workspace-overrides
        :messages               messages})))
 
 ;; -----------------------------------------------------------------------------
@@ -3307,7 +3311,7 @@
   [{:keys [environment user-request spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
-           reasoning-default routing extra-body turn-features workspace]}]
+           reasoning-default routing extra-body turn-features workspace-overrides]}]
   (let [iteration-result (run-turn! environment user-request
                            (cond-> {:output-spec            spec
                                     :max-context-tokens     max-context-tokens
@@ -3319,7 +3323,7 @@
                              routing       (assoc :routing routing)
                              extra-body    (assoc :extra-body extra-body)
                              turn-features (assoc :turn-features turn-features)
-                             (seq workspace) (assoc :workspace workspace)))
+                             (seq workspace-overrides) (assoc :workspace-overrides workspace-overrides)))
         session-turn-id         (:session-turn-id iteration-result)
         {iteration-tokens :tokens
          iteration-cost   :cost} iteration-result
@@ -3827,13 +3831,25 @@
         ;; with `:active-extensions`, so this snapshot is just metadata.
         system-prompt            (prompt/build-system-prompt {})
         resolved-session-id (persistance/db-resolve-session-id db-info session)
+        ;; Workspace pin (1:1 with session_state, PLAN.md decision 1):
+        ;;   - resuming a session       → derive workspace from its latest state
+        ;;   - brand-new session        → mint a trunk workspace, pass its id
+        ;;                                into db-store-session! below
+        ;; db-info nil (SCI-only mode)  → skip; iteration loop never asserts
+        ;;                                workspace pin when there's no DB
+        active-workspace    (when db-info
+                              (if resolved-session-id
+                                (some->> (persistance/db-latest-session-state-id db-info resolved-session-id)
+                                  (persistance/db-workspace-for-session db-info))
+                                (workspace/ensure-trunk! db-info {})))
         session-id          (or resolved-session-id
                               (persistance/db-store-session! db-info
                                 (cond-> {:channel       (or channel :tui)
                                          :external-id   external-id
                                          :model         root-model
                                          :title         title
-                                         :system-prompt system-prompt}
+                                         :system-prompt system-prompt
+                                         :workspace-id  (:id active-workspace)}
                                   root-provider (assoc :provider root-provider))))
         ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
@@ -3920,11 +3936,21 @@
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
-        env {:environment-id                    environment-id
-             :session-id                   session-id
-             :channel                           (or channel :tui)
-             :depth-atom                        depth-atom
-             :db-info                           db-info
+        env (cond-> {:environment-id                    environment-id
+                     :session-id                   session-id
+                     :channel                           (or channel :tui)
+                     :depth-atom                        depth-atom
+                     :db-info                           db-info}
+              ;; Workspace info attached at env-build time so the extension
+              ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
+              ;; root the very first time it fires (PLAN.md §5).
+              active-workspace
+              (assoc :workspace        active-workspace
+                     :workspace/id     (:id active-workspace)
+                     :workspace/root   (:root active-workspace)
+                     :workspace/kind   (:kind active-workspace)
+                     :workspace/branch (:branch active-workspace)))
+        env (assoc env
              :state-atom                        state-atom
              :sci-ctx                           sci-ctx
              :sandbox-ns                        sandbox-ns
@@ -3945,7 +3971,7 @@
              :current-user-request-atom         current-user-request-atom
              :session-title-atom           session-title-atom
              :satisfied-hints-atom              satisfied-hints-atom
-             :extensions                        (atom [])}]
+             :extensions                        (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
     ;; Restore persisted vars when resuming an existing session.
