@@ -3,8 +3,12 @@
 --
 -- Hierarchy:
 --
+--   workspace (git worktree-backed work unit; one branch per row,
+--              trunk-kind rows have no worktree dir)
+--     └─ session_state (binds to exactly one workspace via workspace_id)
+--
 --   session_soul (identity)
---     └─ session_state (branch/fork)
+--     └─ session_state (branch/fork; pinned to workspace 1:1)
 --          ├─ session_turn_soul (user ask, branch-local)
 --          │    └─ session_turn_state (one run/retry of the turn)
 --          │         └─ session_turn_iteration (one LLM round-trip)
@@ -62,7 +66,57 @@ CREATE INDEX idx_session_soul_created
   ON session_soul(created_at DESC);
 
 -- =============================================================================
--- Session state - forkable mutable snapshot.
+-- Workspace - git worktree-backed work unit.
+--
+-- One row = one branch = one worktree on disk = one session-binding.
+-- Each session_state pins to exactly one workspace (1:1 invariant).
+--
+--   kind='trunk'   - original repo checkout. root = repo_root. No worktree
+--                    materialised on disk. merge/discard refused by API.
+--   kind='branch'  - managed worktree under
+--                    ~/.vis/workspaces/<repo_id>/<workspace_id>/.
+--
+-- state lifecycle (branch-kind only):
+--   active --> merging --> merged
+--   active --> discarded
+--
+-- UNIQUE(repo_id, branch) is partial: only enforced for kind='branch',
+-- so multiple trunk-kind rows (one per session-on-trunk) coexist.
+-- =============================================================================
+CREATE TABLE workspace (
+  id                   TEXT PRIMARY KEY NOT NULL,
+  repo_id              TEXT NOT NULL,
+  repo_root            TEXT NOT NULL,
+
+  kind                 TEXT NOT NULL
+                       CHECK (kind IN ('trunk', 'branch')),
+  branch               TEXT,
+  root                 TEXT NOT NULL,
+
+  parent_workspace_id  TEXT
+                       REFERENCES workspace(id) ON DELETE SET NULL,
+
+  state                TEXT NOT NULL
+                       CHECK (state IN ('active', 'merging', 'merged', 'discarded')),
+
+  commit_id            TEXT,              -- repo HEAD sha at worktree creation
+
+  created_at           INTEGER NOT NULL,
+  merged_at            INTEGER,
+  discarded_at         INTEGER,
+
+  CHECK (kind = 'trunk' OR branch IS NOT NULL),
+  CHECK (kind = 'branch' OR state = 'active')
+);
+
+CREATE UNIQUE INDEX uq_workspace_repo_branch
+  ON workspace(repo_id, branch) WHERE kind = 'branch';
+
+CREATE INDEX idx_workspace_repo_state
+  ON workspace(repo_id, state);
+
+-- =============================================================================
+-- Session state - forkable mutable snapshot. Pinned 1:1 to a workspace.
 -- =============================================================================
 CREATE TABLE session_state (
   id                    TEXT PRIMARY KEY NOT NULL,
@@ -70,6 +124,8 @@ CREATE TABLE session_state (
                         REFERENCES session_soul(id) ON DELETE CASCADE,
   parent_state_id       TEXT
                         REFERENCES session_state(id) ON DELETE CASCADE,
+  workspace_id          TEXT NOT NULL
+                        REFERENCES workspace(id) ON DELETE RESTRICT,
   title                 TEXT,
   version               INTEGER NOT NULL CHECK (version >= 0),
   metadata              TEXT,              -- JSON-encoded object/string
@@ -77,6 +133,9 @@ CREATE TABLE session_state (
 
   UNIQUE (session_soul_id, version)
 );
+
+CREATE UNIQUE INDEX uq_session_state_workspace
+  ON session_state(workspace_id);
 
 CREATE INDEX idx_session_state_soul
   ON session_state(session_soul_id, version);
