@@ -2312,14 +2312,83 @@
                                    :new-session
                                    (switch-session! {:action :new})
 
-                                   :new-tab
+                                   :workspace
+                                   ;; PLAN.md decision 6 — /workspace opens a
+                                   ;; new session in a fresh strip slot. The
+                                   ;; underlying session auto-trunks (step 4
+                                   ;; wiring); a follow-up will swap that for
+                                   ;; a real spawn-branch! call so the new
+                                   ;; session lands on a `vis/<short-id>`
+                                   ;; branch worktree by default.
                                    (when-let [config (:config @state/app-db)]
                                      (let [before-count (count (:workspaces @state/app-db))]
                                        (state/dispatch [:create-workspace])
                                        (if (= before-count (count (:workspaces @state/app-db)))
-                                         (vis/notify! "Maximum 8 tabs open"
+                                         (vis/notify! "Maximum 8 workspaces open"
                                            :level :warn :ttl-ms copy-success-ttl-ms)
                                          (install-session! (chat/make-session config) true))))
+
+                                   :apply-workspace-to-trunk
+                                   (let [db-info (vis/db-info)
+                                         ws-id   (:workspace/id @state/app-db)]
+                                     (cond
+                                       (nil? ws-id)
+                                       (vis/notify! "No active workspace" :level :warn :ttl-ms copy-success-ttl-ms)
+                                       (= :trunk (:workspace/kind @state/app-db))
+                                       (vis/notify! "Trunk workspace cannot be applied to itself"
+                                         :level :warn :ttl-ms copy-success-ttl-ms)
+                                       :else
+                                       (try
+                                         (vis/workspace-apply-to-trunk! db-info
+                                           {:workspace-id   ws-id
+                                            :delete-branch? true})
+                                         (vis/notify! "Workspace applied to trunk"
+                                           :level :info :ttl-ms copy-success-ttl-ms)
+                                         (catch Throwable t
+                                           (vis/notify! (str "Apply failed: " (or (ex-message t) (str t)))
+                                             :level :error :ttl-ms copy-success-ttl-ms)))))
+
+                                   :discard-workspace-soft
+                                   (let [db-info (vis/db-info)
+                                         ws-id   (:workspace/id @state/app-db)]
+                                     (cond
+                                       (nil? ws-id)
+                                       (vis/notify! "No active workspace" :level :warn :ttl-ms copy-success-ttl-ms)
+                                       (= :trunk (:workspace/kind @state/app-db))
+                                       (vis/notify! "Trunk workspace cannot be discarded"
+                                         :level :warn :ttl-ms copy-success-ttl-ms)
+                                       :else
+                                       (try
+                                         (vis/workspace-discard! db-info
+                                           {:workspace-id   ws-id
+                                            :delete-branch? false
+                                            :force?         false})
+                                         (vis/notify! "Workspace worktree removed (branch kept)"
+                                           :level :info :ttl-ms copy-success-ttl-ms)
+                                         (catch Throwable t
+                                           (vis/notify! (str "Discard failed: " (or (ex-message t) (str t)))
+                                             :level :error :ttl-ms copy-success-ttl-ms)))))
+
+                                   :discard-workspace-hard
+                                   (let [db-info (vis/db-info)
+                                         ws-id   (:workspace/id @state/app-db)]
+                                     (cond
+                                       (nil? ws-id)
+                                       (vis/notify! "No active workspace" :level :warn :ttl-ms copy-success-ttl-ms)
+                                       (= :trunk (:workspace/kind @state/app-db))
+                                       (vis/notify! "Trunk workspace cannot be discarded"
+                                         :level :warn :ttl-ms copy-success-ttl-ms)
+                                       :else
+                                       (try
+                                         (vis/workspace-discard! db-info
+                                           {:workspace-id   ws-id
+                                            :delete-branch? true
+                                            :force?         true})
+                                         (vis/notify! "Workspace + branch removed"
+                                           :level :info :ttl-ms copy-success-ttl-ms)
+                                         (catch Throwable t
+                                           (vis/notify! (str "Discard failed: " (or (ex-message t) (str t)))
+                                             :level :error :ttl-ms copy-success-ttl-ms)))))
 
                                    :fork-session
                                    (switch-session! {:action :fork})
