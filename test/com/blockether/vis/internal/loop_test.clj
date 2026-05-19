@@ -26,6 +26,48 @@
 (def ^:private ask-result->api-usage
   (deref #'lp/ask-result->api-usage))
 
+(def ^:private multi-fence-hint     (deref #'lp/multi-fence-hint))
+(def ^:private attach-multi-fence-hint (deref #'lp/attach-multi-fence-hint))
+
+(defdescribe multi-fence-hint-test
+  (it "is nil for a single-fence entry"
+    (expect (nil? (multi-fence-hint {})))
+    (expect (nil? (multi-fence-hint {:multi-fence-merged? false :multi-fence-count 1}))))
+
+  (it "names the rule and the count when several fences were merged"
+    (let [h (multi-fence-hint {:multi-fence-merged? true :multi-fence-count 5})]
+      (expect (string? h))
+      (expect (str/includes? h "5"))
+      (expect (str/includes? h "```clojure```"))
+      (expect (str/includes? h "exactly ONE"))))
+
+  (it "falls back to 'multiple' when the count is missing"
+    (let [h (multi-fence-hint {:multi-fence-merged? true})]
+      (expect (str/includes? h "multiple")))))
+
+(defdescribe attach-multi-fence-hint-test
+  (it "is identity on single-fence entries"
+    (let [err {:message "boom"}]
+      (expect (= err (attach-multi-fence-hint err {})))
+      (expect (= err (attach-multi-fence-hint err {:multi-fence-merged? false})))))
+
+  (it "adds :hint when the entry was a multi-fence merge and no hint existed"
+    (let [out (attach-multi-fence-hint {:message "parse error"}
+                {:multi-fence-merged? true :multi-fence-count 3})]
+      (expect (string? (:hint out)))
+      (expect (str/includes? (:hint out) "3"))))
+
+  (it "appends to an existing upstream hint instead of clobbering it"
+    (let [out (attach-multi-fence-hint {:message "parse error" :hint "close brace at line 12"}
+                {:multi-fence-merged? true :multi-fence-count 2})]
+      (expect (str/starts-with? (:hint out) "close brace at line 12"))
+      (expect (str/includes? (:hint out) "2"))))
+
+  (it "treats a blank upstream hint as absent"
+    (let [out (attach-multi-fence-hint {:message "x" :hint "   "}
+                {:multi-fence-merged? true :multi-fence-count 4})]
+      (expect (not (str/starts-with? (:hint out) " "))))))
+
 (defdescribe token-usage-normalization-test
   (it "preserves Anthropic cache write tokens from svar token maps"
     (expect (= {:prompt_tokens 112

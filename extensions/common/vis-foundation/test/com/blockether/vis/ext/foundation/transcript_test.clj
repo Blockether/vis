@@ -37,10 +37,10 @@
    Returns the session id."
   [s]
   (let [cid (h/store-session! s {:channel :tui
-                                      :title "Transcript fixture"
-                                      :provider :openai
-                                      :model "gpt-4o"
-                                      :system-prompt "sys"})
+                                 :title "Transcript fixture"
+                                 :provider :openai
+                                 :model "gpt-4o"
+                                 :system-prompt "sys"})
         q1  (vis/db-store-session-turn! s {:parent-session-id cid
                                            :user-request "First turn"
                                            :status :running})]

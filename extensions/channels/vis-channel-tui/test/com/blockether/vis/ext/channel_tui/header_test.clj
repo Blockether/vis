@@ -193,8 +193,8 @@
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :feature
                   :workspaces [{:id :main :label "Main"}
-                                   {:id :feature :label "Feature" :dirty? true}
-                                   {:id :verify :label "Verify" :state :running}]}]
+                               {:id :feature :label "Feature" :dirty? true}
+                               {:id :verify :label "Verify" :state :running}]}]
       (expect (= 3 (header/header-rows (assoc db :workspaces [{:id :main}]))))
       (expect (= 3 (header/header-rows db)))
       (cr/begin-frame!)
@@ -284,8 +284,8 @@
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :main
                   :workspaces [{:id :main :label "Main"}
-                                   {:id :two :label "Two"}
-                                   {:id :three :label "Three"}]}]
+                               {:id :two :label "Two"}
+                               {:id :three :label "Three"}]}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)
@@ -310,8 +310,8 @@
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :one
                   :workspaces (mapv (fn [i] {:id (keyword (str "t-" i))
-                                                 :label (str "LongTabLabel" i)})
-                                    (range 5))}]
+                                             :label (str "LongTabLabel" i)})
+                                (range 5))}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)
