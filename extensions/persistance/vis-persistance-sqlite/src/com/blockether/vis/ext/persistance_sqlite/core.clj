@@ -529,6 +529,135 @@
                       (:definition-state-id entry)   (assoc :definition_state_id (->id (:definition-state-id entry))))]})))))
 
 ;; =============================================================================
+;; Workspace - trunk-native work units (PLAN.md §2-§4)
+;; =============================================================================
+
+(defn- row->workspace
+  "Project a `workspace` row from SQLite into the canonical Clojure shape
+   used by the workspace facade. Keys mirror `db-get-session` style
+   (plain, not namespaced); the workspace ns adds `:workspace/*` aliases
+   when publishing into an environment."
+  [row]
+  (when row
+    (cond-> {:id         (->uuid (:id row))
+             :type       :workspace
+             :repo-id    (:repo_id row)
+             :repo-root  (:repo_root row)
+             :kind       (->kw-back (:kind row))
+             :root       (:root row)
+             :state      (->kw-back (:state row))
+             :created-at (->date (:created_at row))}
+      (:branch row)              (assoc :branch (:branch row))
+      (:parent_workspace_id row) (assoc :parent-id (->uuid (:parent_workspace_id row)))
+      (:commit_id row)           (assoc :commit-id (:commit_id row))
+      (:merged_at row)           (assoc :merged-at (->date (:merged_at row)))
+      (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row))))))
+
+(defn db-workspace-insert!
+  "Insert a workspace row. Returns the inserted record (canonical shape).
+
+   Required: :repo-id :repo-root :kind :root
+   Optional: :id (defaults to a new UUID), :branch (required when
+             :kind = :branch via DB CHECK), :parent-id, :state (defaults
+             to :active), :commit-id"
+  [db-info {:keys [id repo-id repo-root kind branch root parent-id state commit-id]}]
+  (when (ds db-info)
+    (let [ws-id (->id (or id (new-uuid)))
+          now   (now-ms)]
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (execute! tx-info
+            {:insert-into :workspace
+             :values [{:id                  ws-id
+                       :repo_id             repo-id
+                       :repo_root           repo-root
+                       :kind                (->kw kind)
+                       :branch              branch
+                       :root                root
+                       :parent_workspace_id (some-> parent-id ->ref)
+                       :state               (->kw (or state :active))
+                       :commit_id           commit-id
+                       :created_at          now}]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id ws-id]})))))))
+
+(defn db-workspace-update-state!
+  "Transition `workspace-id` to `new-state`. Sets `merged_at` on :merged
+   and `discarded_at` on :discarded. Returns the updated record."
+  [db-info workspace-id new-state]
+  (when (and (ds db-info) workspace-id)
+    (let [id  (->ref workspace-id)
+          now (now-ms)
+          to  (->kw new-state)
+          set (cond-> {:state to}
+                (= "merged" to)    (assoc :merged_at now)
+                (= "discarded" to) (assoc :discarded_at now))]
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    set
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
+
+(defn db-workspace-get [db-info workspace-id]
+  (when (and (ds db-info) workspace-id)
+    (row->workspace
+      (query-one! db-info
+        {:select [:*] :from :workspace
+         :where  [:= :id (->ref workspace-id)]}))))
+
+(defn db-workspace-list-by-repo
+  "List workspaces in `repo-id`, optionally filtered to a `state-set` of
+   keywords (e.g. #{:active :merging}). Newest first."
+  ([db-info repo-id] (db-workspace-list-by-repo db-info repo-id nil))
+  ([db-info repo-id state-set]
+   (when (ds db-info)
+     (let [where (cond-> [:and [:= :repo_id repo-id]]
+                   (seq state-set)
+                   (conj [:in :state (mapv ->kw state-set)]))]
+       (mapv row->workspace
+         (query! db-info
+           {:select   [:*]
+            :from     :workspace
+            :where    where
+            :order-by [[:created_at :desc]]}))))))
+
+(defn db-workspace-for-session
+  "Return the workspace pinned to `session-state-id`, or nil. Always
+   non-nil after step-4 wiring (1:1 invariant); nil only during the
+   transitional window where session_state may not yet have a workspace."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (let [sid (->ref session-state-id)]
+      (row->workspace
+        (query-one! db-info
+          {:select [:w.*]
+           :from   [[:session_state :s]]
+           :join   [[:workspace :w] [:= :w.id :s.workspace_id]]
+           :where  [:= :s.id sid]})))))
+
+(defn db-session-state-set-workspace!
+  "Pin `session-state-id` to `workspace-id`. Caller guarantees the
+   target session_state row exists and has no other workspace pinned
+   (UNIQUE on session_state.workspace_id enforces 1:1)."
+  [db-info session-state-id workspace-id]
+  (when (and (ds db-info) session-state-id workspace-id)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (execute! tx-info
+          {:update :session_state
+           :set    {:workspace_id (->ref workspace-id)}
+           :where  [:= :id (->ref session-state-id)]})
+        {:session-state-id (->uuid session-state-id)
+         :workspace-id     (->uuid workspace-id)}))))
+
+;; =============================================================================
 ;; Session - session_soul + session_state
 ;; =============================================================================
 
