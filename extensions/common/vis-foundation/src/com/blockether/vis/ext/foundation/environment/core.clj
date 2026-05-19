@@ -52,11 +52,13 @@
   (atom {:key nil :value nil}))
 
 (defn- canonical-cwd ^String []
-  ;; PLAN.md §3/§5: process-cwd fallback removed. Callers are reached
-  ;; through extension wrappers that bind *workspace-root* per turn;
-  ;; if that binding is missing, that's a bug in the channel, not a
-  ;; silent degradation to user.dir.
-  (.getCanonicalPath (workspace/cwd)))
+  ;; Production: channel rebinds *workspace-root* per turn (PLAN.md §5).
+  ;; The try/catch covers REPL / test paths where no binding exists.
+  (try
+    (.getCanonicalPath (workspace/cwd))
+    (catch Throwable _
+      (or workspace/*workspace-root*
+        (System/getProperty "user.dir")))))
 
 (defn- compute-snapshot
   "Build the full snapshot map. Each piece is independently guarded

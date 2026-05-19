@@ -126,7 +126,7 @@
 
 (defdescribe draw-header-color-test
   (it "renders the untitled placeholder inside the active tab, not on the left"
-    ;; Fresh session has no `:workspace-tabs` in app-db. The
+    ;; Fresh session has no `:workspaces` in app-db. The
     ;; header synthesises a single active tab whose label is the
     ;; placeholder; the LEFT slot stays empty.
     (cr/reset!)
@@ -184,7 +184,7 @@
           (expect (= t/header-active-tab-fg (:fg tab-write)))
           (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567")))))))))
 
-(defdescribe draw-header-workspace-tabs-test
+(defdescribe draw-header-workspace-entries-test
   (it "renders tabs in the center header slot without adding rows"
     (cr/reset!)
     (let [writes (atom [])
@@ -192,10 +192,10 @@
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :feature
-                  :workspace-tabs [{:id :main :label "Main"}
+                  :workspaces [{:id :main :label "Main"}
                                    {:id :feature :label "Feature" :dirty? true}
                                    {:id :verify :label "Verify" :state :running}]}]
-      (expect (= 3 (header/header-rows (assoc db :workspace-tabs [{:id :main}]))))
+      (expect (= 3 (header/header-rows (assoc db :workspaces [{:id :main}]))))
       (expect (= 3 (header/header-rows db)))
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
@@ -207,9 +207,9 @@
                                         (not (str/blank? (:text %)))
                                         (< (long (or (:col %) 0)) 16))
                                @writes)
-            layout     (p/tab-layout (:workspace-tabs db) 16 48 :feature {:gap 0})
+            layout     (p/tab-layout (:workspaces db) 16 48 :feature {:gap 0})
             expected   (nth layout 1)
-            tab-hit    (some #(when (and (= :workspace-tab (:kind %))
+            tab-hit    (some #(when (and (= :workspace-entry (:kind %))
                                       (= 1 (:index %)))
                                 %)
                          (cr/current))
@@ -260,13 +260,13 @@
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :tab-5
-                  :workspace-tabs tabs}]
+                  :workspaces tabs}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 50)
       (cr/commit-frame!)
-      (let [left-arrow  (some #(when (and (= :workspace-tab (:kind %)) (= :prev (:index %))) %) (cr/current))
-            right-arrow (some #(when (and (= :workspace-tab (:kind %)) (= :next (:index %))) %) (cr/current))
-            active-hit  (some #(when (and (= :workspace-tab (:kind %)) (= :tab-5 (:workspace-id %))) %) (cr/current))]
+      (let [left-arrow  (some #(when (and (= :workspace-entry (:kind %)) (= :prev (:index %))) %) (cr/current))
+            right-arrow (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %) (cr/current))
+            active-hit  (some #(when (and (= :workspace-entry (:kind %)) (= :tab-5 (:workspace-id %))) %) (cr/current))]
         (expect (= {:row 1 :col 10 :width 1} (:bounds left-arrow)))
         (expect (= {:row 1 :col 39 :width 1} (:bounds right-arrow)))
         (expect (some? active-hit))
@@ -283,7 +283,7 @@
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :main
-                  :workspace-tabs [{:id :main :label "Main"}
+                  :workspaces [{:id :main :label "Main"}
                                    {:id :two :label "Two"}
                                    {:id :three :label "Three"}]}]
       (cr/begin-frame!)
@@ -309,7 +309,7 @@
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :one
-                  :workspace-tabs (mapv (fn [i] {:id (keyword (str "t-" i))
+                  :workspaces (mapv (fn [i] {:id (keyword (str "t-" i))
                                                  :label (str "LongTabLabel" i)})
                                     (range 5))}]
       (cr/begin-frame!)
@@ -331,11 +331,11 @@
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :big-0
-                  :workspace-tabs tabs}]
+                  :workspaces tabs}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 400)
       (cr/commit-frame!)
-      (let [tab-hits-by-id (filter #(and (= :workspace-tab (:kind %))
+      (let [tab-hits-by-id (filter #(and (= :workspace-entry (:kind %))
                                       (integer? (:index %)))
                              (cr/current))
             has-arrows? (boolean (and (some #(= :prev (:index %)) (cr/current))
@@ -355,11 +355,11 @@
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :narrow-0
-                  :workspace-tabs tabs}]
+                  :workspaces tabs}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 50)
       (cr/commit-frame!)
-      (let [tab-hits-by-id (filter #(and (= :workspace-tab (:kind %))
+      (let [tab-hits-by-id (filter #(and (= :workspace-entry (:kind %))
                                       (integer? (:index %)))
                              (cr/current))]
         (expect (= 2 (count tab-hits-by-id)))))))

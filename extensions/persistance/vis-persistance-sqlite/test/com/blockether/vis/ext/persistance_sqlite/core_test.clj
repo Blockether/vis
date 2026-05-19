@@ -1,7 +1,7 @@
 (ns ^{:clj-kondo/config
       ;; Pragmatic: this aggregator test file collects scenarios from
       ;; multiple original test namespaces. Many `it` blocks use
-      ;; `(let [s (h/store) cid (vis/db-store-session! ...)] (let [...]
+      ;; `(let [s (h/store) cid (h/store-session! ...)] (let [...]
       ;; ...))` where the inner let is technically mergeable and the
       ;; intermediate ids (cid / qid / etc.) are bound for SIDE EFFECT,
       ;; not for use. Suppress redundant-let / unused-binding here
@@ -101,7 +101,7 @@
 
   (it "stores iteration block scope and indexes it"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :cli})
+          cid (h/store-session! s {:channel :cli})
           tid (vis/db-store-session-turn! s {:parent-session-id cid
                                              :user-request "block scoped"})
           iid (vis/db-store-iteration! s {:session-turn-id tid
@@ -228,7 +228,7 @@
      (try
        (when marker (spit marker \"ready\"))
        (Thread/sleep 250)
-       (vis/db-store-session! s {:channel :child :title title})
+       (h/store-session! s {:channel :child :title title})
        (println \"CHILD-DONE\" title)
        (finally
          (vis/db-dispose-connection! s))))")
@@ -293,7 +293,7 @@
               child  (start-multiprocess-writer! (str dir) (str marker))]
           (try
             (expect (true? (wait-for-file marker (* 1000 MULTIPROCESS_CHILD_TIMEOUT_S))))
-            (vis/db-store-session! parent {:channel :parent :title "parent"})
+            (h/store-session! parent {:channel :parent :title "parent"})
             (expect-child-success! child)
             (expect (= #{"child" "parent"}
                       (set (map :title
@@ -366,7 +366,7 @@
     (let [dir (fs/create-temp-dir {:prefix "vis-snapshot-lock-"})]
       (try
         (let [s       (vis/db-create-connection! (str dir))
-              cid     (vis/db-store-session! s {:channel :cli :title "old"})
+              cid     (h/store-session! s {:channel :cli :title "old"})
               started (CountDownLatch. 1)
               worker  (future
                         (try
@@ -395,7 +395,7 @@
 
   (it "serializes Vis write APIs while concurrent db-log! calls contend"
     (let [s       (h/store)
-          cid     (vis/db-store-session! s {:channel :cli})
+          cid     (h/store-session! s {:channel :cli})
           tid     (vis/db-store-session-turn! s {:parent-session-id cid
                                                  :user-request "stress"
                                                  :status :running})
@@ -443,7 +443,7 @@
 (defdescribe session-test
   (it "inserts into session_soul + session_state"
     (let [s  (h/store)
-          id (vis/db-store-session! s {:channel :tui :system-prompt "Hi" :model "gpt-4o" :title "T"})
+          id (h/store-session! s {:channel :tui :system-prompt "Hi" :model "gpt-4o" :title "T"})
           session (vis/db-get-session s id)]
       (expect (= 1 (raw-count s :session_soul)))
       (expect (= 1 (raw-count s :session_state)))
@@ -455,37 +455,37 @@
 
   (it "resolves :latest"
     (let [s (h/store)]
-      (vis/db-store-session! s {:channel :tui})
+      (h/store-session! s {:channel :tui})
       (Thread/sleep 2)
-      (let [id2    (vis/db-store-session! s {:channel :tui})
+      (let [id2    (h/store-session! s {:channel :tui})
             latest (vis/db-resolve-session-id s :latest)]
         (expect (= id2 latest)))))
 
   (it "lists by channel via metadata JSON"
     (let [s (h/store)]
-      (vis/db-store-session! s {:channel :tui :title "A"})
-      (vis/db-store-session! s {:channel :telegram :title "B"})
-      (vis/db-store-session! s {:channel :tui :title "C"})
+      (h/store-session! s {:channel :tui :title "A"})
+      (h/store-session! s {:channel :telegram :title "B"})
+      (h/store-session! s {:channel :tui :title "C"})
       (expect (= 2 (count (vis/db-list-sessions s :tui))))
       (expect (= 1 (count (vis/db-list-sessions s :telegram))))))
 
   (it "reports fork count after the latest state becomes the fork"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui :title "A"})]
-      (vis/db-fork-session! s cid {})
+          cid (h/store-session! s {:channel :tui :title "A"})]
+      (h/fork-session! s cid {})
       (expect (= [1] (mapv :fork-count (vis/db-list-sessions s :tui))))
-      (vis/db-fork-session! s cid {})
+      (h/fork-session! s cid {})
       (expect (= [2] (mapv :fork-count (vis/db-list-sessions s :tui))))))
 
   (it "finds by external-id via metadata JSON"
     (let [s  (h/store)
-          id (vis/db-store-session! s {:channel :telegram :external-id "chat-42"})]
+          id (h/store-session! s {:channel :telegram :external-id "chat-42"})]
       (expect (= id (vis/db-find-session-by-external s :telegram "chat-42")))
       (expect (nil? (vis/db-find-session-by-external s :telegram "nope")))))
 
   (it "updates title on session_state"
     (let [s  (h/store)
-          id (vis/db-store-session! s {:channel :tui :title "Old"})]
+          id (h/store-session! s {:channel :tui :title "Old"})]
       (vis/db-update-session-title! s id "New")
       (expect (= "New" (:title (vis/db-get-session s id)))))))
 
@@ -496,7 +496,7 @@
 (defdescribe db-list-session-states-test
   (it "returns one row for the trunk before any fork happens"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
+          cid (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
           rows (vis/db-list-session-states s cid)]
       (expect (vector? rows))
       (expect (= 1 (count rows)))
@@ -508,9 +508,9 @@
 
   (it "surfaces every fork in version order with parent links"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})]
-      (vis/db-fork-session! s cid {:title "Branch A" :system-prompt "vA"})
-      (vis/db-fork-session! s cid {:title "Branch B" :system-prompt "vB"})
+          cid (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})]
+      (h/fork-session! s cid {:title "Branch A" :system-prompt "vA"})
+      (h/fork-session! s cid {:title "Branch B" :system-prompt "vB"})
       (let [rows (vis/db-list-session-states s cid)]
         (expect (= 3 (count rows)))
         (expect (= [0 1 2] (mapv :version rows)))
@@ -523,10 +523,10 @@
 
   (it "reports :turn-count per state - turns belong to one specific branch"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})]
+          cid (h/store-session! s {:channel :tui})]
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "trunk Q1" :status :done})
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "trunk Q2" :status :done})
-      (vis/db-fork-session! s cid {:title "Branch"})
+      (h/fork-session! s cid {:title "Branch"})
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "branch Q1" :status :done})
       (let [rows (vis/db-list-session-states s cid)]
         (expect (= [2 1] (mapv :turn-count rows))))))
@@ -548,7 +548,7 @@
 (defdescribe db-list-session-turn-states-test
   (it "returns one row for the original run before any retry"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid
                                              :user-request "do the thing" :status :running})
           rows (vis/db-list-session-turn-states s qid)]
@@ -561,7 +561,7 @@
 
   (it "surfaces every retry in version order with forked-from links"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid
                                              :user-request "flaky" :status :error})]
       (vis/db-retry-session-turn! s qid {:status :running :model "claude-4" :provider :anthropic})
@@ -592,8 +592,8 @@
 (defdescribe fork-test
   (it "creates a new session_state row with parent_state_id"
     (let [s    (h/store)
-          cid  (vis/db-store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
-          _    (vis/db-fork-session! s cid {:title "Branch A"})
+          cid  (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
+          _    (h/fork-session! s cid {:title "Branch A"})
           session (vis/db-get-session s cid)]
       (expect (= 2 (raw-count s :session_state)))
       (expect (= 1 (:version session)))
@@ -605,34 +605,34 @@
 
   (it "overrides model and system-prompt"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui :system-prompt "old" :model "gpt-4o"})
-          _   (vis/db-fork-session! s cid {:system-prompt "new" :model "claude-4"})
+          cid (h/store-session! s {:channel :tui :system-prompt "old" :model "gpt-4o"})
+          _   (h/fork-session! s cid {:system-prompt "new" :model "claude-4"})
           session (vis/db-get-session s cid)]
       (expect (= "new" (:system-prompt session)))
       (expect (= "claude-4" (:model session)))))
 
   (it "forked state inherits ancestor turns across multiple hops"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})]
+          cid (h/store-session! s {:channel :tui})]
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Turn 1" :status :done})
-      (vis/db-fork-session! s cid {:title "Fork"})
+      (h/fork-session! s cid {:title "Fork"})
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Turn 2" :status :done})
-      (vis/db-fork-session! s cid {:title "Fork 2"})
+      (h/fork-session! s cid {:title "Fork 2"})
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Turn 3" :status :done})
       (let [turns (vis/db-list-session-turns s cid)]
         (expect (= ["Turn 1" "Turn 2" "Turn 3"] (mapv :user-request turns))))))
 
   (it "double fork increments version"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})]
-      (vis/db-fork-session! s cid {})
-      (vis/db-fork-session! s cid {})
+          cid (h/store-session! s {:channel :tui})]
+      (h/fork-session! s cid {})
+      (h/fork-session! s cid {})
       (expect (= 2 (:version (vis/db-get-session s cid))))
       (expect (= 3 (raw-count s :session_state)))))
 
   (it "returns nil instead of throwing when there is no state to fork"
     (let [s (h/store)]
-      (expect (nil? (vis/db-fork-session! s (random-uuid) {}))))))
+      (expect (nil? (h/fork-session! s (random-uuid) {}))))))
 
 ;; =============================================================================
 ;; Turn
@@ -641,7 +641,7 @@
 (defdescribe turn-test
   (it "inserts into session_turn_soul + session_turn_state"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})]
+          cid (h/store-session! s {:channel :tui})]
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "2+2?" :status :running})
       (expect (= 1 (raw-count s :session_turn_soul)))
       (expect (= 1 (raw-count s :session_turn_state)))
@@ -651,14 +651,14 @@
 
   (it "assigns turn positions from 1 within the active session state"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})]
+          cid (h/store-session! s {:channel :tui})]
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "one" :status :done})
       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "two" :status :done})
       (expect (= [1 2] (mapv :position (vis/db-list-session-turns s cid))))))
 
   (it "normalizes :success to done"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-update-session-turn! s qid {:status :success :answer "42"
                                           :tokens {:input 100 :output 50}
@@ -669,7 +669,7 @@
 
   (it "persists :error without renormalization"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-update-session-turn! s qid {:status :error})
       (expect (= :error (:status (first (vis/db-list-session-turns s cid))))))))
@@ -681,7 +681,7 @@
 (defdescribe retry-test
   (it "creates session_turn_state version 1 with forked_from ref"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "hard" :status :running})]
       (vis/db-update-session-turn! s qid {:status :error})
       (vis/db-retry-session-turn! s qid {:status :running :model "claude-4"})
@@ -691,7 +691,7 @@
 
   (it "iterations on retry go to new session_turn_state"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 10})
       (vis/db-update-session-turn! s qid {:status :error})
@@ -707,7 +707,7 @@
 (defdescribe iteration-block-test
   (it "writes one iteration row whose flat columns carry the single form"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid
                                   :code "(+ 1 1)" :result 2
@@ -727,7 +727,7 @@
 
   (it "uses flat code/result columns for the inline log"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid
                                   :code "(+ 1 1)" :result 2
@@ -739,7 +739,7 @@
 
   (it "assigns iteration positions from 1 and rejects non-contiguous manual positions"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
       (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
@@ -769,7 +769,7 @@
 
   (it "replaces fn results with the {:vis/ref :expr} sentinel (freeze-safe contract)"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid
                                   :code "(defn f [x] x)" :result (fn [x] x)
@@ -780,7 +780,7 @@
 
   (it "errors carry the message in the BLOB"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       ;; :error is the structured :error map
       ;; ({:message :trace? :hint? :block?}). Single error field, no
@@ -797,7 +797,7 @@
 
   (it ":comment field carries leading `;; ... / #_(...)` blocks alongside :code"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid
                                   :code "(+ 1 1)"
@@ -818,7 +818,7 @@
   ;; at 1, 2, 3 monotonically.
   (it "increments position monotonically across iterations in the same session_turn_state"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 1})
       (vis/db-store-iteration! s {:session-turn-id qid :code "2" :result 2 :duration-ms 1})
@@ -838,7 +838,7 @@
   ;; ships.
   (it "persists per-iteration token + cost columns and surfaces them on read"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid
                                   :code "(+ 1 1)" :result 2
@@ -856,7 +856,7 @@
 
   (it "persists LLM routing trace as first-class rows and rehydrates metadata view"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           trace [{:event/type :llm.routing/provider-retry
                   :provider :p1
@@ -901,7 +901,7 @@
 
   (it "defaults absent token + cost columns to 0 / 0.0 on read"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       ;; Caller passes neither :tokens nor :cost-usd - the columns
       ;; stay NULL on disk, but the read side normalizes to 0 / 0.0
@@ -921,7 +921,7 @@
 
   (it "persists raw LLM response diagnostics and executable code-block metadata"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           raw "```clojure\n(+ 1 1)\n```"]
       (vis/db-store-iteration! s {:session-turn-id qid
@@ -943,7 +943,7 @@
 
   (it "rejects negative token counts via the schema CHECK"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       ;; Negative usage is structurally impossible - the schema CHECK
       ;; is the last line of defence. Any caller that fabricates a
@@ -964,7 +964,7 @@
 (defdescribe var-test
   (it "inserts definition_soul(var, stateful) + definition_state"
     (let [s    (h/store)
-          cid  (vis/db-store-session! s {:channel :tui})
+          cid  (h/store-session! s {:channel :tui})
           qid  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid  (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                            :vars [{:name "x" :value 42 :code "(def x 42)"}]})
@@ -977,7 +977,7 @@
 
   (it "uses expression as the SQLite column name for var source"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                   :vars [{:name "x" :value 42 :code "(def x 42)"}]})
@@ -988,7 +988,7 @@
 
   (it "reuses soul, increments version"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "x" :value 1}]})
@@ -1000,7 +1000,7 @@
 
   (it "soul persists across queries"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           q1  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t1" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
                                           :vars [{:name "x" :value 1}]})
@@ -1012,7 +1012,7 @@
 
   (it "fn var stores {:vis/ref :expr}"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
@@ -1022,7 +1022,7 @@
 
   (it "stores complex data via nippy"
     (let [s    (h/store)
-          cid  (vis/db-store-session! s {:channel :tui})
+          cid  (h/store-session! s {:channel :tui})
           qid  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           data {:users [{:name "Alice"} {:name "Bob"}] :tags #{:a :b} :n 42}
           iid  (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
@@ -1031,7 +1031,7 @@
 
   (it "latest var registry"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "x" :value 1} {:name "y" :value "hi"}]})
@@ -1045,7 +1045,7 @@
 
   (it "version history"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 1}]})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 50}]})
@@ -1057,12 +1057,12 @@
 
   (it "forked state inherits ancestor var history and lets branch override"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           q1  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "parent" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
                                           :vars [{:name "x" :value 1 :code "(def x 1)"}
                                                  {:name "y" :value 2 :code "(def y 2)"}]})
-          _   (vis/db-fork-session! s cid {:title "branch"})
+          _   (h/fork-session! s cid {:title "branch"})
           q2  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "branch" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
                                           :vars [{:name "x" :value 9 :code "(def x 9)"}]})
@@ -1076,7 +1076,7 @@
 
   (it "builds a compact latest symbol index with info"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid
                                           :code "(def x 1)" :result 1
@@ -1095,7 +1095,7 @@
 
   (it "builds a newest-first value-free var history timeline"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 1 :code "(def x 1)"}]})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 2 :code "(def x 2)"}]})
@@ -1112,7 +1112,7 @@
 (defdescribe cascade-delete-test
   (it "deletes soul + all descendants"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "1" :result 1
                                           :duration-ms 0 :vars [{:name "x" :value 1}]})]
@@ -1132,7 +1132,7 @@
 (defdescribe turn-history-test
   (it "builds ordered history with iteration counts"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "What?" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :answer "A Lisp" :duration-ms 100})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :answer "JVM Lisp" :duration-ms 50})
@@ -1148,14 +1148,14 @@
 (defdescribe soul-state-integrity-test
   (it "session_state.session_soul_id points to session_soul.id"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui :title "FK test"})]
+          cid (h/store-session! s {:channel :tui :title "FK test"})]
       (let [soul  (first (raw-query s {:select [:id] :from :session_soul}))
             state (first (raw-query s {:select [:session_soul_id] :from :session_state}))]
         (expect (= (:id soul) (:session_soul_id state))))))
 
   (it "session_turn_soul.session_state_id points to session_state.id"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           _   (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (let [state (first (raw-query s {:select [:id] :from :session_state}))
             qsoul (first (raw-query s {:select [:session_state_id] :from :session_turn_soul}))]
@@ -1163,7 +1163,7 @@
 
   (it "session_turn_state.session_turn_soul_id points to session_turn_soul.id"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           _   (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (let [qsoul  (first (raw-query s {:select [:id] :from :session_turn_soul}))
             qstate (first (raw-query s {:select [:session_turn_soul_id] :from :session_turn_state}))]
@@ -1171,7 +1171,7 @@
 
   (it "iteration.session_turn_state_id points to session_turn_state.id"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0})]
       (let [qstate (first (raw-query s {:select [:id] :from :session_turn_state}))
@@ -1182,7 +1182,7 @@
     ;; Only var rows live in definition_soul now. Drive a `(def ...)`
     ;; through the iteration so a var-soul row actually exists.
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code ""
                                           :duration-ms 0
@@ -1193,7 +1193,7 @@
 
   (it "definition_state.definition_soul_id (var rows) points to definition_soul.id"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code ""
                                           :duration-ms 0
@@ -1204,7 +1204,7 @@
 
   (it "definition_state.iteration_id (var rows) points to iteration.id"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code ""
                                           :duration-ms 0
@@ -1215,7 +1215,7 @@
 
   (it "retry session_turn_state.forked_from_session_turn_state_id points to previous session_turn_state.id"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
       (vis/db-update-session-turn! s qid {:status :error})
       (vis/db-retry-session-turn! s qid {:status :running :model "claude-4"})
@@ -1227,8 +1227,8 @@
 
   (it "fork session_state.parent_state_id points to previous state"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})]
-      (vis/db-fork-session! s cid {:title "fork"})
+          cid (h/store-session! s {:channel :tui})]
+      (h/fork-session! s cid {:title "fork"})
       (let [states (raw-query s {:select [:id :version :parent_state_id]
                                  :from :session_state :order-by [[:version :asc]]})]
         (expect (= 2 (count states)))
@@ -1237,7 +1237,7 @@
 
   (it "definition_soul holds ONLY var rows; blocks live inline on iteration flat columns"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid
                                           :code "(+ 1 1)" :result 2
@@ -1267,7 +1267,7 @@
     ;; itself is unchanged so the test now exercises a plain
     ;; user-defined var that mutates across iterations.
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Explain monads" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :result 2
                                           :duration-ms 100
@@ -1300,7 +1300,7 @@
 
   (it "latest var registry returns max version for each system var"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "test" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "TURN_USER_REQUEST" :value "test" :code ";; SYSTEM"}
@@ -1320,7 +1320,7 @@
 
   (it "user vars and system vars coexist, each with independent version chains"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "compute" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid
                                           :code "(def data [1 2 3])" :result [1 2 3]
@@ -1350,7 +1350,7 @@
 
   (it "system vars version across multiple queries in same session"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           ;; Turn 1
           q1  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "What is 2+2?" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
@@ -1396,7 +1396,7 @@
 (defdescribe restore-test
   (it "restores vars in topological order - no dependencies"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "x" :value 42 :code "(def x 42)"}
@@ -1414,7 +1414,7 @@
 
   (it "restores fn vars with {:vis/ref :expr}"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "double-it" :value (fn [x] (* x 2))
@@ -1427,7 +1427,7 @@
 
   (it "linear dependency chain A -> B -> C restored in correct order"
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           ;; Iteration 1: define base-rate
           _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
@@ -1469,7 +1469,7 @@
 
   (it "diamond dependency: D depends on B and C, both depend on A"
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                              :vars [{:name "config" :value {:rate 0.1} :code "(def config {:rate 0.1})"}
@@ -1513,7 +1513,7 @@
 
   (it "deep chain: 5 levels deep, each depending on previous"
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           var-names ["level-0" "level-1" "level-2" "level-3" "level-4"]
           _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
@@ -1535,7 +1535,7 @@
 
   (it "mixed data + fn vars with system vars, all restored correctly"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "analyze data" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "TURN_USER_REQUEST" :value "analyze data" :code ";; SYSTEM"}
@@ -1595,7 +1595,7 @@
     ;; (def add-10 (make-adder 10))
     ;; (def result (add-10 5))  => 15
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                              :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
@@ -1637,7 +1637,7 @@
     ;; (def scale (make-scaler))
     ;; (def scaled-data (mapv scale [1 2 3 4 5]))
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                              :vars [{:name "config" :value {:multiplier 3}
@@ -1685,7 +1685,7 @@
     ;; Iter 4: (def answer (compute 5)) — should use new base
     ;; At restore time, base=20 (latest version), compute has :vis/ref :expr
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                              :vars [{:name "base" :value 10 :code "(def base 10)"}]})
@@ -1728,7 +1728,7 @@
 
   (it "wide fan-out: one config feeds 5 independent fns"
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           fn-names ["fn-a" "fn-b" "fn-c" "fn-d" "fn-e"]
           _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
@@ -1755,7 +1755,7 @@
 
   (it "cross-turn dependency: var from turn 1 used by fn in turn 2"
     (let [s      (h/store)
-          cid    (vis/db-store-session! s {:channel :tui})
+          cid    (h/store-session! s {:channel :tui})
           ;; Turn 1: define data
           q1     (vis/db-store-session-turn! s {:parent-session-id cid :user-request "load data" :status :done})
           _      (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
@@ -1803,7 +1803,7 @@
 (defdescribe lazy-seq-safety-test
   (it "infinite range -> {:vis/ref :expr} - never realized"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "nums" :value (range) :code "(def nums (range))"}]})
@@ -1814,7 +1814,7 @@
 
   (it "infinite repeat -> {:vis/ref :expr}"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "ones" :value (repeat 1) :code "(def ones (repeat 1))"}]})
@@ -1823,7 +1823,7 @@
 
   (it "iterate -> {:vis/ref :expr}"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "nats" :value (iterate inc 0)
@@ -1833,7 +1833,7 @@
 
   (it "small lazy seq (map inc [1 2 3]) -> {:vis/ref :expr} - lazy is lazy"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "small" :value (map inc [1 2 3])
@@ -1844,7 +1844,7 @@
 
   (it "realized vector is stored as data"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "v" :value [1 2 3 4 5]
@@ -1854,7 +1854,7 @@
 
   (it "realized list is stored as data"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "l" :value '(1 2 3)
@@ -1864,7 +1864,7 @@
 
   (it "lazy seq inside a map -> map stored, lazy value becomes ref"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "mixed" :value {:data [1 2 3]
@@ -1880,7 +1880,7 @@
 
   (it "lazy seq as expression result -> ref"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:session-turn-id qid
                                           :code "(range)" :result (range)
@@ -1900,7 +1900,7 @@
 (defdescribe restore-integration-test
   (it "data var: store, wipe, restore, read back"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           ;; Create SCI sandbox, def a var
           {:keys [sci-ctx]} (env/create-sci-context nil)
@@ -1923,7 +1923,7 @@
 
   (it "function var: store, wipe, restore via eval, call it"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           ;; Store a fn (result will be {:vis/ref :expr})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
@@ -1941,7 +1941,7 @@
 
   (it "dependency chain: data -> fn -> result, all restored in order"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           ;; Store chain: rate -> calc -> answer
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
@@ -1982,7 +1982,7 @@
 
   (it "higher-order fn factory restores, derived closure is unavailable until recreated intentionally"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
@@ -2011,7 +2011,7 @@
 
   (it "system + user vars round-trip on restore: TURN_USER_REQUEST, user-thinking-state, SESSION_PREVIOUS_ANSWER"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "TURN_USER_REQUEST" :value "What is 2+2?" :code ";; SYSTEM var"}
@@ -2035,7 +2035,7 @@
 (defdescribe log-test
   (it "inserts into log table with FK scope"
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})]
+          cid (h/store-session! s {:channel :tui})]
       (vis/db-log! s {:level :info :event "test.event" :data "{\"k\":1}"
                       :session-soul-id cid})
       (expect (= 1 (raw-count s :log)))
@@ -2081,7 +2081,7 @@
 
   (it "archives live user symbols down to the post-answer target and bumps the bindings revision"
     (let [s       (h/store)
-          cid     (vis/db-store-session! s {:channel :tui})
+          cid     (h/store-session! s {:channel :tui})
           qid     (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           entries (mapv (fn [i]
                           [(symbol (format "v%02d" i)) i])
@@ -2107,7 +2107,7 @@
 
   (it "does not archive docstring-protected symbols automatically"
     (let [s       (h/store)
-          cid     (vis/db-store-session! s {:channel :tui})
+          cid     (h/store-session! s {:channel :tui})
           qid     (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           entries (into [['protected 0 "Durable state"]]
                     (mapv (fn [i]
@@ -2275,7 +2275,7 @@
     ;; entry must rebuild a working fn in the restored sandbox,
     ;; identical behavior to the bare `(defn …)` shape.
     (let [s   (h/store)
-          cid (vis/db-store-session! s {:channel :tui})
+          cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid
                                              :user-request "qualified"
                                              :status :done})]
@@ -2306,7 +2306,7 @@
     ;; rebuild SCI bindings DOES NOT create phantom v(N+1) rows. The
     ;; row counts before and after `restore-sandbox!` are identical.
     (let [store (h/store)
-          cid   (vis/db-store-session! store {:channel :tui})
+          cid   (h/store-session! store {:channel :tui})
           tid   (vis/db-store-session-turn! store
                   {:parent-session-id cid :user-request "x" :status :done})
           ctx1  (sci/init {:namespaces {'user {}}})]
@@ -2336,7 +2336,7 @@
     ;;   soul c -> 1 state row  (v0 = 12)            <- unchanged
     ;;   soul use-c -> 1 state row (v0 = fn ref)     <- unchanged
     (let [store (h/store)
-          cid   (vis/db-store-session! store {:channel :tui})
+          cid   (h/store-session! store {:channel :tui})
           tid   (vis/db-store-session-turn! store
                   {:parent-session-id cid :user-request "redef" :status :done})
           ctx1  (sci/init {:namespaces {'user {}}})]
@@ -2414,7 +2414,7 @@
 (defdescribe phase-4b-dependency-chain-end-to-end-test
   (it "5-deep var→var→var→defn→defn chain round-trips through real DB"
     (let [store (h/store)
-          cid   (vis/db-store-session! store {:channel :tui})
+          cid   (h/store-session! store {:channel :tui})
           tid   (vis/db-store-session-turn! store
                   {:parent-session-id cid :user-request "chain" :status :done})
           ctx1  (sci/init {:namespaces {'user {}}})]

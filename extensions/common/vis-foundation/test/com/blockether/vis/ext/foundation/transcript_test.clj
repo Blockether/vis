@@ -9,6 +9,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.transcript :as transcript]
+   [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- tool-result
@@ -35,7 +36,7 @@
    prose-in-code error block + a clean follow-up block.
    Returns the session id."
   [s]
-  (let [cid (vis/db-store-session! s {:channel :tui
+  (let [cid (h/store-session! s {:channel :tui
                                       :title "Transcript fixture"
                                       :provider :openai
                                       :model "gpt-4o"
@@ -134,7 +135,7 @@
     (let [s (vis/db-create-connection! :memory)]
       (try
         (doseq [_ (range 17)]
-          (vis/db-store-session! s {:channel :tui}))
+          (h/store-session! s {:channel :tui}))
         (let [ids     (mapv :id (vis/db-list-sessions s :tui))
               buckets (vals (group-by #(subs (str %) 0 1) ids))
               matches (first (filter #(> (count %) 1) buckets))
@@ -241,7 +242,7 @@
   (it "surfaces :returned-empty-code? as a typed boolean"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid (vis/db-store-session! s {:channel :tui :title "empty" :model "x"})
+        (let [cid (h/store-session! s {:channel :tui :title "empty" :model "x"})
               q   (vis/db-store-session-turn! s {:parent-session-id cid
                                                  :user-request "empty turn"
                                                  :status :running})
@@ -260,7 +261,7 @@
   (it "normalizes dialog, code blocks, and def-wrapped tool calls into transcript-level timelines"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid  (vis/db-store-session! s {:channel :tui :title "tool transcript" :model "x"})
+        (let [cid  (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
               turn (vis/db-store-session-turn! s {:parent-session-id cid
                                                   :user-request "run a tool"
                                                   :status :running})
@@ -293,7 +294,7 @@
   (it "dedupes one visible tool call when a tool result is both the block result and a var binding"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid   (vis/db-store-session! s {:channel :tui :title "tool transcript" :model "x"})
+        (let [cid   (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
               turn  (vis/db-store-session-turn! s {:parent-session-id cid
                                                    :user-request "run a tool"
                                                    :status :running})
@@ -409,7 +410,7 @@
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [huge (apply str (repeat 50000 "x"))
-              cid  (vis/db-store-session! s {:channel :tui :title "Huge"})
+              cid  (h/store-session! s {:channel :tui :title "Huge"})
               qid  (vis/db-store-session-turn! s {:parent-session-id cid
                                                   :user-request "huge"
                                                   :status :running})]
@@ -426,7 +427,7 @@
   (it "renders flat mixed-block code when render segments are not persisted"
     (let [s (vis/db-create-connection! :memory)]
       (try
-        (let [cid (vis/db-store-session! s {:channel :tui :title "Mixed"})
+        (let [cid (h/store-session! s {:channel :tui :title "Mixed"})
               qid (vis/db-store-session-turn! s {:parent-session-id cid
                                                  :user-request "mixed"
                                                  :status :running})]
