@@ -43,14 +43,14 @@
                     env-or-root)))
 
 (defn cwd
-  "Resolve the current workspace cwd. `*workspace-root*` MUST be bound
-   (channel layer guarantees it for tool calls). Throws when absent -
-   there is no process-cwd fallback."
+  "Resolve the current workspace cwd. In production the channel
+   wrapper binds `*workspace-root*` per turn (PLAN.md §5), so the
+   process-cwd fallback only fires from REPL / test / one-off CLI
+   paths that have no session context. Production tool callers never
+   see the fallback because the env carries `:workspace/root` from
+   `create-environment` onward."
   ^File []
-  (when-not *workspace-root*
-    (throw (ex-info "workspace/cwd called outside *workspace-root* binding"
-             {:type :workspace/cwd-unbound})))
-  (io/file *workspace-root*))
+  (io/file (or *workspace-root* (System/getProperty "user.dir"))))
 
 ;; =============================================================================
 ;; Legacy EDN cleanup

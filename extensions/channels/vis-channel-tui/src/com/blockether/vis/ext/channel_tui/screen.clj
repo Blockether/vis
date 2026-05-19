@@ -1729,7 +1729,14 @@
 
                                     (= :fork (:action choice))
                                     (if-let [current-id (current-session-id)]
-                                      (let [fork-state-id (try (vis/db-fork-session! (vis/db-info) current-id {})
+                                      (let [db (vis/db-info)
+                                            ;; PLAN.md decision 1 — each fork gets its own
+                                            ;; workspace pin (1:1). The simplest version
+                                            ;; mints a fresh trunk for the new state.
+                                            ws-id (try (:id (vis/workspace-ensure-trunk! db {}))
+                                                    (catch Throwable _ nil))
+                                            fork-state-id (try (vis/db-fork-session! db current-id
+                                                                 {:workspace-id ws-id})
                                                             (catch Throwable _ nil))]
                                         (if fork-state-id
                                           (if-let [session-result (chat/resume-session current-id)]

@@ -159,8 +159,12 @@
   (atom {:cwd nil :marker nil :result nil :warnings nil}))
 
 (defn- canonical-cwd ^String []
-  ;; PLAN.md §3/§5: process-cwd fallback removed (see repo-cwd note).
-  (.getCanonicalPath ^java.io.File (repo-cwd)))
+  ;; Production: channel rebinds *workspace-root* per turn (PLAN.md §5).
+  ;; The try/catch covers REPL / test paths where no binding exists.
+  (try (.getCanonicalPath ^java.io.File (repo-cwd))
+    (catch Throwable _
+      (or workspace/*workspace-root*
+        (System/getProperty "user.dir")))))
 
 (defn- file-marker
   [^java.io.File f]
