@@ -3784,7 +3784,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title]}]
+  [router {:keys [db session channel external-id title workspace-id]}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
@@ -3838,9 +3838,18 @@
         ;; db-info nil (SCI-only mode)  → skip; iteration loop never asserts
         ;;                                workspace pin when there's no DB
         active-workspace    (when db-info
-                              (if resolved-session-id
+                              (cond
+                                ;; Resume path: the existing session already pins a
+                                ;; workspace; honour it.
+                                resolved-session-id
                                 (some->> (persistance/db-latest-session-state-id db-info resolved-session-id)
                                   (persistance/db-workspace-for-session db-info))
+                                ;; New session, caller pre-spawned a workspace
+                                ;; (e.g. /workspace slash spawn-branch path).
+                                workspace-id
+                                (persistance/db-workspace-get db-info workspace-id)
+                                ;; New session, no pre-spawn: default trunk.
+                                :else
                                 (workspace/ensure-trunk! db-info {})))
         session-id          (or resolved-session-id
                               (persistance/db-store-session! db-info
@@ -4360,14 +4369,15 @@
         :blocked-ms           0}))))
 
 (defn- open-env!
-  [id {:keys [channel external-id title]}]
+  [id {:keys [channel external-id title workspace-id]}]
   (let [router (get-router)
         env    (create-environment router
                  (cond-> {:db (config/resolve-db-spec)}
                    id          (assoc :session id)
                    channel     (assoc :channel channel)
                    external-id (assoc :external-id external-id)
-                   title       (assoc :title title)))]
+                   title       (assoc :title title)
+                   workspace-id (assoc :workspace-id workspace-id)))]
     env))
 
 (defn- ensure-env!
@@ -4392,17 +4402,27 @@
   (persistance/db-shared-connection! (config/resolve-db-spec)))
 
 (defn create!
+  "Create a brand-new session.
+
+   Opts (all optional):
+     :title         display title
+     :external-id   channel-specific external id
+     :workspace-id  pre-spawned workspace to pin the new session to
+                    (1:1, PLAN.md decision 1). When omitted, a trunk
+                    workspace is auto-minted in create-environment."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id]}]
-   (let [env  (open-env! nil {:channel     channel
-                              :external-id (some-> external-id str)
-                              :title       title})
+  ([channel {:keys [title external-id workspace-id]}]
+   (let [env  (open-env! nil (cond-> {:channel     channel
+                                      :external-id (some-> external-id str)
+                                      :title       title}
+                               workspace-id (assoc :workspace-id workspace-id)))
          id   (str (:session-id env))
          _    (cache-env! id env)]
-     {:id          id
-      :channel     channel
-      :external-id (some-> external-id str)
-      :title       title})))
+     {:id           id
+      :channel      channel
+      :external-id  (some-> external-id str)
+      :title        title
+      :workspace-id (:workspace/id env)})))
 
 (defn by-id
   [id]
