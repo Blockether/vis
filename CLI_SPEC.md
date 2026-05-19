@@ -19,7 +19,7 @@ vis -p "explain this repo"   # print answer, exit
 vis "fix bug"                # one-shot agent, writes files, exits
 ```
 
-Current Vis exposes internal structure (`channels tui`, `conversations`, `run --persist`). Proposed CLI exposes user intent first.
+Current Vis exposes internal structure (`channels tui`, `sessions`, `run --persist`). Proposed CLI exposes user intent first.
 
 ### 1.2 Default interactive, explicit automation
 
@@ -265,8 +265,8 @@ Use: vis -s <id>   vis sessions fork <id>   vis sessions search <query>
 Current:
 
 ```bash
-vis channels tui --conversation-id 42d580bb
-vis conversations --fork 42d580bb
+vis channels tui --session-id 42d580bb
+vis sessions --fork 42d580bb
 ```
 
 Proposed:
@@ -478,7 +478,7 @@ Command Palette
   Providers: limits
   Session: resume                     Ctrl+G
   Session: fork
-  Conversation: copy as Markdown
+  Session: copy as Markdown
   Settings: open
 ```
 
@@ -710,11 +710,11 @@ Rules:
 | no root prompt | `vis "prompt"` | removes ceremony |
 | no `-p` | `vis -p "prompt"` | expected print mode |
 | `vis channels tui` | `vis tui` / `vis` | hides channel plumbing |
-| `vis channels tui --conversation-id ID` | `vis -s ID` | session first-class |
+| `vis channels tui --session-id ID` | `vis -s ID` | session first-class |
 | `vis channels tui --resume` | `vis -c` / `vis resume` | expected resume UX |
-| `vis conversations` | `vis sessions` | user-facing term |
-| `vis conversations search Q` | `vis sessions search Q` | session namespace |
-| `vis conversations --fork ID` | `vis sessions fork ID` / `vis fork ID` | direct action |
+| `vis sessions` | `vis sessions` | user-facing term |
+| `vis sessions search Q` | `vis sessions search Q` | session namespace |
+| `vis sessions --fork ID` | `vis sessions fork ID` / `vis fork ID` | direct action |
 | `vis providers auth P` | `vis login P` | common auth verb |
 | `vis providers logout P` | `vis logout P` | common auth verb |
 | no model command | `vis models`, `vis model` | model UX parity |
@@ -735,7 +735,7 @@ Rules:
 ### Phase 2: session simplification
 
 - Add `vis sessions` namespace.
-- Keep `vis conversations` as compatibility alias.
+- Keep `vis sessions` as compatibility alias.
 - Add `vis resume`, `vis fork` shortcuts.
 - Make session picker available from TUI and CLI.
 
@@ -773,10 +773,10 @@ Keep aliases:
 
 ```bash
 vis channels tui
-vis channels tui --conversation-id ID
-vis conversations
-vis conversations search Q
-vis conversations --fork ID
+vis channels tui --session-id ID
+vis sessions
+vis sessions search Q
+vis sessions --fork ID
 vis providers auth P
 vis providers logout P
 ```
@@ -784,7 +784,7 @@ vis providers logout P
 Print deprecation hints only in TTY:
 
 ```text
-Hint: `vis channels tui --conversation-id ID` can be shortened to `vis -s ID`.
+Hint: `vis channels tui --session-id ID` can be shortened to `vis -s ID`.
 ```
 
 No deprecation hints in JSON/EDN/pipe output.
@@ -796,7 +796,7 @@ No deprecation hints in JSON/EDN/pipe output.
 Current Vis CLI is accurate to architecture:
 
 - channels
-- conversations
+- sessions
 - extensions
 - run
 - providers

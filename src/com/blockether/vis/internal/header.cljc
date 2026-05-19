@@ -31,7 +31,7 @@
 
 (def right-slot-ratio
   "Fraction of the total width given to the RIGHT slot (channel status +
-   conversation-id copy affordance)."
+   session-id copy affordance)."
   1/5)
 
 (defn slot-widths
@@ -104,35 +104,35 @@
   "…")
 
 (def copy-icon
-  "Glyph used by the right-slot `copy conversation id` affordance."
+  "Glyph used by the right-slot `copy session id` affordance."
   "⧉")
 
 ;;; ── Defaults ───────────────────────────────────────────────────────────
 
-(def untitled-conversation-label
-  "Default label every channel shows for a tab whose conversation has
+(def untitled-session-label
+  "Default label every channel shows for a tab whose session has
    no title yet. Renamed by the state layer once a title is generated."
-  "Untitled conversation")
+  "Untitled session")
 
 (def id-display-chars
-  "How many leading characters of the conversation UUID every channel
-   shows next to the copy affordance. Matches `vis conversations`
+  "How many leading characters of the session UUID every channel
+   shows next to the copy affordance. Matches `vis sessions`
    short form."
   8)
 
 ;;; ── Pure helpers ───────────────────────────────────────────────────────
 
 (defn title-or-placeholder
-  "Visible label for a conversation: its title if non-blank, otherwise
-   `untitled-conversation-label`. Used by both the tab-label sync in
+  "Visible label for a session: its title if non-blank, otherwise
+   `untitled-session-label`. Used by both the tab-label sync in
    state and the synthesised fallback tab in channels."
   [title]
   (if (and (string? title) (not (str/blank? title)))
     title
-    untitled-conversation-label))
+    untitled-session-label))
 
 (defn short-id
-  "Shorten a conversation UUID to the shared display length. Returns
+  "Shorten a session UUID to the shared display length. Returns
    nil for blank input so channels can use truthy guards."
   [id]
   (let [id (some-> id str)]

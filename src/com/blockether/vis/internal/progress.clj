@@ -45,7 +45,7 @@
                                               on every chunk
 
    Returns `{:on-chunk fn :get-timeline fn}`. Pass the `:on-chunk` fn
-   under `:hooks {:on-chunk ...}` of `conversations/send!`. Each
+   under `:hooks {:on-chunk ...}` of `sessions/send!`. Each
    timeline entry has the shape:
 
      {:iteration N
@@ -193,12 +193,12 @@
       (boolean (some #(= :code (:kind %)) segments))
       (let [code (str/trim (str (:code chunk)))]
         (and (not (str/blank? code))
-          (not (or (str/starts-with? code "(set-conversation-title!")
+          (not (or (str/starts-with? code "(set-session-title!")
                  (str/starts-with? code "(done"))))))))
 
 (defn- structurally-silent-chunk?
   "True for host-bookkeeping forms that should never appear in user traces:
-   conversation-title updates and answer-emission forms. They may still execute
+   session-title updates and answer-emission forms. They may still execute
    and affect channel chrome/final answer, but the code/result row itself is
    noise in both TUI and CLI trace views. Mixed blocks with visible code
    segments are not silent; channels consume :render-segments to hide only the
@@ -210,11 +210,11 @@
       (or (:vis/structurally-silent? chunk)
         (str/starts-with? trimmed "(done")
         (and (not (visible-code-segments? chunk))
-          (or (str/includes? code "(set-conversation-title!")
+          (or (str/includes? code "(set-session-title!")
             (str/includes? code "(done")))
         (and (= :vis/silent (:result chunk))
           (not (seq (:render-segments chunk)))
-          (or (str/includes? code "(set-conversation-title!")
+          (or (str/includes? code "(set-session-title!")
             (str/includes? code "(done")))))))
 
 (defn- write-form-start-slot

@@ -329,7 +329,7 @@
                                                  ;; ACTUAL runtime class, so `(catch Exception e (.getMessage e))`
                                                  ;; threw "Method getMessage on class java.lang.NullPointerException
                                                  ;; not allowed!" the moment the thrown instance was an NPE / IAE /
-                                                 ;; ISE / etc. Conversation d8aff512-d60d-42b6-a009-041f1bec3891
+                                                 ;; ISE / etc. Session d8aff512-d60d-42b6-a009-041f1bec3891
                                                  ;; tripped this on iter where the model wrote `(catch Exception e
                                                  ;; {:error (.getMessage e)})` and the wrapped value was an NPE.
                                                  ;; Allowing Throwable + the common subclasses makes `.getMessage`
@@ -559,8 +559,8 @@
 
    Returns a vec of {:name :restored-via (:data | :eval | :unavailable | :skip)
                      :success? boolean ...}."
-  [sci-ctx db-info conversation-id]
-  (let [entries (persistance/db-restore-blocks db-info conversation-id)]
+  [sci-ctx db-info session-id]
+  (let [entries (persistance/db-restore-blocks db-info session-id)]
     (mapv (fn [{:keys [name expr result]}]
             (let [sym (symbol name)]
               (try

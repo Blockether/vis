@@ -1545,7 +1545,7 @@
 
    User content rows get a subtle blue-gray background block
    (`user-bubble-bg`) to visually separate user input from the rest of
-   the conversation. Assistant content rows render on terminal bg -
+   the session. Assistant content rows render on terminal bg -
    the only fills come from inline marker zones (code blocks,
    answer-bg, etc.).
 
@@ -1564,6 +1564,7 @@
    & [{:keys [viewport-top viewport-h]
        :or   {viewport-top 0 viewport-h 0}}]]
   (let [user?     (= role :user)
+        queued?   (= :queued status)
         warning?  (warning-message? text)
         ;; Cancelled turns are status messages, not real answers -
         ;; render the entire bubble dim (gray + italic), drop the
@@ -1574,7 +1575,10 @@
         ;; per-message flow is enough; extra rows after Vis->You made
         ;; resumed chats look like they had a double top margin.
         top-sep-h 0
-        label     (if user? "You" "Vis")
+        label     (cond
+                    queued? "Queued"
+                    user?   "You"
+                    :else   "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
         ;; message column. Applies to plain text AND to every
@@ -1611,6 +1615,7 @@
         ;; assistant messages.
         bg-color  (cond
                     warning?   t/warning-bg
+                    queued?    t/terminal-bg
                     ;; User messages fill their content rows with a
                     ;; very pale warm-yellow block so "you said this"
                     ;; reads as its own zone, distinct from the white
@@ -1619,11 +1624,13 @@
                     :else      t/terminal-bg)
         fg-color  (cond
                     cancelled? t/cancelled-fg
+                    queued?    t/dialog-hint
                     warning?   t/warning-fg
                     user?      t/user-bubble-fg
                     :else      t/ai-bubble-fg)
         role-fg   (cond
                     cancelled? t/dialog-hint
+                    queued?    t/dialog-hint
                     user?      t/user-role-fg
                     :else      t/ai-role-fg)
         time-str   (vis/format-date timestamp)
@@ -1705,7 +1712,7 @@
       ;;
       ;; User messages: fill the breathing row above content, the
       ;; content rows, AND one breathing row below the content.
-      (when user?
+      (when (and user? (not queued?))
         (p/set-bg! g bg-color)
         (p/fill-rect! g bx (- btop top-pad) bubble-w (+ (max 1 bubble-h) top-pad bottom-pad)))
 
@@ -1728,7 +1735,7 @@
             ;; Restrict iteration to rows that actually intersect the
             ;; viewport. Pre-virtualisation we walked all `n` lines
             ;; on every redraw and let Lanterna clip OS-side; for an
-            ;; 11k-row trace bubble (conv 7b18414d) that pegged the
+            ;; 11k-row trace bubble (session 7b18414d) that pegged the
             ;; render thread at ~110 ms / frame even with a fully
             ;; warm cache. Now we only touch the rows whose screen
             ;; offset is inside [0, viewport-h).
@@ -2017,7 +2024,7 @@
                         (cr/register!
                           {:bounds {:row abs-row :col fbx :width iw}
                            :kind :toggle-details
-                           :conversation-id (:conversation-id meta)
+                           :session-id (:session-id meta)
                            :node-id (:node-id meta)
                            :collapsed? (:collapsed? meta)})
 
@@ -2162,7 +2169,7 @@
                         (cr/register!
                           {:bounds {:row abs-row :col fbx :width iw}
                            :kind :toggle-details
-                           :conversation-id (:conversation-id meta)
+                           :session-id (:session-id meta)
                            :node-id (:node-id meta)
                            :collapsed? (:collapsed? meta)})
 
@@ -2264,8 +2271,8 @@
                         (p/set-bg! g line-bg)
                         (p/fill-rect! g fbx y iw 1))
                       (p/set-colors! g line-fg line-bg)
-                      (if cancelled?
-                  ;; Cancelled / system status messages: render as a
+                      (if (or cancelled? queued?)
+                  ;; Cancelled / queued status messages: render as a
                   ;; muted italic block. Inline markdown spans are
                   ;; intentionally NOT honoured here - a system note
                   ;; saying "Cancelled by user" should stay flat,
@@ -2483,13 +2490,13 @@
     (subs s 0 (min 8 (count s)))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-expanded?
-  ([detail-expansions conversation-id node-id]
-   (detail-expanded? detail-expansions conversation-id node-id true))
-  ([detail-expansions conversation-id node-id default-expanded?]
+  ([detail-expansions session-id node-id]
+   (detail-expanded? detail-expansions session-id node-id true))
+  ([detail-expansions session-id node-id default-expanded?]
    (boolean
      (or (:vis.channel-tui/expand-all-details? detail-expansions)
        (get detail-expansions
-         [(str conversation-id) (str node-id)]
+         [(str session-id) (str node-id)]
          default-expanded?)))))
 
 (defn- hidden-size-hint
@@ -2547,10 +2554,10 @@
         (str left (repeat-str \space pad-w) suffix)))))
 
 (defn- detail-node-base-id
-  ^String [{:keys [conversation-turn-id iteration-number block-number section kind]}]
+  ^String [{:keys [session-turn-id iteration-number block-number section kind]}]
   (str
     (or (some-> section name) "answer")
-    (when conversation-turn-id (str ":t" (short-id-fragment conversation-turn-id)))
+    (when session-turn-id (str ":t" (short-id-fragment session-turn-id)))
     (when iteration-number (str ":i" iteration-number))
     (when block-number (str ":b" block-number))
     (when kind (str ":" (name kind)))))
@@ -2564,9 +2571,9 @@
 (defn- relevant-detail-expansions-key
   "Stable cache key for only the disclosure nodes this Markdown projection
    can render. A click in one old answer must not bust cached projections for
-   every other visible answer. Scope by conversation + node-id base."
+   every other visible answer. Scope by session + node-id base."
   [opts]
-  (let [conversation-id (some-> (:conversation-id opts) str)
+  (let [session-id (some-> (:session-id opts) str)
         base            (detail-node-base-id opts)
         prefix          (str base ":")]
     (->> (:detail-expansions opts)
@@ -2574,7 +2581,7 @@
               (when (vector? k)
                 (let [[cid node-id] k
                       node-id (str node-id)]
-                  (when (and (= conversation-id (str cid))
+                  (when (and (= session-id (str cid))
                           (or (= base node-id)
                             (str/starts-with? node-id prefix)))
                     [node-id expanded?])))))
@@ -2586,15 +2593,15 @@
    turn. Used by the outer trace+answer projection, which may contain thinking,
    iteration, tool/result, and final-answer disclosures."
   [opts]
-  (let [conversation-id (some-> (:conversation-id opts) str)
-        turn-fragment   (some-> (:conversation-turn-id opts) short-id-fragment)
+  (let [session-id (some-> (:session-id opts) str)
+        turn-fragment   (some-> (:session-turn-id opts) short-id-fragment)
         turn-token      (when turn-fragment (str ":t" turn-fragment))]
     (->> (:detail-expansions opts)
       (keep (fn [[k expanded?]]
               (when (vector? k)
                 (let [[cid node-id] k
                       node-id (str node-id)]
-                  (when (and (= conversation-id (str cid))
+                  (when (and (= session-id (str cid))
                           (or (nil? turn-token)
                             (str/includes? node-id turn-token)))
                     [node-id expanded?])))))
@@ -2625,7 +2632,7 @@
   (true? (:self-describing? detail)))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
-  [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id color-role]
+  [{:keys [marker max-w summary hidden-entries collapsed? session-id node-id color-role]
     :as detail-ctx}]
   (let [suffix    (detail-id-suffix detail-ctx)
         hint      (when collapsed? (str " / " (hidden-size-hint hidden-entries)))
@@ -2642,7 +2649,7 @@
                                (vis/text->ir visible))
                     (max 1 max-w))
         meta      {:kind :toggle-details
-                   :conversation-id (str conversation-id)
+                   :session-id (str session-id)
                    :node-id (str node-id)
                    :collapsed? collapsed?
                    :color-role color-role}]
@@ -2745,7 +2752,7 @@
     str/trim))
 
 (defn- maybe-collapse-block
-  [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
+  [{:keys [session-id detail-expansions session-turn-id iteration-number
            block-number kind summary summary-marker body-marker lines max-w color-role
            raw-text]}]
   (let [body-value (or raw-text (str/join "\n" lines))
@@ -2755,11 +2762,11 @@
                   (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))
         size-lines (or lines (mapv :line entries))
         size-text (channel-body-plain-text body-value)]
-    (if (or (nil? conversation-id)
+    (if (or (nil? session-id)
           (not (auto-collapse-needed? size-lines size-text)))
       entries
-      (let [detail-ctx {:conversation-id conversation-id
-                        :conversation-turn-id conversation-turn-id
+      (let [detail-ctx {:session-id session-id
+                        :session-turn-id session-turn-id
                         :iteration-number iteration-number
                         :block-number block-number
                         :details-path nil
@@ -2767,7 +2774,7 @@
                         :kind kind
                         :color-role color-role}
             node-id    (detail-node-id detail-ctx)
-            collapsed? (not (detail-expanded? detail-expansions conversation-id node-id false))]
+            collapsed? (not (detail-expanded? detail-expansions session-id node-id false))]
         (vec (concat
                (detail-summary-entries (assoc detail-ctx
                                          :marker summary-marker
@@ -2788,20 +2795,20 @@
    persisted/finalized, the reasoning becomes compact system context:
    visible by count, expandable on demand, but no longer glued above the
    final answer as ordinary assistant prose."
-  [{:keys [entries conversation-id detail-expansions conversation-turn-id iteration-number max-w]}]
+  [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
   (let [entries (vec entries)]
-    (if (or (nil? conversation-id)
+    (if (or (nil? session-id)
           (empty? entries)
           (<= (count entries) reasoning-auto-collapse-line-threshold))
       entries
-      (let [detail-ctx {:conversation-id conversation-id
-                        :conversation-turn-id conversation-turn-id
+      (let [detail-ctx {:session-id session-id
+                        :session-turn-id session-turn-id
                         :iteration-number iteration-number
                         :details-path nil
                         :section :thinking
                         :kind :reasoning}
             node-id    (detail-node-id detail-ctx)
-            expanded?  (detail-expanded? detail-expansions conversation-id node-id false)
+            expanded?  (detail-expanded? detail-expansions session-id node-id false)
             summary    (detail-summary-entries
                          (assoc detail-ctx
                            :marker th-md-summary-marker
@@ -2841,14 +2848,14 @@
    bodies first. `wrap-text` is intentionally display-width-aware and
    expensive on long single-line data dumps; when the detail row is
    collapsed by default, the first frame only needs the summary hint."
-  [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
+  [{:keys [session-id detail-expansions session-turn-id iteration-number
            block-number kind summary summary-marker raw-text max-w color-role]
     :as opts}]
   (let [raw-value (if (channel-ir? raw-text) raw-text (str/trim (str raw-text)))
         raw-size-text (channel-body-plain-text raw-value)]
     (when-not (channel-body-blank? raw-value)
-      (let [detail-ctx {:conversation-id conversation-id
-                        :conversation-turn-id conversation-turn-id
+      (let [detail-ctx {:session-id session-id
+                        :session-turn-id session-turn-id
                         :iteration-number iteration-number
                         :block-number block-number
                         :details-path nil
@@ -2856,8 +2863,8 @@
                         :kind kind
                         :color-role color-role}
             node-id    (detail-node-id detail-ctx)
-            collapsed? (not (detail-expanded? detail-expansions conversation-id node-id false))]
-        (if (and conversation-id
+            collapsed? (not (detail-expanded? detail-expansions session-id node-id false))]
+        (if (and session-id
               collapsed?
               (> (count raw-size-text) auto-collapse-char-threshold))
           (detail-summary-entries (assoc detail-ctx
@@ -2914,7 +2921,7 @@
 ;; live as `(str/replace s #"..." (fn [m] ...))` inside `markdown->inline`.
 ;; That allocated a Pattern call, a Matcher, and a per-match callback
 ;; closure on every line of every assistant bubble on every redraw,
-;; which dominated cold-open cost on long conversations (multi-MB of
+;; which dominated cold-open cost on long sessions (multi-MB of
 ;; trace lines, dozens of `[path](path)` links per answer).
 ;;
 (defn- collapse-repeated-error-runs
@@ -2985,8 +2992,8 @@
     (mapcat (fn [{:keys [kind value]}]
               (when (= :title kind)
                 (let [title (if (str/blank? (str value))
-                              "conversation title updated"
-                              (str "conversation title: " value))]
+                              "session title updated"
+                              (str "session title: " value))]
                   (map #(line-entry (str iteration-hdr-marker %))
                     (wrap-text title fill-w)))))
       segments)))
@@ -2994,7 +3001,7 @@
 (defn- format-iteration-entry-entries
   [{:keys [thinking code comments render-segments results result-kinds result-details durations successes started-at-ms provider-fallbacks error repeat-count]}
    code-width iteration-number
-   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms live-preview?]
+   & [{:keys [show-header? session-id detail-expansions session-turn-id now-ms live-preview?]
        :or   {show-header? false live-preview? false}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
@@ -3024,8 +3031,8 @@
                                 (let [ir (vis/text->ir thinking-text)]
                                   (or (seq (ir-tui/ir->entries ir fill-w
                                              {:mode                 :thinking
-                                              :conversation-id      conversation-id
-                                              :conversation-turn-id conversation-turn-id
+                                              :session-id      session-id
+                                              :session-turn-id session-turn-id
                                               :detail-expansions   detail-expansions
                                               :iteration-number    iteration-number
                                               :section             :thinking}))
@@ -3045,9 +3052,9 @@
                                       entries
                                       (maybe-collapse-thinking-entries
                                         {:entries              entries
-                                         :conversation-id      conversation-id
+                                         :session-id      session-id
                                          :detail-expansions   detail-expansions
-                                         :conversation-turn-id conversation-turn-id
+                                         :session-turn-id session-turn-id
                                          :iteration-number    iteration-number
                                          :max-w               fill-w}))]
                 (vec (concat [(line-entry "")
@@ -3152,8 +3159,8 @@
                 code-text     (str/trim (or (code-source-from-render-segments segments form) ""))
                 formatted     (format-clojure-ansi code-text fill-w)
                 code-lines    (str/split-lines formatted)
-                code-node-id  (when conversation-id
-                                (detail-node-id {:conversation-turn-id conversation-turn-id
+                code-node-id  (when session-id
+                                (detail-node-id {:session-turn-id session-turn-id
                                                  :iteration-number    iteration-number
                                                  :block-number        block-number
                                                  :section             :iteration
@@ -3178,9 +3185,9 @@
                 result-lines  (when (and result-text (not (str/blank? (str result-text))))
                                 (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
                                       detail-entries (maybe-collapse-raw-text-block
-                                                       {:conversation-id      conversation-id
+                                                       {:session-id      session-id
                                                         :detail-expansions   detail-expansions
-                                                        :conversation-turn-id conversation-turn-id
+                                                        :session-turn-id session-turn-id
                                                         :iteration-number    iteration-number
                                                         :block-number        block-number
                                                         :kind                :result
@@ -3307,8 +3314,8 @@
    assistant bubbles. Live progress and final/cancel rendering must call this
    instead of formatting iterations themselves. The only caller-specific UI is
    the trailer after these entries (spinner, final answer, or cancelled note)."
-  [{:keys [iterations content-w settings now-ms viewport-rows conversation-id
-           conversation-turn-id detail-expansions live? suppress-trace?]
+  [{:keys [iterations content-w settings now-ms viewport-rows session-id
+           session-turn-id detail-expansions live? suppress-trace?]
     :or   {live? false suppress-trace? false}}]
   (let [raw-iterations (or iterations [])
         iterations     (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
@@ -3335,8 +3342,8 @@
                                (nil? dynamic-limit) static-limit
                                :else                (min static-limit (long dynamic-limit))))
         line-entry     (fn [line] {:line line :meta nil})
-        history-ctx    {:conversation-id conversation-id
-                        :conversation-turn-id conversation-turn-id
+        history-ctx    {:session-id session-id
+                        :session-turn-id session-turn-id
                         :details-path nil
                         :section :progress
                         :kind :history}
@@ -3344,8 +3351,8 @@
         grouped-iterations (collapse-repeated-error-runs iterations)
         history-needed? (and live? (> (count grouped-iterations) live-limit))
         history-expanded? (and history-needed?
-                            conversation-id
-                            (detail-expanded? detail-expansions conversation-id history-node-id false))
+                            session-id
+                            (detail-expanded? detail-expansions session-id history-node-id false))
         hidden-count   (if (and history-needed? (not history-expanded?))
                          (- (count grouped-iterations) live-limit)
                          0)
@@ -3360,9 +3367,9 @@
                                 suffix     (detail-id-suffix history-ctx)
                                 left       (str (if collapsed? "▸ " "▾ ") summary-text)
                                 line       (format-detail-summary-line left suffix content-w)
-                                meta       (when conversation-id
+                                meta       (when session-id
                                              {:kind :toggle-details
-                                              :conversation-id (str conversation-id)
+                                              :session-id (str session-id)
                                               :node-id (str history-node-id)
                                               :collapsed? collapsed?})]
                             [(cond-> (line-entry (str md-summary-marker line))
@@ -3375,8 +3382,8 @@
                                iter-num (inc (long idx))
                                detail-scope-opts {:section :iteration
                                                   :iteration-number iter-num
-                                                  :conversation-id conversation-id
-                                                  :conversation-turn-id conversation-turn-id
+                                                  :session-id session-id
+                                                  :session-turn-id session-turn-id
                                                   :detail-expansions detail-expansions}
                                k [::iter-entries
                                   (if live? :live :final)
@@ -3386,14 +3393,14 @@
                                   show-iteration-headers?
                                   (boolean show-thinking?)
                                   (boolean show-silent?)
-                                  conversation-id
-                                  conversation-turn-id
+                                  session-id
+                                  session-turn-id
                                   (relevant-detail-expansions-key detail-scope-opts)
                                   sec-bucket]
                                inner-opts {:show-header?         show-iteration-headers?
                                            :now-ms               (when running? now-ms)
-                                           :conversation-id      conversation-id
-                                           :conversation-turn-id conversation-turn-id
+                                           :session-id      session-id
+                                           :session-turn-id session-turn-id
                                            :detail-expansions   detail-expansions
                                            :live-preview?        live?}
                                render!    #(format-iteration-entry-entries
@@ -3404,6 +3411,27 @@
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
       (vec (concat (or history-summary [])
              (mapcat iter-entry-fn visible-iterations))))))
+
+(defn- queued-preview
+  [text]
+  (let [s (-> (str (or text ""))
+            (str/replace #"\s+" " ")
+            str/trim)]
+    (if (> (count s) 240)
+      (str (subs s 0 240) "…")
+      s)))
+
+(defn- queued-progress-entries
+  [pending-sends content-w]
+  (let [queued (vec (or pending-sends []))]
+    (when (seq queued)
+      (let [line-entry (fn [line] {:line line :meta nil})
+            preview-lines
+            (mapcat (fn [entry]
+                      (map #(str thinking-marker %)
+                        (wrap-text (queued-preview (:text entry)) content-w)))
+              queued)]
+        (mapv line-entry (concat [""] preview-lines))))))
 
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
@@ -3433,16 +3461,16 @@
                        (drives the spinner frame); defaults to current ms
      :turn-start-ms - wall-clock start, used for elapsed time
      :cancelling?    - true once Esc was pressed
-     :conversation-id - current conversation id; enables live detail rows
-     :conversation-turn-id - optional turn id, when known
-     :detail-expansions - detail expansion state keyed by conversation/node"
+     :session-id - current session id; enables live detail rows
+     :session-turn-id - optional turn id, when known
+     :detail-expansions - detail expansion state keyed by session/node"
   ([progress bubble-w settings] (progress->lines-data progress bubble-w settings nil))
   ([progress bubble-w settings extra]
    (let [raw-iterations   (or (:iterations progress) [])
          iterations       (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
          content-w        (max 10 (- bubble-w 4))
-         {:keys [now-ms turn-start-ms cancelling? conversation-id
-                 conversation-turn-id detail-expansions viewport-rows]} extra
+         {:keys [now-ms turn-start-ms cancelling? session-id
+                 session-turn-id detail-expansions viewport-rows pending-sends]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
          elapsed-ms       (when turn-start-ms
                             (max 0 (- now-ms (long turn-start-ms))))
@@ -3457,10 +3485,11 @@
                              :settings settings
                              :now-ms now-ms
                              :viewport-rows viewport-rows
-                             :conversation-id conversation-id
-                             :conversation-turn-id conversation-turn-id
+                             :session-id session-id
+                             :session-turn-id session-turn-id
                              :detail-expansions detail-expansions
                              :live? true})
+         queued-entries   (queued-progress-entries pending-sends content-w)
          ;; Top margin invariant: the spinner row always has ONE blank
          ;; line above it inside the bubble, regardless of whether any
          ;; iterations have been recorded yet. Without this the iter-0
@@ -3471,10 +3500,11 @@
          ;; iteration lands. Keeping the blank in both branches makes
          ;; the bubble height transition smooth and the spinner
          ;; vertically anchored.
-         entries          (if (seq trace-entries)
+         base-entries     (if (seq trace-entries)
                             (conj (conj trace-entries (line-entry ""))
                               (line-entry spinner-line))
-                            [(line-entry "") (line-entry spinner-line)])]
+                            [(line-entry "") (line-entry spinner-line)])
+         entries          (vec (concat base-entries queued-entries))]
      (entries->payload entries))))
 
 (defn progress->text
@@ -3522,16 +3552,16 @@
                                   {:iterations trace
                                    :content-w content-w
                                    :settings settings
-                                   :conversation-id (:conversation-id opts)
-                                   :conversation-turn-id (:conversation-turn-id opts)
+                                   :session-id (:session-id opts)
+                                   :session-turn-id (:session-turn-id opts)
                                    :detail-expansions (:detail-expansions opts)
                                    :suppress-trace? suppress-trace?})
         ;; IR walker emits painter-ready entries directly. No
         ;; markdown round-trip, no `markdown->entries` rebuild.
         ans-entries             (if (ir-non-empty? answer)
                                   (vec (ir-tui/ir->entries answer (max 1 (- fill-w 2))
-                                         {:conversation-id      (:conversation-id opts)
-                                          :conversation-turn-id (:conversation-turn-id opts)
+                                         {:session-id      (:session-id opts)
+                                          :session-turn-id (:session-turn-id opts)
                                           :detail-expansions   (:detail-expansions opts)
                                           :section             :answer}))
                                   [])
@@ -3595,7 +3625,7 @@
              (boolean (get settings :show-silent false))
              confidence
              (boolean cancelled?)
-             (:conversation-turn-id opts)
+             (:session-turn-id opts)
              (turn-detail-expansions-key opts)
              ;; tail-lines opt switches to the back-walking renderer;
              ;; must be in the cache key so a tail-pinned bubble's
@@ -3652,7 +3682,7 @@
    (cached* [::fam-data
              (System/identityHashCode answer)
              (long bubble-w)
-             (:conversation-turn-id opts)
+             (:session-turn-id opts)
              (relevant-detail-expansions-key opts)
              ;; see comment in format-answer-with-thinking-data
              (:tail-lines opts)]
@@ -3730,12 +3760,12 @@
    `:visible` (the messages whose interval intersects the viewport),
    so off-screen bubbles never trigger `format-answer-with-thinking`
    / `wrap-text` / `markdown->lines`. That's the single largest
-   user-visible win for cold-opening long conversations: cold paint
+   user-visible win for cold-opening long sessions: cold paint
    drops from O(N x trace-size) to O(visible x trace-size).
 
    No outer box, no title bar - just a vertical column of messages with
    generous side gutters. The right gutter doubles as scrollbar space
-   when the conversation overflows. The conversation title (if any) is
+   when the session overflows. The session title (if any) is
    surfaced via the input-box bottom status line, not here."
   [^TextGraphics g layout box-top box-bottom cols]
   (let [text-top   (+ box-top MESSAGE_MARGIN_TOP)

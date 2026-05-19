@@ -27,7 +27,7 @@
                   (tui/channel-main ["--resume"])))
         (expect (= ['com.blockether.vis.ext.channel-tui.screen/channel-main] @calls)))))
 
-  (it "loads the screen ns when --conversation-id resolves"
+  (it "loads the screen ns when --session-id resolves"
     (let [resolve-calls (atom [])
           init-calls    (atom 0)
           by-id-calls   (atom [])
@@ -42,15 +42,15 @@
                     vis/by-channel (fn [_] [])
                     com.blockether.vis.ext.channel-tui.core/exit-not-found!
                     (fn [cid] (swap! exit-calls conj cid))]
-        (expect (= {:screen-args ["--conversation-id" "abcd1234"]}
-                  (tui/channel-main ["--conversation-id" "abcd1234"]))))
+        (expect (= {:screen-args ["--session-id" "abcd1234"]}
+                  (tui/channel-main ["--session-id" "abcd1234"]))))
       (expect (= 1 @init-calls))
       (expect (= ["abcd1234"] @by-id-calls))
       (expect (= [] @exit-calls))
       (expect (= ['com.blockether.vis.ext.channel-tui.screen/channel-main]
                 @resolve-calls))))
 
-  (it "skips loading the screen ns when --conversation-id misses"
+  (it "skips loading the screen ns when --session-id misses"
     (let [resolve-calls  (atom [])
           init-calls     (atom 0)
           shutdown-calls (atom 0)
@@ -63,7 +63,7 @@
                     vis/by-channel (fn [_] [])
                     com.blockether.vis.ext.channel-tui.core/exit-not-found!
                     (fn [cid] (swap! exit-calls conj cid))]
-        (tui/channel-main ["--conversation-id" "deadbeef"]))
+        (tui/channel-main ["--session-id" "deadbeef"]))
       ;; The screen channel-main MUST NOT have been required on the miss path.
       (expect (= [] @resolve-calls))
       (expect (= 1 @init-calls))

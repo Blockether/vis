@@ -1,0 +1,3 @@
+[submodule "tools/bridge"]
+	path = tools/bridge
+	url = https://github.com/enajski/bridge

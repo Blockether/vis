@@ -426,34 +426,27 @@
   "Context-sensitive helper strip below the input box. Kept out of
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
-  [{:keys [loading? cancelling? input pending-sends]} _now-ms]
-  (let [queued-count (count (or pending-sends []))
-        queued-seg   (when (pos? queued-count)
-                       (subtitle-segment (str "Queued: " queued-count) 0))]
-    (cond
-      cancelling?
-      (cond-> [(subtitle-segment "Cancelling... please wait" 1)]
-        queued-seg (conj queued-seg))
+  [{:keys [loading? cancelling? input]} _now-ms]
+  (cond
+    cancelling?
+    [(subtitle-segment "Cancelling... please wait" 1)]
 
-      loading?
-      (cond-> [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
-        queued-seg (conj queued-seg))
+    loading?
+    [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
 
-      (input-empty? input)
-      (cond-> [(subtitle-segment "Alt+Enter newline" 2)
-               (subtitle-segment "↑↓ history" 2)
-               (subtitle-segment "Shift+Tab tabs" 3)
-               (subtitle-segment "Ctrl+B voice" 1)
-               (subtitle-segment "Ctrl+G conversations" 1)
-               (subtitle-segment "Ctrl+K menu" 1)]
-        queued-seg (conj queued-seg))
+    (input-empty? input)
+    [(subtitle-segment "Alt+Enter newline" 2)
+     (subtitle-segment "↑↓ history" 2)
+     (subtitle-segment "Shift+Tab tabs" 3)
+     (subtitle-segment "Ctrl+B voice" 1)
+     (subtitle-segment "Ctrl+G sessions" 1)
+     (subtitle-segment "Ctrl+K menu" 1)]
 
-      :else
-      (cond-> [(subtitle-segment "Shift+Tab tabs" 3)
-               (subtitle-segment "Ctrl+B voice" 1)
-               (subtitle-segment "Ctrl+G conversations" 1)
-               (subtitle-segment "Ctrl+K menu" 1)]
-        queued-seg (conj queued-seg)))))
+    :else
+    [(subtitle-segment "Shift+Tab tabs" 3)
+     (subtitle-segment "Ctrl+B voice" 1)
+     (subtitle-segment "Ctrl+G sessions" 1)
+     (subtitle-segment "Ctrl+K menu" 1)]))
 
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
@@ -509,7 +502,7 @@
    must NOT route through `lines->sentinel-strings`: that prepends
    a block-marker codepoint (e.g. `MARKER_ANSWER_TXT` = `\u206E`)
    which would land in a real cell as a stray 1-column blank
-   (the historical \"leading space\" footer bug — conversation
+   (the historical \"leading space\" footer bug — session
    39a73cfb) and also throw off `spans-width`.
 
    Styling for footer segments comes from the seg-map's
@@ -572,7 +565,7 @@
   ;; model display) and CANNOT be disabled. Even if a settings round-
   ;; trip placed it into `:contributors-disabled`, the renderer ignores
   ;; it for this contribution so the user never accidentally hides the model
-  ;; label (regression: conversation fe6340b0).
+  ;; label (regression: session fe6340b0).
   (extension-segments :tui.slot/footer-segment #{:tui.builtin.model/footer}
     db now-ms row))
 
@@ -677,7 +670,7 @@
   ;; primary-identity content (model display, provider label) paints
   ;; leftmost. Built-in config toggles (reasoning level, verbosity)
   ;; come after. shrink-to-fit still drops by `:priority`.
-  ;; (Conversation fe6340b0 regression: model was invisible on narrow
+  ;; (Session fe6340b0 regression: model was invisible on narrow
   ;; terminals because it painted to the right of `reasoning:` /
   ;; `verbosity:` and got clipped.)
   (let [built-in (build-fn db now-ms)

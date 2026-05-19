@@ -7,7 +7,7 @@
      (render input flavor opts)    ; one of :html :markdown :plain
      (extract-code ast)            ; for vis --code
      (extract-text ast)            ; for voice TTS
-     (conversation->markdown db conv-ref opts?)
+     (session->markdown db session-ref opts?)
 
    Tags:
      ROOT             :ir
@@ -1083,7 +1083,7 @@
       (str/join "\n\n" (remove str/blank? @out)))))
 
 ;; =============================================================================
-;; Conversation exporter — DB → Markdown document
+;; Session exporter — DB → Markdown document
 ;; =============================================================================
 
 (def ^:private DEFAULT_EXPORT_OPTS
@@ -1091,9 +1091,9 @@
    :include-meta?   true
    :flavor          :markdown})
 
-(defn- render-export-header [conversation turn-count]
-  (let [title    (or (:title conversation) "Conversation")
-        soul-id  (or (:id conversation) (:soul-id conversation))]
+(defn- render-export-header [session turn-count]
+  (let [title    (or (:title session) "Session")
+        soul-id  (or (:id session) (:soul-id session))]
     (str "# " title "\n\n"
       (when soul-id (str "_id: `" soul-id "` · " turn-count " turn"
                       (if (= 1 turn-count) "" "s") "_\n\n")))))
@@ -1105,18 +1105,18 @@
         rendered  (render ast (:flavor opts))]
     (str "## You\n" user-text "\n\n## Assistant\n" rendered "\n")))
 
-(defn conversation->markdown
-  "Project a full conversation as a Markdown document on top of the IR
+(defn session->markdown
+  "Project a full session as a Markdown document on top of the IR
    pipeline."
-  ([db-info conversation-ref]
-   (conversation->markdown db-info conversation-ref nil))
-  ([db-info conversation-ref opts]
-   (when (and db-info conversation-ref)
+  ([db-info session-ref]
+   (session->markdown db-info session-ref nil))
+  ([db-info session-ref opts]
+   (when (and db-info session-ref)
      (let [opts         (merge DEFAULT_EXPORT_OPTS opts)
-           conversation (persistance/db-get-conversation db-info conversation-ref)
-           turns        (vec (or (persistance/db-list-conversation-turns db-info conversation-ref) []))]
-       (when conversation
-         (str (render-export-header conversation (count turns))
+           session (persistance/db-get-session db-info session-ref)
+           turns        (vec (or (persistance/db-list-session-turns db-info session-ref) []))]
+       (when session
+         (str (render-export-header session (count turns))
            (str/join "\n" (map (partial render-export-turn opts) turns))))))))
 
 ;; ============================================================================
@@ -1124,7 +1124,7 @@
 ;;
 ;; With per-block eval (Phase B), one Markdown code block can contain multiple
 ;; top-level forms — including a `(done …)` or a
-;; `(set-conversation-title! …)` mixed with regular `(def …)` work. Without a
+;; `(set-session-title! …)` mixed with regular `(def …)` work. Without a
 ;; per-form split the channel either over-hides (whole block disappears when
 ;; the answer call is anywhere inside) or over-shows (raw `(done …)`
 ;; source appears above the rendered IR answer, redundant).
@@ -1143,14 +1143,14 @@
 (defn- top-level-form-kind
   "Classify a parsed top-level form into a render segment kind:
      :answer-ref  —  (done …)
-     :title       —  (set-conversation-title! …)
+     :title       —  (set-session-title! …)
      :code        —  anything else (def, fn call, nested do/let/when, etc.)
    Match is namespace-agnostic by NAME; engine forms come unqualified."
   [form]
   (if (and (seq? form) (symbol? (first form)))
     (case (name (first form))
       "done"             :answer-ref
-      "set-conversation-title!"  :title
+      "set-session-title!"  :title
       :code)
     :code))
 
@@ -1189,7 +1189,7 @@
       (subs src prev-end end))))
 
 (defn- title-value-from-form
-  "Extract the literal title string from a `(set-conversation-title! \"X\")`
+  "Extract the literal title string from a `(set-session-title! \"X\")`
    form. Returns the raw string when shape matches; nil for dynamic args
    (rare)."
   [form]
@@ -1206,7 +1206,7 @@
 
    Segment shapes:
      `{:kind :code        :source \"...\"}`   visible code, with leading prose
-     `{:kind :title       :value  \"X\"}`   `(set-conversation-title! \"X\")` form
+     `{:kind :title       :value  \"X\"}`   `(set-session-title! \"X\")` form
      `{:kind :answer-ref}`                  `(done …)` form (hide; answer below)
 
    Top-level forms drive classification. Legacy top-level `(do ...)`

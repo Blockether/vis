@@ -1,7 +1,7 @@
 {:paths ["src" "resources"]
  ;; TUI channel - Lanterna-based chat UI. Optional channel package.
  ;;
- ;; Depends on vis-sdk for the runtime (conversations, env, turns, db).
+ ;; Depends on vis-sdk for the runtime (sessions, env, turns, db).
  ;; vis-runtime never requires this namespace directly - the CLI dispatcher
  ;; resolves `com.blockether.vis.ext.channel-tui.screen/run-chat!` lazily
  ;; via `requiring-resolve`, so omitting this jar still leaves the rest

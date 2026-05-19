@@ -63,7 +63,7 @@
           cols          60
           expected-col  (- cols 1 id-w)
           db            {:title "Chat"
-                         :conversation {:id uuid}}
+                         :session {:id uuid}}
           writes        (atom [])]
       (cr/reset!)
       (cr/begin-frame!)
@@ -78,7 +78,7 @@
 
   (it "can repaint header hover chrome without mutating click-region staging"
     (let [uuid "123e4567-e89b-12d3-a456-426614174000"
-          db   {:title "Chat" :conversation {:id uuid}}
+          db   {:title "Chat" :session {:id uuid}}
           g    (dummy-text-graphics)]
       (cr/reset!)
       (cr/begin-frame!)
@@ -104,7 +104,7 @@
           expected-right-col (max right-x (- cols 1 status-w gap-w action-w))
           expected-id-col    (+ expected-right-col status-w gap-w)
           db            {:title "Chat"
-                         :conversation {:id uuid}
+                         :session {:id uuid}
                          :channel-status {:voice/input {:text status-text
                                                         :level :warn
                                                         :updated-at-ms 1}}}
@@ -126,7 +126,7 @@
 
 (defdescribe draw-header-color-test
   (it "renders the untitled placeholder inside the active tab, not on the left"
-    ;; Fresh conversation has no `:workspace-tabs` in app-db. The
+    ;; Fresh session has no `:workspace-tabs` in app-db. The
     ;; header synthesises a single active tab whose label is the
     ;; placeholder; the LEFT slot stays empty.
     (cr/reset!)
@@ -134,11 +134,11 @@
           g      (dummy-text-graphics writes)
           uuid   "123e4567-e89b-12d3-a456-426614174000"
           db     {:title ""
-                  :conversation {:id uuid}}]
+                  :session {:id uuid}}]
       (header/draw-header! g db 0 80)
       (let [placeholder-write
             (some #(when (and (string? (:text %))
-                           (str/includes? (:text %) "Untitled conversation"))
+                           (str/includes? (:text %) "Untitled session"))
                      %)
               @writes)
             left-slot-writes
@@ -160,8 +160,8 @@
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
           uuid   "123e4567-e89b-12d3-a456-426614174000"
-          db     {:title "New Conversation"
-                  :conversation {:id uuid}}]
+          db     {:title "New Session"
+                  :session {:id uuid}}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)
@@ -173,7 +173,7 @@
         (header/draw-header! g db 0 80)
         (cr/commit-frame!)
         (let [tab-write (some #(when (and (string? (:text %))
-                                       (str/includes? (:text %) "New Conversation"))
+                                       (str/includes? (:text %) "New Session"))
                                  %)
                           @writes)
               write-by-text (fn [text]
@@ -190,7 +190,7 @@
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
           db     {:title "Chat"
-                  :conversation {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :feature
                   :workspace-tabs [{:id :main :label "Main"}
                                    {:id :feature :label "Feature" :dirty? true}
@@ -258,7 +258,7 @@
           tabs   (mapv (fn [i] {:id (keyword (str "tab-" i)) :label (str "Tab " i)})
                    (range 1 9))
           db     {:title "Chat"
-                  :conversation {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :tab-5
                   :workspace-tabs tabs}]
       (cr/begin-frame!)
@@ -281,7 +281,7 @@
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
           db     {:title "Chat"
-                  :conversation {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :main
                   :workspace-tabs [{:id :main :label "Main"}
                                    {:id :two :label "Two"}
@@ -307,7 +307,7 @@
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
           db     {:title "Chat"
-                  :conversation {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :one
                   :workspace-tabs (mapv (fn [i] {:id (keyword (str "t-" i))
                                                  :label (str "LongTabLabel" i)})
@@ -329,7 +329,7 @@
           tabs   (mapv (fn [i] {:id (keyword (str "big-" i)) :label (str "Big " i)})
                    (range 12))
           db     {:title "Chat"
-                  :conversation {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :big-0
                   :workspace-tabs tabs}]
       (cr/begin-frame!)
@@ -353,7 +353,7 @@
           tabs   (mapv (fn [i] {:id (keyword (str "narrow-" i)) :label (str "N" i)})
                    (range 8))
           db     {:title "Chat"
-                  :conversation {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-workspace-id :narrow-0
                   :workspace-tabs tabs}]
       (cr/begin-frame!)

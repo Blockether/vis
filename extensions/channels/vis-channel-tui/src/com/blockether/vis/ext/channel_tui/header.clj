@@ -4,7 +4,7 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Conversation title          ● Recording 00:01  ⧉ d8d6a0a1
+       ✓ Copied!                 Session title          ● Recording 00:01  ⧉ d8d6a0a1
        (notification banner)     (or fallback placeholder)   (channel status + id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
@@ -14,16 +14,16 @@
      signals - any extension or channel can `(v/notify! ...)` and the
      banner surfaces here. Voice/recording status is NOT rendered here;
      it lives in the RIGHT slot so it cannot collide with notifications.
-   - CENTER: conversation title from app-db (`:title`). When the
-     conversation has no title yet, falls back to a placeholder so
+   - CENTER: session title from app-db (`:title`). When the
+     session has no title yet, falls back to a placeholder so
      the row never looks broken on a fresh run.
-   - RIGHT: short conversation id (first 8 chars of the UUID, the
-     same convention `vis conversations` uses) + a clickable
+   - RIGHT: short session id (first 8 chars of the UUID, the
+     same convention `vis sessions` uses) + a clickable
      `⧉` affordance that drops the FULL UUID onto the system
      clipboard. Visual feedback is the LEFT-slot `✓ Copied!` notification
      - same mechanism every other cross-channel signal flows through.
 
-   Pure draw: reads `:title` and `:conversation` from app-db, the
+   Pure draw: reads `:title` and `:session` from app-db, the
    active notifications list from `vis.core/notifications`, writes
    cells, registers ONE click region for the copy affordance.
 
@@ -85,7 +85,7 @@
   "  ")
 
 (defn- title-or-placeholder
-  "Visible title for the active conversation. Delegates to the shared
+  "Visible title for the active session. Delegates to the shared
    helper so every channel reuses the same placeholder text."
   [db]
   (vh/title-or-placeholder (:title db)))
@@ -93,12 +93,12 @@
 (defn- workspace-tabs
   "Return tabs to render in the centre slot, ALWAYS non-empty.
 
-   Each tab represents a conversation; the active tab's label tracks
-   the conversation title (the state layer updates it on `:set-title`).
+   Each tab represents a session; the active tab's label tracks
+   the session title (the state layer updates it on `:set-title`).
    When the app-db has not initialised its tab list yet — fresh boot,
    first paint, or stand-alone draw in tests — we synthesise a single
-   active tab labelled with the conversation title (or the
-   `Untitled conversation` placeholder) so the centre slot is never
+   active tab labelled with the session title (or the
+   `Untitled session` placeholder) so the centre slot is never
    empty and the LEFT slot never needs to fall back to the title."
   [db]
   (let [tabs (vec (:workspace-tabs db))]
@@ -242,12 +242,12 @@
                    (header-row-specs db cols))))))
 
 (defn- short-id
-  "Project a conversation's UUID onto the shared short-form length."
-  [conversation]
-  (vh/short-id (:id conversation)))
+  "Project a session's UUID onto the shared short-form length."
+  [session]
+  (vh/short-id (:id session)))
 
-(defn- full-id [conversation]
-  (some-> conversation :id str))
+(defn- full-id [session]
+  (some-> session :id str))
 
 (defn- ellipsize
   [text max-cols]
@@ -309,7 +309,7 @@
   true)
 
 (defn- right-block-text
-  "Compose the right-side text: \"⧉ 4b1ed602\" when a conversation id
+  "Compose the right-side text: \"⧉ 4b1ed602\" when a session id
    exists, otherwise empty. Single place that knows the layout so
    `draw-header!` can stay focused on placement math."
   [id-short]
@@ -454,15 +454,15 @@
   "Paint the header band starting at `header-top`, full width `cols`.
    Main content row is split 20% / 60% / 20%:
 
-   - LEFT 20%: ephemeral host notifications ONLY. The conversation
+   - LEFT 20%: ephemeral host notifications ONLY. The session
      title does NOT live here — it lives on the active workspace
      tab. When no notification is active the LEFT slot stays blank.
    - CENTER 60%: workspace tabs. Always painted: when the app-db
      has not yet materialised a tab list, `workspace-tabs` synthesises
-     a single placeholder tab so a fresh conversation reads as
-     `Untitled conversation` inside a tab, not as a title in the LEFT
+     a single placeholder tab so a fresh session reads as
+     `Untitled session` inside a tab, not as a title in the LEFT
      slot.
-   - RIGHT 20%: live channel status + conversation-id copy affordance.
+   - RIGHT 20%: live channel status + session-id copy affordance.
 
    Tabs are part of the header row (no separate band). Overflow shows
    clickable left/right arrows that cycle through workspace tabs."
@@ -479,8 +479,8 @@
         left-x 0
         center-x left-w
         right-x (+ left-w center-w)
-        id-short (short-id (:conversation db))
-        full-uuid (full-id (:conversation db))
+        id-short (short-id (:session db))
+        full-uuid (full-id (:session db))
         id-copy-text (id-copy-block-text id-short)
         action-text (right-block-text id-short)
         status (latest-channel-status db)
@@ -521,7 +521,7 @@
     ;; CENTER 60%: workspace tabs (always non-empty).
     (draw-center-tabs! g tabs active-id content-row center-x center-w)
 
-    ;; RIGHT 20%: live status + conversation-id copy affordance.
+    ;; RIGHT 20%: live status + session-id copy affordance.
     (when (pos? right-w)
       (let [hovered-region (cr/hovered)
             id-hovered? (and (= content-row (get-in hovered-region [:bounds :row]))

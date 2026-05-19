@@ -7,7 +7,7 @@
       collapse already happened in `ir/->ast`, so the walker only
       needs to wrap, indent, and propagate styles correctly.
 
-   2. End-to-end fixture from conversation `bdc79ae9` — the LLM
+   2. End-to-end fixture from session `bdc79ae9` — the LLM
       output that produced the 3-space hanging indent in the TUI.
       Asserts the bug is structurally impossible on the new path."
   (:require

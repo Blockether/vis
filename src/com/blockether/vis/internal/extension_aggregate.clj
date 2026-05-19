@@ -43,19 +43,19 @@
 
 (defn- latest-turn-state-id [env]
   (let [db-info (db-info! env)
-        turn-id (safe-deref (:current-conversation-turn-id-atom env))]
+        turn-id (safe-deref (:current-session-turn-id-atom env))]
     (when turn-id
-      (some->> (persistance/db-list-conversation-turn-states db-info turn-id)
+      (some->> (persistance/db-list-session-turn-states db-info turn-id)
         (sort-by :version)
         last
         :id))))
 
-(defn- current-conversation-state-id [env]
+(defn- current-session-state-id [env]
   (let [db-info (db-info! env)]
-    (or (:conversation-state-id env)
-      (safe-deref (:conversation-state-id-atom env))
-      (when-let [conversation-id (:conversation-id env)]
-        (persistance/db-latest-conversation-state-id db-info conversation-id)))))
+    (or (:session-state-id env)
+      (safe-deref (:session-state-id-atom env))
+      (when-let [session-id (:session-id env)]
+        (persistance/db-latest-session-state-id db-info session-id)))))
 
 (defn- require-scope-id [scope k v]
   (or v
@@ -66,20 +66,20 @@
 
 (defn- explicit-scope [scope]
   (cond-> {}
-    (:conversation-soul-id scope)
-    (assoc :conversation-soul-id (:conversation-soul-id scope))
+    (:session-soul-id scope)
+    (assoc :session-soul-id (:session-soul-id scope))
 
-    (:conversation-id scope)
-    (assoc :conversation-soul-id (:conversation-id scope))
+    (:session-id scope)
+    (assoc :session-soul-id (:session-id scope))
 
-    (:conversation-state-id scope)
-    (assoc :conversation-state-id (:conversation-state-id scope))
+    (:session-state-id scope)
+    (assoc :session-state-id (:session-state-id scope))
 
-    (:conversation-turn-state-id scope)
-    (assoc :conversation-turn-state-id (:conversation-turn-state-id scope))
+    (:session-turn-state-id scope)
+    (assoc :session-turn-state-id (:session-turn-state-id scope))
 
     (:turn-state-id scope)
-    (assoc :conversation-turn-state-id (:turn-state-id scope))
+    (assoc :session-turn-state-id (:turn-state-id scope))
 
     (:iteration-id scope)
     (assoc :iteration-id (:iteration-id scope))
@@ -107,24 +107,24 @@
     (map? scope)
     (explicit-scope scope)
 
-    (= :conversation scope)
-    {:conversation-soul-id (require-scope-id scope :conversation-id (:conversation-id env))}
+    (= :session scope)
+    {:session-soul-id (require-scope-id scope :session-id (:session-id env))}
 
-    (= :conversation-state scope)
-    {:conversation-soul-id  (:conversation-id env)
-     :conversation-state-id (require-scope-id scope :conversation-state-id
-                              (current-conversation-state-id env))}
+    (= :session-state scope)
+    {:session-soul-id  (:session-id env)
+     :session-state-id (require-scope-id scope :session-state-id
+                         (current-session-state-id env))}
 
     (= :turn-state scope)
-    {:conversation-soul-id       (:conversation-id env)
-     :conversation-state-id      (current-conversation-state-id env)
-     :conversation-turn-state-id (require-scope-id scope :conversation-turn-state-id
-                                   (latest-turn-state-id env))}
+    {:session-soul-id       (:session-id env)
+     :session-state-id      (current-session-state-id env)
+     :session-turn-state-id (require-scope-id scope :session-turn-state-id
+                              (latest-turn-state-id env))}
 
     (= :iteration scope)
-    {:conversation-soul-id       (:conversation-id env)
-     :conversation-state-id      (current-conversation-state-id env)
-     :conversation-turn-state-id (latest-turn-state-id env)
+    {:session-soul-id       (:session-id env)
+     :session-state-id      (current-session-state-id env)
+     :session-turn-state-id (latest-turn-state-id env)
      :iteration-id               (require-scope-id scope :iteration-id
                                    (safe-deref (:current-iteration-id-atom env)))}
 
@@ -132,9 +132,9 @@
     (let [iteration-id (require-scope-id scope :iteration-id
                          (safe-deref (:current-iteration-id-atom env)))
           block-index  (safe-deref (:current-form-idx-atom env))]
-      {:conversation-soul-id       (:conversation-id env)
-       :conversation-state-id      (current-conversation-state-id env)
-       :conversation-turn-state-id (latest-turn-state-id env)
+      {:session-soul-id       (:session-id env)
+       :session-state-id      (current-session-state-id env)
+       :session-turn-state-id (latest-turn-state-id env)
        :iteration-id               iteration-id
        :iteration-block-index      (require-scope-id scope :iteration-block-index block-index)})
 

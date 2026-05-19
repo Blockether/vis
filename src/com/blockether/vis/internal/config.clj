@@ -567,7 +567,7 @@
 ;; `active-config` atom for fast reads. Every mutation goes through
 ;; the iteration loop's `set-provider!` (which writes to disk AND
 ;; rebuilds the global router AND reseats it on every cached
-;; conversation env so long-lived envs stop talking to the previous
+;; session env so long-lived envs stop talking to the previous
 ;; model). The router-rebuild and cached-env reseat are owned by
 ;; the runtime; this namespace owns the on-disk + atom state.
 ;; =============================================================================

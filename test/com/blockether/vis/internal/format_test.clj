@@ -32,7 +32,13 @@
     (expect (= "tok 100→20 (cached 70)"
               (fmt/format-tokens {:input 100 :output 20 :cached 70})))
     (expect (= "tok 0→20 (cached 70)"
-              (fmt/format-tokens {:output 20 :cached-input 70})))))
+              (fmt/format-tokens {:output 20 :cached-input 70}))))
+
+  (it "shows positive cache write tokens"
+    (expect (= "tok 112→69 (cache-write 8777)"
+              (fmt/format-tokens {:input 112 :output 69 :cache-created 8777})))
+    (expect (= "tok 112→69 (cached 70, cache-write 8777)"
+              (fmt/format-tokens {:input 112 :output 69 :cached 70 :cache-created 8777})))))
 
 (defdescribe strip-def-docstrings-test
   (it "strips the docstring from a plain (def …) form"

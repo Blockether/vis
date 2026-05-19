@@ -78,7 +78,7 @@
 (def ^:private prewarm-sync-tail-count
   "How many newest bubbles to warm synchronously before launching
    the background pre-warm worker. Covers the region users hit on
-   the first wheel-up after opening/switching conversations."
+   the first wheel-up after opening/switching sessions."
   16)
 
 (def ^:private prewarm-sync-budget-ms
@@ -209,7 +209,7 @@
     ;; T-003: never silently drop a non-empty submission while a turn
     ;; is in flight. Idle -> send-message. Busy -> enqueue with visible
     ;; feedback; drained from `:message-received` once :loading? clears.
-    (when (and (seq (str/trim text)) (:conversation db))
+    (when (and (seq (str/trim text)) (:session db))
       (if (:loading? db)
         (state/dispatch [:enqueue-message text])
         (state/dispatch [:send-message text])))
@@ -217,11 +217,11 @@
 
 (def ^:private copy-success-ttl-ms 1500)
 
-(defn- copy-conversation-id! [text]
-  (vis/worker-future "vis-tui-copy-conversation-id"
+(defn- copy-session-id! [text]
+  (vis/worker-future "vis-tui-copy-session-id"
     #(try (input/clipboard-copy! text)
        (catch Throwable _ nil)))
-  (vis/notify! "✓ Copied conversation ID"
+  (vis/notify! "✓ Copied session ID"
     :level :success :ttl-ms copy-success-ttl-ms))
 
 (defn- copy-selection!
@@ -353,7 +353,7 @@
 
 (defn- paint-search-hits!
   "Overlay reverse-video on every back-buffer cell that belongs to a
-   substring match for the active in-conversation search.
+   substring match for the active in-session search.
 
    Mirrors `paint-selection!`: walks visible bubbles, scans the rows
    they occupy in the back buffer, finds the (lowercase) query as a
@@ -573,10 +573,10 @@
    bubble does not paste `N chars hidden` placeholders back into the prompt.
    Plain answer/user bubbles keep the projected text fallback used for live
    streaming, where the raw message can still be a placeholder."
-  [message bubble-w settings {:keys [conversation-id detail-expansions]}]
+  [message bubble-w settings {:keys [session-id detail-expansions]}]
   (if (and (= :assistant (:role message)) (:traces message))
-    (let [opts {:conversation-id      conversation-id
-                :conversation-turn-id (or (:turn-id message) (:conversation-turn-id message) (:id message))
+    (let [opts {:session-id      session-id
+                :session-turn-id (or (:turn-id message) (:session-turn-id message) (:id message))
                 :detail-expansions   (assoc (or detail-expansions {})
                                        :vis.channel-tui/expand-all-details? true)}]
       (:text (render/format-answer-with-thinking-data
@@ -752,7 +752,7 @@
 ;; `apply-settings` was retired in favour of
 ;; `com.blockether.vis.ext.channel-tui.virtual/layout`, which
 ;; projects ONLY the messages whose viewport interval is non-empty
-;; (cold-open of long conversations no longer pays
+;; (cold-open of long sessions no longer pays
 ;; `format-answer-with-thinking` for every off-screen bubble before
 ;; the first frame). The `:show-timestamps` projection moved into
 ;; `virtual/project-message`; the loading-bubble swap moved into
@@ -814,7 +814,8 @@
         progress-extra {:now-ms         now-ms
                         :turn-start-ms turn-start-ms
                         :cancelling?    (boolean cancelling?)
-                        :viewport-rows  inner-h}
+                        :viewport-rows  inner-h
+                        :pending-sends  (:pending-sends db)}
         ;; Single virtualized layout pass: cheap height estimate for
         ;; every message, full projection + real height ONLY for
         ;; messages whose viewport interval is non-empty. The
@@ -826,13 +827,13 @@
                        {:progress       progress
                         :loading?       loading?
                         :progress-extra progress-extra}
-                       {:conversation-id    (get-in db [:conversation :id])
+                       {:session-id    (get-in db [:session :id])
                         :detail-expansions (:detail-expansions db)})
         total-h      (long (:total-h layout))
         text-top     (+ messages-top render/MESSAGE_MARGIN_TOP)
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
         transcript-bubble-copy-regions (bubble-copy-regions layout messages text-top inner-h cols settings
-                                         {:conversation-id   (get-in db [:conversation :id])
+                                         {:session-id   (get-in db [:session :id])
                                           :detail-expansions (:detail-expansions db)})
         transcript-disclosure-copy-regions (disclosure-copy-regions layout text-top inner-h cols)
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
@@ -888,7 +889,7 @@
           (selectable-ranges-for-source
             (:source sel) transcript-selectable-ranges input-selectable-ranges)
           viewport))
-      ;; Inline highlight of in-conversation search hits. Runs AFTER
+      ;; Inline highlight of in-session search hits. Runs AFTER
       ;; the main paint and AFTER mouse-selection overlay so a search
       ;; hit inside an actively-selected range still shows reverse
       ;; (the modifier is idempotent — stacking it doesn't double-flip).
@@ -1022,15 +1023,16 @@
         progress-extra {:now-ms        now-ms
                         :turn-start-ms turn-start-ms
                         :cancelling?   (boolean cancelling?)
-                        :viewport-rows inner-h}
+                        :viewport-rows inner-h
+                        :pending-sends (:pending-sends db)}
         layout         (virtual/layout messages bubble-w settings
                          messages-scroll inner-h
                          {:progress       progress
                           :loading?       loading?
                           :progress-extra progress-extra}
-                         {:conversation-id   (get-in db [:conversation :id])
+                         {:session-id   (get-in db [:session :id])
                           :detail-expansions (:detail-expansions db)})
-        ;; In-conversation search consumes its pending scroll target
+        ;; In-session search consumes its pending scroll target
         ;; here — the layout's `:offsets` vec gives the Y of any
         ;; message-idx in O(1). One-shot: clear pending so subsequent
         ;; frames don't re-scroll.
@@ -1204,7 +1206,7 @@
                   (finally (.unlock draw-lock))))]
           (when-not rendered?
             ;; Park until the next dispatch wakes us, or until the
-            ;; spinner needs to tick. Idle conversations sleep up to
+            ;; spinner needs to tick. Idle sessions sleep up to
             ;; ~250ms (defensive cap on lost wakeups); active queries
             ;; sleep no longer than the spinner tick so the animation
             ;; stays smooth without spamming repaints.
@@ -1275,9 +1277,9 @@
     (.start t)
     t))
 
-(defn- format-conversation-not-found
-  "Build a friendly multi-line message for `--conversation-id` misses,
-   listing the most recent :tui conversations so the user has
+(defn- format-session-not-found
+  "Build a friendly multi-line message for `--session-id` misses,
+   listing the most recent :tui sessions so the user has
    something to copy-paste."
   [cid]
   (let [available (try (vec (take 10 (vis/by-channel :tui)))
@@ -1287,29 +1289,29 @@
                      id8    (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
                      title  (let [t (:title c)] (when-not (str/blank? t) t))]
                  (str "  " id8 "  " (or title "(untitled)"))))]
-    (str "Conversation not found: " cid
+    (str "Session not found: " cid
       (if (seq available)
-        (str "\n\nAvailable :tui conversations (most recent first):\n"
+        (str "\n\nAvailable :tui sessions (most recent first):\n"
           (str/join "\n" (map line available))
-          "\n\nUse the 8-char prefix or full UUID with --conversation-id.")
-        "\n\nNo :tui conversations exist yet - run `vis channels tui` without --conversation-id first."))))
+          "\n\nUse the 8-char prefix or full UUID with --session-id.")
+        "\n\nNo :tui sessions exist yet - run `vis channels tui` without --session-id first."))))
 
-(defn- current-conversation-id
+(defn- current-session-id
   []
-  (some-> @state/app-db :conversation :id str))
+  (some-> @state/app-db :session :id str))
 
-(defn- workspace-conversations
+(defn- workspace-sessions
   []
   (let [db @state/app-db]
-    (->> (concat (keep :conversation (vals (:workspaces db)))
-           [(:conversation db)])
+    (->> (concat (keep :session (vals (:workspaces db)))
+           [(:session db)])
       (filter :id)
-      (reduce (fn [{:keys [seen out] :as acc} conversation]
-                (let [id (str (:id conversation))]
+      (reduce (fn [{:keys [seen out] :as acc} session]
+                (let [id (str (:id session))]
                   (if (contains? seen id)
                     acc
                     {:seen (conj seen id)
-                     :out  (conj out conversation)})))
+                     :out  (conj out session)})))
         {:seen #{} :out []})
       :out)))
 
@@ -1367,21 +1369,21 @@
         (cleanup)))))
 
 (defn- subscribe-title-listener!
-  "Wire `(set-conversation-title! \"...\")` calls inside this conversation's iteration
+  "Wire `(set-session-title! \"...\")` calls inside this session's iteration
    loop to the TUI header: every change dispatches `[:set-title]`
    into app-db so the next render frame paints the new title without
    polling. Returns a zero-arg cleanup fn.
 
-   The listener is scoped to the currently-active conversation. That
+   The listener is scoped to the currently-active session. That
    matters once the TUI can switch tabs: a stale background listener must
    never overwrite the title of the tab the user is looking at now."
-  [conversation-id]
-  (let [conversation-id (str conversation-id)
-        listener (vis/add-title-listener! conversation-id
+  [session-id]
+  (let [session-id (str session-id)
+        listener (vis/add-title-listener! session-id
                    (fn [new-title]
-                     (when (= conversation-id (current-conversation-id))
+                     (when (= session-id (current-session-id))
                        (state/dispatch [:set-title (or new-title "")]))))
-        cleanup  #(vis/remove-title-listener! conversation-id listener)]
+        cleanup  #(vis/remove-title-listener! session-id listener)]
     (register-shutdown-hook! cleanup)
     cleanup))
 
@@ -1400,55 +1402,55 @@
     (sort-by #(or (date->millis %) 0))
     last))
 
-(defn- conversation-summary
-  [db-info conversation]
-  (let [turns       (try (vec (vis/db-list-conversation-turns db-info (:id conversation)))
+(defn- session-summary
+  [db-info session]
+  (let [turns       (try (vec (vis/db-list-session-turns db-info (:id session)))
                       (catch Throwable _ []))
-        modified-at (or (latest-turn-created-at turns) (:created-at conversation))]
-    (assoc conversation
+        modified-at (or (latest-turn-created-at turns) (:created-at session))]
+    (assoc session
       :turn-count (count turns)
       :modified-at modified-at)))
 
-(defn- conversation-sort-key
-  "Default conversation picker ordering.
+(defn- session-sort-key
+  "Default session picker ordering.
 
-   Prefer conversations with real turns, then newest latest-turn/modified time,
-   then higher turn count. This keeps the latest active conversation first while
-   still pushing empty/new shells behind conversations with history."
+   Prefer sessions with real turns, then newest latest-turn/modified time,
+   then higher turn count. This keeps the latest active session first while
+   still pushing empty/new shells behind sessions with history."
   [{:keys [turn-count modified-at created-at]}]
   [(if (pos? (long (or turn-count 0))) 1 0)
    (or (date->millis modified-at) (date->millis created-at) 0)
    (long (or turn-count 0))])
 
 (defn- latest-modified-first
-  [conversations]
-  (sort-by conversation-sort-key
+  [sessions]
+  (sort-by session-sort-key
     (fn [a b] (compare b a))
-    conversations))
+    sessions))
 
-(defn- tui-conversation-summaries
+(defn- tui-session-summaries
   []
   (try
     (let [db-info (vis/db-info)]
       (->> (vis/by-channel :tui)
-        (map #(conversation-summary db-info %))
+        (map #(session-summary db-info %))
         latest-modified-first
         vec))
     (catch Throwable _ [])))
 
-(defn- conversation-db-title
-  [conversation-id]
-  (when-let [conversation (try (vis/by-id conversation-id) (catch Throwable _ nil))]
-    (let [title (:title conversation)]
+(defn- session-db-title
+  [session-id]
+  (when-let [session (try (vis/by-id session-id) (catch Throwable _ nil))]
+    (let [title (:title session)]
       (when-not (str/blank? (str title))
         (str title)))))
 
-(defn- init-visible-conversation!
-  "Install a conversation into app-db and repaint the tab strip. Returns the
-   cleanup fn for that conversation's title listener."
+(defn- init-visible-session!
+  "Install a session into app-db and repaint the tab strip. Returns the
+   cleanup fn for that session's title listener."
   [{:keys [id history]}]
-  (state/dispatch [:init-conversation {:id id} history])
-  (when-let [title (conversation-db-title id)]
+  (state/dispatch [:init-session {:id id} history])
+  (when-let [title (session-db-title id)]
     (state/dispatch [:set-title title]))
   (subscribe-title-listener! id))
 
@@ -1487,33 +1489,33 @@
   []
   (try (vis/db-sweep-orphaned-running-turns! (vis/db-info)) (catch Throwable _ nil)))
 
-(defn- pre-resolve-conversation-id!
+(defn- pre-resolve-session-id!
   "Sweep interrupted turns before any resume history rebuild. The
-   `--conversation-id` path validates before Lanterna starts; if the sweep
+   `--session-id` path validates before Lanterna starts; if the sweep
    happens later, the precomputed history still contains stale `:running`
    turns with blank answers, which render as empty assistant bubbles."
   [opts]
   (sweep-orphaned-running-turns!)
-  (when-let [cid (:conversation-id opts)]
-    (or (chat/resume-conversation cid)
-      (throw (ex-info (format-conversation-not-found cid)
+  (when-let [cid (:session-id opts)]
+    (or (chat/resume-session cid)
+      (throw (ex-info (format-session-not-found cid)
                {:vis/user-error true
                 :id             cid})))))
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
-     :conversation-id uuid-string - resume a specific conversation
-     :resume          true        - resume the latest :tui conversation"
+     :session-id uuid-string - resume a specific session
+     :resume          true        - resume the latest :tui session"
   ([] (run-chat! {}))
   ([opts]
-  ;; Validate --conversation-id BEFORE we boot Lanterna. A miss here
+  ;; Validate --session-id BEFORE we boot Lanterna. A miss here
   ;; used to crash mid-screen-startup with a stack trace; now it
   ;; surfaces as a `:vis/user-error` and `channel-main` prints a
   ;; clean, actionable message + exit code 2 (no trace, no torn-down
   ;; terminal state). Sweep first so precomputed resume history never
   ;; includes orphaned `:running` turns from a killed prior process.
-   (let [resumed-from-flag (pre-resolve-conversation-id! opts)]
+   (let [resumed-from-flag (pre-resolve-session-id! opts)]
      (state/init!)
 
   ;; Subscribe to host notifications so any (vis/notify! ...) push
@@ -1542,7 +1544,7 @@
            ;; Daemon thread that pre-formats every assistant bubble
            ;; in the background so the FIRST scroll-up doesn't pay
            ;; ~500 ms / big-trace-bubble on the render thread.
-           ;; Stays nil for fresh conversations (nothing to warm).
+           ;; Stays nil for fresh sessions (nothing to warm).
            prewarm-thread (volatile! nil)
            provider-limits-thread (volatile! nil)
            terminal-signal-cleanup (volatile! nil)]
@@ -1555,32 +1557,32 @@
              (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
                (state/dispatch [:set-config c]))))
 
-      ;; Init conversation: resume if --conversation-id given, else fresh.
-      ;; The --conversation-id case was already validated above (before
+      ;; Init session: resume if --session-id given, else fresh.
+      ;; The --session-id case was already validated above (before
       ;; Lanterna started), so here we only need the pre-resolved value.
          (when-let [config (:config @state/app-db)]
            (let [{:keys [id history]}
-                 (if (:conversation-id opts)
+                 (if (:session-id opts)
                    resumed-from-flag
                    (if (:resume opts)
-                  ;; --resume: pick up the latest :tui conversation
+                  ;; --resume: pick up the latest :tui session
                      (if-let [latest (first (vis/by-channel :tui))]
-                       (or (chat/resume-conversation (:id latest))
-                         (chat/make-conversation config))
-                       (chat/make-conversation config))
-                     (chat/make-conversation config)))]
-             (vreset! title-listener-cleanup (init-visible-conversation! {:id id :history history}))
+                       (or (chat/resume-session (:id latest))
+                         (chat/make-session config))
+                       (chat/make-session config))
+                     (chat/make-session config)))]
+             (vreset! title-listener-cleanup (init-visible-session! {:id id :history history}))
              ;; Kick off background pre-warm of the LRU. Walks the
              ;; history bottom-up calling project + bubble-height,
              ;; so by the time the user scrolls UP the cache is
-             ;; already hot. Empty conversations skip this entirely.
+             ;; already hot. Empty sessions skip this entirely.
              ;; Cancelled in the shutdown hook below.
              (when (seq history)
                (let [size     (screen-size screen)
                      cols     (.getColumns size)
                      bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
                      settings (or (:settings @state/app-db) {})
-                     warm-opts {:conversation-id    id
+                     warm-opts {:session-id    id
                                 :detail-expansions (:detail-expansions @state/app-db)}]
                  ;; Head-start warm on the input thread so immediate
                  ;; first-scroll doesn't hit a cold heavy trace bubble.
@@ -1671,94 +1673,94 @@
                ;; non-wheel event, it parks it here for the next loop
                ;; iteration instead of dropping it.
                pending-input-key     (volatile! nil)
-               prewarm-conversation! (fn [{:keys [id history]}]
-                                       (virtual/stop-pre-warm! @prewarm-thread)
-                                       (vreset! prewarm-thread nil)
-                                       (when (seq history)
-                                         (let [size     (screen-size screen)
-                                               cols     (.getColumns size)
-                                               bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                                               settings (or (:settings @state/app-db) {})
-                                               warm-opts {:conversation-id    id
-                                                          :detail-expansions (:detail-expansions @state/app-db)}]
-                                           (virtual/pre-warm-recent! history bubble-w settings
-                                             (assoc warm-opts
-                                               :count prewarm-sync-tail-count
-                                               :budget-ms prewarm-sync-budget-ms))
-                                           (vreset! prewarm-thread
-                                             (virtual/pre-warm! history bubble-w settings warm-opts)))))
-               install-conversation! (fn [{:keys [id] :as conversation-result} notify?]
-                                       (when (and id conversation-result)
-                                         (when-let [cleanup @title-listener-cleanup]
-                                           (try (cleanup) (catch Throwable _ nil)))
-                                         (vreset! title-listener-cleanup nil)
+               prewarm-session! (fn [{:keys [id history]}]
+                                  (virtual/stop-pre-warm! @prewarm-thread)
+                                  (vreset! prewarm-thread nil)
+                                  (when (seq history)
+                                    (let [size     (screen-size screen)
+                                          cols     (.getColumns size)
+                                          bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                                          settings (or (:settings @state/app-db) {})
+                                          warm-opts {:session-id    id
+                                                     :detail-expansions (:detail-expansions @state/app-db)}]
+                                      (virtual/pre-warm-recent! history bubble-w settings
+                                        (assoc warm-opts
+                                          :count prewarm-sync-tail-count
+                                          :budget-ms prewarm-sync-budget-ms))
+                                      (vreset! prewarm-thread
+                                        (virtual/pre-warm! history bubble-w settings warm-opts)))))
+               install-session! (fn [{:keys [id] :as session-result} notify?]
+                                  (when (and id session-result)
+                                    (when-let [cleanup @title-listener-cleanup]
+                                      (try (cleanup) (catch Throwable _ nil)))
+                                    (vreset! title-listener-cleanup nil)
                                          ;; Keep render + height caches HOT across
-                                         ;; conversation/tab switches. Nuking here
+                                         ;; session/tab switches. Nuking here
                                          ;; forced every revisit back to cold-scroll.
-                                         (vreset! title-listener-cleanup
-                                           (init-visible-conversation! conversation-result))
-                                         (prewarm-conversation! conversation-result)
-                                         (when notify?
-                                           (vis/notify! "Switched conversation"
-                                             :level :success :ttl-ms copy-success-ttl-ms))))
+                                    (vreset! title-listener-cleanup
+                                      (init-visible-session! session-result))
+                                    (prewarm-session! session-result)
+                                    (when notify?
+                                      (vis/notify! "Switched session"
+                                        :level :success :ttl-ms copy-success-ttl-ms))))
                refresh-active-workspace! (fn [notify?]
                                            (when-let [cleanup @title-listener-cleanup]
                                              (try (cleanup) (catch Throwable _ nil)))
                                            (vreset! title-listener-cleanup nil)
-                                           (when-let [id (current-conversation-id)]
-                                             (when-let [title (conversation-db-title id)]
+                                           (when-let [id (current-session-id)]
+                                             (when-let [title (session-db-title id)]
                                                (state/dispatch [:set-title title]))
                                              (vreset! title-listener-cleanup
                                                (subscribe-title-listener! id))
-                                             (prewarm-conversation! {:id id
-                                                                     :history (:messages @state/app-db)}))
+                                             (prewarm-session! {:id id
+                                                                :history (:messages @state/app-db)}))
                                            (when notify?
                                              (vis/notify! "Switched tab"
                                                :level :success :ttl-ms copy-success-ttl-ms)))
-               switch-conversation!  (fn [choice]
-                                       (cond
-                                         (:loading? @state/app-db)
-                                         (vis/notify! "Finish or cancel the running turn before switching conversations"
-                                           :level :warn :ttl-ms copy-success-ttl-ms)
+               switch-session!  (fn [choice]
+                                  (cond
+                                    (:loading? @state/app-db)
+                                    (vis/notify! "Finish or cancel the running turn before switching sessions"
+                                      :level :warn :ttl-ms copy-success-ttl-ms)
 
-                                         (= :new (:action choice))
-                                         (when-let [config (:config @state/app-db)]
-                                           (install-conversation! (chat/make-conversation config) true))
+                                    (= :new (:action choice))
+                                    (when-let [config (:config @state/app-db)]
+                                      (install-session! (chat/make-session config) true))
 
-                                         (= :fork (:action choice))
-                                         (if-let [current-id (current-conversation-id)]
-                                           (let [fork-state-id (try (vis/db-fork-conversation! (vis/db-info) current-id {})
-                                                                 (catch Throwable _ nil))]
-                                             (if fork-state-id
-                                               (if-let [conversation-result (chat/resume-conversation current-id)]
-                                                 (do
-                                                   (install-conversation! conversation-result false)
-                                                   (vis/notify! "Forked current conversation"
-                                                     :level :success :ttl-ms copy-success-ttl-ms))
-                                                 (vis/notify! "Forked, but failed to reload conversation"
-                                                   :level :warn :ttl-ms copy-success-ttl-ms))
-                                               (vis/notify! "Could not fork current conversation"
-                                                 :level :warn :ttl-ms copy-success-ttl-ms)))
-                                           (vis/notify! "No current conversation to fork"
-                                             :level :warn :ttl-ms copy-success-ttl-ms))
+                                    (= :fork (:action choice))
+                                    (if-let [current-id (current-session-id)]
+                                      (let [fork-state-id (try (vis/db-fork-session! (vis/db-info) current-id {})
+                                                            (catch Throwable _ nil))]
+                                        (if fork-state-id
+                                          (if-let [session-result (chat/resume-session current-id)]
+                                            (do
+                                              (install-session! session-result false)
+                                              (vis/notify! "Forked current session"
+                                                :level :success :ttl-ms copy-success-ttl-ms))
+                                            (vis/notify! "Forked, but failed to reload session"
+                                              :level :warn :ttl-ms copy-success-ttl-ms))
+                                          (vis/notify! "Could not fork current session"
+                                            :level :warn :ttl-ms copy-success-ttl-ms)))
+                                      (vis/notify! "No current session to fork"
+                                        :level :warn :ttl-ms copy-success-ttl-ms))
 
-                                         (= :switch (:action choice))
-                                         (let [target-id (:id choice)]
-                                           (when-not (= (str target-id) (current-conversation-id))
-                                             (state/dispatch [:select-workspace-tab-conversation-id target-id])
-                                             (if (= (str target-id) (current-conversation-id))
-                                               (refresh-active-workspace! true)
-                                               (if-let [conversation-result (chat/resume-conversation target-id)]
-                                                 (install-conversation! conversation-result true)
-                                                 (vis/notify! "Conversation no longer exists"
-                                                   :level :warn :ttl-ms copy-success-ttl-ms)))))))
-               show-conversations!   (fn []
-                                       (when-not (:dialog-open? @state/app-db)
-                                         (let [conversations (tui-conversation-summaries)]
-                                           (when-let [choice (with-dialog-lock
-                                                               #(dlg/conversation-picker-dialog! screen conversations
-                                                                  (current-conversation-id)))]
-                                             (switch-conversation! choice)))))]
+                                    (= :switch (:action choice))
+                                    (let [target-id (:id choice)]
+                                      (when-not (= (str target-id) (current-session-id))
+                                        (state/dispatch [:select-workspace-tab-session-id target-id])
+                                        (if (= (str target-id) (current-session-id))
+                                          (refresh-active-workspace! true)
+                                          (if-let [session-result (chat/resume-session target-id)]
+                                            (install-session! session-result true)
+                                            (vis/notify! "Session no longer exists"
+                                              :level :warn :ttl-ms copy-success-ttl-ms)))))))
+               show-sessions!   (fn []
+                                  (when-not (:dialog-open? @state/app-db)
+                                    (let [sessions (tui-session-summaries)]
+                                      (when-let [choice (with-dialog-lock
+                                                          #(dlg/session-picker-dialog! screen sessions
+                                                             (current-session-id)))]
+                                        (switch-session! choice)))))]
            (loop []
            ;; Layout fields are populated by the render thread after
            ;; the first paint. Until then, scroll handlers fall back
@@ -2055,7 +2057,7 @@
                                                  (:layout db)
                                                  cols
                                                  (:settings db)
-                                                 {:conversation-id   (get-in db [:conversation :id])
+                                                 {:session-id   (get-in db [:session :id])
                                                   :detail-expansions (:detail-expansions db)}
                                                  sel)
                                                (selection/selected-text
@@ -2078,19 +2080,19 @@
                            (if-let [hit (cr/lookup mx my)]
                              (case (:kind hit)
                                :copy-id
-                               (copy-conversation-id! (:text hit))
+                               (copy-session-id! (:text hit))
 
-                               :switch-conversation
-                               (switch-conversation! {:action :switch :id (:text hit)})
+                               :switch-session
+                               (switch-session! {:action :switch :id (:text hit)})
 
                                :workspace-tab
                                (activate-workspace-tab-hit! refresh-active-workspace! hit)
 
                                :toggle-details
-                               (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
+                               (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)])
 
                                :preview-switcher
-                               (state/dispatch [:select-preview-mode (:conversation-id hit) (:node-id hit) (:mode hit)])
+                               (state/dispatch [:select-preview-mode (:session-id hit) (:node-id hit) (:mode hit)])
 
                                :resources
                                (open-resources-popup! screen (:refs hit))
@@ -2146,25 +2148,25 @@
                              ;; then push a host notification - the
                              ;; header band's LEFT slot subscribes to
                              ;; `vis.core/notifications` and surfaces
-                             ;; `✓ Copied conversation ID` for ~1.5s
+                             ;; `✓ Copied session ID` for ~1.5s
                              ;; before the entry expires. No
                              ;; TUI-specific flash state; the
                              ;; cross-channel notifications system
                              ;; carries the feedback.
                                :copy-id
-                               (copy-conversation-id! (:text hit))
+                               (copy-session-id! (:text hit))
 
-                               :switch-conversation
-                               (switch-conversation! {:action :switch :id (:text hit)})
+                               :switch-session
+                               (switch-session! {:action :switch :id (:text hit)})
 
                                :workspace-tab
                                (activate-workspace-tab-hit! refresh-active-workspace! hit)
 
                                :toggle-details
-                               (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
+                               (state/dispatch [:toggle-detail (:session-id hit) (:node-id hit)])
 
                                :preview-switcher
-                               (state/dispatch [:select-preview-mode (:conversation-id hit) (:node-id hit) (:mode hit)])
+                               (state/dispatch [:select-preview-mode (:session-id hit) (:node-id hit) (:mode hit)])
 
                                :resources
                                (open-resources-popup! screen (:refs hit))
@@ -2307,8 +2309,8 @@
                                    :publish! #(vis/publish-channel-event! :tui %)}))
                                (when-not (:dialog-open? @state/app-db)
                                  (case cmd-id
-                                   :new-conversation
-                                   (switch-conversation! {:action :new})
+                                   :new-session
+                                   (switch-session! {:action :new})
 
                                    :new-tab
                                    (when-let [config (:config @state/app-db)]
@@ -2317,16 +2319,16 @@
                                        (if (= before-count (count (:workspace-tabs @state/app-db)))
                                          (vis/notify! "Maximum 8 tabs open"
                                            :level :warn :ttl-ms copy-success-ttl-ms)
-                                         (install-conversation! (chat/make-conversation config) true))))
+                                         (install-session! (chat/make-session config) true))))
 
-                                   :fork-conversation
-                                   (switch-conversation! {:action :fork})
+                                   :fork-session
+                                   (switch-session! {:action :fork})
 
-                                   :switch-conversation
-                                   (show-conversations!)
+                                   :switch-session
+                                   (show-sessions!)
 
-                                   ;; :search-in-conversation removed from
-                                   ;; the command palette — the in-conversation
+                                   ;; :search-in-session removed from
+                                   ;; the command palette — the in-session
                                    ;; search lives in the upper bar (above
                                    ;; messages) and is triggered by F3 /
                                    ;; Shift+F3 / its in-place input field. The
@@ -2470,8 +2472,8 @@
                        (do (run-command! :voice/toggle-recording)
                          (recur))
 
-                       :show-conversations
-                       (do (show-conversations!)
+                       :show-sessions
+                       (do (show-sessions!)
                          (recur))
 
                        :pick-file
@@ -2545,14 +2547,14 @@
              (try (.join ^Thread t 500) (catch Throwable _ nil)))
            (when-let [cleanup @title-listener-cleanup]
              (try (cleanup) (catch Throwable _ nil)))
-           (doseq [conversation (workspace-conversations)]
-             (chat/dispose! conversation))
+           (doseq [session (workspace-sessions)]
+             (chat/dispose! session))
            (.stopScreen screen)))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 
 (def ^:private tui-usage
-  "vis channels tui [--conversation-id ID | --resume]")
+  "vis channels tui [--session-id ID | --resume]")
 
 (defn- missing-value?
   [v]
@@ -2569,12 +2571,12 @@
 
 (defn- parse-args
   "Parse `vis channels tui` flags.
-     --conversation-id ID   Resume a conversation (full UUID or short prefix)
-     --resume               Resume the latest :tui conversation
+     --session-id ID   Resume a session (full UUID or short prefix)
+     --resume               Resume the latest :tui session
 
    Unknown flags and missing flag values throw a `:vis/user-error` ex-info
    so the user sees a clean error instead of the TUI silently swallowing a
-   typo (e.g. `--conversations-id`)."
+   typo (e.g. `--sessions-id`)."
   [args]
   (loop [args (seq args) opts {}]
     (if-not args
@@ -2582,9 +2584,9 @@
       (let [arg  (first args)
             more (next args)]
         (case arg
-          "--conversation-id"
+          "--session-id"
           (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :conversation-id v)))
+            (recur (next more) (assoc opts :session-id v)))
 
           "--resume"
           (recur more (assoc opts :resume true))
@@ -2612,16 +2614,16 @@
     (alter-var-root #'*out* (constantly log-w))
     (alter-var-root #'*err* (constantly log-w))))
 
-(defn- print-conversation-id-on-exit!
-  "After the fullscreen TUI releases the terminal, print the conversation id
+(defn- print-session-id-on-exit!
+  "After the fullscreen TUI releases the terminal, print the session id
    back to the shell so users can resume/copy it from scrollback. During the
    TUI session the same id is visible in the header; stdout is intentionally
    quiet until teardown because Lanterna owns the screen."
   []
-  (when-let [id (current-conversation-id)]
+  (when-let [id (current-session-id)]
     (let [^java.io.PrintStream out vis/original-stdout]
       (.println out "Resume with:")
-      (.println out (str "vis channels tui --conversation-id " id))
+      (.println out (str "vis channels tui --session-id " id))
       (.flush out))))
 
 (defn channel-main
@@ -2637,11 +2639,11 @@
   (let [exit-code (atom 0)]
     (try
       (run-chat! (parse-args args))
-      (print-conversation-id-on-exit!)
+      (print-session-id-on-exit!)
       (catch Throwable t
         (if (:vis/user-error (ex-data t))
           ;; Caller-facing error: invalid flag value, missing
-          ;; conversation id, etc. Print the message clean and let the
+          ;; session id, etc. Print the message clean and let the
           ;; process exit non-zero - no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
           (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: " (.getMessage t)))

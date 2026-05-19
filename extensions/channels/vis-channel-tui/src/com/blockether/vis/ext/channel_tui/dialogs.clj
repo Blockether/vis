@@ -1849,25 +1849,25 @@
 
                  (recur))))))))))
 
-;;; ── Conversation picker ─────────────────────────────────────────────────────
+;;; ── Session picker ─────────────────────────────────────────────────────
 
-(defn- short-conversation-id
-  [conversation]
-  (let [id (str (:id conversation))]
+(defn- short-session-id
+  [session]
+  (let [id (str (:id session))]
     (subs id 0 (min 8 (count id)))))
 
-(defn- conversation-title
-  [conversation]
-  (let [title      (:title conversation)
+(defn- session-title
+  [session]
+  (let [title      (:title session)
         base-title (if (and (string? title) (not (str/blank? title)))
                      title
-                     "Untitled conversation")
-        fork-count (long (or (:fork-count conversation) 0))]
+                     "Untitled session")
+        fork-count (long (or (:fork-count session) 0))]
     (cond-> base-title
       (pos? fork-count) (str " [forks:" fork-count "]"))))
 
-(def ^:private conversation-dialog-content-w 96)
-(def ^:private conversation-dialog-content-h 14)
+(def ^:private session-dialog-content-w 96)
+(def ^:private session-dialog-content-h 14)
 
 (defn- date->millis
   [v]
@@ -1882,7 +1882,7 @@
   (when-let [ms (date->millis v)]
     (java.util.Date. ms)))
 
-(defn- format-conversation-date
+(defn- format-session-date
   [v]
   (if-let [date (date-value v)]
     (let [fmt (SimpleDateFormat. "yyyy-MM-dd HH:mm" Locale/ROOT)]
@@ -1890,17 +1890,17 @@
       (.format fmt date))
     "-"))
 
-(def ^:private conversation-table-headers
+(def ^:private session-table-headers
   ["" "ID" "Turns" "Modified" "Created" "Title"])
 
-(def ^:private conversation-table-aligns
+(def ^:private session-table-aligns
   [:left :left :right :left :left :left])
 
-(defn- conversation-table-widths
-  "Column widths for the conversation table. Total rendered row width equals
+(defn- session-table-widths
+  "Column widths for the session table. Total rendered row width equals
    `table-w`, including inter-cell separators and one outer space each side."
   [table-w]
-  (let [n         (count conversation-table-headers)
+  (let [n         (count session-table-headers)
         overhead  (dec (* 3 n))
         available (max n (- table-w overhead))]
     (if (>= available 56)
@@ -1919,51 +1919,51 @@
             title-w    (max 1 (- available active-w id-w turns-w modified-w created-w))]
         [active-w id-w turns-w modified-w created-w title-w]))))
 
-(defn- conversation-table-row-label
-  "Format one fixed-width conversation table row with real cell separators.
+(defn- session-table-row-label
+  "Format one fixed-width session table row with real cell separators.
    Width math is terminal columns, not Java chars, so CJK/emoji titles cannot
    shift later rows."
   [cells body-w]
-  (table-row-line (conversation-table-widths body-w) cells conversation-table-aligns))
+  (table-row-line (session-table-widths body-w) cells session-table-aligns))
 
-(defn conversation-dialog-label
-  "Format one fixed-width conversation table row. Columns are intentionally
+(defn session-dialog-label
+  "Format one fixed-width session table row. Columns are intentionally
    stable so the picker reads as a table inside the shared dialog chrome."
-  [{:keys [id turn-count modified-at created-at] :as conversation} active-id body-w]
+  [{:keys [id turn-count modified-at created-at] :as session} active-id body-w]
   (let [active? (= (str id) (some-> active-id str))]
-    (conversation-table-row-label
+    (session-table-row-label
       [(if active? "●" "")
-       (short-conversation-id conversation)
+       (short-session-id session)
        (str (long (or turn-count 0)))
-       (format-conversation-date modified-at)
-       (format-conversation-date created-at)
-       (conversation-title conversation)]
+       (format-session-date modified-at)
+       (format-session-date created-at)
+       (session-title session)]
       body-w)))
 
-(defn conversation-dialog-header
+(defn session-dialog-header
   [body-w]
-  (conversation-table-row-label conversation-table-headers body-w))
+  (session-table-row-label session-table-headers body-w))
 
-(defn conversation-dialog-items
-  "Build table rows for existing conversations only. New/fork stay dialog
+(defn session-dialog-items
+  "Build table rows for existing sessions only. New/fork stay dialog
    options via the N/F shortcuts and command palette; they are not fake table
-   data rows. `conversations` are already sorted by the caller by latest
+   data rows. `sessions` are already sorted by the caller by latest
    modification date."
-  ([conversations active-id]
-   (conversation-dialog-items conversations active-id conversation-dialog-content-w))
-  ([conversations active-id body-w]
-   (mapv (fn [conversation]
+  ([sessions active-id]
+   (session-dialog-items sessions active-id session-dialog-content-w))
+  ([sessions active-id body-w]
+   (mapv (fn [session]
            {:action :switch
-            :id     (str (:id conversation))
-            :label  (conversation-dialog-label conversation active-id body-w)})
-     conversations)))
+            :id     (str (:id session))
+            :label  (session-dialog-label session active-id body-w)})
+     sessions)))
 
-(defn- draw-conversation-row!
+(defn- draw-session-row!
   [g left row inner-w selected? label]
-  ;; Conversation picker is a TABLE — the table cells must NOT shift
+  ;; Session picker is a TABLE — the table cells must NOT shift
   ;; between selected and unselected states, so the `> ` cursor glyph
   ;; is painted by the caller (see the row loop in
-  ;; `conversation-picker-dialog!`) at `(inc left)`, the inner edge of
+  ;; `session-picker-dialog!`) at `(inc left)`, the inner edge of
   ;; the dialog frame. The body label sits two cols further in (gutter
   ;; for marker + 1 col margin) and uses the normal palette, BOLD on
   ;; selected so the row text echoes the cursor cue.
@@ -1976,11 +1976,11 @@
         (p/put-str! g body-x row (ellipsize label body-w)))
       (p/put-str! g body-x row (ellipsize label body-w)))))
 
-(defn conversation-picker-dialog!
-  "Show recent TUI conversations in a fixed-size table. Returns
-   `{:action :new}`, `{:action :fork}`, `{:action :switch :id <conversation-id>}`,
+(defn session-picker-dialog!
+  "Show recent TUI sessions in a fixed-size table. Returns
+   `{:action :new}`, `{:action :fork}`, `{:action :switch :id <session-id>}`,
    or nil on Esc."
-  [^TerminalScreen screen conversations active-id]
+  [^TerminalScreen screen sessions active-id]
   (let [selected (atom 0)
         scroll   (atom 0)]
     (loop []
@@ -1988,14 +1988,14 @@
             cols    (.getColumns size)
             rows    (.getRows size)
             g       (.newTextGraphics screen)
-            bounds  (draw-dialog-chrome! g cols rows "Conversations"
-                      conversation-dialog-content-h)
+            bounds  (draw-dialog-chrome! g cols rows "Sessions"
+                      session-dialog-content-h)
             {:keys [left inner-w]} bounds
             ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
             ;; inner area for the selection gutter (`>` + 1 margin
             ;; col); see `draw-list-item!` for the layout map.
             body-w  (max 1 (- inner-w 4 p/SELECTION_WIDTH))
-            items   (conversation-dialog-items conversations active-id body-w)
+            items   (session-dialog-items sessions active-id body-w)
             total   (count items)
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             header-row content-top
@@ -2011,18 +2011,18 @@
         ;; Header (and the separator below) sit at the same x as the
         ;; row body — just past the selection gutter.
         (p/put-str! g (+ left 1 p/SELECTION_WIDTH) header-row
-          (conversation-dialog-header body-w))
+          (session-dialog-header body-w))
         (p/clear-styles! g)
         (p/set-colors! g t/dialog-border t/dialog-bg)
         (p/fill-rect! g (inc left) (inc header-row) inner-w 1)
         (p/put-str! g (+ left 1 p/SELECTION_WIDTH) (inc header-row)
-          (file-picker-table-border-line (conversation-table-widths body-w) :middle))
+          (file-picker-table-border-line (session-table-widths body-w) :middle))
 
         (dotimes [i visible]
           (let [idx (+ @scroll i)
                 row (+ body-top i)]
             (when (< idx total)
-              (draw-conversation-row! g left row inner-w (= idx @selected)
+              (draw-session-row! g left row inner-w (= idx @selected)
                 (:label (nth items idx)))
               ;; `> ` cursor glyph in the dialog padding column,
               ;; outside the table body — same convention as the
@@ -2061,18 +2061,18 @@
    `:providers` opens router/model/auth configuration. Provider-owned
    knobs still live in Settings -> Providers & Models.
 
-   Whole-conversation Markdown copy lives in the header as an icon,
+   Whole-session Markdown copy lives in the header as an icon,
    not in Ctrl+K."
-  ;; In-conversation search lives in the upper bar (above messages),
+  ;; In-session search lives in the upper bar (above messages),
   ;; not in the command palette — keystroke F3 / Shift+F3 /
   ;; in-place input field. Removing it from this menu avoids two
   ;; entry points for the same action.
-  [{:id :new-conversation    :label "New Conversation"}
+  [{:id :new-session    :label "New Session"}
    {:id :new-tab             :label "New Tab"}
    {:id :worktree            :label "New Worktree"
     :args [{:name "branch" :kind :positional :required false}]}
-   {:id :fork-conversation   :label "Fork Conversation"}
-   {:id :switch-conversation :label "Switch Conversation"}
+   {:id :fork-session   :label "Fork Session"}
+   {:id :switch-session :label "Switch Session"}
    {:id :providers           :label "Configure Providers"}
    {:id :settings            :label "Settings"}])
 

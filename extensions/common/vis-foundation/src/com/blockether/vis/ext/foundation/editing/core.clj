@@ -32,7 +32,7 @@
         (v/extension path)
         (v/relativize from to)
 
-   Hard guard: every path must stay inside the conversation's working
+   Hard guard: every path must stay inside the session's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
   (:require
    [babashka.fs :as fs]

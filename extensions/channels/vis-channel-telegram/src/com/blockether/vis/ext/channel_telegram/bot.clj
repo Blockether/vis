@@ -1,11 +1,11 @@
 (ns com.blockether.vis.ext.channel-telegram.bot
   "Telegram frontend for vis - long-polling loop that hands each incoming
-   message to the shared conversations API and ships the answer back.
+   message to the shared sessions API and ships the answer back.
 
-   Each Telegram chat maps to a `:telegram` conversation via
+   Each Telegram chat maps to a `:telegram` session via
    `vis/for-telegram-chat!` (find-or-create on chat-id). One process can
-   serve many chats; svar serializes asks per-conversation via the
-   conversation's lock in `com.blockether.vis.core`."
+   serve many chats; svar serializes asks per-session via the
+   session's lock in `com.blockether.vis.core`."
   (:require [babashka.process :as process]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -108,7 +108,7 @@
 
 (def ^:private bot-menu-commands-before-voice
   [{"command" "help"      "description" "Show Vis help"}
-   {"command" "status"    "description" "Show conversation/model/status"}
+   {"command" "status"    "description" "Show session/model/status"}
    {"command" "model"     "description" "Show current model"}
    {"command" "models"    "description" "List and choose models"}
    {"command" "reasoning" "description" "Show or set reasoning effort"}
@@ -120,7 +120,7 @@
 (def ^:private bot-menu-commands-after-voice
   [{"command" "cancel"  "description" "Cancel current request"}
    {"command" "restart" "description" "Restart the bot in a fresh JVM"}
-   {"command" "export"  "description" "Export conversation as Markdown"}])
+   {"command" "export"  "description" "Export session as Markdown"}])
 
 (defn- voice-input-extension? []
   (boolean (requiring-resolve 'com.blockether.vis.ext.voice.asr/transcribe-file!)))
@@ -878,7 +878,7 @@
   (vis/text->ir
     (str "Vis Telegram commands:\n"
       "/help - show this help\n"
-      "/status - show conversation, model, reasoning, verbosity\n"
+      "/status - show session, model, reasoning, verbosity\n"
       "/model - show current model\n"
       "/models - list models and choose with buttons\n"
       "/models <n|provider/model> - choose model\n"
@@ -889,13 +889,13 @@
           "Voice messages - transcribe with the Parakeet ASR model, then send as text\n"))
       "/cancel - cancel current request\n"
       "/restart - restart the bot in a fresh Java process\n"
-      "/export - export this conversation as Markdown")))
+      "/export - export this session as Markdown")))
 
 (defn- command-status [chat-id]
   (let [{:keys [id title]} (vis/for-telegram-chat! chat-id)
         settings (chat-settings chat-id)]
     (vis/text->ir
-      (str "Conversation: " (subs (str id) 0 (min 8 (count (str id))))
+      (str "Session: " (subs (str id) 0 (min 8 (count (str id))))
         (when-not (str/blank? title) (str " - " title))
         "\nModel: " (model-label)
         "\nReasoning: " (name (:reasoning-level settings))
@@ -1012,7 +1012,7 @@
 (defn- command-export [chat-id]
   (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
         env      (vis/env-for id)
-        markdown (when env (vis/conversation->markdown (:db-info env) id))]
+        markdown (when env (vis/session->markdown (:db-info env) id))]
     (vis/text->ir
       (if (seq markdown) markdown "No persisted turns to export yet."))))
 
@@ -1378,7 +1378,7 @@
 (vis/register-extension!
   (vis/extension
     {:ext/name      "channel-telegram"
-     :ext/description "Telegram bot channel - long-poll loop wired into conversations."
+     :ext/description "Telegram bot channel - long-poll loop wired into sessions."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

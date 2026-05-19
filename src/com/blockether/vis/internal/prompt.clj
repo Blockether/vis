@@ -65,7 +65,7 @@
    `current_user_message`.
 
    One full previous-turn context block may be prepended so short follow-ups
-   can inspect the prior exchange without replaying the whole conversation."
+   can inspect the prior exchange without replaying the whole session."
   [{:keys [stable-prompt-messages initial-user-content previous-turn-context]}]
   (let [previous-block (previous-turn-context-block previous-turn-context)
         user-block     (when initial-user-content
@@ -83,8 +83,8 @@
 (def ^:private CORE_SYSTEM_PROMPT
   (extension/normalize-prompt-text
     "
-    Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL. You operate in the context of a single conversation.
-    Conversation:
+    Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL. You operate in the context of a single session.
+    Session:
      N TURNS - each turn has one user message and one (done [:ir ...]) assistant answer.
        K ITERATIONS - to construct the answer YOU must conclude your reasoning in the REPL.
     Emit exactly one ```clojure``` block per iteration; no prose outside code.
@@ -120,7 +120,7 @@
       outcome                                  ;; observe what the effect produced
 
     Read `ctx` first. Engine context keys:
-      (:conversation ctx)  -> {:id :title :turn-id :iteration {:id :position}
+      (:session ctx)  -> {:id :title :turn-id :iteration {:id :position}
                                :hints [{:id :importance :text :satisfy-with}]}
       (:llm-provider ctx)  -> optional {:selected :actual :routing :error}
       (:project ctx)       -> optional {:root :warnings ...}
@@ -130,14 +130,14 @@
     provider block.
 
     HINTS
-    Read `(get-in ctx [:conversation :hints])` before acting. Prefer the direct top-level form requested
+    Read `(get-in ctx [:session :hints])` before acting. Prefer the direct top-level form requested
     by each hint; do not wrap host bookkeeping in `(do ...)`. Call
     `(satisfy-hint! <hint-id>)` only when runtime state cannot prove satisfaction;
     emit it as its own top-level form. It returns `:vis/silent` and must not be
     mentioned in final answers.
 
     Engine-owned control forms are bare symbols: `(done ...)`,
-    `(set-conversation-title! ...)`, `(satisfy-hint! ...)`. Never
+    `(set-session-title! ...)`, `(satisfy-hint! ...)`. Never
     namespace-qualify them; they are not extension tools.
 
     `ctx` is a snapshot built BEFORE this iteration runs; new defs and satisfied

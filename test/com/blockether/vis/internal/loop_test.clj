@@ -23,6 +23,21 @@
 (def ^:private collect-iteration-start-hints
   (deref #'lp/collect-iteration-start-hints))
 
+(def ^:private ask-result->api-usage
+  (deref #'lp/ask-result->api-usage))
+
+(defdescribe token-usage-normalization-test
+  (it "preserves Anthropic cache write tokens from svar token maps"
+    (expect (= {:prompt_tokens 112
+                :completion_tokens 69
+                :completion_tokens_details {:reasoning_tokens 0}
+                :prompt_tokens_details {:cached_tokens 0
+                                        :cache_creation_tokens 8777}}
+              (ask-result->api-usage {:tokens {:input 112
+                                               :output 69
+                                               :cached 0
+                                               :cache-created 8777}})))))
+
 (defdescribe iteration-start-hook-test
   (it "collects active :turn.iteration/start hook hints and ignores other phases"
     (let [seen (atom nil)
@@ -41,7 +56,7 @@
                             :doc "bad"
                             :phase :turn.iteration/start
                             :fn (fn [_] {:importance :high})}]}
-          ctx {:conversation-title nil
+          ctx {:session-title nil
                :title-refresh? true
                :turn-position 1}
           hints (collect-iteration-start-hints {} [ext] ctx)]
@@ -83,21 +98,21 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "set-conversation-title! is a bare engine symbol, not a v/ tool"
+  (it "set-session-title! is a bare engine symbol, not a v/ tool"
     (let [env (lp/create-environment ::router {:db :memory})]
       (try
         (expect (= :vis/silent
                   (:val (sci/eval-string+ (:sci-ctx env)
-                          "(set-conversation-title! \"Liveness check\")"
+                          "(set-session-title! \"Liveness check\")"
                           {:ns (:sandbox-ns env)}))))
         (try
           (sci/eval-string+ (:sci-ctx env)
-            "(v/set-conversation-title! \"Liveness check\")"
+            "(v/set-session-title! \"Liveness check\")"
             {:ns (:sandbox-ns env)})
           (expect false)
           (catch Throwable e
             (expect (str/includes? (ex-message e)
-                      "Unable to resolve symbol: v/set-conversation-title!"))))
+                      "Unable to resolve symbol: v/set-session-title!"))))
         (finally
           (lp/dispose-environment! env))))))
 
@@ -161,9 +176,9 @@
 (defdescribe top-level-do-unwrapping-test
   (it "unwraps legacy top-level do before display and eval"
     (let [preflight (var-get #'lp/code-entries-preflight)
-          src "(do (set-conversation-title! \"Triage render noise\") (def x \"doc\" 1))"
+          src "(do (set-session-title! \"Triage render noise\") (def x \"doc\" 1))"
           entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
-      (expect (= "(set-conversation-title! \"Triage render noise\")\n(def x \"doc\" 1)"
+      (expect (= "(set-session-title! \"Triage render noise\")\n(def x \"doc\" 1)"
                 (:expr entry)))
       (expect (true? (:vis/unwrapped-do? entry)))
       (expect (= [{:kind :title :value "Triage render noise"}
