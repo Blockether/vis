@@ -2320,20 +2320,38 @@
                                    (switch-session! {:action :new})
 
                                    :workspace
-                                   ;; PLAN.md decision 6 — /workspace opens a
-                                   ;; new session in a fresh strip slot. The
-                                   ;; underlying session auto-trunks (step 4
-                                   ;; wiring); a follow-up will swap that for
-                                   ;; a real spawn-branch! call so the new
-                                   ;; session lands on a `vis/<short-id>`
-                                   ;; branch worktree by default.
+                                   ;; PLAN.md decision 6 — /workspace spawns a
+                                   ;; fresh `vis/<short-id>` branch workspace
+                                   ;; (real git worktree under
+                                   ;; ~/.vis/workspaces/<repo>/<id>/) and pins
+                                   ;; the new session 1:1 to it. Falls back
+                                   ;; to auto-trunk if spawn fails so the user
+                                   ;; still gets a usable new session slot.
                                    (when-let [config (:config @state/app-db)]
-                                     (let [before-count (count (:workspaces @state/app-db))]
-                                       (state/dispatch [:create-workspace])
+                                     (let [before-count (count (:workspaces @state/app-db))
+                                           db           (vis/db-info)
+                                           current-id   (:workspace/id @state/app-db)
+                                           current-ws   (when (and db current-id)
+                                                          (vis/workspace-get db current-id))
+                                           spawned      (try (vis/workspace-spawn-branch! db
+                                                               {:from current-ws})
+                                                          (catch Throwable t
+                                                            (vis/notify! (str "Spawn failed: "
+                                                                           (or (ex-message t) (str t)))
+                                                              :level :error :ttl-ms copy-success-ttl-ms)
+                                                            nil))]
+                                       (state/dispatch [:create-workspace
+                                                        (when spawned
+                                                          {:workspace      spawned
+                                                           :workspace/root (:root spawned)
+                                                           :label          (:branch spawned)})])
                                        (if (= before-count (count (:workspaces @state/app-db)))
                                          (vis/notify! "Maximum 8 workspaces open"
                                            :level :warn :ttl-ms copy-success-ttl-ms)
-                                         (install-session! (chat/make-session config) true))))
+                                         (install-session!
+                                           (chat/make-session config
+                                             (when spawned {:workspace-id (:id spawned)}))
+                                           true))))
 
                                    :apply-workspace-to-trunk
                                    (let [db-info (vis/db-info)

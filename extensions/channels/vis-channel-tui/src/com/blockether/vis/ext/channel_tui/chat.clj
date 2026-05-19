@@ -356,10 +356,20 @@
       [])))
 
 (defn make-session
-  "Create a fresh `:tui` session. Returns `{:id session-id :history []}`."
-  [_provider-config]
-  (let [{:keys [id]} (vis/create! :tui)]
-    {:id id :history []}))
+  "Create a fresh `:tui` session.
+
+   Optional opts map (second arity):
+     :workspace-id  pre-spawned workspace to pin the new session to
+                    (PLAN.md decision 1, decision 6). Omit and a
+                    trunk workspace is auto-minted by
+                    `create-environment`.
+
+   Returns `{:id session-id :history []}`."
+  ([_provider-config] (make-session _provider-config nil))
+  ([_provider-config {:keys [workspace-id]}]
+   (let [{:keys [id]} (vis/create! :tui (when workspace-id
+                                          {:workspace-id workspace-id}))]
+     {:id id :history []})))
 
 (defn- resolve-resume-id
   "Resolve a resume id. Accepts full UUID or an unambiguous prefix
