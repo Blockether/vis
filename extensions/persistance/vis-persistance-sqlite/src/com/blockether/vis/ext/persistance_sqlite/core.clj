@@ -1247,7 +1247,7 @@
   [db-info {:keys [session-turn-id thinking answer llm-full-duration-ms
                    vars dependencies error
                    llm-routing cache-created-tokens
-                   llm-messages llm-raw-response
+                   llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
             :as opts}]
   (when (ds db-info)
@@ -1285,7 +1285,16 @@
                                 :from   :session_turn_iteration
                                 :where  [:= :session_turn_state_id session-turn-state-id-s]}))
                           1)
-              routing llm-routing
+              ;; When the caller hands us only legacy :llm-provider /
+              ;; :llm-model (no routing summary), synthesise an `actual`
+              ;; routing record so the typed `llm_actual_*` columns stay
+              ;; populated. This is the canonical landing spot for
+              ;; "what provider/model answered".
+              routing (or llm-routing
+                        (when (or llm-provider llm-model)
+                          (cond-> {}
+                            llm-provider (assoc-in [:actual :provider] (->kw llm-provider))
+                            llm-model    (assoc-in [:actual :model] (str llm-model)))))
               raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the single-form code payload inline.
           ;;    Hard cut: callers pass flat :code/:result/:error.
