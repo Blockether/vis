@@ -4,8 +4,8 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe builtin-hooks-test
-  (it "captures its source namespace for hot reload diffing"
-    (expect (= "channel-tui.builtin-hooks"
-              (:ext/name builtin-hooks/vis-extension)))
-    (expect (= ['com.blockether.vis.ext.channel-tui.builtin-hooks]
-              (:ext/source-nses builtin-hooks/vis-extension)))))
+  (it "exposes footer contributions without registering a standalone extension"
+    (expect (= [:tui.slot/footer-segment]
+              (keys builtin-hooks/channel-contributions)))
+    (expect (= [:tui.builtin.model/footer]
+              (mapv :id (:tui.slot/footer-segment builtin-hooks/channel-contributions))))))

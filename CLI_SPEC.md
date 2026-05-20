@@ -618,7 +618,6 @@ vis extensions install github:user/repo
 vis extensions install ./my-ext
 vis extensions remove my-ext
 vis extensions scaffold my-tools
-vis extensions doctor
 ```
 
 Current `vis extensions list` table is useful but too wide. Default should be compact:
@@ -633,7 +632,7 @@ anthropic    provider   ok      Anthropic auth/provider
 exa          search     ok      Exa web/code search
 voice        voice      ok      TTS/ASR
 
-actions: vis extensions show <id>   vis extensions doctor
+actions: vis extensions show <id>   vis doctor
 ```
 
 Detailed metadata stays under:
