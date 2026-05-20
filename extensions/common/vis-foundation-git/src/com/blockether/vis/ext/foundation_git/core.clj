@@ -1,8 +1,8 @@
 (ns com.blockether.vis.ext.foundation-git.core
-  "Git observation tools for the LLM under the `v/` alias.
+  "Git observation tools for the LLM under the `git/` alias.
 
-   Ships three observation tools: `v/git-diff`, `v/git-status`,
-   `v/git-log`. All three are read-only and run inside the currently
+   Ships three observation tools: `git/diff`, `git/status`,
+   `git/log`. All three are read-only and run inside the currently
    bound workspace root (channels rebind `*workspace-root*` per turn,
    PLAN.md §5).
 
@@ -36,7 +36,7 @@
 
 (defn- activation-fn
   "Per-turn activation. Returns true only when both checks pass; false
-   silently hides all `v/git-*` symbols from the model for that turn."
+   silently hides all `git/*` symbols from the model for that turn."
   [env]
   (and @git-binary-available? (in-repo? env)))
 
@@ -64,7 +64,7 @@
    one, so this is a defensive last line."
   [env]
   (or (:workspace/root env)
-    (throw (ex-info "v/git-* tool fired without :workspace/root in env"
+    (throw (ex-info "git/* tool fired without :workspace/root in env"
              {:type :foundation-git/no-workspace}))))
 
 (defn- parse-numstat
@@ -124,12 +124,12 @@
    (git-diff-fn env nil))
   ([env opts]
    (when (and (some? opts) (not (map? opts)))
-     (throw (ex-info (str "v/git-diff expected optional opts map, got " (pr-str opts) ". "
-                       "Call (v/git-diff) or (v/git-diff {:stat? true}).")
+     (throw (ex-info (str "git/diff expected optional opts map, got " (pr-str opts) ". "
+                       "Call (git/diff) or (git/diff {:stat? true}).")
               {:type :foundation-git/invalid-opts
                :opts opts
                :expected "nil or map"
-               :examples ["(v/git-diff)" "(v/git-diff {:stat? true})"]})))
+               :examples ["(git/diff)" "(git/diff {:stat? true})"]})))
    (let [root      (env-root env)
          ws-id     (:workspace/id env)
          db-info   (:db-info env)
@@ -191,42 +191,42 @@
        {:result {:branch  branch
                  :commits (parse-log out)}}))))
 
-(def ^{:doc "Diff stat + porcelain for the currently bound workspace. Branch workspaces diff against their spawn commit; trunk workspaces diff against HEAD. Optional opts map accepted for compatibility (e.g. {:stat? true}); result always includes stat, files, and porcelain. Returns {:branch :head :kind :stat {:files :+ :-} :files [...] :porcelain [...]}."
-       :arglists '([] [opts])} git-diff git-diff-fn)
+(def ^{:doc "Diff stat + porcelain for the currently bound workspace. Branch workspaces diff against their spawn commit; trunk workspaces diff against HEAD. Optional opts map accepted (e.g. {:stat? true}); result always includes stat, files, and porcelain. Returns {:branch :head :kind :stat {:files :+ :-} :files [...] :porcelain [...]}."
+       :arglists '([] [opts])} diff git-diff-fn)
 
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}."
-       :arglists '([])} git-status git-status-fn)
+       :arglists '([])} status git-status-fn)
 
 (def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Returns {:branch :commits [{:sha :author :at :subject} ...]}."
-       :arglists '([] [n])} git-log git-log-fn)
+       :arglists '([] [n])} log git-log-fn)
 
 (defn- inject-env
   [env f args]
   {:env env :fn f :args (into [env] args)})
 
-(def git-diff-symbol
-  (vis/symbol #'git-diff
+(def diff-symbol
+  (vis/symbol #'diff
     {:before-fn inject-env
      :render-fn vis/render-string}))
 
-(def git-status-symbol
-  (vis/symbol #'git-status
+(def status-symbol
+  (vis/symbol #'status
     {:before-fn inject-env
      :render-fn vis/render-string}))
 
-(def git-log-symbol
-  (vis/symbol #'git-log
+(def log-symbol
+  (vis/symbol #'log
     {:before-fn inject-env
      :render-fn vis/render-string}))
 
 (def git-symbols
-  [git-diff-symbol git-status-symbol git-log-symbol])
+  [diff-symbol status-symbol log-symbol])
 
 ;; =============================================================================
 ;; Op registry
 ;; =============================================================================
 
-(doseq [op [:v/git-diff :v/git-status :v/git-log]]
+(doseq [op [:git/diff :git/status :git/log]]
   (vis/register-op! op {:tag :op.tag/observation}))
 
 ;; =============================================================================
@@ -235,15 +235,15 @@
 
 (def vis-extension
   (vis/extension
-    {:ext/name           "foundation-git"
-     :ext/description    "Git observation tools under v/: git-diff, git-status, git-log. Activates only when git is on PATH and the active workspace sits inside a repo."
+    {:ext/name           "git"
+     :ext/description    "Git observation tools under git/: diff, status, log. Activates only when git is on PATH and the active workspace sits inside a repo."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
-     :ext/sci            {:ext.sci/alias 'v
+     :ext/sci            {:ext.sci/alias 'git
                           :ext.sci/symbols git-symbols}
-     :ext/kind           "foundation"}))
+     :ext/kind           "git"}))
 
 (vis/register-extension! vis-extension)

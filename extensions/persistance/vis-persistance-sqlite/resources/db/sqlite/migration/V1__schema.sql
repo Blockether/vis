@@ -256,8 +256,6 @@ CREATE TABLE session_turn_iteration (
 
   llm_system_prompt               TEXT,
   llm_user_prompt                 TEXT,    -- JSON envelope for multimodal user input (text/images/audio/files)
-  llm_provider                    TEXT,    -- provider id used for this session_turn_iteration (e.g. 'openai', 'github-copilot')
-  llm_model                       TEXT,
   llm_selected_provider           TEXT,
   llm_selected_model              TEXT,
   llm_actual_provider             TEXT,
@@ -269,7 +267,6 @@ CREATE TABLE session_turn_iteration (
                                     llm_full_duration_ms IS NULL OR llm_full_duration_ms >= 0
                                   ),       -- total duration across all traced attempts
   llm_thinking                    TEXT,
-  llm_error                       TEXT,
   llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
                                   CHECK (llm_returned_empty_code IN (0, 1)),
 

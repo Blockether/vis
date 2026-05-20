@@ -1247,7 +1247,7 @@
   [db-info {:keys [session-turn-id thinking answer llm-full-duration-ms
                    vars dependencies error
                    llm-routing cache-created-tokens
-                   llm-messages llm-provider llm-model llm-raw-response
+                   llm-messages llm-raw-response
                    llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
             :as opts}]
   (when (ds db-info)
@@ -1299,11 +1299,8 @@
                                         :llm_system_prompt    (when (seq llm-messages)
                                                                 (:content (first (filter #(= "system" (:role %)) llm-messages))))
                                         :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
-                                        :llm_provider         (when llm-provider (name (->kw llm-provider)))
-                                        :llm_model            llm-model
                                         :llm_thinking         (str/trim (or thinking ""))
                                         :llm_full_duration_ms (long (or llm-full-duration-ms 0))
-                                        :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
                                         :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
                                         :llm_executable_code_blocks (when (some? llm-executable-blocks)
                                                                       (->json (vec llm-executable-blocks)))
@@ -1554,9 +1551,7 @@
     iteration))
 
 (defn- row->iteration [row]
-  (let [iter-error (or (<-blob (:error row))
-                     (when (some? (:llm_error row))
-                       (or (<-json (:llm_error row)) (:llm_error row))))]
+  (let [iter-error (<-blob (:error row))]
     (cond-> {:id          (->uuid (:id row))
              :type        :iteration
              :position    (:position row)
@@ -1568,8 +1563,12 @@
       (some? (:eval_duration_ms row))    (assoc :duration-ms (:eval_duration_ms row))
       (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
       (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
-      (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
-      (some? (:llm_model row))            (assoc :model (:llm_model row))
+      ;; `:provider` / `:model` on the iteration map mirror what actually
+      ;; answered (post-fallback). They are aliases of the typed
+      ;; `llm_actual_*` columns; consumers that want the router's
+      ;; pre-call selection should read `:llm-selected-provider/model`.
+      (some? (:llm_actual_provider row))   (assoc :provider (->kw-back (:llm_actual_provider row)))
+      (some? (:llm_actual_model row))      (assoc :model (:llm_actual_model row))
       (some? (:llm_selected_provider row)) (assoc :llm-selected-provider (->kw-back (:llm_selected_provider row)))
       (some? (:llm_selected_model row))    (assoc :llm-selected-model (:llm_selected_model row))
       (some? (:llm_actual_provider row))   (assoc :llm-actual-provider (->kw-back (:llm_actual_provider row)))

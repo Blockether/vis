@@ -18,19 +18,19 @@
       (expect (= 6 (count symbols)))))
 
   (it "documents quoted aliased SCI symbols"
-    (let [v-ns    (sci/create-ns 'vis.ext.v)
-          sci-ctx (sci/init {:namespaces {'vis.ext.v {'git-diff (sci/new-var 'git-diff
-                                                                  (fn [] nil)
-                                                                  {:ns v-ns
-                                                                   :doc "diff docs"
-                                                                   :arglists '([])})}}
-                             :ns-aliases {'v 'vis.ext.v}})
+    (let [git-ns  (sci/create-ns 'vis.ext.git)
+          sci-ctx (sci/init {:namespaces {'vis.ext.git {'diff (sci/new-var 'diff
+                                                                (fn [] nil)
+                                                                {:ns git-ns
+                                                                 :doc "diff docs"
+                                                                 :arglists '([])})}}
+                             :ns-aliases {'git 'vis.ext.git}})
           tool    @#'introspection/engine-symbol-documentation-tool
-          result  (tool {:sci-ctx sci-ctx} 'v/git-diff)]
+          result  (tool {:sci-ctx sci-ctx} 'git/diff)]
       (expect (extension/tool-result? result))
       (expect (get-in result [:result :found?]))
-      (expect (= 'v/git-diff (get-in result [:result :symbol])))
-      (expect (= 'vis.ext.v/git-diff (get-in result [:result :resolved-symbol])))
+      (expect (= 'git/diff (get-in result [:result :symbol])))
+      (expect (= 'vis.ext.git/diff (get-in result [:result :resolved-symbol])))
       (expect (= "diff docs" (get-in result [:result :doc]))))))
 
 (defdescribe session-state-envelope-test
