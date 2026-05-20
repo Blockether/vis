@@ -164,6 +164,78 @@
 (defn- github-copilot-account-type [provider-id]
   (get github-copilot-account-types provider-id :individual))
 
+(def ^:private copilot-oauth-wait-poll-ms 200)
+(def ^:private copilot-oauth-wait-timeout-ms (* 6 60 1000))
+(def ^:private copilot-oauth-cancelled ::copilot-oauth-cancelled)
+
+(defn- cancel-copilot-oauth-poll!
+  [result]
+  (when (instance? java.util.concurrent.Future result)
+    (.cancel ^java.util.concurrent.Future result true)))
+
+(defn- draw-copilot-waiting!
+  [^TerminalScreen screen started-at-ms]
+  (let [size        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+        cols        (.getColumns size)
+        rows        (.getRows size)
+        g           (.newTextGraphics screen)
+        bounds      (dlg/draw-dialog-chrome! g cols rows "GitHub Copilot - Waiting" 8)
+        {:keys [left inner-w]} bounds
+        {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds)
+        text-x      (+ left 2)
+        text-w      (max 1 (- inner-w 2))
+        elapsed-s   (quot (max 0 (- (System/currentTimeMillis) started-at-ms)) 1000)
+        lines       ["Waiting for GitHub authorization..."
+                     ""
+                     "Finish login in the browser."
+                     "This dialog closes when GitHub confirms authorization."
+                     ""
+                     (str "Elapsed: " elapsed-s "s")]]
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
+    (p/fill-rect! g (inc left) content-top inner-w content-h)
+    (doseq [[idx line] (map-indexed vector lines)]
+      (let [row (+ content-top idx)]
+        (when (< row (+ content-top content-h))
+          (p/fill-rect! g (inc left) row inner-w 1)
+          (p/put-str! g text-x row (dlg/ellipsize line text-w)))))
+    (dlg/draw-hint-bar! g left hint-row inner-w [["Esc" "cancel"]])
+    (.setCursorPosition screen (p/cursor-pos 0 0))
+    (.refresh screen Screen$RefreshType/DELTA)))
+
+(defn- wait-for-copilot-oauth!
+  [^TerminalScreen screen result]
+  (let [started-at-ms (System/currentTimeMillis)
+        deadline-ms   (+ started-at-ms (long copilot-oauth-wait-timeout-ms))]
+    (loop []
+      (cond
+        (realized? result)
+        @result
+
+        (>= (System/currentTimeMillis) deadline-ms)
+        (do
+          (cancel-copilot-oauth-poll! result)
+          (when screen
+            (dlg/text-view-dialog! screen "GitHub Copilot"
+              ["Timed out waiting for GitHub authorization."
+               ""
+               "Restart auth when ready."]))
+          copilot-oauth-cancelled)
+
+        :else
+        (do
+          (when screen
+            (draw-copilot-waiting! screen started-at-ms))
+          (if (and screen
+                (when-let [key (.pollInput screen)]
+                  (and (not (instance? MouseAction key))
+                    (= KeyType/Escape (.getKeyType key)))))
+            (do
+              (cancel-copilot-oauth-poll! result)
+              copilot-oauth-cancelled)
+            (do
+              (Thread/sleep (long copilot-oauth-wait-poll-ms))
+              (recur))))))))
+
 (defn- copilot-auth-instructions!
   [^TerminalScreen screen verification-uri user-code]
   (loop [status nil]
@@ -302,20 +374,14 @@
                (copilot/logout!))
             ;; Poll in background, show waiting message
              (let [result (vis/worker-future "vis-tui-copilot-oauth-poll"
-                            #(poll-fn device-code interval expires-in opts))]
-              ;; The poll runs in background; once authorized it returns.
-               (loop [attempt 0]
-                 (if (realized? result)
-                   (let [_poll-result @result
-                         {:keys [token]} (exchange-fn opts)]
-                     ;; Success is silent: surfacing a redundant "Authenticated!" toast
-                     ;; on top of the just-closed device-flow dialog confused users
-                     ;; (cf. anthropic dialog feedback). Failure dialogs remain.
-                     token)
-                   (do
-                     (Thread/sleep 2000)
-                     (when (< attempt 180) ;; 6 min max
-                       (recur (inc attempt)))))))))
+                            #(poll-fn device-code interval expires-in opts))
+                   poll-result (wait-for-copilot-oauth! screen result)]
+               (when-not (= copilot-oauth-cancelled poll-result)
+                 (let [{:keys [token]} (exchange-fn opts)]
+                   ;; Success is silent: surfacing a redundant "Authenticated!" toast
+                   ;; on top of the just-closed device-flow dialog confused users
+                   ;; (cf. anthropic dialog feedback). Failure dialogs remain.
+                   token)))))
          (catch Exception e
            (dlg/text-view-dialog! screen "GitHub Copilot" [(str "Auth failed: " (ex-message e))])
            nil))))))

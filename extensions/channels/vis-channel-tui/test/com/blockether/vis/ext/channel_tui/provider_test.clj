@@ -279,7 +279,44 @@
                                                   :expires-in 900})
                     provider/copilot-auth-instructions! (fn [& _] nil)]
         (expect (nil? (@#'provider/copilot-oauth-flow! nil :individual true)))
-        (expect (= true @start-called?))))))
+        (expect (= true @start-called?)))))
+
+  (it "times out pending device authorization instead of hanging the TUI"
+    (let [cancelled?       (atom false)
+          exchange-called? (atom false)
+          pending-result   (reify
+                             java.util.concurrent.Future
+                             (cancel [_ _]
+                               (reset! cancelled? true)
+                               true)
+                             (isCancelled [_] @cancelled?)
+                             (isDone [_] false)
+                             (get [_] @(promise))
+                             (get [_ _ _]
+                               (throw (java.util.concurrent.TimeoutException.)))
+
+                             clojure.lang.IDeref
+                             (deref [_] @(promise))
+
+                             clojure.lang.IPending
+                             (isRealized [_] false))]
+      (with-redefs [copilot/detect-oauth-token (constantly nil)
+                    copilot/start-device-flow! (fn [& _]
+                                                 {:user-code "ABCD-EFGH"
+                                                  :verification-uri "https://github.com/login/device"
+                                                  :device-code "device"
+                                                  :interval 5
+                                                  :expires-in 900})
+                    copilot/get-copilot-token! (fn [& _]
+                                                 (reset! exchange-called? true)
+                                                 {:token "api-token"})
+                    provider/copilot-auth-instructions! (fn [& _] true)
+                    provider/copilot-oauth-wait-poll-ms 1
+                    provider/copilot-oauth-wait-timeout-ms 1
+                    vis/worker-future (fn [& _] pending-result)]
+        (expect (nil? (@#'provider/copilot-oauth-flow! nil :individual)))
+        (expect (= true @cancelled?))
+        (expect (= false @exchange-called?))))))
 
 (defdescribe codex-oauth-ready-test
   (it "returns true immediately when Codex credentials already exist"
