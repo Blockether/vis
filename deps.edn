@@ -57,7 +57,11 @@
   ;;   org.babashka/http-client -> vis-channel-telegram + provider/exa extensions
   ;;   rewrite-clj              -> vis-language-clojure
   ;;   lanterna                 -> vis-channel-tui
-  com.blockether/svar                             {:mvn/version "0.5.6"}
+  ;; svar uses :local/root while we iterate on router + llm fixes
+  ;; (catalog-key resolver, max_tokens/output-limit honouring,
+  ;; stream-line-trace instrumentation). Switch back to {:mvn/version
+  ;; "X.Y.Z"} once the next svar release is cut.
+  com.blockether/svar                             {:local/root "../svar"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into

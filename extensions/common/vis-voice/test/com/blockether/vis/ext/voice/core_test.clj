@@ -70,6 +70,23 @@
       (expect (= "voice" (:cmd/name cli)))
       (expect (= ["models"] (mapv :cmd/name (:cmd/subcommands cli))))))
 
+  (it "contributes voice-specific doctor diagnostics"
+    (with-redefs [voice/model-dir (constantly "/tmp/piper")
+                  voice/model-files (fn [_] {:model "/tmp/piper/model.onnx"
+                                             :tokens "/tmp/piper/tokens.txt"
+                                             :data "/tmp/piper/espeak-ng-data"})
+                  voice/model-installed? (constantly true)
+                  voice/model-status (constantly {:parakeet {:installed? true}})
+                  com.blockether.vis.ext.voice.core/executable? (constantly true)
+                  clojure.core/requiring-resolve (fn [sym]
+                                                   (case sym
+                                                     com.blockether.vis.ext.voice.asr/transcribe-file! identity
+                                                     com.blockether.vis.ext.voice.core/synthesize-file! identity))]
+      (let [msgs ((:ext/doctor-fn voice/voice-extension) {})]
+        (expect (= [::voice/runtime ::voice/ffmpeg ::voice/piper ::voice/parakeet]
+                  (mapv :check-id msgs)))
+        (expect (every? #(= :info (:level %)) msgs)))))
+
   (it "defers TUI voice input namespace until the channel contribution is invoked"
     (let [contribution (first (get-in voice/voice-extension
                                 [:ext/channel-contributions :tui.slot/commands]))

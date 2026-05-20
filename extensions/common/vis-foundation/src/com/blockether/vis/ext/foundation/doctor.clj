@@ -1,20 +1,15 @@
 (ns com.blockether.vis.ext.foundation.doctor
   "Foundation's contribution to the host `vis doctor` aggregator. ONE fn
-   (`doctor-fn`) returns the full message stream from four logical
+   (`doctor-fn`) returns the full message stream from two logical
    sections, each stamping its own `:check-id` so the formatter
    groups them under the same banner the original four-checks-vec
    shape produced (plan §1 Q18 / §10):
 
-     ::system            JVM / OS / Clojure / memory / DB-path facts
-                          (lifted from the old host built-in
-                          `cli-doctor!`)
      ::agents-md         AGENTS.md presence / source / size; one
                           :info line when found, one :warn line
                           when neither AGENTS.md nor CLAUDE.md exists
                           (rules silently absent is worth flagging
                           even though it isn't an error per se).
-     ::voice             Optional voice runtime readiness: voice feature,
-                          ffmpeg, and Piper espeak-ng-data presence.
      ::scan-warnings     Aggregated warnings from project-guidance
                           scanners (already surfaced via
                           `(v/scan-warnings)`); promoted to
@@ -28,8 +23,6 @@
    runs regardless of `:ext/activation-fn`, so the section fns must
    NOT assume `:db-info` or other env keys are present."
   (:require
-   [babashka.process :as process]
-   [clojure.java.io :as io]
    [com.blockether.vis.ext.foundation.environment.agents :as agents]))
 
 (set! *warn-on-reflection* true)
@@ -48,37 +41,10 @@
                               (object-array [(/ (double n) (* 1024.0 1024.0 1024.0))]))))
 
 ;; ---------------------------------------------------------------------------
-;; ::system - lifted from the old internal/main.clj's cli-doctor!
-;; ---------------------------------------------------------------------------
-
-(defn- system-check-fn
-  "JVM + OS + Clojure + memory + DB-path facts. Defensive about
-   `:db-info`: per the activation contract, the env may not have
-   one (see plan Q19 / §1)."
-  [environment]
-  (let [rt        (Runtime/getRuntime)
-        used      (- (.totalMemory rt) (.freeMemory rt))
-        max-mem   (.maxMemory rt)
-        db-path   (or (some-> environment :db-info :path) "(no DB)")]
-    [{:level   :info
-      :message (str "OS: "       (System/getProperty "os.name") " "
-                 (System/getProperty "os.arch") " "
-                 (System/getProperty "os.version"))}
-     {:level   :info
-      :message (str "Java: "     (System/getProperty "java.version")
-                 " (" (System/getProperty "java.vendor") ")")}
-     {:level   :info
-      :message (str "Clojure: "  (clojure-version))}
-     {:level   :info
-      :message (str "Memory: "   (format-bytes used) " / " (format-bytes max-mem))}
-     {:level   :info
-      :message (str "DB path: "  db-path)}]))
-
-;; ---------------------------------------------------------------------------
 ;; ::agents-md - project guidance presence
 ;; ---------------------------------------------------------------------------
 
-(defn- agents-md-check-fn [_environment]
+(defn- agents-md-diagnostics [_environment]
   (let [{:keys [found? source path bytes truncated? original-bytes]} (agents/instructions)]
     (if found?
       [(cond-> {:level   :info
@@ -95,69 +61,10 @@
         :remediation "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
 
 ;; ---------------------------------------------------------------------------
-;; ::voice - optional voice runtime checks
-;; ---------------------------------------------------------------------------
-
-(defn- executable? [cmd]
-  (try
-    (zero? (:exit (process/sh {:out :string :err :string :continue true}
-                    "command" "-v" cmd)))
-    (catch Throwable _ false)))
-
-(defn- resolved? [sym]
-  (boolean (requiring-resolve sym)))
-
-(defn- call-resolved [sym & args]
-  (when-let [f (requiring-resolve sym)]
-    (apply f args)))
-
-(defn- voice-extension-message []
-  (let [asr? (resolved? 'com.blockether.vis.ext.voice.asr/transcribe-file!)
-        tts? (resolved? 'com.blockether.vis.ext.voice.core/synthesize-file!)]
-    (if (or asr? tts?)
-      {:level :info
-       :message (str "Voice:"
-                  " input=" (if asr? "loaded" "missing")
-                  ", output=" (if tts? "loaded" "missing"))}
-      {:level       :warn
-       :message     "Voice: not loaded; voice menus/commands are disabled."
-       :remediation "Add/load vis-voice, then restart the channel."})))
-
-(defn- ffmpeg-message []
-  (if (executable? "ffmpeg")
-    {:level :info
-     :message "ffmpeg: installed"}
-    {:level       :warn
-     :message     "ffmpeg: missing; Telegram voice input cannot convert .oga/.opus to WAV for ASR."
-     :remediation "Install ffmpeg and ensure it is on PATH for the Vis/Telegram process."}))
-
-(defn- piper-espeak-message []
-  (try
-    (if-let [files (call-resolved 'com.blockether.vis.ext.voice.core/model-files)]
-      (let [data-dir (:data files)]
-        (if (.isDirectory (io/file data-dir))
-          {:level :info
-           :message (str "Piper espeak-ng-data: installed - " data-dir)}
-          {:level       :warn
-           :message     (str "Piper espeak-ng-data: missing - " data-dir)
-           :remediation "Run `vis extensions voice models download --piper` or set VIS_PIPER_MODEL_DIR to a complete Piper model directory."}))
-      {:level :info
-       :message "Piper espeak-ng-data: skipped; voice TTS is not loaded."})
-    (catch Throwable t
-      {:level       :warn
-       :message     (str "Piper espeak-ng-data: check failed: " (or (ex-message t) t))
-       :remediation "Run `vis extensions voice models status` for detailed voice model diagnostics."})))
-
-(defn- voice-check-fn [_environment]
-  [(voice-extension-message)
-   (ffmpeg-message)
-   (piper-espeak-message)])
-
-;; ---------------------------------------------------------------------------
 ;; ::scan-warnings - promotes scanner warnings into doctor :error msgs
 ;; ---------------------------------------------------------------------------
 
-(defn- scan-warnings-check-fn [_environment]
+(defn- scan-warnings-diagnostics [_environment]
   (let [warnings (agents/scan-warnings)]
     (if (empty? warnings)
       []
@@ -177,9 +84,8 @@
 
 ;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
-;; `:ext/doctor-fn`. Order is intentional: system facts first,
-;; then project-guidance presence, then voice readiness, then any scan
-;; failures. Each section stamps its own
+;; `:ext/doctor-fn`. Order is intentional: project-guidance presence,
+;; then any scan failures. Each section stamps its own
 ;; `:check-id` so the formatter still groups the output under the
 ;; documented prefixes.
 ;; ---------------------------------------------------------------------------
@@ -188,12 +94,10 @@
   (mapv #(assoc % :check-id check-id) msgs))
 
 (defn doctor-fn
-  "Foundation's `:ext/doctor-fn`. Concatenates the four
-   logical section streams into a single message seq."
+  "Foundation's `:ext/doctor-fn`. Concatenates the foundation
+   diagnostic streams into a single message seq."
   [environment]
   (vec
     (concat
-      (stamp ::system        (system-check-fn        environment))
-      (stamp ::agents-md     (agents-md-check-fn     environment))
-      (stamp ::voice         (voice-check-fn         environment))
-      (stamp ::scan-warnings (scan-warnings-check-fn environment)))))
+      (stamp ::agents-md     (agents-md-diagnostics     environment))
+      (stamp ::scan-warnings (scan-warnings-diagnostics environment)))))
