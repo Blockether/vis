@@ -52,7 +52,7 @@
   {:runs []})
 
 (defn- run-width ^long [{:keys [text]}]
-  (count (or text "")))
+  (p/display-width (or text "")))
 
 (defn- line-width ^long [line]
   (reduce + 0 (map run-width (:runs line))))
@@ -338,18 +338,43 @@
         (into [open] (conj body close)))
       body)))
 
+(defn- task-list-marker
+  "Return a glyph marker for GFM-style task-list text prefixes.
+
+   CommonMark keeps `- [x] item` / `- [ ] item` as ordinary list item
+   paragraph text in our canonical IR, so the TUI walker renders the task
+   marker here: checked items become `☑️`, unchecked items become `⬜`, and
+   the literal `[x]` / `[ ]` prefix is stripped from the first run."
+  [ordered? runs]
+  (when-not ordered?
+    (let [first-text (some-> runs first :text str)]
+      (cond
+        (re-find #"^\[[xX]\]\s+" first-text)
+        {:marker "☑️ " :prefix #"^\[[xX]\]\s+"}
+
+        (re-find #"^\[ \]\s+" first-text)
+        {:marker "⬜ " :prefix #"^\[ \]\s+"}))))
+
+(defn- strip-task-list-marker [runs prefix]
+  (if (and prefix (seq runs))
+    (update-in (vec runs) [0 :text] #(str/replace-first (or % "") prefix ""))
+    runs))
+
 (defn- list->lines [tag children width opts]
   (let [ordered? (= :ol tag)
         n        (volatile! 1)]
     (vec
       (mapcat
         (fn [li]
-          (let [marker (if ordered?
+          (let [kids (node-children li)
+                first-p (first (filter #(and (vector? %) (= :p (node-tag %))) kids))
+                first-runs (when first-p (inlines->runs (node-children first-p) #{} nil))
+                task-marker (task-list-marker ordered? first-runs)
+                marker (if ordered?
                          (let [m (str @n ". ")] (vswap! n inc) m)
-                         "- ")
-                indent (apply str (repeat (count marker) " "))
+                         (or (:marker task-marker) "- "))
+                indent (apply str (repeat (p/display-width marker) " "))
                 marker-run {:text marker :style #{:marker} :node li}
-                kids (node-children li)
                 ;; canonical :li children = either all blocks (post-canon
                 ;; multi-paragraph) OR exactly one wrapping :p (post-canon
                 ;; inline run). Both cases handled uniformly: lay out each
@@ -366,7 +391,10 @@
                           (cond
                             (and (vector? b) (= :p (node-tag b)))
                             (let [indent-run {:text indent :style #{} :node li}
-                                  inline-runs (inlines->runs (node-children b) #{} nil)
+                                  raw-inline-runs (inlines->runs (node-children b) #{} nil)
+                                  inline-runs (if first?
+                                                (strip-task-list-marker raw-inline-runs (:prefix task-marker))
+                                                raw-inline-runs)
                                   prefix (if first?
                                            {:initial [marker-run]  :cont [indent-run]}
                                            {:initial [indent-run]  :cont [indent-run]})

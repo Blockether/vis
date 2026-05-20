@@ -29,6 +29,12 @@
 (def ^:private ask-code-block-observation
   (deref #'lp/ask-code-block-observation))
 
+(def ^:private parse-top-level-forms
+  (deref #'lp/parse-top-level-forms))
+
+(def ^:private code-entries-preflight
+  (deref #'lp/code-entries-preflight))
+
 (def ^:private empty-code-error-with-observation
   (deref #'lp/empty-code-error-with-observation))
 
@@ -236,6 +242,29 @@
     (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
       (expect (= 180000 (:semantic-timeout-ms opts)))
       (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))))
+
+(defdescribe parse-top-level-forms-test
+  (it "keeps quote reader macro attached when streaming top-level forms"
+    (let [{:keys [forms parse-error]} (parse-top-level-forms
+                                        "(require '[clojure.string :as str])")
+          form (:form (first forms))]
+      (expect (nil? parse-error))
+      (expect (= 1 (count forms)))
+      (expect (= '(require (quote [clojure.string :as str])) form))
+      (expect (= "(require (quote [clojure.string :as str]))"
+                (:source (first forms))))))
+
+  (it "keeps a blank line between merged clojure fences"
+    (let [{:keys [code-entries normalized-code]}
+          (code-entries-preflight
+            1
+            [{:lang "clojure" :source "(def a 1)"}
+             {:lang "clojure" :source "(def b 2)"}])
+          entry (first code-entries)]
+      (expect (= "(def a 1)\n\n(def b 2)" normalized-code))
+      (expect (= normalized-code (:expr entry)))
+      (expect (true? (:multi-fence-merged? entry)))
+      (expect (= 2 (:multi-fence-count entry))))))
 
 (defdescribe malformed-direct-answer-repair-test
   (it "does not auto-repair malformed direct answer blocks"

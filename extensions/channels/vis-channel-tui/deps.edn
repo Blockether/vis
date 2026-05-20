@@ -9,20 +9,19 @@
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis          {:local/root "../../.."}
-  ;; Blockether fork of mabe02/lanterna 3.1.5 with three patches on top:
+  ;; Blockether fork of mabe02/lanterna 3.1.5 with four patches on top:
   ;;   1. PR #625 cherry-pick - emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
   ;;   2. BMP `Emoji_Presentation=Yes` width detection - ✅, ⭐, ⚡,
   ;;      ❌, ✨, ☔, ☕, ⏰, etc. (≈30 ranges, ≈100 code points)
   ;;      now correctly counted as 2 terminal columns.
-  ;;   3. VS-16 graphemes are NOT double-width - 🏷️, ❤️, etc. report
-  ;;      `isDoubleWidth=false` so lanterna's putString cursor advance
-  ;;      matches what real terminals (macOS Terminal, iTerm2 in some
-  ;;      font configs) actually paint. Removes the per-cell padding
-  ;;      hack the markdown-table prettifier carried.
+  ;;   3. VS-16 graphemes are terminal-matched: 🏷️/❤️ remain narrow,
+  ;;      while observed-wide symbols like ☑️ stay double-width so
+  ;;      following text does not overwrite the emoji cell.
+  ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
   ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.3"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.4"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}

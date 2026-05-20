@@ -52,13 +52,13 @@
          this)))))
 
 (defdescribe right-block-text-test
-  (it "shows the copy-id affordance only"
-    (expect (= "⧉ 4b1ed602" (right-block-text "4b1ed602")))))
+  (it "shows the short session id only"
+    (expect (= "4b1ed602" (right-block-text "4b1ed602")))))
 
 (defdescribe draw-header-copy-region-test
   (it "registers a single click region for id copy (no Markdown copy)"
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
-          id-rendered   "⧉ 123e4567"
+          id-rendered   "123e4567"
           id-w          (p/display-width id-rendered)
           cols          60
           expected-col  (- cols 1 id-w)
@@ -91,7 +91,7 @@
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
           status-text   "● Recording 00:01"
           notification  "✓ Copied!"
-          id-rendered   "⧉ 123e4567"
+          id-rendered   "123e4567"
           action-w      (p/display-width (right-block-text "123e4567"))
           id-w          (p/display-width id-rendered)
           cols          80
@@ -154,7 +154,7 @@
         (expect (= t/terminal-bg (:bg placeholder-write)))
         (expect (empty? left-slot-writes))
         (expect (not-any? #(= :workspace-entry (:kind %)) (cr/current)))
-        (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567")))))))
+        (expect (= t/header-fg (:fg (write-by-text "123e4567")))))))
 
   (it "uses a subtly different foreground for the hovered header copy affordance only"
     (cr/reset!)
@@ -181,7 +181,7 @@
                               (some #(when (= text (:text %)) %) @writes))]
           ;; With one workspace, title stays inert center text, not a switcher entry.
           (expect (= t/header-fg (:fg title-write)))
-          (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567")))))))))
+          (expect (= t/header-hover-fg (:fg (write-by-text "123e4567")))))))))
 
 (defdescribe draw-header-workspace-entries-test
   (it "renders workspace switcher entries in the center header slot without adding rows"

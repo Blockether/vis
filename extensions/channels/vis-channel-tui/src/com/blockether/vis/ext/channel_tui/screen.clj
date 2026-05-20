@@ -940,7 +940,7 @@
 (defn- header-hover-only-change?
   "True when a render bump only exists to repaint header hover chrome.
 
-   Header affordance (`⧉ <id>`) lives outside the
+   Header affordance (`<id>`) lives outside the
    transcript body. Repainting the whole scrollback when the mouse enters
    or leaves those cells makes the body visibly flash. Body link hovers
    still take the full path for now, because their highlight row lives
