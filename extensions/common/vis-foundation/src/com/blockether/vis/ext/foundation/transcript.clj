@@ -52,7 +52,7 @@
             :llm-raw-response :llm-raw-response-preview :llm-raw-response-length
             :llm-raw-response-sha256
             :llm-executable-blocks
-            :metadata
+            :engine-timing
             :vars
             [{:name :code :value :version}]
             :blocks
@@ -905,8 +905,8 @@
                      blocks))))))
 
 (defn- render-final-answer
-  "Final answer text the turn settled on, persisted on
-   `session_turn_state.metadata.answer`. Rendered after every iteration so
+  "Final answer text the turn settled on, persisted in the
+   `session_turn_state.answer` BLOB column. Rendered after every iteration so
    the reader sees the trajectory that led to it. nil/blank -> nothing
    emitted."
   [answer]

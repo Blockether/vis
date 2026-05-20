@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-git.core-test
   (:require
+   [clojure.string]
    [com.blockether.vis.ext.foundation-git.core :as git]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it]]))
@@ -25,4 +26,8 @@
       (git/git-diff-fn {:workspace/root "/repo"} :bad)
       (expect false)
       (catch clojure.lang.ExceptionInfo e
-        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))))))
+        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
+        (expect (clojure.string/includes? (ex-message e)
+                  "v/git-diff expected optional opts map, got :bad"))
+        (expect (clojure.string/includes? (ex-message e)
+                  "Call (v/git-diff) or (v/git-diff {:stat? true})."))))))

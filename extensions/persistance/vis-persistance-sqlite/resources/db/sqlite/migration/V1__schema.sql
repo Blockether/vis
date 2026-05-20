@@ -322,7 +322,12 @@ CREATE TABLE session_turn_iteration (
                                     llm_cache_created_tokens IS NULL OR llm_cache_created_tokens >= 0
                                   ),
 
-  engine_timing                   TEXT,    -- JSON-encoded core engine timing diagnostics.
+  engine_provider_call_ms         INTEGER CHECK (
+                                    engine_provider_call_ms IS NULL OR engine_provider_call_ms >= 0
+                                  ),
+  engine_response_preflight_ms    INTEGER CHECK (
+                                    engine_response_preflight_ms IS NULL OR engine_response_preflight_ms >= 0
+                                  ),
 
   -- Single-form iteration payload. `result` and `error` are Nippy-encoded
   -- Clojure values.
@@ -370,23 +375,6 @@ CREATE TABLE llm_routing_event (
 
 CREATE INDEX idx_llm_routing_event_iteration_position
   ON llm_routing_event(session_turn_iteration_id, position);
-
-CREATE TABLE runtime_extension_snapshot (
-  id                         TEXT PRIMARY KEY NOT NULL,
-  session_turn_iteration_id  TEXT NOT NULL
-                             REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
-  extension_name             TEXT NOT NULL,
-  extension_version          TEXT,
-  source_paths               TEXT,
-  source_mtime_max           INTEGER,
-  source_sha256              TEXT,
-  created_at                 INTEGER NOT NULL,
-
-  UNIQUE(session_turn_iteration_id, extension_name)
-);
-
-CREATE INDEX idx_runtime_extension_snapshot_iteration
-  ON runtime_extension_snapshot(session_turn_iteration_id);
 
 CREATE TRIGGER trg_session_turn_iteration_position_ai
 BEFORE INSERT ON session_turn_iteration

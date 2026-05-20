@@ -1971,8 +1971,8 @@
 (defonce ^:private extension-source-markers
   ;; Sidecar atom holding source-file markers per registered extension.
   ;; Keyed by :ext/name. Populated at register-time, dropped at
-  ;; deregister-time. Read by `iteration-metadata` (first iteration of
-  ;; each turn) and by `reload-extensions!`'s diff. Kept
+  ;; deregister-time. Read by `iteration-extension-snapshots`
+  ;; (first iteration of each turn) and by `reload-extensions!`'s diff. Kept
   ;; OUT of the extension map itself so `extension/validate!` doesn't have
   ;; to know about runtime-derived fields. Plan §5.5.
   (atom {}))
@@ -2020,8 +2020,8 @@
    the matching sub-registry as a side effect.
 
    Also computes source-file markers (paths, max-mtime, sha256) and
-   stores them in a sidecar atom for the iteration-metadata writer
-   and the v2 change-detector. Plan §5.5.
+   stores them in a sidecar atom for the `runtime_extension_snapshot`
+   writer and the v2 change-detector. Plan §5.5.
 
    Idempotent on `:ext/name`. Returns the validated extension."
   [ext]
