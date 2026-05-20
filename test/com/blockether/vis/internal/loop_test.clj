@@ -276,7 +276,7 @@
       (expect (nil? (:repaired? entry)))
       (expect (string? (:repaired-source parsed)))
       (expect (nil? (:parse-error parsed)))
-      (expect (true? (:vis/structurally-silent? entry)))
+      (expect (false? (:vis/structurally-silent? entry)))
       (expect (= src (:expr entry)))
       (expect (str/includes? (:repaired-source parsed) "\"setHotwordsFile\" \"/\""))))
 
@@ -294,6 +294,45 @@
           (expect (true? (:repaired? result)))
           (expect (= "(def x 1)" (:repaired-source result)))
           (expect (= 1 (:val (sci/eval-string+ (:sci-ctx env) "x" {:ns (:sandbox-ns env)})))))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "keeps code visible when an answer form shares a block with code"
+    (let [preflight (var-get #'lp/code-entries-preflight)
+          src "(done {:answer \"ok\"})\n(def x \"doc\" 1)"
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+      (expect (false? (:vis/structurally-silent? entry)))
+      (expect (= [{:kind :answer-ref}
+                  {:kind :code :source "(def x \"doc\" 1)"}]
+                (:render-segments entry)))))
+
+  (it "still hides standalone direct-answer blocks"
+    (let [preflight (var-get #'lp/code-entries-preflight)
+          src "(done {:answer \"ok\"})"
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+      (expect (true? (:vis/structurally-silent? entry)))
+      (expect (= [{:kind :answer-ref}] (:render-segments entry)))))
+
+  (it "streams form-start for mixed answer/code blocks"
+    (let [env    (lp/create-environment ::router {:db :memory})
+          chunks (atom [])
+          src    "(done {:answer \"ok\"})\n(def x \"doc\" 1)"]
+      (try
+        (with-redefs [svar/ask-code! (fn [_ _]
+                                       {:blocks [{:source src :lang "clojure"}]
+                                        :raw ""
+                                        :tokens {}})]
+          (lp/run-iteration env []
+            {:iteration 0
+             :resolved-model {:provider :test :name "test"}
+             :on-chunk #(swap! chunks conj %)})
+          (let [start (first (filter #(= :form-start (:phase %)) @chunks))]
+            (expect (some? start))
+            (expect (= src (:code start)))
+            (expect (false? (:vis/structurally-silent? start)))
+            (expect (= [{:kind :answer-ref}
+                        {:kind :code :source "(def x \"doc\" 1)"}]
+                      (:render-segments start)))))
         (finally
           (lp/dispose-environment! env)))))
 
@@ -325,6 +364,31 @@
       (expect (= [{:kind :title :value "Triage render noise"}
                   {:kind :code :source "(def x \"doc\" 1)"}]
                 (:render-segments entry))))))
+
+(defdescribe final-answer-gate-test
+  (it "rejects answers from iterations that called extension tools"
+    (let [err (lp/final-answer-gate-error
+                {}
+                1
+                [{:id 0
+                  :code "(v/cat \"deps.edn\")"
+                  :channel [{:success? true :result [:ir {}]}]
+                  :error nil}]
+                {:answer "done"}
+                nil)]
+      (expect (string? err))
+      (expect (str/includes? err "extension/tool"))))
+
+  (it "allows answer-only iterations when no extension tool ran"
+    (expect (nil? (lp/final-answer-gate-error
+                    {}
+                    1
+                    [{:id 0
+                      :code "(+ 1 2)"
+                      :result 3
+                      :error nil}]
+                    {:answer "done"}
+                    nil)))))
 
 ;; ---------------------------------------------------------------------------
 ;; def-sink -> vars-snapshot (per-var precise source extraction)

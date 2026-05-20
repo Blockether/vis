@@ -794,7 +794,12 @@
         footer-row   (- rows 2)
         input-top    (- rows input-box-h 2)
         subtitle-row (- input-top 2)
-        messages-top    (header/header-rows db)
+        ;; Keep one empty terminal row between the header band (`Vis`/workspace
+        ;; strip) and the first transcript bubble. `draw-messages-area!` then
+        ;; applies its own internal MESSAGE_MARGIN_TOP inside this area; without
+        ;; this outer gap the first recap/progress bubble visually hugs the
+        ;; header bottom rule.
+        messages-top    (inc (header/header-rows db))
         messages-bottom subtitle-row
         ;; Single source of truth for the gutter math lives in
         ;; `render.clj` (`MESSAGE_SIDE_PAD`). Reference it directly; do

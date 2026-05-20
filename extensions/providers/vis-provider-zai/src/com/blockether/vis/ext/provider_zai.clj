@@ -470,7 +470,7 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/name        "zai"
+    {:ext/name        "provider-zai"
      :ext/description "Z.ai coding-plan + pass static-API-key providers."
      :ext/version     "0.2.0"
      :ext/author      "Blockether"

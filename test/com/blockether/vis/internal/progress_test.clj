@@ -37,7 +37,23 @@
                             :silent? true})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (= [] (:forms entry)))
-        (expect (= ["Title changed to \"New title\"."] (:recaps entry)))))))
+        (expect (= ["Title changed to \"New title\"."] (:recaps entry))))))
+
+  (it "keeps mixed answer/code chunks visible"
+    (let [tracker (progress/make-progress-tracker)]
+      ((:on-chunk tracker) {:phase :form-result
+                            :iteration-count 1
+                            :position 0
+                            :code "(done {:answer \"ok\"})\n(def x \"doc\" 1)"
+                            :render-segments [{:kind :answer-ref}
+                                              {:kind :code :source "(def x \"doc\" 1)"}]
+                            :result :vis/answer
+                            :error nil})
+      (let [entry (first ((:get-timeline tracker)))
+            form  (first (:forms entry))]
+        (expect (= 1 (count (:forms entry))))
+        (expect (= "(done {:answer \"ok\"})\n(def x \"doc\" 1)" (:code form)))
+        (expect (false? (:silent? form)))))))
 
 (defdescribe progress-tracker-iteration-key-aliasing-test
   (it "routes `:iteration`-only chunks to the same bucket as `:iteration-count` chunks"
