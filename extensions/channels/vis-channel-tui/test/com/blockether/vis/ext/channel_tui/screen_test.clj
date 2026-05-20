@@ -541,11 +541,15 @@
 
   (it "whole trace bubble copy expands hidden result bodies"
     (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
-          trace       [{:code      ["(+ 1 2)"]
-                        :comments  [nil]
-                        :results   [huge-result]
-                        :durations [1]
-                        :successes [true]}]
+          trace       [{:forms [{:position      0
+                                 :engine-idx    0
+                                 :code          "(+ 1 2)"
+                                 :result-render huge-result
+                                 :result-kind   :value
+                                 :duration-ms   1
+                                 :success?      true
+                                 :silent?       false
+                                 :running?      false}]}]
           copied      (copyable-bubble-text
                         {:role :assistant
                          :id "turn-1"

@@ -45,27 +45,32 @@
                                               on every chunk
 
    Returns `{:on-chunk fn :get-timeline fn}`. Pass the `:on-chunk` fn
-   under `:hooks {:on-chunk ...}` of `sessions/send!`. Each
-   timeline entry has the shape:
+   under `:hooks {:on-chunk ...}` of `sessions/send!`. Each timeline
+   entry has the shape:
 
      {:iteration N
       :thinking  str-or-nil
-      :code      [str ...]            ;; per-form, idx-aligned
-      :render-segments [[{:kind ...}] ...] ;; optional per-block display split
-      :results   [str-or-IR ...]      ;; nil for form eval errors
-      :result-kinds [keyword ...] ;; :tool, :value, or :error
-      :result-details [map-or-str ...] ;; extra result metadata
-      :errors    [map-or-nil ...]      ;; per-form structured eval errors
-      :durations [int-ms ...]
-      :successes [bool ...]
-      :started-at-ms [int-ms ...] ;; running form start timestamps
-      :silents   [bool ...]       ;; per-form :vis/silent visibility marker
-      :recaps   [str ...]        ;; user-facing recap lines for hidden host work
-      :provider-fallbacks [map ...] ;; routed provider fallback notices
-      :activity  nil-or-keyword      ;; live coarse phase (:provider-call/:response-parse)
-      :error     nil-or-iteration-error
-      :final     nil-or-{:answer :iteration-count :status}
-      :done?     bool}
+      :forms     [{:position        int            ;; display index after elision
+                   :engine-idx      int            ;; original loop form index
+                   :code            str
+                   :comment         str-or-nil
+                   :render-segments [{:kind ...} ...] ;; source classification
+                   :result-render   str-or-IR-or-nil  ;; pre-rendered tool result
+                   :result-kind     :tool|:value|:error
+                   :result-detail   map-or-nil        ;; tool metadata
+                   :error           map-or-nil
+                   :duration-ms     int
+                   :success?        bool
+                   :silent?         bool
+                   :started-at-ms   int-or-nil
+                   :running?        bool} ...]
+      :recaps             [str ...]   ;; user-facing recap lines for hidden host work
+      :provider-fallbacks [map ...]   ;; routed provider fallback notices
+      :activity           nil-or-keyword ;; live coarse phase (:provider-call/:response-parse)
+      :elided-form-idxs   #{int ...}  ;; original loop indices hidden from :forms
+      :error              nil-or-iteration-error
+      :final              nil-or-{:answer :iteration-count :status}
+      :done?              bool}
 
    The pre-existing `:events` interleaving log was removed: it lived
    only in memory (never persisted), and resumed bubbles re-render
@@ -266,11 +271,16 @@
   "Build the completed `:forms` entry for a `:form-result` chunk.
    Carries the raw `:error` and the pre-derived display projections
    (`:result-render`, `:result-kind`, `:result-detail`) the renderer
-   reads verbatim. `:result-render` is nil when the form returned
-   `:vis/answer` for the answer slot — the channel renders the answer
-   text below the trace."
+   reads verbatim.
+
+   `:result-render` is nil when:
+     - the form errored (the renderer paints `:error` inline with the
+       failing source caret; the per-form result row is suppressed)
+     - the form returned `:vis/answer` for the answer slot (the
+       channel renders the answer text below the trace)"
   [display-idx prev-form chunk]
-  (let [answer-slot? (and (not (:error chunk))
+  (let [errored?     (some? (:error chunk))
+        answer-slot? (and (not errored?)
                        (= :vis/answer (:result chunk))
                        (visible-code-segments? chunk))]
     {:position        display-idx
@@ -280,12 +290,12 @@
      :render-segments (:render-segments chunk)
      :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
      :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
-     :result-render   (when-not answer-slot? (format-form-result chunk))
+     :result-render   (when-not (or errored? answer-slot?) (format-form-result chunk))
      :result-kind     (form-result-kind chunk)
      :result-detail   (form-result-detail chunk)
      :error           (:error chunk)
-     :success?        (nil? (:error chunk))
-     :silent?         (and (nil? (:error chunk)) (silent-chunk? chunk))
+     :success?        (not errored?)
+     :silent?         (and (not errored?) (silent-chunk? chunk))
      :running?        false}))
 
 (defn- assoc-form
@@ -432,24 +442,6 @@
     ;; Unknown / missing :phase - leave the entry as-is.
     entry))
 
-(defn- legacy-vector-projections
-  "Project canonical `:forms` back to legacy parallel vectors.
-   Kept for channel/test compatibility while `:forms` is the source of truth."
-  [entry]
-  (let [forms (vec (or (:forms entry) []))]
-    (assoc entry
-      :code (mapv :code forms)
-      :comments (mapv :comment forms)
-      :render-segments (mapv :render-segments forms)
-      :results (mapv #(when (nil? (:error %)) (:result-render %)) forms)
-      :result-kinds (mapv :result-kind forms)
-      :result-details (mapv :result-detail forms)
-      :errors (mapv :error forms)
-      :durations (mapv #(or (:duration-ms %) 0) forms)
-      :successes (mapv :success? forms)
-      :started-at-ms (mapv :started-at-ms forms)
-      :silents (mapv :silent? forms))))
-
 (defn make-progress-tracker
   "Create a phased progress tracker.
 
@@ -464,14 +456,31 @@
   ([] (make-progress-tracker nil))
   ([{:keys [on-update]}]
    (let [timeline (atom (sorted-map))
-         as-vec   #(mapv legacy-vector-projections (vals %))]
+         as-vec   #(vec (vals %))]
      {:on-chunk     (fn [chunk]
-                      (let [iteration (:iteration-count chunk)
-                            tl        (swap! timeline update iteration
-                                        (fn [entry]
-                                          (update-entry
-                                            (or entry (empty-iteration-entry iteration))
-                                            chunk)))]
-                        (when on-update
-                          (on-update (as-vec tl) chunk))))
+                      ;; Loop emits a mix of chunk shapes: per-iteration
+                      ;; lifecycle chunks (`:reasoning`, `:form-result`,
+                      ;; `:iteration-final`, `:provider-fallback`) carry
+                      ;; `:iteration-count`, while transport-level chunks
+                      ;; (`:provider-call`, `:response-parse`,
+                      ;; `:iteration-error`) historically carried only
+                      ;; `:iteration`. Both keys hold the same 1-based
+                      ;; iteration position. Reading just `:iteration-count`
+                      ;; routed the latter group into a `nil` bucket of
+                      ;; the sorted-map, where it sorted BEFORE every
+                      ;; real iteration and shifted live iteration
+                      ;; numbering by +1 (the visible "iteration 2" for
+                      ;; what the final result reported as a single
+                      ;; iteration). Accept either key here; skip when
+                      ;; neither is set so a malformed chunk does not
+                      ;; resurrect the phantom-bucket bug.
+                      (when-let [iteration (or (:iteration-count chunk)
+                                             (:iteration chunk))]
+                        (let [tl (swap! timeline update iteration
+                                   (fn [entry]
+                                     (update-entry
+                                       (or entry (empty-iteration-entry iteration))
+                                       chunk)))]
+                          (when on-update
+                            (on-update (as-vec tl) chunk)))))
       :get-timeline #(as-vec @timeline)})))
