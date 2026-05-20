@@ -30,9 +30,10 @@
 (def ^:private attach-multi-fence-hint (deref #'lp/attach-multi-fence-hint))
 
 (defdescribe multi-fence-hint-test
-  (it "is nil for a single-fence entry"
+  (it "is nil for a single-fence entry with no other issues"
     (expect (nil? (multi-fence-hint {})))
-    (expect (nil? (multi-fence-hint {:multi-fence-merged? false :multi-fence-count 1}))))
+    (expect (nil? (multi-fence-hint {:multi-fence-merged? false :multi-fence-count 1
+                                     :all-blocks-count 1 :malformed? false}))))
 
   (it "names the rule and the count when several fences were merged"
     (let [h (multi-fence-hint {:multi-fence-merged? true :multi-fence-count 5})]
@@ -43,7 +44,32 @@
 
   (it "falls back to 'multiple' when the count is missing"
     (let [h (multi-fence-hint {:multi-fence-merged? true})]
-      (expect (str/includes? h "multiple")))))
+      (expect (str/includes? h "multiple"))))
+
+  (it "names dropped wrong-lang fences when all-blocks-count exceeds multi-fence-count"
+    ;; Model emitted 5 fences total, only 2 tagged clojure -> 3 silently dropped
+    (let [h (multi-fence-hint {:multi-fence-merged? true
+                               :multi-fence-count 2 :all-blocks-count 5})]
+      (expect (str/includes? h "3 fence(s) were emitted untagged or with a non-clojure lang"))))
+
+  (it "fires for wrong-lang drops even when only one tagged fence survived"
+    ;; Single-fence path: vis sees 1 block but svar saw 4 — 3 dropped silently.
+    (let [h (multi-fence-hint {:multi-fence-merged? false :multi-fence-count 1
+                               :all-blocks-count 4})]
+      (expect (string? h))
+      (expect (str/includes? h "3 fence(s) were emitted untagged"))))
+
+  (it "surfaces the malformed-boundary clause when svar flagged a torn fence"
+    (let [h (multi-fence-hint {:malformed? true
+                               :multi-fence-count 1 :all-blocks-count 1})]
+      (expect (str/includes? h "malformed boundary"))))
+
+  (it "combines all three clauses when every signal fires"
+    (let [h (multi-fence-hint {:multi-fence-merged? true :multi-fence-count 3
+                               :all-blocks-count 5 :malformed? true})]
+      (expect (str/includes? h "3 ```clojure``` fences"))
+      (expect (str/includes? h "2 fence(s) were emitted untagged"))
+      (expect (str/includes? h "malformed boundary")))))
 
 (defdescribe attach-multi-fence-hint-test
   (it "is identity on single-fence entries"
@@ -194,7 +220,7 @@
     (let [preflight (var-get #'lp/code-entries-preflight)
           parse-forms (var-get #'lp/parse-top-level-forms)
           src "(done [:ir [:p \"Hotword biasing - add \" [:c \"setHotwordsFile\") \"/\" [:c \"setHotwordsScore\"]]])"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}] nil)))
           parsed (parse-forms (:expr entry))]
       (expect (nil? (:repaired? entry)))
       (expect (nil? (:repaired-source parsed)))
@@ -205,7 +231,7 @@
   (it "does not rewrite malformed non-answer code"
     (let [preflight (var-get #'lp/code-entries-preflight)
           src "(println \"a\" broken \"b)"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}] nil)))]
       (expect (nil? (:repaired? entry)))
       (expect (= src (:expr entry)))))
 
@@ -219,7 +245,7 @@
   (it "unwraps legacy top-level do before display and eval"
     (let [preflight (var-get #'lp/code-entries-preflight)
           src "(do (set-session-title! \"Triage render noise\") (def x \"doc\" 1))"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}] nil)))]
       (expect (= "(set-session-title! \"Triage render noise\")\n(def x \"doc\" 1)"
                 (:expr entry)))
       (expect (true? (:vis/unwrapped-do? entry)))
