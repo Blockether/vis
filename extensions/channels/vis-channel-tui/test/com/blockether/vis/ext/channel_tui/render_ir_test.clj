@@ -205,29 +205,29 @@
   (it ":code block has neutral outside margins and code-bg inside padding"
     (let [lines       (ir-tui/ir->lines [:ir [:code "a\n\nb"]] 80)
           code-lines  (filter #(= :code (:block-tag %)) lines)
-          margin-lines (filter #(= :outer-margin (:block-tag %)) lines)
-          tags         (mapv :block-tag lines)
-          ts           (texts lines)]
+          pad-lines   (filter #(= :p (:block-tag %)) lines)
+          tags        (mapv :block-tag lines)
+          ts          (texts lines)]
       ;; Shape:
-      ;;   :outer-margin - outside margin before the chip (bubble bg)
-      ;;   :code         - inside top padding (code bg)
-      ;;   :code         - content "a"
-      ;;   :code         - literal blank line inside the source
-      ;;   :code         - content "b"
-      ;;   :code         - inside bottom padding (code bg)
-      ;;   :outer-margin - outside margin after the chip (bubble bg)
-      (expect (= [:outer-margin :code :code :code :code :code :outer-margin] tags))
+      ;;   :p     - outside margin before the chip (bubble bg)
+      ;;   :code  - inside top padding (code bg)
+      ;;   :code  - content "a"
+      ;;   :code  - literal blank line inside the source
+      ;;   :code  - content "b"
+      ;;   :code  - inside bottom padding (code bg)
+      ;;   :p     - outside margin after the chip (bubble bg)
+      (expect (= [:p :code :code :code :code :code :p] tags))
       (expect (= 5 (count code-lines)))
-      (expect (= 2 (count margin-lines)))
+      (expect (= 2 (count pad-lines)))
       (expect (= ["" "" "a" "" "b" "" ""] ts))))
 
   (it "adjacent :code blocks keep one neutral margin between padded chips"
     (let [lines (ir-tui/ir->lines [:ir [:code "a"] [:code "b"]] 80)
           tags  (mapv :block-tag lines)
           ts    (texts lines)]
-      ;; The middle :outer-margin is the one-line margin between code chips;
-      ;; each chip still has its own :code top/bottom padding rows.
-      (expect (= [:outer-margin :code :code :code :outer-margin :code :code :code :outer-margin] tags))
+      ;; The middle :p is the one-line margin between code chips; each
+      ;; chip still has its own :code top/bottom padding rows.
+      (expect (= [:p :code :code :code :p :code :code :code :p] tags))
       (expect (= ["" "" "a" "" "" "" "b" "" ""] ts))))
 
   (it ":ul list stamps :block-tag :ul on marker + continuation lines"

@@ -20,15 +20,15 @@
       (expect (zero? c))
       (expect (zero? r))))
 
-  (it "caps visible tabs in [min, max] depending on width and tab count"
+  (it "caps visible workspaces in [min, max] depending on width and count"
     ;; Wide screen — capped to max.
-    (expect (= 8 (vh/max-visible-count 12 400)))
+    (expect (= 8 (vh/max-visible-workspace-count 12 400)))
     ;; Mid screen — clamped to min.
-    (expect (= 5 (vh/max-visible-count 12 80)))
-    ;; Few tabs — never exceeds tabs-n.
-    (expect (= 3 (vh/max-visible-count 3 400)))
+    (expect (= 5 (vh/max-visible-workspace-count 12 80)))
+    ;; Few workspaces — never exceeds workspace count.
+    (expect (= 3 (vh/max-visible-workspace-count 3 400)))
     ;; Narrow screen below the min floor — degrades to natural fit.
-    (expect (= 2 (vh/max-visible-count 8 30))))
+    (expect (= 2 (vh/max-visible-workspace-count 8 30))))
 
   (it "picks the placeholder for blank/missing titles, real title otherwise"
     (expect (= vh/untitled-session-label (vh/title-or-placeholder nil)))

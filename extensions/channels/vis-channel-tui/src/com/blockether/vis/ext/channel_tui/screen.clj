@@ -83,7 +83,7 @@
 
 (def ^:private prewarm-sync-budget-ms
   "Wall-clock budget for synchronous tail warm-up. Keeps startup and
-   tab-switch responsive while eliminating first-scroll cold stalls."
+   workspace-switch responsive while eliminating first-scroll cold stalls."
   120)
 
 (defn- input-empty?
@@ -322,7 +322,7 @@
   (input/paste-text (input/empty-input) (or text "")))
 
 (defn- activate-workspace-entry-hit!
-  "Switch to the workspace tab represented by a header click region."
+  "Switch to the workspace represented by a header click region."
   [refresh-active-workspace! hit]
   (let [before (:active-workspace-id @state/app-db)]
     (state/dispatch [:select-workspace-index (:index hit)])
@@ -1375,8 +1375,8 @@
    polling. Returns a zero-arg cleanup fn.
 
    The listener is scoped to the currently-active session. That
-   matters once the TUI can switch tabs: a stale background listener must
-   never overwrite the title of the tab the user is looking at now."
+   matters once the TUI can switch workspaces: a stale background listener
+   must never overwrite the title of the workspace the user is looking at now."
   [session-id]
   (let [session-id (str session-id)
         listener (vis/add-title-listener! session-id
@@ -1446,7 +1446,7 @@
         (str title)))))
 
 (defn- init-visible-session!
-  "Install a session into app-db and repaint the tab strip. Returns the
+  "Install a session into app-db and repaint the workspace strip. Returns the
    cleanup fn for that session's title listener."
   [{:keys [id history]}]
   (state/dispatch [:init-session {:id id} history])
@@ -1695,7 +1695,7 @@
                                       (try (cleanup) (catch Throwable _ nil)))
                                     (vreset! title-listener-cleanup nil)
                                          ;; Keep render + height caches HOT across
-                                         ;; session/tab switches. Nuking here
+                                         ;; session/workspace switches. Nuking here
                                          ;; forced every revisit back to cold-scroll.
                                     (vreset! title-listener-cleanup
                                       (init-visible-session! session-result))
@@ -1715,7 +1715,7 @@
                                              (prewarm-session! {:id id
                                                                 :history (:messages @state/app-db)}))
                                            (when notify?
-                                             (vis/notify! "Switched tab"
+                                             (vis/notify! "Switched workspace"
                                                :level :success :ttl-ms copy-success-ttl-ms)))
                switch-session!  (fn [choice]
                                   (cond
@@ -2267,7 +2267,7 @@
                  (and (instance? KeyStroke key)
                    (seq (slash-suggestions-for-input screen (:input db) (:slash-command-index db)))
                    (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown
-                      KeyType/Tab KeyType/ReverseTab KeyType/Enter}
+                      KeyType/Tab KeyType/ReverseTab}
                     (.getKeyType ^KeyStroke key)))
                  (let [suggestions (slash-suggestions-for-input screen (:input db)
                                      (:slash-command-index db))
@@ -2288,7 +2288,7 @@
                      (= ktype KeyType/ReverseTab)
                      (state/dispatch [:move-slash-command-selection -1 (count suggestions)])
 
-                     (#{KeyType/Tab KeyType/Enter} ktype)
+                     (= ktype KeyType/Tab)
                      (when-let [suggestion (slash/selected-suggestion suggestions)]
                        (state/dispatch
                          [:update-input
@@ -2296,7 +2296,7 @@
                    (recur))
 
                  :else
-                 (let [{:keys [action state tab-index]} (input/handle-key key (:input db))]
+                 (let [{:keys [action state workspace-index]} (input/handle-key key (:input db))]
                    (state/dispatch [:update-input state])
                    (let [extra-commands (extension-commands screen)
                          palette-commands (palette-extra-commands extra-commands)
@@ -2537,7 +2537,7 @@
 
                        :select-workspace-index
                        (do (let [before (:active-workspace-id @state/app-db)]
-                             (state/dispatch [:select-workspace-index tab-index])
+                             (state/dispatch [:select-workspace-index workspace-index])
                              (when-not (= before (:active-workspace-id @state/app-db))
                                (refresh-active-workspace! false)))
                          (recur))

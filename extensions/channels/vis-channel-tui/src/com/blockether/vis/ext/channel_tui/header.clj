@@ -36,8 +36,8 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            ;; Channel-agnostic header policy (slot ratios, tab
-            ;; padding/cap, glyphs, default labels). Lives in
+            ;; Channel-agnostic header policy (slot ratios, workspace
+            ;; switcher padding/cap, glyphs, default labels). Lives in
             ;; `internal/header.cljc` so a future web/Telegram channel
             ;; reuses the same values without touching TUI code.
             [com.blockether.vis.internal.header :as vh]))
@@ -127,10 +127,10 @@
         :active? true}])))
 
 (defn- active-workspace-entry-id
-  [db tabs]
+  [db entries]
   (or (:active-workspace-id db)
-    (:id (some #(when (:active? %) %) tabs))
-    (:id (first tabs))))
+    (:id (some #(when (:active? %) %) entries))
+    (:id (first entries))))
 
 (defn- contributor-disabled?
   [db contribution-id]
@@ -240,10 +240,9 @@
       {:id id :spec spec})))
 
 (defn header-rows
-  "Rows needed by the header for this app-db. Workspace tabs add a tab top
-   border plus tab row when more than one tab exists; each enabled extension
-   that declares a `:tui.slot/header-row` channel contribution adds its fn's
-   reported height.
+  "Rows needed by the header for this app-db. Workspace switcher lives inside
+   the base content row; each enabled extension that declares a
+   `:tui.slot/header-row` channel contribution adds its fn's reported height.
 
    Note: contribution fns are invoked here AND in `draw-header!` (the
    render path needs both the total height and the draw-fn).
@@ -338,17 +337,17 @@
   (max (long lo) (min (long hi) (long n))))
 
 (defn- active-strip-index
-  [tabs active-id]
-  (or (first (keep-indexed #(when (= (:id %2) active-id) %1) tabs)) 0))
+  [entries active-id]
+  (or (first (keep-indexed #(when (= (:id %2) active-id) %1) entries)) 0))
 
-(defn- visible-tab-window
-  [tabs active-id width]
-  (let [tabs (vec tabs)
-        n (count tabs)
+(defn- visible-workspace-window
+  [entries active-id width]
+  (let [entries (vec entries)
+        n (count entries)
         width (max 0 (long width))
-        max-visible (vh/max-visible-count n width)
+        max-visible (vh/max-visible-workspace-count n width)
         overflow? (> n max-visible)
-        active-idx (active-strip-index tabs active-id)
+        active-idx (active-strip-index entries active-id)
         half (quot max-visible 2)
         start (if overflow?
                 (clamp-long (- active-idx half) 0 (max 0 (- n max-visible)))
@@ -356,26 +355,26 @@
         end (min n (+ start max-visible))]
     {:overflow? overflow?
      :start start
-     :tabs (mapv (fn [idx tab] (assoc tab :header/original-index idx))
-             (range start end)
-             (subvec tabs start end))}))
+     :entries (mapv (fn [idx entry] (assoc entry :header/original-index idx))
+                (range start end)
+                (subvec entries start end))}))
 
 (defn- truncate-with-ellipsis
   "Truncate `s` so its display width fits in `max-cols`. When truncation
-   actually happens, append `vh/tab-ellipsis` so overflow is visible."
+   actually happens, append `vh/workspace-ellipsis` so overflow is visible."
   ^String [s ^long max-cols]
   (let [s (or s "")]
     (cond
       (<= max-cols 0) ""
       (<= (p/display-width s) max-cols) s
-      (= max-cols 1) (p/truncate-cols vh/tab-ellipsis 1)
-      :else (str (p/truncate-cols s (dec max-cols)) vh/tab-ellipsis))))
+      (= max-cols 1) (p/truncate-cols vh/workspace-ellipsis 1)
+      :else (str (p/truncate-cols s (dec max-cols)) vh/workspace-ellipsis))))
 
 (defn- center-padded
-  "Place `s` centred inside a `cell-w`-wide cell with `vh/tab-padding`
-   reserved on each side; ellipsises overflow."
+  "Place `s` centred inside a `cell-w`-wide workspace cell with
+   `vh/workspace-entry-padding` reserved on each side; ellipsises overflow."
   ^String [s ^long cell-w]
-  (let [inner (max 0 (- cell-w (* 2 (long vh/tab-padding))))
+  (let [inner (max 0 (- cell-w (* 2 (long vh/workspace-entry-padding))))
         text  (truncate-with-ellipsis s inner)
         text-w (p/display-width text)
         pad-total (max 0 (- cell-w text-w))
@@ -385,7 +384,7 @@
       text
       (apply str (repeat right \space)))))
 
-(defn- draw-tab-arrow!
+(defn- draw-workspace-arrow!
   [g row col text direction]
   (let [hovered (cr/hovered)
         hovered? (and (= :workspace-entry (:kind hovered))
@@ -405,39 +404,53 @@
          :text direction
          :enabled? true}))))
 
-(defn- draw-center-tabs!
-  "Paint the visible tab window inside the center 60% slot.
+(defn- draw-center-title!
+  "Paint one workspace/session title as inert header text. With only one
+   workspace there is nothing to switch, so this must not look or behave like
+   a switcher entry."
+  [g row left width text]
+  (when (pos? (long width))
+    (let [shown (truncate-with-ellipsis text width)
+          w     (p/display-width shown)
+          col   (+ left (max 0 (quot (- width w) 2)))]
+      (p/clear-styles! g)
+      (p/set-colors! g t/header-fg t/terminal-bg)
+      (p/enable! g p/BOLD)
+      (p/put-str! g col row shown)
+      (p/clear-styles! g))))
 
-   Tabs are painted directly here (instead of going through
-   `p/draw-tabs!`) because the header needs two things the generic
-   primitive does not offer: a fixed `vh/tab-padding`-cell inner margin and
-   an ellipsis on overflow. Each cell still occupies its full width on
-   screen — fill-rect paints the active/inactive background — but the
-   label itself is centred within the inner area `(cell-w - 2*padding)`."
-  [g tabs active-id row left width]
-  (let [{:keys [overflow? tabs]} (visible-tab-window tabs active-id width)
+(defn- draw-center-workspaces!
+  "Paint the visible workspace switcher window inside the center 60% slot.
+
+   Workspaces are painted directly here because the header needs a fixed
+   `vh/workspace-entry-padding`-cell inner margin and an ellipsis on overflow.
+   Each cell still occupies its full width on screen — fill-rect paints the
+   active/inactive background — but the label itself is centred within the
+   inner area `(cell-w - 2*padding)`."
+  [g entries active-id row left width]
+  (let [{:keys [overflow? entries]} (visible-workspace-window entries active-id width)
         arrow-w 1
         arrow-gap 1
-        tab-left (if overflow? (+ left arrow-w arrow-gap) left)
-        tab-width (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
-        n (count tabs)]
+        entries-left (if overflow? (+ left arrow-w arrow-gap) left)
+        entries-width (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
+        n (count entries)]
     (when overflow?
-      (draw-tab-arrow! g row left vh/tab-arrow-left :prev)
-      (draw-tab-arrow! g row (+ left width (- arrow-w)) vh/tab-arrow-right :next))
-    (when (and (pos? n) (pos? tab-width))
-      (let [base (quot tab-width n)
-            extra (rem tab-width n)
-            cells (loop [idx 0 x tab-left out []]
+      (draw-workspace-arrow! g row left vh/workspace-arrow-left :prev)
+      (draw-workspace-arrow! g row (+ left width (- arrow-w)) vh/workspace-arrow-right :next))
+    (when (and (pos? n) (pos? entries-width))
+      (let [base (quot entries-width n)
+            extra (rem entries-width n)
+            cells (loop [idx 0 x entries-left out []]
                     (if (= idx n)
                       out
                       (let [cell-w (+ base (if (< idx extra) 1 0))
-                            tab (nth tabs idx)
-                            label (p/tab-display-label tab)
+                            entry (nth entries idx)
+                            label (p/tab-display-label entry)
                             text (center-padded label cell-w)
-                            active? (= (:id tab) active-id)]
+                            active? (= (:id entry) active-id)]
                         (recur (inc idx)
                           (+ x cell-w)
-                          (conj out (assoc tab
+                          (conj out (assoc entry
                                       :left x
                                       :width cell-w
                                       :text text
@@ -449,8 +462,8 @@
           (p/clear-styles! g)
           (if active?
             ;; Inverted slab: black bg + white fg (BOLD) makes the
-            ;; active tab pop; no BORDERED outline so the slab reads
-            ;; clean. Inactive tabs are dim italic on the header surface.
+            ;; active workspace pop; no BORDERED outline so the slab reads
+            ;; clean. Inactive workspaces are dim italic on the header surface.
             (do (p/set-colors! g t/header-active-tab-fg t/header-active-tab-bg)
               (p/enable! g p/BOLD))
             (do (p/set-colors! g t/border-fg t/dialog-bg)
@@ -473,19 +486,19 @@
    Main content row is split 20% / 60% / 20%:
 
    - LEFT 20%: ephemeral host notifications ONLY. The session
-     title does NOT live here — it lives on the active workspace
-     tab. When no notification is active the LEFT slot stays blank.
-   - CENTER 60%: workspace tabs. Always painted: when the app-db
-     has not yet materialised a tab list, `workspace-entries` synthesises
-     a single placeholder tab so a fresh session reads as
-     `Untitled session` inside a tab, not as a title in the LEFT
-     slot.
+     title does NOT live here; it lives in the centre slot. When no
+     notification is active the LEFT slot stays blank.
+   - CENTER 60%: workspace title or workspace switcher. With one workspace,
+     paint inert title text. With multiple workspaces, paint switchable
+     workspace entries. When app-db has not yet materialised a workspace list,
+     `workspace-entries` synthesises one placeholder workspace so a fresh
+     session reads as `Untitled session` in the centre.
    - RIGHT 20%: live channel status + session-id copy affordance.
 
-   Tabs are part of the header row (no separate band). Overflow shows
-   clickable left/right arrows that cycle through workspace tabs."
+   Workspaces are part of the header row (no separate band). Overflow shows
+   clickable left/right arrows that cycle through workspaces."
   [g db header-top cols]
-  (let [tabs (workspace-entries db)
+  (let [workspaces (workspace-entries db)
         top-rule-row header-top
         content-row (inc header-top)
         contrib-specs (header-row-specs db cols)
@@ -520,15 +533,16 @@
         status-level (some-> status :level)
         left-cap (max 0 (- left-w edge-pad 1))
         notif-trim (when notif-text (ellipsize notif-text left-cap))
-        active-id (active-workspace-entry-id db tabs)]
+        active-id (active-workspace-entry-id db workspaces)
+        single-title (some-> workspaces first p/tab-display-label)]
     (draw-rule! g top-rule-row cols)
 
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
 
-    ;; LEFT 20%: notifications only. No title here — title lives on
-    ;; the active tab (see `workspace-entries`/`:set-title`).
+    ;; LEFT 20%: notifications only. No title here — centre slot owns
+    ;; the active workspace/session label.
     (when (seq notif-trim)
       (p/clear-styles! g)
       (p/set-colors! g (level->fg notif-level) t/terminal-bg)
@@ -536,8 +550,10 @@
       (p/put-str! g (+ left-x edge-pad) content-row notif-trim)
       (p/clear-styles! g))
 
-    ;; CENTER 60%: workspace tabs (always non-empty).
-    (draw-center-tabs! g tabs active-id content-row center-x center-w)
+    ;; CENTER 60%: one inert title, or a switcher when multiple workspaces exist.
+    (if (> (count workspaces) 1)
+      (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
+      (draw-center-title! g content-row center-x center-w single-title))
 
     ;; RIGHT 20%: live status + session-id copy affordance.
     (when (pos? right-w)
