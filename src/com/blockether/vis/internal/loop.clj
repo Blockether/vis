@@ -1824,8 +1824,6 @@
                          :duration-ms preflight-duration-ms
                          :code-length (count normalized-code)
                          :forms (count code-entries)}))
-          engine-timing {:provider-call-ms provider-duration-ms
-                         :response-preflight-ms preflight-duration-ms}
           direct-answer-entry (when (= 1 (count code-entries))
                                 (first code-entries))
           final-answer-preflight-error
@@ -2137,7 +2135,6 @@
                                    :phase :vis/final-answer-validation})}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
-             :engine-timing engine-timing
              :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-selected-provider (:provider resolved-model)
@@ -2164,7 +2161,6 @@
                               :answer-position  form-idx}
                :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)
-               :engine-timing engine-timing
                :silent-form-idxs silent-form-idxs
                :llm-messages messages :llm-provider provider :llm-model model-name
                :llm-selected-provider (:provider resolved-model)
@@ -2181,7 +2177,6 @@
          :blocks blocks
          :final-result nil :api-usage api-usage
          :duration-ms (or (:duration-ms ask-result) 0)
-         :engine-timing engine-timing
          :silent-form-idxs silent-form-idxs
          :llm-messages messages
          :llm-provider (actual-llm-provider resolved-model ask-result)
@@ -2736,25 +2731,6 @@
                        (try (hook-fn payload)
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
-        ;; Extension provenance rows reuse precomputed `active-exts`
-        ;; (no second activation pass). Source markers are written ONLY
-        ;; on first iteration of each turn (`iter-pos` = 0 internally,
-        ;; persisted as position 1). Subsequent iterations omit markers
-        ;; to avoid redundant DB volume.
-        iteration-extension-snapshots
-        (fn [iter-pos]
-          (when (seq active-exts)
-            (mapv (fn [ext]
-                    (let [ns-sym  (:ext/name ext)
-                          markers (when (zero? (long iter-pos))
-                                    (extension/extension-source-markers-of ns-sym))]
-                      (cond-> {:name ns-sym}
-                        (:ext/version ext) (assoc :version (:ext/version ext))
-                        markers            (merge (select-keys markers
-                                                    [:source-paths
-                                                     :source-mtime-max
-                                                     :source-hash-sha256])))))
-              active-exts)))
         iteration-cache-created-tokens
         (fn [token-cost]
           (let [cache-created (long (or (get-in token-cost [:tokens :cache-created]) 0))]
@@ -2984,7 +2960,7 @@
                           err-iteration-id (persistance/db-store-iteration! (:db-info environment)
                                              (let [tc (iteration-token-cost (:api-usage iteration-result))]
                                                (cond-> {:session-turn-id session-turn-id :vars [] :code ""
-                                                        :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
+                                                        :thinking empty-reasoning :duration-ms 0 :llm-full-duration-ms 0 :error iteration-error-data
                                                         :llm-messages effective-messages
                                                         :llm-provider (:provider resolved-model)
                                                         :llm-model (str (:name resolved-model))
@@ -2994,7 +2970,6 @@
                                                                        (seq (get-in iteration-error-data [:data :routed/trace]))
                                                                        (assoc :fallback? true
                                                                          :trace (vec (get-in iteration-error-data [:data :routed/trace]))))
-                                                        :extension-snapshots (iteration-extension-snapshots iteration)
                                                         :cache-created-tokens (iteration-cache-created-tokens tc)}
                                                  tc (assoc :tokens (:tokens tc)
                                                       :cost-usd (:cost-usd tc)))))]
@@ -3073,9 +3048,8 @@
                                                   :code (:code store-block)
                                                   :result (:result store-block)
                                                   :error (:error store-block)
-                                                  :duration-ms (or (envelope-duration-ms (:envelope store-block))
-                                                                 (:duration-ms iteration-result)
-                                                                 0)
+                                                  :duration-ms (long (or (envelope-duration-ms (:envelope store-block)) 0))
+                                                  :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
                                                   :vars vars-snapshot
                                                   :dependencies deps-snapshot
                                                   :thinking thinking
@@ -3088,8 +3062,6 @@
                                                   :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
                                                   :llm-assistant-message (:assistant-message iteration-result)
                                                   :llm-routing (llm-routing-summary pre-resolved-model iteration-result)
-                                                  :engine-timing (:engine-timing iteration-result)
-                                                  :extension-snapshots (iteration-extension-snapshots iteration)
                                                   :cache-created-tokens (iteration-cache-created-tokens tc)}
                                            tc (assoc :tokens (:tokens tc)
                                                 :cost-usd (:cost-usd tc)))))

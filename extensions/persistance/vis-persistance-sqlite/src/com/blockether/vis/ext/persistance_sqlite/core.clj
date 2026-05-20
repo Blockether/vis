@@ -1175,13 +1175,18 @@
 
 (defn- prepare-iteration-columns
   "Prepare the hard-cut single-form session_turn_iteration payload.
-   Result and error stay Nippy BLOBs."
+   Result and error stay Nippy BLOBs.
+
+   `:duration-ms` is the SCI sandbox eval wall time for this iteration's
+   block; persisted into the named `eval_duration_ms` column. The LLM
+   call wall time arrives as `:llm-full-duration-ms` and lands on
+   `llm_full_duration_ms`."
   [{:keys [result error duration-ms] :as opts}]
   (let [code (require-iteration-code! opts)]
     (cond-> {:code (str code)}
       (contains? opts :result)     (assoc :result (->blob (freeze-safe result)))
       (some? error)                (assoc :error (->blob (freeze-safe error)))
-      (some? duration-ms)          (assoc :duration_ms (long duration-ms)))))
+      (some? duration-ms)          (assoc :eval_duration_ms (long duration-ms)))))
 
 (defn- routing-summary-columns
   [routing]
@@ -1237,8 +1242,12 @@
                      insert. Optional; omit for no-deps iterations.
 
    Returns the iteration UUID."
-  [db-info {:keys [session-turn-id thinking answer duration-ms vars dependencies error
-                   llm-routing engine-timing cache-created-tokens
+  ;; `:duration-ms` is consumed by `prepare-iteration-columns` and lands in
+  ;; `eval_duration_ms`; kept off the outer :keys to stop clj-kondo's
+  ;; unused-binding lint while staying documented here.
+  [db-info {:keys [session-turn-id thinking answer llm-full-duration-ms
+                   vars dependencies error
+                   llm-routing cache-created-tokens
                    llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
             :as opts}]
@@ -1294,11 +1303,9 @@
                                         :llm_provider         (when llm-provider (name (->kw llm-provider)))
                                         :llm_model            llm-model
                                         :llm_thinking         (str/trim (or thinking ""))
-                                        :llm_full_duration_ms (or duration-ms 0)
+                                        :llm_full_duration_ms (long (or llm-full-duration-ms 0))
                                         :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
                                         :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                        :engine_provider_call_ms      (some-> (:provider-call-ms engine-timing) long)
-                                        :engine_response_preflight_ms (some-> (:response-preflight-ms engine-timing) long)
                                         :llm_executable_code_blocks (when (some? llm-executable-blocks)
                                                                       (->json (vec llm-executable-blocks)))
                                         :llm_assistant_message (when (some? llm-assistant-message)
@@ -1559,7 +1566,7 @@
       (some? (:code row))                (assoc :code (:code row))
       (some? (:result row))              (assoc :result (<-blob (:result row)))
       (some? iter-error)                 (assoc :error iter-error)
-      (some? (:duration_ms row))         (assoc :duration-ms (:duration_ms row))
+      (some? (:eval_duration_ms row))    (assoc :duration-ms (:eval_duration_ms row))
       (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
       (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
       (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
@@ -1589,12 +1596,6 @@
       (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
       (some? (:llm_returned_empty_code row))
       (assoc :returned-empty-code? (= 1 (long (:llm_returned_empty_code row))))
-      (or (some? (:engine_provider_call_ms row)) (some? (:engine_response_preflight_ms row)))
-      (assoc :engine-timing (cond-> {}
-                              (some? (:engine_provider_call_ms row))
-                              (assoc :provider-call-ms (long (:engine_provider_call_ms row)))
-                              (some? (:engine_response_preflight_ms row))
-                              (assoc :response-preflight-ms (long (:engine_response_preflight_ms row)))))
       ;; Token / cost columns - ALWAYS present on the read side, with
       ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
       ;; is NULL. Callers can assume `(:input-tokens it)` is a long

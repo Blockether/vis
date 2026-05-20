@@ -52,7 +52,6 @@
             :llm-raw-response :llm-raw-response-preview :llm-raw-response-length
             :llm-raw-response-sha256
             :llm-executable-blocks
-            :engine-timing
             :vars
             [{:name :code :value :version}]
             :blocks
