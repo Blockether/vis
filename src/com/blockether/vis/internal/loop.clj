@@ -2905,6 +2905,27 @@
                                                               :reasoning reasoning-level
                                                               :requested-reasoning raw-reasoning-level})
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
+                    ;; `:context-limit` for the `context-pressure-hint`
+                    ;; threshold. Walk three sources in priority order:
+                    ;;   1. caller-supplied `:max-context-tokens` (turn-
+                    ;;      level override; rarely set today — TUI
+                    ;;      `vis/send!` does not pass it).
+                    ;;   2. The resolved model's `:input-limit` (models.dev
+                    ;;      input cap, e.g. Copilot Claude-sonnet-4.6 = 128K).
+                    ;;   3. The resolved model's `:context` (input+output
+                    ;;      budget, used when models.dev exposes no
+                    ;;      separate input cap).
+                    ;;   4. 200_000 fallback for unknown models, matching
+                    ;;      the historical advisory ceiling.
+                    ;; Without this the hint fired off a uniform 200K
+                    ;; baseline and either pestered the model too early
+                    ;; on a 1M-context Anthropic native call or, worse,
+                    ;; under-warned on a 128K Copilot call where the
+                    ;; 50% trigger now lands at ~64K instead of 100K.
+                    effective-context-limit (or max-context-tokens
+                                              (:input-limit pre-resolved-model)
+                                              (:context pre-resolved-model)
+                                              200000)
                     llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
                                                               (some-> (:name pre-resolved-model) str))
                                                   :routing  (cond-> {:fallback? false}
@@ -2922,7 +2943,7 @@
                                        :title-refresh? (zero? (long iteration))
                                        :turn-position turn-position
                                        :input-tokens (:input-tokens @usage-atom)
-                                       :context-limit (or max-context-tokens 200000)})
+                                       :context-limit effective-context-limit})
                     current-ctx-map (vctx/build
                                       {:environment environment
                                        :session current-session

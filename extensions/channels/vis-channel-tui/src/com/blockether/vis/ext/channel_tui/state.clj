@@ -326,10 +326,15 @@
     (update :theme-name normalize-theme-name)
     (update :reasoning-level normalize-reasoning-level)
     (update :openai-codex-verbosity normalize-codex-verbosity)
-    ;; Provider reasoning/thinking is forensic data, not chat UI. Keep it
-    ;; hidden even if an old config persisted `:show-thinking true`; the
-    ;; transcript/reproduction surfaces still retain it for debugging.
-    (assoc :show-thinking false)
+    ;; Honour the persisted `:show-thinking` value. Earlier policy
+    ;; force-disabled it on every load ("forensic data, not chat UI")
+    ;; but that masked Z.ai GLM `reasoning_content`, Copilot Claude
+    ;; `reasoning_text` deltas, and Codex / Anthropic thinking-summary
+    ;; streams — exactly the signal users want to inspect when an
+    ;; agent turn loops or burns budget on hidden chain-of-thought.
+    ;; Coerce to bool so a stale string/nil from old configs falls
+    ;; through cleanly to the `default-settings` default (true).
+    (update :show-thinking boolean)
     (update :show-iterations boolean)
     (update :show-silent boolean)
     (update :show-timestamps boolean)
@@ -376,7 +381,13 @@
    the rendering pipeline outright (the visual zones already convey
    the same boundaries without the labels)."
   {:theme-name            (keyword shared-theme/default-theme-id)
-   :show-thinking          false
+   ;; Default ON: thinking is the agent's own narration of why it
+   ;; chose the next probe / patch / answer. Hiding it makes long
+   ;; reasoning turns look like the TUI froze (no visible output
+   ;; while the model spends 4-8K tokens on hidden thinking, e.g.
+   ;; session 831cedee 2026-05-20). Users who want a quieter
+   ;; transcript can flip it off in Settings.
+   :show-thinking          true
    :show-iterations        true
    :show-silent            false
    :reasoning-level        :balanced

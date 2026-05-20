@@ -1093,6 +1093,10 @@
     :choices (theme-choice-order)
     :label "Theme"
     :description "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}
+   {:key :show-thinking
+    :type :toggle
+    :label "Show model thinking"
+    :description "Stream reasoning_content / thinking deltas inside each iteration bubble (z.ai GLM, Copilot Claude, Codex reasoning summaries, Anthropic thinking). Disable for a quieter transcript."}
    {:key :show-iterations
     :type :toggle
     :label "Show full execution trace"
