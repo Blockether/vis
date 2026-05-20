@@ -350,7 +350,7 @@
     (let [first-text (some-> runs first :text str)]
       (cond
         (re-find #"^\[[xX]\]\s+" first-text)
-        {:marker "☑️ " :prefix #"^\[[xX]\]\s+"}
+        {:marker "☑️  " :prefix #"^\[[xX]\]\s+"}
 
         (re-find #"^\[ \]\s+" first-text)
         {:marker "⬜ " :prefix #"^\[ \]\s+"}))))
