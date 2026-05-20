@@ -322,19 +322,19 @@ CREATE TABLE session_turn_iteration (
                                     llm_cache_created_tokens IS NULL OR llm_cache_created_tokens >= 0
                                   ),
 
-  engine_provider_call_ms         INTEGER CHECK (
-                                    engine_provider_call_ms IS NULL OR engine_provider_call_ms >= 0
-                                  ),
-  engine_response_preflight_ms    INTEGER CHECK (
-                                    engine_response_preflight_ms IS NULL OR engine_response_preflight_ms >= 0
-                                  ),
 
   -- Single-form iteration payload. `result` and `error` are Nippy-encoded
   -- Clojure values.
   code                            TEXT NOT NULL,
   result                          BLOB,
   error                           BLOB,
-  duration_ms                     INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+  -- SCI sandbox eval wall time for this iteration's block. The LLM
+  -- call time lives on llm_full_duration_ms; the turn total wall time
+  -- lives on session_turn_state.duration_ms. Per-iteration wall time
+  -- approximates eval_duration_ms + llm_full_duration_ms.
+  eval_duration_ms                INTEGER CHECK (
+                                    eval_duration_ms IS NULL OR eval_duration_ms >= 0
+                                  ),
 
   created_at                      INTEGER NOT NULL,
   finished_at                     INTEGER,

@@ -1,365 +1,341 @@
-# Workspace Refactor — Implementation Plan
+# Markdown Answer Source of Truth Plan
 
-Source of truth: this file. Where it diverges from `WORKSPACE_SPEC.md`,
-this file wins (overrides called out inline).
+## Rationale
 
----
+Model-authored `[:ir ...]` is too brittle. Models naturally produce Markdown, not EDN/Hiccup render trees. One malformed vector, missing attrs map, or nested block list can turn a final answer into an EDN-looking artifact instead of user-facing prose.
 
-## 1. Locked decisions
+Markdown should be the canonical answer source because it is:
 
-| # | Decision | Note |
-|---|---|---|
-| 1 | **Session ↔ Workspace = 1 : 1, sztywno** | Overrides SPEC §3 invariant 4 (workspace lifetime ≥ session). Each session has exactly one workspace; each workspace has exactly one session. Closing a session is closing its workspace's chat surface; the workspace row remains queryable. |
-| 2 | **Trunk is a real row** | Overrides SPEC §3 invariant 2 (trunk = NULL). `workspace.kind ∈ {trunk, branch}`. Trunk row has `root = repo_root`, no worktree directory created, merge/discard disabled. |
-| 3 | **Each session-on-trunk = its own trunk-workspace row** | No row reuse. Cheap (metadata only). Keeps 1:1 clean — no special-case. |
-| 4 | **Drop EDN entirely** | `~/.vis/workspaces.edn` deleted (best-effort) on first boot. **No import.** Existing SQLite DB also dropped (V1 reset). |
-| 5 | **Flat `workspace` table** | Single table, no soul/state split. State transitions in-place on a single mutable row. Overrides vis idiom but matches SPEC §4 + simpler. |
-| 6 | **Spawn = semi-automatic via slash command** | New chat created in TUI → trunk-workspace auto-created. `/workspace` (no args) in TUI = create new session + new branch-workspace + switch to it. Branch name and worktree path both auto-minted (decision 15). |
-| 7 | **Apply / Discard = slash commands** | `/apply-workspace-to-trunk`, `/discard-workspace-soft`, `/discard-workspace-hard` in TUI. Keybinding accelerators deferred post-v1. |
-| 8 | **LLM tools: only `v/workspace.diff`** | Cuts SPEC §11 down to one tool. Spawn / merge / discard / switch / list all belong to the user via TUI / slash. Agent sees its own workspace and a diff view of it. |
-| 9 | **SCI ctx cache key = workspace_id** | Equivalent to `session_state_id` because 1:1. Naming aligns to user-facing concept. |
-| 10 | **No optional bags in v1 schema** | `inheritable`, `metadata` columns deleted. Only `commit_id` (HEAD sha at worktree create) remains for git audit. Future extensibility goes through new columns when concretely needed. |
-| 11 | **TUI: tab terminology banned in code, visual unchanged** | `:workspace-tabs` → `:workspaces` etc.; all event names and handlers sweep. The header strip renders **exactly as today's tabs do** — only labels and routing change. |
-| 12 | **TUI shows active only; finished workspaces invisible in strip** | Header strip lists `state ∈ {active, merging}`. Merged + discarded persist in DB for transcript references but never appear in any list, panel, or overlay. No `/finished` command, no Active/Finished split. |
-| 13 | **Trunk = current git branch at trunk-workspace creation time** | Captured once on insert. Subsequent branch changes in the repo don't mutate the trunk-workspace row. |
-| 14 | **No-git folder: hard refuse** | Vis without a discoverable git repo prints user error and exits. No `kind='bare_cwd'` fallback. Simpler invariants. |
-| 15 | **Branch names + worktree paths are auto-generated** | User never types a branch name. Spawn always mints `vis/<short-id>` and `~/.vis/workspaces/<repo-id>/<workspace-id>/`. Removes a footgun + a dialog. |
-| 16 | **Slash commands renamed for clarity** | `/workspace` (spawn) · `/apply-workspace-to-trunk` (merge) · `/discard-workspace-soft` (worktree only) · `/discard-workspace-hard` (worktree + branch). No `/finished`. |
+- model-native: lower syntax burden in `(done ...)`
+- human-readable in storage
+- stable for copy/export/transcript use
+- portable across channels
+- easy to index after CommonMark plain-text extraction
 
----
+IR should remain, but only as a derived rendering layer:
 
-## 2. Schema V1
+- parse Markdown with CommonMark
+- derive canonical IR/render AST
+- render TUI/Telegram/Web/voice from that AST
+- cache derived render output by Markdown hash + parser/render version + renderer opts
 
-Drop old SQLite DB. Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` in place — no V2 (per `AGENTS.md` and decision 4).
+Source of truth becomes Markdown. IR becomes disposable cache.
+
+## Target architecture
+
+```text
+(done {:answer markdown})
+  -> validate markdown string
+  -> persist answer_markdown TEXT
+  -> derive IR via CommonMark when needed
+  -> render channel-specific output
+```
+
+Canonical data flow:
+
+```text
+DB answer_markdown
+  -> markdown->ir
+  -> TUI render / Telegram render / voice extract / search text
+```
+
+Never store model-authored IR as answer truth.
+
+## Model-facing contract
+
+Preferred final answer:
+
+```clojure
+(done {:answer "Summary\n\n- Item one\n- Item two"})
+```
+
+Optional sugar:
+
+```clojure
+(done "Summary\n\n- Item one")
+```
+
+Rejected for normal model use:
+
+```clojure
+(done [:ir {} [:p {} [:span {} "text"]]])
+```
+
+`[:ir ...]` remains internal/debug-only renderer data, not prompt syntax.
+
+Needs-input payloads stay data-shaped:
+
+```clojure
+{:vis/answer-mode :needs-input
+ :answer/text "Question for user"}
+```
+
+## Tool-result contract
+
+Tools must continue returning plain Clojure data, not Markdown.
+
+Good:
+
+```clojure
+{:path "src/foo.clj"
+ :matches [{:line 12 :text "..."}]}
+```
+
+Bad:
+
+```clojure
+"### Matches\n\n- src/foo.clj:12 ..."
+```
+
+Reason: RLM needs destructurable runtime data. Markdown tool results would force heuristic parsing, reduce reliability, and increase prompt/UI injection risk.
+
+Renderer/display functions may derive Markdown/IR previews from tool result data, but tool results themselves remain data.
+
+## DB shape
+
+Current schema has:
 
 ```sql
-CREATE TABLE workspace (
-  id                   TEXT PRIMARY KEY NOT NULL,
-  repo_id              TEXT NOT NULL,
-  repo_root            TEXT NOT NULL,
-
-  kind                 TEXT NOT NULL CHECK (kind IN ('trunk','branch')),
-  branch               TEXT,
-  root                 TEXT NOT NULL,
-
-  parent_workspace_id  TEXT REFERENCES workspace(id) ON DELETE SET NULL,
-
-  state                TEXT NOT NULL
-                       CHECK (state IN ('active','merging','merged','discarded')),
-
-  commit_id            TEXT,                         -- repo HEAD sha at worktree creation
-
-  created_at           INTEGER NOT NULL,
-  merged_at            INTEGER,
-  discarded_at         INTEGER,
-
-  CHECK (kind = 'trunk' OR branch IS NOT NULL),
-  CHECK (kind = 'branch' OR state = 'active')        -- trunk can't merge/discard
-);
-
-CREATE UNIQUE INDEX uq_workspace_repo_branch
-  ON workspace(repo_id, branch) WHERE kind = 'branch';
-
-CREATE INDEX idx_workspace_repo_state
-  ON workspace(repo_id, state);
-
--- session_state gains workspace pin (NOT NULL, 1:1 with session_state)
-ALTER TABLE session_state ADD COLUMN workspace_id TEXT NOT NULL
-  REFERENCES workspace(id) ON DELETE RESTRICT;
-
-CREATE UNIQUE INDEX uq_session_state_workspace
-  ON session_state(workspace_id);
+answer BLOB -- Nippy-frozen IR
 ```
 
-Note: because V1 is a fresh recreate, `ALTER TABLE` above is rewritten as
-inline column in the modified `session_state` `CREATE TABLE` statement — no
-real ALTER runs. The SPEC shows it as ALTER for readability; the migration
-file gets the inline form.
+Replace with Markdown truth:
 
----
+```sql
+answer_markdown TEXT
+answer_plaintext TEXT NULL        -- optional derived FTS/search projection
+answer_render_cache BLOB NULL     -- optional derived IR/layout cache
+answer_cache_key TEXT NULL        -- hash(markdown + parser version + render opts)
+```
 
-## 3. `workspace.clj` — public API
+If old database compatibility is not needed, edit `V1__schema.sql` inline and discard existing DBs.
 
-Namespace: `com.blockether.vis.internal.workspace`. Re-exports from
-`com.blockether.vis.core` as `workspace-*`.
+Cache is optional and invalidatable. Missing cache must reparse Markdown.
 
-### Lookup
+## Render/cache rules
+
+Cache key must include:
+
+- raw Markdown hash
+- CommonMark/parser version
+- enabled Markdown extensions
+- renderer id
+- renderer options, e.g. width/theme/flavor
+
+Examples:
 
 ```clojure
-(workspace/get          ws-id)                ;; → workspace map | nil
-(workspace/list-active  repo-id)              ;; → vec  states #{:active :merging}
-(workspace/list-finished repo-id)             ;; → vec  states #{:merged :discarded}
-(workspace/for-session  session-state-id)     ;; → workspace map (always present, 1:1)
-(workspace/status       ws-id)                ;; → enriched with :git/branch :git/head :git/dirty?
-(workspace/trunk-info   repo-id)              ;; → {:branch :head :repo-root}  (live git)
+{:source-sha sha256
+ :parser-version "commonmark-java+x"
+ :renderer :tui
+ :width 100
+ :theme theme-id}
 ```
 
-### Mutations
+Never treat cache as canonical data.
+
+## Security/safety rules
+
+Markdown is untrusted user/model content.
+
+Required:
+
+- parse raw HTML as visible text or sanitize strictly
+- escape per target renderer
+- never pass raw Markdown directly to Telegram MarkdownV2/HTML
+- allowlist link schemes
+- avoid auto-fetching images/resources
+- strip or neutralize terminal control sequences for TUI
+- FTS indexes derived plain text, not raw syntax only
+
+## Code areas to change
+
+### Prompt
+
+File:
+
+- `src/com/blockether/vis/internal/prompt.clj`
+
+Change:
+
+- replace `(done [:ir ...])` docs with `(done {:answer "markdown"})`
+- remove model-facing `ANSWER_IR` section
+- add `ANSWER_MARKDOWN` section
+- explicitly say: do not author `[:ir ...]`
+
+### Loop / done handling
+
+File:
+
+- `src/com/blockether/vis/internal/loop.clj`
+
+Change:
+
+- `done` accepts Markdown string or `{:answer string}`
+- `done` stores answer value as Markdown source
+- derive IR only for live rendering and validation
+- stop calling `render/->ast` as final answer source canonicalization
+- stop persisting `(answer-str answer)` because it loses Markdown
+
+Needed helpers:
 
 ```clojure
-(workspace/ensure-trunk! {:session-state-id sid})
-;; → trunk workspace row, inserted if no row pinned to sid.
-;;   repo-root is auto-discovered (decision 14: hard refuse if no git).
-
-(workspace/spawn-branch! {:from              ws-or-nil   ;; current binding; nil → derive from cwd
-                          :session-state-id  sid})       ;; the new session's state
-;; → new workspace row (kind=branch).
-;;   Branch name auto-minted as "vis/<short-id>" (decision 15).
-;;   Worktree auto-materialised at "~/.vis/workspaces/<repo-id>/<workspace-id>/".
-;;   repo-root derived from :from workspace, or from current git discovery.
-
-(workspace/apply-to-trunk! {:workspace-id   ws-id
-                            :strategy       :no-ff
-                            :delete-branch? true})
-;; trunk-kind → refuse. Otherwise:
-;;   :active → :merging → git merge into trunk branch → :merged.
-;;   On :delete-branch?: `git branch -D <branch>` from repo-root after success.
-
-(workspace/discard! {:workspace-id   ws-id
-                     :delete-branch? true     ;; true ≡ "hard", false ≡ "soft"
-                     :force?         false})  ;; allow removal of dirty worktree
-;; trunk-kind → refuse. Otherwise:
-;;   1. `git worktree remove <root>` (with --force if :force?)
-;;   2. If :delete-branch?, `git branch -D <branch>` from repo-root
-;;   3. Row transitions to :discarded; root path freed on disk.
+(answer-markdown x)
+(markdown-answer? x)
+(answer-markdown->ir s)
 ```
 
-### Cwd binding (unchanged from current shape)
+### Render namespace
+
+File:
+
+- `src/com/blockether/vis/internal/render.clj`
+
+Change:
+
+- clarify string semantics
+- prefer `markdown->ir` name for CommonMark parsing
+- keep `literal->ir` or `->ast` for literal/data fallback
+- ensure `render` on answer paths parses Markdown, not literal string
+
+Current ambiguity:
 
 ```clojure
-workspace/*workspace-root*       ;; dynamic var, always bound during a turn
-(workspace/cwd)                  ;; java.io.File at *workspace-root*
-(workspace/workspace-root v)     ;; canonicalise from env-or-map-or-string
+(render/render "**bold**" :markdown)
 ```
 
-**Drop the `user.dir` fallback** in `cwd` — assert `*workspace-root*` is
-bound. Channel layer guarantees it (see §5).
+Currently behaves like literal text. Answer path should treat string as Markdown source.
 
-### Hooks
+### Persistence schema
+
+File:
+
+- `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`
+
+Change:
+
+- replace `answer BLOB` with `answer_markdown TEXT`
+- optionally add cache columns
+
+### Persistence implementation
+
+File:
+
+- `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`
+
+Change:
+
+- `db-update-session-turn!` writes `answer_markdown`, not Nippy IR blob
+- `row->turn` returns `:answer-markdown`
+- compatibility may also return derived `:answer` IR during transition
+- `reindex-search!` indexes `answer_markdown` via Markdown -> IR -> plain text
+
+### TUI channel
+
+Files:
+
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj`
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/state.clj`
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/virtual.clj`
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render*.clj`
+
+Change:
+
+- assistant messages carry Markdown source plus derived IR:
 
 ```clojure
-(workspace/register-hook! :on-spawn   (fn [ws] ...))
-(workspace/register-hook! :on-merge   (fn [ws result] ...))
-(workspace/register-hook! :on-discard (fn [ws] ...))
+{:role :assistant
+ :text answer-markdown
+ :ir   (vis/text->ir answer-markdown)}
 ```
 
-Sync, try/catch, non-blocking. Attach/detach hooks omitted in v1 (no
-attach concept under 1:1).
+- resume path reads `:answer-markdown`
+- TUI render path derives IR from Markdown
+- copy/export prefers raw Markdown source
 
----
+### Telegram channel
 
-## 4. `persistance.clj` + sqlite backend
+File:
 
-Adds backend ops. Names follow existing `store-*` / `db-*` style.
+- `extensions/channels/vis-channel-telegram/src/com/blockether/vis/ext/channel_telegram/bot.clj`
 
-```
-db-workspace-insert!         row → row
-db-workspace-update-state!   id, state, [merged_at | discarded_at]
-db-workspace-get             id → row
-db-workspace-list-by-repo    repo-id, state-set → [row ...]
-db-workspace-for-session     session-state-id → row
-db-session-state-set-workspace!  session-state-id, workspace-id
-```
+Change:
 
-`com.blockether.vis.internal.persistance` exposes the facade vars;
-`com.blockether.vis.ext.persistance_sqlite.core` implements HoneySQL ops.
+- answer Markdown -> IR -> Telegram renderer
+- never send raw Markdown without target escaping
 
----
+### Voice
 
-## 5. `loop.clj` + `extension.clj` wiring
+File:
 
-### Session start
+- `extensions/common/vis-voice/src/com/blockether/vis/ext/voice/core.clj`
 
-In `run-iteration-phase` (or its setup):
+Change:
 
-1. Resolve `repo-root` (git discover; **error if no git**).
-2. If `session_state.workspace_id` is NULL (new session): call
-   `workspace/ensure-trunk!` and pin its id to `session_state.workspace_id`.
-3. Load the workspace row, derive `:workspace/root`, `:workspace/id`,
-   `:workspace/kind`, `:workspace/branch`.
-4. Merge into `environment`. Assert `:workspace/root` is non-blank.
+- answer Markdown -> IR -> plain text extraction
 
-Remove the mixed `select-keys [:workspace/root :workspace/id … :workspace]`
-shape in `loop.clj:3268`. New shape: pure `:workspace/*` namespaced keys,
-never a bare `:workspace`.
+### Transcript/export
 
-### SCI cache
+Files likely:
 
-Rekey cache from `session-id` → `workspace-id` (decision 9). Since 1:1
-each session_state has exactly one workspace_id; no behavioural change
-besides the key.
+- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/transcript.clj`
+- `src/com/blockether/vis/internal/render.clj` (`session->markdown`)
 
-### Extension wrapper
+Change:
 
-`extension.clj` already wraps tool calls with
-`binding [workspace/*workspace-root* ...]`. Drop the
-`(or *workspace-root* user.dir)` fallback in `workspace/cwd` and assert.
-Add an upstream assertion at the binding site that env has a non-blank
-`:workspace/root`. Tools that misuse `(io/file ".")` get fixed in the
-audit pass (§7).
+- export assistant answer from raw `answer_markdown`
+- avoid IR -> Markdown round-trip when source exists
 
----
+## Migration strategy
 
-## 6. TUI surface
+Since old DB can be discarded:
 
-### App-db rename (decision 11)
+1. edit V1 schema directly
+2. delete/ignore existing local DB during development
+3. update code/tests to new schema
+4. no legacy repair path required
 
-```
-:workspace-tabs       → :workspaces           (vec, ordered)
-:active-workspace-id   stays
-:workspaces (map)     → :workspace-locals     (per-ws UI cache: input, scroll, pastes…)
-```
+If compatibility later needed:
 
-Event sweep:
+- if old row has `answer BLOB`, render IR to Markdown once
+- persist `answer_markdown`
+- discard old IR blob after migration
 
-| Old | New |
-|---|---|
-| `:add-workspace-tab`            | `:create-workspace` |
-| `:select-workspace-tab-index`   | `:select-workspace-index` |
-| `:select-workspace-tab-session-id` | `:select-workspace-by-session` |
-| (new) | `:apply-workspace-to-trunk`, `:discard-workspace-soft`, `:discard-workspace-hard`, `:workspace-applied`, `:workspace-discarded` |
+## Test plan
 
-Banned identifiers in code (lint at the end): `tab`, `session-tab`,
-`workspace-tab`. Header / dialog visuals remain identical to today's
-strip — only labels (`Workspaces` not `Tabs`) and routing change.
+Required tests:
 
-### Strip visibility (decision 12)
+- prompt no longer contains `(done [:ir`
+- `(done {:answer "**bold**"})` stores exact Markdown
+- derived IR renders bold in TUI
+- code fences survive DB round-trip exactly
+- tables parse/render acceptably
+- links render safely
+- raw HTML is visible/safe, not executed
+- resume path reconstructs assistant message from Markdown
+- export/copy uses raw Markdown
+- search finds plain text inside Markdown
+- tool results remain destructurable Clojure data
+- needs-input still works
 
-Header strip lists `state ∈ {active, merging}` only. Finished workspaces
-(merged + discarded) stay in DB for transcript references but never
-appear in any list, panel, or overlay. **No `/finished` command. No
-toggle. No history view.**
+## Rollout order
 
-### Slash commands (decisions 6, 7, 16)
+1. Add Markdown answer helpers and tests.
+2. Change `done` to accept/store Markdown while still deriving IR for live result.
+3. Change prompt contract.
+4. Change DB schema and persistence read/write.
+5. Update TUI resume/live paths.
+6. Update Telegram/voice/CLI/export.
+7. Remove model-facing IR docs/tests.
+8. Optional: add render cache columns and cache invalidation.
 
-Registered in `channel-tui`:
+## Non-goals
 
-```
-/workspace                       workspace/spawn-branch!  +  new session  +  switch
-                                 (no args; branch + worktree both auto)
-/apply-workspace-to-trunk        workspace/apply-to-trunk!  on active branch-workspace
-/discard-workspace-soft          workspace/discard! :delete-branch? false
-/discard-workspace-hard          workspace/discard! :delete-branch? true
-```
+- Do not make tools return Markdown.
+- Do not remove IR renderer internals.
+- Do not make raw Markdown target-specific output.
+- Do not preserve old local DB if product decision is to drop it.
 
-Trunk-workspace recipients of `/apply-workspace-to-trunk` and
-`/discard-workspace-*` → user-error toast.
+## Final principle
 
----
-
-## 7. Audit + cleanup (decision: along the way)
-
-Sweep these consumer call sites for `user.dir` reads or `:workspace/root`
-fallbacks left over from the old shape:
-
-```
-src/com/blockether/vis/internal/file_picker.clj
-src/com/blockether/vis/internal/external_opener.clj
-src/com/blockether/vis/internal/theme.clj
-src/com/blockether/vis/internal/provider_limits.clj
-src/com/blockether/vis/internal/git.clj
-```
-
-Acceptance: `rg '(System/getProperty "user.dir")|\(io/file "\."\)' src extensions`
-returns zero hits outside `workspace.clj`.
-
-Also: `git/workspace-status` (working-tree porcelain) → rename to
-`git/working-tree-status` to end the name collision with
-`workspace/status`.
-
----
-
-## 8. Foundation LLM tool
-
-In `extensions/common/vis-foundation`, add **one** tool:
-
-```clojure
-v/workspace.diff
-;; → {:branch :head :stat {:files :+ :-} :porcelain [...]}
-;; Calls workspace/status + git diff --stat against trunk branch.
-```
-
-Spec §11's `spawn / merge / discard / list / switch` are NOT added. User-only.
-
----
-
-## 9. Execution order
-
-Each step is a separate commit. Tests stay red until step 10.
-
-1. **Schema rewrite** — edit `V1__schema.sql` to add `workspace` table and
-   inline `workspace_id` into `session_state`. Add startup hook that
-   best-effort deletes `~/.vis/workspaces.edn`. Drop existing SQLite DB
-   (one-shot in `bin/dev` boot path).
-2. **Persistance backend** — `db-workspace-*` + `db-session-state-set-workspace!`
-   in sqlite ext + facade vars in `persistance.clj`.
-3. **`workspace.clj` rewrite** — replace EDN code with DB facade calls.
-   New API surface (§3). Hooks registry. Drop `user.dir` fallback in
-   `cwd`. Re-exports from `core.clj`.
-4. **`loop.clj`/`extension.clj` wiring** — ensure-trunk on session start,
-   SCI cache rekey to workspace-id, assert workspace-root binding, clean
-   up the mixed `select-keys` shape.
-5. **Foundation tool** — `v/workspace.diff`.
-6. **TUI naming sweep** — `:workspaces`/`:workspace-locals`, event
-   renames, kill the word "tab". Header strip filters to
-   `state ∈ {active, merging}` — finished workspaces invisible.
-7. **Slash commands** — `/workspace`, `/apply-workspace-to-trunk`,
-   `/discard-workspace-soft`, `/discard-workspace-hard` in `channel-tui`.
-8. **Cwd / collision audit** — sweep §7, rename
-   `git/workspace-status` → `git/working-tree-status`.
-9. **Test migration** — fix everything that broke; new tests for
-   workspace lifecycle, trunk auto-creation, 1:1 invariant,
-   slash-command parsing.
-
-Single push at the end of step 9 (or batched per step if midway review
-is desired — caller's choice).
-
----
-
-## 10. Test plan
-
-New / migrated test namespaces:
-
-```
-src/com/blockether/vis/internal/workspace.clj
-  test/com/blockether/vis/internal/workspace_test.clj
-    - ensure-trunk! idempotent per session-state
-    - spawn-branch! auto-mints "vis/<short-id>" branch + worktree path
-    - apply-to-trunk! refuses trunk
-    - apply-to-trunk! :active → :merging → :merged transitions atomic
-    - discard! refuses trunk; force? removes dirty worktree
-    - discard! :delete-branch? true ≡ hard, false ≡ soft
-    - hooks fire post-commit; exceptions swallowed
-    - for-session always returns a workspace
-
-extensions/persistance/.../core_test.clj
-    - workspace insert / update-state round-trip
-    - session_state.workspace_id NOT NULL enforced
-    - UNIQUE(repo_id, branch) only for kind='branch'
-
-extensions/channels/vis-channel-tui/.../state_test.clj
-    - rename sweep compiles (no :workspace-tabs leftover)
-    - :create-workspace dispatch
-    - header strip shows only state ∈ {active, merging}
-
-extensions/common/vis-foundation/.../tools_test.clj
-    - v/workspace.diff returns stat + porcelain
-```
-
-Regression test for audit (§7): grep-style assertion in a meta-test that
-no source file outside `workspace.clj` references `user.dir`.
-
----
-
-## 11. Risks / known unknowns
-
-- **Git merge UX under conflicts.** Step 4 (loop wiring) shouldn't see
-  conflicts directly; apply-to-trunk is invoked from slash command in
-  step 7. v1: on conflict, leave `:merging`, surface stderr to TUI
-  toast, user resolves in editor, retries `/apply-workspace-to-trunk`.
-  No in-TUI conflict resolver.
-- **Worktree on case-insensitive FS (macOS default).** Branch names
-  differing only in case will collide on disk even though git
-  distinguishes them. Documented; not solved in v1.
-- **Long-running merge blocking TUI.** Run merge in a future; TUI shows
-  spinner; subsequent slash commands rejected until merge resolves.
+Markdown is answer truth. IR is derived rendering/cache structure. Tools return data. Channels render from Markdown-derived IR.

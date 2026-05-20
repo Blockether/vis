@@ -887,20 +887,18 @@
                                           :duration-ms 5
                                           :llm-provider :p2
                                           :llm-model "m2"
-                                          :engine-timing {:total-ms 5}
                                           :llm-routing {:selected {:provider :p1 :model "m1"}
                                                         :actual {:provider :p2 :model "m2"}
                                                         :fallback? true
                                                         :trace trace}})]
       (expect (= 2 (raw-count s :llm_routing_event)))
-      (let [raw-row (first (raw-query s {:select [:engine_timing :llm_selected_provider :llm_actual_provider :llm_fallback]
+      (let [raw-row (first (raw-query s {:select [:llm_selected_provider :llm_actual_provider :llm_fallback]
                                          :from :session_turn_iteration
                                          :where [:= :id (str iid)]}))
             iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= "p1" (:llm_selected_provider raw-row)))
         (expect (= "p2" (:llm_actual_provider raw-row)))
         (expect (= 1 (:llm_fallback raw-row)))
-        (expect (str/includes? (or (:engine_timing raw-row) "") "total-ms"))
         (expect (= [:llm.routing/provider-retry :llm.routing/provider-fallback]
                   (mapv :event/type (:llm-routing-trace iter))))
         (expect (= true (:llm-fallback? iter)))
