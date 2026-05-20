@@ -1015,7 +1015,20 @@
         input-box-h    (+ text-rows 2 (* 2 render/input-pad-y))
         input-top      (- rows input-box-h 2)
         subtitle-row   (- input-top 2)
-        messages-top   (header/header-rows db)
+        ;; Geometry MUST match `render-frame!` exactly. The full path
+        ;; reserves one empty terminal row between the header band and
+        ;; the first transcript bubble via `(inc (header/header-rows db))`.
+        ;; Dropping the `inc` here shifts the live bubble + scrollbar
+        ;; track + inner-h by one row vs the previous full frame, which
+        ;; (a) leaves a stale row of bubble border under the header on
+        ;; every live↔full flip (the `[]` artifacts visible when a turn
+        ;; ends), (b) changes inner-h so the virtual layout clamps
+        ;; `eff-scroll` against a different ceiling — content visibly
+        ;; jumps down when new iterations arrive mid-scroll, and
+        ;; (c) misaligns click regions published by the prior full frame
+        ;; with the partial-live re-paint, so a second click on a
+        ;; collapsible disclosure misses its toggle target.
+        messages-top   (inc (header/header-rows db))
         messages-bottom subtitle-row
         bubble-w       (max 1 (- cols render/MESSAGE_SIDE_PAD))
         inner-h        (max 0 (- messages-bottom messages-top 2))
