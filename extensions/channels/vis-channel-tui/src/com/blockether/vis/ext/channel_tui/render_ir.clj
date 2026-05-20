@@ -552,8 +552,11 @@
         (assoc (empty-line) :block-tag :outer-margin))
 
       :quote
-      (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
-        (assoc (empty-line) :block-tag :outer-margin))
+      ;; Blockquotes are already visually boxed by their quote marker. Do not
+      ;; append an outer-margin blank here: the sentinel painter renders that
+      ;; blank with quote styling, which shows up as an extra empty `|` row
+      ;; under a one-line quote.
+      (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
 
       :table
       (conj (vec (table->lines node width opts))

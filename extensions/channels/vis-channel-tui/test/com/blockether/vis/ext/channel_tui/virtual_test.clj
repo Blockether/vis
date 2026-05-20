@@ -43,12 +43,19 @@
    a fixed thinking string. Mirrors the shape `chat/rebuild-history`
    produces."
   [n-iters forms-per-iter answer]
-  (let [trace (vec (repeat n-iters
-                     {:thinking  "thinking line"
-                      :code      (vec (repeat forms-per-iter "(+ 1 2)"))
-                      :results   (vec (repeat forms-per-iter "3"))
-                      :durations (vec (repeat forms-per-iter 1))
-                      :successes (vec (repeat forms-per-iter true))}))]
+  (let [forms (vec (for [idx (range forms-per-iter)]
+                     {:position      idx
+                      :engine-idx    idx
+                      :code          "(+ 1 2)"
+                      :result-render "3"
+                      :result-kind   :value
+                      :duration-ms   1
+                      :success?      true
+                      :silent?       false
+                      :running?      false}))
+        trace (vec (repeat n-iters
+                     {:thinking "thinking line"
+                      :forms    forms}))]
     {:role            :assistant
      :ir              (markdown->ir answer)
      :text            answer
@@ -228,11 +235,15 @@
       (render/invalidate-cache!)
       (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
             m           {:role :assistant :text "Sending request to provider..."}
-            trace       [{:code      ["(+ 1 2)"]
-                          :comments  [nil]
-                          :results   [huge-result]
-                          :durations [1]
-                          :successes [true]}]
+            trace       [{:forms [{:position      0
+                                   :engine-idx    0
+                                   :code          "(+ 1 2)"
+                                   :result-render huge-result
+                                   :result-kind   :value
+                                   :duration-ms   1
+                                   :success?      true
+                                   :silent?       false
+                                   :running?      false}]}]
             {:keys [visible]}
             (virtual/layout [m] bubble-w settings nil 30
               {:loading?       true
@@ -251,11 +262,16 @@
       (let [m              {:role :assistant :text "Sending request to provider..."}
             huge-result    (str/join " " (repeat 1000 "abcdefghij"))
             progress-entry (fn [i done?]
-                             {:code      [(str "(do (Thread/sleep 1000) " i ")")]
-                              :results   [(when done? huge-result)]
-                              :durations [(when done? 1000)]
-                              :successes [(when done? true)]
-                              :started-at-ms [(when-not done? 0)]})
+                             {:forms [{:position      0
+                                       :engine-idx    0
+                                       :code          (str "(do (Thread/sleep 1000) " i ")")
+                                       :result-render (when done? huge-result)
+                                       :result-kind   (when done? :value)
+                                       :duration-ms   (if done? 1000 0)
+                                       :success?      (when done? true)
+                                       :started-at-ms (when-not done? 0)
+                                       :silent?       false
+                                       :running?      (not done?)}]})
             progress       {:iterations (vec (concat (map #(progress-entry % true) (range 300))
                                                [(progress-entry 300 false)]))}
             sample         (fn []
@@ -269,6 +285,9 @@
                                    dt (/ (- (System/nanoTime) t0) 1000000.0)]
                                {:ms dt
                                 :line-count (count (get-in r [:visible 0 :projected :prewrapped-lines]))}))
+            ;; First sample pays JIT + cache-miss warmup; drop it
+            ;; so the budget reflects steady-state layout cost.
+            _warmup        (sample)
             samples        (doall (repeatedly 12 sample))
             sorted-ms      (vec (sort (map :ms samples)))
             p95-ms         (nth sorted-ms (dec (count sorted-ms)))
