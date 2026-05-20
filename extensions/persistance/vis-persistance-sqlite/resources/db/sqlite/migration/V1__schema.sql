@@ -215,7 +215,6 @@ CREATE TABLE session_turn_state (
   llm_root_model               TEXT,
   status                       TEXT NOT NULL
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
-  messages                     TEXT,        -- JSON envelope for turn-start messages.
   iteration_count              INTEGER NOT NULL DEFAULT 0 CHECK (iteration_count >= 0),
   duration_ms                  INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
   llm_input_tokens             INTEGER NOT NULL DEFAULT 0 CHECK (llm_input_tokens >= 0),

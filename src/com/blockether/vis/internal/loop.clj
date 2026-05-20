@@ -3169,7 +3169,6 @@
   (let [session-turn-id (persistance/db-store-session-turn! (:db-info env)
                           {:parent-session-id (:session-id env)
                            :user-request user-request
-                           :messages nil
                            :status :running})
         result (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
