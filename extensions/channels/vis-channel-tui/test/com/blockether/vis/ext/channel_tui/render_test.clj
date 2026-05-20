@@ -78,7 +78,7 @@
                   60 1 {})
           body (str/join "\n" (map (comp strip-ansi body-of) lines))]
       (expect (str/includes? body "(def x 1)"))
-      (expect (str/includes? body "session title: Mixed forms"))
+      (expect (str/includes? body "* Recap: Title changed to \"Mixed forms\"."))
       ;; Render-segments path: the raw `(done …)` call form should not
       ;; leak — the renderer surfaces the answer reference instead.
       (expect (not (str/includes? body "(done [:ir")))
@@ -174,6 +174,17 @@
       (expect (str/starts-with? (body-of comment-line) " ;;")))))
 
 (defdescribe provider-fallback-notice-test
+  (it "renders provider fallback recap lines above fallback details"
+    (let [lines (format-iteration-entry
+                  {:provider-fallbacks
+                   [{:failed-provider {:id :anthropic-coding-plan
+                                       :model "claude-opus-4-7"
+                                       :error "Exceptional status code: 429"}}]}
+                  120 1 {})
+          body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
+      (expect (str/includes? body "* Recap: Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
+      (expect (str/includes? body "Exceptional status code: 429"))))
+
   (it "formats provider fallback notices as yellow-band rows with one left space"
     (let [lines (format-iteration-entry
                   {:provider-fallbacks
@@ -241,7 +252,18 @@
       (let [fallback (first (filter #(str/starts-with? (:text %) " ↪ provider fallback:") @captured))]
         (expect (some? fallback))
         (expect (= t/warning-bg (:bg fallback)))
-        (expect (= t/warning-fg (:fg fallback)))))))
+        (expect (= t/warning-fg (:fg fallback))))))
+
+  (it "renders provider error recap lines above provider error details"
+    (let [lines (format-iteration-entry
+                  {:error {:type :svar.core/http-error
+                           :message "Exceptional status code: 429"
+                           :data {:status 429
+                                  :body "rate limit"}}}
+                  120 1 {})
+          body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
+      (expect (str/includes? body "* Recap: Provider error HTTP 429: Exceptional status code: 429"))
+      (expect (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
 
 (defdescribe assistant-bubble-footer-fallback-test
   (it "shows selected and actual LLM routing in the assistant bubble footer"

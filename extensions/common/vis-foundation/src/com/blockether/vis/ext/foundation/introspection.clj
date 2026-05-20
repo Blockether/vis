@@ -127,9 +127,9 @@
       :else                        nil)))
 
 (defn- turn-cost-summary
-  "Pull the token / cost / provider / model map persisted on
-   `session_turn_state.metadata` (with `llm_root_provider` /
-   `llm_root_model` as the canonical typed columns). Returns a map
+  "Pull the token / cost / provider / model summary persisted on
+   `session_turn_state` named columns (`llm_input_tokens`, `llm_output_tokens`,
+   `llm_total_cost_usd`, `llm_root_provider`, `llm_root_model`). Returns a map
    with the :input-tokens / :output-tokens / :total-cost / :provider
    / :model / :provider-model keys when present, or an empty map.
    Never throws.

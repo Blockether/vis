@@ -2507,7 +2507,7 @@
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
   [{:keys [thinking code comments render-segments results result-kinds result-details
-           errors durations successes started-at-ms silents
+           errors durations successes started-at-ms silents recaps
            provider-fallbacks error repeat-count]}]
   [(text-fingerprint thinking)
    (mapv text-fingerprint code)
@@ -2523,6 +2523,7 @@
    successes
    started-at-ms
    silents
+   recaps
    provider-fallbacks
    (when error (select-keys error [:type :message]))
    repeat-count])
@@ -3019,6 +3020,36 @@
       " — " why
       delay)))
 
+(defn- fallback-recap
+  [notice]
+  (let [text (str/replace (format-fallback-notice notice) #"^[↻↪] " "")]
+    (cond
+      (str/starts-with? text "provider fallback:")
+      (str "Provider fallback:" (subs text (count "provider fallback:")))
+
+      (str/starts-with? text "retry same provider:")
+      (str "Provider retry:" (subs text (count "retry same provider:")))
+
+      :else
+      (str "Provider: " text))))
+
+(defn- provider-error-recap
+  [error]
+  (let [data (:data error)]
+    (when (and (map? error) (or (:status data) (:body data) (:request-id data) (:request_id data)))
+      (let [status (:status data)
+            msg    (or (:message error) (some-> (:body data) str str/trim) (str (:type error)) "provider error")]
+        (str "Provider error" (when status (str " HTTP " status)) ": " msg)))))
+
+(defn- recap-entries
+  [line-entry recaps fill-w]
+  (when (seq recaps)
+    (vec
+      (mapcat (fn [recap]
+                (map #(line-entry (str iteration-hdr-marker %))
+                  (wrap-text (str "* Recap: " recap) fill-w)))
+        recaps))))
+
 (defn- code-source-from-render-segments
   [segments fallback-code]
   (let [sources (keep (fn [{:keys [kind source]}]
@@ -3035,14 +3066,14 @@
     (mapcat (fn [{:keys [kind value]}]
               (when (= :title kind)
                 (let [title (if (str/blank? (str value))
-                              "session title updated"
-                              (str "session title: " value))]
+                              "Title changed."
+                              (str "Title changed to \"" value "\"."))]
                   (map #(line-entry (str iteration-hdr-marker %))
-                    (wrap-text title fill-w)))))
+                    (wrap-text (str "* Recap: " title) fill-w)))))
       segments)))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking code comments render-segments results result-kinds result-details errors durations successes started-at-ms provider-fallbacks error repeat-count]}
+  [{:keys [thinking code comments render-segments results result-kinds result-details errors durations successes started-at-ms recaps provider-fallbacks error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? session-id detail-expansions session-turn-id now-ms live-preview?]
        :or   {show-header? false live-preview? false}}]]
@@ -3053,6 +3084,11 @@
         fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
         header      []
+        recap-lines (recap-entries line-entry
+                      (cond-> (vec (or recaps []))
+                        (seq provider-fallbacks) (into (map fallback-recap provider-fallbacks))
+                        (provider-error-recap error) (conj (provider-error-recap error)))
+                      fill-w)
         thinking-lines
         (fn [thinking-text-or-texts]
           ;; Per user direction: do NOT truncate reasoning while it's
@@ -3295,10 +3331,10 @@
                                             (wrap-text (format-fallback-notice notice) (max 1 (dec fill-w)))))
                                   provider-fallbacks))))
         trailing-errors (error-lines)]
-    ;; Layout: header (with optional ITERATION-N label) + provider fallback
-    ;; notices + collected thinking lines + any error rows + body (per-form
-    ;; code/result pairs). Resume / live share the same flat layout.
-    (into (vec (concat header fallback-lines (thinking-lines thinking) trailing-errors))
+    ;; Layout: header (with optional ITERATION-N label) + recap lines + provider
+    ;; fallback notices + collected thinking lines + any error rows + body
+    ;; (per-form code/result pairs). Resume / live share the same flat layout.
+    (into (vec (concat header recap-lines fallback-lines (thinking-lines thinking) trailing-errors))
       body)))
 
 (defn format-iteration-entry

@@ -60,6 +60,7 @@
       :successes [bool ...]
       :started-at-ms [int-ms ...] ;; running form start timestamps
       :silents   [bool ...]       ;; per-form :vis/silent visibility marker
+      :recaps   [str ...]        ;; user-facing recap lines for hidden host work
       :provider-fallbacks [map ...] ;; routed provider fallback notices
       :activity  nil-or-keyword      ;; live coarse phase (:provider-call/:response-parse)
       :error     nil-or-iteration-error
@@ -88,6 +89,7 @@
    :successes []
    :started-at-ms []
    :silents   []
+   :recaps    []
    :provider-fallbacks []
    :activity  nil
    :elided-form-idxs #{}
@@ -220,6 +222,28 @@
           (or (str/includes? code "(set-session-title!")
             (str/includes? code "(done")))))))
 
+(defn- title-recap
+  [value]
+  (let [title (some-> value str str/trim not-empty)]
+    (if title
+      (str "Title changed to \"" title "\".")
+      "Title changed.")))
+
+(defn- render-segment-recaps
+  [segments]
+  (->> segments
+    (keep (fn [{:keys [kind value]}]
+            (when (= :title kind)
+              (title-recap value))))
+    vec))
+
+(defn- append-recaps
+  [entry recaps]
+  (let [recaps (->> recaps (remove str/blank?) distinct vec)]
+    (if (seq recaps)
+      (update entry :recaps #(vec (distinct (concat (or % []) recaps))))
+      entry)))
+
 (defn- write-form-start-slot
   "Per-block start chunks land at `:position` before eval completes.
    Only `:code` / `:comments` / `:started-at-ms` are populated; result-
@@ -307,13 +331,16 @@
    visible slot if present. Future chunks with higher original indices
    are shifted left by `display-form-idx`, avoiding nil holes in live
    progress when a silent system call appears before visible work."
-  [entry idx]
-  (if (contains? (or (:elided-form-idxs entry) #{}) idx)
-    entry
-    (let [display-idx (display-form-idx entry idx)]
-      (-> entry
-        (update :elided-form-idxs (fnil conj #{}) idx)
-        (elide-form-slots #{display-idx})))))
+  ([entry idx]
+   (hide-form-slot entry idx nil))
+  ([entry idx recaps]
+   (let [entry (append-recaps entry recaps)]
+     (if (contains? (or (:elided-form-idxs entry) #{}) idx)
+       entry
+       (let [display-idx (display-form-idx entry idx)]
+         (-> entry
+           (update :elided-form-idxs (fnil conj #{}) idx)
+           (elide-form-slots #{display-idx})))))))
 
 (defn- unhide-form-slot
   "Make original form index `idx` visible again. This happens when an
@@ -371,7 +398,7 @@
             (and (not (:error chunk))
               (= :vis/answer (:result chunk))
               (not (visible-code-segments? chunk))))
-        (hide-form-slot entry (:position chunk))
+        (hide-form-slot entry (:position chunk) (render-segment-recaps (:render-segments chunk)))
         (write-form-slot (unhide-form-slot entry (:position chunk)) chunk))
       :activity nil)
 
