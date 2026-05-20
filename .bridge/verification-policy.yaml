@@ -1,0 +1,28 @@
+artifact: verification-policy
+policy-id: vis-bridge-v1
+rules:
+- scope:
+    subsystems:
+    - bridge-extension
+    change-categories:
+    - code-only
+    - mixed
+    risk-classes:
+    - medium
+    - high
+  required-evidence:
+    unit-tests: required
+    property-tests: optional
+    runtime-assertions: optional
+    docs-or-nl-spec: recommended
+  evidence-roles:
+    regression:
+    - unit
+  omission-rules:
+    allowed?: true
+    requires-record?: true
+    required-fields:
+    - rationale
+    - owner
+  notes:
+  - Default bootstrap policy. Customize scope and evidence levels for this project.
