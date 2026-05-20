@@ -127,10 +127,8 @@
   "Materialize one DB-iteration block into a `:forms` entry. The shape
    matches the live progress tracker's per-form map so the renderer
    uses one code path for live and resumed traces."
-  [restored-values display-idx block]
-  {:position        display-idx
-   :engine-idx      (:position block)
-   :code            (:code block)
+  [restored-values block]
+  {:code            (:code block)
    :comment         (:comment block)
    :render-segments (:render-segments block)
    :started-at-ms   nil
@@ -143,8 +141,7 @@
    :silent?         (and (nil? (:error block))
                       (or (:vis/silent block)
                         (= :vis/silent (:result block))
-                        (structurally-silent-block? block)))
-   :running?        false})
+                        (structurally-silent-block? block)))})
 
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
@@ -186,8 +183,7 @@
         visible     (into [] (keep-indexed (fn [idx b]
                                              (when-not (contains? elide-idxs idx) b)))
                       all-blocks)
-        forms       (vec (map-indexed (fn [idx b] (block->form-record restored-values idx b))
-                           visible))]
+        forms       (mapv #(block->form-record restored-values %) visible)]
     {:position           (when-let [p (:position it)] (dec (long p)))
      :thinking           (visible-thinking (:thinking it))
      :provider-fallbacks (:llm-routing-trace it)

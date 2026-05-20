@@ -19,13 +19,11 @@
 
      :form-result      One block finished evaluating. Carries
                        `:position`, `:code`, `:result`/`:error`,
-                       and `:envelope` timestamps. The
-                       tracker writes per-block data into the
-                       iteration entry's parallel vectors at index
-                       `:position`. Chunks tagged `:silent?` (or
-                       returning `:vis/silent`) are retained with a
-                       parallel `:silents` marker so channels can
-                       toggle their visibility.
+                       and `:envelope` timestamps. The tracker writes
+                       the completed form record into `:forms` at the
+                       chunk's display index. Chunks tagged `:silent?`
+                       (or returning `:vis/silent`) keep their `:silent?`
+                       flag so channels can toggle visibility.
 
      :iteration-final  Iteration is complete. Carries `:final` (nil
                        when the turn isn't done yet) and `:done?`
@@ -50,9 +48,7 @@
 
      {:iteration N
       :thinking  str-or-nil
-      :forms     [{:position        int            ;; display index after elision
-                   :engine-idx      int            ;; original loop form index
-                   :code            str
+      :forms     [{:code            str
                    :comment         str-or-nil
                    :render-segments [{:kind ...} ...] ;; source classification
                    :result-render   str-or-IR-or-nil  ;; pre-rendered tool result
@@ -62,8 +58,7 @@
                    :duration-ms     int
                    :success?        bool
                    :silent?         bool
-                   :started-at-ms   int-or-nil
-                   :running?        bool} ...]
+                   :started-at-ms   int-or-nil} ...]
       :recaps             [str ...]   ;; user-facing recap lines for hidden host work
       :provider-fallbacks [map ...]   ;; routed provider fallback notices
       :activity           nil-or-keyword ;; live coarse phase (:provider-call/:response-parse)
@@ -256,16 +251,15 @@
 
 (defn- chunk->form-start
   "Build the initial `:forms` entry for a `:form-start` chunk. Only the
-   code/comment/start timestamp are known; result-side fields stay nil."
-  [display-idx chunk]
-  {:position        display-idx
-   :engine-idx      (:position chunk)
-   :code            (:code chunk)
+   code/comment/start timestamp are known; result-side fields stay nil.
+   The form is running implicitly: `:started-at-ms` is set and
+   `:success?` is nil."
+  [chunk]
+  {:code            (:code chunk)
    :comment         (:comment chunk)
    :render-segments (:render-segments chunk)
    :started-at-ms   (:started-at-ms chunk)
-   :silent?         (silent-chunk? chunk)
-   :running?        true})
+   :silent?         (silent-chunk? chunk)})
 
 (defn- chunk->form-result
   "Build the completed `:forms` entry for a `:form-result` chunk.
@@ -278,14 +272,12 @@
        failing source caret; the per-form result row is suppressed)
      - the form returned `:vis/answer` for the answer slot (the
        channel renders the answer text below the trace)"
-  [display-idx prev-form chunk]
+  [prev-form chunk]
   (let [errored?     (some? (:error chunk))
         answer-slot? (and (not errored?)
                        (= :vis/answer (:result chunk))
                        (visible-code-segments? chunk))]
-    {:position        display-idx
-     :engine-idx      (:position chunk)
-     :code            (:code chunk)
+    {:code            (:code chunk)
      :comment         (:comment chunk)
      :render-segments (:render-segments chunk)
      :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
@@ -295,8 +287,7 @@
      :result-detail   (form-result-detail chunk)
      :error           (:error chunk)
      :success?        (not errored?)
-     :silent?         (and (not errored?) (silent-chunk? chunk))
-     :running?        false}))
+     :silent?         (and (not errored?) (silent-chunk? chunk))}))
 
 (defn- assoc-form
   [entry display-idx form]
@@ -380,9 +371,9 @@
         (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :form-start
-    (let [display-idx (display-form-idx entry (:position chunk))
-          entry'      (unhide-form-slot entry (:position chunk))]
-      (assoc (assoc-form entry' display-idx (chunk->form-start display-idx chunk))
+    (let [entry'      (unhide-form-slot entry (:position chunk))
+          display-idx (display-form-idx entry' (:position chunk))]
+      (assoc (assoc-form entry' display-idx (chunk->form-start chunk))
         :activity nil))
 
     :form-result
@@ -398,7 +389,7 @@
               display-idx (display-form-idx entry' (:position chunk))
               prev-form   (get (:forms entry') display-idx)]
           (assoc (assoc-form entry' display-idx
-                   (chunk->form-result display-idx prev-form chunk))
+                   (chunk->form-result prev-form chunk))
             :activity nil))))
 
     :iteration-final
