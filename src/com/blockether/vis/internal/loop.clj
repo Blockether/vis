@@ -362,6 +362,11 @@
    :regex true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
+(def ^:private edamame-streaming-opts
+  ;; `parse-next` requires normalized opts. Raw opts make reader macros
+  ;; like `'x` surface as a bare `'` symbol, which then explodes in SCI.
+  (edamame/normalize-opts edamame-opts))
+
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
@@ -468,7 +473,7 @@
   [code]
   (let [code (or code "")
         rdr  (edamame/reader code)
-        opts edamame-opts
+        opts edamame-streaming-opts
         out  (volatile! [])]
     (loop []
       (let [next-form (try

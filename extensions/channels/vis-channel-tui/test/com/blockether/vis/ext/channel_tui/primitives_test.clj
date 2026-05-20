@@ -57,18 +57,20 @@
     (it "⭐ star is 2 cols"             (expect (= 2 (p/display-width EMOJI_BMP_STAR))))
     (it "⚡ high voltage is 2 cols"     (expect (= 2 (p/display-width EMOJI_BMP_BOLT)))))
 
-  (describe "VS-16 graphemes are 1 col (lanterna fork 3.1.5-vis.3 fix)"
-    ;; Unicode says VS-16 forces emoji presentation = 2 cols. Real
-    ;; terminals (macOS Terminal, iTerm2 in some font configs) paint
-    ;; them at base text-presentation width = 1 col. The lanterna
-    ;; fork's TextCharacter.isDoubleWidth was updated to match what
-    ;; terminals actually do, so display-width now reports 1 col for
-    ;; any grapheme containing VS-16. Pins the contract here.
+  (describe "VS-16/VS-15 graphemes match observed terminal width (lanterna fork 3.1.5-vis.4 fix)"
+    ;; VS-16 is terminal/font-dependent in practice. Keep known-narrow
+    ;; Vis cases narrow, but do not blanket-narrow every VS-16 glyph:
+    ;; ☑️ paints wide in target terminals, and counting it as one cell
+    ;; lets following text overwrite the second emoji cell.
     (it "❤ heart alone is 1 col"   (expect (= 1 (p/display-width EMOJI_BMP_NARROW))))
     (it "❤️ heart + VS-16 stays 1 col (the user-terminal-matching fix)"
       (expect (= 1 (p/display-width (str EMOJI_BMP_NARROW "\uFE0F")))))
     (it "🏷️ label + VS-16 is 1 col"
-      (expect (= 1 (p/display-width "\uD83C\uDFF7\uFE0F")))))
+      (expect (= 1 (p/display-width "\uD83C\uDFF7\uFE0F"))))
+    (it "☑️ ballot box + VS-16 is 2 cols"
+      (expect (= 2 (p/display-width "\u2611\uFE0F"))))
+    (it "☑︎ ballot box + VS-15 is 1 col"
+      (expect (= 1 (p/display-width "\u2611\uFE0E")))))
 
   (describe "edge cases"
     (it "nil is zero"   (expect (= 0 (p/display-width nil))))

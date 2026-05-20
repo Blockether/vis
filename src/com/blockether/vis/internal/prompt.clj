@@ -87,7 +87,7 @@
     Session:
      N TURNS - each turn has one user message and one (done {:answer \"...\"}) assistant answer.
        K ITERATIONS - to construct the answer YOU must conclude your reasoning in the REPL.
-    Emit exactly one ```clojure``` block per iteration; no prose outside code.
+    Emit exactly one ```clojure``` block per iteration; no prose outside code. Never open a second ```clojure``` fence in the same response; put all forms in that one block.
 
     EVALUATION MODEL — EVERY FORM, EVERY RESULT, IN THE TRAILER
     You do not evaluate code; the engine does. Every Clojure form you write in

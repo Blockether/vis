@@ -77,6 +77,24 @@
       (expect (some #(= "1. x" %) ts))
       (expect (some #(= "2. y" %) ts))))
 
+  (it "ul renders GFM task-list markers as checklist glyphs"
+    (let [lines (ir-tui/ir->lines
+                  [:ir [:ul [:li "[x] Completed item"]
+                        [:li "[ ] Pending item"]
+                        [:li "[X] Also completed"]]]
+                  80)
+          ts    (texts lines)]
+      (expect (= ["☑️ Completed item"
+                  "⬜ Pending item"
+                  "☑️ Also completed"]
+                ts))))
+
+  (it "task-list continuations indent by display width, not char count"
+    (let [lines (ir-tui/ir->lines [:ir [:ul [:li "[ ] Pending item wraps here"]]] 14)
+          ts    (texts lines)]
+      (expect (= ["⬜ Pending" "   item wraps" "   here"] ts))
+      (expect (every? #(<= (p/display-width %) 14) ts))))
+
   (it "wrapped li uses hanging indent equal to marker width (NOT 3 spaces)"
     ;; This is the regression target: pre-IR code produced "   foo" continuation.
     (let [lines (ir-tui/ir->lines
