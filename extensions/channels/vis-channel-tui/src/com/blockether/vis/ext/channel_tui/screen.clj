@@ -1129,16 +1129,23 @@
    `draw-lock`."
   [^TerminalScreen screen]
   (loop [last-v -1 last-cols -1 last-rows -1 last-frame-ms 0
-         last-db nil last-layout nil last-hover nil]
+         last-db nil last-layout nil last-hover nil
+         was-blocked? false]
     (let [db @state/app-db]
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version db) 0))
               ;; tryLock so a dialog session (which holds the lock for
               ;; seconds) doesn't pin us. Time out fast and re-poll.
               got-lock? (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
-              [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout rendered-hover]
+              [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout rendered-hover new-was-blocked?]
               (if-not got-lock?
-                [false last-cols last-rows last-frame-ms last-db last-layout last-hover]
+                ;; Lock contention while a dialog session paints onto
+                ;; Lanterna's back buffer. Remember it so the next
+                ;; successful render forces a full repaint over the
+                ;; dialog cells - the partial-live / header-hover-only
+                ;; paths only touch a subset of rows and would leave
+                ;; the dialog overlay ghosted on screen.
+                [false last-cols last-rows last-frame-ms last-db last-layout last-hover true]
                 (try
                   ;; Re-read AFTER acquiring the lock - dialog state
                   ;; could have flipped while we were waiting.
@@ -1167,17 +1174,23 @@
                             (and (string? text)
                               (str/starts-with? (str/triml text) "/"))))
                         current-hover (cr/hovered)
+                        ;; Force a full repaint on the first iteration
+                        ;; after a dialog session held draw-lock: see
+                        ;; the no-got-lock branch above.
                         header-hover-only? (and same-size?
                                              last-layout
                                              (not animate?)
+                                             (not was-blocked?)
                                              (header-hover-only-change? last-db db last-hover current-hover))
-                        partial-live? (partial-live-frame? last-db db same-size? last-layout slash-suggestions-visible?)]
+                        partial-live? (and (not was-blocked?)
+                                        (partial-live-frame? last-db db same-size? last-layout slash-suggestions-visible?))]
                     (if (and (not (:shutdown? db))
                           (not (:dialog-open? db))
                           (or (not= last-v version)
                             (not= last-cols cols)
                             (not= last-rows rows)
-                            animate?))
+                            animate?
+                            was-blocked?))
                       (let [[layout publish-layout?]
                             (cond
                               header-hover-only?
@@ -1193,8 +1206,13 @@
                         ;; bumping the version (see no-render-bump-events).
                         (when publish-layout?
                           (state/dispatch [:set-layout layout]))
-                        [true cols rows now-ms db layout current-hover])
-                      [false cols rows last-frame-ms last-db last-layout last-hover]))
+                        ;; Cleared was-blocked? - the dialog overlay has
+                        ;; just been painted over.
+                        [true cols rows now-ms db layout current-hover false])
+                      ;; Dialog still open (or nothing to paint) - keep
+                      ;; the blocked flag sticky until we actually paint.
+                      [false cols rows last-frame-ms last-db last-layout last-hover
+                       (or was-blocked? (boolean (:dialog-open? db)))]))
                   (catch Throwable t
                     ;; Drawing must never crash the thread - a stray
                     ;; resize race or null cell will recover next frame.
@@ -1202,7 +1220,7 @@
                                :id    ::render-frame-failed
                                :data  (throwable-log-data t)
                                :msg   (str "render frame failed: " (or (ex-message t) (str t)))})
-                    [false last-cols last-rows last-frame-ms last-db last-layout last-hover])
+                    [false last-cols last-rows last-frame-ms last-db last-layout last-hover was-blocked?])
                   (finally (.unlock draw-lock))))]
           (when-not rendered?
             ;; Park until the next dispatch wakes us, or until the
@@ -1223,7 +1241,8 @@
             (long new-frame-ms)
             rendered-db
             rendered-layout
-            rendered-hover))))))
+            rendered-hover
+            (boolean new-was-blocked?)))))))
 
 (defn- start-render-thread!
   "Spawn the render thread. Daemon so the JVM can still exit even if a
