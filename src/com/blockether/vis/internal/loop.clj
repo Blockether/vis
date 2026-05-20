@@ -378,19 +378,40 @@
     (catch Throwable _ false)))
 
 (defn- multi-fence-hint
-  "Model-facing reminder when several ```clojure``` fences were merged into
-   one eval source and that source then failed to parse / lint / eval.
-   The merge is intentional tolerance (cheap fix for the common 2-3 fence
-   case), but each extra fence is a fresh chance for a brace/quote to open
-   in one fence and close in another, producing parser surprises like
-   `the map literal contains 7 forms` on a source that LOOKS balanced.
-   Returns nil when the entry was a single fence."
-  [{:keys [multi-fence-merged? multi-fence-count]}]
-  (when multi-fence-merged?
-    (str "You emitted " (or multi-fence-count "multiple") " ```clojure``` fences in this iteration; "
-      "the engine merged them into one eval source and that source failed. "
-      "System prompt rule: emit exactly ONE ```clojure``` block per iteration. "
-      "Fix: keep one fence; move secondary computation to defs inside the same block.")))
+  "Model-facing reminder when the fence-emission stage produced a result
+   that the engine then had to merge / repair / drop. Combines the three
+   signals svar surfaces post-extract:
+
+     :multi-fence-count   — number of ```clojure``` fences after select-blocks
+     :all-blocks-count    — pre-select fence count (catches untagged /
+                            wrong-lang drops)
+     :malformed?          — fence parser flagged a torn boundary (glued
+                            close+open, unclosed terminal fence, etc.)
+
+   Returns nil when none of the conditions apply (single tagged fence,
+   clean parse)."
+  [{:keys [multi-fence-merged? multi-fence-count all-blocks-count malformed?]}]
+  (let [merged-extra? multi-fence-merged?
+        wrong-lang-extra? (and (number? all-blocks-count)
+                            (number? multi-fence-count)
+                            (> all-blocks-count multi-fence-count))
+        any? (or merged-extra? wrong-lang-extra? malformed?)
+        clauses (cond-> []
+                  merged-extra?
+                  (conj (str "You emitted " (or multi-fence-count "multiple")
+                          " ```clojure``` fences in this iteration; "
+                          "the engine merged them into one eval source and that source failed."))
+                  wrong-lang-extra?
+                  (conj (str "Additionally, "
+                          (- all-blocks-count multi-fence-count)
+                          " fence(s) were emitted untagged or with a non-clojure lang and were dropped silently."))
+                  malformed?
+                  (conj "The fence parser also flagged a malformed boundary (glued close+open or unclosed terminal fence).")
+                  any?
+                  (conj (str "System prompt rule: emit exactly ONE ```clojure``` block per iteration, "
+                          "opener `\"```clojure\"` and closer `\"```\"` each on their own line, "
+                          "no glued boundaries. Move secondary computation to defs inside the same block.")))]
+    (when any? (str/join " " clauses))))
 
 (defn- attach-multi-fence-hint
   "If `entry` was a multi-fence merge, splice the rule reminder into
@@ -1067,8 +1088,13 @@
 
   Legacy top-level `(do ...)` wrappers are unwrapped before eval/display.
   Direct sibling top-level forms are canonical; nested host bookkeeping is
-  not a supported display contract."
-  [_iteration-position blocks]
+  not a supported display contract.
+
+  `fence-stats` (opt): `{:all-blocks-count <int> :malformed? <bool>}` from
+  svar's `extract-code-blocks-detail`. Stamped onto every emitted entry so
+  downstream error formatting can name wrong-lang / malformed causes even
+  when the surviving block count is 1."
+  [_iteration-position blocks {:keys [all-blocks-count malformed?] :as _fence-stats}]
   (let [blocks                       (vec (or blocks []))
         ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
         ;; but operates on the block vector directly.
@@ -1146,11 +1172,23 @@
                                                 :block-lang "clojure"
                                                 :render-segments (render/parse-block-display normalized-code)
                                                 :multi-fence-merged? true
-                                                :multi-fence-count parsed-total-blocks}
+                                                :multi-fence-count parsed-total-blocks
+                                                :all-blocks-count all-blocks-count
+                                                :malformed? (boolean malformed?)}
                                          (some :repaired? raw-entries) (assoc :repaired? true))]
 
                                       :else
-                                      raw-entries)
+                                      ;; Single-fence path still stamps the diagnostic
+                                      ;; stats so wrong-lang drops / malformed boundaries
+                                      ;; surface their hint even when only one block
+                                      ;; survived the selection.
+                                      (mapv (fn [e]
+                                              (cond-> e
+                                                (number? all-blocks-count)
+                                                (assoc :multi-fence-count parsed-total-blocks
+                                                  :all-blocks-count all-blocks-count
+                                                  :malformed? (boolean malformed?))))
+                                        raw-entries))
      :empty-code-preflight-error    empty-code-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
@@ -1807,8 +1845,15 @@
           ;; string was removed in svar v0.5.3). One block → one
           ;; code-entry; SCI evaluates each entry as a single chunk.
           blocks (vec (:blocks ask-result))
+          ;; svar v0.5.5+ also surfaces `:all-blocks` (pre-lang-filter)
+          ;; plus `:saw-fence?` / `:malformed?`. Plumb these so vis can
+          ;; name wrong-lang drops and torn fence boundaries in the
+          ;; iteration error trailer.
+          fence-stats {:all-blocks-count (when-let [ab (:all-blocks ask-result)]
+                                           (count ab))
+                       :malformed? (boolean (:malformed? ask-result))}
           preflight-start-ns (System/nanoTime)
-          preflight-result (code-entries-preflight iteration-position blocks)
+          preflight-result (code-entries-preflight iteration-position blocks fence-stats)
           preflight-duration-ms (elapsed-ms preflight-start-ns)
           {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
@@ -1924,12 +1969,15 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true)
-                                          ;; If the merged-fence source produced ANY error
-                                          ;; (parse, lint, eval, timeout), attach the
-                                          ;; single-fence rule reminder so the model knows
-                                          ;; the merge itself is a candidate root cause.
-                                          (and (:multi-fence-merged? entry)
-                                            (:error raw-result))
+                                          ;; If the fence-emission stage produced any
+                                          ;; diagnostic-worthy condition (merge, wrong-
+                                          ;; lang drops, malformed boundary) AND this
+                                          ;; entry threw, attach the systemic hint. The
+                                          ;; helper itself decides whether any of the
+                                          ;; three signals fire; a clean single-tagged
+                                          ;; fence returns nil and the error is left
+                                          ;; untouched.
+                                          (:error raw-result)
                                           (update :error attach-multi-fence-hint entry))
                                  display-result (def-display-result environment expr result)
                                  ;; def-display-result is now a pass-through; kept on the
