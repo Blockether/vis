@@ -120,35 +120,30 @@
       :error (:red ANSI)
       "")))
 
+(defn- message-label
+  [{:keys [check-id ext]}]
+  (or (some-> check-id name)
+    (some-> ext str)
+    "?"))
+
 (defn- format-message
   "Render one diagnostic message line:
-     `<icon> <check-id-name>: <message>`
-   followed (optionally) by an indented `-> <remediation>`.
-   `use-ansi?` controls whether to wrap level-colored bits."
-  [{:keys [level message remediation check-id]} use-ansi?]
+     `<icon> <label>: <message>`
+   where label is the message's `:check-id` name, falling back to
+   extension id only for anonymous extension diagnostics. Followed
+   (optionally) by an indented `-> <remediation>`. `use-ansi?` controls
+   whether to wrap level-colored bits."
+  [{:keys [level message remediation] :as m} use-ansi?]
   (let [icon  (or (ICONS level) "•")
         color (color-for level use-ansi?)
         reset (if use-ansi? (:reset ANSI) "")
         dim   (if use-ansi? (:dim ANSI)  "")
         head  (str "  " color icon reset " "
-                (or (some-> check-id name) "?") ": "
+                (message-label m) ": "
                 message)
         tail  (when (and remediation (not (string/blank? remediation)))
                 (str "\n      " dim "-> " remediation reset))]
     (str head tail)))
-
-(defn- format-extension-section
-  "Render one extension's section: header line + rule + each
-   message, in fn-return order. `use-ansi?` already detected by
-   caller."
-  [ext-ns messages use-ansi?]
-  (let [bold    (if use-ansi? (:bold ANSI) "")
-        rst     (if use-ansi? (:reset ANSI) "")
-        ext-str (str ext-ns)
-        head    (str "  " bold ext-str rst)
-        rule    (str "  " (apply str (repeat (count ext-str) "─")))
-        body    (string/join "\n" (mapv #(format-message % use-ansi?) messages))]
-    (string/join "\n" [head rule body])))
 
 (defn format-output
   "Build the full TTY output from a vec of messages. Empty result
@@ -163,21 +158,14 @@
        "vis doctor\n\nNo diagnostic checks registered."
 
        :else
-       (let [grouped  (group-by :ext messages)
-             ;; Preserve ordering by walking in the order messages appeared.
-             extension-list-aggregates (vec (distinct (mapv :ext messages)))
-             sections (mapv #(format-extension-section
-                               %
-                               (get grouped %)
-                               use-ansi?)
-                        extension-list-aggregates)
-             totals   (frequencies (mapv :level messages))
-             summary  (str "Summary: "
-                        (or (:error totals) 0) " errors, "
-                        (or (:warn totals)  0) " warnings, "
-                        (or (:info totals)  0) " info")]
+       (let [body    (string/join "\n" (mapv #(format-message % use-ansi?) messages))
+             totals  (frequencies (mapv :level messages))
+             summary (str "Summary: "
+                       (or (:error totals) 0) " errors, "
+                       (or (:warn totals)  0) " warnings, "
+                       (or (:info totals)  0) " info")]
          (str bold "vis doctor" rst "\n\n"
-           (string/join "\n\n" sections)
+           body
            "\n\n" summary))))))
 
 ;; ---------------------------------------------------------------------------
