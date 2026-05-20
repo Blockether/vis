@@ -11,7 +11,7 @@
           ext-nses (set (map :ext/name (vis/registered-extensions)))]
       (expect (= :zai-coding-plan (:provider/id coding)))
       (expect (= :zai (:provider/id pass)))
-      (expect (contains? ext-nses "zai"))
+      (expect (contains? ext-nses "provider-zai"))
       (expect (= "https://api.z.ai/api/coding/paas/v4" (get-in coding [:provider/preset :base-url])))
       (expect (= "https://api.z.ai/api/paas/v4" (get-in pass [:provider/preset :base-url])))
       (expect (ifn? (:provider/limits-fn coding)))

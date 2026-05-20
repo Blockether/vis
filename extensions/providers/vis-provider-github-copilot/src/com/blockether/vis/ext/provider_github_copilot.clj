@@ -634,7 +634,7 @@
 
 (vis/register-extension!
   (vis/extension
-    {:ext/name        "github-copilot"
+    {:ext/name        "provider-github-copilot"
      :ext/description "GitHub Copilot individual + business OAuth/token-exchange providers."
      :ext/version     "0.4.0"
      :ext/author      "Blockether"

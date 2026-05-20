@@ -56,12 +56,26 @@
   (* 5 60 1000))
 
 (def ASK_CODE_SEMANTIC_TIMEOUT_MS
-  "Default model/progress timeout for Vis `svar/ask-code!` streams.
-   Nil by default: upstream OpenAI/Z.ai/Anthropic streams generally do
-   not send provider-level heartbeats, so Vis relies on idle timeout.
-   Set per call with `:semantic-timeout-ms` when a proxy emits `: ping`
-   heartbeats and transport liveness is not enough."
-  nil)
+  "Default model/progress timeout for Vis `svar/ask-code!` streams (ms).
+
+   Catches the failure mode `idle-timeout-ms` cannot: the transport
+   keeps emitting bytes (SSE `: ping` comments, blank separators, or
+   any framing-layer keepalive that returns from `.readLine`) which
+   resets the idle watchdog forever, yet zero `response.*.delta` /
+   `message.*` events ever arrive. Without this watchdog the iteration
+   loop blocks on `.readLine` until the model finally streams output
+   (observed: codex/responses gpt-5.5 iter 0 silent for 11min 9s on
+   2026-05-20, session da9f0b47, no timeout ever fired).
+
+   4 minutes (240000 ms) is the considered ceiling: > Anthropic's
+   documented 185s worst case for legitimate extended thinking on
+   Opus 4.5 (anthropics/claude-agent-sdk-typescript#44), high enough
+   that a deep reasoning model with a real long pre-token phase still
+   succeeds, low enough that a stuck provider surfaces a real error
+   in under 5 minutes instead of holding the whole turn hostage.
+
+   Disable per call with `:semantic-timeout-ms nil`."
+  (* 4 60 1000))
 
 (defn- with-default-ask-code-idle-timeout
   [opts]
@@ -999,11 +1013,6 @@
     (= "done" (name (first form)))
     (nil? (namespace (first form)))))
 
-(defn- form-contains-turn-answer-call?
-  [entry-or-form-or-source]
-  (let [form (parsed-entry-form entry-or-form-or-source)]
-    (boolean (some turn-answer-call-form? (tree-seq coll? seq form)))))
-
 (defn- session-title-meta-form?
   [entry-or-form-or-source]
   (let [form (parsed-entry-form entry-or-form-or-source)]
@@ -1077,19 +1086,6 @@
   [entry-or-form-or-source]
   (turn-answer-call-form? (parsed-entry-form entry-or-form-or-source)))
 
-(defn- answer-source-like?
-  "Cheap fallback for malformed `(done ...)` answer blocks that cannot parse.
-   They should still be hidden from user-facing progress; parse failure feeds
-   the model retry loop through persisted iteration diagnostics."
-  [entry-or-form-or-source]
-  (or (direct-answer-entry? entry-or-form-or-source)
-    (let [s (str (if (map? entry-or-form-or-source)
-                   (:expr entry-or-form-or-source)
-                   entry-or-form-or-source))]
-      (and (str/includes? s "(done")
-        (or (str/includes? s ":ir")
-          (str/includes? s "needs-input"))))))
-
 ;; `bare-symbol-entry?` removed with `plain-prose-code-error` — the
 ;; per-block-eval cut routes prose into SCI as a parse / unresolved-symbol
 ;; error instead of detecting "every entry is a bare symbol" upfront.
@@ -1159,9 +1155,8 @@
                                                   :block-lang (:lang b)}
                                                  (let [segments        (render/parse-block-display src)
                                                        structurally-silent?
-                                                       (or (answer-source-like? src)
-                                                         (and (seq segments)
-                                                           (not-any? #(= :code (:kind %)) segments)))]
+                                                       (and (seq segments)
+                                                         (not-any? #(= :code (:kind %)) segments))]
                                                    (cond-> {:expr       src
                                                             :block-lang (:lang b)
                                                             :render-segments segments
@@ -1245,24 +1240,30 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
+(defn- extension-call-block?
+  [block]
+  (boolean
+    (or (seq (:channel block))
+      (extension/tool-result? (:result block))
+      (some #(extension/tool-result? (:result %)) (:forms block)))))
+
+(defn- final-answer-structural-error
+  [blocks]
+  (when (some extension-call-block? blocks)
+    "Final answer rejected: this iteration called an extension/tool. Run another iteration, read the tool output, then call `(done ...)` using observed evidence."))
+
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
    candidate `(done …)` answer. Returns nil when every hook accepts,
    otherwise a single string surfaced as the rejected answer form's
    validation error.
 
-   This used to run a structural floor first (no sibling
-   errors / no extension calls in this iter / prior-iteration
-   evidence required). With one form per iteration:
-     #1 own-form-error is enforced upstream by `answer-form-error`
-        (if the (done …) form itself threw, the answer is dropped).
-     #2 mixing tool + (done …) in one `(do …)` is the canonical
-        canonical one-iteration shape — handles return synchronously,
-        the answer is composed in the same eval frame.
-     #3 evidence-prior gating became a false-positive engine: probe-
-        and-answer in a single iteration is the intended flow.
-   So the floor is gone. Extensions that need an additional veto
-   (e.g. user-facing safety / format gates) still get their
+   Runs the hard structural floor first: a final answer must not
+   share an iteration with extension/tool calls. The model needs one
+   iteration to observe tool output, then a later iteration may call
+   `(done ...)` using that evidence. Own-form errors are enforced
+   upstream by `answer-form-error`. Extensions that need an additional
+   veto (e.g. user-facing safety / format gates) still get their
    `:turn.answer/validate` hook fired here.
 
    `active-extensions` is passed by the turn loop so activation is
@@ -1281,23 +1282,24 @@
                      :blocks blocks
                      :answer answer-value}
                extra-ctx)]
-     (some (fn [ext]
-             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
-                     (when (= :turn.answer/validate phase)
-                       (binding [extension/*current-extension* ext
-                                 extension/*current-symbol* nil]
-                         (try
-                           (let [hit (hook-fn ctx)]
-                             (cond
-                               (s/valid? ::extension/answer-validation-reject hit)
-                               (answer-validation-rejection-message hook hit)
+     (or (final-answer-structural-error blocks)
+       (some (fn [ext]
+               (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                       (when (= :turn.answer/validate phase)
+                         (binding [extension/*current-extension* ext
+                                   extension/*current-symbol* nil]
+                           (try
+                             (let [hit (hook-fn ctx)]
+                               (cond
+                                 (s/valid? ::extension/answer-validation-reject hit)
+                                 (answer-validation-rejection-message hook hit)
 
-                               (and (map? hit) (:reject hit))
-                               (answer-validation-invalid-return-message ext id hit)))
-                           (catch Throwable t
-                             (answer-validation-hook-error-message ext id t))))))
-               (or (:ext/hooks ext) [])))
-       (answer-validation-extensions environment active-extensions)))))
+                                 (and (map? hit) (:reject hit))
+                                 (answer-validation-invalid-return-message ext id hit)))
+                             (catch Throwable t
+                               (answer-validation-hook-error-message ext id t))))))
+                 (or (:ext/hooks ext) [])))
+         (answer-validation-extensions environment active-extensions))))))
 
 (defn- iteration-start-hook-hit
   [ext id hit]
@@ -1922,7 +1924,7 @@
                            (when (and on-chunk
                                    (not suppress-form-start?)
                                    (not (session-title-meta-form? entry))
-                                   (not (form-contains-turn-answer-call? entry)))
+                                   (not structurally-silent?))
                              (on-chunk {:phase           :form-start
                                         :iteration-count iteration-position
                                         :position        idx

@@ -65,11 +65,9 @@
    traces (answer-emission / title updates / mixed blocks where the
    visible segment is purely structural)."
   [b]
-  (let [code    (str (:code b))
-        trimmed (str/triml code)]
+  (let [code    (str (:code b))]
     (boolean
       (or (:vis/structurally-silent? b)
-        (str/starts-with? trimmed "(done")
         (and (not (visible-code-segments? b))
           (or (str/includes? code "(set-session-title!")
             (str/includes? code "(done")))
