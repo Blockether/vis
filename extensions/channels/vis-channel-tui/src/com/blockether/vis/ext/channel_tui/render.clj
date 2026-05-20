@@ -1329,13 +1329,13 @@
    show as `🔗 See here -> url` (visible label only) instead of
    leaking asterisks or the URL inside the bracket portion.
 
-   Lifts through `vis/text->ir` (commonmark parser) then walks the
+   Lifts through `vis/markdown->ir` (commonmark parser) then walks the
    IR concatenating only visible text — link/image targets dropped."
   ^String [^String text]
   (let [s (or text "")]
     (if (str/blank? s)
       s
-      (str/trim (ir-node-visible-text (vis/text->ir s))))))
+      (str/trim (ir-node-visible-text (vis/markdown->ir s))))))
 
 (defn- chrome-display-text
   "Build the visible chrome row for a ref:
@@ -2690,7 +2690,7 @@
         ;; sentinel-wrapped runs the painter understands; legacy
         ;; `markdown->inline` regex parser is gone.
         wrapped   (wrap-text (ir-tui/ir->inline-sentinel-string
-                               (vis/text->ir visible))
+                               (vis/markdown->ir visible))
                     (max 1 max-w))
         meta      {:kind :toggle-details
                    :session-id (str session-id)
@@ -3105,9 +3105,9 @@
                             (fn [thinking-text]
                               (when (and (string? thinking-text) (not (str/blank? thinking-text)))
                                 ;; Thinking text comes from the LLM as plain markdown; lift to
-                                ;; canonical IR via `vis/text->ir`, then walker over it in
+                                ;; canonical IR via `vis/markdown->ir`, then walker over it in
                                 ;; `:thinking` mode (uses the iter-header-bg / italic marker set).
-                                (let [ir (vis/text->ir thinking-text)]
+                                (let [ir (vis/markdown->ir thinking-text)]
                                   (or (seq (ir-tui/ir->entries ir fill-w
                                              {:mode                 :thinking
                                               :session-id      session-id

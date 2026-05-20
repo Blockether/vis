@@ -539,7 +539,7 @@
   (and (vector? x) (= :ir (first x))))
 
 ;; =============================================================================
-;; text->ir — commonmark-java markdown parser → canonical IR
+;; markdown->ir — commonmark-java markdown parser → canonical IR
 ;; =============================================================================
 ;;
 ;; Used at the boundaries that DON'T have IR upstream:
@@ -650,20 +650,24 @@
     :else
     (mapcat cm->blocks (cm-children-seq n))))
 
-(defn text->ir
-  "Parse a plain-text or markdown string into canonical answer-IR.
+(defn markdown->ir
+  "Parse a Markdown string into canonical answer-IR.
    Idempotent: when the input is already canonical IR, returns it
    unchanged (`identical?` preserved — cache-friendly).
 
-   Used at the boundaries that don't have IR upstream — thinking
-   text from the model, per-block `:comment` strings, user-typed
-   messages from the TUI input box. Returns canonical `[:ir &
-   blocks]` directly (no further `->ast` round-trip needed). Empty /
-   nil input yields `[:ir {}]`.
+   This is the SINGLE entry point for turning Markdown source into IR.
+   Used by:
+     - the final-answer pipeline (model wrote Markdown in `(done {:answer ...})`)
+     - thinking text from the model
+     - per-block `:comment` strings
+     - user-typed messages from the TUI input box
+
+   Returns canonical `[:ir & blocks]` directly (no further `->ast`
+   round-trip needed). Empty / nil input yields `[:ir {}]`.
 
    Implementation: commonmark-java parser + GFM tables / strikethrough
-   extensions, then a faithful Node→IR walker. Soft line breaks
-   collapse to a single space; hard line breaks become `[:br]`."
+   extensions, then a faithful Node→IR walker. Soft line breaks collapse
+   to a single space; hard line breaks become `[:br]`."
   [text]
   (cond
     (canonical? text)
@@ -987,6 +991,31 @@
 ;; Public render entry
 ;; =============================================================================
 
+(defn answer->ir
+  "Lift a final-answer value into canonical IR.
+
+   The Markdown-answer pipeline produces exactly two final-answer shapes:
+     - `{:answer markdown}`                                  - `(done {:answer ...})`
+     - `{:vis/answer-mode :needs-input :answer/text string}` - needs-input gate
+
+   Returns canonical `[:ir & blocks]`. nil yields `[:ir {}]`.
+   Anything outside the two canonical shapes is an upstream bug."
+  [answer]
+  (cond
+    (nil? answer)
+    [:ir {}]
+
+    (and (map? answer) (string? (:answer answer)))
+    (markdown->ir (:answer answer))
+
+    (and (map? answer) (string? (:answer/text answer)))
+    (markdown->ir (:answer/text answer))
+
+    :else
+    (throw (ex-info "answer->ir requires {:answer markdown} or a needs-input map"
+             {:type :vis/invalid-answer
+              :got-type (some-> answer class .getName)}))))
+
 (defn render
   "Render any answer input into a flavor.
 
@@ -1041,15 +1070,15 @@
    IR-side rendering: all prose/list/quote/table text collapses to spaces;
    `:code`/`:c` bodies are included verbatim (often the highest-signal text
    for search).
-   Strings are lifted via `text->ir` so search hits the same shape
+   Strings are lifted via `markdown->ir` so search hits the same shape
    regardless of upstream contract.
 
-   Idempotent on canonical input via the `text->ir` shortcut."
+   Idempotent on canonical input via the `markdown->ir` shortcut."
   ^String [v]
   (when (some? v)
     (let [ir (cond
                (canonical? v) v
-               (string? v)    (text->ir v)
+               (string? v)    (markdown->ir v)
                :else          (->ast v))
           out (volatile! [])]
       (letfn [(walk [n]
@@ -1100,9 +1129,12 @@
 
 (defn- render-export-turn [opts turn]
   (let [user-text (or (:user-request turn) (:user turn) (:prompt turn) "")
-        answer    (:answer turn)
-        ast       (->ast answer)
-        rendered  (render ast (:flavor opts))]
+        ;; Persistence stores the model's raw Markdown answer under
+        ;; `:answer-markdown`. Source of truth; no fallback paths.
+        md        (or (:answer-markdown turn) "")
+        rendered  (case (:flavor opts)
+                    :markdown md
+                    (render (markdown->ir md) (:flavor opts)))]
     (str "## You\n" user-text "\n\n## Assistant\n" rendered "\n")))
 
 (defn session->markdown

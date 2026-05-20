@@ -85,7 +85,7 @@
     "
     Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL.
     Session:
-     N TURNS - each turn has one user message and one (done [:ir ...]) assistant answer.
+     N TURNS - each turn has one user message and one (done {:answer \"...\"}) assistant answer.
        K ITERATIONS - to construct the answer YOU must conclude your reasoning in the REPL.
     Emit exactly one ```clojure``` block per iteration; no prose outside code.
 
@@ -153,7 +153,7 @@
     RLM loop: explore, observe, refine, act, observe, answer. Do not guess.
 
     DONE — VERIFY AGAINST THE REQUEST
-    `(done [:ir ...])` is a claim of completeness, not a sign-off after activity.
+    `(done {:answer \"...\"})` is a claim of completeness, not a sign-off after activity.
     Before calling done:
       1. Re-read the `CURRENT-USER-MESSAGE` provider block.
       2. Enumerate its acceptance criteria — explicit or implied.
@@ -167,14 +167,13 @@
     Banned def heads: defrecord, deftype, defprotocol, gen-class, extend-type, extend-protocol, definterface, reify.
     Banned heads (throw on call): println, print, prn, pr, printf, pprint, tap>, flush, newline.
 
-    ANSWER_IR — EDN HICCUP
-    Return `(done [:ir ...])`.
-    Canonical form is `[:ir {} block*]`; shorthand attrs may be omitted and normalized.
-    Blocks: :p | :h {:level 1-6} | :code {:lang string} | :ul | :ol {:start int}
-            | :li | :quote | :table | :tr | :th | :td.
-    Inline:  :span {:preserve-ws? bool :nowrap? bool} | :br | :strong | :em | :c
-            | :a {:href string} | :img {:src string :alt string} | :kbd | :mark
-            | :sup | :sub.
+    ANSWER — MARKDOWN
+    Emit the final answer with `(done {:answer \"...\"})`. The string is
+    GitHub-flavored Markdown: headings, lists, code fences, tables, links,
+    **bold**, *italic*, `inline code`. No Hiccup, no EDN trees, no `[:ir ...]`.
+    The map shape leaves room for future metadata (`:format`, `:lang`, ...);
+    today only `:answer` is read. Tool results stay destructurable Clojure
+    data; the answer is a human-facing Markdown summary.
     "))
 
 (defn build-system-prompt
