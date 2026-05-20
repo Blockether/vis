@@ -13,26 +13,29 @@ Read these, mark what feels invented, what feels essential, what's missing.
 
 ## Operator API — final
 
-Five operators + finalizer. Pure semantics. No magic.
+Three mid-turn verbs + finalizer. Pure semantics. No magic.
 
 ```clojure
-;; ─── WRITE ───
+;; ─── WRITE (mid-turn, memos only) ───
 (mem-set!    path value)         ; assoc-in
 (mem-update! path f & args)      ; update-in
 (mem-remove! path)               ; dissoc-in
 
-;; ─── SCRATCHPAD ───
-(mem-add-scratchpad-symbol    'sym)   ; engine reads source from SCI var meta, stores form
-(mem-remove-scratchpad-symbol 'sym)   ; drop from scratchpad
-
-;; ─── FINAL ───
-(done {:answer "markdown string"})
+;; ─── FINAL (end of turn) ───
+(done {:answer  "markdown string"
+       :promote '[sym ...]       ; optional — add these SCI symbols to scratchpad
+       :forget  '[sym ...]})     ; optional — drop these from scratchpad
 ```
+
+Scratchpad mutations happen only at `done` time. Forces a single conscious
+"what survives this turn" decision at the boundary, rather than mid-turn churn.
+If turn fails (`:error` / `:cancelled`) before `done` — nothing promoted,
+nothing forgotten. Atomic.
 
 **No `ctx` symbol. No `(ctx)` fn. No reads in eval.**
 CTX is always rendered into the user message of the next turn with inline
 `;;` comments explaining each subtree. Model reads from the rendered text,
-writes back via the five verbs.
+writes back via the four verbs.
 
 ## Entry keys
 
@@ -192,11 +195,13 @@ Inline `;;` comments are stable per subtree. Positive-only framing.
  ;;   To call    : (build-ws "x")
  ;;                — invoke as a normal function; it is already live.
  ;;
- ;;   To promote : define normally, then add by name.
+ ;;   To promote : define normally this turn, then list in done :promote.
  ;;                  (defn build-ws [id] (workspace/spawn-branch! id))
- ;;                  (mem-add-scratchpad-symbol 'build-ws)
+ ;;                  …
+ ;;                  (done {:answer "…" :promote '[build-ws]})
  ;;
- ;;   To drop    : (mem-remove-scratchpad-symbol 'build-ws)
+ ;;   To drop    : list in done :forget.
+ ;;                  (done {:answer "…" :forget '[build-ws]})
  ;;                — next turn the symbol stops being materialized.
  ;;
  ;;   To inspect : read this map for the source form, or use
@@ -444,13 +449,11 @@ MODEL >
            :replace "(defn emit-event [{:keys [level msg] :as ev}]\n  (println (pr-str ev)))\n\n(defn log [level msg]\n  (emit-event {:level level :msg msg}))"}])
 => {:applied 1}
 
-(mem-add-scratchpad-symbol 'emit-event)
-=> 'emit-event
-
 (mem-set! [:session/tasks :introduce-emit-event :status] :done)
 => :ok
 
-(done {:answer "Task `:introduce-emit-event` done. `emit-event` w pliku + w scratchpadzie."})
+(done {:answer  "Task `:introduce-emit-event` done. `emit-event` w pliku + w scratchpadzie."
+       :promote '[emit-event]})
 => :done
 ```
 
@@ -501,16 +504,14 @@ MODEL >
   (println (pr-str (assoc ev :ts (or (:ts ev) (System/currentTimeMillis))))))
 => #'vis.user/emit-event
 
-(mem-add-scratchpad-symbol 'emit-event)       ;; overwrites prior scratchpad form
-=> 'emit-event
-
 (mem-set! [:session/tasks :auto-stamp-ts]
           {:title "emit-event auto-stamp :ts"
            :spec :logging-edn :status :todo
            :deps [:introduce-emit-event]})
 => :ok
 
-(done {:answer "Decyzja `:emit-event-auto-ts` zapisana. Scratchpadowa wersja `emit-event` zaktualizowana, dodany task `:auto-stamp-ts`."})
+(done {:answer  "Decyzja `:emit-event-auto-ts` zapisana. Scratchpadowa wersja `emit-event` zaktualizowana, dodany task `:auto-stamp-ts`."
+       :promote '[emit-event]})       ;; overwrites prior scratchpad form with the redefined source
 => :done
 ```
 
@@ -565,10 +566,8 @@ USER > OK, juz nie potrzebuję emit-event w scratchpadzie.
 
 ```clojure
 MODEL >
-(mem-remove-scratchpad-symbol 'emit-event)
-=> 'emit-event
-
-(done {:answer "Usunięte. `emit-event` od następnej tury nie będzie materializowane."})
+(done {:answer "Usunięte. `emit-event` od następnej tury nie będzie materializowane."
+       :forget '[emit-event]})
 => :done
 ```
 
@@ -702,8 +701,8 @@ MODEL >
 ```
 
 Six subtrees. One engine-managed (`:env`), four model-managed via the
-generic `mem-set!` / `mem-update!` / `mem-remove!`, one model-managed via
-dedicated `mem-add-scratchpad-symbol` / `mem-remove-scratchpad-symbol`.
+generic `mem-set!` / `mem-update!` / `mem-remove!`, one (`:scratchpad`)
+mutated only at turn boundary via `(done {:promote … :forget …})`.
 
 Cross-turn history lives entirely in SQLite (`session_turn`,
 `session_turn_iteration`); reach it via foundation calls
