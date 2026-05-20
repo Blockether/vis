@@ -125,10 +125,10 @@
                   (:bounds copy-hit)))))))
 
 (defdescribe draw-header-color-test
-  (it "renders the untitled placeholder inside the active tab, not on the left"
+  (it "renders the lone workspace title as inert center text, not on the left"
     ;; Fresh session has no `:workspaces` in app-db. The
-    ;; header synthesises a single active tab whose label is the
-    ;; placeholder; the LEFT slot stays empty.
+    ;; header synthesises one workspace label for the centre slot,
+    ;; but does not render a switcher when there is nothing to switch.
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -150,9 +150,10 @@
             write-by-text (fn [text]
                             (some #(when (= text (:text %)) %) @writes))]
         (expect (some? placeholder-write))
-        (expect (= t/header-active-tab-fg (:fg placeholder-write)))
-        (expect (= t/header-active-tab-bg (:bg placeholder-write)))
+        (expect (= t/header-fg (:fg placeholder-write)))
+        (expect (= t/terminal-bg (:bg placeholder-write)))
         (expect (empty? left-slot-writes))
+        (expect (not-any? #(= :workspace-entry (:kind %)) (cr/current)))
         (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567")))))))
 
   (it "uses a subtly different foreground for the hovered header copy affordance only"
@@ -172,20 +173,18 @@
         (cr/begin-frame!)
         (header/draw-header! g db 0 80)
         (cr/commit-frame!)
-        (let [tab-write (some #(when (and (string? (:text %))
-                                       (str/includes? (:text %) "New Session"))
-                                 %)
-                          @writes)
+        (let [title-write (some #(when (and (string? (:text %))
+                                         (str/includes? (:text %) "New Session"))
+                                   %)
+                            @writes)
               write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
-          ;; Title becomes the active tab label — active style applies.
-          ;; Active tab fg switched to the high-contrast yellow so the
-          ;; light-theme grey-on-grey contrast bug stays fixed.
-          (expect (= t/header-active-tab-fg (:fg tab-write)))
+          ;; With one workspace, title stays inert center text, not a switcher entry.
+          (expect (= t/header-fg (:fg title-write)))
           (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567")))))))))
 
 (defdescribe draw-header-workspace-entries-test
-  (it "renders tabs in the center header slot without adding rows"
+  (it "renders workspace switcher entries in the center header slot without adding rows"
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -201,7 +200,7 @@
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)
       (let [tab-writes (filter #(= 1 (:row %)) @writes)
-            ;; LEFT 20% (cols 0..15) stays empty — title lives in the tab now.
+            ;; LEFT 20% (cols 0..15) stays empty — title lives in the center slot.
             left-slot-writes (filter #(and (= 1 (:row %))
                                         (string? (:text %))
                                         (not (str/blank? (:text %)))
@@ -251,7 +250,7 @@
         (expect (= :feature (:workspace-id tab-hit)))
         (expect (= tab-hit (cr/lookup (:left expected) 1))))))
 
-  (it "shows clickable arrows when tabs overflow the 60 percent center slot"
+  (it "shows clickable arrows when workspaces overflow the 60 percent center slot"
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -273,9 +272,9 @@
         (expect (= left-arrow (cr/lookup 10 1)))
         (expect (= right-arrow (cr/lookup 39 1))))))
 
-  (it "pads tab labels with breathing room inside each cell"
-    ;; With 3 tabs in a 48-col centre slot each cell is 16 cols wide.
-    ;; tab-padding=1 reserves a space on each side, so the rendered text
+  (it "pads workspace labels with breathing room inside each cell"
+    ;; With 3 workspaces in a 48-col centre slot each cell is 16 cols wide.
+    ;; workspace-entry-padding=1 reserves a space on each side, so the rendered text
     ;; starts and ends with a space even when the label is short.
     (cr/reset!)
     (let [writes (atom [])
@@ -298,8 +297,8 @@
         ;; The cell paints its full 16-col width as one string.
         (expect (= 16 (p/display-width (:text main-write)))))))
 
-  (it "truncates oversized tab labels with an ellipsis instead of a hard cut"
-    ;; Five long-labelled tabs in a 48-col centre slot → cell width 9 (or 10
+  (it "truncates oversized workspace labels with an ellipsis instead of a hard cut"
+    ;; Five long-labelled workspaces in a 48-col centre slot → cell width 9 (or 10
     ;; for the first three with the +1 remainder). After 2-col padding the
     ;; inner area is < label width, so truncation kicks in with the
     ;; ellipsis glyph.
@@ -319,9 +318,9 @@
             ellipsised (some #(when (str/includes? (:text %) "…") %) tab-writes)]
         (expect (some? ellipsised)))))
 
-  (it "clamps visible tab count to at most 8 even when the centre slot is huge"
+  (it "clamps visible workspace count to at most 8 even when the centre slot is huge"
     ;; cols=400 → centre slot ≈ 240. Without a cap fluid layout would show
-    ;; all 12 tabs; the policy caps the visible window at 8 and the rest
+    ;; all 12 workspaces; the policy caps the visible window at 8 and the rest
     ;; reach via the prev/next arrows.
     (cr/reset!)
     (let [writes (atom [])
@@ -346,7 +345,7 @@
   (it "keeps the natural-fit count when the slot is too narrow for the min cap"
     ;; cols=50 → centre slot 30, natural fit = quot(30,14) = 2 < min=5,
     ;; so we degrade to the natural fit instead of squeezing five
-    ;; unreadable tabs into 30 cols.
+    ;; unreadable workspaces into 30 cols.
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)

@@ -222,16 +222,6 @@
         (expect (= t/warning-fg (:fg fallback)))))))
 
 (defdescribe assistant-bubble-footer-fallback-test
-  (it "shows provider wait separate from eval time in assistant bubble footer"
-    (let [message {:role :assistant
-                   :iteration-count 1
-                   :duration-ms 52138
-                   :engine-timing {:provider-call-ms 51935
-                                   :response-preflight-ms 24}
-                   :eval-duration-ms 75}]
-      (expect (= "1 iter / 52.1s / provider 51.9s + eval 75ms"
-                (assistant-meta-line message)))))
-
   (it "shows selected and actual LLM routing in the assistant bubble footer"
     (let [message {:role :assistant
                    :llm-selected {:provider "anthropic-coding-plan"
@@ -1984,12 +1974,17 @@
                 @puts))
 
       ;; Title row: BOLD keys for each [key action] hint pair.
-      ;; Tab and Enter both complete the highlighted slash suggestion.
-      (doseq [k ["↑↓/wheel" "Tab/Enter"]]
+      ;; Tab is the only completion key — Enter is intentionally NOT
+      ;; advertised here (Enter falls through to the normal send path;
+      ;; only Tab acts on the highlighted suggestion).
+      (doseq [k ["↑↓/wheel" "Tab"]]
         (expect (some #(and (= title-row (:row %))
                          (= k (:text %))
                          (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                   @puts)))
+      (expect (not-any? #(and (= title-row (:row %))
+                           (= "Enter" (:text %)))
+                @puts))
 
       ;; Title row: action words rendered NON-BOLD next to their keys.
       (doseq [a [" select" " complete"]]

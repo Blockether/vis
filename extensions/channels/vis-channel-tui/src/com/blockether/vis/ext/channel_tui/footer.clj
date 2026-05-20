@@ -445,14 +445,14 @@
              (subtitle-segment "Ctrl+G sessions" 1)
              (subtitle-segment "Ctrl+K menu" 1)]
       (workspace-switching-available? db)
-      (conj (subtitle-segment "Shift+Tab workspaces" 3)))
+      (conj (subtitle-segment "Shift+Tab switch workspace" 3)))
 
     :else
     (cond-> [(subtitle-segment "Ctrl+B voice" 1)
              (subtitle-segment "Ctrl+G sessions" 1)
              (subtitle-segment "Ctrl+K menu" 1)]
       (workspace-switching-available? db)
-      (conj (subtitle-segment "Shift+Tab workspaces" 3)))))
+      (conj (subtitle-segment "Shift+Tab switch workspace" 3)))))
 
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;

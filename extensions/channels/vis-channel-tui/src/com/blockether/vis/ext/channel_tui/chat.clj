@@ -177,11 +177,6 @@
                         turn-iterations (vis/db-list-session-turn-iterations d (:id q))
                         last-iteration-id (some-> (last turn-iterations) :id)
                         llm-routing (some-> (last turn-iterations) :metadata :llm)
-                        engine-timing (not-empty (apply merge-with +
-                                                   (keep #(some-> % :metadata :engine-timing)
-                                                     turn-iterations)))
-                        eval-duration-ms (let [n (reduce + 0 (keep :duration-ms turn-iterations))]
-                                           (when (pos? n) n))
                         ;; Empty IR is `[:ir {}]` (count 2 — just root tag
                         ;; + attrs); a real answer adds at least one block.
                         produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
@@ -347,8 +342,6 @@
                                             (:actual llm-routing) (assoc :llm-actual (:actual llm-routing))
                                             (contains? llm-routing :fallback?) (assoc :llm-fallback? (:fallback? llm-routing))
                                             (seq (:trace llm-routing)) (assoc :llm-routing-trace (:trace llm-routing))
-                                            (seq engine-timing) (assoc :engine-timing engine-timing)
-                                            eval-duration-ms (assoc :eval-duration-ms eval-duration-ms)
                                             iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)
                                             cost   (assoc :cost cost)
@@ -448,9 +441,7 @@
            llm-selected (:llm-selected result)
            llm-actual (:llm-actual result)
            llm-fallback? (:llm-fallback? result)
-           llm-routing-trace (:llm-routing-trace result)
-           engine-timing (:engine-timing result)
-           eval-duration-ms (:eval-duration-ms result)]
+           llm-routing-trace (:llm-routing-trace result)]
        ;; Return canonical IR on `:answer`. The bubble layer (state
        ;; event handler -> assistant-message -> render-answer) is
        ;; the single rendering chokepoint. Pre-rendering here would
@@ -465,8 +456,6 @@
          llm-actual (assoc :llm-actual llm-actual)
          (some? llm-fallback?) (assoc :llm-fallback? llm-fallback?)
          (seq llm-routing-trace) (assoc :llm-routing-trace llm-routing-trace)
-         (seq engine-timing) (assoc :engine-timing engine-timing)
-         eval-duration-ms (assoc :eval-duration-ms eval-duration-ms)
          tokens     (assoc :tokens tokens)
          cost       (assoc :cost cost)
          confidence (assoc :confidence confidence)

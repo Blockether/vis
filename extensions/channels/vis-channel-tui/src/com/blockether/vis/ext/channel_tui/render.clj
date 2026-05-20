@@ -688,11 +688,13 @@
   ;; whole row sits on the `dialog-title-bg` accent stripe to match
   ;; the `draw-dialog-chrome!` title bar style.
   ;;
-  ;; Tab and Enter both accept the highlighted suggestion (insert it into
-  ;; the input) while the menu is open. The screen key pre-handler must
-  ;; consume Enter before the normal send path.
+  ;; Tab is the ONLY way to act on a suggestion (insert it into the
+  ;; input). Enter does nothing special while the menu is open — it
+  ;; falls through to the normal send path. Do not put `Enter run`
+  ;; back here without also restoring the matching dispatch in
+  ;; screen.clj `:send` branch.
   [["↑↓/wheel" "select"]
-   ["Tab/Enter" "complete"]])
+   ["Tab" "complete"]])
 
 (defn- draw-slash-title-bar!
   "Render the slash-command overlay title row.
@@ -1516,28 +1518,16 @@
         (when (seq suffix-parts)
           (str " — " (str/join ", " suffix-parts)))))))
 
-(defn- engine-timing-summary
-  [engine-timing eval-duration-ms]
-  (let [provider-ms (:provider-call-ms engine-timing)
-        parts (cond-> []
-                (and (number? provider-ms) (pos? provider-ms))
-                (conj (str "provider " (vis/format-duration provider-ms)))
-                (and (number? eval-duration-ms) (pos? eval-duration-ms))
-                (conj (str "eval " (vis/format-duration eval-duration-ms))))]
-    (when (seq parts)
-      (str/join " + " parts))))
-
 (defn- assistant-meta-line
-  [{:keys [iteration-count duration-ms tokens cost engine-timing eval-duration-ms] :as message}]
+  [{:keys [iteration-count duration-ms tokens cost] :as message}]
   (let [line (vis/format-meta-line
                {:iteration-count iteration-count
                 :silent-count (silent-form-count message)
                 :duration-ms duration-ms
                 :tokens tokens
                 :cost cost}
-               {:suffix (vec (remove nil?
-                               [(engine-timing-summary engine-timing eval-duration-ms)
-                                (fallback-summary message)]))})]
+               {:suffix (when-let [fallback (fallback-summary message)]
+                          [fallback])})]
     (when-not (str/blank? line) line)))
 
 (defn draw-chat-bubble!

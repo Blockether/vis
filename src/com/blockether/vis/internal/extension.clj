@@ -95,7 +95,6 @@
 (s/def :op.error/message  (s/and string? #(not (str/blank? %))))
 (s/def :op.error/trace    (s/nilable string?))
 (s/def :op.error/hint     (s/nilable (s/and string? #(not (str/blank? %)))))
-(s/def :op.error/data     any?)
 
 (s/def :op.error.block/source     string?)
 (s/def :op.error.block/row        pos-int?)
@@ -114,7 +113,7 @@
 (s/def ::error
   (s/nilable
     (s/keys :req-un [:op.error/message]
-      :opt-un [:op.error/trace :op.error/hint :op.error/data :op.error/block])))
+      :opt-un [:op.error/trace :op.error/hint :op.error/block])))
 
 ;; ---- the envelope ----
 (s/def ::envelope
@@ -336,18 +335,14 @@
 
 (defn normalize-error
   "Build a structured `:error` map from a Throwable per PLAN §2.1.
-   Required `:message`; optional `:data` (ex-data), `:trace` (preformatted string
+   Required `:message`; optional `:trace` (preformatted string
    including header + frames). `:hint` and `:block` are tool/engine-
    supplied via `merge-into-metadata` style updates after
    construction."
   [^Throwable t]
-  (let [data  (ex-data t)
-        trace (normalize-trace t)]
+  (let [trace (normalize-trace t)]
     (cond-> {:message (or (not-empty (ex-message t))
                         (.getName (class t)))}
-      data
-      (assoc :data data)
-
       (not (str/blank? trace))
       (assoc :trace trace))))
 

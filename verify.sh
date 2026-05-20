@@ -334,7 +334,7 @@ _test() {
 
 # --- Smoke test: bin/vis prints the help tree. Doesn't touch the user DB. ---
 _smoke() {
-  ./bin/vis 2>&1 | tee /dev/stderr | grep -q "Vis - persistent sandboxed Recursive Language Model" || {
+  ./bin/vis 2>&1 | tee /dev/stderr | grep -q "iterative coding agent CLI" || {
     echo "FAILED: bin/vis didn't print the expected help banner."
     return 1
   }
