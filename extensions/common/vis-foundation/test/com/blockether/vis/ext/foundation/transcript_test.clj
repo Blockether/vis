@@ -74,7 +74,7 @@
                                 :llm-raw-response "```clojure\n(+ 1 1)\n```"
                                 :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
-                                :metadata {:usage {:cache-created-tokens 700}}
+                                :cache-created-tokens 700
                                 :cost-usd 0.0042})
     (vis/db-update-session-turn! s q1 {:status :done :answer "42"})
     ;; Turn 2: failure iteration. No vars, no answer.
@@ -88,7 +88,7 @@
                                   :llm-provider :blockether
                                   :llm-model    "gpt-4o"
                                   :tokens   {:input 80 :output 10 :reasoning 0 :cached 20}
-                                  :metadata {:usage {:cache-created-tokens 300}}
+                                  :cache-created-tokens 300
                                   :cost-usd 0.0021})
       (vis/db-update-session-turn! s q2 {:status :error}))
     cid))

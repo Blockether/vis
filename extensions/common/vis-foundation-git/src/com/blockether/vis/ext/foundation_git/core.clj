@@ -120,26 +120,32 @@
       :stat      {:files N :+ N :- N}
       :files     [{:file :+ :-} ...]
       :porcelain [{:status :file} ...]}"
-  [env]
-  (let [root      (env-root env)
-        ws-id     (:workspace/id env)
-        db-info   (:db-info env)
-        ws        (when (and db-info ws-id) (vis/workspace-get db-info ws-id))
-        base      (when (and (= :branch (:kind ws)) (:commit-id ws))
-                    (:commit-id ws))
-        diff-arg  (if base [base "HEAD"] ["HEAD"])
-        numstat   (parse-numstat (git-out root (into ["diff" "--numstat"] diff-arg)))
-        porc      (parse-porcelain (git-out root ["status" "--porcelain"]))
-        head      (git-out root ["rev-parse" "HEAD"])
-        +sum      (reduce + 0 (map :+ numstat))
-        -sum      (reduce + 0 (map :- numstat))]
-    (extension/success
-      {:result {:branch    (:branch ws)
-                :head      head
-                :kind      (:kind ws)
-                :stat      {:files (count numstat) :+ +sum :- -sum}
-                :files     numstat
-                :porcelain porc}})))
+  ([env]
+   (git-diff-fn env nil))
+  ([env opts]
+   (when (and (some? opts) (not (map? opts)))
+     (throw (ex-info "v/git-diff opts must be a map when provided"
+              {:type :foundation-git/invalid-opts
+               :opts opts})))
+   (let [root      (env-root env)
+         ws-id     (:workspace/id env)
+         db-info   (:db-info env)
+         ws        (when (and db-info ws-id) (vis/workspace-get db-info ws-id))
+         base      (when (and (= :branch (:kind ws)) (:commit-id ws))
+                     (:commit-id ws))
+         diff-arg  (if base [base "HEAD"] ["HEAD"])
+         numstat   (parse-numstat (git-out root (into ["diff" "--numstat"] diff-arg)))
+         porc      (parse-porcelain (git-out root ["status" "--porcelain"]))
+         head      (git-out root ["rev-parse" "HEAD"])
+         +sum      (reduce + 0 (map :+ numstat))
+         -sum      (reduce + 0 (map :- numstat))]
+     (extension/success
+       {:result {:branch    (:branch ws)
+                 :head      head
+                 :kind      (:kind ws)
+                 :stat      {:files (count numstat) :+ +sum :- -sum}
+                 :files     numstat
+                 :porcelain porc}}))))
 
 (defn git-status-fn
   "Working-tree status of the active workspace as parsed porcelain.
@@ -182,8 +188,8 @@
        {:result {:branch  branch
                  :commits (parse-log out)}}))))
 
-(def ^{:doc "Diff stat + porcelain for the currently bound workspace. Branch workspaces diff against their spawn commit; trunk workspaces diff against HEAD. Returns {:branch :head :kind :stat {:files :+ :-} :files [...] :porcelain [...]}."
-       :arglists '([])} git-diff git-diff-fn)
+(def ^{:doc "Diff stat + porcelain for the currently bound workspace. Branch workspaces diff against their spawn commit; trunk workspaces diff against HEAD. Optional opts map accepted for compatibility (e.g. {:stat? true}); result always includes stat, files, and porcelain. Returns {:branch :head :kind :stat {:files :+ :-} :files [...] :porcelain [...]}."
+       :arglists '([] [opts])} git-diff git-diff-fn)
 
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}."
        :arglists '([])} git-status git-status-fn)

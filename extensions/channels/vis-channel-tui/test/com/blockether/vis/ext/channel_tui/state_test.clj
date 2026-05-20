@@ -106,8 +106,8 @@
     (expect (false? (:slash-command-hidden? @state/app-db)))))
 
 (defdescribe workspace-entries-test
-  (it "adds a tab and seeds a base tab when none exist"
-    ;; Base tab inherits the current `:title`; the freshly-added tab
+  (it "adds a workspace and seeds a base workspace when none exist"
+    ;; Base workspace inherits the current `:title`; the freshly-added workspace
     ;; starts as `Untitled session` because it has no title yet.
     (reset! state/app-db {:title "Current"
                           :render-version 0})
@@ -118,9 +118,9 @@
     (expect (= :tab-1 (:active-workspace-id @state/app-db)))
     (expect (= 1 (:render-version @state/app-db))))
 
-  (it "adds the next unique tab and makes it active"
-    ;; New tabs default to the untitled placeholder; `:set-title`
-    ;; renames the active tab once a title is generated.
+  (it "adds the next unique workspace and makes it active"
+    ;; New workspaces default to the untitled placeholder; `:set-title`
+    ;; renames the active workspace once a title is generated.
     (reset! state/app-db {:workspaces [{:id :main :label "Main"}
                                        {:id :tab-1 :label "Tab 1" :active? true}]
                           :active-workspace-id :tab-1
@@ -132,7 +132,7 @@
               (:workspaces @state/app-db)))
     (expect (= :tab-2 (:active-workspace-id @state/app-db))))
 
-  (it "attaches workspace root to the new tab and active snapshot"
+  (it "attaches workspace root to the new workspace and active snapshot"
     (let [workspace {:workspace/id "ws-1"
                      :workspace/root "/tmp/vis-ws"
                      :main {:branch "feature/ws"}}]
@@ -156,7 +156,7 @@
               (mapv :id (:workspaces @state/app-db))))
     (expect (= :tab-7 (:active-workspace-id @state/app-db))))
 
-  (it "switches the full transcript, draft, prompt history, and session by tab"
+  (it "switches the full transcript, draft, prompt history, and session by workspace"
     (reset! state/app-db {:session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")

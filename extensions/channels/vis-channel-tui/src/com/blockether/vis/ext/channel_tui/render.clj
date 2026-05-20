@@ -2389,6 +2389,48 @@
   ([s] (str/upper-case (str s)))
   ([s n] (str (str/upper-case (str s)) " " n)))
 
+(defn- error-trace-headline
+  [error]
+  (when-let [trace (:trace error)]
+    (some-> trace str str/split-lines first str/trim not-empty)))
+
+(defn- form-error-headline
+  [error]
+  (let [headline (or (error-trace-headline error)
+                   (:message error)
+                   (some-> (:type error) str)
+                   "unknown error")]
+    (str "ERROR — " headline)))
+
+(defn- inline-error-context-lines
+  "Babashka-style code context for form eval errors. Kept inside the
+   code band so failing source, caret, error message, and status occupy
+   one visual block instead of code + error + repeated context blocks."
+  [code-text error]
+  (let [block     (:block error)
+        source    (or (:source block) code-text)
+        opened    (:opened-loc block)
+        arrow-row (or (:row opened) (:row block))
+        arrow-col (or (:col opened) (:col block))]
+    (when (and (string? source) (not (str/blank? source)))
+      (let [lines      (vec (str/split source #"\n" -1))
+            total      (count lines)
+            gutter-w   (count (str total))
+            fmt-line   (fn [idx0]
+                         (format (str " %" gutter-w "d: %s")
+                           (inc idx0) (nth lines idx0)))
+            arrow-line (when (and arrow-row arrow-col
+                               (<= 1 arrow-row total))
+                         (str (apply str (repeat (+ gutter-w 3) \space))
+                           (apply str (repeat (max 0 (dec (long arrow-col))) \space))
+                           "^---"))
+            arrow-idx0 (when arrow-line (dec (long arrow-row)))]
+        (vec
+          (mapcat (fn [idx0]
+                    (cond-> [(fmt-line idx0)]
+                      (= idx0 arrow-idx0) (conj arrow-line)))
+            (range total)))))))
+
 (defn- error-signature
   "Stable comparison key for two trace `:error` maps. Returns nil for
    non-error iterations (so they never collapse)."
@@ -2455,7 +2497,7 @@
                   (update e k drop-indexes hidden-idxs))
           entry
           [:code :comments :render-segments :results :result-kinds :result-details
-           :durations :successes :started-at-ms :silents])))))
+           :errors :durations :successes :started-at-ms :silents])))))
 
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
@@ -2465,7 +2507,7 @@
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
   [{:keys [thinking code comments render-segments results result-kinds result-details
-           durations successes started-at-ms silents
+           errors durations successes started-at-ms silents
            provider-fallbacks error repeat-count]}]
   [(text-fingerprint thinking)
    (mapv text-fingerprint code)
@@ -2476,6 +2518,7 @@
    ;; result-details are small op-metadata maps with subprocess
    ;; payloads inline. Compared structurally - cheap.
    result-details
+   errors
    durations
    successes
    started-at-ms
@@ -2999,7 +3042,7 @@
       segments)))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking code comments render-segments results result-kinds result-details durations successes started-at-ms provider-fallbacks error repeat-count]}
+  [{:keys [thinking code comments render-segments results result-kinds result-details errors durations successes started-at-ms provider-fallbacks error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? session-id detail-expansions session-turn-id now-ms live-preview?]
        :or   {show-header? false live-preview? false}}]]
@@ -3157,8 +3200,12 @@
                 segments      (when render-segments (get render-segments idx))
                 title-lines   (render-segment-title-entries line-entry segments fill-w)
                 code-text     (str/trim (or (code-source-from-render-segments segments form) ""))
+                error-map     (when errors (get errors idx))
+                inline-error-code-lines (when error-map
+                                          (inline-error-context-lines code-text error-map))
                 formatted     (format-clojure-ansi code-text fill-w)
-                code-lines    (str/split-lines formatted)
+                code-lines    (or inline-error-code-lines
+                                (str/split-lines formatted))
                 code-node-id  (when session-id
                                 (detail-node-id {:session-turn-id session-turn-id
                                                  :iteration-number    iteration-number
@@ -3180,6 +3227,9 @@
                                   (strip-markdown-fence-marker-lines raw-result-text)
                                   raw-result-text)
                 result-detail   (when result-details (get result-details idx))
+                inline-error-message-lines (when error-map
+                                             (mapv #(line-entry (str c-marker %))
+                                               (wrap-text (form-error-headline error-map) fill-w)))
                 tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
                 result-lines  (when (and result-text (not (str/blank? (str result-text))))
@@ -3218,6 +3268,7 @@
                                          [(line-entry (str thinking-marker ""))]))
                                      [(line-entry (str c-pad ""))]
                                      c-lines
+                                     (when (seq inline-error-message-lines) inline-error-message-lines)
                                      (when status-line [status-line])
                                      [(line-entry (str c-pad ""))]))
                 result-margin nil]
