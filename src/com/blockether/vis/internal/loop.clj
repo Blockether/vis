@@ -18,6 +18,7 @@
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.parse-diagnose :as pd]
+   [com.blockether.vis.internal.paren-repair :as paren-repair]
    [com.blockether.vis.internal.env.sci-patches :as sci-patches]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
@@ -552,21 +553,27 @@
   "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
    for per-form eval + capture.
 
-   Parse errors are surfaced unchanged (plus quote-balance hints when precise).
-   The engine must not auto-rebalance delimiters: answer/output repair can
-   produce valid-but-wrong IR, which is worse than a model-visible retry.
+   Parse errors are surfaced unchanged (plus quote-balance hints when precise)
+   unless the error is delimiter-shaped and Parinfer can repair it into code
+   that Edamame accepts. Repair is disclosed as `:repaired-source` so the
+   trailer can show what changed.
 
    Uses edamame's incremental reader so a parse failure on form N still
    yields the parsed prefix [form-1 … form-(N-1)]. The caller evaluates the
    prefix in order and reports the parse error as form N's outcome — model
    loses only the broken form, not the entire iteration.
 
-   Returns {:forms <vec> :parse-error <map|nil> :repaired-source <nil>}."
+   Returns {:forms <vec> :parse-error <map|nil> :repaired-source <string|nil>}."
   [code]
   (let [first-pass (parse-forms-streaming code)]
     (if-not (:parse-error first-pass)
       first-pass
-      (update first-pass :parse-error enrich-parse-error code))))
+      (if-let [repaired (paren-repair/maybe-repair-delimiters code)]
+        (let [repaired-pass (parse-forms-streaming repaired)]
+          (if-not (:parse-error repaired-pass)
+            (assoc repaired-pass :repaired-source repaired)
+            (update first-pass :parse-error enrich-parse-error code)))
+        (update first-pass :parse-error enrich-parse-error code)))))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [thrown       (atom nil)
@@ -650,7 +657,8 @@
                  :error  parse-error
                  :repaired-source repaired-source}
                 {:result last-result :forms acc :error nil
-                 :repaired-source repaired-source})
+                 :repaired-source repaired-source
+                 :repaired? (boolean repaired-source)})
               (let [{:keys [source form]} (first todo)
                     entry (eval-one-form form source)]
                 (if-let [err (:error entry)]
@@ -766,15 +774,17 @@
   [{:keys [sci-ctx sandbox-ns] :as environment} code
    & {:keys [timeout-ms tool-event-fn]}]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
-    ;; Per-block-eval contract: feed the block source to SCI verbatim.
-    ;; SCI parses + evaluates as one chunk; parse / runtime errors surface
-    ;; as the block's structured `:error` map. No pre-eval lint, no
-    ;; pre-parse check, no answer-string restitch — the model self-corrects
-    ;; from SCI's error next iteration.
+    ;; Per-block-eval contract: feed original block source to `run-sci-code`;
+    ;; it parses, repairs delimiter slips when safe, then evaluates parsed
+    ;; forms. Guard validators run against the repaired source when one exists
+    ;; so a stray close paren does not block repair before eval.
     (let [start-time (System/currentTimeMillis)
           exec       (try
-                       (sci-patches/validate-non-empty-block! code)
-                       (sci-patches/validate-no-banned-defs! code)
+                       (let [{:keys [parse-error repaired-source]} (parse-top-level-forms code)
+                             validation-code (or repaired-source code)]
+                         (when-not parse-error
+                           (sci-patches/validate-non-empty-block! validation-code)
+                           (sci-patches/validate-no-banned-defs! validation-code)))
                        (run-with-timing sci-ctx code sandbox-ns timeout-ms
                          start-time tool-event-fn environment)
                        (catch Throwable e
