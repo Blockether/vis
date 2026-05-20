@@ -801,7 +801,6 @@
 (def MARKER_TH_MD_QUOTE      "\uE02A") ;; markdown blockquote (thinking)
 (def MARKER_TH_MD_HR         "\uE02B") ;; markdown horizontal rule (thinking)
 (def MARKER_TH_MD_SUMMARY    "\uE02C") ;; markdown <summary> disclosure label (thinking)
-(def MARKER_PROVIDER_FALLBACK "\uE02D") ;; provider fallback notice (warning band)
 
 ;; Inline span sentinels (\uE110...\uE117) live in their own section
 ;; near the top of this file because both the width math

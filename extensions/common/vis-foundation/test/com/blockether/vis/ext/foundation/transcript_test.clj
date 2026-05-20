@@ -406,7 +406,9 @@
           (expect (not (str/includes? out "##### Block 0"))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "bounds huge code blocks in default Markdown reports"
+  (it "renders huge code blocks verbatim in Markdown reports"
+    ;; Forensic transcripts never truncate. A 50k-char code block lands
+    ;; in the report exactly as the model wrote it.
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [huge (apply str (repeat 50000 "x"))
@@ -420,8 +422,7 @@
           (vis/db-update-session-turn! s qid {:status :done})
           (let [out (transcript/transcript-md s cid)]
             (expect (string? out))
-            (expect (< (count out) 30000))
-            (expect (str/includes? out "..."))))
+            (expect (str/includes? out huge))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "renders flat mixed-block code when render segments are not persisted"
