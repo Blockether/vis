@@ -1468,7 +1468,7 @@
   [message]
   (let [n (reduce + 0
             (map (fn [trace]
-                   (count (filter true? (:silents trace))))
+                   (count (filter :silent? (:forms trace))))
               (or (:traces message) [])))]
     (when (pos? n) n)))
 
@@ -2450,44 +2450,6 @@
        (subs s 0 (min 64 n))
        (subs s (max 0 (- n 256)))])))
 
-(defn- legacy-iteration->forms
-  "Convert legacy progress entries (`:code`, `:results`, ...) to canonical
-   `:forms`. No-op when `:forms` already exists."
-  [entry]
-  (if (contains? entry :forms)
-    entry
-    (let [codes (or (:code entry) [])
-          n     (apply max 0 (map count [(or (:code entry) [])
-                                         (or (:comments entry) [])
-                                         (or (:render-segments entry) [])
-                                         (or (:results entry) [])
-                                         (or (:result-kinds entry) [])
-                                         (or (:result-details entry) [])
-                                         (or (:errors entry) [])
-                                         (or (:durations entry) [])
-                                         (or (:successes entry) [])
-                                         (or (:started-at-ms entry) [])
-                                         (or (:silents entry) [])]))
-          at    (fn [k idx] (get (or (k entry) []) idx))]
-      (assoc entry :forms
-        (mapv (fn [idx]
-                {:position        idx
-                 :engine-idx      idx
-                 :code            (get codes idx)
-                 :comment         (at :comments idx)
-                 :render-segments (at :render-segments idx)
-                 :result-render   (at :results idx)
-                 :result-kind     (at :result-kinds idx)
-                 :result-detail   (at :result-details idx)
-                 :error           (at :errors idx)
-                 :duration-ms     (at :durations idx)
-                 :success?        (at :successes idx)
-                 :started-at-ms   (at :started-at-ms idx)
-                 :silent?         (boolean (at :silents idx))
-                 :running?        (and (some? (at :started-at-ms idx))
-                                    (nil? (at :successes idx)))})
-          (range n))))))
-
 (defn- iteration-running?
   "True when at least one form in the iteration has started but not
    yet completed. Drives the per-iteration cache key: iterations with
@@ -3094,8 +3056,7 @@
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
-  (let [{:keys [thinking forms recaps provider-fallbacks error repeat-count]}
-        (legacy-iteration->forms entry)
+  (let [{:keys [thinking forms recaps provider-fallbacks error repeat-count]} entry
         _ show-header?
         fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
@@ -3386,7 +3347,7 @@
         thinking?      (and (not errored?)
                          (some? (:thinking last-iteration))
                          (not (str/blank? (:thinking last-iteration))))
-        executing?     (and (not errored?) last-iteration (seq (:forms (legacy-iteration->forms last-iteration))))]
+        executing?     (and (not errored?) last-iteration (seq (:forms last-iteration)))]
     (cond
       cancelling? "Vis is cancelling"
       errored?    (let [label (prettify-error-type err)]
@@ -3409,8 +3370,7 @@
            session-turn-id detail-expansions live? suppress-trace?]
     :or   {live? false suppress-trace? false}}]
   (let [raw-iterations (or iterations [])
-        iterations     (mapv legacy-iteration->forms
-                         (if (vector? raw-iterations) raw-iterations (vec raw-iterations)))
+        iterations     (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
         show-thinking? (get settings :show-thinking true)
         show-iterations? (get settings :show-iterations true)
         show-silent?   (get settings :show-silent false)

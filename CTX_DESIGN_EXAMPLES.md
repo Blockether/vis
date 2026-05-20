@@ -3,6 +3,13 @@
 Goal: stress-test the proposed CTX shape with realistic flows.
 Read these, mark what feels invented, what feels essential, what's missing.
 
+**Markdown-native answer note:** Vis is markdown-native today. Model finishes
+each turn with `(done {:answer "..."})` where `:answer` is a markdown string.
+No IR (`[:p [:t "..."]]` is gone). No `:subject` arg on `done`. Anything we
+want as a "subject" for the recent-turn breadcrumb must be either (a) written
+explicitly by the model via `(mem! ...)` or (b) derived deterministically by
+the engine (e.g. first line of `:answer`).
+
 Shape used in these examples (subject to debate):
 
 ```clojure
@@ -11,7 +18,7 @@ Shape used in these examples (subject to debate):
  :session/counters    {…}                  ; gen-id seeds
 
  ;; engine-managed
- :session/recent      [{:turn :subject :status}]
+ :session/recent      [{:turn :subject :status}]   ; :subject derivation TBD
  :session/archived    {:turn-ids […]}
  :session/env         {:defs :open-files :git-branch}
  :session/file-truth  {path [turn iter]}
@@ -27,7 +34,7 @@ Shape used in these examples (subject to debate):
 
 Conventions in these examples:
 - `USER >` — user message
-- `MODEL >` — what model emits (one SCI form per line, or block)
+- `MODEL >` — what model emits in a single ```clojure``` code block per iter
 - `=> …` — engine eval result
 - `CTX AFTER TURN N:` — full CTX blob state after `(done …)`
 - Lazy fetches via `(v/turn-message N)`, `(v/iterations N)`, `(v/turn-answer N)` shown as needed
@@ -44,12 +51,12 @@ User chatting, no code. Tests whether `:session/preferences` carries trivially-s
 USER > Lubię żółty.
 ```
 
-```
+```clojure
 MODEL >
 (mem! [:session/preferences :color] "yellow")
 => :ok
-(done [:p [:t "Zapamiętane — kolor żółty."]]
-      {:subject "noted color preference"})
+
+(done {:answer "Zapamiętane — kolor żółty."})
 => :done
 ```
 
@@ -59,12 +66,12 @@ MODEL >
 USER > Ile jest 17 * 23?
 ```
 
-```
+```clojure
 MODEL >
 (* 17 23)
 => 391
-(done [:p [:t "391"]]
-      {:subject "arithmetic"})
+
+(done {:answer "391"})
 => :done
 ```
 
@@ -74,12 +81,12 @@ MODEL >
 USER > Mam psa.
 ```
 
-```
+```clojure
 MODEL >
 (mem! [:session/preferences :has-pet] :dog)
 => :ok
-(done [:p [:t "Ok, pies zapamiętany."]]
-      {:subject "noted pet"})
+
+(done {:answer "Ok, pies zapamiętany."})
 => :done
 ```
 
@@ -89,10 +96,9 @@ MODEL >
 USER > Powiedz coś po polsku.
 ```
 
-```
+```clojure
 MODEL >
-(done [:p [:t "Cześć! Co słychać?"]]
-      {:subject "polish greeting"})
+(done {:answer "Cześć! Co słychać?"})
 => :done
 ```
 
@@ -107,10 +113,9 @@ Model sees in `;; ctx`:
 :session/preferences {:color "yellow" :has-pet :dog}
 ```
 
-```
+```clojure
 MODEL >
-(done [:p [:t "Lubisz żółty kolor i masz psa."]]
-      {:subject "recalled preferences"})
+(done {:answer "Lubisz żółty kolor i masz psa."})
 => :done
 ```
 
@@ -122,11 +127,11 @@ MODEL >
  :session/counters  {}
 
  :session/recent
-   [{:turn 1 :subject "noted color preference" :status :done}
-    {:turn 2 :subject "arithmetic"             :status :done}
-    {:turn 3 :subject "noted pet"              :status :done}
-    {:turn 4 :subject "polish greeting"        :status :done}
-    {:turn 5 :subject "recalled preferences"   :status :done}]
+   [{:turn 1 :subject "Zapamiętane — kolor żółty."   :status :done}
+    {:turn 2 :subject "391"                          :status :done}
+    {:turn 3 :subject "Ok, pies zapamiętany."        :status :done}
+    {:turn 4 :subject "Cześć! Co słychać?"           :status :done}
+    {:turn 5 :subject "Lubisz żółty kolor i masz psa." :status :done}]
 
  :session/env         {:defs {} :open-files #{} :git-branch "main"}
  :session/file-truth  {}
@@ -134,10 +139,14 @@ MODEL >
  :session/preferences {:color "yellow" :has-pet :dog}}
 ```
 
+(Subject above is the first line of `:answer`. If we'd rather have model-supplied
+subjects, model would emit `(mem! [:session/recent <turn> :subject] "…")` before
+`(done …)` — extra call, more friction. Lean engine-derived from `:answer`.)
+
 **Observations to discuss:**
-- `:session/recent` of 5 entries with only `:subject` strings is cheap, but is it useful? Model already sees `:session/preferences`, doesn't need to know turn-by-turn subjects to answer "co lubię".
-- Maybe `:session/recent` only needed when conversation refers to *prior turn structure* ("zrób to co przed chwilą"). Otherwise it's dead weight.
-- Question: should `:session/recent` exist at all, or just `:session/archived` after K?
+- `:session/recent` of 5 entries with first-line-of-answer subjects: is it useful? Model already sees `:session/preferences`, doesn't need turn-by-turn subjects to answer "co lubię".
+- Maybe `:session/recent` only needed when conversation refers to *prior turn structure* ("zrób to co przed chwilą"). Otherwise dead weight.
+- Question: drop `:session/recent` entirely?
 
 ---
 
@@ -151,13 +160,12 @@ Coding flow. Stress-tests the patch-invalidates-read story.
 USER > Pokaż mi src/auth.clj i powiedz co tam jest.
 ```
 
-```
+```clojure
 MODEL >
 (v/cat "src/auth.clj")          ;; iter [1 1]
 => "(ns auth)\n(defn check [tok] (= tok \"secret\"))\n"
 
-(done [:p [:t "Plik definiuje check/1: literal string compare na secret."]]
-      {:subject "inspected auth"})
+(done {:answer "Plik definiuje `check/1`: literal string compare na `\"secret\"`."})
 => :done
 ```
 
@@ -166,7 +174,9 @@ MODEL >
 ```clojure
 {:session/id        "01HXYZ"
  :session/turn      1
- :session/recent    [{:turn 1 :subject "inspected auth" :status :done}]
+ :session/recent    [{:turn 1
+                      :subject "Plik definiuje `check/1`: literal string compare na `\"secret\"`."
+                      :status :done}]
  :session/env       {:defs {} :open-files #{} :git-branch "main"}
  :session/file-truth {}                         ;; read-only, file not written
  :session/preferences {} :session/rules {} :session/decisions {}
@@ -181,7 +191,7 @@ MODEL >
 USER > Zamień to literal compare na bcrypt verify.
 ```
 
-Model sees no `:session/file-truth` for `src/auth.clj` — so the truth is "whatever filesystem has now". Model needs to re-read OR rely on Turn 1's iter result (which is in current-turn chat? NO — Turn 1 closed. Iter result lives in SQLite, reachable via `(v/iterations 1)`).
+Model sees no `:session/file-truth` for `src/auth.clj` — so the truth is "whatever filesystem has now". Turn 1's `v/cat` result lives in SQLite (reachable via `(v/iterations 1)`) but isn't auto-included in this turn's context.
 
 Question: should Turn 1's `v/cat` result be visible without an explicit fetch in Turn 2?
 
@@ -191,7 +201,7 @@ Two camps:
 
 Sketch with **No** policy:
 
-```
+```clojure
 MODEL >
 (v/cat "src/auth.clj")          ;; iter [2 1] — re-read; FS truth
 => "(ns auth)\n(defn check [tok] (= tok \"secret\"))\n"
@@ -205,8 +215,7 @@ MODEL >
 ;; Engine notes: [2 1] result on src/auth.clj is now superseded by [2 2].
 ;; (Marked in chat trailer of THIS turn only; cross-turn doesn't carry it.)
 
-(done [:p [:t "Zmieniono check na bcrypt verify."]]
-      {:subject "auth → bcrypt"})
+(done {:answer "Zmieniono `check` na bcrypt verify."})
 => :done
 ```
 
@@ -214,8 +223,8 @@ MODEL >
 
 ```clojure
 {:session/turn 2
- :session/recent [{:turn 1 :subject "inspected auth" :status :done}
-                  {:turn 2 :subject "auth → bcrypt"  :status :done}]
+ :session/recent [{:turn 1 :subject "Plik definiuje …"        :status :done}
+                  {:turn 2 :subject "Zmieniono `check` na bcrypt verify." :status :done}]
  :session/env {:defs {} :open-files #{} :git-branch "main"}   ;; reset per turn
  :session/file-truth {"src/auth.clj" [2 2]}                   ;; latest write
  ...}
@@ -229,14 +238,13 @@ USER > Hmm, czy w tym pliku jest jeszcze coś poza check?
 
 Model sees `:session/file-truth {"src/auth.clj" [2 2]}`. The "truth" of `src/auth.clj` is whatever iter [2 2] left it as. Model has options:
 
-```
+```clojure
 MODEL >
 ;; option A: re-read FS (cheap, definitive)
 (v/cat "src/auth.clj")
 => "(ns auth)\n(defn check [tok] (bcrypt/check tok stored-hash))\n"
 
-(done [:p [:t "Tylko check/1. Nic więcej."]]
-      {:subject "auth file inventory"})
+(done {:answer "Tylko `check/1`. Nic więcej w pliku."})
 
 ;; option B: fetch the iter row directly
 (v/iterations 2)
@@ -264,7 +272,7 @@ Multi-turn coding job. Tests `:session/specs` / `:session/tasks` / `:session/dec
 USER > Zaplanuj refactor logging do strukturalnych eventów (EDN, nie text).
 ```
 
-```
+```clojure
 MODEL >
 (let [sid (gen-id :spec)]
   (mem! [:session/specs sid]
@@ -293,8 +301,7 @@ MODEL >
 (mem! [:session/work] {:phase :planning :focus [:session/specs 1] :blockers []})
 => :ok
 
-(done [:p [:t "Spec #1 + 3 tasks. Zaczynam od emit-event."]]
-      {:subject "planned logging refactor"})
+(done {:answer "Spec #1 zapisany + 3 taski. Zaczynam od `emit-event`."})
 => :done
 ```
 
@@ -303,7 +310,7 @@ MODEL >
 ```clojure
 {:session/turn 1
  :session/counters {:spec 1 :task 3}
- :session/recent [{:turn 1 :subject "planned logging refactor" :status :done}]
+ :session/recent [{:turn 1 :subject "Spec #1 zapisany + 3 taski. Zaczynam od `emit-event`." :status :done}]
  :session/specs {1 {:title "logging → structured EDN events"
                     :acceptance [...] :status :draft :added-turn 1}}
  :session/tasks {1 {:title "introduce emit-event fn" :spec 1 :status :todo
@@ -324,7 +331,7 @@ USER > Działaj.
 
 Model reads `:session/work :focus → spec 1`; `:session/tasks` shows t1 has no deps. Picks t1.
 
-```
+```clojure
 MODEL >
 (mem-fn [:session/tasks 1 :status] (constantly :doing))
 => :ok
@@ -345,8 +352,7 @@ MODEL >
 (mem-fn [:session/tasks 1 :done-turn] (constantly 2))
 => :ok
 
-(done [:p [:t "Task #1 done. emit-event wprowadzony, log/2 deleguje."]]
-      {:subject "added emit-event"})
+(done {:answer "Task #1 done. `emit-event` wprowadzony, `log/2` deleguje."})
 => :done
 ```
 
@@ -355,8 +361,8 @@ MODEL >
 ```clojure
 {:session/turn 2
  :session/counters {:spec 1 :task 3}
- :session/recent [{:turn 1 :subject "planned logging refactor" :status :done}
-                  {:turn 2 :subject "added emit-event"         :status :done}]
+ :session/recent [{:turn 1 :subject "Spec #1 zapisany + 3 taski. Zaczynam od `emit-event`." :status :done}
+                  {:turn 2 :subject "Task #1 done. `emit-event` wprowadzony, `log/2` deleguje." :status :done}]
  :session/specs {1 {:title "…" :status :draft :added-turn 1}}  ;; still :draft
  :session/tasks {1 {:title "…" :status :done :done-turn 2 :spec 1 :added-turn 1 :deps []}
                  2 {…} 3 {…}}
@@ -374,7 +380,7 @@ USER > Wait, maybe emit-event powinno mieć timestamp dodawany przez engine, nie
 
 This is a design question, not work. Model records a decision.
 
-```
+```clojure
 MODEL >
 (let [d (gen-id :decision)]
   (mem! [:session/decisions d]
@@ -389,8 +395,7 @@ MODEL >
          :deps [1] :added-turn 3}))
 => :ok
 
-(done [:p [:t "Decyzja zapisana, task #4 dodany."]]
-      {:subject "decided :ts auto-stamp"})
+(done {:answer "Decyzja zapisana, task #4 dodany."})
 => :done
 ```
 
@@ -417,7 +422,7 @@ Session A teaches a project rule. Session B (next day, same repo) picks it up.
 USER > Pamiętaj, w tym projekcie testy muszą uderzać w prawdziwy SQLite, nigdy mockować.
 ```
 
-```
+```clojure
 MODEL >
 (let [r (gen-id :rule)]
   (mem! [:session/rules r]
@@ -426,8 +431,7 @@ MODEL >
          :added-turn 7}))
 => :ok
 
-(done [:p [:t "Reguła #1 zapisana jako project-scoped."]]
-      {:subject "added project rule: real-DB testing"})
+(done {:answer "Reguła #1 zapisana jako project-scoped."})
 => :done
 ```
 
@@ -462,15 +466,14 @@ USER > Dodaj test dla emit-event.
 
 Model sees `:session/rules 1 :body` → knows to write a real-DB test, not a mock.
 
-```
+```clojure
 MODEL >
 (v/cat "test/logging_test.clj")
 => ;; existing tests
 …
 (v/patch [{…test using real next.jdbc + tmp sqlite file…}])
 …
-(done [:p [:t "Test dodany, używa tmp SQLite jak reguła projektu wymaga."]]
-      {:subject "added emit-event test (real DB)"})
+(done {:answer "Test dodany, używa tmp SQLite jak reguła projektu wymaga."})
 => :done
 ```
 
@@ -479,34 +482,41 @@ MODEL >
 ## Cross-cutting questions raised by these examples
 
 1. **`:session/recent` — value or noise?**
-   Example 1 shows 5 entries with only `:subject`. Was any of them ever read by the model? Probably not — model used `:session/preferences` directly. Maybe `:session/recent` is only useful when user says "zrób to co przed chwilą" or "wycofaj poprzednią zmianę" — and even then, `(v/turn-toc)` / `(v/iterations N)` cover it.
+   Example 1 shows 5 entries where each `:subject` is just the first-line of `:answer`. The model never read them — used `:session/preferences` directly. Maybe `:session/recent` is only useful when user says "zrób to co przed chwilą" or "wycofaj poprzednią zmianę" — and even then, `(v/turn-toc)` / `(v/iterations N)` / `(v/turn-answer N)` cover it.
 
-   **Proposal:** drop `:session/recent`. Keep `:session/archived {:turn-ids […]}` or even drop that too — `session_turn` table already enumerates them.
+   **Proposal:** drop `:session/recent`. `session_turn` table already has the full history; `(v/turn-toc)` lists them on demand.
 
-2. **`:session/file-truth` — derived or invented?**
+2. **Subject — derived or model-emitted?**
+   With markdown-native `(done {:answer "…"})`, model has no `:subject` arg. Two options:
+   - **Engine-derives:** first line of `:answer`. Free, deterministic, but only as good as the model's first sentence.
+   - **Model writes:** `(mem! [:session/recent <turn> :subject] "…")` before `(done …)`. More friction.
+   - **Drop subjects entirely.** Lazy fetch `(v/turn-answer N)` shows the full markdown when actually needed.
+   Lean drop entirely if we also drop `:session/recent`.
+
+3. **`:session/file-truth` — derived or invented?**
    Example 2 showed that `v/cat` to FS is cheap and definitive. `file-truth` is a denormalisation of `session_turn_iteration` rows. Cost > benefit?
 
    **Proposal:** drop. Re-read FS via `v/cat` whenever uncertain. Engine renders within-turn iter trailers with "superseded by [t i]" markers; cross-turn nothing.
 
-3. **Spec status promotion — auto or manual?**
+4. **Spec status promotion — auto or manual?**
    Example 3 Turn 2: model finished a task but didn't bump spec status. Auto-promote (any `:doing` task → spec `:doing`) is a small rule but hidden magic. Lean manual; prompt nudge.
 
-4. **`:session/work` necessity.**
-   Examples 1 & 2 don't use it. Example 3 uses it lightly. Maybe `:session/work` is redundant — model can write `{:focus 1}` directly into the first task it's working on (`:status :doing` already signals that). Sticky `:phase` could just be the `:subject` of last turn.
+5. **`:session/work` necessity.**
+   Examples 1 & 2 don't use it. Example 3 uses it lightly. Maybe `:session/work` is redundant — model can write `:status :doing` on tasks as the focus signal. Sticky `:phase` could just be the trailing `:status` of the in-progress task.
 
-   **Proposal:** drop `:session/work`. Model uses `:status :doing` on tasks as the focus signal. Phase = derived from "which step of which spec is being worked".
+   **Proposal:** drop `:session/work`. Model uses `:status :doing` on tasks as the focus signal.
 
-5. **Counters' visibility.**
+6. **Counters' visibility.**
    `:session/counters` is engine-managed and uninteresting to the model. Render-time hide?
 
-6. **Decision tagging.**
+7. **Decision tagging.**
    `:tags` on decisions is freeform but only model-set. Useful for search-back? Probably yes ("show me ctx decisions").
 
 ---
 
 ## What's left after dropping invented stuff
 
-If we drop `:session/recent`, `:session/file-truth`, `:session/work`, and hide `:session/counters` on the wire:
+If we drop `:session/recent`, `:session/archived`, `:session/file-truth`, `:session/work`, and hide `:session/counters` on the wire:
 
 ```clojure
 ;; storage:
@@ -526,6 +536,8 @@ If we drop `:session/recent`, `:session/file-truth`, `:session/work`, and hide `
 ```
 
 Five model-managed subtrees, one engine-managed (env). That's the minimum-viable shape.
+
+Cross-turn history lives entirely in SQLite (`session_turn`, `session_turn_iteration`) — reachable via foundation calls (`v/turn-message`, `v/turn-answer`, `v/iterations`, `v/turn-toc`), never preloaded into the prompt.
 
 Question to commit on before any code:
 - Is this the minimum? Anything still invented?

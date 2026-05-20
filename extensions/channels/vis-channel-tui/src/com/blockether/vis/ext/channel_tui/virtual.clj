@@ -208,10 +208,12 @@
       (and (= role :assistant) trace)
       (let [n-iter   (long (count trace))
             code-fs  (long (reduce (fn [^long acc it]
-                                     (+ acc (long (count (:code it)))))
+                                     (+ acc (long (count (:forms it)))))
                              0 trace))
             res-fs   (long (reduce (fn [^long acc it]
-                                     (+ acc (long (count (:results it)))))
+                                     (+ acc (long
+                                              (count
+                                                (filter :result-render (:forms it))))))
                              0 trace))
             think-c  (long (reduce (fn [^long acc it]
                                      (+ acc (char-count (:thinking it))))
