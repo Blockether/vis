@@ -169,7 +169,8 @@
 ;; =============================================================================
 (def render               ir/render)
 (def ->ast                ir/->ast)
-(def text->ir             ir/text->ir)
+(def markdown->ir         ir/markdown->ir)
+(def answer->ir           ir/answer->ir)
 (def search-text          ir/search-text)
 (def extract-code         ir/extract-code)
 (def extract-text         ir/extract-text)

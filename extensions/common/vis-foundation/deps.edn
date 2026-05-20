@@ -2,7 +2,7 @@
  :deps {com.blockether/vis                {:local/root "../../.."}
         ;; babashka.fs - backing implementation for the thin cwd-safe `v/`
         ;; filesystem wrappers.
-        babashka/fs                       {:mvn/version "0.5.20"}
+        babashka/fs                       {:mvn/version "0.5.24"}
         babashka/process                  {:mvn/version "0.6.25"}
         ;; java-diff-utils - real unified diff hunks for `v/patch` previews.
         io.github.java-diff-utils/java-diff-utils {:mvn/version "4.12"}

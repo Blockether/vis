@@ -1742,7 +1742,7 @@
           ;; lines directly so the assertion exercises the painter, not
           ;; the retired in-painter markdown lift.
           rendered (render/format-answer-markdown-data
-                     (vis/text->ir "**SIEMA**\n\n> quoted text") 50 nil)
+                     (vis/markdown->ir "**SIEMA**\n\n> quoted text") 50 nil)
           message {:role :user :text "**SIEMA**\n\n> quoted text"
                    :prewrapped-lines (:lines rendered)
                    :line-meta (:line-meta rendered)}
@@ -1787,7 +1787,7 @@
                      (fillRectangle [_ _ _] this)
                      (setCharacter [_ _ _] this))
           rendered (render/format-answer-markdown-data
-                     (vis/text->ir "hello") 50 nil)
+                     (vis/markdown->ir "hello") 50 nil)
           left     2
           _height  (render/draw-chat-bubble! graphics
                      {:role :assistant
@@ -1833,7 +1833,7 @@
                        this)
                      (setCharacter [_ _ _] this))
           rendered (render/format-answer-markdown-data
-                     (vis/text->ir "```clojure\n(+ 1 2)\n```") 50 nil)
+                     (vis/markdown->ir "```clojure\n(+ 1 2)\n```") 50 nil)
           left    2
           width   50
           text-x  (inc left)

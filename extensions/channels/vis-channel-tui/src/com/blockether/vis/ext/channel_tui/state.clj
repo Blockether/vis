@@ -1404,7 +1404,7 @@
                                     :display-text      display-text})]
                       (if (:error result)
                         (dispatch [:message-received workspace-id
-                                   (vis/text->ir (vis/format-error (:error result)))
+                                   (vis/markdown->ir (vis/format-error (:error result)))
                                    {:client-turn-id client-turn-id}])
                         (do
                           (dispatch [:message-received workspace-id (:answer result)
@@ -1429,6 +1429,6 @@
                                    {:status :cancelled
                                     :client-turn-id client-turn-id}])
                         (dispatch [:message-received workspace-id
-                                   (vis/text->ir (vis/format-error (or (ex-message t) (str t))))
+                                   (vis/markdown->ir (vis/format-error (or (ex-message t) (str t))))
                                    {:client-turn-id client-turn-id}]))))))]
       (vis/cancellation-set-future! token fut))))

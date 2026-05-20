@@ -1317,7 +1317,7 @@
           (stdout! (str "\n" (trace-title "◆" "final result")
                      (pretty-block "summary" (trace-final-summary-prose result))))
           (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
-          (stdout! (render/render (:answer result)
+          (stdout! (render/render (render/answer->ir (:answer result))
                      (if (trace-terminal?) :markdown :plain)))
           (when (:error result)
             (when-let [ex (:exception result)]
@@ -1330,7 +1330,7 @@
         edn?  (stdout! (result->edn result))
 
         code?
-        (let [blocks (render/extract-code (:answer result))]
+        (let [blocks (render/extract-code (render/answer->ir (:answer result)))]
           (cond
             (:error result)
             (do (stdout! (error/format-error (:error result)))
@@ -1351,7 +1351,7 @@
           (System/exit 1))
 
         :else
-        (do (stdout! (render/render (:answer result)
+        (do (stdout! (render/render (render/answer->ir (:answer result))
                        (if effective-raw? :plain :markdown)))
           (when (and (:duration-ms result) (not effective-raw?))
             (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))

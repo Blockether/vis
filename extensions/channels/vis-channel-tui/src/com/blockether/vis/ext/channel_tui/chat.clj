@@ -57,7 +57,7 @@
 (defn user-message
   "Create a structured user message with timestamp.
    The user types raw markdown into the input box; we lift it to
-   canonical IR via `vis/text->ir` immediately so the bubble layer
+   canonical IR via `vis/markdown->ir` immediately so the bubble layer
    (and every downstream consumer) sees the same shape it sees for
    assistant answers.
 
@@ -68,7 +68,7 @@
   ([text] (user-message text (java.util.Date.)))
   ([text timestamp]
    {:role      :user
-    :ir        (vis/text->ir text)
+    :ir        (vis/markdown->ir text)
     ;; Keep the raw text so resume paths (input-history arrow cycling in
     ;; state/:init-session, search, etc.) can recover the exact string
     ;; the user typed without re-rendering IR back to markdown.
@@ -82,22 +82,22 @@
    chokepoints; lift to `empty-ir` instead."
   [:ir {}])
 
-(defn- canonical-ir?
-  [x]
-  (and (vector? x) (= :ir (first x))))
+(defn- answer->markdown
+  "Extract the Markdown string from a final-answer value.
 
-(defn- answer->ir
-  "Normalize a turn result answer into canonical IR for the TUI boundary.
+   The Markdown-answer pipeline produces exactly two shapes:
+     - `{:answer string}`                                    -- canonical `(done {:answer ...})`
+     - `{:vis/answer-mode :needs-input :answer/text string}` -- needs-input gate
 
-   The normal `vis/send!` success path already returns `[:ir ...]`, but
-   terminal paths such as cancellation can carry human-readable strings.
-   The channel must still hand `assistant-message` canonical IR, never raw text."
+   Anything else is an upstream bug; we surface it as a pr-str fallback
+   so the user sees something instead of an empty bubble. `fallback-text`
+   covers the empty-answer case (cancellation slots, placeholder bubbles)."
   [answer fallback-text]
   (cond
-    (canonical-ir? answer) answer
-    (some? answer)         (vis/text->ir (if (string? answer) answer (pr-str answer)))
-    (seq fallback-text)    (vis/text->ir fallback-text)
-    :else                  empty-ir))
+    (and (map? answer) (string? (:answer answer)))      (:answer answer)
+    (and (map? answer) (string? (:answer/text answer))) (:answer/text answer)
+    (seq fallback-text)                                 fallback-text
+    :else                                               ""))
 
 (defn render-answer
   "Render canonical answer-IR (`[:ir & nodes]`) to the markdown string
@@ -129,23 +129,39 @@
 
 (defn assistant-message
   "Create a structured assistant (vis) message with timestamp.
-   STRICT: `ir` must be canonical `[:ir & nodes]` (or nil for empty
-   placeholder). Non-IR inputs throw via `render-answer`.
 
-   The message carries ONLY `:ir`. Walker-driven projection
-   (`virtual.clj`) computes the rendered markdown string lazily and
-   caches it on the projected message map; nothing here pre-renders."
-  ([ir] (assistant-message ir (java.util.Date.)))
-  ([ir timestamp]
-   ;; Validate IR contract eagerly so non-IR garbage surfaces at the
-   ;; construction site, not deep in the painter.
-   (let [ir (or ir empty-ir)]
-     (when-not (and (vector? ir) (= :ir (first ir)))
-       (throw (ex-info "chat/assistant-message requires canonical [:ir ...] input"
-                {:got-type (some-> ir class .getName)})))
+   Accepts either:
+     - a Markdown source string  -> the canonical input on the Markdown
+       answer pipeline; IR is derived via `vis/markdown->ir`
+     - a canonical `[:ir & nodes]` vector -> IR is used as-is; raw
+       Markdown is reconstructed via `vis/render ir :markdown` so the
+       message still carries a `:text` field
+     - nil -> empty placeholder for unfilled answer slots
+
+   The message carries both:
+     :text  raw Markdown source (used by copy/export, FTS, plain views)
+     :ir    derived IR (used by the bubble layout walker)"
+  ([source] (assistant-message source (java.util.Date.)))
+  ([source timestamp]
+   (cond
+     (nil? source)
+     {:role :assistant :text "" :ir empty-ir :timestamp timestamp}
+
+     (string? source)
      {:role      :assistant
-      :ir        ir
-      :timestamp timestamp})))
+      :text      source
+      :ir        (if (str/blank? source) empty-ir (vis/markdown->ir source))
+      :timestamp timestamp}
+
+     (and (vector? source) (= :ir (first source)))
+     {:role      :assistant
+      :text      (vis/render source :markdown)
+      :ir        source
+      :timestamp timestamp}
+
+     :else
+     (throw (ex-info "chat/assistant-message requires Markdown string or canonical [:ir ...] input"
+              {:got-type (some-> source class .getName)})))))
 
 (defn- rebuild-history
   "Reconstruct message history from DB for a session.
@@ -165,10 +181,15 @@
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
-                        ;; Modern rows store Nippy-thawed canonical IR;
-                        ;; legacy terminal paths may have persisted a string.
-                        ;; Normalize both.
-                        answer-ir (answer->ir (:answer q) nil)
+                        ;; Persistence stores the raw Markdown source
+                        ;; the model wrote in `(done {:answer ...})`.
+                        ;; Channels derive IR via `vis/markdown->ir` at
+                        ;; render time; keep the source so copy/export
+                        ;; round-trip byte-for-byte.
+                        answer-md (or (:answer-markdown q) "")
+                        answer-ir (if (str/blank? answer-md)
+                                    empty-ir
+                                    (vis/markdown->ir answer-md))
                         model     (:model q)
                         tokens    (cond-> {}
                                     (:input-tokens q)     (assoc :input (:input-tokens q))
@@ -197,9 +218,11 @@
                                       (:llm-actual last-it) (assoc :actual (:llm-actual last-it))
                                       (contains? last-it :llm-fallback?) (assoc :fallback? (:llm-fallback? last-it))
                                       (seq (:llm-routing-trace last-it)) (assoc :trace (:llm-routing-trace last-it)))
-                        ;; Empty IR is `[:ir {}]` (count 2 — just root tag
-                        ;; + attrs); a real answer adds at least one block.
-                        produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
+                        ;; A non-blank Markdown source signals a real
+                        ;; final answer; empty / nil-only turns keep
+                        ;; their assistant message but elide the
+                        ;; answer-bearing form differently.
+                        produced-answer? (not (str/blank? answer-md))
                         trace (into []
                                 (map (fn [it]
                                        (let [;; `:render-segments` is a derived view of `:code`
@@ -449,12 +472,17 @@
                        (seq workspace)   (merge workspace))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
-           ;; `(:answer result)` from `vis/send!` is normally canonical IR
-           ;; (`[:ir & nodes]`), but cancellation terminal paths may carry raw
-           ;; status text. Normalize here so `render-answer` /
-           ;; `assistant-message` never see raw strings.
-           answer (answer->ir (:answer result)
-                    (if cancelled? "Cancelled by user." "[empty response]"))
+           ;; `(:answer result)` is a `{:answer markdown}` map from
+           ;; `(done {:answer ...})`, a needs-input map, a plain
+           ;; string (cancel/error fallbacks), or nil. Normalize to a
+           ;; Markdown string here; the bubble layer derives IR from
+           ;; it via `vis/markdown->ir`.
+           answer-markdown (answer->markdown (:answer result)
+                             (if cancelled? "Cancelled by user." ""))
+           answer-ir       (if (str/blank? answer-markdown)
+                             empty-ir
+                             (vis/markdown->ir answer-markdown))
+           answer answer-ir
            model  (or (get-in result [:cost :model]) (get result :model))
            provider (or (get-in result [:cost :provider]) (get result :provider))
            tokens (:tokens result)
@@ -490,7 +518,7 @@
      (catch Exception e
        (if (vis/cancellation? e)
          (do (.interrupt (Thread/currentThread))
-           {:answer [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+           {:answer (vis/markdown->ir "Cancelled by user.")
             :iteration-count 0
             :status :cancelled})
          (do

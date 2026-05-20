@@ -356,7 +356,7 @@
 
        ;; Both assistant- and user-messages now carry canonical IR on
        ;; `:ir` (chat/assistant-message + chat/user-message lift
-       ;; via vis/text->ir at construction). The walker is the single
+       ;; via vis/markdown->ir at construction). The walker is the single
        ;; bubble layout engine; the rendered markdown string stays in
        ;; `:text` for clipboard/copy.
        (#{:assistant :user} (:role message))

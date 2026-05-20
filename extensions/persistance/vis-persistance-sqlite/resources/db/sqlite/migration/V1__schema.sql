@@ -222,7 +222,9 @@ CREATE TABLE session_turn_state (
   llm_reasoning_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (llm_reasoning_tokens >= 0),
   llm_cached_tokens            INTEGER NOT NULL DEFAULT 0 CHECK (llm_cached_tokens >= 0),
   llm_total_cost_usd           REAL NOT NULL DEFAULT 0 CHECK (llm_total_cost_usd >= 0),
-  answer                       BLOB,        -- Nippy-frozen IR `[:ir & nodes]`. NULL while running.
+  answer_markdown              TEXT,        -- Raw Markdown source the model emitted via `(done {:answer ...})`.
+                                            -- Channels parse via `render/markdown->ir` at render time.
+                                            -- NULL while the turn is still running.
   -- Per-turn final outcome, derived at turn end. Lets the next turn's
   -- handover digest say "previous turn complete | cancelled | error"
   -- without scanning every session_turn_iteration. Set by the session_turn_iteration

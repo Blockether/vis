@@ -96,10 +96,11 @@
    indexing empty rows just inflates the index.
 
    Used as the write-side hook for the rich text fields the bubble
-   layer carries as IR (or markdown strings lifted via `text->ir`):
-   answer, thinking, per-code-block comments. Search hits land back on
-   `(owner_table, owner_id)` which the caller translates to the
-   right BLOB row."
+   layer carries as Markdown (answer) or markdown-shaped strings
+   (thinking, per-code-block comments). `vis/search-text` lifts the
+   string via `markdown->ir` and projects it to plain text before
+   indexing. Search hits land back on `(owner_table, owner_id)`
+   which the caller translates to the right row."
   [tx-info owner-table owner-id field v]
   (let [text (some-> v vis/search-text)]
     (execute! tx-info
@@ -1085,7 +1086,7 @@
    `:error`), it lands in the dedicated `prior_outcome` column so the next turn's handover digest can read
    it without scanning every iteration. The column is bounded by a
    CHECK constraint at the schema level."
-  [db-info session-turn-id {:keys [answer iteration-count duration-ms
+  [db-info session-turn-id {:keys [answer-markdown iteration-count duration-ms
                                    status tokens cost prior-outcome]}]
   (when (and (ds db-info) session-turn-id)
     (sqlite-write-tx! db-info
@@ -1105,15 +1106,14 @@
                                 :llm_total_cost_usd   (double (or (:total-cost cost) 0.0))}
                          (:model cost)    (assoc :llm_root_model (str (:model cost)))
                          (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
-                         (some? answer)   (assoc :answer (->blob answer))
+                         (some? answer-markdown) (assoc :answer_markdown answer-markdown)
                          prior-outcome    (assoc :prior_outcome (name prior-outcome)))
                :where  [:= :id (:id state)]})
-            ;; Index answer plain-text projection for FT5 search. The
-            ;; canonical IR stays in `:answer` BLOB; FTS hits map back
-            ;; via `(owner_table, owner_id) = ("session_turn_state",
-            ;; state-id)` and the caller thaws the BLOB.
-            (when (some? answer)
-              (reindex-search! tx-info "session_turn_state" (:id state) "answer_text" answer))))))))
+            ;; Index the raw Markdown answer for FT5 search. `vis/search-text`
+            ;; lifts the string through `markdown->ir` and walks the AST so
+            ;; fence/link/heading syntax does not pollute the index.
+            (when (some? answer-markdown)
+              (reindex-search! tx-info "session_turn_state" (:id state) "answer_text" answer-markdown))))))))
 
 ;; Extra workflow persistence removed.
 
@@ -1445,7 +1445,7 @@
     ;; turn label or read the session-level title via `:title`
     ;; on the session map.
     ;; (intentionally no `(:title row)` branch)
-    (:answer row)            (assoc :answer (<-blob (:answer row)))
+    (:answer_markdown row)   (assoc :answer-markdown (:answer_markdown row))
     (:llm_root_provider row) (assoc :provider (->kw-back (:llm_root_provider row)))
     (:llm_root_model row)    (assoc :model (:llm_root_model row))))
 
@@ -1458,7 +1458,7 @@
   {:select [:qs.id :qs.session_state_id :qs.position :qs.user_request
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status
-            :qst.answer
+            :qst.answer_markdown
             :qst.iteration_count :qst.duration_ms
             :qst.llm_input_tokens :qst.llm_output_tokens
             :qst.llm_reasoning_tokens :qst.llm_cached_tokens
@@ -1829,9 +1829,10 @@
      [])))
 
 (defn db-turn-history
-  "Per-turn history rows for a session. `:answer` is canonical
-   `[:ir & nodes]` IR (or nil). Channels render via their registered
-   `:channel/messages-renderer-fn` - persistence stays flavor-free."
+  "Per-turn history rows for a session. `:answer-markdown` is the raw
+   Markdown source the model wrote in `(done {:answer ...})` (or nil).
+   Channels derive IR via `vis/markdown->ir` at render time; persistence
+   stays flavor-free."
   [db-info session-id]
   (let [turns (db-list-session-turns db-info session-id)]
     (mapv (fn [idx turn]
@@ -1843,7 +1844,7 @@
                        :user-request         (:user-request turn)
                        :status               (:status turn)
                        :iteration-count      iteration-count}
-                (:answer turn) (assoc :answer (:answer turn)))))
+                (:answer-markdown turn) (assoc :answer-markdown (:answer-markdown turn)))))
       (range)
       turns)))
 

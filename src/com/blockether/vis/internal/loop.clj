@@ -324,31 +324,37 @@
     (string? (:answer/text v))
     (not (str/blank? (:answer/text v)))))
 
-(defn answer-str
-  "Render the answer value to a flat string for legacy callers (logs,
-   error formatting, plain-text channel paths). New code should call
-   `(render/render v :plain)` or another flavor directly.
+(defn markdown-answer?
+  "True for a canonical final-answer payload: `{:answer string}`.
+   This is the ONLY shape `(done ...)` accepts for a final answer
+   (the other allowed shape is the `needs-input-answer?` map)."
+  [v]
+  (and (map? v)
+    (string? (:answer v))))
 
-   Bypasses the IR pipeline only for needs-input legacy maps so the
-   prompt-flow gate keeps reading `:answer/text` without a render hop."
+(defn answer-markdown
+  "Extract the raw Markdown source from a final-answer value.
+
+   Canonical shapes:
+   - `{:answer string}`           -> the string (from `(done {:answer ...})`)
+   - `{:vis/answer-mode :needs-input :answer/text string}` -> `:answer/text`
+
+   Returns nil for anything else. The answer pipeline only ever produces
+   these two shapes; an unrecognized shape is an upstream bug."
   [answer]
   (let [v (:result answer answer)]
     (cond
       (needs-input-answer? v) (:answer/text v)
-      :else                   (render/render v :plain))))
+      (markdown-answer? v)    (:answer v)
+      :else                   nil)))
 
 (defn append-runtime-appendices
-  "Canonicalize the final answer value before any channel or persistence
-   boundary sees it. This is the answer-IR choke point: lazy seqs inside
-   Hiccup children are safely bounded by `render/->ast`, malformed Hiccup is
-   normalized, and already-canonical IR stays identity-preserved.
-
-   Needs-input maps stay data-shaped so the prompt-flow gate can still read
-   `:answer/text` without a render hop."
+  "Pass-through on the Markdown-answer pipeline. Needs-input maps stay
+   data-shaped so the prompt-flow gate can still read `:answer/text`
+   without a render hop; Markdown-answer maps stay map-shaped so the
+   persistence layer can read `:answer` verbatim."
   [_environment answer _answer-value]
-  (if (needs-input-answer? answer)
-    answer
-    (render/->ast answer)))
+  answer)
 
 (def edamame-opts
   {:all true
@@ -1006,6 +1012,37 @@
   [s]
   (bytes->hex (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (str s) "UTF-8"))))
 
+(defn- ask-code-block-observation
+  "Summarize svar 0.5.5 code-fence observations for logs/chunks."
+  [ask-result]
+  (let [blocks     (or (:blocks ask-result) [])
+        all-blocks (or (:all-blocks ask-result) blocks)]
+    {:block-count         (count blocks)
+     :all-block-count     (count all-blocks)
+     :dropped-block-count (max 0 (- (count all-blocks) (count blocks)))
+     :saw-fence?          (boolean (:saw-fence? ask-result))
+     :malformed?          (boolean (:malformed? ask-result))}))
+
+(defn- empty-code-error-with-observation
+  "Use svar 0.5.5 fence observations to make no-code retries precise."
+  [default-error ask-result]
+  (let [{:keys [all-block-count dropped-block-count saw-fence? malformed?]}
+        (ask-code-block-observation ask-result)]
+    (cond
+      malformed?
+      "LLM returned a malformed Markdown code fence. Emit one complete ```clojure``` block with opener and closer on their own lines."
+
+      (and saw-fence? (pos? dropped-block-count))
+      (str "LLM returned fenced blocks, but none survived Clojure selection. "
+        "Use a ```clojure``` fence; untagged or other-language fences are dropped. "
+        "Dropped blocks: " dropped-block-count " of " all-block-count ".")
+
+      saw-fence?
+      "LLM returned fenced content, but no executable Clojure block was selected. Use exactly one ```clojure``` block."
+
+      :else
+      default-error)))
+
 ;; `normalized-code-source` removed: `code-entries-preflight` now computes
 ;; the same join inline on the surviving block sources (was only ever called
 ;; from the splitter's old preflight path).
@@ -1119,7 +1156,7 @@
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       "LLM returned no executable Clojure code block. Emit a ```clojure``` block; put prose in (done [:ir ...]).")
+                                       "LLM returned no executable Clojure code block. Emit a ```clojure``` block; put prose in (done {:answer \"...\"}).")
         ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
@@ -1774,13 +1811,14 @@
                                  streaming-fn         (assoc :on-chunk streaming-fn)
                                  effective-llm-headers (assoc :llm-headers effective-llm-headers)
                                  extra-body           (assoc :extra-body extra-body)))))
+          code-observation (ask-code-block-observation ask-result-raw)
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop iteration
-              {:duration-ms provider-duration-ms
-               :raw-length (count (or (:raw ask-result-raw) ""))
-               :block-count (count (or (:blocks ask-result-raw) []))
-               :tokens (:tokens ask-result-raw)
-               :fallback? (boolean (some #(not= :llm.routing/provider-retry (:event/type %)) (:routed/trace ask-result-raw)))})
+              (merge {:duration-ms provider-duration-ms
+                      :raw-length (count (or (:raw ask-result-raw) ""))
+                      :tokens (:tokens ask-result-raw)
+                      :fallback? (boolean (some #(not= :llm.routing/provider-retry (:event/type %)) (:routed/trace ask-result-raw)))}
+                code-observation))
           parse-started-at-ms (System/currentTimeMillis)
           _ (when on-chunk
               (on-chunk {:phase :response-parse
@@ -1789,18 +1827,19 @@
                          :started-at-ms parse-started-at-ms
                          :provider-duration-ms provider-duration-ms
                          :raw-length (count (or (:raw ask-result-raw) ""))
-                         :block-count (count (or (:blocks ask-result-raw) []))}))
+                         :block-count (:block-count code-observation)
+                         :code-observation code-observation}))
           ask-result ask-result-raw
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
-              {:has-reasoning (some? model-reasoning)
-               :raw-length    (count (or (:raw ask-result) ""))
-               :block-count   (count (or (:blocks ask-result) []))
-               :duration-ms   (:duration-ms ask-result)
-               :provider-duration-ms provider-duration-ms
-               :tokens        (:tokens ask-result)
-               :thinking      thinking})
+              (merge {:has-reasoning (some? model-reasoning)
+                      :raw-length    (count (or (:raw ask-result) ""))
+                      :duration-ms   (:duration-ms ask-result)
+                      :provider-duration-ms provider-duration-ms
+                      :tokens        (:tokens ask-result)
+                      :thinking      thinking}
+                code-observation))
           api-usage (ask-result->api-usage ask-result)
           ;; svar/ask-code! returns the per-block vector in `:blocks`
           ;; (single source of truth; the legacy `:result` concatenated
@@ -1808,22 +1847,32 @@
           ;; code-entry; SCI evaluates each entry as a single chunk.
           blocks (vec (:blocks ask-result))
           preflight-start-ns (System/nanoTime)
-          preflight-result (code-entries-preflight iteration-position blocks)
+          preflight-result-raw (code-entries-preflight iteration-position blocks)
+          empty-code-observation-error (when (:empty-code-preflight-error preflight-result-raw)
+                                         (empty-code-error-with-observation
+                                           (:empty-code-preflight-error preflight-result-raw)
+                                           ask-result))
+          preflight-result (cond-> preflight-result-raw
+                             empty-code-observation-error
+                             (assoc :empty-code-preflight-error empty-code-observation-error
+                               :code-entries [{:expr ""
+                                               :vis/preflight-error empty-code-observation-error}]))
           preflight-duration-ms (elapsed-ms preflight-start-ns)
           {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
-              {:duration-ms preflight-duration-ms
-               :block-count (count blocks)
-               :code-length (count normalized-code)
-               :forms (count code-entries)
-               :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))})
+              (merge {:duration-ms preflight-duration-ms
+                      :code-length (count normalized-code)
+                      :forms (count code-entries)
+                      :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))}
+                code-observation))
           _ (when on-chunk
               (on-chunk {:phase :response-parse
                          :status :done
                          :iteration iteration-position
                          :duration-ms preflight-duration-ms
                          :code-length (count normalized-code)
-                         :forms (count code-entries)}))
+                         :forms (count code-entries)
+                         :code-observation code-observation}))
           direct-answer-entry (when (= 1 (count code-entries))
                                 (first code-entries))
           final-answer-preflight-error
@@ -3053,7 +3102,7 @@
                                                   :vars vars-snapshot
                                                   :dependencies deps-snapshot
                                                   :thinking thinking
-                                                  :answer (when final-result (answer-str (:answer final-result)))
+                                                  :answer (when final-result (answer-markdown (:answer final-result)))
                                                   :llm-messages (:llm-messages iteration-result)
                                                   :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                                   :llm-model (:llm-model iteration-result)
@@ -3071,7 +3120,7 @@
                     (cond
                       final-result
                       (do (log-stage! :final iteration
-                            {:answer (truncate (answer-str (:answer final-result)) 200)
+                            {:answer (answer-markdown (:answer final-result))
                              :iteration-count (inc iteration)})
                         (log-stage! :iteration/stop iteration
                           {:blocks (count blocks) :errors (count (filter :error blocks))
@@ -3173,14 +3222,13 @@
         result (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
-            {;; Coerce through `answer-str` so the persisted answer is
-             ;; ALWAYS the plain-text rendering, never a stringified
-             ;; IR vector. Some terminal paths (e.g. error/cancel
-             ;; fallbacks) feed `:answer` in as the raw value passed
-             ;; to `(done ...)`; without this coercion the TUI
-             ;; resume path showed literal `[:ir [:p "..."]]` to
-             ;; the user (session b7ba1d93 regression).
-             :answer          (when-let [a (:answer result)] (answer-str a))
+            {;; The persisted answer is the raw Markdown source the
+             ;; model wrote in `(done {:answer ...})`. Channels parse
+             ;; the Markdown into IR at render time via
+             ;; `render/markdown->ir`; the database stays human-
+             ;; readable and round-trips byte-for-byte through copy /
+             ;; export / transcript.
+             :answer-markdown (when-let [a (:answer result)] (answer-markdown a))
              :iteration-count (:iteration-count result)
              :duration-ms     (:duration-ms result)
              :status          (or (:status result) :success)
@@ -3868,40 +3916,38 @@
         ;; Returns the marker keyword so the per-form result row makes
         ;; request visible.
         answer-fn                (fn done [s]
-                                   ;; Canonicalize the answer value to
-                                   ;; `[:ir & nodes]` AT THE ENTRY
-                                   ;; POINT. From here on, every
-                                   ;; downstream consumer (DB persist,
-                                   ;; channel renderers, voice TTS,
-                                   ;; logs) sees one shape and one
-                                   ;; shape only.
+                                   ;; Canonical final-answer shape:
+                                   ;;   (done {:answer "markdown string"})
                                    ;;
-                                   ;; `render/->ast` is total and pure:
-                                   ;;   string         -> [:ir {} "..."]
-                                   ;;   [:ir ...]      -> normalized in place
-                                   ;;   [:tag ...]     -> wrapped in :ir
-                                   ;;   seq of mixed   -> wrapped + per-child coerced
-                                   ;;   anything else  -> [:ir {} [:code {:lang "edn"} (pr-str x)]]
+                                   ;; The map form leaves room for future
+                                   ;; metadata (`:format`, `:lang`, `:tags`,
+                                   ;; `:attachments`, ...). The Markdown
+                                   ;; string IS the answer source of truth;
+                                   ;; channels derive IR via
+                                   ;; `render/markdown->ir` when they need
+                                   ;; layout.
                                    ;;
-                                   ;; The previous `(str s)` invoked
-                                   ;; Java `.toString` on Hiccup/IR
-                                   ;; vectors, producing a literal
-                                   ;; `"[:ir [:p ...]]"` string that no
-                                   ;; downstream renderer could undo.
-                                   ;; EXCEPTION: needs-input payloads
-                                   ;; are data, not prose. The
-                                   ;; prompt-flow gate reads them as
+                                   ;; Needs-input maps stay data-shaped so
+                                   ;; the prompt-flow gate reads them as
                                    ;; maps via `needs-input-answer?` /
-                                   ;; `:answer/text`. Coercing those to
-                                   ;; IR would dump them as an EDN code
-                                   ;; block. Pass the map through
-                                   ;; untouched - `answer-str` already
-                                   ;; special-cases the shape.
-                                   (reset! answer-atom
-                                     {:value    (if (needs-input-answer? s)
-                                                  s
-                                                  (render/->ast s))
-                                      :position @current-form-idx-atom})
+                                   ;; `:answer/text`.
+                                   ;;
+                                   ;; Everything else is a programmer/model
+                                   ;; error: we wrap it in a synthetic
+                                   ;; Markdown answer so the loop can still
+                                   ;; surface a user-visible message, and
+                                   ;; the answer-validation gate may reject
+                                   ;; it downstream.
+                                   (let [value (cond
+                                                 (needs-input-answer? s) s
+                                                 (markdown-answer? s)    s
+                                                 (string? s)             {:answer s}
+                                                 (nil? s)                {:answer ""}
+                                                 :else                   {:answer (pr-str s)
+                                                                          :vis/coerced? true})]
+                                     (reset! answer-atom
+                                       {:value    value
+                                        :position @current-form-idx-atom}))
                                    :vis/answer)
         ;; SCI binding for the session title:
         ;;   `(set-session-title! \"...\")` - writes the title through
