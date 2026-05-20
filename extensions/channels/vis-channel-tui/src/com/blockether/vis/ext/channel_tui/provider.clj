@@ -173,25 +173,6 @@
   (when (instance? java.util.concurrent.Future result)
     (.cancel ^java.util.concurrent.Future result true)))
 
-(defn- key-character
-  [key]
-  (when (and key (not (instance? MouseAction key)) (= KeyType/Character (.getKeyType key)))
-    (.getCharacter key)))
-
-(defn- key-enter?
-  [key]
-  (and key
-    (not (instance? MouseAction key))
-    (or (= KeyType/Enter (.getKeyType key))
-      (contains? #{\newline \return} (key-character key)))))
-
-(defn- key-escape?
-  [key]
-  (and key
-    (not (instance? MouseAction key))
-    (or (= KeyType/Escape (.getKeyType key))
-      (= (char 27) (key-character key)))))
-
 (defn- draw-copilot-waiting!
   [^TerminalScreen screen started-at-ms]
   (let [size        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -246,7 +227,7 @@
             (draw-copilot-waiting! screen started-at-ms))
           (if (and screen
                 (when-let [key (.pollInput screen)]
-                  (key-escape? key)))
+                  (dlg/modal-escape-key? key)))
             (do
               (cancel-copilot-oauth-poll! result)
               copilot-oauth-cancelled)
@@ -348,8 +329,8 @@
 
             :else
             (cond
-              (key-enter? key) true
-              (key-escape? key) nil
+              (dlg/modal-enter-key? key) true
+              (dlg/modal-escape-key? key) nil
               (= KeyType/Character (.getKeyType key))
               (case (Character/toLowerCase (.getCharacter key))
                 \o (do (opener/open! verification-uri)
@@ -1358,7 +1339,7 @@
          (.refresh screen Screen$RefreshType/DELTA)
 
          (let [key (if (provider-diagnostics-loading? @statuses @limits)
-                     (.pollInput screen)
+                     (some-> (.pollInput screen) dlg/normalize-modal-key)
                      (dlg/read-modal-key! screen))]
            (if (nil? key)
              (do

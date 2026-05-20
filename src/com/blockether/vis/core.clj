@@ -350,7 +350,7 @@
 ;; Doctor protocol
 ;;
 ;; Cross-cutting diagnostic surface. Every extension can declare
-;; `:ext/doctor-check-fn` - a single `(fn [env]) -> seq<msg>` returning
+;; `:ext/doctor-fn` - a single `(fn [env]) -> seq<msg>` returning
 ;; diagnostic messages. The host auto-injects `:ext` on each emitted message;
 ;; the extension self-stamps `:check-id` when it wants the formatter's
 ;; per-section grouping. `vis doctor` aggregates across every registered

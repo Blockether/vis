@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.doctor
-  "Doctor protocol: aggregates `:ext/doctor-check-fn` from every
+  "Doctor protocol: aggregates `:ext/doctor-fn` from every
    registered extension into a single cross-cutting diagnostic
    surface. `vis doctor` invokes [[run-checks]] then
    [[format-output]] + [[exit-code]].
@@ -12,7 +12,7 @@
        in fn-return order. Levels NOT re-sorted within a section -
        cause-and-effect narrative preserved.
      - Activation contract: the fn runs for EVERY registered
-       extension regardless of `:ext/activation-fn`. Check fns must
+       extension regardless of `:ext/activation-fn`. Doctor fns must
        defensively handle missing env keys.
      - Exit codes: 0 if only :info or empty; 1 if any :warn (no
        :error); 2 if any :error.
@@ -29,7 +29,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- coerce-message
-  "Best-effort sanity check on a check fn's returned message. Forces
+  "Best-effort sanity check on a doctor fn's returned message. Forces
    `:level` into the allowed set; missing/blank `:message` becomes a
    placeholder so the output never has empty lines."
   [m]
@@ -40,19 +40,19 @@
         :message message))))
 
 (defn- run-one-extension
-  "Run ONE extension's `:ext/doctor-check-fn`. Each emitted message
+  "Run ONE extension's `:ext/doctor-fn`. Each emitted message
    gets `:ext` (the namespace) auto-injected; `:check-id` is left to
    the extension to stamp. Throwables become a single :error message
    describing the throw."
-  [ext-ns check-fn environment]
+  [ext-ns doctor-fn environment]
   (try
-    (let [returned (check-fn environment)
+    (let [returned (doctor-fn environment)
           msgs     (cond
                      (nil? returned)        []
                      (map? returned)        [returned]
                      (sequential? returned) (vec returned)
                      :else [{:level   :error
-                             :message (str ":ext/doctor-check-fn returned non-message value: "
+                             :message (str ":ext/doctor-fn returned non-message value: "
                                         (pr-str returned))}])]
       (mapv (fn [m] (-> (coerce-message m) (assoc :ext ext-ns))) msgs))
     (catch Throwable t
@@ -60,11 +60,11 @@
                  :data  {:ext   ext-ns
                          :error (ex-message t)}})
       [{:level   :error
-        :message (str ":ext/doctor-check-fn threw: " (or (ex-message t) (str t)))
+        :message (str ":ext/doctor-fn threw: " (or (ex-message t) (str t)))
         :ext     ext-ns}])))
 
 (defn run-checks
-  "Walk every registered extension, invoke its `:ext/doctor-check-fn`,
+  "Walk every registered extension, invoke its `:ext/doctor-fn`,
    return a vec of message maps with `:ext` auto-injected. The
    extension's fn is responsible for stamping `:check-id` on each
    message when it wants per-section grouping in the formatter.
@@ -75,8 +75,8 @@
   (vec
     (mapcat
       (fn [ext]
-        (when-let [check-fn (:ext/doctor-check-fn ext)]
-          (run-one-extension (:ext/name ext) check-fn environment)))
+        (when-let [doctor-fn (:ext/doctor-fn ext)]
+          (run-one-extension (:ext/name ext) doctor-fn environment)))
       (extension/registered-extensions))))
 
 (defn exit-code

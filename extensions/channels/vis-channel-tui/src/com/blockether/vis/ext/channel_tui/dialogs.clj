@@ -131,6 +131,28 @@
 (def ^:private modal-pending-key
   (ThreadLocal/withInitial #(atom nil)))
 
+(defn normalize-modal-key
+  "Normalize raw terminal CR/LF/ESC character keystrokes to Lanterna
+   Enter/Escape key types. Some terminals surface modal Enter/Escape as
+   `KeyType/Character`; modal code should not need to special-case that."
+  [key]
+  (if (and key (not (instance? MouseAction key)) (= KeyType/Character (.getKeyType key)))
+    (case (.getCharacter key)
+      (\newline \return) (KeyStroke. KeyType/Enter)
+      \u001B (KeyStroke. KeyType/Escape)
+      key)
+    key))
+
+(defn modal-enter-key?
+  [key]
+  (let [key (normalize-modal-key key)]
+    (and key (not (instance? MouseAction key)) (= KeyType/Enter (.getKeyType key)))))
+
+(defn modal-escape-key?
+  [key]
+  (let [key (normalize-modal-key key)]
+    (and key (not (instance? MouseAction key)) (= KeyType/Escape (.getKeyType key)))))
+
 (defn read-modal-input!
   "Read one modal input event. Consecutive pending wheel events are drained
    and returned as one `:scroll-delta`, so a wheel flood costs one redraw.
@@ -138,11 +160,11 @@
    modal read on this thread."
   [^TerminalScreen screen]
   (let [pending-key (.get ^ThreadLocal modal-pending-key)
-        key         (or @pending-key (.readInput screen))]
+        key         (normalize-modal-key (or @pending-key (.readInput screen)))]
     (reset! pending-key nil)
     (if-let [delta (modal-wheel-delta key)]
       (loop [acc (long delta)]
-        (if-let [next-key (.pollInput screen)]
+        (if-let [next-key (some-> (.pollInput screen) normalize-modal-key)]
           (if-let [next-delta (modal-wheel-delta next-key)]
             (recur (+ acc (long next-delta)))
             (do

@@ -17,7 +17,8 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.channel-tui.input :as input]
    [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
+  (:import [com.googlecode.lanterna.input InputDecoder KeyDecodingProfile KeyStroke KeyType]
+           [java.io StringReader]))
 
 (defdescribe input-buffer-test
   (it "empty-input is one empty line, cursor at 0,0"
@@ -254,6 +255,33 @@
                 (input/handle-key (ctrl-special-key KeyType/Backspace) state)))
       (expect (= {:action :continue :state line-gone}
                 (input/handle-key (ctrl-key (Character. \u)) state))))))
+
+(defn- custom-decoder
+  [s]
+  (let [decoder (InputDecoder. (StringReader. s))]
+    (.addProfile decoder
+      (reify KeyDecodingProfile
+        (getPatterns [_]
+          [input/escape-pattern
+           input/alt-enter-pattern
+           input/alt-backspace-pattern
+           input/paste-start-pattern
+           input/paste-end-pattern
+           input/sgr-mouse-pattern])))
+    decoder))
+
+(defdescribe escape-pattern-test
+  (it "bare ESC decodes immediately instead of poisoning the next key"
+    (let [decoder (custom-decoder (str (char 0x1b)))
+          key     (.getNextCharacter decoder false)]
+      (expect (= KeyType/Escape (.getKeyType key)))
+      (expect (not (.isAltDown key)))))
+
+  (it "ESC+Enter still decodes as Alt+Enter when both bytes are queued"
+    (let [decoder (custom-decoder (str (char 0x1b) \newline))
+          key     (.getNextCharacter decoder false)]
+      (expect (= KeyType/Enter (.getKeyType key)))
+      (expect (.isAltDown key)))))
 
 (defdescribe alt-backspace-pattern-test
   (it "ESC+DEL and ESC+Ctrl-H decode as Alt+Backspace"

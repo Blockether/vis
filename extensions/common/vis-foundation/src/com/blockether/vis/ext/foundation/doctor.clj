@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.foundation.doctor
-  "Foundation's contribution to the `vis extensions doctor` aggregator. ONE fn
-   (`check-fn`) returns the full message stream from four logical
+  "Foundation's contribution to the host `vis doctor` aggregator. ONE fn
+   (`doctor-fn`) returns the full message stream from four logical
    sections, each stamping its own `:check-id` so the formatter
    groups them under the same banner the original four-checks-vec
    shape produced (plan §1 Q18 / §10):
@@ -24,13 +24,12 @@
    These section fns are pure data -> message-seq; they don't mutate
    anything and don't depend on the runtime environment beyond
    what's needed to read the existing scanners. Activation
-   contract per plan: every registered extension's `:ext/doctor-check-fn`
+   contract per plan: every registered extension's `:ext/doctor-fn`
    runs regardless of `:ext/activation-fn`, so the section fns must
    NOT assume `:db-info` or other env keys are present."
   (:require
    [babashka.process :as process]
    [clojure.java.io :as io]
-   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.environment.agents :as agents]))
 
 (set! *warn-on-reflection* true)
@@ -168,17 +167,17 @@
                :remediation (case source
                               :agents-md
                               (str "Verify the file is readable; project guidance auto-refreshes "
-                                "when AGENTS.md/CLAUDE.md markers change. Run `bin/vis extensions doctor` to revalidate now.")
+                                "when AGENTS.md/CLAUDE.md markers change. Run `bin/vis doctor` to revalidate now.")
                               :claude-md-fallback
                               (str "Verify the file is readable; or add a proper `AGENTS.md` instead of "
                                 "relying on the CLAUDE.md fallback.")
-                              "Investigate, fix, then revalidate via `bin/vis extensions doctor`.")
+                              "Investigate, fix, then revalidate via `bin/vis doctor`.")
                :data        {:path path :source source}})
         warnings))))
 
 ;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
-;; `:ext/doctor-check-fn`. Order is intentional: system facts first,
+;; `:ext/doctor-fn`. Order is intentional: system facts first,
 ;; then project-guidance presence, then voice readiness, then any scan
 ;; failures. Each section stamps its own
 ;; `:check-id` so the formatter still groups the output under the
@@ -188,8 +187,8 @@
 (defn- stamp [check-id msgs]
   (mapv #(assoc % :check-id check-id) msgs))
 
-(defn check-fn
-  "Foundation's `:ext/doctor-check-fn`. Concatenates the four
+(defn doctor-fn
+  "Foundation's `:ext/doctor-fn`. Concatenates the four
    logical section streams into a single message seq."
   [environment]
   (vec
@@ -198,37 +197,3 @@
       (stamp ::agents-md     (agents-md-check-fn     environment))
       (stamp ::voice         (voice-check-fn         environment))
       (stamp ::scan-warnings (scan-warnings-check-fn environment)))))
-
-;; ---------------------------------------------------------------------------
-;; `vis extensions doctor` CLI command. Foundation owns the diagnostics,
-;; but extension-owned CLI must mount under `vis extensions ...` through
-;; `:ext/cli`, never by direct global command registration.
-;; ---------------------------------------------------------------------------
-
-(defn- println-original!
-  "Print to `original-stdout` (the unredirected stream captured
-   before `init-cli!`). The CLI dispatcher redirects `*out*` to
-   silence stray prints from the iteration loop / Telemere /
-   svar; doctor output bypasses that to land on the user's
-   terminal."
-  [^String s]
-  (.println ^java.io.PrintStream vis/original-stdout s)
-  (.flush ^java.io.PrintStream vis/original-stdout))
-
-(defn- cli-doctor-run!
-  "CLI handler for `vis extensions doctor`. Init host runtime, walk every
-   extension's `:ext/doctor-check-fn` via [[vis/run-doctor-checks]],
-   format + print to original-stdout, exit with 0 / 1 / 2 by max
-   level."
-  [_parsed _residual]
-  (vis/init-cli!)
-  (let [env  {:db-info (vis/resolve-db-spec)}
-        msgs (vis/run-doctor-checks env)]
-    (println-original! (vis/doctor-format-output msgs))
-    (System/exit (int (vis/doctor-exit-code msgs)))))
-
-(defn cli-command []
-  {:cmd/name   "doctor"
-   :cmd/doc    "Run cross-extension diagnostics. Prints info / warn / error messages contributed by every loaded extension; exits 0 (clean) / 1 (warnings) / 2 (errors)."
-   :cmd/usage  "vis extensions doctor"
-   :cmd/run-fn cli-doctor-run!})

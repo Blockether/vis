@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.builtin-hooks
-  "Built-in TUI channel contributions registered by vis-channel-tui itself.
+  "Built-in TUI channel contributions mounted on the channel-tui extension.
 
    Channel-tui is itself an extension (`:ext/name`
    `com.blockether.vis.ext.channel-tui`), so it can declare its own
@@ -66,25 +66,10 @@
           :join-left? true}]))))
 
 ;; -----------------------------------------------------------------------------
-;; Extension envelope
+;; Contribution map
 ;; -----------------------------------------------------------------------------
 
-(def vis-extension
-  (vis/extension
-    {:ext/name      "channel-tui.builtin-hooks"
-     :ext/description (str "Built-in TUI channel contributions: model/provider "
-                        "display in the footer. Registered as regular extension "
-                        "channel contributions so the user can toggle them via Settings "
-                        "and other channels can read the same data via "
-                        "channel-contributions-for.")
-     :ext/version   "0.1.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/kind      "channel-builtin"
-     :ext/channel-contributions
-     {:tui.slot/footer-segment
-      [{:id :tui.builtin.model/footer
-        :fn #'model-footer-render}]}}))
-
-(vis/register-extension! vis-extension)
+(def channel-contributions
+  {:tui.slot/footer-segment
+   [{:id :tui.builtin.model/footer
+     :fn #'model-footer-render}]})

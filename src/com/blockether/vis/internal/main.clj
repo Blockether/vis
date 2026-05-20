@@ -22,9 +22,9 @@
      vis extensions list    - list registered extensions
      vis channels <name>    - auto-mounted via the channel registry
 
-   `vis extensions doctor` is registered by vis-foundation through
-   `:ext/cli`, so extension-owned commands stay under `vis extensions`.
-   Every extension can plug its `:ext/doctor-check-fn` into the aggregator."
+   `vis doctor` is host-owned. Extensions plug diagnostics into it
+   with `:ext/doctor-fn`; extension-owned CLI commands stay under
+   `vis extensions`."
 
   (:refer-clojure :exclude [agent run!])
   (:require
