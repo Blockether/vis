@@ -232,14 +232,6 @@
           (long m-idx)
           -1)))))
 
-(defn- strip-ansi-sgr
-  ^String [s]
-  (str/replace (str s) #"\u001B\[[0-9;]*m" ""))
-
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} visible-width
-  ^long [s]
-  (p/display-width (strip-ansi-sgr s)))
-
 (defn- truncate-ansi-cols
   "Like `p/truncate-cols`, but preserves ANSI SGR escapes as zero-width.
    Zprint emits ANSI-colored Clojure code; feeding those rows directly to
@@ -1075,13 +1067,6 @@
         stripped  (fmt/strip-def-docstrings code-text)]
     (cached* [:clojure-plain width stripped]
       #(fmt/format-clojure stripped width))))
-
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} raw-result-lines
-  "Pretty-print TUI result text without ANSI syntax coloring. Width
-   handling remains visual wrapping if zprint falls back to raw text."
-  [text width]
-  (mapcat #(wrap-text % width)
-    (str/split-lines (format-clojure-plain text width))))
 
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.

@@ -54,7 +54,7 @@
     ;; spinner now lives next to the form via the in-line `↻ <elapsed>`
     ;; status row, and the code / status rows ride the same marker band.
     (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:position 0 :engine-idx 0 :code "(Thread/sleep 1000)" :comment nil :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms 1000 :duration-ms 0 :success? nil :silent? false :running? true}]}
+                                         :forms [{:code "(Thread/sleep 1000)" :comment nil :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms 1000 :duration-ms 0 :success? nil :silent? false}]}
                   40 1 {:now-ms 2500})
           code-line (first (filter #(str/includes? % "Thread/sleep") lines))
           status-line (first (filter #(str/includes? % "↻ 1.0s") lines))]
@@ -66,11 +66,11 @@
 
   (it "renders mixed-block render segments as visible code plus title banner while hiding answer call"
     (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:position 0 :engine-idx 0 :code (str "(def x 1)\n"
-                                                                                    "(set-session-title! \"Mixed forms\")\n"
-                                                                                    "(done [:ir [:p \"Done\"]])") :comment nil :render-segments [{:kind :code :source "(def x 1)"}
-                                                                                                                                                 {:kind :title :value "Mixed forms"}
-                                                                                                                                                 {:kind :answer-ref}] :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}
+                                         :forms [{:code (str "(def x 1)\n"
+                                                          "(set-session-title! \"Mixed forms\")\n"
+                                                          "(done [:ir [:p \"Done\"]])") :comment nil :render-segments [{:kind :code :source "(def x 1)"}
+                                                                                                                       {:kind :title :value "Mixed forms"}
+                                                                                                                       {:kind :answer-ref}] :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   60 1 {})
           body (str/join "\n" (map (comp strip-ansi body-of) lines))]
       (expect (str/includes? body "(def x 1)"))
@@ -83,7 +83,7 @@
   (it "renders IR tool results without EDN dumping"
     (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
           lines (format-iteration-entry {:iteration 0
-                                         :forms [{:position 0 :engine-idx 0 :code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}
+                                         :forms [{:code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   60 1 {})
           body (str/join "\n" (map (comp strip-ansi body-of) lines))]
       (expect (str/includes? body "bold"))
@@ -93,7 +93,7 @@
   (it "renders channel sink IR stored as a value without EDN dumping"
     (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
           lines (format-iteration-entry {:iteration 0
-                                         :forms [{:position 0 :engine-idx 0 :code "(def t (z/forms \"x.clj\"))" :comment nil :render-segments nil :result-render ir :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}
+                                         :forms [{:code "(def t (z/forms \"x.clj\"))" :comment nil :render-segments nil :result-render ir :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   60 1 {})
           visible-lines (mapv (comp strip-sentinels strip-ansi) lines)
           body (str/join "\n" visible-lines)
@@ -109,7 +109,7 @@
                 :trace "clojure.lang.ExceptionInfo: Unable to resolve symbol: 'v/git-diff"
                 :block {:source code :row 1 :col 45}}
           lines (format-iteration-entry {:iteration 0
-                                         :forms [{:position 0 :engine-idx 0 :code code :comment nil :render-segments nil :result-render nil :result-kind :error :result-detail nil :error err :started-at-ms nil :duration-ms 1 :success? false :silent? false :running? false}]}
+                                         :forms [{:code code :comment nil :render-segments nil :result-render nil :result-kind :error :result-detail nil :error err :started-at-ms nil :duration-ms 1 :success? false :silent? false}]}
                   80 1 {})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
           body (str/join "\n" visible)
@@ -131,7 +131,7 @@
     ;;   <result>
     ;;   iteration-pad
     (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:position 0 :engine-idx 0 :code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}
+                                         :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   40 1 {})
           bodies (mapv (comp strip-ansi body-of) lines)
           status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
@@ -146,7 +146,7 @@
 
   (it "pads displayed form comments by one column"
     (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:position 0 :engine-idx 0 :code "(+ 1 2)" :comment ";; why this runs" :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 0 :success? nil :silent? false :running? false}]}
+                                         :forms [{:code "(+ 1 2)" :comment ";; why this runs" :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 0 :success? nil :silent? false}]}
                   40 1 {})
           comment-line (first (filter #(str/includes? % ";; why this runs") lines))]
       (expect (= p/MARKER_THINKING (marker-of comment-line)))
@@ -277,7 +277,7 @@
   ;; neutral iteration pad, reuse that row as the outside margin.
   (let [ans       [:ir {} [:p {} "hello"]]
         settings  {:show-thinking true :show-iterations true}
-        iter      {:forms [{:position 0 :engine-idx 0 :code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}
+        iter      {:forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
         index-of  (fn [p needle]
                     (first (keep-indexed
                              (fn [i ln]
@@ -358,7 +358,7 @@
 
   (it "uses the same trace renderer for live progress and cancelled bubbles"
     (let [ir       [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
-          iter     {:forms [{:position 0 :engine-idx 0 :code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}
+          iter     {:forms [{:code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
           settings {:show-thinking true :show-iterations true}
           live     (:lines (render/progress->lines-data
                              {:iterations [iter]} 80 settings
@@ -382,7 +382,7 @@
 
   (it "live progress renders every iteration instead of hiding history"
     (let [mk-entry (fn [n]
-                     {:forms [{:position 0 :engine-idx 0 :code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]})
+                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
           body     (strip-ansi
                      (render/progress->text
                        {:iterations (mapv mk-entry (range 5))}
@@ -430,12 +430,11 @@
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
           payload     (render/progress->lines-data
-                        {:iterations [{:forms [{:position 0 :engine-idx 0
-                                                :code "(+ 1 2)"
+                        {:iterations [{:forms [{:code "(+ 1 2)"
                                                 :result-render huge-result
                                                 :result-kind :value
                                                 :duration-ms 1
-                                                :success? true :silent? false :running? false}]}]}
+                                                :success? true :silent? false}]}]}
                         96
                         {:show-thinking true :show-iterations true}
                         {:now-ms            1000
@@ -449,7 +448,7 @@
 
   (it "live progress bounds old iteration history by default while keeping latest work visible"
     (let [mk-entry (fn [n]
-                     {:forms [{:position 0 :engine-idx 0 :code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]})
+                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
           payload   (render/progress->lines-data
                       {:iterations (mapv mk-entry (range 80))}
                       80
@@ -470,7 +469,7 @@
 
   (it "expanded live progress history renders the hidden iterations on demand"
     (let [mk-entry (fn [n]
-                     {:forms [{:position 0 :engine-idx 0 :code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]})
+                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
           payload   (render/progress->lines-data
                       {:iterations (mapv mk-entry (range 12))}
                       80
@@ -488,18 +487,16 @@
 
   (it "toggles :vis/silent forms in live progress traces"
     (let [progress {:iterations
-                    [{:forms [{:position 0 :engine-idx 0
-                               :code "(set-session-title! \"Greeting\")"
+                    [{:forms [{:code "(set-session-title! \"Greeting\")"
                                :result-render ":vis/silent"
                                :result-kind :value
                                :duration-ms 1
-                               :success? true :silent? true :running? false}
-                              {:position 1 :engine-idx 1
-                               :code "(+ 1 2)"
+                               :success? true :silent? true}
+                              {:code "(+ 1 2)"
                                :result-render "3"
                                :result-kind :value
                                :duration-ms 1
-                               :success? true :silent? false :running? false}]}]}
+                               :success? true :silent? false}]}]}
           hidden-body (strip-ansi
                         (render/progress->text progress 80
                           {:show-thinking true :show-iterations true :show-silent false}
@@ -532,7 +529,7 @@
     ;; just to make a flake go away.
     (let [mk-iter (fn [i]
                     {:thinking (apply str (repeat (+ 200 (* 100 i)) \.))
-                     :forms [{:position 0 :engine-idx 0 :code (str "(do (println :iter " i ") (mapv inc (range 100)))") :comment nil :render-segments nil :result-render "[1 2 3 ...]" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 50 :success? true :silent? false :running? false}]})
+                     :forms [{:code (str "(do (println :iter " i ") (mapv inc (range 100)))") :comment nil :render-segments nil :result-render "[1 2 3 ...]" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 50 :success? true :silent? false}]})
           base       (mapv mk-iter (range 14))
           last-base  (mk-iter 14)
           bubble-w   130
@@ -566,7 +563,7 @@
     ;; The second call must be ~free (cache hit). If someone reintroduces
     ;; `identityHashCode`-based keying this test fails immediately.
     (let [iter   {:thinking "some reasoning"
-                  :forms [{:position 0 :engine-idx 0 :code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 10 :success? true :silent? false :running? false}]}
+                  :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 10 :success? true :silent? false}]}
           iters1 (vec (repeat 5 iter))
           ;; Same content, fresh vec identity, fresh map identities for entries.
           iters2 (mapv #(into {} %) iters1)]
@@ -598,7 +595,7 @@
       (let [lines (format-iteration-entry
                     {:thinking "alpha\nbeta"
                      :error nil
-                     :forms [{:position 0 :engine-idx 0 :code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}
+                     :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                     60 1 {:show-header? true})
             body  (strip-ansi (str/join "\n" (map body-of lines)))]
         (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
@@ -1092,7 +1089,7 @@
   (it "renders legacy preview-kind entries as ordinary results without PREVIEW/RAW switchers"
     (render/invalidate-cache!)
     (let [body "only line of preview output"
-          trace [{:forms [{:position 0 :engine-idx 0 :code "(v/cat file)" :comment nil :render-segments nil :result-render body :result-kind :preview :result-detail {:raw "{:secret \"raw-only\"}"} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+          trace [{:forms [{:code "(v/cat file)" :comment nil :render-segments nil :result-render body :result-kind :preview :result-detail {:raw "{:secret \"raw-only\"}"} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
@@ -1106,7 +1103,7 @@
   (it "pretty-prints Clojure result text without ANSI syntax colors"
     (render/invalidate-cache!)
     (let [raw "{:b 2 :a [1 2 3]}"
-          trace [{:forms [{:position 0 :engine-idx 0 :code "{:b 2 :a [1 2 3]}" :comment nil :render-segments nil :result-render raw :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+          trace [{:forms [{:code "{:b 2 :a [1 2 3]}" :comment nil :render-segments nil :result-render raw :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
@@ -1119,9 +1116,9 @@
 
   (it "renders operation badges and color roles for tool result summaries"
     (render/invalidate-cache!)
-    (let [trace [{:forms [{:position 0 :engine-idx 0 :code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render "1 file changed" :result-kind :tool :result-detail {:op :v/patch
-                                                                                                                                                                                                                         :tag :op.tag/mutation
-                                                                                                                                                                                                                         :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+    (let [trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render "1 file changed" :result-kind :tool :result-detail {:op :v/patch
+                                                                                                                                                                                               :tag :op.tag/mutation
+                                                                                                                                                                                               :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
@@ -1132,9 +1129,9 @@
   (it "does not duplicate edit badges when tool results auto-collapse"
     (render/invalidate-cache!)
     (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))
-          trace       [{:forms [{:position 0 :engine-idx 0 :code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render huge-result :result-kind :tool :result-detail {:op :v/patch
-                                                                                                                                                                                                                          :tag :op.tag/mutation
-                                                                                                                                                                                                                          :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+          trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render huge-result :result-kind :tool :result-detail {:op :v/patch
+                                                                                                                                                                                                :tag :op.tag/mutation
+                                                                                                                                                                                                :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload     (render/format-answer-with-thinking-data
                         nil trace 96 {:show-iterations true} nil false
                         {:session-id "session"
@@ -1146,11 +1143,11 @@
 
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
-    (let [trace   [{:forms [{:position 0 :engine-idx 0 :code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil :result-render "Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)." :result-kind :tool :result-detail {:op :any
-                                                                                                                                                                                                                                                                                               :tag :op.tag/observation
-                                                                                                                                                                                                                                                                                               :color-role :tool-color/search
-                                                                                                                                                                                                                                                                                               :spec {:any ["alpha" "beta"] :paths ["src"]}
-                                                                                                                                                                                                                                                                                               :paths ["src"]} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+    (let [trace   [{:forms [{:code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil :result-render "Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)." :result-kind :tool :result-detail {:op :any
+                                                                                                                                                                                                                                                                     :tag :op.tag/observation
+                                                                                                                                                                                                                                                                     :color-role :tool-color/search
+                                                                                                                                                                                                                                                                     :spec {:any ["alpha" "beta"] :paths ["src"]}
+                                                                                                                                                                                                                                                                     :paths ["src"]} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
@@ -1162,7 +1159,7 @@
   (it "does not wrap collapsed huge result bodies before rendering the summary"
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 4000 "abcdefghij"))
-          trace       [{:forms [{:position 0 :engine-idx 0 :code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+          trace       [{:forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           turn-id     "123e4567-e89b-12d3-a456-426614174000"
           fut         (future
                         (render/format-answer-with-thinking-data
@@ -1219,7 +1216,7 @@
   (it "paints collapsed info rows as bold text on the summary band"
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
-          trace       [{:forms [{:position 0 :engine-idx 0 :code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+          trace       [{:forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload     (render/format-answer-with-thinking-data
                         nil trace 96 {:show-iterations true} nil false
                         {:session-id "session"
@@ -1279,8 +1276,8 @@
                    "- beta line\n"
                    "- gamma line")
             big-body (str body "\n\n" (apply str (repeat 4096 "x")))
-            trace [{:forms [{:position 0 :engine-idx 0 :code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :op.tag/mutation
-                                                                                                                                                                                                                   :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :op.tag/mutation
+                                                                                                                                                                                         :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["session" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1296,8 +1293,8 @@
       (let [body "Result: **important** and *subtle*."
             ;; Trip auto-collapse with filler.
             big-body (str body "\n" (apply str (repeat 4096 "y")))
-            trace [{:forms [{:position 0 :engine-idx 0 :code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :op.tag/mutation
-                                                                                                                                                                                                                   :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :op.tag/mutation
+                                                                                                                                                                                         :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["session" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1323,8 +1320,8 @@
                    "+changed\n"
                    "```\n")
             big-body (str body "\n" (apply str (repeat 4096 "z")))
-            trace [{:forms [{:position 0 :engine-idx 0 :code "(v/cat \"x\")" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/cat :tag :op.tag/observation
-                                                                                                                                                                          :color-role :tool-color/read} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false :running? false}]}]
+            trace [{:forms [{:code "(v/cat \"x\")" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/cat :tag :op.tag/observation
+                                                                                                                                                :color-role :tool-color/read} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["session" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1346,7 +1343,7 @@
       ;; contract: the error body still appears verbatim and does NOT
       ;; pick up bullet markers from accidental IR conversion.
       (render/invalidate-cache!)
-      (let [trace [{:forms [{:position 0 :engine-idx 0 :code "(boom)" :comment nil :render-segments nil :result-render "- pretend-bullet" :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? false :silent? false :running? false}]}]
+      (let [trace [{:forms [{:code "(boom)" :comment nil :render-segments nil :result-render "- pretend-bullet" :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? false :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {}}
@@ -1518,9 +1515,9 @@
                      {:role :assistant
                       :text "hello"
                       :iteration-count 3
-                      :traces [{:forms [{:position 0 :silent? true}
-                                        {:position 1 :silent? false}]}
-                               {:forms [{:position 0 :silent? true}]}]}
+                      :traces [{:forms [{:silent? true}
+                                        {:silent? false}]}
+                               {:forms [{:silent? true}]}]}
                      4 2 60 {:viewport-h 40})]
       (expect (= 5 height))
       (expect (some #(str/includes? (:text %) "3 iters (2 silent)")

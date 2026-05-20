@@ -15,22 +15,32 @@ Shape used in these examples (subject to debate):
 ```clojure
 {:session/id          "01HXYZ"
  :session/turn        N
- :session/counters    {…}                  ; gen-id seeds
 
- ;; engine-managed
- :session/recent      [{:turn :subject :status}]   ; :subject derivation TBD
- :session/archived    {:turn-ids […]}
- :session/env         {:defs :open-files :git-branch}
- :session/file-truth  {path [turn iter]}
+ ;; engine-managed (rebuilt every iter; never model-writable)
+ :session/env
+   {:workspace {:id          "ws/01HXYZ"
+                :root        "/Users/fierycod/.vis/workspaces/repo:vis/ws-01HXYZ"
+                :branch      "feat/ctx-redesign"   ; workspace branch
+                :trunk       "main"                ; merge target
+                :head        "abc1234"             ; current sha
+                :dirty?      true
+                :diff-stat   "+47 -12 across 3 files"}  ; cheap; full diff via v/workspace.diff
+    :symbols    {build-ws {:sig "[id]" :doc "…" :defined-turn 7}
+                 emit-event {:sig "[ev]" :defined-turn 2}}     ; user-defined SCI symbols this turn
+                                                                ; engine-bare (v/cat, mem!, gen-id, ctx) NOT listed
+    :open-files #{…}}                              ; touched THIS turn only
 
  ;; model-managed (via (mem! …))
  :session/preferences {…}
  :session/rules       {id {…}}
  :session/decisions   {id {…}}
  :session/specs       {id {…}}
- :session/tasks       {id {…}}
- :session/work        {:phase :focus :blockers}}
+ :session/tasks       {id {…}}}
 ```
+
+**No `:session/counters`.** IDs derived at write time:
+`(gen-id :tasks)` ≡ `(inc (apply max 0 (keys (:session/tasks ctx))))`.
+No extra state, no race in single-threaded SCI eval, no bullshit.
 
 Conventions in these examples:
 - `USER >` — user message
@@ -133,8 +143,12 @@ MODEL >
     {:turn 4 :subject "Cześć! Co słychać?"           :status :done}
     {:turn 5 :subject "Lubisz żółty kolor i masz psa." :status :done}]
 
- :session/env         {:defs {} :open-files #{} :git-branch "main"}
- :session/file-truth  {}
+ :session/env
+   {:workspace {:id "ws/01HXYZ" :root "/…/ws-01HXYZ"
+                :branch "main" :trunk "main" :head "abc1234"
+                :dirty? false :diff-stat "clean"}
+    :symbols       {}
+    :open-files #{}}
 
  :session/preferences {:color "yellow" :has-pet :dog}}
 ```
@@ -177,7 +191,8 @@ MODEL >
  :session/recent    [{:turn 1
                       :subject "Plik definiuje `check/1`: literal string compare na `\"secret\"`."
                       :status :done}]
- :session/env       {:defs {} :open-files #{} :git-branch "main"}
+ :session/env       {:workspace {:branch "main" :dirty? false :head "abc1234" …}
+                     :symbols {} :open-files #{}}
  :session/file-truth {}                         ;; read-only, file not written
  :session/preferences {} :session/rules {} :session/decisions {}
  :session/specs {} :session/tasks {} :session/work {}}
@@ -225,7 +240,8 @@ MODEL >
 {:session/turn 2
  :session/recent [{:turn 1 :subject "Plik definiuje …"        :status :done}
                   {:turn 2 :subject "Zmieniono `check` na bcrypt verify." :status :done}]
- :session/env {:defs {} :open-files #{} :git-branch "main"}   ;; reset per turn
+ :session/env {:workspace {:branch "main" :dirty? true :diff-stat "+1 -1 in src/auth.clj" …}
+               :symbols {} :open-files #{"src/auth.clj"}}        ;; this turn
  :session/file-truth {"src/auth.clj" [2 2]}                   ;; latest write
  ...}
 ```
@@ -309,7 +325,6 @@ MODEL >
 
 ```clojure
 {:session/turn 1
- :session/counters {:spec 1 :task 3}
  :session/recent [{:turn 1 :subject "Spec #1 zapisany + 3 taski. Zaczynam od `emit-event`." :status :done}]
  :session/specs {1 {:title "logging → structured EDN events"
                     :acceptance [...] :status :draft :added-turn 1}}
@@ -320,7 +335,8 @@ MODEL >
                  3 {:title "wire levels through emit-event" :spec 1
                     :status :todo :deps [1] :added-turn 1}}
  :session/work {:phase :planning :focus [:session/specs 1] :blockers []}
- :session/env  {:defs {} :open-files #{} :git-branch "main"}}
+ :session/env  {:workspace {:branch "main" :dirty? false :head "abc1234" …}
+                :symbols {} :open-files #{}}}
 ```
 
 ### Turn 2
@@ -360,14 +376,15 @@ MODEL >
 
 ```clojure
 {:session/turn 2
- :session/counters {:spec 1 :task 3}
  :session/recent [{:turn 1 :subject "Spec #1 zapisany + 3 taski. Zaczynam od `emit-event`." :status :done}
                   {:turn 2 :subject "Task #1 done. `emit-event` wprowadzony, `log/2` deleguje." :status :done}]
  :session/specs {1 {:title "…" :status :draft :added-turn 1}}  ;; still :draft
  :session/tasks {1 {:title "…" :status :done :done-turn 2 :spec 1 :added-turn 1 :deps []}
                  2 {…} 3 {…}}
  :session/work  {:phase :step-1-of-3 :focus [:session/specs 1] :blockers []}
- :session/env   {:defs {} :open-files #{} :git-branch "main"}}
+ :session/env   {:workspace {:branch "feat/logging" :dirty? true
+                             :diff-stat "+5 -2 in src/logging.clj" :head "def5678" …}
+                 :symbols {} :open-files #{"src/logging.clj"}}}
 ```
 
 **Note:** model forgot to flip spec status to `:doing`. Engine doesn't auto-promote. Question: do we want auto-promotion (any spec with a `:doing` task → `:doing`)? Or is that hidden magic? Lean explicit, no magic.
@@ -403,7 +420,6 @@ MODEL >
 
 ```clojure
 {:session/turn 3
- :session/counters {:spec 1 :task 4 :decision 1}
  :session/decisions {1 {:body "emit-event auto-stamps :ts (UTC ms) if absent; callers pass only domain fields"
                         :added-turn 3 :tags #{:logging :api}}}
  :session/tasks (… 4 added …)
@@ -506,27 +522,29 @@ MODEL >
 
    **Proposal:** drop `:session/work`. Model uses `:status :doing` on tasks as the focus signal.
 
-6. **Counters' visibility.**
-   `:session/counters` is engine-managed and uninteresting to the model. Render-time hide?
+6. **Counters — killed.**
+   IDs derive at write time from `(inc (apply max 0 (keys table)))`. No `:session/counters` blob. Saves a subtree.
 
 7. **Decision tagging.**
    `:tags` on decisions is freeform but only model-set. Useful for search-back? Probably yes ("show me ctx decisions").
+
+8. **Workspace in env.**
+   Engine-derived via `workspace/for-session` + `workspace/status`. Surfaces `:branch`, `:trunk`, `:head`, `:dirty?`, `:diff-stat`. Full diff stays lazy via `v/workspace.diff`. Model uses this to know "am I on trunk" / "is there pending work" / "do I need to apply or discard before X".
 
 ---
 
 ## What's left after dropping invented stuff
 
-If we drop `:session/recent`, `:session/archived`, `:session/file-truth`, `:session/work`, and hide `:session/counters` on the wire:
+If we drop `:session/recent`, `:session/archived`, `:session/file-truth`, `:session/work`, `:session/counters`:
 
 ```clojure
 ;; storage:
 {:session/id          "01HXYZ"
  :session/turn        7
- :session/counters    {…}                ; engine; hidden from wire
 
- :session/env         {:defs        {…}  ; live SCI introspection
-                       :open-files  #{}  ; touched THIS turn
-                       :git-branch  "…"}
+ :session/env         {:workspace  {:id :root :branch :trunk :head :dirty? :diff-stat}
+                       :symbols       {…}    ; live SCI introspection
+                       :open-files #{}}   ; touched THIS turn
 
  :session/preferences {…}                ; model-written kv
  :session/rules       {id {…}}           ; model-written; :scope :session|:project
@@ -535,7 +553,7 @@ If we drop `:session/recent`, `:session/archived`, `:session/file-truth`, `:sess
  :session/tasks       {id {…}}}          ; model-written
 ```
 
-Five model-managed subtrees, one engine-managed (env). That's the minimum-viable shape.
+Five model-managed subtrees, one engine-managed (env w/ workspace sub-view). That's the minimum-viable shape.
 
 Cross-turn history lives entirely in SQLite (`session_turn`, `session_turn_iteration`) — reachable via foundation calls (`v/turn-message`, `v/turn-answer`, `v/iterations`, `v/turn-toc`), never preloaded into the prompt.
 
