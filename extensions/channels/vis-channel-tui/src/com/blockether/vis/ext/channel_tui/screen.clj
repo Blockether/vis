@@ -1307,7 +1307,7 @@
            [(:session db)])
       (filter :id)
       (reduce (fn [{:keys [seen out] :as acc} session]
-                (let [id (str (:id session))]
+                (let [id (:id session)]      ; UUID; hashes + equality work natively
                   (if (contains? seen id)
                     acc
                     {:seen (conj seen id)
