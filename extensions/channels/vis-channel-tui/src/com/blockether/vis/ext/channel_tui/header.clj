@@ -4,7 +4,7 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Session title          ● Recording 00:01  ⧉ d8d6a0a1
+       ✓ Copied!                 Session title          ● Recording 00:01  d8d6a0a1
        (notification banner)     (or fallback placeholder)   (channel status + id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
@@ -18,8 +18,8 @@
      session has no title yet, falls back to a placeholder so
      the row never looks broken on a fresh run.
    - RIGHT: short session id (first 8 chars of the UUID, the
-     same convention `vis sessions` uses) + a clickable
-     `⧉` affordance that drops the FULL UUID onto the system
+     same convention `vis sessions` uses) as the clickable
+     affordance that drops the FULL UUID onto the system
      clipboard. Visual feedback is the LEFT-slot `✓ Copied!` notification
      - same mechanism every other cross-channel signal flows through.
 
@@ -316,7 +316,7 @@
 
 (defn- id-copy-block-text [id-short]
   (if id-short
-    (str vh/copy-icon " " id-short)
+    id-short
     ""))
 
 (def ^:dynamic *register-click-regions?*
@@ -326,7 +326,7 @@
   true)
 
 (defn- right-block-text
-  "Compose the right-side text: \"⧉ 4b1ed602\" when a session id
+  "Compose the right-side text: \"4b1ed602\" when a session id
    exists, otherwise empty. Single place that knows the layout so
    `draw-header!` can stay focused on placement math."
   [id-short]
