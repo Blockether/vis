@@ -11,7 +11,7 @@
    with `requiring-resolve` (see
    `com.blockether.vis.internal.persistance/resolve-impl`), so the heavy
    ns auto-loads on the first real DB op. Commands that never touch the
-   DB (`vis providers list`, `vis --help`, `vis extensions doctor` for
+   DB (`vis providers list`, `vis --help`, `vis doctor` for
    non-DB-touching extensions, ...) skip the load entirely.
 
    The contract that flips with this split:

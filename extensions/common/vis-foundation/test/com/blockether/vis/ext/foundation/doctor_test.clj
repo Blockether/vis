@@ -1,9 +1,9 @@
 (ns com.blockether.vis.ext.foundation.doctor-test
-  "Unit tests for foundation's `:ext/doctor-check-fn` sections:
+  "Unit tests for foundation's `:ext/doctor-fn` sections:
    ::system, ::agents-md, ::voice, ::scan-warnings.
 
    Plan §6: each section returns expected message shapes for every
-   input scenario; the composite `check-fn` stamps the right
+   input scenario; the composite `doctor-fn` stamps the right
    `:check-id` on every message."
   (:require
    [clojure.string :as str]
@@ -11,11 +11,11 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- section-msgs
-  "Run the composite `check-fn` against `env`, then keep only the
+  "Run the composite `doctor-fn` against `env`, then keep only the
    messages stamped with the given `:check-id` - the test sees just
    the section it cares about."
   [check-id env]
-  (->> (doctor/check-fn env)
+  (->> (doctor/doctor-fn env)
     (filter #(= check-id (:check-id %)))
     vec))
 
@@ -80,15 +80,15 @@
     (expect (empty? (section-msgs ::doctor/scan-warnings {})))))
 
 ;; ---------------------------------------------------------------------------
-;; Composite check-fn shape
+;; Composite doctor-fn shape
 ;; ---------------------------------------------------------------------------
 
-(defdescribe check-fn-shape-test
-  (it "check-fn is a function suitable for `:ext/doctor-check-fn`"
-    (expect (fn? doctor/check-fn)))
+(defdescribe doctor-fn-shape-test
+  (it "doctor-fn is a function suitable for `:ext/doctor-fn`"
+    (expect (fn? doctor/doctor-fn)))
 
   (it "every emitted message carries one of the four documented :check-ids in section order"
-    (let [msgs (doctor/check-fn {})
+    (let [msgs (doctor/doctor-fn {})
           ids  (distinct (mapv :check-id msgs))]
       (expect (every? #{::doctor/system
                         ::doctor/agents-md

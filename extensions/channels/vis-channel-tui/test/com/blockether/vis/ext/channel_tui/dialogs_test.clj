@@ -20,6 +20,14 @@
   (testing "dialogs namespace loads and text-input-dialog! is public"
     (is (fn? (var-get #'dlg/text-input-dialog!)))))
 
+(deftest modal-key-normalization-test
+  (testing "modal helpers accept Lanterna Enter/Escape and raw terminal CR/LF/ESC strokes"
+    (is (dlg/modal-enter-key? (KeyStroke. KeyType/Enter)))
+    (is (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \newline) false false false)))
+    (is (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \return) false false false)))
+    (is (dlg/modal-escape-key? (KeyStroke. KeyType/Escape)))
+    (is (dlg/modal-escape-key? (KeyStroke. (Character/valueOf (char 27)) false false false)))))
+
 (defn- virtual-screen
   []
   (let [terminal (DefaultVirtualTerminal. (TerminalSize. 80 30))

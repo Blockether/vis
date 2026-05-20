@@ -21,6 +21,19 @@
 
 (def ^:private ESC_CHAR (Character. (char 0x1b)))
 
+(def escape-pattern
+  "Full match for bare Escape. Custom ESC-prefixed patterns below return
+   partial matches for Alt+Enter, Alt+Backspace, bracketed paste, and SGR
+   mouse sequences. Lanterna keeps a candidate full match only when one
+   exists; without this, a lone Esc can stay buffered and the next Enter is
+   decoded as Alt+Enter instead of closing/canceling."
+  (reify CharacterPattern
+    (match [_ seq]
+      (when (and (= 1 (.size seq))
+              (= (.get seq 0) ESC_CHAR))
+        (CharacterPattern$Matching.
+          (KeyStroke. KeyType/Escape false false))))))
+
 (def alt-enter-pattern
   (reify CharacterPattern
     (match [_ seq]
@@ -357,7 +370,7 @@
     (catch Throwable _ nil)))
 
 (defn register-custom-patterns!
-  "Register Alt+Enter, Alt+Backspace, bracketed-paste, and SGR-mouse patterns on
+  "Register Escape, Alt+Enter, Alt+Backspace, bracketed-paste, and SGR-mouse patterns on
    the terminal's input decoder. Without `sgr-mouse-pattern` the
    stock Lanterna parser handles only legacy X10 mouse events,
    whose raw-byte coordinate encoding clashes with the JVM's
@@ -366,7 +379,8 @@
   [^UnixTerminal terminal]
   (.addProfile (.getInputDecoder terminal)
     (reify KeyDecodingProfile
-      (getPatterns [_] [alt-enter-pattern
+      (getPatterns [_] [escape-pattern
+                        alt-enter-pattern
                         alt-backspace-pattern
                         paste-start-pattern
                         paste-end-pattern

@@ -802,8 +802,8 @@
 
 ;; Doctor contribution from this extension: ONE function the `vis doctor`
 ;; aggregator calls with the live environment and that returns a seq of
-;; diagnostic message maps. Replaces the previous `:ext/doctor-checks`
-;; vec-of-`{:check/id :check/name :check/description :check/run-fn}` shape -
+;; diagnostic message maps. Replaces the previous doctor check vector
+;; of `{:check/id :check/name :check/description :check/run-fn}` maps -
 ;; the metadata fields (`:check/name`, `:check/description`) were never
 ;; surfaced anywhere; only `:check/id` made it onto messages, and the
 ;; extension can stamp `:check-id` on its own messages just as easily
@@ -819,7 +819,7 @@
 ;;    :remediation "..."        ; optional; renders as `-> ...` indented line
 ;;    :check-id ::keyword     ; optional; renders as the prefix
 ;;    :data {...}}              ; optional; passthrough for callers
-(s/def :ext/doctor-check-fn fn?)
+(s/def :ext/doctor-fn fn?)
 
 ;; SCI sandbox contribution.
 (s/def :ext.sci/symbols (s/coll-of ::symbol-entry :kind vector?))
@@ -923,7 +923,7 @@
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
             :ext/channel-contributions
-            :ext/doctor-check-fn])
+            :ext/doctor-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 
@@ -1782,7 +1782,7 @@
       (not (:ext/providers spec))                      (assoc :ext/providers [])
       (not (:ext/persistance spec))                    (assoc :ext/persistance [])
       (not (:ext/channel-contributions spec))          (assoc :ext/channel-contributions {})
-      (not (:ext/doctor-check-fn spec))                (assoc :ext/doctor-check-fn (constantly [])))
+      (not (:ext/doctor-fn spec))                      (assoc :ext/doctor-fn (constantly [])))
     (validate!)))
 
 ;; =============================================================================

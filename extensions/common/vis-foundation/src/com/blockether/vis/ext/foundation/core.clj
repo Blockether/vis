@@ -51,21 +51,14 @@
                   [:v/reload-extensions! :op.tag/mutation]]]
   (vis/register-op! op {:tag tag}))
 
-(defn- lazy-doctor-check-fn
+(defn- lazy-doctor-fn
   [env]
-  (call-resolved! 'com.blockether.vis.ext.foundation.doctor/check-fn env))
+  (call-resolved! 'com.blockether.vis.ext.foundation.doctor/doctor-fn env))
 
 (defn- lazy-cli-run-fn
   [command-sym parsed residual]
   (let [cmd (call-resolved! command-sym)]
     ((:cmd/run-fn cmd) parsed residual)))
-
-(defn- doctor-cli-command
-  []
-  {:cmd/name   "doctor"
-   :cmd/doc    "Run cross-extension diagnostics. Prints info / warn / error messages contributed by every loaded extension; exits 0 (clean) / 1 (warnings) / 2 (errors)."
-   :cmd/usage  "vis extensions doctor"
-   :cmd/run-fn #(lazy-cli-run-fn 'com.blockether.vis.ext.foundation.doctor/cli-command %1 %2)})
 
 (defn- transcript-cli-command
   []
@@ -82,7 +75,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation"
-     :ext/description    "Foundation `v/`: session-state/session-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, doctor/reproduction CLI."
+     :ext/description    "Foundation `v/`: session-state/session-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, reproduction CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -95,8 +88,7 @@
      :ext/hooks          hints/hooks
      :ext/ctx            environment/environment-ctx
      :ext/prompt         combined-prompt
-     :ext/doctor-check-fn lazy-doctor-check-fn
-     :ext/cli            [(doctor-cli-command)
-                          (transcript-cli-command)]}))
+     :ext/doctor-fn       lazy-doctor-fn
+     :ext/cli            [(transcript-cli-command)]}))
 
 (vis/register-extension! vis-extension)

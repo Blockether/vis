@@ -64,26 +64,25 @@
       (expect (= '[com.blockether.vis.ext.foundation.core] (get-in manifest ['v :nses])))
       (expect (not (contains? (get manifest 'v) :docs)))))
 
-  (it "defers doctor and reproduction command namespaces until command execution"
+  (it "defers doctor fn and reproduction command namespaces until use"
     (let [commands (into {} (map (juxt :cmd/name identity) (:ext/cli foundation/vis-extension)))
           calls    (atom [])]
-      (expect (contains? commands "doctor"))
+      (expect (not (contains? commands "doctor")))
       (expect (contains? commands "reproduction"))
       (with-redefs [clojure.core/requiring-resolve
                     (fn [sym]
                       (swap! calls conj sym)
                       (case sym
-                        com.blockether.vis.ext.foundation.doctor/cli-command
-                        (fn [] {:cmd/run-fn (fn [parsed residual]
-                                              [:doctor parsed residual])})
+                        com.blockether.vis.ext.foundation.doctor/doctor-fn
+                        (fn [env] [{:level :info :message (:ok env)}])
                         com.blockether.vis.ext.foundation.transcript/cli-command
                         (fn [] {:cmd/run-fn (fn [parsed residual]
                                               [:reproduction parsed residual])})))]
         (expect (= [] @calls))
-        (expect (= [:doctor {:p true} ["x"]]
-                  ((get-in commands ["doctor" :cmd/run-fn]) {:p true} ["x"])))
+        (expect (= [{:level :info :message true}]
+                  ((:ext/doctor-fn foundation/vis-extension) {:ok true})))
         (expect (= [:reproduction {:p true} ["y"]]
                   ((get-in commands ["reproduction" :cmd/run-fn]) {:p true} ["y"])))
-        (expect (= ['com.blockether.vis.ext.foundation.doctor/cli-command
+        (expect (= ['com.blockether.vis.ext.foundation.doctor/doctor-fn
                     'com.blockether.vis.ext.foundation.transcript/cli-command]
                   @calls))))))

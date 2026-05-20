@@ -18,7 +18,8 @@
      stays intact. Runtime semantics live below the TUI layer
      and are unaffected: this only changes WHEN screen.clj is required."
   (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]))
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.builtin-hooks :as builtin-hooks]))
 
 (def tui-usage
   "vis channels tui [--session-id ID | --resume]")
@@ -163,12 +164,7 @@
                       :channel/usage     tui-usage
                       :channel/owns-tty? true
                       :channel/main-fn   #'channel-main
-                      :channel/messages-renderer-fn #'render-for-tui}]}))
+                      :channel/messages-renderer-fn #'render-for-tui}]
+     :ext/channel-contributions builtin-hooks/channel-contributions}))
 
 (vis/register-extension! tui-extension)
-
-;; Built-in TUI hook contributions (model/provider footer segment).
-;; Loaded by side-effect: requires the ns which registers its own
-;; vis-extension envelope. Kept separate from this ns so the hook
-;; surface is reviewable in isolation.
-(require 'com.blockether.vis.ext.channel-tui.builtin-hooks)

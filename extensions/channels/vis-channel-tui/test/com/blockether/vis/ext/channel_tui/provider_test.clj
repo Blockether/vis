@@ -6,8 +6,7 @@
             [com.blockether.vis.ext.provider-anthropic :as anthropic]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
-            [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
+            [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- eventually
   [pred]
@@ -257,14 +256,6 @@
           (expect (str/includes? text "Status: loading"))
           (expect (= false @provider-probed?))
           (expect (= false @limits-probed?)))))))
-
-(defdescribe copilot-oauth-key-test
-  (it "accepts Lanterna Enter/Escape and raw terminal CR/LF/ESC strokes"
-    (expect (= true (@#'provider/key-enter? (KeyStroke. KeyType/Enter))))
-    (expect (= true (@#'provider/key-enter? (KeyStroke. (Character/valueOf \newline) false false false))))
-    (expect (= true (@#'provider/key-enter? (KeyStroke. (Character/valueOf \return) false false false))))
-    (expect (= true (@#'provider/key-escape? (KeyStroke. KeyType/Escape))))
-    (expect (= true (@#'provider/key-escape? (KeyStroke. (Character/valueOf (char 27)) false false false))))))
 
 (defdescribe copilot-oauth-ready-test
   (it "does not start the device flow when Copilot credentials already exist"
