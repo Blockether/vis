@@ -144,9 +144,9 @@
              :iterations      iters
              :tokens          (:tokens totals)
              :cost-usd        (:cost-usd totals)}
-      provider       (assoc :provider provider)
-      model          (assoc :model model)
-      (:answer turn) (assoc :answer (:answer turn)))))
+      provider                 (assoc :provider provider)
+      model                    (assoc :model model)
+      (:answer-markdown turn)  (assoc :answer (:answer-markdown turn)))))
 
 (defn- session-totals
   "Sum tokens + cost + iteration counts across every turn."
@@ -500,7 +500,6 @@
 (def ^:private markdown-code-preview-chars 20000)
 (def ^:private markdown-raw-preview-chars 1200)
 (def ^:private markdown-executable-blocks-preview-chars 4000)
-(def ^:private markdown-answer-preview-chars 12000)
 
 (defn- truncate
   [s n]
@@ -905,13 +904,12 @@
 
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted in the
-   `session_turn_state.answer` BLOB column. Rendered after every iteration so
-   the reader sees the trajectory that led to it. nil/blank -> nothing
-   emitted."
+   `session_turn_state.answer_markdown` TEXT column. The model wrote
+   raw Markdown via `(done {:answer ...})`; the transcript echoes the
+   source verbatim. nil/blank -> nothing emitted."
   [answer]
   (when (not (str/blank? (str answer)))
-    (str "\n#### Final answer\n\n"
-      (render-fenced "text" (truncate answer markdown-answer-preview-chars)))))
+    (str "\n#### Final answer\n\n" answer "\n")))
 
 (defn- render-turn-block
   [include-prompts?

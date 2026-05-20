@@ -23,7 +23,7 @@
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "siema"
-                      :answer [:ir {} [:p {} [:span {} "Siema! 👋 What can I do for you?"]]]}])
+                      :answer-markdown "Siema! 👋 What can I do for you?"}])
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -38,13 +38,13 @@
         (expect (= :ir (first ir)))
         (expect (str/includes? text "Siema!")))))
 
-  (it "rebuild-history coerces legacy persisted string answers"
+  (it "rebuild-history derives IR from the raw Markdown answer source"
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-legacy
                       :user-request "siema"
-                      :answer "Cancelled by user."}])
+                      :answer-markdown "Cancelled by user."}])
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -60,7 +60,7 @@
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "siema"
-                      :answer [:ir {} [:p {} [:span {} "Siema!"]]]}])
+                      :answer-markdown "Siema!"}])
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
@@ -78,7 +78,7 @@
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "mixed"
-                      :answer [:ir {} [:p {} [:span {} "Done"]]]}])
+                      :answer-markdown "Done"}])
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
@@ -107,7 +107,7 @@
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "read file"
-                      :answer [:ir {}]}])
+                      :answer-markdown ""}])
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
@@ -136,7 +136,7 @@
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "derive"
-                      :answer [:ir {}]}])
+                      :answer-markdown ""}])
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
@@ -172,7 +172,7 @@
                     (fn [_db _cid]
                       [{:id :turn-1
                         :user-request "run"
-                        :answer [:ir {}]}])
+                        :answer-markdown ""}])
                     vis/db-list-session-turn-iterations
                     (fn [_db _turn-id]
                       [{:id :iter-1
@@ -188,17 +188,18 @@
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"
-    ;; STRICT contract: `vis/send!` returns canonical answer-IR; the
-    ;; bubble layer renders at the boundary, never here.
-    (let [seen (atom nil)
-          ir   [:ir {} [:p {} [:span {} "ok"]]]]
+    ;; Markdown answer pipeline: `vis/send!` returns `{:answer markdown}`;
+    ;; the bubble layer derives IR via `vis/markdown->ir` at the boundary.
+    (let [seen (atom nil)]
       (with-redefs [vis/send! (fn [_id _text opts]
                                 (reset! seen opts)
-                                {:answer ir})]
+                                {:answer {:answer "ok"}})]
         (let [result (chat/turn! {:id "c1"} "hello"
                        {:reasoning-default :deep
                         :extra-body {:text {:verbosity "high"}}})]
-          (expect (= ir (:answer result)))
+          (expect (vector? (:answer result)))
+          (expect (= :ir (first (:answer result))))
+          (expect (str/includes? (vis/render (:answer result) :markdown) "ok"))
           (expect (= 1 (:iteration-count result)))
           (expect (= :deep (:reasoning-default @seen)))
           (expect (= {:text {:verbosity "high"}} (:extra-body @seen)))))))

@@ -26,6 +26,12 @@
 (def ^:private ask-result->api-usage
   (deref #'lp/ask-result->api-usage))
 
+(def ^:private ask-code-block-observation
+  (deref #'lp/ask-code-block-observation))
+
+(def ^:private empty-code-error-with-observation
+  (deref #'lp/empty-code-error-with-observation))
+
 (def ^:private multi-fence-hint     (deref #'lp/multi-fence-hint))
 (def ^:private attach-multi-fence-hint (deref #'lp/attach-multi-fence-hint))
 
@@ -79,6 +85,48 @@
                                                :output 69
                                                :cached 0
                                                :cache-created 8777}})))))
+
+(defdescribe ask-code-block-observation-test
+  (it "summarizes svar 0.5.5 fence observations"
+    (expect (= {:block-count 1
+                :all-block-count 3
+                :dropped-block-count 2
+                :saw-fence? true
+                :malformed? true}
+              (ask-code-block-observation
+                {:blocks [{:source "(def x 1)" :lang "clojure"}]
+                 :all-blocks [{:source "(def x 1)" :lang "clojure"}
+                              {:source "console.log(1)" :lang "javascript"}
+                              {:source "oops" :lang nil}]
+                 :saw-fence? true
+                 :malformed? true}))))
+
+  (it "keeps pre-0.5.5 shape compatible"
+    (expect (= {:block-count 1
+                :all-block-count 1
+                :dropped-block-count 0
+                :saw-fence? false
+                :malformed? false}
+              (ask-code-block-observation
+                {:blocks [{:source "(def x 1)" :lang "clojure"}]})))))
+
+(defdescribe empty-code-error-with-observation-test
+  (it "reports malformed fences before generic no-code"
+    (let [msg (empty-code-error-with-observation "generic" {:malformed? true})]
+      (expect (str/includes? msg "malformed Markdown code fence"))))
+
+  (it "reports dropped non-clojure fences with counts"
+    (let [msg (empty-code-error-with-observation
+                "generic"
+                {:blocks []
+                 :all-blocks [{:source "x" :lang "python"}
+                              {:source "y" :lang nil}]
+                 :saw-fence? true})]
+      (expect (str/includes? msg "none survived Clojure selection"))
+      (expect (str/includes? msg "Dropped blocks: 2 of 2"))))
+
+  (it "keeps generic message for fenceless responses"
+    (expect (= "generic" (empty-code-error-with-observation "generic" {})))))
 
 (defdescribe iteration-start-hook-test
   (it "collects active :turn.iteration/start hook hints and ignores other phases"

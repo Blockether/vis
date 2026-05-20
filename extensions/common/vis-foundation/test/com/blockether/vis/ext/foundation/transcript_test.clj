@@ -76,7 +76,7 @@
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                                 :cache-created-tokens 700
                                 :cost-usd 0.0042})
-    (vis/db-update-session-turn! s q1 {:status :done :answer "42"})
+    (vis/db-update-session-turn! s q1 {:status :done :answer-markdown "42"})
     ;; Turn 2: failure iteration. No vars, no answer.
     (let [q2 (vis/db-store-session-turn! s {:parent-session-id cid
                                             :user-request "Second turn that fails"
@@ -273,7 +273,7 @@
                                       :vars [{:name "out" :value value :code code}]
                                       :answer "done"
                                       :duration-ms 10})
-          (vis/db-update-session-turn! s turn {:status :done :answer "done"})
+          (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
           (let [data      (transcript/transcript s cid)
                 call      (first (:calls data))
                 code-row  (first (filter #(= :code (:kind %)) (:timeline data)))
@@ -306,7 +306,7 @@
                                       :vars [{:name "out" :value value :code code}]
                                       :answer "done"
                                       :duration-ms 10})
-          (vis/db-update-session-turn! s turn {:status :done :answer "done"})
+          (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
           (let [data  (transcript/transcript s cid)
                 calls (:calls data)]
             (expect (= 1 (count calls)))
@@ -437,7 +437,7 @@
                                               "(done [:ir [:p \"Done\"]])")
                                       :result :vis/answer
                                       :answer "Done"})
-          (vis/db-update-session-turn! s qid {:status :done :answer "Done"})
+          (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "(def x 1)"))
             (expect (str/includes? out "set-session-title!"))

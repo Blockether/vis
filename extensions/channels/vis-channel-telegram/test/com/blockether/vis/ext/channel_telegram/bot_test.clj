@@ -313,7 +313,7 @@
                     vis/for-telegram-chat! (fn [_] {:id "c1"})
                     vis/send! (fn [id text opts]
                                 (deliver seen-send [id text opts])
-                                {:answer "spoken ok"})
+                                {:answer {:answer "spoken ok"}})
                     tg/send-chat-action! (fn [_token _chat-id _action])
                     tg/send-message! (fn [& _] nil)
                     com.blockether.vis.ext.channel-telegram.bot/send-answer-audio!

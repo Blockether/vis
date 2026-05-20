@@ -26,15 +26,15 @@
 
 ;; ─── Fixtures ───────────────────────────────────────────────────────────────
 
-(defn- text->ir [s]
-  (ir/text->ir (or s "")))
+(defn- markdown->ir [s]
+  (ir/markdown->ir (or s "")))
 
 (defn- user-msg [text]
-  {:role :user :text text :ir (text->ir text)
+  {:role :user :text text :ir (markdown->ir text)
    :timestamp #inst "2026-04-30T00:00:00"})
 
 (defn- plain-assistant-msg [text]
-  {:role :assistant :text text :ir (text->ir text)
+  {:role :assistant :text text :ir (markdown->ir text)
    :timestamp #inst "2026-04-30T00:00:00"})
 
 (defn- trace-assistant-msg
@@ -50,7 +50,7 @@
                       :durations (vec (repeat forms-per-iter 1))
                       :successes (vec (repeat forms-per-iter true))}))]
     {:role            :assistant
-     :ir              (text->ir answer)
+     :ir              (markdown->ir answer)
      :text            answer
      :traces           trace
      :iteration-count n-iters
@@ -105,7 +105,7 @@
                             :durations (vec (repeat (count chunk) 1))
                             :successes (vec (repeat (count chunk) true))})))]
     {:role :assistant
-     :ir (text->ir "done")
+     :ir (markdown->ir "done")
      :text "done"
      :traces trace
      :iteration-count (count trace)
