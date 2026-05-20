@@ -84,9 +84,9 @@
                         [:li "[X] Also completed"]]]
                   80)
           ts    (texts lines)]
-      (expect (= ["☑️ Completed item"
+      (expect (= ["☑️  Completed item"
                   "⬜ Pending item"
-                  "☑️ Also completed"]
+                  "☑️  Also completed"]
                 ts))))
 
   (it "task-list continuations indent by display width, not char count"

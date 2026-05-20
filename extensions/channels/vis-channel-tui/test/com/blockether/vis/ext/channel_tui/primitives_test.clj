@@ -57,18 +57,17 @@
     (it "⭐ star is 2 cols"             (expect (= 2 (p/display-width EMOJI_BMP_STAR))))
     (it "⚡ high voltage is 2 cols"     (expect (= 2 (p/display-width EMOJI_BMP_BOLT)))))
 
-  (describe "VS-16/VS-15 graphemes match observed terminal width (lanterna fork 3.1.5-vis.4 fix)"
-    ;; VS-16 is terminal/font-dependent in practice. Keep known-narrow
-    ;; Vis cases narrow, but do not blanket-narrow every VS-16 glyph:
-    ;; ☑️ paints wide in target terminals, and counting it as one cell
-    ;; lets following text overwrite the second emoji cell.
+  (describe "VS-16/VS-15 graphemes match observed terminal width (lanterna fork 3.1.5-vis.5 fix)"
+    ;; VS-16 is terminal/font-dependent in practice. Vis target
+    ;; terminals paint these text-default symbols as one cell; counting
+    ;; them as two lets following whitespace/borders drift left.
     (it "❤ heart alone is 1 col"   (expect (= 1 (p/display-width EMOJI_BMP_NARROW))))
     (it "❤️ heart + VS-16 stays 1 col (the user-terminal-matching fix)"
       (expect (= 1 (p/display-width (str EMOJI_BMP_NARROW "\uFE0F")))))
     (it "🏷️ label + VS-16 is 1 col"
       (expect (= 1 (p/display-width "\uD83C\uDFF7\uFE0F"))))
-    (it "☑️ ballot box + VS-16 is 2 cols"
-      (expect (= 2 (p/display-width "\u2611\uFE0F"))))
+    (it "☑️ ballot box + VS-16 is 1 col"
+      (expect (= 1 (p/display-width "\u2611\uFE0F"))))
     (it "☑︎ ballot box + VS-15 is 1 col"
       (expect (= 1 (p/display-width "\u2611\uFE0E")))))
 

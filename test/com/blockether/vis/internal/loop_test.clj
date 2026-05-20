@@ -267,23 +267,45 @@
       (expect (= 2 (:multi-fence-count entry))))))
 
 (defdescribe malformed-direct-answer-repair-test
-  (it "does not auto-repair malformed direct answer blocks"
+  (it "auto-repairs delimiter slips in direct answer blocks"
     (let [preflight (var-get #'lp/code-entries-preflight)
           parse-forms (var-get #'lp/parse-top-level-forms)
           src "(done [:ir [:p \"Hotword biasing - add \" [:c \"setHotwordsFile\") \"/\" [:c \"setHotwordsScore\"]]])"
           entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))
           parsed (parse-forms (:expr entry))]
       (expect (nil? (:repaired? entry)))
+      (expect (string? (:repaired-source parsed)))
+      (expect (nil? (:parse-error parsed)))
+      (expect (true? (:vis/structurally-silent? entry)))
+      (expect (= src (:expr entry)))
+      (expect (str/includes? (:repaired-source parsed) "\"setHotwordsFile\" \"/\""))))
+
+  (it "auto-repairs stray close delimiters before eval"
+    (let [parsed ((var-get #'lp/parse-top-level-forms) "(def x 1))")]
+      (expect (nil? (:parse-error parsed)))
+      (expect (= "(def x 1)" (:repaired-source parsed)))
+      (expect (= '(def x 1) (:form (first (:forms parsed)))))))
+
+  (it "executes repaired source instead of failing pre-eval validators"
+    (let [env (lp/create-environment ::router {:db :memory})]
+      (try
+        (let [result ((var-get #'lp/execute-code) env "(def x 1))")]
+          (expect (nil? (:error result)))
+          (expect (true? (:repaired? result)))
+          (expect (= "(def x 1)" (:repaired-source result)))
+          (expect (= 1 (:val (sci/eval-string+ (:sci-ctx env) "x" {:ns (:sandbox-ns env)})))))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "does not rewrite malformed non-answer code when quotes are unsafe"
+    (let [preflight (var-get #'lp/code-entries-preflight)
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          src "(println \"a\" broken \"b)"
+          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))
+          parsed (parse-forms (:expr entry))]
+      (expect (nil? (:repaired? entry)))
       (expect (nil? (:repaired-source parsed)))
       (expect (some? (:parse-error parsed)))
-      (expect (true? (:vis/structurally-silent? entry)))
-      (expect (= src (:expr entry)))))
-
-  (it "does not rewrite malformed non-answer code"
-    (let [preflight (var-get #'lp/code-entries-preflight)
-          src "(println \"a\" broken \"b)"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
-      (expect (nil? (:repaired? entry)))
       (expect (= src (:expr entry)))))
 
   (it "streams fn shorthand and regex literals through parser instead of rejecting them"

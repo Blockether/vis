@@ -15,13 +15,13 @@
   ;;   2. BMP `Emoji_Presentation=Yes` width detection - ✅, ⭐, ⚡,
   ;;      ❌, ✨, ☔, ☕, ⏰, etc. (≈30 ranges, ≈100 code points)
   ;;      now correctly counted as 2 terminal columns.
-  ;;   3. VS-16 graphemes are terminal-matched: 🏷️/❤️ remain narrow,
-  ;;      while observed-wide symbols like ☑️ stay double-width so
-  ;;      following text does not overwrite the emoji cell.
+  ;;   3. VS-16 graphemes are terminal-matched narrow for text-default
+  ;;      symbols like ☑️, 🏷️, and ❤️ so following whitespace/borders
+  ;;      stay aligned in target terminals.
   ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
   ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.4"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.5"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}

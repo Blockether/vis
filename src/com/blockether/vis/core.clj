@@ -421,10 +421,10 @@
 
 ;; SCI execution helpers.
 (def answer-form-error              lp/answer-form-error)
-;; Removed:
-;;   `parinfer-rebalance` + `split-top-level-forms` — the per-block-eval
-;;   architecture passes each svar block source verbatim into SCI, which
-;;   parses + evals as one unit. No edamame splitter, no parinfer repair.
+;; Historical public helpers removed:
+;;   `parinfer-rebalance` + `split-top-level-forms`. Delimiter repair now
+;;   happens internally at eval time and is disclosed per block as
+;;   `:repaired-source` / `:repaired?`.
 
 ;; Environment lifecycle
 (def create-environment           lp/create-environment)
