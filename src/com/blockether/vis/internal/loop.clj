@@ -4057,27 +4057,29 @@
 (defonce
   ^{:doc "In-process env cache.
 
-   Keyed by session-soul-id (the user-facing session UUID). Under the
-   1:1 session ↔ workspace invariant (PLAN.md decision 1) this key is
-   isomorphic to `(:workspace/id env)` — one cache entry = one
-   session = one workspace = one SCI sandbox lineage.
-
-   PLAN.md decision 9 calls out `workspace_id` as the conceptually
-   correct cache key. We keep session-id as the literal key because
-   every channel caller (TUI screen, CLI, telegram) already holds a
-   session-id; rekeying would force a session→workspace resolve at
-   every lookup with no behavioural change. The semantics are
-   workspace-scoped; the index is session-id-shaped."}
+   Keyed by `java.util.UUID` session-soul-id. Under the 1:1 session ↔
+   workspace invariant (PLAN.md decision 1) this key is isomorphic to
+   `(:workspace/id env)` — one cache entry = one session = one
+   workspace = one SCI sandbox lineage. Lookups normalize incoming
+   strings to UUID via `cache-key` so legacy string-id callers keep
+   working during the UUID sweep."}
   cache (atom {}))
 
+(defn- cache-key
+  "Normalize an id-shaped value (UUID or string-UUID) to a UUID
+   suitable for keying `cache`. Nil → nil so wrapped lookups stay
+   honest."
+  [id]
+  (persistance/->uuid id))
+
 (defn cache-env!
-  "Insert `env` into the cache under `session-id`. The cached entry
-   transitively pins a single SCI sandbox to the session's workspace
-   (1:1 — see `cache` docstring)."
+  "Insert `env` into the cache under `session-id` (UUID, or string
+   normalized via `cache-key`). Returns `{:id <UUID> :environment env}`."
   [session-id env]
-  (swap! cache assoc session-id {:environment env
-                                 :lock (java.util.concurrent.locks.ReentrantLock.)})
-  {:id session-id :environment env})
+  (let [k (cache-key session-id)]
+    (swap! cache assoc k {:environment env
+                          :lock (java.util.concurrent.locks.ReentrantLock.)})
+    {:id k :environment env}))
 
 (defn refresh-cached-routers!
   "Reseat `:router` on every cached env's environment map.
@@ -4271,29 +4273,31 @@
 
 (defn- schedule-cached-env-refresh!
   [id reason reload-id]
-  (swap! cache update id
-    (fn [entry]
-      (cond-> entry
-        entry
-        (assoc :env-refresh {:status :scheduled
-                             :reason reason
-                             :reload-id reload-id
-                             :scheduled-at-ms (now-ms)}))))
-  id)
+  (let [k (cache-key id)]
+    (swap! cache update k
+      (fn [entry]
+        (cond-> entry
+          entry
+          (assoc :env-refresh {:status :scheduled
+                               :reason reason
+                               :reload-id reload-id
+                               :scheduled-at-ms (now-ms)}))))
+    k))
 
 (defn- refresh-cached-env-if-needed!
   "Called with the session lock held, immediately before a turn starts.
    If `reload-extensions!` marked this env dirty, rebuild the SCI env now so
    the just-finished IR/render path never races its own symbol table."
   [id entry]
-  (let [entry*  (or (get @cache id) entry)
+  (let [k       (cache-key id)
+        entry*  (or (get @cache k) entry)
         refresh (:env-refresh entry*)]
     (if (= :scheduled (:status refresh))
       (let [old-env (:environment entry*)
             title   (some-> (:session-title-atom old-env) deref)
             new-env (create-environment (get-router)
                       (cond-> {:db (config/resolve-db-spec)
-                               :session id}
+                               :session k}
                         (:channel old-env) (assoc :channel (:channel old-env))
                         title              (assoc :title title)))
             updated (assoc entry*
@@ -4304,9 +4308,9 @@
         (try (dispose-environment! old-env)
           (catch Throwable t
             (tel/log! {:level :warn :id ::env-refresh-dispose-failed
-                       :data {:session-id id
+                       :data {:session-id k
                               :error (ex-message t)}})))
-        (swap! cache assoc id updated)
+        (swap! cache assoc k updated)
         updated)
       entry*)))
 
@@ -4419,16 +4423,17 @@
 
 (defn- ensure-env!
   [id]
-  (if-let [entry (get @cache id)]
-    entry
-    (let [env (open-env! id {})]
-      (swap! cache
-        (fn [m]
-          (if (contains? m id)
-            m
-            (assoc m id {:environment env
-                         :lock (java.util.concurrent.locks.ReentrantLock.)}))))
-      (get @cache id))))
+  (let [k (cache-key id)]
+    (if-let [entry (get @cache k)]
+      entry
+      (let [env (open-env! k {})]
+        (swap! cache
+          (fn [m]
+            (if (contains? m k)
+              m
+              (assoc m k {:environment env
+                          :lock (java.util.concurrent.locks.ReentrantLock.)}))))
+        (get @cache k)))))
 
 (defn db-info
   "Return the process-wide shared DB connection bound to
@@ -4453,18 +4458,19 @@
                                       :external-id (some-> external-id str)
                                       :title       title}
                                workspace-id (assoc :workspace-id workspace-id)))
-         id   (str (:session-id env))
+         id   (:session-id env)
          _    (cache-env! id env)]
-     {:id           id
+     {:id           id                ; UUID
       :channel      channel
       :external-id  (some-> external-id str)
       :title        title
       :workspace-id (:workspace/id env)})))
 
 (defn by-id
+  "Return the session record (UUID `:id`) or nil."
   [id]
   (when-let [session (persistance/db-get-session (db-info) id)]
-    {:id            (str (:id session))
+    {:id            (:id session)       ; UUID
      :channel       (:channel session)
      :external-id   (:external-id session)
      :system-prompt (:system-prompt session)
@@ -4475,7 +4481,7 @@
 (defn by-channel
   [channel]
   (mapv (fn [c]
-          {:id          (str (:id c))
+          {:id          (:id c)         ; UUID
            :channel     (:channel c)
            :external-id (:external-id c)
            :title       (:title c)
@@ -4486,7 +4492,7 @@
   [chat-id]
   (let [ext (str chat-id)]
     (or (when-let [id (persistance/db-find-session-by-external (db-info) :telegram ext)]
-          (by-id (str id)))
+          (by-id id))
       (create! :telegram {:external-id ext}))))
 
 ;; =============================================================================
@@ -4527,13 +4533,14 @@
 
 (defn close!
   [id]
-  (when-let [{:keys [environment ^java.util.concurrent.locks.ReentrantLock lock]}
-             (clojure.core/get @cache id)]
-    (.lock lock)
-    (try
-      (try (dispose-environment! environment) (catch Exception _ nil))
-      (finally (.unlock lock))))
-  (swap! cache dissoc id))
+  (let [k (cache-key id)]
+    (when-let [{:keys [environment ^java.util.concurrent.locks.ReentrantLock lock]}
+               (clojure.core/get @cache k)]
+      (.lock lock)
+      (try
+        (try (dispose-environment! environment) (catch Exception _ nil))
+        (finally (.unlock lock))))
+    (swap! cache dissoc k)))
 
 (defn delete!
   [id]
