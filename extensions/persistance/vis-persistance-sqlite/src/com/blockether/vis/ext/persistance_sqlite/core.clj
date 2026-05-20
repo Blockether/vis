@@ -84,7 +84,6 @@
 
 (defn- ->json [m] (when m (json/write-json-str m)))
 (defn- <-json [s] (when s (json/read-json s :key-fn keyword)))
-(defn- json-extract [column path] [:json_extract column path])
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."
@@ -670,15 +669,10 @@
    caller (loop/create-environment) calls `workspace/ensure-trunk!` to
    mint a trunk workspace before invoking this fn.
 
-   Metadata layout:
-     session_soul.metadata  -> {:channel :tui, :external-id \"...\"}
-     session_state.metadata -> {:system-prompt \"...\", :provider :openai,
-                                    :model \"gpt-4o\"}
-     session_state.title    -> title column
-
-   `:provider` is stored as a keyword (e.g. `:openai`, `:github-copilot`)
-   so the snapshot is a faithful round-trip of the provider id; the
-   reader (`db-get-session`) re-keywordizes it on the way back."
+   Session identity and LLM root defaults are first-class columns:
+     session_soul.channel / external_id
+     session_state.system_prompt / llm_root_provider / llm_root_model
+     session_state.title."
   [db-info {:keys [channel external-id title system-prompt provider model
                    workspace-id]}]
   (when-not workspace-id
@@ -692,21 +686,21 @@
               now      (now-ms)]
           (execute! tx-info
             {:insert-into :session_soul
-             :values [{:id         (str soul-id)
-                       :metadata   (->json {:channel     (->kw (or channel :tui))
-                                            :external-id external-id})
-                       :created_at now}]})
+             :values [{:id          (str soul-id)
+                       :channel     (name (->kw (or channel :tui)))
+                       :external_id (some-> external-id str)
+                       :created_at  now}]})
           (execute! tx-info
             {:insert-into :session_state
-             :values [{:id                   (str state-id)
-                       :session_soul_id (str soul-id)
-                       :workspace_id    (->ref workspace-id)
-                       :title                title
-                       :version              0
-                       :metadata             (->json (cond-> {:system-prompt (or system-prompt "")
-                                                              :model         (or model "")}
-                                                       provider (assoc :provider (->kw provider))))
-                       :created_at           now}]})
+             :values [(cond-> {:id                   (str state-id)
+                               :session_soul_id      (str soul-id)
+                               :workspace_id         (->ref workspace-id)
+                               :title                title
+                               :version              0
+                               :system_prompt        (or system-prompt "")
+                               :llm_root_model       (or model "")
+                               :created_at           now}
+                        provider (assoc :llm_root_provider (name (->kw provider))))]})
           soul-id)))))
 
 (defn- latest-state-for [db-info soul-id-s]
@@ -724,19 +718,17 @@
   (when (and (ds db-info) session-id)
     (let [id (->ref session-id)]
       (when-let [soul (query-one! db-info {:select [:*] :from :session_soul :where [:= :id id]})]
-        (let [state    (latest-state-for db-info id)
-              soul-meta (<-json (:metadata soul))
-              state-meta (when state (<-json (:metadata state)))]
+        (let [state (latest-state-for db-info id)]
           (cond-> {:id            (->uuid (:id soul))
                    :type          :session
-                   :channel       (->kw-back (:channel soul-meta))
-                   :external-id   (:external-id soul-meta)
-                   :title         (or (:title state) (:title soul-meta))
-                   :system-prompt (:system-prompt state-meta)
-                   :model         (:model state-meta)
+                   :channel       (->kw-back (:channel soul))
+                   :external-id   (:external_id soul)
+                   :title         (:title state)
+                   :system-prompt (:system_prompt state)
+                   :model         (:llm_root_model state)
                    :version       (or (:version state) 0)
                    :created-at    (->date (:created_at soul))}
-            (:provider state-meta) (assoc :provider (->kw-back (:provider state-meta)))))))))
+            (:llm_root_provider state) (assoc :provider (->kw-back (:llm_root_provider state)))))))))
 
 (defn db-resolve-session-id [db-info selector]
   (cond
@@ -754,22 +746,17 @@
 
 (defn db-list-sessions [db-info channel]
   (when (ds db-info)
-    (let [ch (->kw channel)]
-      ;; session_soul.metadata contains channel - filter through SQLite JSON1,
-      ;; expressed with HoneySQL so predicates/subqueries stay structured.
+    (let [ch (name (->kw channel))]
       (mapv (fn [row]
-              (let [soul-meta (<-json (:soul_metadata row))]
-                {:id          (->uuid (:id row))
-                 :channel     (->kw-back (:channel soul-meta))
-                 :external-id (:external-id soul-meta)
-                 :title       (or (:state_title row) (:title soul-meta))
-                 :version     (:version row)
-                 :fork-count  (or (:fork_count row) 0)
-                 :created-at  (->date (:created_at row))}))
+              {:id          (->uuid (:id row))
+               :channel     (->kw-back (:channel row))
+               :external-id (:external_id row)
+               :title       (:state_title row)
+               :version     (:version row)
+               :fork-count  (or (:fork_count row) 0)
+               :created-at  (->date (:created_at row))})
         (query! db-info
-          {:select [:cs.id
-                    [:cs.metadata :soul_metadata]
-                    :cs.created_at
+          {:select [:cs.id :cs.channel :cs.external_id :cs.created_at
                     [:s.title :state_title]
                     :s.version
                     [{:select [[[:count :*]]]
@@ -782,7 +769,7 @@
            :join   [[:session_state :s]
                     [:= :s.session_soul_id :cs.id]]
            :where  [:and
-                    [:= (json-extract :cs.metadata "$.channel") ch]
+                    [:= :cs.channel ch]
                     [:= :s.version
                      {:select [[[:max :s2.version]]]
                       :from   [[:session_state :s2]]
@@ -791,14 +778,14 @@
 
 (defn db-find-session-by-external [db-info channel external-id]
   (when (and (ds db-info) external-id)
-    (let [ch  (->kw channel)
+    (let [ch  (name (->kw channel))
           ext (str external-id)]
       (when-let [row (query-one! db-info
                        {:select [:id]
                         :from   :session_soul
                         :where  [:and
-                                 [:= (json-extract :metadata "$.channel") ch]
-                                 [:= (json-extract :metadata "$.\"external-id\"") ext]]})]
+                                 [:= :channel ch]
+                                 [:= :external_id ext]]})]
         (->uuid (:id row))))))
 
 (defn db-latest-session-state-id
@@ -856,7 +843,8 @@
     (let [soul-id-s (->ref session-id)
           rows (query! db-info
                  {:select [:cs.id :cs.version :cs.parent_state_id :cs.title
-                           :cs.metadata :cs.created_at
+                           :cs.system_prompt :cs.llm_root_provider :cs.llm_root_model
+                           :cs.created_at
                            [{:select [[[:count :*]]]
                              :from   :session_turn_soul
                              :where  [:= :session_turn_soul.session_state_id :cs.id]}
@@ -865,16 +853,15 @@
                   :where  [:= :cs.session_soul_id soul-id-s]
                   :order-by [[:cs.version :asc]]})]
       (mapv (fn [row]
-              (let [state-meta (<-json (:metadata row))]
-                (cond-> {:state-id        (->uuid (:id row))
-                         :version         (:version row)
-                         :parent-state-id (some-> (:parent_state_id row) ->uuid)
-                         :title           (:title row)
-                         :created-at      (->date (:created_at row))
-                         :turn-count      (or (:turn_count row) 0)}
-                  (:system-prompt state-meta) (assoc :system-prompt (:system-prompt state-meta))
-                  (:provider state-meta)      (assoc :provider (->kw-back (:provider state-meta)))
-                  (:model state-meta)         (assoc :model (:model state-meta)))))
+              (cond-> {:state-id        (->uuid (:id row))
+                       :version         (:version row)
+                       :parent-state-id (some-> (:parent_state_id row) ->uuid)
+                       :title           (:title row)
+                       :created-at      (->date (:created_at row))
+                       :turn-count      (or (:turn_count row) 0)}
+                (:system_prompt row)     (assoc :system-prompt (:system_prompt row))
+                (:llm_root_provider row) (assoc :provider (->kw-back (:llm_root_provider row)))
+                (:llm_root_model row)    (assoc :model (:llm_root_model row))))
         rows))
     []))
 
@@ -942,24 +929,22 @@
           (when-let [current (latest-state-for tx-info soul-id-s)]
             (let [new-id       (new-uuid)
                   now          (now-ms)
-                  cur-meta     (<-json (:metadata current))
                   parent-title (:title current)
                   fork-title   (or title (str parent-title " (fork)"))
                   new-version  (inc (:version current))]
               (execute! tx-info
                 {:insert-into :session_state
-                 :values [{:id                   (str new-id)
-                           :session_soul_id soul-id-s
-                           :parent_state_id      (:id current)
-                           :workspace_id         (->ref workspace-id)
-                           :title                fork-title
-                           :version              new-version
-                           :metadata             (->json
-                                                   (cond-> (or cur-meta {})
-                                                     system-prompt (assoc :system-prompt system-prompt)
-                                                     provider      (assoc :provider (->kw provider))
-                                                     model         (assoc :model model)))
-                           :created_at           now}]})
+                 :values [(cond-> {:id                   (str new-id)
+                                   :session_soul_id      soul-id-s
+                                   :parent_state_id      (:id current)
+                                   :workspace_id         (->ref workspace-id)
+                                   :title                fork-title
+                                   :version              new-version
+                                   :system_prompt        (or system-prompt (:system_prompt current))
+                                   :llm_root_model       (or model (:llm_root_model current))
+                                   :created_at           now}
+                            (or provider (:llm_root_provider current))
+                            (assoc :llm_root_provider (name (->kw (or provider (:llm_root_provider current))))))]})
               ;; Mark parent state as forked (idempotent)
               (when (and parent-title
                       (not (str/includes? parent-title "[forked]")))
@@ -1054,7 +1039,7 @@
                        :session_turn_soul_id (str soul-id)
                        :version       0
                        :status        (normalize-status (or status :running))
-                       :metadata      (->json (when messages {:messages messages}))
+                       :messages      (when messages (->json messages))
                        :created_at    now}]})
           soul-id)))))
 
@@ -1111,18 +1096,14 @@
           (when state
             (execute! tx-info
               {:update :session_turn_state
-               :set    (cond-> {:status (normalize-status (or status :done))
-                                :metadata (->json
-                                            (merge (<-json (:metadata state))
-                                              (cond-> {:iteration-count (or iteration-count 0)
-                                                       :duration-ms     (or duration-ms 0)}
-                                                (:input tokens)     (assoc :input-tokens     (long (:input tokens)))
-                                                (:output tokens)    (assoc :output-tokens    (long (:output tokens)))
-                                                (:reasoning tokens) (assoc :reasoning-tokens (long (:reasoning tokens)))
-                                                (:cached tokens)    (assoc :cached-tokens    (long (:cached tokens)))
-                                                (:total-cost cost)  (assoc :total-cost       (double (:total-cost cost)))
-                                                (:provider cost)    (assoc :provider         (->kw (:provider cost)))
-                                                (:model cost)       (assoc :model            (str (:model cost))))))}
+               :set    (cond-> {:status          (normalize-status (or status :done))
+                                :iteration_count (long (or iteration-count 0))
+                                :duration_ms     (long (or duration-ms 0))
+                                :llm_input_tokens     (long (or (:input tokens) 0))
+                                :llm_output_tokens    (long (or (:output tokens) 0))
+                                :llm_reasoning_tokens (long (or (:reasoning tokens) 0))
+                                :llm_cached_tokens    (long (or (:cached tokens) 0))
+                                :llm_total_cost_usd   (double (or (:total-cost cost) 0.0))}
                          (:model cost)    (assoc :llm_root_model (str (:model cost)))
                          (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
                          (some? answer)   (assoc :answer (->blob answer))
@@ -1202,16 +1183,6 @@
       (some? error)                (assoc :error (->blob (freeze-safe error)))
       (some? duration-ms)          (assoc :duration_ms (long duration-ms)))))
 
-(defn- routing-from-metadata
-  [metadata]
-  (get metadata :llm))
-
-(defn- strip-core-routing-metadata
-  [metadata]
-  (if (map? metadata)
-    (not-empty (dissoc metadata :llm))
-    metadata))
-
 (defn- routing-summary-columns
   [routing]
   (let [selected (:selected routing)
@@ -1246,6 +1217,19 @@
       (:elapsed-ms event)    (assoc :elapsed_ms (long (:elapsed-ms event)))
       (:at-ms event)         (assoc :at_ms (long (:at-ms event))))))
 
+(defn- extension-snapshot-row
+  [iteration-id-s now ext]
+  (let [name-s (some-> (:name ext) str)]
+    (when name-s
+      (cond-> {:id                        (new-id)
+               :session_turn_iteration_id iteration-id-s
+               :extension_name            name-s
+               :created_at                now}
+        (:version ext)            (assoc :extension_version (str (:version ext)))
+        (:source-paths ext)       (assoc :source_paths (->json (:source-paths ext)))
+        (:source-mtime-max ext)   (assoc :source_mtime_max (long (:source-mtime-max ext)))
+        (:source-hash-sha256 ext) (assoc :source_sha256 (:source-hash-sha256 ext))))))
+
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
   "Store one iteration row + per-`(def ...)` definition_soul/definition_state
@@ -1266,7 +1250,8 @@
                      insert. Optional; omit for no-deps iterations.
 
    Returns the iteration UUID."
-  [db-info {:keys [session-turn-id thinking answer duration-ms vars dependencies error metadata
+  [db-info {:keys [session-turn-id thinking answer duration-ms vars dependencies error
+                   llm-routing engine-timing extension-snapshots cache-created-tokens
                    llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
             :as opts}]
@@ -1305,8 +1290,8 @@
                                 :from   :session_turn_iteration
                                 :where  [:= :session_turn_state_id session-turn-state-id-s]}))
                           1)
-              routing (routing-from-metadata metadata)
-              metadata* (strip-core-routing-metadata metadata)
+              routing llm-routing
+              extension-snapshots (seq extension-snapshots)
               raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the single-form code payload inline.
           ;;    Hard cut: callers pass flat :code/:result/:error.
@@ -1326,7 +1311,7 @@
                                         :llm_full_duration_ms (or duration-ms 0)
                                         :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
                                         :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                        :metadata             (when metadata* (->json metadata*))
+                                        :engine_timing        (when engine-timing (->json engine-timing))
                                         :llm_executable_code_blocks (when (some? llm-executable-blocks)
                                                                       (->json (vec llm-executable-blocks)))
                                         :llm_assistant_message (when (some? llm-assistant-message)
@@ -1348,12 +1333,17 @@
                           (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
                           (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
                           (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
+                          (some? cache-created-tokens) (assoc :llm_cache_created_tokens (long cache-created-tokens))
                           (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd))
                           (seq routing)               (merge (routing-summary-columns routing)))]})
             (doseq [[idx event] (map-indexed vector (:trace routing))]
               (execute! tx-info
                 {:insert-into :llm_routing_event
                  :values [(routing-event-row iteration-id-s now idx event)]}))
+            (doseq [row (keep #(extension-snapshot-row iteration-id-s now %) extension-snapshots)]
+              (execute! tx-info
+                {:insert-into :runtime_extension_snapshot
+                 :values [row]}))
             ;; Index thinking manually; code itself is indexed by schema triggers.
             (let [thinking-s (str/trim (or thinking ""))]
               (when-not (= "" thinking-s)
@@ -1441,35 +1431,28 @@
 ;; =============================================================================
 
 (defn- row->turn [row]
-  (let [state-meta (<-json (:state_metadata row))
-        ;; `:provider` may live in either the JSON metadata or the
-        ;; dedicated `llm_root_provider` column. The column is the
-        ;; canonical source (typed, indexable); the JSON copy is a
-        ;; convenience for older readers. Prefer the column, fall
-        ;; back to the JSON, and always re-keywordize.
-        provider   (or (:llm_root_provider row) (:provider state-meta))]
-    (cond-> {:id                    (->uuid (:soul_id row))
-             :type                  :turn
-             :session-state-id (->uuid (:session_state_id row))
-             :position              (:position row)
-             :user-request          (:user_request row)
-             :status                (->kw-back (:status row))
-             :created-at            (->date (:soul_created_at row))}
-      ;; Turn rows carry no `title` column; `:name` is not populated
-      ;; here. UI/display layers should use `:user-request` for a
-      ;; turn label or read the session-level title via `:title`
-      ;; on the session map.
-      ;; (intentionally no `(:title row)` branch)
-      (:answer row)             (assoc :answer (<-blob (:answer row)))
-      (:iteration-count state-meta)  (assoc :iteration-count (:iteration-count state-meta))
-      (:duration-ms state-meta)      (assoc :duration-ms (:duration-ms state-meta))
-      provider                  (assoc :provider (->kw-back provider))
-      (:model state-meta)       (assoc :model (:model state-meta))
-      (:input-tokens state-meta)     (assoc :input-tokens (:input-tokens state-meta))
-      (:output-tokens state-meta)    (assoc :output-tokens (:output-tokens state-meta))
-      (:reasoning-tokens state-meta) (assoc :reasoning-tokens (:reasoning-tokens state-meta))
-      (:cached-tokens state-meta)    (assoc :cached-tokens (:cached-tokens state-meta))
-      (:total-cost state-meta)       (assoc :total-cost (:total-cost state-meta)))))
+  (cond-> {:id                    (->uuid (:soul_id row))
+           :type                  :turn
+           :session-state-id      (->uuid (:session_state_id row))
+           :position              (:position row)
+           :user-request          (:user_request row)
+           :status                (->kw-back (:status row))
+           :created-at            (->date (:soul_created_at row))
+           :iteration-count       (long (or (:iteration_count row) 0))
+           :duration-ms           (long (or (:duration_ms row) 0))
+           :input-tokens          (long (or (:llm_input_tokens row) 0))
+           :output-tokens         (long (or (:llm_output_tokens row) 0))
+           :reasoning-tokens      (long (or (:llm_reasoning_tokens row) 0))
+           :cached-tokens         (long (or (:llm_cached_tokens row) 0))
+           :total-cost            (double (or (:llm_total_cost_usd row) 0.0))}
+    ;; Turn rows carry no `title` column; `:name` is not populated
+    ;; here. UI/display layers should use `:user-request` for a
+    ;; turn label or read the session-level title via `:title`
+    ;; on the session map.
+    ;; (intentionally no `(:title row)` branch)
+    (:answer row)            (assoc :answer (<-blob (:answer row)))
+    (:llm_root_provider row) (assoc :provider (->kw-back (:llm_root_provider row)))
+    (:llm_root_model row)    (assoc :model (:llm_root_model row))))
 
 (defn- session-turn-soul+state-query
   "HoneySQL fragment joining session_turn_soul + latest session_turn_state."
@@ -1479,8 +1462,12 @@
   ;; or the session-level title.
   {:select [:qs.id :qs.session_state_id :qs.position :qs.user_request
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
-            :qst.status :qst.metadata [:qst.metadata :state_metadata]
+            :qst.status
             :qst.answer
+            :qst.messages :qst.iteration_count :qst.duration_ms
+            :qst.llm_input_tokens :qst.llm_output_tokens
+            :qst.llm_reasoning_tokens :qst.llm_cached_tokens
+            :qst.llm_total_cost_usd
             :qst.llm_root_provider :qst.llm_root_model]
    :from   [[:session_turn_soul :qs]]
    :join   [[:session_turn_state :qst] [:= :qst.session_turn_soul_id :qs.id]]
@@ -1570,16 +1557,17 @@
 (defn- attach-routing
   [iteration routing]
   (if (seq routing)
-    (-> iteration
-      (assoc :llm-routing-trace (vec (:trace routing)))
-      (assoc-in [:metadata :llm] routing))
+    (cond-> iteration
+      (:selected routing) (assoc :llm-selected (:selected routing))
+      (:actual routing)   (assoc :llm-actual (:actual routing))
+      (contains? routing :fallback?) (assoc :llm-fallback? (:fallback? routing))
+      (seq (:trace routing)) (assoc :llm-routing-trace (vec (:trace routing))))
     iteration))
 
 (defn- row->iteration [row]
   (let [iter-error (or (<-blob (:error row))
                      (when (some? (:llm_error row))
-                       (or (<-json (:llm_error row)) (:llm_error row))))
-        metadata   (when (some? (:metadata row)) (<-json (:metadata row)))]
+                       (or (<-json (:llm_error row)) (:llm_error row))))]
     (cond-> {:id          (->uuid (:id row))
              :type        :iteration
              :position    (:position row)
@@ -1618,6 +1606,8 @@
       (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
       (some? (:llm_returned_empty_code row))
       (assoc :returned-empty-code? (= 1 (long (:llm_returned_empty_code row))))
+      (some? (:engine_timing row))
+      (assoc :engine-timing (<-json (:engine_timing row)))
       ;; Token / cost columns - ALWAYS present on the read side, with
       ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
       ;; is NULL. Callers can assume `(:input-tokens it)` is a long
@@ -1628,12 +1618,8 @@
       true (assoc :output-tokens    (long   (or (:llm_output_tokens row) 0)))
       true (assoc :reasoning-tokens (long   (or (:llm_reasoning_tokens row) 0)))
       true (assoc :cached-tokens    (long   (or (:llm_cached_tokens row) 0)))
-      (some? (get-in metadata [:usage :cache-created-tokens]))
-      (assoc :cache-created-tokens (long (get-in metadata [:usage :cache-created-tokens])))
-      true (assoc :cost-usd         (double (or (:llm_cost_usd row) 0.0)))
-      ;; Iteration metadata (JSON) carries the per-iteration metrics:
-      ;; :var-history-recall-count plus per-iteration extension info.
-      metadata                            (assoc :metadata metadata))))
+      true (assoc :cache-created-tokens (long (or (:llm_cache_created_tokens row) 0)))
+      true (assoc :cost-usd         (double (or (:llm_cost_usd row) 0.0))))))
 
 (defn db-list-session-turn-iterations [db-info session-turn-id]
   (if (and (ds db-info) session-turn-id)
@@ -1885,7 +1871,7 @@
              :extension_id                (str (:extension-id opts))
              :aggregate_key               (->edn-text (:aggregate-key opts))
              :kind                        (->edn-text (:kind opts))
-             :metadata                    (->json (:metadata opts))
+             :index_data                  (->json (:index-data opts))
              :content                     (->blob (:content opts))
              :session_soul_id        (some-> (:session-soul-id opts) ->ref)
              :session_state_id       (some-> (:session-state-id opts) ->ref)
@@ -1930,7 +1916,7 @@
        :key           aggregate-key
        :kind          (<-edn-text (:kind row))
        :scope         scope
-       :metadata      (<-json (:metadata row))
+       :index-data    (<-json (:index_data row))
        :content       (<-blob (:content row))
        :created-at    (->date (:created_at row))
        :updated-at    (->date (:updated_at row))})))
@@ -1949,14 +1935,14 @@
     (contains? opts :iteration-block-index)
     (conj [:= :session_turn_iteration_block_index (:iteration-block-index opts)])
     (:iteration-block-id opts)         (conj [:= :session_turn_iteration_block_id (str (:iteration-block-id opts))])
-    ;; Metadata JSON field filtering.
-    ;; :metadata in a query is a map of {field-key expected-value} pairs.
+    ;; index_data JSON field filtering.
+    ;; :index-data in a query is a map of {field-key expected-value} pairs.
     ;; Each pair becomes a json_extract WHERE clause. This lets extensions
-    ;; run structured queries over their metadata without custom tables.
-    ;; Example: (extension-list-aggregates env {:kind :bridge/edge :metadata {:source "core/run"}})
-    (and (map? (:metadata opts)) (seq (:metadata opts)))
-    (into (for [[k v] (:metadata opts)]
-            [:= [:json_extract :metadata (str "$." (name k))] (str v)]))))
+    ;; run structured queries over their index sidecar without custom tables.
+    ;; Example: (extension-list-aggregates env {:kind :bridge/edge :index-data {:source "core/run"}})
+    (and (map? (:index-data opts)) (seq (:index-data opts)))
+    (into (for [[k v] (:index-data opts)]
+            [:= [:json_extract :index_data (str "$.\"" (name k) "\"")] (str v)]))))
 
 (defn- extension-aggregate-select
   [opts]
@@ -1996,7 +1982,7 @@
             {:insert-into :extension_aggregate
              :values [row]
              :on-conflict [:extension_id :aggregate_key :kind :scope_key]
-             :do-update-set {:metadata                    (:metadata row)
+             :do-update-set {:index_data                  (:index_data row)
                              :content                     (:content row)
                              :session_soul_id        (:session_soul_id row)
                              :session_state_id       (:session_state_id row)
@@ -2109,7 +2095,7 @@
               next-content (apply f (:content current) args)]
           (db-put-extension-aggregate! tx-info
             (assoc opts
-              :metadata (or (:metadata opts) (:metadata current))
+              :index-data (or (:index-data opts) (:index-data current))
               :content next-content)))))))
 
 ;; =============================================================================

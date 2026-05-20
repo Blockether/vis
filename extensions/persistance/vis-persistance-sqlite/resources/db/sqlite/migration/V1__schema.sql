@@ -54,16 +54,20 @@ PRAGMA foreign_keys = ON;
 
 -- =============================================================================
 -- Session soul - pure identity.
--- metadata is a JSON blob for channel bindings and external IDs.
 -- =============================================================================
 CREATE TABLE session_soul (
   id           TEXT PRIMARY KEY NOT NULL,
-  metadata     TEXT,                       -- JSON-encoded object/string
+  channel      TEXT NOT NULL DEFAULT 'tui',
+  external_id  TEXT,
   created_at   INTEGER NOT NULL
 );
 
-CREATE INDEX idx_session_soul_created
-  ON session_soul(created_at DESC);
+CREATE INDEX idx_session_soul_channel_created
+  ON session_soul(channel, created_at DESC);
+
+CREATE UNIQUE INDEX idx_session_soul_channel_external
+  ON session_soul(channel, external_id)
+  WHERE external_id IS NOT NULL;
 
 -- =============================================================================
 -- Workspace - git worktree-backed work unit.
@@ -128,7 +132,9 @@ CREATE TABLE session_state (
                         REFERENCES workspace(id) ON DELETE RESTRICT,
   title                 TEXT,
   version               INTEGER NOT NULL CHECK (version >= 0),
-  metadata              TEXT,              -- JSON-encoded object/string
+  system_prompt         TEXT,
+  llm_root_provider     TEXT,
+  llm_root_model        TEXT,
   created_at            INTEGER NOT NULL,
 
   UNIQUE (session_soul_id, version)
@@ -155,7 +161,6 @@ CREATE TABLE session_turn_soul (
   -- `(set-session-title! ...)` and mirrored to the SESSION_TITLE
   -- SCI var). Turn rows carry `user_request` for display and replay.
   user_request           TEXT,
-  metadata               TEXT,             -- JSON-encoded object/string
   created_at             INTEGER NOT NULL,
 
   UNIQUE (session_state_id, position)
@@ -210,7 +215,14 @@ CREATE TABLE session_turn_state (
   llm_root_model               TEXT,
   status                       TEXT NOT NULL
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
-  metadata                     TEXT,        -- JSON-encoded object/string
+  messages                     TEXT,        -- JSON envelope for turn-start messages.
+  iteration_count              INTEGER NOT NULL DEFAULT 0 CHECK (iteration_count >= 0),
+  duration_ms                  INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+  llm_input_tokens             INTEGER NOT NULL DEFAULT 0 CHECK (llm_input_tokens >= 0),
+  llm_output_tokens            INTEGER NOT NULL DEFAULT 0 CHECK (llm_output_tokens >= 0),
+  llm_reasoning_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (llm_reasoning_tokens >= 0),
+  llm_cached_tokens            INTEGER NOT NULL DEFAULT 0 CHECK (llm_cached_tokens >= 0),
+  llm_total_cost_usd           REAL NOT NULL DEFAULT 0 CHECK (llm_total_cost_usd >= 0),
   answer                       BLOB,        -- Nippy-frozen IR `[:ir & nodes]`. NULL while running.
   -- Per-turn final outcome, derived at turn end. Lets the next turn's
   -- handover digest say "previous turn complete | cancelled | error"
@@ -306,8 +318,11 @@ CREATE TABLE session_turn_iteration (
   llm_cost_usd                    REAL    CHECK (
                                     llm_cost_usd IS NULL OR llm_cost_usd >= 0
                                   ),
+  llm_cache_created_tokens        INTEGER CHECK (
+                                    llm_cache_created_tokens IS NULL OR llm_cache_created_tokens >= 0
+                                  ),
 
-  metadata                        TEXT,    -- JSON-encoded per-session_turn_iteration context (active extensions, etc.)
+  engine_timing                   TEXT,    -- JSON-encoded core engine timing diagnostics.
 
   -- Single-form iteration payload. `result` and `error` are Nippy-encoded
   -- Clojure values.
@@ -355,6 +370,23 @@ CREATE TABLE llm_routing_event (
 
 CREATE INDEX idx_llm_routing_event_iteration_position
   ON llm_routing_event(session_turn_iteration_id, position);
+
+CREATE TABLE runtime_extension_snapshot (
+  id                         TEXT PRIMARY KEY NOT NULL,
+  session_turn_iteration_id  TEXT NOT NULL
+                             REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
+  extension_name             TEXT NOT NULL,
+  extension_version          TEXT,
+  source_paths               TEXT,
+  source_mtime_max           INTEGER,
+  source_sha256              TEXT,
+  created_at                 INTEGER NOT NULL,
+
+  UNIQUE(session_turn_iteration_id, extension_name)
+);
+
+CREATE INDEX idx_runtime_extension_snapshot_iteration
+  ON runtime_extension_snapshot(session_turn_iteration_id);
 
 CREATE TRIGGER trg_session_turn_iteration_position_ai
 BEFORE INSERT ON session_turn_iteration
@@ -539,7 +571,7 @@ CREATE TABLE extension_aggregate (
   aggregate_key               TEXT NOT NULL CHECK (trim(aggregate_key) <> ''),
   kind                        TEXT NOT NULL CHECK (trim(kind) <> ''),
 
-  metadata                    TEXT,            -- JSON-encoded object/string
+  index_data                  TEXT,            -- JSON-encoded extension-owned query/index fields
   content                     BLOB,            -- Nippy-encoded extension-owned payload
 
   session_soul_id        TEXT
@@ -619,28 +651,28 @@ CREATE INDEX idx_extension_aggregate_iteration_block_id
   ON extension_aggregate(session_turn_iteration_block_id)
   WHERE session_turn_iteration_block_id IS NOT NULL;
 
--- Supports metadata JSON field filtering for extension aggregate queries.
--- Extensions pass {:metadata {:field value}} to extension-list-aggregates/extension-delete-aggregate!;
+-- Supports index_data JSON field filtering for extension aggregate queries.
+-- Extensions pass {:index-data {:field value}} to extension-list-aggregates/extension-delete-aggregate!;
 -- the clause layer generates json_extract WHERE conditions on these paths.
-CREATE INDEX idx_extension_aggregate_metadata
-  ON extension_aggregate(extension_id, kind, json_extract(metadata, '$.kind'))
-  WHERE metadata IS NOT NULL;
+CREATE INDEX idx_extension_aggregate_index_data_kind
+  ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.kind'))
+  WHERE index_data IS NOT NULL;
 
--- Supports graph-traversal-style metadata queries (Bridge edges by source/target).
+-- Supports graph-traversal-style index queries (Bridge edges by source/target).
 -- Without these, "find all edges FROM x" or "find all edges TO y" scans all rows
 -- of that kind.
-CREATE INDEX idx_extension_aggregate_meta_source
-  ON extension_aggregate(extension_id, kind, json_extract(metadata, '$.source'))
-  WHERE metadata IS NOT NULL;
+CREATE INDEX idx_extension_aggregate_index_source
+  ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.source'))
+  WHERE index_data IS NOT NULL;
 
-CREATE INDEX idx_extension_aggregate_meta_target
-  ON extension_aggregate(extension_id, kind, json_extract(metadata, '$.target'))
-  WHERE metadata IS NOT NULL;
+CREATE INDEX idx_extension_aggregate_index_target
+  ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.target'))
+  WHERE index_data IS NOT NULL;
 
 -- Supports "all nodes/edges for a file" queries (Bridge re-indexing).
-CREATE INDEX idx_extension_aggregate_meta_path
-  ON extension_aggregate(extension_id, kind, json_extract(metadata, '$.path'))
-  WHERE metadata IS NOT NULL;
+CREATE INDEX idx_extension_aggregate_index_path
+  ON extension_aggregate(extension_id, kind, json_extract(index_data, '$.path'))
+  WHERE index_data IS NOT NULL;
 
 -- =============================================================================
 -- Log - structured logs.

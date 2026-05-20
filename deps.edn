@@ -103,6 +103,7 @@
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/channels/vis-channel-telegram/test"
                         "extensions/common/vis-foundation/test"
+                        "extensions/common/vis-foundation-git/test"
                         "extensions/common/vis-exa/test"
                         "extensions/common/vis-voice/test"]
           :extra-deps  {io.github.noahtheduke/lazytest           {:mvn/version "2.0.0"}
@@ -135,6 +136,7 @@
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/channels/vis-channel-telegram/test"
                         "--dir" "extensions/common/vis-foundation/test"
+                        "--dir" "extensions/common/vis-foundation-git/test"
                         "--dir" "extensions/common/vis-exa/test"
                         "--dir" "extensions/common/vis-voice/test"]}
 

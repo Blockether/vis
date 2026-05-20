@@ -3,7 +3,8 @@
    [clojure.string]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
    [com.blockether.vis.internal.extension :as extension]
-   [lazytest.core :refer [defdescribe expect it]]))
+   [lazytest.core :refer [defdescribe expect it]]
+   [sci.core :as sci]))
 
 (defdescribe introspection-public-surface-test
   (it "exposes session and Clojure symbol introspection symbols"
@@ -14,7 +15,23 @@
       (expect (contains? symbols 'engine-symbol-source-code))
       (expect (contains? symbols 'engine-symbol-metadata))
       (expect (contains? symbols 'engine-symbol-apropos))
-      (expect (= 6 (count symbols))))))
+      (expect (= 6 (count symbols)))))
+
+  (it "documents quoted aliased SCI symbols"
+    (let [v-ns    (sci/create-ns 'vis.ext.v)
+          sci-ctx (sci/init {:namespaces {'vis.ext.v {'git-diff (sci/new-var 'git-diff
+                                                                  (fn [] nil)
+                                                                  {:ns v-ns
+                                                                   :doc "diff docs"
+                                                                   :arglists '([])})}}
+                             :ns-aliases {'v 'vis.ext.v}})
+          tool    @#'introspection/engine-symbol-documentation-tool
+          result  (tool {:sci-ctx sci-ctx} 'v/git-diff)]
+      (expect (extension/tool-result? result))
+      (expect (get-in result [:result :found?]))
+      (expect (= 'v/git-diff (get-in result [:result :symbol])))
+      (expect (= 'vis.ext.v/git-diff (get-in result [:result :resolved-symbol])))
+      (expect (= "diff docs" (get-in result [:result :doc]))))))
 
 (defdescribe session-state-envelope-test
   (it "returns a canonical envelope so observed symbol wrapping can unwrap it"

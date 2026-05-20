@@ -63,13 +63,13 @@
                       {:extension-id 'test.ext.alpha
                        :aggregate-key :index/status
                        :kind :background/status
-                       :metadata {:schema-version 1}
+                       :index-data {:schema-version 1}
                        :content {:state :running}})
           second-row (persistance/db-put-extension-aggregate! s
                        {:extension-id 'test.ext.alpha
                         :aggregate-key :index/status
                         :kind :background/status
-                        :metadata {:schema-version 1}
+                        :index-data {:schema-version 1}
                         :content {:state :done}})]
       (expect (= (:id first-row) (:id second-row)))
       (expect (= {:state :done} (:content second-row)))
@@ -124,64 +124,64 @@
                   (select-keys (:scope (first rows)) [:iteration-id :iteration-block-index])))
         (expect (= {:ok true} (:content (first rows))))))))
 
-(defdescribe sqlite-extension-aggregate-metadata-filter-test
-  (it "filters extension aggregate rows by metadata JSON fields"
+(defdescribe sqlite-extension-aggregate-index-data-filter-test
+  (it "filters extension aggregate rows by index_data JSON fields"
     (let [s (h/store)]
-      ;; Insert three rows with different metadata
+      ;; Insert three rows with different index data
       (persistance/db-put-extension-aggregate! s
         {:extension-id 'test.ext.bridge
          :aggregate-key "node:core/run"
          :kind :bridge/node
-         :metadata {:path "src/core.clj"
-                    :kind      "def"
-                    :language  "clojure"}
+         :index-data {:path "src/core.clj"
+                      :kind      "def"
+                      :language  "clojure"}
          :content {:name "run"}})
       (persistance/db-put-extension-aggregate! s
         {:extension-id 'test.ext.bridge
          :aggregate-key "node:core/start"
          :kind :bridge/node
-         :metadata {:path "src/core.clj"
-                    :kind      "def"
-                    :language  "clojure"}
+         :index-data {:path "src/core.clj"
+                      :kind      "def"
+                      :language  "clojure"}
          :content {:name "start"}})
       (persistance/db-put-extension-aggregate! s
         {:extension-id 'test.ext.bridge
          :aggregate-key "edge:core/run::calls::lc/iterate"
          :kind :bridge/edge
-         :metadata {:edge-kind "calls"
-                    :source    "core/run"
-                    :target    "lc/iterate"
-                    :path "src/core.clj"}
+         :index-data {:edge-kind "calls"
+                      :source    "core/run"
+                      :target    "lc/iterate"
+                      :path "src/core.clj"}
          :content {:source "core/run" :target "lc/iterate" :kind "calls"}})
-      ;; Filter by kind + metadata file-path → both nodes in core.clj
+      ;; Filter by kind + index-data file-path → both nodes in core.clj
       (let [by-file (vis/db-list-extension-aggregates s
                       {:extension-id 'test.ext.bridge
                        :kind :bridge/node
-                       :metadata {:path "src/core.clj"}})]
+                       :index-data {:path "src/core.clj"}})]
         (expect (= 2 (count by-file)))
         (expect (= #{"node:core/run" "node:core/start"}
                   (set (map :key by-file)))))
-      ;; Filter by metadata edge-kind → one edge
+      ;; Filter by index-data edge-kind → one edge
       (let [by-edge-kind (vis/db-list-extension-aggregates s
                            {:extension-id 'test.ext.bridge
-                            :metadata {:edge-kind "calls"}})]
+                            :index-data {:edge-kind "calls"}})]
         (expect (= 1 (count by-edge-kind)))
         (expect (= "edge:core/run::calls::lc/iterate" (:key (first by-edge-kind)))))
-      ;; Filter by metadata source → edge from core/run
+      ;; Filter by index-data source → edge from core/run
       (let [by-source (vis/db-list-extension-aggregates s
                         {:extension-id 'test.ext.bridge
-                         :metadata {:source "core/run"}})]
+                         :index-data {:source "core/run"}})]
         (expect (= 1 (count by-source))))
       ;; Filter edges by file-path → re-indexing use case
       (let [by-edge-file (vis/db-list-extension-aggregates s
                            {:extension-id 'test.ext.bridge
                             :kind :bridge/edge
-                            :metadata {:path "src/core.clj"}})]
+                            :index-data {:path "src/core.clj"}})]
         (expect (= 1 (count by-edge-file))))
       ;; No match → empty
       (let [none (vis/db-list-extension-aggregates s
                    {:extension-id 'test.ext.bridge
-                    :metadata {:path "nonexistent.clj"}})]
+                    :index-data {:path "nonexistent.clj"}})]
         (expect (= 0 (count none)))))))
 
 (defdescribe sqlite-bootstrap-error-normalization-test
@@ -221,17 +221,25 @@
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
-   (let [dir    (System/getProperty \"vis.test.db-dir\")
-         marker (some-> (System/getProperty \"vis.test.marker\") not-empty)
-         title  (or (System/getProperty \"vis.test.title\") \"child\")
-         s      (vis/db-create-connection! dir)]
-     (try
-       (when marker (spit marker \"ready\"))
-       (Thread/sleep 250)
-       (h/store-session! s {:channel :child :title title})
-       (println \"CHILD-DONE\" title)
-       (finally
-         (vis/db-dispose-connection! s))))")
+   (require '[com.blockether.vis.ext.persistance-sqlite.test-helpers :as h])
+   (try
+     (let [dir    (System/getProperty \"vis.test.db-dir\")
+           marker (some-> (System/getProperty \"vis.test.marker\") not-empty)
+           title  (or (System/getProperty \"vis.test.title\") \"child\")
+           s      (vis/db-create-connection! dir)]
+       (try
+         (when marker (spit marker \"ready\"))
+         (Thread/sleep 250)
+         (h/store-session! s {:channel :child :title title})
+         (println \"CHILD-DONE\" title)
+         (finally
+           (vis/db-dispose-connection! s))))
+     (shutdown-agents)
+     (System/exit 0)
+     (catch Throwable t
+       (.printStackTrace t)
+       (shutdown-agents)
+       (System/exit 1)))")
 
 (defonce ^:private child-output-futures (atom {}))
 
@@ -269,11 +277,10 @@
 
 ;; Multiprocess child JVMs cold-boot Clojure + Flyway + sqlite-jdbc on every
 ;; spawn. On a warm machine that's ~6–7 s; under the full test suite (JIT
-;; contention with the rest of the run), 10–20 s. The previous 10 s ceiling
-;; flaked deterministically as soon as anything else heated the JVM up at
-;; the same time. 30 s is correctness-only — these tests guard cross-JVM DB
-;; semantics, not startup speed.
-(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 30)
+;; contention with the rest of the run), 10–20 s, with occasional slower
+;; cold-starts on loaded CI/developer machines. This is correctness-only —
+;; these tests guard cross-JVM DB semantics, not startup speed.
+(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 60)
 
 (defn- expect-child-success!
   [^Process child]
@@ -461,7 +468,7 @@
             latest (vis/db-resolve-session-id s :latest)]
         (expect (= id2 latest)))))
 
-  (it "lists by channel via metadata JSON"
+  (it "lists by channel via column"
     (let [s (h/store)]
       (h/store-session! s {:channel :tui :title "A"})
       (h/store-session! s {:channel :telegram :title "B"})
@@ -477,7 +484,7 @@
       (h/fork-session! s cid {})
       (expect (= [2] (mapv :fork-count (vis/db-list-sessions s :tui))))))
 
-  (it "finds by external-id via metadata JSON"
+  (it "finds by external-id via column"
     (let [s  (h/store)
           id (h/store-session! s {:channel :telegram :external-id "chat-42"})]
       (expect (= id (vis/db-find-session-by-external s :telegram "chat-42")))
@@ -844,7 +851,7 @@
                                   :code "(+ 1 1)" :result 2
                                   :duration-ms 5
                                   :tokens   {:input 1200 :output 150 :reasoning 80 :cached 600}
-                                  :metadata {:usage {:cache-created-tokens 7000}}
+                                  :cache-created-tokens 7000
                                   :cost-usd 0.0123})
       (let [iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= 1200 (:input-tokens iter)))
@@ -854,7 +861,7 @@
         (expect (= 7000 (:cache-created-tokens iter)))
         (expect (= 0.0123 (:cost-usd iter))))))
 
-  (it "persists LLM routing trace as first-class rows and rehydrates metadata view"
+  (it "persists LLM routing trace as first-class rows and rehydrates routing view"
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
@@ -880,24 +887,25 @@
                                           :duration-ms 5
                                           :llm-provider :p2
                                           :llm-model "m2"
-                                          :metadata {:engine-timing {:total-ms 5}
-                                                     :llm {:selected {:provider :p1 :model "m1"}
-                                                           :actual {:provider :p2 :model "m2"}
-                                                           :fallback? true
-                                                           :trace trace}}})]
+                                          :engine-timing {:total-ms 5}
+                                          :llm-routing {:selected {:provider :p1 :model "m1"}
+                                                        :actual {:provider :p2 :model "m2"}
+                                                        :fallback? true
+                                                        :trace trace}})]
       (expect (= 2 (raw-count s :llm_routing_event)))
-      (let [raw-row (first (raw-query s {:select [:metadata :llm_selected_provider :llm_actual_provider :llm_fallback]
+      (let [raw-row (first (raw-query s {:select [:engine_timing :llm_selected_provider :llm_actual_provider :llm_fallback]
                                          :from :session_turn_iteration
                                          :where [:= :id (str iid)]}))
             iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= "p1" (:llm_selected_provider raw-row)))
         (expect (= "p2" (:llm_actual_provider raw-row)))
         (expect (= 1 (:llm_fallback raw-row)))
-        (expect (not (str/includes? (or (:metadata raw-row) "") "llm")))
+        (expect (str/includes? (or (:engine_timing raw-row) "") "total-ms"))
         (expect (= [:llm.routing/provider-retry :llm.routing/provider-fallback]
                   (mapv :event/type (:llm-routing-trace iter))))
         (expect (= true (:llm-fallback? iter)))
-        (expect (= (:llm-routing-trace iter) (get-in iter [:metadata :llm :trace]))))))
+        (expect (= {:provider :p1 :model "m1"} (:llm-selected iter)))
+        (expect (= {:provider :p2 :model "m2"} (:llm-actual iter))))))
 
   (it "defaults absent token + cost columns to 0 / 0.0 on read"
     (let [s   (h/store)
@@ -907,7 +915,7 @@
       ;; stay NULL on disk, but the read side normalizes to 0 / 0.0
       ;; so consumers never have to `or`-pad. Callers that need to
       ;; distinguish "no usage reported" from "zero tokens" can
-      ;; check the raw column via :metadata or a custom query; the
+      ;; check raw LLM usage columns via a custom query; the
       ;; default API path is always numeric.
       (vis/db-store-iteration! s {:session-turn-id qid
                                   :code "(+ 1 1)" :result 2

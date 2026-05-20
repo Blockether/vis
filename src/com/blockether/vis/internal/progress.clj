@@ -52,9 +52,10 @@
       :thinking  str-or-nil
       :code      [str ...]            ;; per-form, idx-aligned
       :render-segments [[{:kind ...}] ...] ;; optional per-block display split
-      :results   [str-or-IR-or-formatted-error ...]
+      :results   [str-or-IR ...]      ;; nil for form eval errors
       :result-kinds [keyword ...] ;; :tool, :value, or :error
       :result-details [map-or-str ...] ;; extra result metadata
+      :errors    [map-or-nil ...]      ;; per-form structured eval errors
       :durations [int-ms ...]
       :successes [bool ...]
       :started-at-ms [int-ms ...] ;; running form start timestamps
@@ -82,6 +83,7 @@
    :results   []
    :result-kinds []
    :result-details []
+   :errors    []
    :durations []
    :successes []
    :started-at-ms []
@@ -130,9 +132,10 @@
   (tool-result-detail (:result chunk)))
 
 (defn- format-form-result
-  "Pre-format a per-form chunk's result for renderer consumption.
+  "Pre-format a successful per-form chunk's result for renderer consumption.
 
-   Errors get the standard `ERROR: ...` prefix.
+   Eval errors are stored separately in :errors; TUI renders them inline
+   with the failing source and caret marker.
 
    Tool calls inside the form land in `:channel` as a vec of sink
    entries (one per call, regardless of nesting). When non-empty, we
@@ -244,11 +247,13 @@
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments  #(assoc (pad-to % need) idx (:comment chunk)))
       (update :render-segments #(assoc (pad-to % need) idx (:render-segments chunk)))
-      (update :results   #(assoc (pad-to % need) idx (when-not (and (= :vis/answer (:result chunk))
-                                                                 (visible-code-segments? chunk))
+      (update :results   #(assoc (pad-to % need) idx (when-not (or (:error chunk)
+                                                                 (and (= :vis/answer (:result chunk))
+                                                                   (visible-code-segments? chunk)))
                                                        (format-form-result chunk))))
       (update :result-kinds #(assoc (pad-to % need) idx (form-result-kind chunk)))
       (update :result-details #(assoc (pad-to % need) idx (form-result-detail chunk)))
+      (update :errors    #(assoc (pad-to % need) idx (:error chunk)))
       (update :durations #(assoc (pad-to % need) idx (or (envelope-duration-ms (:envelope chunk)) 0)))
       (update :successes #(assoc (pad-to % need) idx (nil? (:error chunk))))
       (update :silents   #(assoc (pad-to % need) idx (and (nil? (:error chunk))
@@ -289,6 +294,7 @@
         (update :results   drop-slot idx)
         (update :result-kinds drop-slot idx)
         (update :result-details drop-slot idx)
+        (update :errors drop-slot idx)
         (update :durations drop-slot idx)
         (update :successes drop-slot idx)
         (update :started-at-ms drop-slot idx)
@@ -325,6 +331,7 @@
         (update :results   insert-slot display-idx)
         (update :result-kinds insert-slot display-idx)
         (update :result-details insert-slot display-idx)
+        (update :errors insert-slot display-idx)
         (update :durations insert-slot display-idx)
         (update :successes insert-slot display-idx)
         (update :started-at-ms insert-slot display-idx)

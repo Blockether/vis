@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.extension-test
   (:require
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- sample-channel-fn
@@ -20,6 +21,17 @@
                     :ext/prompt (fn [_] prompt-text)})]
       (expect (= "First line\n\n  Nested line" ((:ext/prompt string-ext) {})))
       (expect (= "First line\n\n  Nested line" ((:ext/prompt fn-ext) {}))))))
+
+(defdescribe ctx-contributions-test
+  (it "binds active workspace root while building extension ctx"
+    (let [root (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
+          ext  {:ext/name "test.ctx-workspace"
+                :ext/ctx  (fn [_]
+                            {:project {:ctx-root workspace/*workspace-root*
+                                       :cwd      (.getCanonicalPath (workspace/cwd))}})}
+          ctx  (extension/ctx-contributions {:workspace/root root} [ext])]
+      (expect (= root (get-in ctx [:project :ctx-root])))
+      (expect (= root (get-in ctx [:project :cwd]))))))
 
 (defdescribe channel-contributions-test
   (it "extension accepts channel contributions and derives channel kind"
