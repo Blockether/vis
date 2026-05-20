@@ -527,6 +527,10 @@
       (throw (ex-info "v/patch expects a map or vector of edit maps"
                {:type :ext.foundation.editing/invalid-patch-edits
                 :got  (type edits)})))
+    (when-not (seq edits)
+      (throw (ex-info "v/patch requires at least one edit; empty patch batches are bugs, not success"
+               {:type :ext.foundation.editing/empty-patch
+                :got  edits})))
     (mapv (fn [edit]
             (when-not (map? edit)
               (throw (ex-info "v/patch edit must be a map"
@@ -732,6 +736,9 @@
   [^String patch-text]
   (try
     (let [{:keys [hunks]} (patch/parse-patch patch-text)
+          _ (when (empty? hunks)
+              (throw (ex-info "v/patch envelope contained no hunks"
+                       {:type :ext.foundation.editing/empty-patch})))
           plans (envelope-plan hunks)]
       {:valid? true
        :mode :codex-apply-patch
@@ -1423,6 +1430,7 @@
      "  (v/patch [{:path :search :replace}])  — exact-replace; each :search must match exactly once."
      "  (v/patch \"*** Begin Patch\\n... *** End Patch\\n\")  — Codex envelope (Add/Update/Delete/Move)."
      "  Both modes validate the full plan before any write; one failure aborts the batch."
+     "  Empty edit batches are rejected. If a computed patch vector is [], stop and report no change."
      "  On failure, v/patch reports match counts in :checks/:failures and writes nothing."
      "  v/patch returns diff + post-image — that IS the write evidence. Do NOT v/cat to verify."
      ""

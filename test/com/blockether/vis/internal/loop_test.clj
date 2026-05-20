@@ -3,6 +3,7 @@
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.env.sci-patches :as sp]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.loop :as lp]
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci]))
@@ -105,6 +106,26 @@
                                                :output 69
                                                :cached 0
                                                :cache-created 8777}})))))
+
+(defdescribe final-answer-mutation-gate-test
+  (it "rejects done in the same iteration as a mutation tool event"
+    (extension/register-op! :test/mutate {:tag :op.tag/mutation})
+    (let [err (lp/final-answer-gate-error {}
+                1
+                [{:tool-events [{:op :test/mutate}]}]
+                [:ir {}]
+                [])]
+      (expect (string? err))
+      (expect (str/includes? err "mutation tool(s) ran"))
+      (expect (str/includes? err ":test/mutate"))))
+
+  (it "allows done after observation-only tool events"
+    (extension/register-op! :test/observe {:tag :op.tag/observation})
+    (expect (nil? (lp/final-answer-gate-error {}
+                    1
+                    [{:tool-events [{:op :test/observe}]}]
+                    [:ir {}]
+                    [])))))
 
 (defdescribe iteration-start-hook-test
   (it "collects active :turn.iteration/start hook hints and ignores other phases"
