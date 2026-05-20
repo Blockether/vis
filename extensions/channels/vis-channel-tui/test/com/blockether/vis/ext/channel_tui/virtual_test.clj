@@ -98,12 +98,20 @@
                    (partition-all 12)
                    (mapv (fn [chunk]
                            {:thinking "synthetic 9a55 reasoning chunk"
-                            :code (mapv :code chunk)
-                            :results (mapv :result chunk)
-                            :result-kinds (mapv :kind chunk)
-                            :result-details (mapv :detail chunk)
-                            :durations (vec (repeat (count chunk) 1))
-                            :successes (vec (repeat (count chunk) true))})))]
+                            :forms (vec
+                                     (map-indexed
+                                       (fn [idx {:keys [code result kind detail]}]
+                                         {:position        idx
+                                          :engine-idx      idx
+                                          :code            code
+                                          :result-render   result
+                                          :result-kind     kind
+                                          :result-detail   detail
+                                          :duration-ms     1
+                                          :success?        true
+                                          :silent?         false
+                                          :running?        false})
+                                       chunk))})))]
     {:role :assistant
      :ir (markdown->ir "done")
      :text "done"
