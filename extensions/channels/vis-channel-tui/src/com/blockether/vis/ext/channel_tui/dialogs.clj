@@ -1954,7 +1954,7 @@
   ([sessions active-id body-w]
    (mapv (fn [session]
            {:action :switch
-            :id     (str (:id session))
+            :id     (:id session)              ; UUID — downstream (switch-session!) accepts both
             :label  (session-dialog-label session active-id body-w)})
      sessions)))
 

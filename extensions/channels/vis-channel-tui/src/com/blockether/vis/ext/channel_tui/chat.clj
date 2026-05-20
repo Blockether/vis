@@ -372,27 +372,27 @@
      {:id id :history []})))
 
 (defn- resolve-resume-id
-  "Resolve a resume id. Accepts full UUID or an unambiguous prefix
-   among :tui sessions. Returns full UUID string or nil."
+  "Resolve a resume id to a full `java.util.UUID`, or nil. Accepts a
+   full UUID or an unambiguous prefix among :tui sessions."
   [session-id]
   (let [cid (some-> session-id str str/trim)]
     (when (seq cid)
-      (or (some-> (vis/by-id cid) :id str)
+      (or (some-> (vis/by-id cid) :id)        ; UUID
         (let [matches (->> (vis/by-channel :tui)
                         (map :id)
                         (filter #(str/starts-with? (str %) cid))
                         vec)]
           (when (= 1 (count matches))
-            (str (first matches))))))))
+            (first matches)))))))
 
 (defn resume-session
   "Resume an existing session by id.
    Accepts full UUID or unambiguous short UUID prefix.
-   Returns `{:id session-id :history [...]}` with persisted messages."
+   Returns `{:id UUID :history [...]}` with persisted messages."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
     (when-let [session (vis/by-id resolved-id)]
-      {:id (str (:id session)) :history (rebuild-history (str (:id session)))})))
+      {:id (:id session) :history (rebuild-history (:id session))})))
 
 (defn turn!
   "Send a user request through the shared sessions cache. Blocking.
