@@ -1217,19 +1217,6 @@
       (:elapsed-ms event)    (assoc :elapsed_ms (long (:elapsed-ms event)))
       (:at-ms event)         (assoc :at_ms (long (:at-ms event))))))
 
-(defn- extension-snapshot-row
-  [iteration-id-s now ext]
-  (let [name-s (some-> (:name ext) str)]
-    (when name-s
-      (cond-> {:id                        (new-id)
-               :session_turn_iteration_id iteration-id-s
-               :extension_name            name-s
-               :created_at                now}
-        (:version ext)            (assoc :extension_version (str (:version ext)))
-        (:source-paths ext)       (assoc :source_paths (->json (:source-paths ext)))
-        (:source-mtime-max ext)   (assoc :source_mtime_max (long (:source-mtime-max ext)))
-        (:source-hash-sha256 ext) (assoc :source_sha256 (:source-hash-sha256 ext))))))
-
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
   "Store one iteration row + per-`(def ...)` definition_soul/definition_state
@@ -1251,7 +1238,7 @@
 
    Returns the iteration UUID."
   [db-info {:keys [session-turn-id thinking answer duration-ms vars dependencies error
-                   llm-routing engine-timing extension-snapshots cache-created-tokens
+                   llm-routing engine-timing cache-created-tokens
                    llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
             :as opts}]
@@ -1291,7 +1278,6 @@
                                 :where  [:= :session_turn_state_id session-turn-state-id-s]}))
                           1)
               routing llm-routing
-              extension-snapshots (seq extension-snapshots)
               raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the single-form code payload inline.
           ;;    Hard cut: callers pass flat :code/:result/:error.
@@ -1311,7 +1297,8 @@
                                         :llm_full_duration_ms (or duration-ms 0)
                                         :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
                                         :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                        :engine_timing        (when engine-timing (->json engine-timing))
+                                        :engine_provider_call_ms      (some-> (:provider-call-ms engine-timing) long)
+                                        :engine_response_preflight_ms (some-> (:response-preflight-ms engine-timing) long)
                                         :llm_executable_code_blocks (when (some? llm-executable-blocks)
                                                                       (->json (vec llm-executable-blocks)))
                                         :llm_assistant_message (when (some? llm-assistant-message)
@@ -1340,10 +1327,6 @@
               (execute! tx-info
                 {:insert-into :llm_routing_event
                  :values [(routing-event-row iteration-id-s now idx event)]}))
-            (doseq [row (keep #(extension-snapshot-row iteration-id-s now %) extension-snapshots)]
-              (execute! tx-info
-                {:insert-into :runtime_extension_snapshot
-                 :values [row]}))
             ;; Index thinking manually; code itself is indexed by schema triggers.
             (let [thinking-s (str/trim (or thinking ""))]
               (when-not (= "" thinking-s)
@@ -1606,8 +1589,12 @@
       (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
       (some? (:llm_returned_empty_code row))
       (assoc :returned-empty-code? (= 1 (long (:llm_returned_empty_code row))))
-      (some? (:engine_timing row))
-      (assoc :engine-timing (<-json (:engine_timing row)))
+      (or (some? (:engine_provider_call_ms row)) (some? (:engine_response_preflight_ms row)))
+      (assoc :engine-timing (cond-> {}
+                              (some? (:engine_provider_call_ms row))
+                              (assoc :provider-call-ms (long (:engine_provider_call_ms row)))
+                              (some? (:engine_response_preflight_ms row))
+                              (assoc :response-preflight-ms (long (:engine_response_preflight_ms row)))))
       ;; Token / cost columns - ALWAYS present on the read side, with
       ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
       ;; is NULL. Callers can assume `(:input-tokens it)` is a long

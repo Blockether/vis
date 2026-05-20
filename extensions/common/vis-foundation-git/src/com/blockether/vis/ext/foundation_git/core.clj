@@ -124,9 +124,12 @@
    (git-diff-fn env nil))
   ([env opts]
    (when (and (some? opts) (not (map? opts)))
-     (throw (ex-info "v/git-diff opts must be a map when provided"
+     (throw (ex-info (str "v/git-diff expected optional opts map, got " (pr-str opts) ". "
+                       "Call (v/git-diff) or (v/git-diff {:stat? true}).")
               {:type :foundation-git/invalid-opts
-               :opts opts})))
+               :opts opts
+               :expected "nil or map"
+               :examples ["(v/git-diff)" "(v/git-diff {:stat? true})"]})))
    (let [root      (env-root env)
          ws-id     (:workspace/id env)
          db-info   (:db-info env)

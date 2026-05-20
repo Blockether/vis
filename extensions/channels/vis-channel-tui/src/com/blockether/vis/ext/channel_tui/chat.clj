@@ -39,6 +39,21 @@
     (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s))
       s)))
 
+(defn- title-recap
+  [value]
+  (let [title (some-> value str str/trim not-empty)]
+    (if title
+      (str "Title changed to \"" title "\".")
+      "Title changed.")))
+
+(defn- render-segment-recaps
+  [segments]
+  (->> segments
+    (keep (fn [{:keys [kind value]}]
+            (when (= :title kind)
+              (title-recap value))))
+    vec))
+
 (defn user-message
   "Create a structured user message with timestamp.
    The user types raw markdown into the input box; we lift it to
@@ -329,7 +344,8 @@
                                           :errors    (mapv :error exprs)
                                           :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)
-                                          :silents   silents})))
+                                          :silents   silents
+                                          :recaps    (render-segment-recaps (:render-segments it))})))
                                 turn-iterations)
                         ;; `:prior-outcome :cancelled` is how the
                         ;; persistance layer marks an aborted turn (the
