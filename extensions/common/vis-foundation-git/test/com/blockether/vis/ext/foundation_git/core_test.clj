@@ -28,6 +28,6 @@
       (catch clojure.lang.ExceptionInfo e
         (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
         (expect (clojure.string/includes? (ex-message e)
-                  "v/git-diff expected optional opts map, got :bad"))
+                  "git/diff expected optional opts map, got :bad"))
         (expect (clojure.string/includes? (ex-message e)
-                  "Call (v/git-diff) or (v/git-diff {:stat? true})."))))))
+                  "Call (git/diff) or (git/diff {:stat? true})."))))))
