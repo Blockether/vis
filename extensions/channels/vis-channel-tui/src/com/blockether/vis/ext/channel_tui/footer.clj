@@ -422,11 +422,15 @@
    :region :center
    :priority priority})
 
+(defn- workspace-switching-available?
+  [{:keys [workspaces]}]
+  (> (count workspaces) 1))
+
 (defn- build-subtitle-segments
   "Context-sensitive helper strip below the input box. Kept out of
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
-  [{:keys [loading? cancelling? input]} _now-ms]
+  [{:keys [loading? cancelling? input] :as db} _now-ms]
   (cond
     cancelling?
     [(subtitle-segment "Cancelling... please wait" 1)]
@@ -435,18 +439,20 @@
     [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
 
     (input-empty? input)
-    [(subtitle-segment "Alt+Enter newline" 2)
-     (subtitle-segment "↑↓ history" 2)
-     (subtitle-segment "Shift+Tab tabs" 3)
-     (subtitle-segment "Ctrl+B voice" 1)
-     (subtitle-segment "Ctrl+G sessions" 1)
-     (subtitle-segment "Ctrl+K menu" 1)]
+    (cond-> [(subtitle-segment "Alt+Enter newline" 2)
+             (subtitle-segment "↑↓ history" 2)
+             (subtitle-segment "Ctrl+B voice" 1)
+             (subtitle-segment "Ctrl+G sessions" 1)
+             (subtitle-segment "Ctrl+K menu" 1)]
+      (workspace-switching-available? db)
+      (conj (subtitle-segment "Shift+Tab workspaces" 3)))
 
     :else
-    [(subtitle-segment "Shift+Tab tabs" 3)
-     (subtitle-segment "Ctrl+B voice" 1)
-     (subtitle-segment "Ctrl+G sessions" 1)
-     (subtitle-segment "Ctrl+K menu" 1)]))
+    (cond-> [(subtitle-segment "Ctrl+B voice" 1)
+             (subtitle-segment "Ctrl+G sessions" 1)
+             (subtitle-segment "Ctrl+K menu" 1)]
+      (workspace-switching-available? db)
+      (conj (subtitle-segment "Shift+Tab workspaces" 3)))))
 
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;

@@ -639,4 +639,15 @@
       ;; first line carries the underlying class name.
       (expect (string? (get-in out [:error :trace])))
       (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
-      (expect (not (contains? out :markdown))))))
+      (expect (not (contains? out :markdown)))))
+
+  (it "empty v/patch batches surface as canonical failure envelopes"
+    (let [patch-symbol (private-fn "patch-symbol")
+          on-error     (:ext.symbol/on-error-fn patch-symbol)
+          err          (ex-info "v/patch requires at least one edit; empty patch batches are bugs, not success"
+                         {:type :ext.foundation.editing/empty-patch})
+          out          (:result (on-error err nil nil [[]]))]
+      (expect (false? (:success? out)))
+      (expect (= :v/patch (:symbol out)))
+      (expect (= :op.tag/mutation (:tag out)))
+      (expect (= :ext.foundation.editing/empty-patch (get-in out [:error :data :type]))))))

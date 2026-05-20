@@ -119,6 +119,17 @@
       (expect (str/includes? err "mutation tool(s) ran"))
       (expect (str/includes? err ":test/mutate"))))
 
+  (it "rejects done in the same iteration as any editing mutation op"
+    (doseq [op [:v/patch :v/create-dirs :v/copy :v/move :v/delete :v/delete-if-exists]]
+      (extension/register-op! op {:tag :op.tag/mutation})
+      (let [err (lp/final-answer-gate-error {}
+                  1
+                  [{:tool-events [{:op op}]}]
+                  [:ir {}]
+                  [])]
+        (expect (string? err))
+        (expect (str/includes? err (pr-str op))))))
+
   (it "allows done after observation-only tool events"
     (extension/register-op! :test/observe {:tag :op.tag/observation})
     (expect (nil? (lp/final-answer-gate-error {}
