@@ -960,7 +960,6 @@
 (def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
 (def ^:private code-err-pad-marker p/MARKER_CODE_ERR_PAD)
 (def ^:private iteration-pad-marker   p/MARKER_ITERATION_PAD)
-(def ^:private provider-fallback-marker p/MARKER_PROVIDER_FALLBACK)
 (def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
 (def ^:private answer-txt-marker p/MARKER_ANSWER_TXT)
 (def ^:private answer-pad-marker p/MARKER_ANSWER_PAD)
@@ -1823,13 +1822,6 @@
                     (do (p/set-colors! g t/iteration-header-fg bg-color)
                       (p/put-str! g x y (subs line 1)))
 
-              ;; ── Provider fallback - yellow warning band ──
-                    (str/starts-with? line provider-fallback-marker)
-                    (let [raw (subs line 1)]
-                      (p/set-colors! g t/warning-fg t/warning-bg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/put-str! g x y raw))
-
               ;; ── Thinking - dimmed bg, italic ──
               ;; Inline span sentinels (**bold** etc.) embedded in
               ;; thinking-mode prose are honoured via paint-styled-line!
@@ -2458,71 +2450,93 @@
        (subs s 0 (min 64 n))
        (subs s (max 0 (- n 256)))])))
 
+(defn- legacy-iteration->forms
+  "Convert legacy progress entries (`:code`, `:results`, ...) to canonical
+   `:forms`. No-op when `:forms` already exists."
+  [entry]
+  (if (contains? entry :forms)
+    entry
+    (let [codes (or (:code entry) [])
+          n     (apply max 0 (map count [(or (:code entry) [])
+                                         (or (:comments entry) [])
+                                         (or (:render-segments entry) [])
+                                         (or (:results entry) [])
+                                         (or (:result-kinds entry) [])
+                                         (or (:result-details entry) [])
+                                         (or (:errors entry) [])
+                                         (or (:durations entry) [])
+                                         (or (:successes entry) [])
+                                         (or (:started-at-ms entry) [])
+                                         (or (:silents entry) [])]))
+          at    (fn [k idx] (get (or (k entry) []) idx))]
+      (assoc entry :forms
+        (mapv (fn [idx]
+                {:position        idx
+                 :engine-idx      idx
+                 :code            (get codes idx)
+                 :comment         (at :comments idx)
+                 :render-segments (at :render-segments idx)
+                 :result-render   (at :results idx)
+                 :result-kind     (at :result-kinds idx)
+                 :result-detail   (at :result-details idx)
+                 :error           (at :errors idx)
+                 :duration-ms     (at :durations idx)
+                 :success?        (at :successes idx)
+                 :started-at-ms   (at :started-at-ms idx)
+                 :silent?         (boolean (at :silents idx))
+                 :running?        (and (some? (at :started-at-ms idx))
+                                    (nil? (at :successes idx)))})
+          (range n))))))
+
 (defn- iteration-running?
-  "True when at least one block in the iteration has started but not
+  "True when at least one form in the iteration has started but not
    yet completed. Drives the per-iteration cache key: iterations with
-   running blocks include a 1-second time bucket so the `↻ Ns`
+   running forms include a 1-second time bucket so the `↻ Ns`
    running-duration label refreshes; fully-done iterations cache
    forever (until LRU eviction)."
-  [{:keys [started-at-ms successes]}]
+  [{:keys [forms]}]
   (boolean
-    (some (fn [^long idx]
-            (and (some? (get started-at-ms idx))
-              (nil? (get successes idx))))
-      (range (max (count (or started-at-ms []))
-               (count (or successes [])))))))
-
-(defn- drop-indexes
-  [v idxs]
-  (if (and (vector? v) (seq idxs))
-    (reduce-kv (fn [acc idx x]
-                 (if (contains? idxs idx)
-                   acc
-                   (conj acc x)))
-      []
-      v)
-    v))
+    (some (fn [{:keys [started-at-ms success?]}]
+            (and (some? started-at-ms) (nil? success?)))
+      (or forms []))))
 
 (defn- visible-iteration-entry
+  "Filter `:forms` down to visibly-running/completed entries. When
+   `show-silent?` is true the entry passes through unchanged; otherwise
+   `:silent?` slots drop out."
   [entry show-silent?]
   (if show-silent?
     entry
-    (let [hidden-idxs (into #{}
-                        (keep-indexed (fn [idx silent?]
-                                        (when silent? idx)))
-                        (or (:silents entry) []))]
-      (if (empty? hidden-idxs)
-        entry
-        (reduce (fn [e k]
-                  (update e k drop-indexes hidden-idxs))
-          entry
-          [:code :comments :render-segments :results :result-kinds :result-details
-           :errors :durations :successes :started-at-ms :silents])))))
+    (update entry :forms (fn [forms] (vec (remove :silent? (or forms [])))))))
+
+(defn- form-fingerprint
+  "Content-derived fingerprint of one form map. Captures every field
+   the iteration renderer reads."
+  [{:keys [code comment render-segments result-render result-kind result-detail
+           error duration-ms success? silent? started-at-ms]}]
+  [(text-fingerprint code)
+   (text-fingerprint comment)
+   render-segments
+   (text-fingerprint result-render)
+   result-kind
+   ;; result-detail is a small op-metadata map; compared structurally.
+   result-detail
+   error
+   duration-ms
+   success?
+   silent?
+   started-at-ms])
 
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
    field `format-iteration-entry-entries` reads. No `identityHashCode`
-   anywhere - identical content always produces identical fingerprint,
+   anywhere — identical content always produces identical fingerprint,
    so completed iterations hit the cache forever even when the parent
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
-  [{:keys [thinking code comments render-segments results result-kinds result-details
-           errors durations successes started-at-ms silents recaps
-           provider-fallbacks error repeat-count]}]
+  [{:keys [thinking forms recaps provider-fallbacks error repeat-count]}]
   [(text-fingerprint thinking)
-   (mapv text-fingerprint code)
-   (mapv text-fingerprint comments)
-   render-segments
-   (mapv text-fingerprint results)
-   result-kinds
-   ;; result-details are small op-metadata maps with subprocess
-   ;; payloads inline. Compared structurally - cheap.
-   result-details
-   errors
-   durations
-   successes
-   started-at-ms
-   silents
+   (mapv form-fingerprint forms)
    recaps
    provider-fallbacks
    (when error (select-keys error [:type :message]))
@@ -3073,14 +3087,16 @@
       segments)))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking code comments render-segments results result-kinds result-details errors durations successes started-at-ms recaps provider-fallbacks error repeat-count]}
+  [entry
    code-width iteration-number
    & [{:keys [show-header? session-id detail-expansions session-turn-id now-ms live-preview?]
        :or   {show-header? false live-preview? false}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
-  (let [_ show-header?
+  (let [{:keys [thinking forms recaps provider-fallbacks error repeat-count]}
+        (legacy-iteration->forms entry)
+        _ show-header?
         fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
         header      []
@@ -3188,12 +3204,11 @@
                      (or raw-rows [])
                      [(line-entry (str code-err-pad-marker ""))])))))
         form-lines
-        (fn [idx block-number]
-          (let [form          (when code (get code idx))
-                success?      (when successes (get successes idx))
+        (fn [form block-number]
+          (let [{:keys [code comment render-segments result-render result-kind result-detail
+                        error duration-ms started-at-ms success?]} form
                 has-status?   (some? success?)
                 is-error?     (and has-status? (not success?))
-                duration-ms   (when durations (get durations idx))
                 duration-str  (vis/format-duration duration-ms)
                 ;; BLOCK N header removed per user directive (also gated
                 ;; on `show-header?` which is now always false). Keep
@@ -3201,9 +3216,8 @@
                 ;; show-header? ...)` branch is dead but type-safe.
                 _expr-num     block-number
                 expr-hdr      ""
-                running-start (when started-at-ms (get started-at-ms idx))
-                running-ms    (when (and running-start now-ms)
-                                (max 0 (- (long now-ms) (long running-start))))
+                running-ms    (when (and started-at-ms now-ms)
+                                (max 0 (- (long now-ms) (long started-at-ms))))
                 running-ms    (when running-ms (* 1000 (quot running-ms 1000)))
                 running-str   (or (some-> running-ms vis/format-duration) "0ms")
                 status-text   (if has-status?
@@ -3221,24 +3235,21 @@
                                 is-error? code-err-pad-marker
                                 success?  code-ok-pad-marker
                                 :else     code-pad-marker)
-                comment-text  (some-> comments (get idx))
-                comment-lines (when (and (string? comment-text)
-                                      (not (str/blank? comment-text)))
-                                (let [trimmed (str/trim comment-text)
+                comment-lines (when (and (string? comment)
+                                      (not (str/blank? comment)))
+                                (let [trimmed   (str/trim comment)
                                       ;; Form comments sit in their own thinking-style band above
                                       ;; the code block. Give the visible text the same one-column
                                       ;; left breathing room as code rows, without shifting all
                                       ;; reasoning/thinking rows globally.
                                       comment-w (max 1 (dec fill-w))
-                                      wrapped (mapcat (fn [line] (wrap-text line comment-w))
-                                                (str/split-lines trimmed))]
+                                      wrapped   (mapcat (fn [line] (wrap-text line comment-w))
+                                                  (str/split-lines trimmed))]
                                   (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
-                segments      (when render-segments (get render-segments idx))
-                title-lines   (render-segment-title-entries line-entry segments fill-w)
-                code-text     (str/trim (or (code-source-from-render-segments segments form) ""))
-                error-map     (when errors (get errors idx))
-                inline-error-code-lines (when error-map
-                                          (inline-error-context-lines code-text error-map))
+                title-lines   (render-segment-title-entries line-entry render-segments fill-w)
+                code-text     (str/trim (or (code-source-from-render-segments render-segments code) ""))
+                inline-error-code-lines (when error
+                                          (inline-error-context-lines code-text error))
                 formatted     (format-clojure-ansi code-text fill-w)
                 code-lines    (or inline-error-code-lines
                                 (str/split-lines formatted))
@@ -3252,20 +3263,17 @@
                                 (mapv #(line-entry (str c-marker %)) code-lines)
                                 code-node-id
                                 code-text)
-                result-str      (when results (get results idx))
-                result-kind     (when result-kinds (get result-kinds idx))
                 raw-result-text (if (and (= :value result-kind)
                                       (not is-error?)
-                                      (not (channel-ir? result-str)))
-                                  (format-clojure-plain result-str fill-w)
-                                  result-str)
+                                      (not (channel-ir? result-render)))
+                                  (format-clojure-plain result-render fill-w)
+                                  result-render)
                 result-text     (if (and raw-result-text (not is-error?) (string? raw-result-text))
                                   (strip-markdown-fence-marker-lines raw-result-text)
                                   raw-result-text)
-                result-detail   (when result-details (get result-details idx))
-                inline-error-message-lines (when error-map
+                inline-error-message-lines (when error
                                              (mapv #(line-entry (str c-marker %))
-                                               (wrap-text (form-error-headline error-map) fill-w)))
+                                               (wrap-text (form-error-headline error) fill-w)))
                 tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
                 result-lines  (when (and result-text (not (str/blank? (str result-text))))
@@ -3310,31 +3318,27 @@
                 result-margin nil]
             (vec (concat code-block result-margin result-lines))))
         grouped
-        (when (seq code)
+        (when (seq forms)
           (let [code+result-lines
                 (into []
-                  (mapcat (fn [[idx _form]]
+                  (mapcat (fn [[idx form]]
                             (concat
                               (when (pos? idx) [(line-entry (str iteration-pad-marker ""))])
-                              (form-lines idx (inc idx))))
-                    (map-indexed vector code)))]
+                              (form-lines form (inc idx))))
+                    (map-indexed vector forms)))]
             (when (seq code+result-lines)
               (vec (concat
                      [(line-entry (str iteration-pad-marker ""))]
                      code+result-lines
                      [(line-entry (str iteration-pad-marker ""))])))))
         body (or grouped [])
-        fallback-lines (when (seq provider-fallbacks)
-                         (vec (concat [(line-entry "")]
-                                (mapcat (fn [notice]
-                                          (map #(line-entry (str provider-fallback-marker " " %))
-                                            (wrap-text (format-fallback-notice notice) (max 1 (dec fill-w)))))
-                                  provider-fallbacks))))
         trailing-errors (error-lines)]
-    ;; Layout: header (with optional ITERATION-N label) + recap lines + provider
-    ;; fallback notices + collected thinking lines + any error rows + body
-    ;; (per-form code/result pairs). Resume / live share the same flat layout.
-    (into (vec (concat header recap-lines fallback-lines (thinking-lines thinking) trailing-errors))
+    ;; Layout: header (with optional ITERATION-N label) + recap lines
+    ;; (which already include provider-fallback notices and any
+    ;; provider-error recap) + collected thinking lines + any error
+    ;; rows + body (per-form code/result pairs). Resume / live share
+    ;; the same flat layout.
+    (into (vec (concat header recap-lines (thinking-lines thinking) trailing-errors))
       body)))
 
 (defn format-iteration-entry
@@ -3382,7 +3386,7 @@
         thinking?      (and (not errored?)
                          (some? (:thinking last-iteration))
                          (not (str/blank? (:thinking last-iteration))))
-        executing?     (and (not errored?) last-iteration (seq (:code last-iteration)))]
+        executing?     (and (not errored?) last-iteration (seq (:forms (legacy-iteration->forms last-iteration))))]
     (cond
       cancelling? "Vis is cancelling"
       errored?    (let [label (prettify-error-type err)]
@@ -3405,7 +3409,8 @@
            session-turn-id detail-expansions live? suppress-trace?]
     :or   {live? false suppress-trace? false}}]
   (let [raw-iterations (or iterations [])
-        iterations     (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
+        iterations     (mapv legacy-iteration->forms
+                         (if (vector? raw-iterations) raw-iterations (vec raw-iterations)))
         show-thinking? (get settings :show-thinking true)
         show-iterations? (get settings :show-iterations true)
         show-silent?   (get settings :show-silent false)
@@ -3421,7 +3426,7 @@
                                (and (pos? kept) (>= acc budget)) kept
                                :else
                                (let [it (nth iterations i)
-                                     n-code (long (count (or (:code it) [])))
+                                     n-code (long (count (or (:forms it) [])))
                                      thinking-rows (quot (count (or (:thinking it) "")) 80)
                                      rows (+ 6 (* 12 n-code) thinking-rows)]
                                  (recur (dec i) (+ acc rows) (inc kept)))))))

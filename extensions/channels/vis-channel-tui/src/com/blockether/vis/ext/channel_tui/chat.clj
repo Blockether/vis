@@ -54,6 +54,146 @@
               (title-recap value))))
     vec))
 
+(defn- visible-code-segments?
+  "True when an iteration block has at least one `:code` segment that
+   should reach the user. Mirrors the live progress predicate."
+  [b]
+  (boolean (some #(= :code (:kind %)) (:render-segments b))))
+
+(defn- structurally-silent-block?
+  "True for host-bookkeeping forms that should never appear in user
+   traces (answer-emission / title updates / mixed blocks where the
+   visible segment is purely structural)."
+  [b]
+  (let [code    (str (:code b))
+        trimmed (str/triml code)]
+    (boolean
+      (or (:vis/structurally-silent? b)
+        (str/starts-with? trimmed "(done")
+        (and (not (visible-code-segments? b))
+          (or (str/includes? code "(set-session-title!")
+            (str/includes? code "(done")))
+        (and (= :vis/silent (:result b))
+          (not (seq (:render-segments b)))
+          (or (str/includes? code "(set-session-title!")
+            (str/includes? code "(done")))))))
+
+(defn- form-result-kind
+  [{:keys [result error]}]
+  (cond
+    error                            :error
+    (extension/tool-result? result)  :tool
+    :else                            :value))
+
+(defn- form-result-detail
+  "Project tool-result envelope to the small detail map the TUI labels
+   consume. Returns nil for non-tool results."
+  [{:keys [result]}]
+  (when (extension/tool-result? result)
+    (let [metadata (:metadata result)]
+      (merge (select-keys result [:symbol :tag])
+        (select-keys metadata [:spec :paths :hit-count :truncated-by
+                               :command :cwd :target])))))
+
+(defn- form-result-render
+  "Render the form's result for the trace bubble. Mirrors the live
+   progress `format-form-result` chokepoint but resolves restored
+   def values for runtime-ref placeholders."
+  [restored-values {:keys [result error channel code]}]
+  (let [restored (when (history-restore/runtime-ref? result)
+                   (history-restore/restored-def-result restored-values code))]
+    (cond
+      error nil
+      (seq channel)
+      ;; Per-form sink entries: walk each, surface pre-rendered IR on
+      ;; success, format the error map on failure. Sort by `:position`
+      ;; so racy futures land in canonical source order.
+      (extension/combine-render-values
+        (map (fn [{:keys [success? result error]}]
+               (if success?
+                 result
+                 (extension/default-error-ir
+                   {:success? false :result nil :info {} :error error})))
+          (sort-by :position channel)))
+      restored                         restored
+      (= :vis/answer result)           nil
+      (history-restore/runtime-ref? result)
+      "<runtime value; re-evaluate expression to restore>"
+      (extension/tool-result? result)
+      (extension/render-tool-result result)
+      :else                            (fmt/bounded-value-str result))))
+
+(defn- block->form-record
+  "Materialize one DB-iteration block into a `:forms` entry. The shape
+   matches the live progress tracker's per-form map so the renderer
+   uses one code path for live and resumed traces."
+  [restored-values display-idx block]
+  {:position        display-idx
+   :engine-idx      (:position block)
+   :code            (:code block)
+   :comment         (:comment block)
+   :render-segments (:render-segments block)
+   :started-at-ms   nil
+   :duration-ms     (or (:duration-ms block) 0)
+   :result-render   (form-result-render restored-values block)
+   :result-kind     (form-result-kind block)
+   :result-detail   (form-result-detail block)
+   :error           (:error block)
+   :success?        (nil? (:error block))
+   :silent?         (and (nil? (:error block))
+                      (or (:vis/silent block)
+                        (= :vis/silent (:result block))
+                        (structurally-silent-block? block)))
+   :running?        false})
+
+(defn- it->iteration-entry
+  "Turn one persisted iteration row into the same shape the live
+   progress tracker produces — a map carrying `:thinking`, `:forms`,
+   `:recaps`, and `:provider-fallbacks`. The renderer consumes both
+   live and resumed traces through this single shape."
+  [restored-values {:keys [produced-answer? last-iteration-id]} it]
+  (let [code        (or (:code it) "")
+        ;; `:render-segments` is a derived view of `:code`. NOT stored
+        ;; in the DB; rederived on every render via the pure
+        ;; `parse-block-display` parser so display logic stays driven
+        ;; by the same classifier that gates the live channel.
+        segments    (vis/parse-block-display code)
+        all-blocks  [(cond-> {:position 0 :code code}
+                       (contains? it :result) (assoc :result (:result it))
+                       (contains? it :error) (assoc :error (:error it))
+                       (contains? it :channel) (assoc :channel (:channel it))
+                       (seq segments) (assoc :render-segments segments)
+                       (contains? it :duration-ms) (assoc :duration-ms (:duration-ms it)))]
+        answer-here? (and produced-answer?
+                       (= (:id it) last-iteration-id)
+                       (seq all-blocks))
+        preflight-idxs (into #{}
+                         (keep-indexed (fn [i b] (when (:vis/preflight? b) i)))
+                         all-blocks)
+        answer-idx  (when answer-here?
+                      (let [idx   (or (:answer-position it)
+                                    (dec (count all-blocks)))
+                            block (when (and (integer? idx) (not (neg? idx))
+                                          (< idx (count all-blocks)))
+                                    (get all-blocks idx))]
+                        (when (and block
+                                (not (visible-code-segments? block))
+                                (or (= :vis/answer (:result block))
+                                  (str/includes? (str (:code block)) "(done")))
+                          idx)))
+        elide-idxs  (cond-> preflight-idxs
+                      (some? answer-idx) (conj answer-idx))
+        visible     (into [] (keep-indexed (fn [idx b]
+                                             (when-not (contains? elide-idxs idx) b)))
+                      all-blocks)
+        forms       (vec (map-indexed (fn [idx b] (block->form-record restored-values idx b))
+                           visible))]
+    {:position           (when-let [p (:position it)] (dec (long p)))
+     :thinking           (visible-thinking (:thinking it))
+     :provider-fallbacks (:llm-routing-trace it)
+     :forms              forms
+     :recaps             (render-segment-recaps (:render-segments it))}))
+
 (defn user-message
   "Create a structured user message with timestamp.
    The user types raw markdown into the input box; we lift it to
@@ -223,152 +363,9 @@
                         ;; their assistant message but elide the
                         ;; answer-bearing form differently.
                         produced-answer? (not (str/blank? answer-md))
-                        trace (into []
-                                (map (fn [it]
-                                       (let [;; `:render-segments` is a derived view of `:code`
-                                             ;; (top-level form classification). NOT stored in
-                                             ;; the DB — rederived on every render via the
-                                             ;; pure `parse-block-display` parser so display
-                                             ;; logic stays driven by the same classifier
-                                             ;; that gates the live channel, with zero
-                                             ;; serialization drift.
-                                             code (or (:code it) "")
-                                             segments (vis/parse-block-display code)
-                                             all-exprs   [(cond-> {:position 0
-                                                                   :code code}
-                                                            (contains? it :result) (assoc :result (:result it))
-                                                            (contains? it :error) (assoc :error (:error it))
-                                                            (contains? it :channel) (assoc :channel (:channel it))
-                                                            (seq segments) (assoc :render-segments segments)
-                                                            (contains? it :duration-ms)
-                                                            (assoc :duration-ms (:duration-ms it)))]
-                                             answer-here? (and produced-answer?
-                                                            (= (:id it) last-iteration-id)
-                                                            (seq all-exprs))
-                                             ;; Elide:
-                                             ;; 1. the `(done "...")` form on the answer iteration
-                                             ;;    (rule b': always last form)
-                                             ;; 2. any block tagged `:vis/preflight?` — those are
-                                             ;;    synthetic gate rejections, model-facing only,
-                                             ;;    never displayed to the user.
-                                             ;; 3. structurally-silent host bookkeeping such as
-                                             ;;    `(set-session-title! ...)` and answer
-                                             ;;    emission forms. They affect chrome/final answer,
-                                             ;;    but should not render as normal trace code.
-                                             ;; Other successful `:vis/silent` forms are retained
-                                             ;; and marked in `:silents`; the TUI setting decides
-                                             ;; whether to render them.
-                                             visible-code-segments?
-                                             (fn [b]
-                                               (boolean (some #(= :code (:kind %)) (:render-segments b))))
-                                             structurally-silent-block?
-                                             (fn [b]
-                                               (let [code (str (:code b))
-                                                     trimmed (str/triml code)]
-                                                 (boolean
-                                                   (or (:vis/structurally-silent? b)
-                                                     (str/starts-with? trimmed "(done")
-                                                     (and (not (visible-code-segments? b))
-                                                       (or (str/includes? code "(set-session-title!")
-                                                         (str/includes? code "(done")))
-                                                     (and (= :vis/silent (:result b))
-                                                       (not (seq (:render-segments b)))
-                                                       (or (str/includes? code "(set-session-title!")
-                                                         (str/includes? code "(done")))))))
-                                             preflight-idxs (into #{}
-                                                              (keep-indexed
-                                                                (fn [i b] (when (:vis/preflight? b) i)))
-                                                              all-exprs)
-                                             answer-idx  (when answer-here?
-                                                           (let [idx (or (:answer-position it)
-                                                                       (dec (count all-exprs)))
-                                                                 block (when (and (integer? idx)
-                                                                               (not (neg? idx))
-                                                                               (< idx (count all-exprs)))
-                                                                         (get all-exprs idx))]
-                                                             (when (and block
-                                                                     (not (visible-code-segments? block))
-                                                                     (or (= :vis/answer (:result block))
-                                                                       (str/includes? (str (:code block)) "(done")))
-                                                               idx)))
-                                             elide-idxs  (cond-> preflight-idxs
-                                                           (some? answer-idx) (conj answer-idx))
-                                             exprs       (into []
-                                                           (keep-indexed
-                                                             (fn [idx expr]
-                                                               (when-not (contains? elide-idxs idx)
-                                                                 expr)))
-                                                           all-exprs)
-                                             code-exprs  (if (and (seq exprs)
-                                                               (every? structurally-silent-block? exprs))
-                                                           []
-                                                           exprs)
-                                             result-kind (fn [{:keys [result error]}]
-                                                           (cond
-                                                             error :error
-                                                             (extension/tool-result? result) :tool
-                                                             :else :value))
-                                             tool-result-detail
-                                             (fn [result]
-                                               (when (extension/tool-result? result)
-                                                 (let [metadata (:metadata result)]
-                                                   (merge (select-keys result [:symbol :tag])
-                                                     (select-keys metadata [:spec :paths :hit-count :truncated-by
-                                                                            :command :cwd :target])))))
-                                             result-strs (mapv (fn [{:keys [result error channel code]}]
-                                                                 (let [restored (when (history-restore/runtime-ref? result)
-                                                                                  (history-restore/restored-def-result restored-values code))]
-                                                                   (cond
-                                                                     error nil
-                                                                     (seq channel)
-                                                                     ;; Per-form sink entries: walk each, surface
-                                                                     ;; pre-rendered IR on success, format the
-                                                                     ;; error map on failure. Same shape as the live
-                                                                     ;; progress path in `internal/progress.clj`. Sort
-                                                                     ;; by :position so racy futures land in canonical
-                                                                     ;; source order. This must win over `{:vis/ref :expr}`:
-                                                                     ;; `(def x (v/cat ...))` cannot persist the live var value,
-                                                                     ;; but its tool-rendered channel text is durable and should
-                                                                     ;; be shown when resuming history.
-                                                                     (extension/combine-render-values
-                                                                       (map (fn [{:keys [success? result error]}]
-                                                                              (if success?
-                                                                                result
-                                                                                (extension/default-error-ir
-                                                                                  {:success? false :result nil :info {} :error error})))
-                                                                         (sort-by :position channel)))
-                                                                     restored restored
-                                                                     (= :vis/answer result) nil
-                                                                     (history-restore/runtime-ref? result)
-                                                                     "<runtime value; re-evaluate expression to restore>"
-                                                                     (extension/tool-result? result)
-                                                                     (extension/render-tool-result result)
-                                                                     :else (fmt/bounded-value-str result))))
-                                                           exprs)
-                                             result-details (mapv (fn [expr]
-                                                                    (tool-result-detail (:result expr)))
-                                                              exprs)
-                                             durations   (mapv #(or (:duration-ms %) 0) exprs)
-                                             silents     (mapv (fn [expr]
-                                                                 (and (nil? (:error expr))
-                                                                   (or (:vis/silent expr)
-                                                                     (= :vis/silent (:result expr))
-                                                                     (structurally-silent-block? expr))))
-                                                           exprs)]
-                                         {:position  (when-let [p (:position it)] (dec (long p)))
-                                          :thinking  (visible-thinking (:thinking it))
-                                          :provider-fallbacks (:llm-routing-trace it)
-                                          :code      (mapv :code code-exprs)
-                                          :comments  (mapv :comment code-exprs)
-                                          :render-segments (mapv :render-segments code-exprs)
-                                          :results   result-strs
-                                          :result-kinds (mapv result-kind exprs)
-                                          :result-details result-details
-                                          :errors    (mapv :error exprs)
-                                          :durations durations
-                                          :successes (mapv #(nil? (:error %)) exprs)
-                                          :silents   silents
-                                          :recaps    (render-segment-recaps (:render-segments it))})))
+                        trace (into [] (map (partial it->iteration-entry restored-values
+                                              {:produced-answer? produced-answer?
+                                               :last-iteration-id last-iteration-id}))
                                 turn-iterations)
                         ;; `:prior-outcome :cancelled` is how the
                         ;; persistance layer marks an aborted turn (the

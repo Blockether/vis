@@ -67,10 +67,11 @@
                       :code "(set-session-title! \"Greeting\")"
                       :result :vis/silent}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            trace   (-> history second :traces first)]
-        (expect (= [] (:code trace)))
-        (expect (= [true] (:silents trace)))
-        (expect (= [":vis/silent"] (:results trace))))))
+            trace   (-> history second :traces first)
+            form    (-> trace :forms first)]
+        (expect (= 1 (count (:forms trace))))
+        (expect (true? (:silent? form)))
+        (expect (str/includes? (str (:code form)) "set-session-title!")))))
 
   (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
     (with-redefs [vis/db-info (fn [] :db)
@@ -90,13 +91,14 @@
                                         {:kind :answer-ref}]
                       :result :vis/answer}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            trace   (-> history second :traces first)]
-        (expect (= 1 (count (:code trace))))
-        (expect (= [[{:kind :code :source "(def x 1)"}
-                     {:kind :title :value "Mixed"}
-                     {:kind :answer-ref}]]
-                  (:render-segments trace)))
-        (expect (= [nil] (:results trace))))))
+            trace   (-> history second :traces first)
+            form    (-> trace :forms first)]
+        (expect (= 1 (count (:forms trace))))
+        (expect (= [{:kind :code :source "(def x 1)"}
+                    {:kind :title :value "Mixed"}
+                    {:kind :answer-ref}]
+                  (:render-segments form)))
+        (expect (nil? (:result-render form))))))
 
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (v/cat ...))` persists the live var value as
@@ -119,7 +121,7 @@
                                  :result "Read `src/foo.clj` — 10 line(s)."}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)
-            rendered (first (:results trace))]
+            rendered (-> trace :forms first :result-render)]
         (expect (str/includes? rendered "Read `src/foo.clj`"))
         (expect (not (str/includes? rendered "<runtime value"))))))
 
@@ -143,7 +145,7 @@
                       :code "(def prompt-slice (subvec xs 0 2))"
                       :result {:vis/ref :expr}}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            rendered (-> history second :traces first :results first)]
+            rendered (-> history second :traces first :forms first :result-render)]
         (expect (str/includes? rendered "alpha"))
         (expect (str/includes? rendered "beta"))
         (expect (not (str/includes? rendered "<runtime value"))))))
@@ -179,12 +181,13 @@
                         :code "(v/cat \"x.txt\")"
                         :result tool-out}])]
         (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-              trace   (-> history second :traces first)]
-          (expect (= [:tool] (:result-kinds trace)))
+              trace   (-> history second :traces first)
+              form    (-> trace :forms first)]
+          (expect (= :tool (:result-kind form)))
           (expect (= {:symbol :v/cat
                       :tag :op.tag/observation
                       :target {:path "x.txt"}}
-                    (first (:result-details trace)))))))))
+                    (:result-detail form))))))))
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"

@@ -497,15 +497,6 @@
 ;; shape - no DB calls, no side effects.
 ;; =============================================================================
 
-(def ^:private markdown-code-preview-chars 20000)
-(def ^:private markdown-raw-preview-chars 1200)
-(def ^:private markdown-executable-blocks-preview-chars 4000)
-
-(defn- truncate
-  [s n]
-  (let [s (str s)]
-    (if (<= (count s) n) s (str (subs s 0 n) "..."))))
-
 (defn- one-line
   [s]
   (-> (or s "") str (str/replace #"\s+" " ") str/trim))
@@ -565,24 +556,24 @@
                  (keep (fn [{:keys [kind source value]}]
                          (case kind
                            :code (when-not (str/blank? (str source))
-                                   (render-fenced "clojure"
-                                     (truncate source markdown-code-preview-chars)))
+                                   (render-fenced "clojure" source))
                            :title (str "_session title:_ `" (or value "") "`\n")
                            :answer-ref nil
                            nil))
                    render-segments))]
       (when-not (str/blank? body) body))
-    (render-fenced "clojure" (truncate code markdown-code-preview-chars))))
+    (render-fenced "clojure" code)))
 
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced error. `answer?`
-   flips on the block the iteration's `:answer-position` points at -
-   the block that called `(done ...)` - so the reader spots the
+   flips on the block the iteration's `:answer-position` points at —
+   the block that called `(done ...)` — so the reader spots the
    terminal block at a glance.
 
-   Result truncation cap is 800 chars on the display string so the
-   report is forensic, not a one-pager."
+   Verbatim: result strings, error blobs, and code segments are
+   rendered without truncation. Forensic reports are useless when the
+   first place you look has been clipped."
   [idx answer? {:keys [code comment render-segments result error] :as block}]
   (let [marker      (if error "✗" "✓")
         flags       (cond-> []
@@ -597,20 +588,20 @@
       (when (not (str/blank? comment)) (str comment "\n"))
       (render-block-code-segments code render-segments)
       (when has-result?
-        (str "\nResult: `" (truncate (display-result result) 800) "`\n"))
+        (str "\nResult: `" (display-result result) "`\n"))
       (when error
         (str "\n_error:_\n" (render-fenced "text" error)))
       "\n")))
 
 (defn- render-thinking
-  "Render the LLM's reasoning trace as a fenced text block. Many
-   models stream multi-KB reasoning per iteration; preserved
-   verbatim. Hard cap at 16 KB so a runaway thinking trace doesn't
-   blow up the file."
+  "Render the LLM's reasoning trace as a fenced text block. The
+   transcript carries the reasoning verbatim — no truncation — so the
+   reader has a forensic record of what the model thought before it
+   acted."
   [thinking]
   (when (not (str/blank? thinking))
     (str "_thinking:_\n"
-      (render-fenced "text" (truncate thinking 16384))
+      (render-fenced "text" thinking)
       "\n")))
 
 (defn- render-iter-error
@@ -625,8 +616,9 @@
 
 (defn- render-vars
   "Compact list of `(def ...)` rows produced by this iteration. One
-   bullet per var with truncated code preview + truncated value
-   pr-str. Empty / nil -> nothing emitted."
+   bullet per var with the full code expression (newlines collapsed
+   via `one-line`) and the full `pr-str` of its value. Empty / nil ->
+   nothing emitted."
   [vars]
   (when (seq vars)
     (str "_vars defined this iteration:_\n\n"
@@ -635,9 +627,9 @@
                (str "- `" name "`"
                  (when version (str " (v" version ")"))
                  (when (and code (not (str/blank? code)))
-                   (str " - `" (truncate (one-line code) 80) "`"))
+                   (str " - `" (one-line code) "`"))
                  (when (some? value)
-                   (str " -> `" (truncate (pr-str value) 80) "`"))))
+                   (str " -> `" (pr-str value) "`"))))
           vars))
       "\n\n")))
 
@@ -732,16 +724,11 @@
                 (:iterations turn)))
       turns)))
 
-(defn- sha-prefix
-  [s]
-  (when (not (str/blank? (str s)))
-    (truncate s 12)))
-
 (defn- render-raw-diagnostic-row
   [{:keys [turn-position iteration status raw-length raw-sha256 block-count block-langs]}]
   (str "| " (or turn-position "?") " | " iteration " | " (or (some-> status name) "-")
     " | " (or raw-length "-")
-    " | `" (or (sha-prefix raw-sha256) "-") "`"
+    " | `" (or raw-sha256 "-") "`"
     " | " (or block-count "-")
     " | " (if (seq block-langs) (str/join ", " block-langs) "-")
     " |\n"))
@@ -753,12 +740,10 @@
       " / iteration " iteration
       (when raw-length (str " (" raw-length " chars total)")))
     (str
-      (render-fenced "text" (truncate raw-preview markdown-raw-preview-chars))
+      (render-fenced "text" raw-preview)
       (when (seq executable-blocks)
         (str "\n\nExecutable Markdown code blocks selected by svar:\n\n"
-          (render-fenced "clojure"
-            (truncate (pr-str executable-blocks)
-              markdown-executable-blocks-preview-chars)))))))
+          (render-fenced "clojure" (pr-str executable-blocks)))))))
 
 (defn- render-raw-diagnostics
   "Compact raw LLM response diagnostics for the whole report. The

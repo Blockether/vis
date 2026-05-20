@@ -76,19 +76,16 @@
    [com.blockether.vis.internal.format :as fmt]))
 
 (defn- empty-iteration-entry [iteration]
+  ;; Per-iteration timeline entry. `:forms` is the canonical per-form
+  ;; vector — every form a map carrying primitives (`:code`, `:result`,
+  ;; `:error`, ...) and a few pre-derived display projections (the
+  ;; pre-rendered `:result` IR, the `:result-kind` tag, the
+  ;; `:result-detail` op metadata, and the `:render-segments` source
+  ;; classification). The renderer reads `:forms` directly; no parallel
+  ;; arrays.
   {:iteration iteration
    :thinking  nil
-   :code      []
-   :comments  []
-   :render-segments []
-   :results   []
-   :result-kinds []
-   :result-details []
-   :errors    []
-   :durations []
-   :successes []
-   :started-at-ms []
-   :silents   []
+   :forms     []
    :recaps    []
    :provider-fallbacks []
    :activity  nil
@@ -97,10 +94,14 @@
    :final     nil
    :done?     false})
 
-(defn- pad-to [v target-count]
-  (if (< (count v) target-count)
-    (into v (repeat (- target-count (count v)) nil))
-    v))
+(defn- pad-forms-to
+  "Pad `:forms` with placeholder maps until it has at least `n` entries.
+   Tolerates out-of-order chunk arrivals (futures landing at higher
+   positions before earlier ones)."
+  [forms n]
+  (if (< (count forms) n)
+    (into forms (repeat (- n (count forms)) {:position nil}))
+    forms))
 
 (defn- envelope-duration-ms
   [envelope]
@@ -192,6 +193,10 @@
       (= :vis/silent (:result chunk)))))
 
 (defn- visible-code-segments?
+  "True when the chunk has at least one `:code` segment that should
+   reach the user, regardless of structural subforms. Reads from
+   `:render-segments` first (the loop carries the parsed segments on
+   the chunk); falls back to a quick textual check when missing."
   [chunk]
   (let [segments (:render-segments chunk)]
     (if (seq segments)
@@ -244,90 +249,75 @@
       (update entry :recaps #(vec (distinct (concat (or % []) recaps))))
       entry)))
 
-(defn- write-form-start-slot
-  "Per-block start chunks land at `:position` before eval completes.
-   Only `:code` / `:comments` / `:started-at-ms` are populated; result-
-   side vectors intentionally stay empty so renderers can distinguish
-   running code from completed success or failure."
-  [entry chunk]
-  (let [idx  (display-form-idx entry (:position chunk))
-        need (inc idx)]
-    (-> entry
-      (update :code     #(assoc (pad-to % need) idx (:code chunk)))
-      (update :comments #(assoc (pad-to % need) idx (:comment chunk)))
-      (update :render-segments #(assoc (pad-to % need) idx (:render-segments chunk)))
-      (update :started-at-ms #(assoc (pad-to % need) idx (:started-at-ms chunk)))
-      (update :silents  #(assoc (pad-to % need) idx (silent-chunk? chunk))))))
+(defn- chunk->form-start
+  "Build the initial `:forms` entry for a `:form-start` chunk. Only the
+   code/comment/start timestamp are known; result-side fields stay nil."
+  [display-idx chunk]
+  {:position        display-idx
+   :engine-idx      (:position chunk)
+   :code            (:code chunk)
+   :comment         (:comment chunk)
+   :render-segments (:render-segments chunk)
+   :started-at-ms   (:started-at-ms chunk)
+   :silent?         (silent-chunk? chunk)
+   :running?        true})
 
-(defn- write-form-slot
-  "Per-block chunks land at `:position`. Pad parallel vectors with
-   nils up to that index, then assoc the chunk's data. This
-   tolerates out-of-order arrivals (e.g. a future async eval)
-   without crashing on `assoc out-of-bounds`."
-  [entry chunk]
-  (let [idx (display-form-idx entry (:position chunk))
-        need (inc idx)]
-    (-> entry
-      (update :code      #(assoc (pad-to % need) idx (:code chunk)))
-      (update :comments  #(assoc (pad-to % need) idx (:comment chunk)))
-      (update :render-segments #(assoc (pad-to % need) idx (:render-segments chunk)))
-      (update :results   #(assoc (pad-to % need) idx (when-not (or (:error chunk)
-                                                                 (and (= :vis/answer (:result chunk))
-                                                                   (visible-code-segments? chunk)))
-                                                       (format-form-result chunk))))
-      (update :result-kinds #(assoc (pad-to % need) idx (form-result-kind chunk)))
-      (update :result-details #(assoc (pad-to % need) idx (form-result-detail chunk)))
-      (update :errors    #(assoc (pad-to % need) idx (:error chunk)))
-      (update :durations #(assoc (pad-to % need) idx (or (envelope-duration-ms (:envelope chunk)) 0)))
-      (update :successes #(assoc (pad-to % need) idx (nil? (:error chunk))))
-      (update :silents   #(assoc (pad-to % need) idx (and (nil? (:error chunk))
-                                                       (silent-chunk? chunk)))))))
+(defn- chunk->form-result
+  "Build the completed `:forms` entry for a `:form-result` chunk.
+   Carries the raw `:error` and the pre-derived display projections
+   (`:result-render`, `:result-kind`, `:result-detail`) the renderer
+   reads verbatim. `:result-render` is nil when the form returned
+   `:vis/answer` for the answer slot — the channel renders the answer
+   text below the trace."
+  [display-idx prev-form chunk]
+  (let [answer-slot? (and (not (:error chunk))
+                       (= :vis/answer (:result chunk))
+                       (visible-code-segments? chunk))]
+    {:position        display-idx
+     :engine-idx      (:position chunk)
+     :code            (:code chunk)
+     :comment         (:comment chunk)
+     :render-segments (:render-segments chunk)
+     :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
+     :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
+     :result-render   (when-not answer-slot? (format-form-result chunk))
+     :result-kind     (form-result-kind chunk)
+     :result-detail   (form-result-detail chunk)
+     :error           (:error chunk)
+     :success?        (nil? (:error chunk))
+     :silent?         (and (nil? (:error chunk)) (silent-chunk? chunk))
+     :running?        false}))
 
-(defn- drop-slot
-  "Drop index `idx` from `v`. Out-of-bounds idx returns `v` unchanged.
-   Used to ELIDE the `(done ...)` form from the iteration's per-form
-   parallel vectors when an iteration produces a final answer - the
-   channel renders the answer text below; showing the answer call
-   itself in the code trace is redundant noise."
-  [v idx]
-  (if (and (vector? v) (integer? idx) (not (neg? idx)) (< idx (count v)))
-    (into (subvec v 0 idx) (subvec v (inc idx)))
-    v))
+(defn- assoc-form
+  [entry display-idx form]
+  (let [need (inc display-idx)]
+    (update entry :forms #(assoc (pad-forms-to % need) display-idx form))))
 
-(defn- insert-slot
-  "Insert nil at index `idx` in vector `v`, padding if needed. Used when
-   a previously silent form is re-emitted with an error and must become
-   visible again without overwriting later visible forms."
-  [v idx]
-  (if (and (vector? v) (integer? idx) (not (neg? idx)))
-    (let [padded (pad-to v idx)]
-      (into (conj (subvec padded 0 idx) nil) (subvec padded idx)))
-    v))
+(defn- drop-form-at
+  "Remove the form at display index `idx` from `:forms`. Indices shift
+   down; the channel re-numbers in display order."
+  [entry idx]
+  (update entry :forms
+    (fn [forms]
+      (if (and (vector? forms) (integer? idx) (not (neg? idx)) (< idx (count forms)))
+        (into (subvec forms 0 idx) (subvec forms (inc idx)))
+        forms))))
 
-(defn- elide-form-slots
-  "Remove visible form slots at the given indices from every parallel
-   vector in `entry`. Indices shift down, which is fine - the channel
-   re-numbers in display order."
-  [entry idx-set]
-  (reduce
-    (fn [e idx]
-      (-> e
-        (update :code      drop-slot idx)
-        (update :comments  drop-slot idx)
-        (update :render-segments drop-slot idx)
-        (update :results   drop-slot idx)
-        (update :result-kinds drop-slot idx)
-        (update :result-details drop-slot idx)
-        (update :errors drop-slot idx)
-        (update :durations drop-slot idx)
-        (update :successes drop-slot idx)
-        (update :started-at-ms drop-slot idx)
-        (update :silents drop-slot idx)))
-    entry
-    (sort > idx-set)))
+(defn- insert-empty-form-at
+  "Insert a placeholder form at display index `idx`, padding if needed.
+   Used by `unhide-form-slot` when a previously silent form must become
+   visible without overwriting later visible slots."
+  [entry idx]
+  (update entry :forms
+    (fn [forms]
+      (if (and (vector? forms) (integer? idx) (not (neg? idx)))
+        (let [padded (pad-forms-to forms idx)]
+          (into (conj (subvec padded 0 idx) {:position idx})
+            (subvec padded idx)))
+        forms))))
 
 (defn- hide-form-slot
-  "Remember original form index `idx` as elided and remove its current
+  "Remember original form index `idx` as elided and drop its current
    visible slot if present. Future chunks with higher original indices
    are shifted left by `display-form-idx`, avoiding nil holes in live
    progress when a silent system call appears before visible work."
@@ -340,7 +330,7 @@
        (let [display-idx (display-form-idx entry idx)]
          (-> entry
            (update :elided-form-idxs (fnil conj #{}) idx)
-           (elide-form-slots #{display-idx})))))))
+           (drop-form-at display-idx)))))))
 
 (defn- unhide-form-slot
   "Make original form index `idx` visible again. This happens when an
@@ -352,17 +342,7 @@
     (let [display-idx (display-form-idx entry idx)]
       (-> entry
         (update :elided-form-idxs disj idx)
-        (update :code      insert-slot display-idx)
-        (update :comments  insert-slot display-idx)
-        (update :render-segments insert-slot display-idx)
-        (update :results   insert-slot display-idx)
-        (update :result-kinds insert-slot display-idx)
-        (update :result-details insert-slot display-idx)
-        (update :errors insert-slot display-idx)
-        (update :durations insert-slot display-idx)
-        (update :successes insert-slot display-idx)
-        (update :started-at-ms insert-slot display-idx)
-        (update :silents insert-slot display-idx)))))
+        (insert-empty-form-at display-idx)))))
 
 (defn- update-entry
   "Apply a single chunk to its iteration's timeline entry. Dispatches
@@ -390,17 +370,26 @@
         (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :form-start
-    (assoc (write-form-start-slot entry chunk) :activity nil)
+    (let [display-idx (display-form-idx entry (:position chunk))
+          entry'      (unhide-form-slot entry (:position chunk))]
+      (assoc (assoc-form entry' display-idx (chunk->form-start display-idx chunk))
+        :activity nil))
 
     :form-result
-    (assoc
-      (if (or (structurally-silent-chunk? chunk)
-            (and (not (:error chunk))
-              (= :vis/answer (:result chunk))
-              (not (visible-code-segments? chunk))))
-        (hide-form-slot entry (:position chunk) (render-segment-recaps (:render-segments chunk)))
-        (write-form-slot (unhide-form-slot entry (:position chunk)) chunk))
-      :activity nil)
+    (let [silent? (or (structurally-silent-chunk? chunk)
+                    (and (not (:error chunk))
+                      (= :vis/answer (:result chunk))
+                      (not (visible-code-segments? chunk))))]
+      (if silent?
+        (assoc (hide-form-slot entry (:position chunk)
+                 (render-segment-recaps (:render-segments chunk)))
+          :activity nil)
+        (let [entry'      (unhide-form-slot entry (:position chunk))
+              display-idx (display-form-idx entry' (:position chunk))
+              prev-form   (get (:forms entry') display-idx)]
+          (assoc (assoc-form entry' display-idx
+                   (chunk->form-result display-idx prev-form chunk))
+            :activity nil))))
 
     :iteration-final
     (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
@@ -412,16 +401,20 @@
                  :done?    (boolean (:done? chunk)))
           ;; Elide `(done ...)`: the answer text already renders below;
           ;; showing the answer call itself in the trace is redundant.
-          ;; Structurally-silent bookkeeping forms (answer emission / title
-          ;; updates) are hidden as chunks arrive. Other successful
-          ;; `:vis/silent` forms stay in the timeline and are marked in
-          ;; `:silents`; channel settings decide whether to render them.
+          ;; Structurally-silent bookkeeping forms (answer emission /
+          ;; title updates) are hidden as chunks arrive. Other
+          ;; successful `:vis/silent` forms stay in the timeline with
+          ;; `:silent? true`; channel settings decide whether to render
+          ;; them.
           answer-idx   (when-not duplicate-final?
                          (when (:final chunk) (:answer-position chunk)))
           silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
-          base         (reduce (fn [e idx]
-                                 (let [display-idx (display-form-idx e idx)]
-                                   (update e :silents #(assoc (pad-to % (inc display-idx)) display-idx true))))
+          base         (reduce (fn [e engine-idx]
+                                 (let [display-idx (display-form-idx e engine-idx)]
+                                   (if (and (integer? display-idx)
+                                         (< display-idx (count (:forms e))))
+                                     (assoc-in e [:forms display-idx :silent?] true)
+                                     e)))
                          base
                          (sort silent-idxs))]
       (if (some? answer-idx)
@@ -439,6 +432,24 @@
     ;; Unknown / missing :phase - leave the entry as-is.
     entry))
 
+(defn- legacy-vector-projections
+  "Project canonical `:forms` back to legacy parallel vectors.
+   Kept for channel/test compatibility while `:forms` is the source of truth."
+  [entry]
+  (let [forms (vec (or (:forms entry) []))]
+    (assoc entry
+      :code (mapv :code forms)
+      :comments (mapv :comment forms)
+      :render-segments (mapv :render-segments forms)
+      :results (mapv #(when (nil? (:error %)) (:result-render %)) forms)
+      :result-kinds (mapv :result-kind forms)
+      :result-details (mapv :result-detail forms)
+      :errors (mapv :error forms)
+      :durations (mapv #(or (:duration-ms %) 0) forms)
+      :successes (mapv :success? forms)
+      :started-at-ms (mapv :started-at-ms forms)
+      :silents (mapv :silent? forms))))
+
 (defn make-progress-tracker
   "Create a phased progress tracker.
 
@@ -453,7 +464,7 @@
   ([] (make-progress-tracker nil))
   ([{:keys [on-update]}]
    (let [timeline (atom (sorted-map))
-         as-vec   #(vec (vals %))]
+         as-vec   #(mapv legacy-vector-projections (vals %))]
      {:on-chunk     (fn [chunk]
                       (let [iteration (:iteration-count chunk)
                             tl        (swap! timeline update iteration

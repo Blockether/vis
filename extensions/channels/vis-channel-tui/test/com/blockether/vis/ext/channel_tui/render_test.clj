@@ -9,7 +9,48 @@
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
-(def ^:private format-iteration-entry @#'render/format-iteration-entry)
+(defn- parallel->entry
+  "Test helper that builds a `:forms`-shaped iteration entry from the
+   pre-Etap-2 parallel-array shape. Lets test fixtures keep their
+   readable `:code [..] :results [..]` style while the renderer only
+   consumes `:forms`."
+  [m]
+  (if (contains? m :forms)
+    m
+    (let [{:keys [code comments render-segments results result-kinds result-details
+                  errors durations successes started-at-ms silents]} m
+          n (apply max 0 (map count [code comments render-segments results result-kinds
+                                     result-details errors durations successes
+                                     started-at-ms silents]))
+          forms (vec (for [idx (range n)]
+                       (let [success? (get successes idx)]
+                         {:position        idx
+                          :engine-idx      idx
+                          :code            (get code idx)
+                          :comment         (get comments idx)
+                          :render-segments (get render-segments idx)
+                          :result-render   (get results idx)
+                          :result-kind     (get result-kinds idx)
+                          :result-detail   (get result-details idx)
+                          :error           (get errors idx)
+                          :duration-ms     (get durations idx 0)
+                          :started-at-ms   (get started-at-ms idx)
+                          :success?        success?
+                          :silent?         (boolean (get silents idx))
+                          :running?        (nil? success?)})))]
+      (-> m
+        (dissoc :code :comments :render-segments :results :result-kinds :result-details
+          :errors :durations :successes :started-at-ms :silents)
+        (assoc :forms forms)))))
+
+(def ^:private format-iteration-entry*
+  @#'render/format-iteration-entry)
+
+(defn- format-iteration-entry
+  ([entry code-width iteration-number]
+   (format-iteration-entry entry code-width iteration-number {}))
+  ([entry code-width iteration-number opts]
+   (format-iteration-entry* (parallel->entry entry) code-width iteration-number opts)))
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 (def ^:private assistant-meta-line @#'render/assistant-meta-line)
@@ -185,24 +226,7 @@
       (expect (str/includes? body "* Recap: Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
       (expect (str/includes? body "Exceptional status code: 429"))))
 
-  (it "formats provider fallback notices as yellow-band rows with one left space"
-    (let [lines (format-iteration-entry
-                  {:provider-fallbacks
-                   [{:failed-provider {:id :anthropic-coding-plan
-                                       :model "claude-opus-4-7"
-                                       :error "Exceptional status code: 429"}}]}
-                  120 1 {})
-          fallback-lines (filter #(str/includes? % "provider fallback") lines)
-          first-line     (first fallback-lines)]
-      (expect (seq fallback-lines))
-      (expect (every? #(= p/MARKER_PROVIDER_FALLBACK (marker-of %)) fallback-lines))
-      (expect (str/starts-with? (body-of first-line) " ↪ provider fallback:"))
-      (expect (str/includes? (body-of first-line)
-                "anthropic-coding-plan/claude-opus-4-7"))
-      (expect (str/includes? (body-of first-line)
-                "Exceptional status code: 429"))))
-
-  (it "formats same-provider retry notices from routing event maps"
+  (it "formats same-provider retry notices as recap rows"
     (let [lines (format-iteration-entry
                   {:provider-fallbacks
                    [{:event/type :llm.routing/provider-retry
@@ -211,48 +235,8 @@
                      :reason :rate-limit
                      :delay-ms 2000}]}
                   120 1 {})
-          retry-line (first (filter #(str/includes? % "retry same provider") lines))]
-      (expect (some? retry-line))
-      (expect (= p/MARKER_PROVIDER_FALLBACK (marker-of retry-line)))
-      (expect (str/includes? (body-of retry-line)
-                "↻ retry same provider: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s"))))
-
-  (it "paints provider fallback rows with warning yellow background"
-    (let [captured (atom [])
-          active   (atom #{})
-          fg       (atom nil)
-          bg       (atom nil)
-          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                     (clearModifiers []
-                       (reset! active #{})
-                       this)
-                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                       (swap! active into (seq arr))
-                       this)
-                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                       (apply swap! active disj (seq arr))
-                       this)
-                     (getActiveModifiers []
-                       (if (empty? @active)
-                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                     (setForegroundColor [c] (reset! fg c) this)
-                     (setBackgroundColor [c] (reset! bg c) this)
-                     (fillRectangle [_pos _size _ch] this)
-                     (setCharacter [_col _row _ch] this)
-                     (putString
-                       ([_col _row text]
-                        (swap! captured conj {:text text :fg @fg :bg @bg})
-                        this)))
-          line     (str p/MARKER_PROVIDER_FALLBACK
-                     " ↪ provider fallback: anthropic-coding-plan/claude-opus-4-7 — Exceptional status code: 429")]
-      (render/draw-chat-bubble! graphics
-        {:role :assistant :timestamp nil :prewrapped-lines [line]}
-        0 0 120)
-      (let [fallback (first (filter #(str/starts-with? (:text %) " ↪ provider fallback:") @captured))]
-        (expect (some? fallback))
-        (expect (= t/warning-bg (:bg fallback)))
-        (expect (= t/warning-fg (:fg fallback))))))
+          body (str/join "\n" (map (comp strip-ansi body-of) lines))]
+      (expect (str/includes? body "* Recap: Provider retry: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s"))))
 
   (it "renders provider error recap lines above provider error details"
     (let [lines (format-iteration-entry
