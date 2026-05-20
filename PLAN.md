@@ -1,341 +1,366 @@
-# Markdown Answer Source of Truth Plan
+# Vis answer pipeline rewrite
+
+## Mission
+
+1. **Etap 1 — Markdown is the answer.**
+   `(done {:answer "markdown"})`. DB stores Markdown. IR is derived render cache only.
+
+2. **Etap 2 — Iteration display collapse.**
+   Five parallel arrays (`:render-segments`, `:results`, `:result-kinds`, `:result-details`, `:code`)
+   become one per-form vector of maps with a single derivation function. Primitives stay in
+   persistence (`:code`, `:result`, `:error`); the display projection is computed at render time
+   and cached by content hash.
+
+No backwards compatibility. No migration. Old database discarded. Old `[:ir ...]` API removed
+from prompt and `done`. Both steps must end on a green `./verify.sh`.
 
 ## Rationale
 
-Model-authored `[:ir ...]` is too brittle. Models naturally produce Markdown, not EDN/Hiccup render trees. One malformed vector, missing attrs map, or nested block list can turn a final answer into an EDN-looking artifact instead of user-facing prose.
+### Why Markdown as answer truth
 
-Markdown should be the canonical answer source because it is:
+Model-authored `[:ir ...]` is brittle: one missing attrs map, one misnested block, and the
+final answer renders as an EDN code block. Models write Markdown natively. Markdown survives
+copy/export/transcript without round-tripping. CommonMark is a single well-defined parser.
+Treating Markdown as source means:
 
-- model-native: lower syntax burden in `(done ...)`
-- human-readable in storage
-- stable for copy/export/transcript use
-- portable across channels
-- easy to index after CommonMark plain-text extraction
+- prompt collapses from a 20-line tag/attrs/canonical-form section to three lines
+- final answers stop turning into EDN artifacts
+- DB is human-readable
+- exports/transcripts are byte-identical to what the model wrote
+- IR stays useful as a render AST — but as derivation, not source
 
-IR should remain, but only as a derived rendering layer:
+### Why IR stays inside extensions
 
-- parse Markdown with CommonMark
-- derive canonical IR/render AST
-- render TUI/Telegram/Web/voice from that AST
-- cache derived render output by Markdown hash + parser/render version + renderer opts
+`:render-fn` on extension symbols returns IR. That stays. Reasons:
 
-Source of truth becomes Markdown. IR becomes disposable cache.
+- programmatic compose via `combine-render-values` / `default-error-ir`
+- per-channel routing without round-tripping through Markdown
+- structural introspection from channels (badges, role colors, kbd, mark)
+- extension authors are power users; Markdown is the wrong contract for them
 
-## Target architecture
+The model never sees IR. Extensions still produce it.
 
-```text
-(done {:answer markdown})
-  -> validate markdown string
-  -> persist answer_markdown TEXT
-  -> derive IR via CommonMark when needed
-  -> render channel-specific output
-```
+### Why iteration display arrays collapse
 
-Canonical data flow:
+Per-iteration we currently carry five parallel arrays indexed by form position:
 
-```text
-DB answer_markdown
-  -> markdown->ir
-  -> TUI render / Telegram render / voice extract / search text
-```
+| field              | role                              | derivation                            |
+| ------------------ | --------------------------------- | ------------------------------------- |
+| `:code`            | raw source per form               | primitive                              |
+| `:render-segments` | source classification             | `(parse-block-display code)`           |
+| `:results`         | pre-rendered tool result IR       | `(render-tool-result result)`          |
+| `:result-kinds`    | result style tag                  | `(classify result error)`              |
+| `:result-details`  | tool result metadata              | `(extract-metadata result)`            |
 
-Never store model-authored IR as answer truth.
+Real primitives in persistence: `:code`, `:result`, `:error`. The other four are pure
+derivations cached at the message-map level. They are not duplicates but the cache is leaking
+into the data model. One per-form map plus one derivation function is enough.
 
-## Model-facing contract
+## Etap 1 — Markdown answer
 
-Preferred final answer:
+### Model contract
 
-```clojure
-(done {:answer "Summary\n\n- Item one\n- Item two"})
-```
-
-Optional sugar:
+Canonical:
 
 ```clojure
-(done "Summary\n\n- Item one")
+(done {:answer "Summary\n\n- item one\n- item two"})
 ```
 
-Rejected for normal model use:
+No string sugar. The map shape leaves room for future metadata
+(`:format`, `:lang`, `:tags`, `:attachments`, ...). No vector form. No IR.
 
-```clojure
-(done [:ir {} [:p {} [:span {} "text"]]])
-```
-
-`[:ir ...]` remains internal/debug-only renderer data, not prompt syntax.
-
-Needs-input payloads stay data-shaped:
+Needs-input stays a separate predicate path:
 
 ```clojure
 {:vis/answer-mode :needs-input
- :answer/text "Question for user"}
+ :answer/text "Question for the user"}
 ```
-
-## Tool-result contract
-
-Tools must continue returning plain Clojure data, not Markdown.
-
-Good:
-
-```clojure
-{:path "src/foo.clj"
- :matches [{:line 12 :text "..."}]}
-```
-
-Bad:
-
-```clojure
-"### Matches\n\n- src/foo.clj:12 ..."
-```
-
-Reason: RLM needs destructurable runtime data. Markdown tool results would force heuristic parsing, reduce reliability, and increase prompt/UI injection risk.
-
-Renderer/display functions may derive Markdown/IR previews from tool result data, but tool results themselves remain data.
-
-## DB shape
-
-Current schema has:
-
-```sql
-answer BLOB -- Nippy-frozen IR
-```
-
-Replace with Markdown truth:
-
-```sql
-answer_markdown TEXT
-answer_plaintext TEXT NULL        -- optional derived FTS/search projection
-answer_render_cache BLOB NULL     -- optional derived IR/layout cache
-answer_cache_key TEXT NULL        -- hash(markdown + parser version + render opts)
-```
-
-If old database compatibility is not needed, edit `V1__schema.sql` inline and discard existing DBs.
-
-Cache is optional and invalidatable. Missing cache must reparse Markdown.
-
-## Render/cache rules
-
-Cache key must include:
-
-- raw Markdown hash
-- CommonMark/parser version
-- enabled Markdown extensions
-- renderer id
-- renderer options, e.g. width/theme/flavor
-
-Examples:
-
-```clojure
-{:source-sha sha256
- :parser-version "commonmark-java+x"
- :renderer :tui
- :width 100
- :theme theme-id}
-```
-
-Never treat cache as canonical data.
-
-## Security/safety rules
-
-Markdown is untrusted user/model content.
-
-Required:
-
-- parse raw HTML as visible text or sanitize strictly
-- escape per target renderer
-- never pass raw Markdown directly to Telegram MarkdownV2/HTML
-- allowlist link schemes
-- avoid auto-fetching images/resources
-- strip or neutralize terminal control sequences for TUI
-- FTS indexes derived plain text, not raw syntax only
-
-## Code areas to change
 
 ### Prompt
 
-File:
+`src/com/blockether/vis/internal/prompt.clj` `CORE_SYSTEM_PROMPT`:
 
-- `src/com/blockether/vis/internal/prompt.clj`
+- delete the whole `ANSWER_IR` block (tag taxonomy, attrs rules, canonical-form
+  invariants, soft-break collapsing).
+- delete every example showing `(done [:ir ...])`.
+- replace with a short Markdown contract:
 
-Change:
+  ```text
+  ANSWER
+  Emit the final answer with (done {:answer "..."}). The string is GitHub-flavored
+  Markdown: headings, lists, code fences, tables, links, **bold**, *italic*,
+  `inline code`. No Hiccup, no EDN trees, no [:ir ...]. Tool results stay
+  destructurable Clojure data; the answer is a human-facing Markdown summary.
+  ```
 
-- replace `(done [:ir ...])` docs with `(done {:answer "markdown"})`
-- remove model-facing `ANSWER_IR` section
-- add `ANSWER_MARKDOWN` section
-- explicitly say: do not author `[:ir ...]`
+### Loop / done
 
-### Loop / done handling
+`src/com/blockether/vis/internal/loop.clj`:
 
-File:
-
-- `src/com/blockether/vis/internal/loop.clj`
-
-Change:
-
-- `done` accepts Markdown string or `{:answer string}`
-- `done` stores answer value as Markdown source
-- derive IR only for live rendering and validation
-- stop calling `render/->ast` as final answer source canonicalization
-- stop persisting `(answer-str answer)` because it loses Markdown
-
-Needed helpers:
-
-```clojure
-(answer-markdown x)
-(markdown-answer? x)
-(answer-markdown->ir s)
-```
+- `answer-fn` (the SCI `done` binding) must:
+  - accept `{:answer string}` only — reject every other shape with a clear error
+  - accept the needs-input map shape unchanged
+  - store the raw Markdown string on `answer-atom` — no `(render/->ast s)`
+- delete `append-runtime-appendices` IR canonicalization for answers; keep it only
+  if it is still needed for needs-input maps, otherwise inline.
+- `run-turn!` must persist the raw Markdown:
+  - replace `:answer (answer-str a)` with `:answer-markdown (answer-markdown a)`
+- `answer-str` keeps a plain-text helper, but operates on Markdown via
+  `(render/extract-text (render/markdown->ir s))` — no IR canonicalization of the
+  source value.
+- every error/cancel fallback that put a stringified IR into the answer slot
+  now writes a plain Markdown string.
 
 ### Render namespace
 
-File:
+`src/com/blockether/vis/internal/render.clj`:
 
-- `src/com/blockether/vis/internal/render.clj`
+- public API gains an unambiguous Markdown entry point:
 
-Change:
+  ```clojure
+  (render/markdown->ir markdown-string) ; CommonMark parse, canonical IR
+  ```
 
-- clarify string semantics
-- prefer `markdown->ir` name for CommonMark parsing
-- keep `literal->ir` or `->ast` for literal/data fallback
-- ensure `render` on answer paths parses Markdown, not literal string
+  Implemented by renaming today's `text->ir` (which already does this).
+- `->ast` stays internal for literal/data fallback used inside `:render-fn`
+  pipelines. It is no longer invoked on final answers.
+- `(render value :markdown)` on the answer path receives the raw Markdown
+  string and returns it unchanged (no IR round-trip).
+- `search-text` indexes via `markdown->ir` -> plain-text walker; one entry point.
 
-Current ambiguity:
+### DB schema
 
-```clojure
-(render/render "**bold**" :markdown)
-```
+`extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`:
 
-Currently behaves like literal text. Answer path should treat string as Markdown source.
+- replace
 
-### Persistence schema
+  ```sql
+  answer BLOB        -- Nippy-frozen IR
+  ```
 
-File:
+  with
 
-- `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`
+  ```sql
+  answer_markdown TEXT
+  ```
 
-Change:
-
-- replace `answer BLOB` with `answer_markdown TEXT`
-- optionally add cache columns
+- no cache columns yet; render cache lives in memory only.
+- discard existing local DB; no migration path.
 
 ### Persistence implementation
 
-File:
+`extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`:
 
-- `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`
+- `db-update-session-turn!` writes `:answer_markdown` (TEXT), not `(->blob answer)`.
+- `row->turn` returns `:answer-markdown` directly. No legacy `:answer` IR field.
+- `db-turn-history` returns `:answer-markdown`.
+- `reindex-search!` indexes the Markdown string through `vis/search-text`
+  (which already lifts strings via `markdown->ir`).
 
-Change:
+### TUI
 
-- `db-update-session-turn!` writes `answer_markdown`, not Nippy IR blob
-- `row->turn` returns `:answer-markdown`
-- compatibility may also return derived `:answer` IR during transition
-- `reindex-search!` indexes `answer_markdown` via Markdown -> IR -> plain text
+`extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj`
+and the rest of the TUI channel:
 
-### TUI channel
+- assistant message shape becomes:
 
-Files:
+  ```clojure
+  {:role :assistant
+   :text answer-markdown            ; raw source — copy/export uses this
+   :ir   (vis/markdown->ir answer-markdown) ; derived for layout
+   :timestamp ts}
+  ```
 
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj`
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/state.clj`
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/virtual.clj`
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render*.clj`
-
-Change:
-
-- assistant messages carry Markdown source plus derived IR:
-
-```clojure
-{:role :assistant
- :text answer-markdown
- :ir   (vis/text->ir answer-markdown)}
-```
-
-- resume path reads `:answer-markdown`
-- TUI render path derives IR from Markdown
-- copy/export prefers raw Markdown source
+- live progress assistant message: same shape, IR derived once.
+- resume rebuild: read `:answer-markdown`, derive IR.
+- copy / clipboard / export prefer `:text` (raw Markdown), not a re-rendered
+  IR projection.
+- `vis/render :markdown` on the answer path simply returns the source.
 
 ### Telegram channel
 
-File:
+`extensions/channels/vis-channel-telegram/src/com/blockether/vis/ext/channel_telegram/bot.clj`:
 
-- `extensions/channels/vis-channel-telegram/src/com/blockether/vis/ext/channel_telegram/bot.clj`
-
-Change:
-
-- answer Markdown -> IR -> Telegram renderer
-- never send raw Markdown without target escaping
+- answer path: `markdown -> markdown->ir -> telegram render`.
+- never send raw model Markdown to Telegram without target-specific escaping.
 
 ### Voice
 
-File:
+`extensions/common/vis-voice/src/com/blockether/vis/ext/voice/core.clj`:
 
-- `extensions/common/vis-voice/src/com/blockether/vis/ext/voice/core.clj`
+- answer path: `markdown -> markdown->ir -> extract-text -> TTS`.
 
-Change:
+### Transcript / export
 
-- answer Markdown -> IR -> plain text extraction
+`extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/transcript.clj`
+and `render/session->markdown`:
 
-### Transcript/export
+- assistant turns emit `:answer-markdown` verbatim.
+- no IR -> Markdown round-trip on the answer.
 
-Files likely:
+### Tests
+
+- prompt must not contain `(done [:ir`.
+- `(done {:answer "**bold**"})` round-trips: stored exactly, derived IR renders
+  bold in TUI.
+- code fences, tables, lists, links survive DB round-trip exactly.
+- raw HTML in answers is rendered visibly, never executed.
+- resume reconstructs the assistant bubble from raw Markdown.
+- export/copy emits raw Markdown.
+- FTS finds plain text inside Markdown answers.
+- tool results remain destructurable maps.
+- needs-input answers still work.
+
+### Definition of done — Etap 1
+
+- `./verify.sh` green
+- prompt contains zero `[:ir`
+- DB column is `answer_markdown TEXT`
+- TUI / Telegram / voice / transcript render assistant answers from Markdown source
+- single commit landing the cut
+
+## Etap 2 — Iteration display collapse
+
+### Target shape
+
+Per-iteration timeline entry today (parallel arrays):
+
+```clojure
+{:iteration N
+ :code             ["(def x 1)" "(done {:answer \"..\"})"]
+ :comments         [nil nil]
+ :render-segments  [[{:kind :code :source "(def x 1)"}] [{:kind :answer-ref}]]
+ :results          ["1" nil]
+ :result-kinds     [:value :value]
+ :result-details   [nil nil]
+ :errors           [nil nil]
+ :durations        [12 1]
+ :successes        [true true]
+ :started-at-ms    [... ...]
+ :silents          [false true]
+ ...}
+```
+
+Target:
+
+```clojure
+{:iteration N
+ :forms [{:position 0
+          :code "(def x 1)"
+          :comment nil
+          :result raw-value-or-tool-result
+          :error nil
+          :duration-ms 12
+          :started-at-ms ...
+          :success? true
+          :silent? false}
+         {:position 1
+          :code "(done {:answer \"..\"})"
+          :result :vis/answer
+          :silent? true
+          ...}]
+ :thinking ...
+ :error nil
+ :final nil
+ :done? false
+ ...}
+```
+
+Renderable view derived at consumer:
+
+```clojure
+(defn form-display [{:keys [code result error] :as form}]
+  (assoc form
+    :source-segments (parse-block-display code)
+    :result-render   (render-result result error)
+    :result-kind     (classify-kind result error)
+    :result-detail   (extract-metadata result)))
+```
+
+Cached by content hash `[code result error]` -> render. Live progress and resume share the
+same projection. Fingerprint becomes `:forms` content hash, not five separate vectors.
+
+### Code changes
+
+- `src/com/blockether/vis/internal/progress.clj`
+  - replace parallel-array `pad-to` / `assoc` / `drop-slot` / `insert-slot` machinery
+    with `:forms` vector ops indexed by `:position`
+  - emit chunks shaped per-form, not per-axis
+  - `hide-form-slot` / `elide-form-slots` operate on `:forms`
+  - keep `:thinking`, `:error`, `:final`, `:done?`, `:provider-fallbacks`, `:activity`,
+    `:recaps`, `:elided-form-idxs` at top level (truly iteration-scoped)
+
+- `src/com/blockether/vis/internal/loop.clj`
+  - `on-chunk :form-start` / `:form-result` carry one form map, no parallel axes
+  - block validation / persistence still uses `:code` / `:result` / `:error` / `:render-segments`
+    on the persisted iteration block (DB layer untouched in this Etap)
+  - the display side only uses `:forms`
+
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj`
+  - history rebuild produces `:forms` directly
+  - `result-kind`, `tool-result-detail`, `result-strs`, `result-details` local fns
+    become `form-display` helper invoked per form (single function, single test)
+
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj`
+  - `format-iteration-entry-entries` consumes `:forms`
+  - `iteration-fingerprint` keys off `:forms` content + iteration-level scalars
+  - `code-source-from-render-segments` reads `:source-segments` from the form display
+
+- `extensions/channels/vis-channel-telegram/src/com/blockether/vis/ext/channel_telegram/bot.clj`
+  - live-bubble formatter consumes `:forms`
 
 - `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/transcript.clj`
-- `src/com/blockether/vis/internal/render.clj` (`session->markdown`)
+  - `render-block-code-segments` reads `:source-segments` from the form display
 
-Change:
+### Tests
 
-- export assistant answer from raw `answer_markdown`
-- avoid IR -> Markdown round-trip when source exists
+- progress tracker emits `:forms`, all per-axis tests rewritten.
+- TUI render snapshot tests rewritten against `:forms`.
+- Telegram live-bubble test rewritten.
+- new tests for `form-display` purity and cache-key shape.
 
-## Migration strategy
+### Definition of done — Etap 2
 
-Since old DB can be discarded:
+- `./verify.sh` green
+- progress chunk shape is `:forms`-based
+- consumers no longer reference `:render-segments`, `:results`, `:result-kinds`,
+  `:result-details` at top level of iteration entries
+- one derivation function (`form-display`) shared across live and resume paths
+- single commit landing the cut
 
-1. edit V1 schema directly
-2. delete/ignore existing local DB during development
-3. update code/tests to new schema
-4. no legacy repair path required
+## Order of operations
 
-If compatibility later needed:
+1. Etap 1 first. Smaller blast radius, immediate prompt simplification, decouples
+   final-answer truth from iteration display.
+2. Etap 2 second, on top of a green Etap 1.
 
-- if old row has `answer BLOB`, render IR to Markdown once
-- persist `answer_markdown`
-- discard old IR blob after migration
+No half-merged middle states. Each etap = one commit, green `verify.sh` before commit.
 
-## Test plan
+## Out of scope
 
-Required tests:
-
-- prompt no longer contains `(done [:ir`
-- `(done {:answer "**bold**"})` stores exact Markdown
-- derived IR renders bold in TUI
-- code fences survive DB round-trip exactly
-- tables parse/render acceptably
-- links render safely
-- raw HTML is visible/safe, not executed
-- resume path reconstructs assistant message from Markdown
-- export/copy uses raw Markdown
-- search finds plain text inside Markdown
-- tool results remain destructurable Clojure data
-- needs-input still works
-
-## Rollout order
-
-1. Add Markdown answer helpers and tests.
-2. Change `done` to accept/store Markdown while still deriving IR for live result.
-3. Change prompt contract.
-4. Change DB schema and persistence read/write.
-5. Update TUI resume/live paths.
-6. Update Telegram/voice/CLI/export.
-7. Remove model-facing IR docs/tests.
-8. Optional: add render cache columns and cache invalidation.
+- migrating existing user DBs
+- preserving `(done [:ir ...])`
+- preserving `(done "string")` sugar
+- markdown tool results
+- render cache columns in SQLite
+- promoting Markdown as the contract for `:render-fn`
 
 ## Non-goals
 
-- Do not make tools return Markdown.
-- Do not remove IR renderer internals.
-- Do not make raw Markdown target-specific output.
-- Do not preserve old local DB if product decision is to drop it.
+- backwards compatibility of any kind
+- partial rollouts
+- supporting both shapes during transition
+
+## Risks
+
+- string ambiguity (`String` = Markdown source / literal text / Clojure source) — mitigated
+  by naming the entry points: `markdown->ir`, `literal->ir`, `extract-text`, `search-text`.
+- Telegram/Web escaping — channel-specific escape stays mandatory after parsing.
+- raw HTML in Markdown — rendered as visible text, never executed.
+- terminal control sequences in answers — stripped at the TUI boundary.
 
 ## Final principle
 
-Markdown is answer truth. IR is derived rendering/cache structure. Tools return data. Channels render from Markdown-derived IR.
+Markdown is the canonical answer. IR is derived rendering. Iteration display is one
+function over one per-form vector. Tools return data. Channels render from
+content-addressed projections.
