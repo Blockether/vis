@@ -7,9 +7,11 @@
   (it "registers business and individual GitHub Copilot providers as separate extension entries"
     (require 'com.blockether.vis.ext.provider-github-copilot :reload)
     (let [business   (vis/provider-by-id :github-copilot-business)
-          individual (vis/provider-by-id :github-copilot-individual)]
+          individual (vis/provider-by-id :github-copilot-individual)
+          ext-nses   (set (map :ext/name (vis/registered-extensions)))]
       (expect (= :github-copilot-business (:provider/id business)))
       (expect (= :github-copilot-individual (:provider/id individual)))
+      (expect (contains? ext-nses "provider-github-copilot"))
       (expect (= "https://api.business.githubcopilot.com" (get-in business [:provider/preset :base-url])))
       (expect (= "https://api.individual.githubcopilot.com" (get-in individual [:provider/preset :base-url])))
       (expect (ifn? (:provider/status-fn business)))

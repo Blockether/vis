@@ -214,11 +214,9 @@
    segments are not silent; channels consume :render-segments to hide only the
    structural subforms."
   [chunk]
-  (let [code (str (:code chunk))
-        trimmed (str/triml code)]
+  (let [code (str (:code chunk))]
     (boolean
       (or (:vis/structurally-silent? chunk)
-        (str/starts-with? trimmed "(done")
         (and (not (visible-code-segments? chunk))
           (or (str/includes? code "(set-session-title!")
             (str/includes? code "(done")))

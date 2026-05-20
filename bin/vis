@@ -135,9 +135,23 @@ else
   set --
 fi
 
+# svar SSE per-line trace. Off by default. Set VIS_STREAM_TRACE=1 (or
+# true/yes/on) to flip `-Dsvar.stream.trace=true` on this JVM; the svar
+# SSE reader then emits `::stream-line-trace` log entries every N lines
+# OR whenever the inter-line gap >= STREAM_LINE_TRACE_GAP_MS. Use to
+# diagnose stuck `ask-code!` streams (silent server reasoning vs. ping
+# storms vs. real model deltas) without rebuilding svar.
+stream_trace_jvm_opts=()
+case "${VIS_STREAM_TRACE:-0}" in
+  1|true|TRUE|yes|YES|on|ON)
+    stream_trace_jvm_opts=("-J-Dsvar.stream.trace=true")
+    measure_log "svar stream trace enabled"
+    ;;
+esac
+
 measure_log "exec cold clojure -M:vis"
 if (( ${#vis_extension_sdeps[@]} > 0 )); then
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${vis_extension_sdeps[@]}" -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" "${vis_extension_sdeps[@]}" -M:vis "$@"
 else
-  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+  run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${stream_trace_jvm_opts[@]}" -M:vis "$@"
 fi

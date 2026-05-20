@@ -71,5 +71,17 @@ for arg in "$@"; do
 done
 set -- "${args[@]}"
 
+# svar SSE per-line trace - see bin/vis for the full rationale.
+# Same flag, same env var, same effect on the dev nREPL JVM (where the
+# `dev/tui!` Terminal.app JVM is also launched from, so a stuck stream
+# inside the dev path is observable the same way as packaged TUI).
+stream_trace_jvm_opts=()
+case "${VIS_STREAM_TRACE:-0}" in
+  1|true|TRUE|yes|YES|on|ON)
+    stream_trace_jvm_opts=("-J-Dsvar.stream.trace=true")
+    measure_log "svar stream trace enabled"
+    ;;
+esac
+
 measure_log "exec cold clojure -M:dev"
-run_measured_or_exec "process cold clojure -M:dev" clojure -M:dev "$@"
+run_measured_or_exec "process cold clojure -M:dev" clojure "${stream_trace_jvm_opts[@]}" -M:dev "$@"

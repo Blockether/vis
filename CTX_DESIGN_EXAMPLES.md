@@ -12,6 +12,18 @@ Read these, mark what feels invented, what feels essential, what's missing.
 - Lazy fetches via `(v/turn-message N)`, `(v/iterations N)`, `(v/turn-answer N)`, `(v/turn-toc from to)`
 
 ## Operator API — final
+tool -> [] 
+[user-message, tool, assistant; tool, tool tool tool, assistant] => duzy...
+
+(def a "..czesc pliku a[100-300]")
+(def b "..czesc pliku a[300-500])
+(reduce [a, b])
+kod początkowy -> TRANSFORMACJE -> kod v2 -> .....
+
+1. Kontekst nie puchnie...
+2. Dalej masz dostep do poprzednich informacji...
+3. Nie puchnie ENV (SCI).. 
+
 
 Three mid-turn verbs + finalizer. Pure semantics. No magic.
 
