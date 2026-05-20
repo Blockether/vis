@@ -122,6 +122,19 @@
   (try (git! repo-root ["rev-parse" "HEAD"])
     (catch Throwable _ nil)))
 
+(defn- dirty-worktree?
+  [root]
+  (not (str/blank? (git! root ["status" "--porcelain"]))))
+
+(defn- commit-worktree-if-dirty!
+  [root workspace-id]
+  (when (dirty-worktree? root)
+    (git! root ["add" "-A"])
+    (git! root ["-c" "user.name=Vis Workspace"
+                "-c" "user.email=vis-workspace@localhost"
+                "commit" "-m" (str "Apply workspace " workspace-id)])
+    (current-head root)))
+
 (defn- sanitize-id
   [s]
   (let [s (-> (str (or s "workspace"))
@@ -136,9 +149,6 @@
         name (sanitize-id (.getName (io/file root)))
         hash (Long/toUnsignedString (Integer/toUnsignedLong (hash root)) 36)]
     (str name "-" hash)))
-
-(defn- short-id []
-  (subs (str (UUID/randomUUID)) 0 8))
 
 (defn- worktree-root
   [repo-id workspace-id]
@@ -306,16 +316,18 @@
     (when (= :trunk (:kind ws))
       (throw (ex-info "Trunk workspace cannot be merged"
                {:type :workspace/trunk-merge :workspace-id workspace-id})))
-    (when-not (= :active (:state ws))
-      (throw (ex-info (str "Workspace must be :active to merge (state="
+    (when-not (contains? #{:active :merging} (:state ws))
+      (throw (ex-info (str "Workspace must be :active or :merging to merge (state="
                         (:state ws) ")")
                {:workspace-id workspace-id :state (:state ws)})))
     (let [repo-root  (:repo-root ws)
+          root       (:root ws)
           branch     (:branch ws)
           merge-args (cond-> ["merge"]
                        (= strategy :no-ff)   (conj "--no-ff")
                        (= strategy :ff-only) (conj "--ff-only")
                        true                  (conj branch))]
+      (commit-worktree-if-dirty! root workspace-id)
       (p/db-workspace-update-state! db-info workspace-id :merging)
       (try
         (let [out  (git! repo-root merge-args)

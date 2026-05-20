@@ -587,6 +587,11 @@
         ;; returns — late-arriving thread writes silently drop (the dynamic
         ;; var binding has unwound).
         channel-sink (atom [])
+        ;; Per-eval tool lifecycle events. Live UI still consumes events
+        ;; synchronously through `tool-event-fn`; the loop also keeps a
+        ;; local copy so final-answer validation can see that a mutation
+        ;; happened even when the public tool value is plain data.
+        tool-events  (atom [])
         sink-pos     (atom -1)
         ;; Per-iteration sinks. `*def-sink-atom*`
         ;; collects every (def …) the SCI sandbox runs (Phase 2).
@@ -601,14 +606,15 @@
         lru          (sci-patches/fresh-lru-atom)
         turn-position (when env
                         (some-> (:current-turn-position-atom env) deref))
-        ;; Live tool-event callback only - no longer accumulated into a vec.
-        ;; Storage role retired (was dead persistence). The TUI/progress UI
-        ;; consumes via `tool-event-fn` synchronously during eval.
+        ;; Live tool-event callback + local validation copy. Persistence of
+        ;; these events remains retired; the local copy exists only long
+        ;; enough to block `(done ...)` in the same iteration as mutation.
         record-tool-event (fn [event]
                             (let [op (:op event)
                                   n  (get (swap! tool-counts update op (fnil inc 0)) op)
                                   event* (cond-> event
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
+                              (swap! tool-events conj event*)
                               (when tool-event-fn (tool-event-fn event*))))
         {parsed-forms :forms parse-error :parse-error repaired-source :repaired-source}
         (parse-top-level-forms code)
@@ -686,6 +692,7 @@
                                         {:result v :forms [] :error nil}))))]
                             (assoc outcome
                               :channel @channel-sink
+                              :tool-events @tool-events
                               :def-sink @def-sink
                               :lru     @lru))
                           (catch Throwable e
@@ -694,6 +701,7 @@
                             ;; eval-string+ threw outside per-form path).
                             {:result nil
                              :channel @channel-sink
+                             :tool-events @tool-events
                              :def-sink @def-sink
                              :lru     @lru
                              :forms   []
@@ -708,6 +716,7 @@
                              (reset! thrown e)
                              {:result nil
                               :channel @channel-sink
+                              :tool-events @tool-events
                               :def-sink @def-sink
                               :lru     @lru
                               :error   (try (extension/ex->op-error e {:block-source code})
@@ -735,6 +744,7 @@
       (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil
          :channel @channel-sink
+         :tool-events @tool-events
          :def-sink @def-sink
          :lru     @lru
          :error   {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
@@ -1231,25 +1241,43 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
+(defn- mutation-tool-event?
+  [{:keys [op]}]
+  (when op
+    (try
+      (= :op.tag/mutation (extension/op-tag op))
+      (catch Throwable _
+        false))))
+
+(defn- mutation-final-answer-gate-error
+  [blocks]
+  (let [events (->> blocks
+                 (mapcat :tool-events)
+                 (filter mutation-tool-event?)
+                 vec)]
+    (when (seq events)
+      (let [ops (->> events (map :op) distinct (map pr-str) (str/join ", "))]
+        (str "Final answer rejected: mutation tool(s) ran in this iteration (" ops "). "
+          "Do not claim completion in the same iteration as a write. "
+          "Let the mutation result render, then answer in the next iteration using that evidence.")))))
+
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
    candidate `(done …)` answer. Returns nil when every hook accepts,
    otherwise a single string surfaced as the rejected answer form's
    validation error.
 
-   This used to run a structural floor first (no sibling
-   errors / no extension calls in this iter / prior-iteration
-   evidence required). With one form per iteration:
+   This runs a structural mutation floor first, then extension hooks.
+   With one form per iteration:
      #1 own-form-error is enforced upstream by `answer-form-error`
         (if the (done …) form itself threw, the answer is dropped).
-     #2 mixing tool + (done …) in one `(do …)` is the canonical
-        canonical one-iteration shape — handles return synchronously,
-        the answer is composed in the same eval frame.
+     #2 mutation tool + (done …) in one iteration is rejected so the
+        write result stays observable before any completion claim.
      #3 evidence-prior gating became a false-positive engine: probe-
-        and-answer in a single iteration is the intended flow.
-   So the floor is gone. Extensions that need an additional veto
-   (e.g. user-facing safety / format gates) still get their
-   `:turn.answer/validate` hook fired here.
+        and-answer with observations in a single iteration remains the
+        intended flow. Extensions that need an additional veto (e.g.
+        user-facing safety / format gates) still get their
+        `:turn.answer/validate` hook fired here.
 
    `active-extensions` is passed by the turn loop so activation is
    computed once per turn; direct callers may omit it and provide
@@ -1261,29 +1289,30 @@
   ([environment iteration blocks answer-value active-extensions]
    (final-answer-gate-error environment iteration blocks answer-value active-extensions nil))
   ([environment iteration blocks answer-value active-extensions extra-ctx]
-   (let [ctx (merge {:environment environment
-                     :phase :turn.answer/validate
-                     :iteration iteration
-                     :blocks blocks
-                     :answer answer-value}
-               extra-ctx)]
-     (some (fn [ext]
-             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
-                     (when (= :turn.answer/validate phase)
-                       (binding [extension/*current-extension* ext
-                                 extension/*current-symbol* nil]
-                         (try
-                           (let [hit (hook-fn ctx)]
-                             (cond
-                               (s/valid? ::extension/answer-validation-reject hit)
-                               (answer-validation-rejection-message hook hit)
+   (or (mutation-final-answer-gate-error blocks)
+     (let [ctx (merge {:environment environment
+                       :phase :turn.answer/validate
+                       :iteration iteration
+                       :blocks blocks
+                       :answer answer-value}
+                 extra-ctx)]
+       (some (fn [ext]
+               (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                       (when (= :turn.answer/validate phase)
+                         (binding [extension/*current-extension* ext
+                                   extension/*current-symbol* nil]
+                           (try
+                             (let [hit (hook-fn ctx)]
+                               (cond
+                                 (s/valid? ::extension/answer-validation-reject hit)
+                                 (answer-validation-rejection-message hook hit)
 
-                               (and (map? hit) (:reject hit))
-                               (answer-validation-invalid-return-message ext id hit)))
-                           (catch Throwable t
-                             (answer-validation-hook-error-message ext id t))))))
-               (or (:ext/hooks ext) [])))
-       (answer-validation-extensions environment active-extensions)))))
+                                 (and (map? hit) (:reject hit))
+                                 (answer-validation-invalid-return-message ext id hit)))
+                             (catch Throwable t
+                               (answer-validation-hook-error-message ext id t))))))
+                 (or (:ext/hooks ext) [])))
+         (answer-validation-extensions environment active-extensions))))))
 
 (defn- iteration-start-hook-hit
   [ext id hit]
@@ -2052,6 +2081,7 @@
                                     :code code
                                     :result (:result result)
                                     :channel (:channel result)
+                                    :tool-events (vec (:tool-events result))
                                     :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
                                     :envelope (:envelope result)
                                     :role (:role result)
@@ -3150,7 +3180,10 @@
                                                 :cost-usd (:cost-usd tc)))))
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                         trace-entry {:iteration iteration :thinking thinking
-                                     :blocks blocks :final? (boolean final-result)}]
+                                     :blocks blocks
+                                     :engine-timing (:engine-timing iteration-result)
+                                     :eval-duration-ms (reduce + (map block-duration-ms blocks))
+                                     :final? (boolean final-result)}]
                     (cond
                       final-result
                       (do (log-stage! :final iteration
@@ -3181,10 +3214,18 @@
                                      :answer-position  (:answer-position final-result)
                                      :silent-form-idxs (:silent-form-idxs iteration-result)
                                      :done?            true}))
-                        (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
+                        (let [trace* (conj trace trace-entry)
+                              engine-timing* (not-empty (apply merge-with + (keep :engine-timing trace*)))
+                              eval-duration-ms* (reduce + (map #(long (or (:eval-duration-ms %) 0)) trace*))
+                              result (-> (merge {:answer (:answer final-result) :trace trace*
                                                  :iteration-count (inc iteration)}
                                            (finalize-cost))
-                                       (attach-llm-routing-summary pre-resolved-model iteration-result))]
+                                       (attach-llm-routing-summary pre-resolved-model iteration-result)
+                                       (cond->
+                                         engine-timing*
+                                         (assoc :engine-timing engine-timing*)
+                                         (pos? eval-duration-ms*)
+                                         (assoc :eval-duration-ms eval-duration-ms*)))]
                           (auto-archive-hot-symbols! environment)
                           result))
 

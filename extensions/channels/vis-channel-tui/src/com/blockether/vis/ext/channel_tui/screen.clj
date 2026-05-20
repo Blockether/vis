@@ -2267,7 +2267,7 @@
                  (and (instance? KeyStroke key)
                    (seq (slash-suggestions-for-input screen (:input db) (:slash-command-index db)))
                    (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown
-                      KeyType/Tab KeyType/ReverseTab}
+                      KeyType/Tab KeyType/ReverseTab KeyType/Enter}
                     (.getKeyType ^KeyStroke key)))
                  (let [suggestions (slash-suggestions-for-input screen (:input db)
                                      (:slash-command-index db))
@@ -2288,7 +2288,7 @@
                      (= ktype KeyType/ReverseTab)
                      (state/dispatch [:move-slash-command-selection -1 (count suggestions)])
 
-                     (= ktype KeyType/Tab)
+                     (#{KeyType/Tab KeyType/Enter} ktype)
                      (when-let [suggestion (slash/selected-suggestion suggestions)]
                        (state/dispatch
                          [:update-input
