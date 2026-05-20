@@ -13,14 +13,14 @@
    instead of stalling the system-prompt build."
   (:require
    [clojure.java.io :as io]
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [com.blockether.vis.internal.git :as vis-git])
   (:import
    (java.io File)
    (java.util.concurrent ExecutionException Future TimeUnit TimeoutException)
-   (org.eclipse.jgit.api Git Status)
+   (org.eclipse.jgit.api Git)
    (org.eclipse.jgit.lib Repository)
-   (org.eclipse.jgit.revwalk RevWalk RevWalkUtils)
-   (org.eclipse.jgit.storage.file FileRepositoryBuilder)))
+   (org.eclipse.jgit.revwalk RevWalk RevWalkUtils)))
 
 (set! *warn-on-reflection* true)
 
@@ -30,16 +30,6 @@
    past it, in which case the snapshot returns without dirty-status
    fields rather than blocking the LLM turn."
   2000)
-
-(defn- open-repository ^Repository [^File start]
-  (try
-    (let [^FileRepositoryBuilder builder (FileRepositoryBuilder.)]
-      (.. builder
-        (findGitDir start)
-        readEnvironment)
-      (when (.getGitDir builder)
-        (.build builder)))
-    (catch Throwable _ nil)))
 
 (defn- detached-head?
   "True when the repository HEAD is not on a branch.
@@ -75,9 +65,6 @@
     (.exists (io/file worktree-root ".gitmodules"))
     (catch Throwable _ false)))
 
-(defn- safe-count [coll]
-  (if coll (count coll) 0))
-
 (defn- collect-status
   "Run `git status` with a wall-time deadline. Returns a status map
    on success, nil on timeout/failure. Status walks the working
@@ -93,26 +80,7 @@
     (try
       (let [^Future fut (.submit executor ^java.util.concurrent.Callable task)]
         (try
-          (let [^Status status (.get fut timeout-ms TimeUnit/MILLISECONDS)
-                modified       (safe-count (.getModified status))
-                untracked      (safe-count (.getUntracked status))
-                added          (safe-count (.getAdded status))
-                changed        (safe-count (.getChanged status))
-                missing        (safe-count (.getMissing status))
-                removed        (safe-count (.getRemoved status))
-                conflicting    (safe-count (.getConflicting status))
-                changes?       (boolean (some pos? [modified untracked added changed
-                                                    missing removed conflicting]))]
-            {:clean?      (.isClean status)
-             :dirty?      (not (.isClean status))
-             :changes?    changes?
-             :modified    modified
-             :untracked   untracked
-             :added       added
-             :changed     changed
-             :missing     missing
-             :removed     removed
-             :conflicting conflicting})
+          (vis-git/status-counts (.get fut timeout-ms TimeUnit/MILLISECONDS))
           (catch TimeoutException _
             (.cancel fut true)
             nil)
@@ -180,7 +148,7 @@
   ([^File start-file {:keys [status? status-timeout-ms]
                       :or   {status?            true
                              status-timeout-ms default-status-timeout-ms}}]
-   (when-let [^Repository repo (open-repository start-file)]
+   (when-let [^Repository repo (vis-git/open-repository start-file)]
      (try
        (let [git-dir       (.getDirectory repo)
              worktree-root (.getWorkTree repo)
