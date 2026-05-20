@@ -173,6 +173,25 @@
   (when (instance? java.util.concurrent.Future result)
     (.cancel ^java.util.concurrent.Future result true)))
 
+(defn- key-character
+  [key]
+  (when (and key (not (instance? MouseAction key)) (= KeyType/Character (.getKeyType key)))
+    (.getCharacter key)))
+
+(defn- key-enter?
+  [key]
+  (and key
+    (not (instance? MouseAction key))
+    (or (= KeyType/Enter (.getKeyType key))
+      (contains? #{\newline \return} (key-character key)))))
+
+(defn- key-escape?
+  [key]
+  (and key
+    (not (instance? MouseAction key))
+    (or (= KeyType/Escape (.getKeyType key))
+      (= (char 27) (key-character key)))))
+
 (defn- draw-copilot-waiting!
   [^TerminalScreen screen started-at-ms]
   (let [size        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -227,8 +246,7 @@
             (draw-copilot-waiting! screen started-at-ms))
           (if (and screen
                 (when-let [key (.pollInput screen)]
-                  (and (not (instance? MouseAction key))
-                    (= KeyType/Escape (.getKeyType key)))))
+                  (key-escape? key)))
             (do
               (cancel-copilot-oauth-poll! result)
               copilot-oauth-cancelled)
@@ -329,17 +347,17 @@
                 (recur status)))
 
             :else
-            (case (.getKeyType key)
-              KeyType/Enter  true
-              KeyType/Escape nil
-              KeyType/Character
+            (cond
+              (key-enter? key) true
+              (key-escape? key) nil
+              (= KeyType/Character (.getKeyType key))
               (case (Character/toLowerCase (.getCharacter key))
                 \o (do (opener/open! verification-uri)
                      (recur "Opened browser URL."))
                 \c (do (input/clipboard-copy! user-code)
                      (recur "Copied device code to clipboard."))
                 (recur status))
-              (recur status))))))))
+              :else (recur status))))))))
 
 (defn- copilot-oauth-flow!
   "Run the GitHub Copilot OAuth device flow inside the TUI.
@@ -367,21 +385,24 @@
            nil))
         ;; Device flow
        (try
-         (let [{:keys [user-code verification-uri device-code interval expires-in]}
-               (start-fn opts)]
-           (when (copilot-auth-instructions! screen verification-uri user-code)
-             (when force?
-               (copilot/logout!))
-            ;; Poll in background, show waiting message
-             (let [result (vis/worker-future "vis-tui-copilot-oauth-poll"
-                            #(poll-fn device-code interval expires-in opts))
-                   poll-result (wait-for-copilot-oauth! screen result)]
-               (when-not (= copilot-oauth-cancelled poll-result)
-                 (let [{:keys [token]} (exchange-fn opts)]
-                   ;; Success is silent: surfacing a redundant "Authenticated!" toast
-                   ;; on top of the just-closed device-flow dialog confused users
-                   ;; (cf. anthropic dialog feedback). Failure dialogs remain.
-                   token)))))
+         (let [start-result (vis/worker-future "vis-tui-copilot-oauth-start"
+                              #(start-fn opts))
+               flow        (wait-for-copilot-oauth! screen start-result)]
+           (when-not (= copilot-oauth-cancelled flow)
+             (let [{:keys [user-code verification-uri device-code interval expires-in]} flow]
+               (when (copilot-auth-instructions! screen verification-uri user-code)
+                 (when force?
+                   (copilot/logout!))
+                ;; Poll in background, show waiting message
+                 (let [result (vis/worker-future "vis-tui-copilot-oauth-poll"
+                                #(poll-fn device-code interval expires-in opts))
+                       poll-result (wait-for-copilot-oauth! screen result)]
+                   (when-not (= copilot-oauth-cancelled poll-result)
+                     (let [{:keys [token]} (exchange-fn opts)]
+                       ;; Success is silent: surfacing a redundant "Authenticated!" toast
+                       ;; on top of the just-closed device-flow dialog confused users
+                       ;; (cf. anthropic dialog feedback). Failure dialogs remain.
+                       token)))))))
          (catch Exception e
            (dlg/text-view-dialog! screen "GitHub Copilot" [(str "Auth failed: " (ex-message e))])
            nil))))))
