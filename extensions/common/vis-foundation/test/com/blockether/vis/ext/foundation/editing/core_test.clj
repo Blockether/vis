@@ -494,6 +494,15 @@
         (expect (some? err))
         (expect (= 2 (-> err ex-data :failures first :matches))))))
 
+  (it "patch rejects empty exact-replace batches instead of reporting success"
+    (let [patch (private-fn "patch-safe")
+          err   (try
+                  (patch [])
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (= :ext.foundation.editing/empty-patch (:type (ex-data err))))))
+
   (it "patch diagnostics report failing edit index, all match counts, bounded previews, and write nothing"
     (let [path  (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
           patch (private-fn "patch-safe")

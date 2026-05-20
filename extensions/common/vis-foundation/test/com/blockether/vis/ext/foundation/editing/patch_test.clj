@@ -240,7 +240,14 @@
                 "\n@@\n-NOPE\n+y\n*** End Patch\n")
           out (check env)]
       (expect (= false (:valid? out)))
-      (expect (seq (:failures out))))))
+      (expect (seq (:failures out)))))
+
+  (it "patch-envelope-check rejects empty envelopes"
+    (let [check (private-fn "patch-envelope-check")
+          out (check "*** Begin Patch\n*** End Patch\n")]
+      (expect (= false (:valid? out)))
+      (expect (= :ext.foundation.editing/empty-patch
+                (-> out :failures first :data :type))))))
 
 (defdescribe patch-tool-dispatch-test
   (it "patch-tool routes string -> envelope, vec -> exact-replace"

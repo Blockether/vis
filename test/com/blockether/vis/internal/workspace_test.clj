@@ -3,12 +3,12 @@
    store through the sqlite extension; git-backed paths exercise the
    live vis repository (kind=:trunk, no worktree to clean up).
 
-   Branch-kind operations (spawn-branch!, apply-to-trunk!, discard! of
-   real worktrees) require disk side-effects under
-   `~/.vis/workspaces/<repo-id>/<id>/` and are exercised through smoke
-   tests in the REPL during development. They are out of scope for the
-   unit suite to keep CI fast and cleanup-free."
+   Branch-kind operations use temporary git repositories so apply/discard
+   regressions stay covered without touching the live repository."
   (:require
+   [clojure.java.io :as io]
+   [clojure.java.shell :as sh]
+   [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.core :as ps]
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.internal.workspace :as ws]
@@ -21,6 +21,51 @@
   (let [store (assoc (ps/db-open! :memory) :backend :sqlite)]
     (try (f store)
       (finally (ps/db-close! store)))))
+
+(defn- temp-dir
+  [prefix]
+  (.getCanonicalPath
+    (.toFile
+      (java.nio.file.Files/createTempDirectory
+        prefix
+        (make-array java.nio.file.attribute.FileAttribute 0)))))
+
+(defn- delete-tree!
+  [root]
+  (doseq [f (reverse (file-seq (io/file root)))]
+    (io/delete-file f true)))
+
+(defn- git!
+  [dir args]
+  (let [argv   (into ["git" "-C" (.getCanonicalPath (io/file dir))] args)
+        result (apply sh/sh argv)]
+    (when-not (zero? (:exit result))
+      (throw (ex-info (str "git failed: " (str/join " " argv))
+               (assoc result :argv argv))))
+    (str/trim (or (:out result) ""))))
+
+(defn- init-git-repo!
+  [repo-root]
+  (git! repo-root ["init"])
+  (git! repo-root ["config" "user.name" "Vis Test"])
+  (git! repo-root ["config" "user.email" "vis-test@example.invalid"])
+  (spit (io/file repo-root "note.txt") "base\n")
+  (git! repo-root ["add" "note.txt"])
+  (git! repo-root ["commit" "-m" "base"]))
+
+(defn- branch-workspace!
+  [store repo-root worktree-root]
+  (let [branch "vis/apply-test"]
+    (git! repo-root ["worktree" "add" "-b" branch worktree-root "HEAD"])
+    (ps/db-workspace-insert! store
+      {:id        (str (java.util.UUID/randomUUID))
+       :repo-id   "apply-test"
+       :repo-root repo-root
+       :kind      :branch
+       :branch    branch
+       :root      worktree-root
+       :state     :active
+       :commit-id (git! worktree-root ["rev-parse" "HEAD"])})))
 
 (defdescribe cwd-binding-test
   (it "falls back to process cwd when *workspace-root* is unbound (REPL/test convenience)"
@@ -92,6 +137,25 @@
             (expect false)
             (catch clojure.lang.ExceptionInfo e
               (expect (= :workspace/trunk-discard (:type (ex-data e)))))))))))
+
+(defdescribe branch-apply-test
+  (it "commits dirty worktree changes before merging to trunk"
+    (with-store
+      (fn [store]
+        (let [base          (temp-dir "vis-workspace-apply-test")
+              repo-root     (str (io/file base "repo"))
+              worktree-root (str (io/file base "worktree"))]
+          (try
+            (.mkdirs (io/file repo-root))
+            (init-git-repo! repo-root)
+            (let [workspace (branch-workspace! store repo-root worktree-root)]
+              (spit (io/file (:root workspace) "note.txt") "changed\n")
+              (let [result (ws/apply-to-trunk! store {:workspace-id (:id workspace)})]
+                (expect (= "changed\n" (slurp (io/file repo-root "note.txt"))))
+                (expect (= :merged (get-in result [:workspace :state])))
+                (expect (str/blank? (git! (:root workspace) ["status" "--porcelain"])))))
+            (finally
+              (delete-tree! base))))))))
 
 (defdescribe lookup-errors-test
   (it "apply-to-trunk! reports unknown workspace-id in ex-data"

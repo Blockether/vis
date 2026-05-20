@@ -151,7 +151,7 @@
                             (some #(when (= text (:text %)) %) @writes))]
         (expect (some? placeholder-write))
         (expect (= t/header-active-tab-fg (:fg placeholder-write)))
-        (expect (= t/dialog-title-bg (:bg placeholder-write)))
+        (expect (= t/header-active-tab-bg (:bg placeholder-write)))
         (expect (empty? left-slot-writes))
         (expect (= t/header-fg (:fg (write-by-text "⧉ 123e4567")))))))
 

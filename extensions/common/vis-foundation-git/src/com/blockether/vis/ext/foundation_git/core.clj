@@ -13,8 +13,7 @@
    [clojure.java.shell :as sh]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.workspace :as workspace]))
+   [com.blockether.vis.internal.extension :as extension]))
 
 ;; =============================================================================
 ;; Activation
