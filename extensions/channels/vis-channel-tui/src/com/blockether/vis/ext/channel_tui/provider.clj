@@ -740,15 +740,7 @@
                          vec))
         selected (atom 0)
         scroll   (atom 0)]
-    ;; If still empty after init, prompt for a model
-    (when (empty? @models)
-      (if-let [model-name (select-model! screen provider
-                            (:default-models (vis/provider-template (:id provider))))]
-        (swap! models conj {:name model-name})
-        ;; User cancelled - return nil (no changes)
-        (reset! models [])))
-    (when (seq @models)
-      (loop []
+    (loop []
         (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
               cols    (.getColumns size)
               rows    (.getRows size)
@@ -889,7 +881,7 @@
 
                         :else (recur)))
 
-                    :else (recur)))))))))))
+                    :else (recur)))))))))) 
 
 (defn- ensure-base-url
   [provider]

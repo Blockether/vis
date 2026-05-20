@@ -299,17 +299,6 @@
     (when (seq content)
       [[:code {:lang "text"} content]])))
 
-(defn- warning-line
-  [{:keys [source reason path]}]
-  (str (present source) " / " (present reason) " / " (present path)))
-
-(defn- render-scan-warnings-channel
-  [result]
-  (lines-channel "v/scan-warnings"
-    (if (seq result)
-      (map warning-line result)
-      ["no scan warnings"])))
-
 (defn- reload-summary
   [result]
   (str "added " (count (:added result))
@@ -423,7 +412,6 @@
     monorepo                {:render-fn render-monorepo-channel}
     repositories            {:render-fn render-repositories-channel}
     main-agent-instructions {:render-fn render-guidance-channel}
-    scan-warnings           {:render-fn render-scan-warnings-channel}
     reload-extensions!      {:render-fn render-reload-channel}))
 
 (defn- env-data-symbol
@@ -453,7 +441,7 @@
   (env-data-symbol #'refresh!-tool 'refresh!))
 
 ;; ---------------------------------------------------------------------------
-;; Project guidance + scan-warnings surface.
+;; Project guidance surface.
 ;; ---------------------------------------------------------------------------
 
 (defn main-agent-instructions
@@ -461,30 +449,10 @@
   []
   (agents/instructions))
 
-(defn- combined-scan-warnings []
-  ;; Two sources, all `{:source :reason :path}` shaped so the
-  ;; renderer can splice them into one `(:project ctx) :warnings`
-  ;; vec:
-  ;;
-  ;;   (a) AGENTS.md / CLAUDE.md read failures              — agents/scan-warnings
-  ;;   (b) Extension namespace `(require)` failures collected
-  ;;       during classpath discovery                        — vis/extension-load-failures
-  ;;
-  ;; (b) is load-bearing. Pre-fix a single typo in any
-  ;; extension source file silently disabled its alias namespace
-  ;; (`v/`, …). The user saw nothing; the LLM saw
-  ;; "Unable to resolve symbol" forever (session
-  ;; d8aff512-d60d-42b6-a009-041f1bec3891 burned 200+ blocks on this).
-  ;; Surfacing the failure here puts the actual root cause — "foundation.core
-  ;; failed to load: Syntax error reading source at markdown.clj:328:17" —
-  ;; into the system prompt where the model will read it.
-  (vec (concat (agents/scan-warnings)
-         (vis/extension-load-failures))))
-
-(defn ^{:doc "Scan warnings vec: {:source :reason :path}. Empty when clean."
-        :arglists '([])} scan-warnings
-  []
-  (combined-scan-warnings))
+(defn- environment-warnings []
+  ;; Keep extension load failures in `(:project ctx) :warnings`. This is not
+  ;; a public `v/` tool; it is emergency context for broken extension loads.
+  (vec (vis/extension-load-failures)))
 
 (defn reload-extensions!
   "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
@@ -496,11 +464,6 @@
   []
   (success-envelope (main-agent-instructions)))
 
-(defn- scan-warnings-tool
-  "Scan warnings vec: {:source :reason :path}. Empty when clean. Returned in a canonical tool envelope."
-  []
-  (success-envelope (scan-warnings)))
-
 (defn- reload-extensions!-tool
   "Reload extension registry. Returns diff in a canonical tool envelope: {:added :removed :reloaded :errors ...}."
   ([]
@@ -511,9 +474,6 @@
 (def main-agent-instructions-symbol
   (env-data-symbol #'main-agent-instructions-tool 'main-agent-instructions))
 
-(def scan-warnings-symbol
-  (env-data-symbol #'scan-warnings-tool 'scan-warnings))
-
 (def reload-extensions!-symbol
   (env-data-symbol #'reload-extensions!-tool 'reload-extensions!))
 
@@ -521,7 +481,6 @@
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol
    main-agent-instructions-symbol
-   scan-warnings-symbol
    reload-extensions!-symbol])
 
 (def ^:private FN_INDEX
@@ -530,10 +489,10 @@
 
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project
-   guidance, and scan warnings live under `(:project ctx)`."
+   guidance, and extension-load warnings live under `(:project ctx)`."
   [_environment]
   (try
-    (render/project-context (snapshot) (agents/instructions) (combined-scan-warnings))
+    (render/project-context (snapshot) (agents/instructions) (environment-warnings))
     (catch Throwable t
       (tel/log! {:level :error :id ::environment-ctx-failed
                  :data  {:error (ex-message t)}})

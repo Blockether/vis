@@ -76,7 +76,7 @@
   ;; ::ext-load-failure entries collected during the most recent
   ;; classpath scan. Each entry: {:source :reason :path :extension-id
   ;; :extension-ns :class}. `:source` is the literal keyword
-  ;; `:extension-load` so the foundation scan-warnings surface can
+  ;; `:extension-load` so environment warning consumers can
   ;; tag every line with its origin and the user reads "the
   ;; extension-load-failure warnings come from manifest discovery,
   ;; not from runtime features". Public via `load-failures` (read-only); cleared
@@ -98,9 +98,8 @@
    merged manifest map.
 
    Side effect: appends every load-failure entry to
-   `load-failures-atom` so consumers (foundation scan-warnings
-   surface in `(:project ctx) :warnings`, startup launcher banner)
-   can surface them. The atom is
+   `load-failures-atom` so consumers (`(:project ctx) :warnings`,
+   startup launcher banner) can surface them. The atom is
    reset to `[]` on entry so consecutive scans don't compound stale
    warnings."
   []
@@ -216,8 +215,7 @@
    any vis.edn that failed to parse. Empty vec when every namespace
    loaded cleanly.
 
-   The shape of each entry matches what
-   `vis-foundation`'s scan-warnings renderer expects so callers can
-   splice the result straight into `(:project ctx) :warnings`."
+   The shape of each entry matches `(:project ctx) :warnings` so
+   callers can splice it straight into environment context."
   []
   @load-failures-atom)

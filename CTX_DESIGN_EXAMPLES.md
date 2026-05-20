@@ -76,9 +76,12 @@ Six substantive subtrees. Two engine-derived (`:session.env/symbols`,
 
 ## Rendered CTX block (what model actually sees)
 
+Note the leading `;; ctx` marker and the bare EDN map. **No `(def ctx …)`.**
+This is plain text in the user message, not code to evaluate.
+
 ```clojure
 ;; ════════════════════════════════════════════════════════════════════
-;; CTX — session state. Renders fresh into every user message.
+;; ctx — session state snapshot. Read this. Write back via mem-* verbs.
 ;; ════════════════════════════════════════════════════════════════════
 
 {:session/id   "01HXYZ"

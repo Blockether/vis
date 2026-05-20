@@ -10,11 +10,6 @@
                           when neither AGENTS.md nor CLAUDE.md exists
                           (rules silently absent is worth flagging
                           even though it isn't an error per se).
-     ::scan-warnings     Aggregated warnings from project-guidance
-                          scanners (already surfaced via
-                          `(v/scan-warnings)`); promoted to
-                          :error level for prominence in the
-                          doctor output.
 
    These section fns are pure data -> message-seq; they don't mutate
    anything and don't depend on the runtime environment beyond
@@ -61,33 +56,9 @@
         :remediation "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
 
 ;; ---------------------------------------------------------------------------
-;; ::scan-warnings - promotes scanner warnings into doctor :error msgs
-;; ---------------------------------------------------------------------------
-
-(defn- scan-warnings-diagnostics [_environment]
-  (let [warnings (agents/scan-warnings)]
-    (if (empty? warnings)
-      []
-      (mapv (fn [{:keys [path reason source]}]
-              {:level       :error
-               :message     (str path ": " reason)
-               :remediation (case source
-                              :agents-md
-                              (str "Verify the file is readable; project guidance auto-refreshes "
-                                "when AGENTS.md/CLAUDE.md markers change. Run `bin/vis doctor` to revalidate now.")
-                              :claude-md-fallback
-                              (str "Verify the file is readable; or add a proper `AGENTS.md` instead of "
-                                "relying on the CLAUDE.md fallback.")
-                              "Investigate, fix, then revalidate via `bin/vis doctor`.")
-               :data        {:path path :source source}})
-        warnings))))
-
-;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
-;; `:ext/doctor-fn`. Order is intentional: project-guidance presence,
-;; then any scan failures. Each section stamps its own
-;; `:check-id` so the formatter still groups the output under the
-;; documented prefixes.
+;; `:ext/doctor-fn`. Order is intentional and scoped to foundation-owned
+;; diagnostics. Each section stamps its own `:check-id` for formatter labels.
 ;; ---------------------------------------------------------------------------
 
 (defn- stamp [check-id msgs]
@@ -98,6 +69,4 @@
    diagnostic streams into a single message seq."
   [environment]
   (vec
-    (concat
-      (stamp ::agents-md     (agents-md-diagnostics     environment))
-      (stamp ::scan-warnings (scan-warnings-diagnostics environment)))))
+    (stamp ::agents-md (agents-md-diagnostics environment))))

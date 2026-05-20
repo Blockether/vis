@@ -56,7 +56,7 @@
       (expect (not (contains? syms 'load-skill!)))
       (expect (not (contains? syms 'load-skill)))
       (expect (not (contains? syms 'reload-skills!)))
-      (expect (contains? syms 'scan-warnings))
+      (expect (not (contains? syms 'scan-warnings)))
       (expect (not (contains? syms 'reload-instructions!)))
       (expect (contains? syms 'reload-extensions!))))
 
