@@ -17,7 +17,7 @@
    See plan §1 Q5.
 
    Failure modes (file unreadable, permissions, I/O error, etc.)
-   land in the scan-warnings vec, NOT in the rendered prompt block -
+   land in the guidance read-warning vec, NOT in the rendered prompt block -
    model isn't bound by rules it can't see, but the user/agent
    knows something is broken. See plan §1 Q10."
   (:require
@@ -227,7 +227,7 @@
   []
   (:result (current)))
 
-(defn scan-warnings
+(defn read-warnings
   "Vec of warning maps for AGENTS.md / CLAUDE.md read failures.
    Empty when the file isn't present at all (absence isn't a
    warning) or when a present file read cleanly."

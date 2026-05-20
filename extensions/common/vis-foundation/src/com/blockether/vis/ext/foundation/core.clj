@@ -7,8 +7,8 @@
    [com.blockether.vis.ext.foundation.hints :as hints]))
 
 (defn- combined-prompt
-  "Stitch foundation-owned tool strategy prompt text. Structured runtime,
-   project guidance, and scan warnings flow through `ctx`, not prompt labels."
+  "Stitch foundation-owned tool strategy prompt text. Structured runtime
+   and project guidance flow through `ctx`, not prompt labels."
   [env]
   (str (environment/environment-prompt env)
     "\n\n"
@@ -40,7 +40,6 @@
                   [:v/languages :op.tag/observation]
                   [:v/monorepo :op.tag/observation]
                   [:v/main-agent-instructions :op.tag/observation]
-                  [:v/scan-warnings :op.tag/observation]
                   [:v/patch :op.tag/mutation]
                   [:v/create-dirs :op.tag/mutation]
                   [:v/copy :op.tag/mutation]
@@ -75,7 +74,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation"
-     :ext/description    "Foundation `v/`: session-state/session-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, reproduction CLI."
+     :ext/description    "Foundation `v/`: session-state/session-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, reproduction CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
