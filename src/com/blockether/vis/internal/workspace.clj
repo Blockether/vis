@@ -15,7 +15,12 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.persistance :as p])
   (:import [java.io File]
-           [java.util UUID]))
+           [java.util UUID]
+           [org.eclipse.jgit.api Git]
+           [org.eclipse.jgit.diff DiffEntry]
+           [org.eclipse.jgit.lib Repository]
+           [org.eclipse.jgit.revwalk RevWalk]
+           [org.eclipse.jgit.treewalk CanonicalTreeParser]))
 
 (set! *warn-on-reflection* true)
 
@@ -115,25 +120,88 @@
                t)))))
 
 (defn- current-branch [repo-root]
-  (try (git! repo-root ["rev-parse" "--abbrev-ref" "HEAD"])
+  (try
+    (with-open [git (Git/open (io/file repo-root))]
+      (.getBranch (.getRepository git)))
     (catch Throwable _ nil)))
 
 (defn- current-head [repo-root]
-  (try (git! repo-root ["rev-parse" "HEAD"])
+  (try
+    (with-open [git (Git/open (io/file repo-root))]
+      (some-> (.resolve (.getRepository git) "HEAD") .getName))
     (catch Throwable _ nil)))
 
-(defn- dirty-worktree?
-  [root]
-  (not (str/blank? (git! root ["status" "--porcelain"]))))
+(defn- tree-parser
+  ^CanonicalTreeParser [^Repository repo rev]
+  (let [parser (CanonicalTreeParser.)
+        commit-id (.resolve repo rev)]
+    (with-open [reader (.newObjectReader repo)
+                walk (RevWalk. repo)]
+      (let [commit (.parseCommit walk commit-id)]
+        (.reset parser reader (.getId (.getTree commit)))))
+    parser))
 
-(defn- commit-worktree-if-dirty!
-  [root workspace-id]
-  (when (dirty-worktree? root)
-    (git! root ["add" "-A"])
-    (git! root ["-c" "user.name=Vis Workspace"
-                "-c" "user.email=vis-workspace@localhost"
-                "commit" "-m" (str "Apply workspace " workspace-id)])
-    (current-head root)))
+(defn- committed-paths
+  [^Git git base-head]
+  (if-not base-head
+    []
+    (let [repo (.getRepository git)
+          old-tree (tree-parser repo base-head)
+          new-tree (tree-parser repo "HEAD")]
+      (mapcat (fn [^DiffEntry entry]
+                (let [change (some-> (.getChangeType entry) .name)]
+                  (cond
+                    (= "DELETE" change) [(.getOldPath entry)]
+                    (= "RENAME" change) [(.getOldPath entry) (.getNewPath entry)]
+                    :else [(.getNewPath entry)])))
+        (.. git diff
+          (setOldTree old-tree)
+          (setNewTree new-tree)
+          call)))))
+
+(defn- status-paths
+  [^Git git]
+  (let [status (.. git status call)]
+    (concat (.getAdded status)
+      (.getChanged status)
+      (.getModified status)
+      (.getMissing status)
+      (.getRemoved status)
+      (.getUntracked status))))
+
+(defn- changed-paths
+  [repo-root root]
+  (with-open [git (Git/open (io/file root))]
+    (->> (concat (committed-paths git (current-head repo-root))
+           (status-paths git))
+      distinct
+      vec)))
+
+(defn- apply-path-to-trunk!
+  [root repo-root rel]
+  (let [src (io/file root rel)
+        dst (io/file repo-root rel)]
+    (cond
+      (.isDirectory src) nil
+
+      (.exists src)
+      (do
+        (some-> (.getParentFile dst) .mkdirs)
+        (io/copy src dst)
+        {:path rel :op :copied})
+
+      (.exists dst)
+      (do
+        (io/delete-file dst true)
+        {:path rel :op :deleted})
+
+      :else
+      {:path rel :op :missing})))
+
+(defn- apply-worktree-files-to-trunk!
+  [root repo-root]
+  (mapv #(apply-path-to-trunk! root repo-root %)
+    (changed-paths repo-root root)))
 
 (defn- sanitize-id
   [s]
@@ -297,19 +365,17 @@
       ws)))
 
 (defn apply-to-trunk!
-  "Merge `:workspace-id`'s branch into the trunk branch currently
-   checked out in repo-root. Refuses trunk-kind. Walks
-   :active → :merging → :merged on success; leaves at :merging for
-   retry on failure.
+  "Copy `:workspace-id`'s changed files onto the trunk worktree.
+   This applies branch commits, dirty tracked edits, deletions, and
+   untracked files by path. Refuses trunk-kind. Walks
+   :active/:merging → :merged on success.
 
    Opts:
      :workspace-id    - required
-     :strategy        - :no-ff (default) | :ff-only
      :delete-branch?  - delete local branch after success
 
-   Returns {:workspace ws :merge {:exit :out :branch}}."
-  [db-info {:keys [workspace-id strategy delete-branch?]
-            :or   {strategy :no-ff}}]
+   Returns {:workspace ws :merge {:exit :out :branch :applied}}."
+  [db-info {:keys [workspace-id delete-branch?]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
@@ -320,24 +386,21 @@
       (throw (ex-info (str "Workspace must be :active or :merging to merge (state="
                         (:state ws) ")")
                {:workspace-id workspace-id :state (:state ws)})))
-    (let [repo-root  (:repo-root ws)
-          root       (:root ws)
-          branch     (:branch ws)
-          merge-args (cond-> ["merge"]
-                       (= strategy :no-ff)   (conj "--no-ff")
-                       (= strategy :ff-only) (conj "--ff-only")
-                       true                  (conj branch))]
-      (commit-worktree-if-dirty! root workspace-id)
+    (let [repo-root (:repo-root ws)
+          root      (:root ws)
+          branch    (:branch ws)]
       (p/db-workspace-update-state! db-info workspace-id :merging)
       (try
-        (let [out  (git! repo-root merge-args)
-              done (p/db-workspace-update-state! db-info workspace-id :merged)]
+        (let [applied (apply-worktree-files-to-trunk! root repo-root)
+              out     (str "Applied " (count (remove nil? applied))
+                        " workspace path(s) from " branch)
+              done    (p/db-workspace-update-state! db-info workspace-id :merged)]
           (when delete-branch?
             (try (git! repo-root ["branch" "-D" branch]) (catch Throwable _ nil)))
-          (fire-hook! :on-apply done {:exit 0 :out out :branch branch})
-          {:workspace done :merge {:exit 0 :out out :branch branch}})
+          (fire-hook! :on-apply done {:exit 0 :out out :branch branch :applied applied})
+          {:workspace done :merge {:exit 0 :out out :branch branch :applied applied}})
         (catch Throwable t
-          (throw (ex-info "Merge failed; workspace left in :merging for retry"
+          (throw (ex-info "Apply failed; workspace left in :merging for retry"
                    {:workspace-id workspace-id
                     :branch       branch
                     :error        (or (ex-message t) (str t))}

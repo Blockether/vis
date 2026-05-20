@@ -2068,6 +2068,10 @@
   ;; in-place input field. Removing it from this menu avoids two
   ;; entry points for the same action.
   [{:id :new-session    :label "New Session"}
+   {:id :workspace                  :label "Workspace (new)"}
+   {:id :apply-workspace-to-trunk   :label "Apply workspace to trunk"}
+   {:id :discard-workspace-soft     :label "Discard workspace (keep branch)"}
+   {:id :discard-workspace-hard     :label "Discard workspace (delete branch)"}
    {:id :fork-session   :label "Fork Session"}
    {:id :switch-session :label "Switch Session"}
    {:id :providers           :label "Configure Providers"}

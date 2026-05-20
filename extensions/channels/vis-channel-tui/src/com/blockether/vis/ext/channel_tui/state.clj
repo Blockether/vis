@@ -532,7 +532,7 @@
 (def ^:private ^:const max-workspaces 8)
 
 (def untitled-session-label
-  "Default tab label for a session without a title yet.
+  "Default workspace label for a session without a title yet.
 
    Aliases the channel-agnostic value in `internal/header` so the TUI,
    web, Telegram, etc. all show the same placeholder. Kept exported
@@ -541,13 +541,13 @@
   vh/untitled-session-label)
 
 (defn- workspace-number
-  [tab]
-  (when-let [[_ n] (some->> tab :id name (re-matches #"tab-(\d+)"))]
+  [entry]
+  (when-let [[_ n] (some->> entry :id name (re-matches #"tab-(\d+)"))]
     (Long/parseLong n)))
 
 (defn- next-workspace-number
-  [tabs]
-  (inc (reduce max 0 (keep workspace-number tabs))))
+  [entries]
+  (inc (reduce max 0 (keep workspace-number entries))))
 
 (defn- base-workspace-entry
   [db]
@@ -559,12 +559,12 @@
 
 (defn- workspaces-or-base
   [db]
-  (let [tabs (vec (:workspaces db))]
-    (if (seq tabs)
-      tabs
+  (let [entries (vec (:workspaces db))]
+    (if (seq entries)
+      entries
       [(base-workspace-entry db)])))
 
-(defn- active-tab-label
+(defn- active-workspace-label
   [db fallback]
   (let [title (:title db)]
     (if (and (string? title) (not (str/blank? title)))
@@ -573,14 +573,14 @@
 
 (defn- ensure-workspaces
   [db]
-  (let [tabs (workspaces-or-base db)
-        active-id (or (current-workspace-id (assoc db :workspaces tabs))
-                    (:id (first tabs)))]
+  (let [entries (workspaces-or-base db)
+        active-id (or (current-workspace-id (assoc db :workspaces entries))
+                    (:id (first entries)))]
     (assoc db
-      :workspaces (mapv (fn [tab]
-                          (cond-> (dissoc tab :active?)
-                            (= (:id tab) active-id) (assoc :active? true)))
-                    tabs)
+      :workspaces (mapv (fn [entry]
+                          (cond-> (dissoc entry :active?)
+                            (= (:id entry) active-id) (assoc :active? true)))
+                    entries)
       :active-workspace-id active-id)))
 
 (defn- restore-workspace
@@ -594,11 +594,11 @@
     sync-active-workspace
     (assoc :active-workspace-id workspace-id)
     (update :workspaces
-      (fn [tabs]
-        (mapv (fn [tab]
-                (cond-> (dissoc tab :active?)
-                  (= (:id tab) workspace-id) (assoc :active? true)))
-          tabs)))
+      (fn [entries]
+        (mapv (fn [entry]
+                (cond-> (dissoc entry :active?)
+                  (= (:id entry) workspace-id) (assoc :active? true)))
+          entries)))
     (restore-workspace workspace-id)))
 
 (defn- update-workspace
@@ -757,21 +757,21 @@
 (reg-event-db :create-workspace
   (fn [db [_ opts]]
     (let [db        (-> db ensure-workspaces sync-active-workspace)
-          tabs      (vec (:workspaces db))
-          n         (next-workspace-number tabs)
+          entries   (vec (:workspaces db))
+          n         (next-workspace-number entries)
           id        (keyword (str "tab-" n))
           workspace (:workspace opts)
           root      (or (:workspace/root workspace) (:workspace/root opts))
           label     (or (:label opts)
                       (some-> workspace :main :branch)
                       untitled-session-label)
-          tab       (cond-> {:id id :label label :active? true}
+          entry     (cond-> {:id id :label label :active? true}
                       workspace (assoc :workspace workspace)
                       root      (assoc :workspace/root root))]
-      (if (>= (count tabs) max-workspaces)
+      (if (>= (count entries) max-workspaces)
         db
         (cond-> (-> db
-                  (assoc :workspaces (conj (mapv #(dissoc % :active?) tabs) tab)
+                  (assoc :workspaces (conj (mapv #(dissoc % :active?) entries) entry)
                     :active-workspace-id id)
                   (merge (empty-workspace-state)))
           workspace (assoc :workspace workspace)
@@ -779,32 +779,32 @@
 
 (reg-event-db :select-workspace-index
   (fn [db [_ idx]]
-    (let [db   (-> db ensure-workspaces sync-active-workspace)
-          tabs (vec (:workspaces db))
-          idx  (if (#{:next :prev} idx)
-                 (when (seq tabs)
-                   (let [active-id (or (:active-workspace-id db)
-                                     (:id (some #(when (:active? %) %) tabs))
-                                     (:id (first tabs)))
-                         current   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) tabs))
-                                     -1)
-                         delta     (if (= :prev idx) -1 1)]
-                     (mod (+ current delta) (count tabs))))
-                 idx)]
-      (if-let [tab (and (integer? idx) (nth tabs idx nil))]
-        (activate-workspace db (:id tab))
+    (let [db      (-> db ensure-workspaces sync-active-workspace)
+          entries (vec (:workspaces db))
+          idx     (if (#{:next :prev} idx)
+                    (when (seq entries)
+                      (let [active-id (or (:active-workspace-id db)
+                                        (:id (some #(when (:active? %) %) entries))
+                                        (:id (first entries)))
+                            current   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) entries))
+                                        -1)
+                            delta     (if (= :prev idx) -1 1)]
+                        (mod (+ current delta) (count entries))))
+                    idx)]
+      (if-let [entry (and (integer? idx) (nth entries idx nil))]
+        (activate-workspace db (:id entry))
         db))))
 
 (reg-event-db :select-workspace-by-session
   (fn [db [_ session-id]]
     (let [target-id (some-> session-id str)
           db        (-> db ensure-workspaces sync-active-workspace)
-          tabs      (vec (:workspaces db))
-          tab       (when target-id
+          entries   (vec (:workspaces db))
+          entry     (when target-id
                       (some #(when (= target-id (workspace-session-id db (:id %))) %)
-                        tabs))]
-      (if tab
-        (activate-workspace db (:id tab))
+                        entries))]
+      (if entry
+        (activate-workspace db (:id entry))
         db))))
 
 (reg-event-db :set-mouse-selection
@@ -860,12 +860,12 @@
       (cond-> db'
         active-id
         (update :workspaces
-          (fn [tabs]
-            (mapv (fn [tab]
-                    (cond-> tab
-                      (= (:id tab) active-id)
-                      (assoc :label (active-tab-label db' (:label tab)))))
-              tabs)))))))
+          (fn [entries]
+            (mapv (fn [entry]
+                    (cond-> entry
+                      (= (:id entry) active-id)
+                      (assoc :label (active-workspace-label db' (:label entry)))))
+              entries)))))))
 
 (reg-event-db :update-input
   (fn [db [_ new-input]]

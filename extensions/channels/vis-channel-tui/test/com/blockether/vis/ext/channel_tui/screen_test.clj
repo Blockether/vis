@@ -246,7 +246,7 @@
          (expect (not-any? #{:model} (mapv :id dlg/palette-commands)))))))
 
 (defdescribe workspace-entry-click-test
-  (it "switches to the clicked workspace tab and refreshes active session state"
+  (it "switches to the clicked workspace and refreshes active session state"
     (reset! state/app-db {:workspaces [{:id :main :label "Main" :active? true}
                                        {:id :tab-1 :label "Tab 1"}]
                           :active-workspace-id :main

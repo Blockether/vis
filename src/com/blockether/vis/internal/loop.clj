@@ -378,40 +378,19 @@
     (catch Throwable _ false)))
 
 (defn- multi-fence-hint
-  "Model-facing reminder when the fence-emission stage produced a result
-   that the engine then had to merge / repair / drop. Combines the three
-   signals svar surfaces post-extract:
-
-     :multi-fence-count   — number of ```clojure``` fences after select-blocks
-     :all-blocks-count    — pre-select fence count (catches untagged /
-                            wrong-lang drops)
-     :malformed?          — fence parser flagged a torn boundary (glued
-                            close+open, unclosed terminal fence, etc.)
-
-   Returns nil when none of the conditions apply (single tagged fence,
-   clean parse)."
-  [{:keys [multi-fence-merged? multi-fence-count all-blocks-count malformed?]}]
-  (let [merged-extra? multi-fence-merged?
-        wrong-lang-extra? (and (number? all-blocks-count)
-                            (number? multi-fence-count)
-                            (> all-blocks-count multi-fence-count))
-        any? (or merged-extra? wrong-lang-extra? malformed?)
-        clauses (cond-> []
-                  merged-extra?
-                  (conj (str "You emitted " (or multi-fence-count "multiple")
-                          " ```clojure``` fences in this iteration; "
-                          "the engine merged them into one eval source and that source failed."))
-                  wrong-lang-extra?
-                  (conj (str "Additionally, "
-                          (- all-blocks-count multi-fence-count)
-                          " fence(s) were emitted untagged or with a non-clojure lang and were dropped silently."))
-                  malformed?
-                  (conj "The fence parser also flagged a malformed boundary (glued close+open or unclosed terminal fence).")
-                  any?
-                  (conj (str "System prompt rule: emit exactly ONE ```clojure``` block per iteration, "
-                          "opener `\"```clojure\"` and closer `\"```\"` each on their own line, "
-                          "no glued boundaries. Move secondary computation to defs inside the same block.")))]
-    (when any? (str/join " " clauses))))
+  "Model-facing reminder when several ```clojure``` fences were merged into
+   one eval source and that source then failed to parse / lint / eval.
+   The merge is intentional tolerance (cheap fix for the common 2-3 fence
+   case), but each extra fence is a fresh chance for a brace/quote to open
+   in one fence and close in another, producing parser surprises like
+   `the map literal contains 7 forms` on a source that LOOKS balanced.
+   Returns nil when the entry was a single fence."
+  [{:keys [multi-fence-merged? multi-fence-count]}]
+  (when multi-fence-merged?
+    (str "You emitted " (or multi-fence-count "multiple") " ```clojure``` fences in this iteration; "
+      "the engine merged them into one eval source and that source failed. "
+      "System prompt rule: emit exactly ONE ```clojure``` block per iteration. "
+      "Fix: keep one fence; move secondary computation to defs inside the same block.")))
 
 (defn- attach-multi-fence-hint
   "If `entry` was a multi-fence merge, splice the rule reminder into
@@ -587,11 +566,6 @@
         ;; returns — late-arriving thread writes silently drop (the dynamic
         ;; var binding has unwound).
         channel-sink (atom [])
-        ;; Per-eval tool lifecycle events. Live UI still consumes events
-        ;; synchronously through `tool-event-fn`; the loop also keeps a
-        ;; local copy so final-answer validation can see that a mutation
-        ;; happened even when the public tool value is plain data.
-        tool-events  (atom [])
         sink-pos     (atom -1)
         ;; Per-iteration sinks. `*def-sink-atom*`
         ;; collects every (def …) the SCI sandbox runs (Phase 2).
@@ -606,15 +580,14 @@
         lru          (sci-patches/fresh-lru-atom)
         turn-position (when env
                         (some-> (:current-turn-position-atom env) deref))
-        ;; Live tool-event callback + local validation copy. Persistence of
-        ;; these events remains retired; the local copy exists only long
-        ;; enough to block `(done ...)` in the same iteration as mutation.
+        ;; Live tool-event callback only - no longer accumulated into a vec.
+        ;; Storage role retired (was dead persistence). The TUI/progress UI
+        ;; consumes via `tool-event-fn` synchronously during eval.
         record-tool-event (fn [event]
                             (let [op (:op event)
                                   n  (get (swap! tool-counts update op (fnil inc 0)) op)
                                   event* (cond-> event
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
-                              (swap! tool-events conj event*)
                               (when tool-event-fn (tool-event-fn event*))))
         {parsed-forms :forms parse-error :parse-error repaired-source :repaired-source}
         (parse-top-level-forms code)
@@ -692,7 +665,6 @@
                                         {:result v :forms [] :error nil}))))]
                             (assoc outcome
                               :channel @channel-sink
-                              :tool-events @tool-events
                               :def-sink @def-sink
                               :lru     @lru))
                           (catch Throwable e
@@ -701,7 +673,6 @@
                             ;; eval-string+ threw outside per-form path).
                             {:result nil
                              :channel @channel-sink
-                             :tool-events @tool-events
                              :def-sink @def-sink
                              :lru     @lru
                              :forms   []
@@ -716,7 +687,6 @@
                              (reset! thrown e)
                              {:result nil
                               :channel @channel-sink
-                              :tool-events @tool-events
                               :def-sink @def-sink
                               :lru     @lru
                               :error   (try (extension/ex->op-error e {:block-source code})
@@ -744,7 +714,6 @@
       (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil
          :channel @channel-sink
-         :tool-events @tool-events
          :def-sink @def-sink
          :lru     @lru
          :error   {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
@@ -1098,13 +1067,8 @@
 
   Legacy top-level `(do ...)` wrappers are unwrapped before eval/display.
   Direct sibling top-level forms are canonical; nested host bookkeeping is
-  not a supported display contract.
-
-  `fence-stats` (opt): `{:all-blocks-count <int> :malformed? <bool>}` from
-  svar's `extract-code-blocks-detail`. Stamped onto every emitted entry so
-  downstream error formatting can name wrong-lang / malformed causes even
-  when the surviving block count is 1."
-  [_iteration-position blocks {:keys [all-blocks-count malformed?] :as _fence-stats}]
+  not a supported display contract."
+  [_iteration-position blocks]
   (let [blocks                       (vec (or blocks []))
         ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
         ;; but operates on the block vector directly.
@@ -1182,23 +1146,11 @@
                                                 :block-lang "clojure"
                                                 :render-segments (render/parse-block-display normalized-code)
                                                 :multi-fence-merged? true
-                                                :multi-fence-count parsed-total-blocks
-                                                :all-blocks-count all-blocks-count
-                                                :malformed? (boolean malformed?)}
+                                                :multi-fence-count parsed-total-blocks}
                                          (some :repaired? raw-entries) (assoc :repaired? true))]
 
                                       :else
-                                      ;; Single-fence path still stamps the diagnostic
-                                      ;; stats so wrong-lang drops / malformed boundaries
-                                      ;; surface their hint even when only one block
-                                      ;; survived the selection.
-                                      (mapv (fn [e]
-                                              (cond-> e
-                                                (number? all-blocks-count)
-                                                (assoc :multi-fence-count parsed-total-blocks
-                                                  :all-blocks-count all-blocks-count
-                                                  :malformed? (boolean malformed?))))
-                                        raw-entries))
+                                      raw-entries)
      :empty-code-preflight-error    empty-code-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
@@ -1241,43 +1193,25 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
-(defn- mutation-tool-event?
-  [{:keys [op]}]
-  (when op
-    (try
-      (= :op.tag/mutation (extension/op-tag op))
-      (catch Throwable _
-        false))))
-
-(defn- mutation-final-answer-gate-error
-  [blocks]
-  (let [events (->> blocks
-                 (mapcat :tool-events)
-                 (filter mutation-tool-event?)
-                 vec)]
-    (when (seq events)
-      (let [ops (->> events (map :op) distinct (map pr-str) (str/join ", "))]
-        (str "Final answer rejected: mutation tool(s) ran in this iteration (" ops "). "
-          "Do not claim completion in the same iteration as a write. "
-          "Let the mutation result render, then answer in the next iteration using that evidence.")))))
-
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
    candidate `(done …)` answer. Returns nil when every hook accepts,
    otherwise a single string surfaced as the rejected answer form's
    validation error.
 
-   This runs a structural mutation floor first, then extension hooks.
-   With one form per iteration:
+   This used to run a structural floor first (no sibling
+   errors / no extension calls in this iter / prior-iteration
+   evidence required). With one form per iteration:
      #1 own-form-error is enforced upstream by `answer-form-error`
         (if the (done …) form itself threw, the answer is dropped).
-     #2 mutation tool + (done …) in one iteration is rejected so the
-        write result stays observable before any completion claim.
+     #2 mixing tool + (done …) in one `(do …)` is the canonical
+        canonical one-iteration shape — handles return synchronously,
+        the answer is composed in the same eval frame.
      #3 evidence-prior gating became a false-positive engine: probe-
-        and-answer with observations in a single iteration remains the
-        intended flow. Extensions that need an additional veto (e.g.
-        user-facing safety / format gates) still get their
-        `:turn.answer/validate` hook fired here.
+        and-answer in a single iteration is the intended flow.
+   So the floor is gone. Extensions that need an additional veto
+   (e.g. user-facing safety / format gates) still get their
+   `:turn.answer/validate` hook fired here.
 
    `active-extensions` is passed by the turn loop so activation is
    computed once per turn; direct callers may omit it and provide
@@ -1289,30 +1223,29 @@
   ([environment iteration blocks answer-value active-extensions]
    (final-answer-gate-error environment iteration blocks answer-value active-extensions nil))
   ([environment iteration blocks answer-value active-extensions extra-ctx]
-   (or (mutation-final-answer-gate-error blocks)
-     (let [ctx (merge {:environment environment
-                       :phase :turn.answer/validate
-                       :iteration iteration
-                       :blocks blocks
-                       :answer answer-value}
-                 extra-ctx)]
-       (some (fn [ext]
-               (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
-                       (when (= :turn.answer/validate phase)
-                         (binding [extension/*current-extension* ext
-                                   extension/*current-symbol* nil]
-                           (try
-                             (let [hit (hook-fn ctx)]
-                               (cond
-                                 (s/valid? ::extension/answer-validation-reject hit)
-                                 (answer-validation-rejection-message hook hit)
+   (let [ctx (merge {:environment environment
+                     :phase :turn.answer/validate
+                     :iteration iteration
+                     :blocks blocks
+                     :answer answer-value}
+               extra-ctx)]
+     (some (fn [ext]
+             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                     (when (= :turn.answer/validate phase)
+                       (binding [extension/*current-extension* ext
+                                 extension/*current-symbol* nil]
+                         (try
+                           (let [hit (hook-fn ctx)]
+                             (cond
+                               (s/valid? ::extension/answer-validation-reject hit)
+                               (answer-validation-rejection-message hook hit)
 
-                                 (and (map? hit) (:reject hit))
-                                 (answer-validation-invalid-return-message ext id hit)))
-                             (catch Throwable t
-                               (answer-validation-hook-error-message ext id t))))))
-                 (or (:ext/hooks ext) [])))
-         (answer-validation-extensions environment active-extensions))))))
+                               (and (map? hit) (:reject hit))
+                               (answer-validation-invalid-return-message ext id hit)))
+                           (catch Throwable t
+                             (answer-validation-hook-error-message ext id t))))))
+               (or (:ext/hooks ext) [])))
+       (answer-validation-extensions environment active-extensions)))))
 
 (defn- iteration-start-hook-hit
   [ext id hit]
@@ -1874,15 +1807,8 @@
           ;; string was removed in svar v0.5.3). One block → one
           ;; code-entry; SCI evaluates each entry as a single chunk.
           blocks (vec (:blocks ask-result))
-          ;; svar v0.5.5+ also surfaces `:all-blocks` (pre-lang-filter)
-          ;; plus `:saw-fence?` / `:malformed?`. Plumb these so vis can
-          ;; name wrong-lang drops and torn fence boundaries in the
-          ;; iteration error trailer.
-          fence-stats {:all-blocks-count (when-let [ab (:all-blocks ask-result)]
-                                           (count ab))
-                       :malformed? (boolean (:malformed? ask-result))}
           preflight-start-ns (System/nanoTime)
-          preflight-result (code-entries-preflight iteration-position blocks fence-stats)
+          preflight-result (code-entries-preflight iteration-position blocks)
           preflight-duration-ms (elapsed-ms preflight-start-ns)
           {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
@@ -1998,15 +1924,12 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true)
-                                          ;; If the fence-emission stage produced any
-                                          ;; diagnostic-worthy condition (merge, wrong-
-                                          ;; lang drops, malformed boundary) AND this
-                                          ;; entry threw, attach the systemic hint. The
-                                          ;; helper itself decides whether any of the
-                                          ;; three signals fire; a clean single-tagged
-                                          ;; fence returns nil and the error is left
-                                          ;; untouched.
-                                          (:error raw-result)
+                                          ;; If the merged-fence source produced ANY error
+                                          ;; (parse, lint, eval, timeout), attach the
+                                          ;; single-fence rule reminder so the model knows
+                                          ;; the merge itself is a candidate root cause.
+                                          (and (:multi-fence-merged? entry)
+                                            (:error raw-result))
                                           (update :error attach-multi-fence-hint entry))
                                  display-result (def-display-result environment expr result)
                                  ;; def-display-result is now a pass-through; kept on the
@@ -2081,7 +2004,6 @@
                                     :code code
                                     :result (:result result)
                                     :channel (:channel result)
-                                    :tool-events (vec (:tool-events result))
                                     :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
                                     :envelope (:envelope result)
                                     :role (:role result)
@@ -3180,10 +3102,7 @@
                                                 :cost-usd (:cost-usd tc)))))
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                         trace-entry {:iteration iteration :thinking thinking
-                                     :blocks blocks
-                                     :engine-timing (:engine-timing iteration-result)
-                                     :eval-duration-ms (reduce + (map block-duration-ms blocks))
-                                     :final? (boolean final-result)}]
+                                     :blocks blocks :final? (boolean final-result)}]
                     (cond
                       final-result
                       (do (log-stage! :final iteration
@@ -3214,18 +3133,10 @@
                                      :answer-position  (:answer-position final-result)
                                      :silent-form-idxs (:silent-form-idxs iteration-result)
                                      :done?            true}))
-                        (let [trace* (conj trace trace-entry)
-                              engine-timing* (not-empty (apply merge-with + (keep :engine-timing trace*)))
-                              eval-duration-ms* (reduce + (map #(long (or (:eval-duration-ms %) 0)) trace*))
-                              result (-> (merge {:answer (:answer final-result) :trace trace*
+                        (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                                  :iteration-count (inc iteration)}
                                            (finalize-cost))
-                                       (attach-llm-routing-summary pre-resolved-model iteration-result)
-                                       (cond->
-                                         engine-timing*
-                                         (assoc :engine-timing engine-timing*)
-                                         (pos? eval-duration-ms*)
-                                         (assoc :eval-duration-ms eval-duration-ms*)))]
+                                       (attach-llm-routing-summary pre-resolved-model iteration-result))]
                           (auto-archive-hot-symbols! environment)
                           result))
 

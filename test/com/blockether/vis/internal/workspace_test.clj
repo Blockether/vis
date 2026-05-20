@@ -55,7 +55,7 @@
 
 (defn- branch-workspace!
   [store repo-root worktree-root]
-  (let [branch "vis/apply-test"]
+  (let [branch (str "vis/apply-test-" (subs (str (java.util.UUID/randomUUID)) 0 8))]
     (git! repo-root ["worktree" "add" "-b" branch worktree-root "HEAD"])
     (ps/db-workspace-insert! store
       {:id        (str (java.util.UUID/randomUUID))
@@ -139,7 +139,7 @@
               (expect (= :workspace/trunk-discard (:type (ex-data e)))))))))))
 
 (defdescribe branch-apply-test
-  (it "commits dirty worktree changes before merging to trunk"
+  (it "copies dirty workspace files to trunk without committing the workspace"
     (with-store
       (fn [store]
         (let [base          (temp-dir "vis-workspace-apply-test")
@@ -150,10 +150,13 @@
             (init-git-repo! repo-root)
             (let [workspace (branch-workspace! store repo-root worktree-root)]
               (spit (io/file (:root workspace) "note.txt") "changed\n")
+              (spit (io/file (:root workspace) "new.txt") "new\n")
               (let [result (ws/apply-to-trunk! store {:workspace-id (:id workspace)})]
                 (expect (= "changed\n" (slurp (io/file repo-root "note.txt"))))
+                (expect (= "new\n" (slurp (io/file repo-root "new.txt"))))
                 (expect (= :merged (get-in result [:workspace :state])))
-                (expect (str/blank? (git! (:root workspace) ["status" "--porcelain"])))))
+                (expect (= "M note.txt\n?? new.txt"
+                          (git! (:root workspace) ["status" "--porcelain"])))))
             (finally
               (delete-tree! base))))))))
 

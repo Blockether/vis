@@ -221,25 +221,17 @@
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
-   (require '[com.blockether.vis.ext.persistance-sqlite.test-helpers :as h])
-   (try
-     (let [dir    (System/getProperty \"vis.test.db-dir\")
-           marker (some-> (System/getProperty \"vis.test.marker\") not-empty)
-           title  (or (System/getProperty \"vis.test.title\") \"child\")
-           s      (vis/db-create-connection! dir)]
-       (try
-         (when marker (spit marker \"ready\"))
-         (Thread/sleep 250)
-         (h/store-session! s {:channel :child :title title})
-         (println \"CHILD-DONE\" title)
-         (finally
-           (vis/db-dispose-connection! s))))
-     (shutdown-agents)
-     (System/exit 0)
-     (catch Throwable t
-       (.printStackTrace t)
-       (shutdown-agents)
-       (System/exit 1)))")
+   (let [dir    (System/getProperty \"vis.test.db-dir\")
+         marker (some-> (System/getProperty \"vis.test.marker\") not-empty)
+         title  (or (System/getProperty \"vis.test.title\") \"child\")
+         s      (vis/db-create-connection! dir)]
+     (try
+       (when marker (spit marker \"ready\"))
+       (Thread/sleep 250)
+       (h/store-session! s {:channel :child :title title})
+       (println \"CHILD-DONE\" title)
+       (finally
+         (vis/db-dispose-connection! s))))")
 
 (defonce ^:private child-output-futures (atom {}))
 

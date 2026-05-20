@@ -146,7 +146,7 @@
       (expect (= "/tmp/vis-ws" (:workspace/root @state/app-db)))
       (expect (= "feature/ws" (get-in @state/app-db [:workspaces 1 :label])))))
 
-  (it "caps workspace tabs at eight total tabs"
+  (it "caps workspaces at eight total entries"
     (reset! state/app-db {:title "Main"
                           :render-version 0})
     (dotimes [_ 10]
@@ -182,7 +182,7 @@
     (expect (= "tab draft" (input/input->text (:input @state/app-db))))
     (expect (= ["tab prompt"] (:input-history @state/app-db))))
 
-  (it "selects workspace tabs by zero-based index and cycles to the next tab"
+  (it "selects workspaces by zero-based index and cycles to the next workspace"
     (reset! state/app-db {:workspaces [{:id :main :label "Main"}
                                        {:id :tab-1 :label "Tab 1" :active? true}
                                        {:id :tab-2 :label "Tab 2"}]
@@ -205,7 +205,7 @@
     (state/dispatch [:select-workspace-index 99])
     (expect (= :tab-2 (:active-workspace-id @state/app-db))))
 
-  (it "selects an already-open workspace tab by session id"
+  (it "selects an already-open workspace by session id"
     (reset! state/app-db {:workspaces [{:id :main :label "Main" :active? true}
                                        {:id :tab-1 :label "Tab 1"}]
                           :active-workspace-id :main
