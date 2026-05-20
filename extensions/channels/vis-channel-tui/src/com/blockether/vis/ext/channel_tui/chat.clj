@@ -175,8 +175,13 @@
                         ;; text below the iteration trace, never the
                         ;; `(done "...")` call as code above it.
                         turn-iterations (vis/db-list-session-turn-iterations d (:id q))
-                        last-iteration-id (some-> (last turn-iterations) :id)
-                        llm-routing (some-> (last turn-iterations) :metadata :llm)
+                        last-it (last turn-iterations)
+                        last-iteration-id (:id last-it)
+                        llm-routing (cond-> {}
+                                      (:llm-selected last-it) (assoc :selected (:llm-selected last-it))
+                                      (:llm-actual last-it) (assoc :actual (:llm-actual last-it))
+                                      (contains? last-it :llm-fallback?) (assoc :fallback? (:llm-fallback? last-it))
+                                      (seq (:llm-routing-trace last-it)) (assoc :trace (:llm-routing-trace last-it)))
                         ;; Empty IR is `[:ir {}]` (count 2 — just root tag
                         ;; + attrs); a real answer adds at least one block.
                         produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
@@ -276,7 +281,7 @@
                                                                  (let [restored (when (history-restore/runtime-ref? result)
                                                                                   (history-restore/restored-def-result restored-values code))]
                                                                    (cond
-                                                                     error (extension/default-error-ir {:success? false :error error})
+                                                                     error nil
                                                                      (seq channel)
                                                                      ;; Per-form sink entries: walk each, surface
                                                                      ;; pre-rendered IR on success, format the
@@ -314,13 +319,14 @@
                                                            exprs)]
                                          {:position  (when-let [p (:position it)] (dec (long p)))
                                           :thinking  (visible-thinking (:thinking it))
-                                          :provider-fallbacks (get-in it [:metadata :llm :trace])
+                                          :provider-fallbacks (:llm-routing-trace it)
                                           :code      (mapv :code code-exprs)
                                           :comments  (mapv :comment code-exprs)
                                           :render-segments (mapv :render-segments code-exprs)
                                           :results   result-strs
                                           :result-kinds (mapv result-kind exprs)
                                           :result-details result-details
+                                          :errors    (mapv :error exprs)
                                           :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)
                                           :silents   silents})))

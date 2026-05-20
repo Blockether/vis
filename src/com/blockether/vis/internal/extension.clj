@@ -1580,7 +1580,8 @@
         (let [contribution
               (try
                 (binding [*current-extension* ext
-                          *current-symbol* nil]
+                          *current-symbol* nil
+                          workspace/*workspace-root* (workspace/workspace-root environment)]
                   (f environment))
                 (catch Throwable t
                   (tel/log! {:level :warn

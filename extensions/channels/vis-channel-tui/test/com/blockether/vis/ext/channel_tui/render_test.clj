@@ -115,6 +115,28 @@
       (expect (not (str/starts-with? ir-line p/MARKER_RESULT)))
       (expect (not (str/starts-with? ir-line p/MARKER_ANSWER_TXT)))))
 
+  (it "renders form eval errors inline with source caret"
+    (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
+          err  {:message "Unable to resolve symbol: 'v/git-diff"
+                :trace "clojure.lang.ExceptionInfo: Unable to resolve symbol: 'v/git-diff"
+                :block {:source code :row 1 :col 45}}
+          lines (format-iteration-entry {:iteration 0
+                                         :code [code]
+                                         :results [nil]
+                                         :result-kinds [:error]
+                                         :errors [err]
+                                         :successes [false]
+                                         :durations [1]}
+                  80 1 {})
+          visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          body (str/join "\n" visible)
+          error-line (first (filter #(str/includes? % "ERROR — clojure.lang.ExceptionInfo") lines))]
+      (expect (str/includes? body " 1: (def git-diff-doc"))
+      (expect (str/includes? body "^---"))
+      (expect (str/includes? body "ERROR — clojure.lang.ExceptionInfo: Unable to resolve symbol: 'v/git-diff"))
+      (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote code)) body))))
+      (expect (= p/MARKER_CODE_ERR (marker-of error-line)))))
+
   (it "puts success status on its own bottom line and keeps bottom padding"
     ;; Layout (post header-band removal):
     ;;   iteration-pad

@@ -1598,7 +1598,7 @@
     provider (assoc :provider (name (keyword provider)))
     model    (assoc :model (str model))))
 
-(defn- llm-routing-metadata
+(defn- llm-routing-summary
   [selected-model iteration-result]
   (let [selected (llm-id (:provider selected-model) (some-> (:name selected-model) str))
         actual   (llm-id (or (:llm-provider iteration-result) (:provider selected-model))
@@ -1613,7 +1613,7 @@
 
 (defn- attach-llm-routing-summary
   [result selected-model iteration-result]
-  (let [routing  (llm-routing-metadata selected-model iteration-result)
+  (let [routing  (llm-routing-summary selected-model iteration-result)
         actual   (:actual routing)
         selected (:selected routing)]
     (cond-> (assoc result
@@ -2736,35 +2736,29 @@
                        (try (hook-fn payload)
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
-        ;; Metadata persisted on each iteration row - reuses the
-        ;; precomputed `active-exts` (no second activation pass).
-        ;;
-        ;; Source markers (paths, max-mtime, sha256) are written ONLY
-        ;; on the first iteration of each turn (`iter-pos` = 0 internally,
-        ;; persisted as position 1). The v2 change-detector reads `WHERE position = 1 ORDER BY
-        ;; created_at DESC LIMIT 1` to compare against current state.
-        ;; Subsequent iterations omit them - cuts ~99 % redundant DB
-        ;; volume vs every-iteration. See plan Q15.
-        iteration-metadata (fn [iter-pos llm-meta]
-                             (cond-> {}
-                               (seq llm-meta) (assoc :llm llm-meta)
-                               (seq active-exts)
-                               (assoc :extensions (mapv (fn [ext]
-                                                          (let [ns-sym  (:ext/name ext)
-                                                                markers (when (zero? (long iter-pos))
-                                                                          (extension/extension-source-markers-of ns-sym))]
-                                                            (cond-> {:name ns-sym}
-                                                              (:ext/version ext) (assoc :version (:ext/version ext))
-                                                              markers            (merge (select-keys markers
-                                                                                          [:source-paths
-                                                                                           :source-mtime-max
-                                                                                           :source-hash-sha256])))))
-                                                    active-exts))))
-        iteration-metadata-with-usage (fn [iter-pos llm-meta token-cost]
-                                        (let [cache-created (long (or (get-in token-cost [:tokens :cache-created]) 0))]
-                                          (cond-> (iteration-metadata iter-pos llm-meta)
-                                            (pos? cache-created)
-                                            (assoc-in [:usage :cache-created-tokens] cache-created))))]
+        ;; Extension provenance rows reuse precomputed `active-exts`
+        ;; (no second activation pass). Source markers are written ONLY
+        ;; on first iteration of each turn (`iter-pos` = 0 internally,
+        ;; persisted as position 1). Subsequent iterations omit markers
+        ;; to avoid redundant DB volume.
+        iteration-extension-snapshots
+        (fn [iter-pos]
+          (when (seq active-exts)
+            (mapv (fn [ext]
+                    (let [ns-sym  (:ext/name ext)
+                          markers (when (zero? (long iter-pos))
+                                    (extension/extension-source-markers-of ns-sym))]
+                      (cond-> {:name ns-sym}
+                        (:ext/version ext) (assoc :version (:ext/version ext))
+                        markers            (merge (select-keys markers
+                                                    [:source-paths
+                                                     :source-mtime-max
+                                                     :source-hash-sha256])))))
+              active-exts)))
+        iteration-cache-created-tokens
+        (fn [token-cost]
+          (let [cache-created (long (or (get-in token-cost [:tokens :cache-created]) 0))]
+            (when (pos? cache-created) cache-created)))]
     ;; -----------------------------------------------------------------
     ;; Turn-start SYSTEM-var bindings.
     ;;
@@ -2833,8 +2827,8 @@
                           :llm-provider (:provider it)
                           :llm-model    (some-> (:model it) str)
                           ;; Persisted assistant messages are intentionally NOT
-                          ;; replayed across user turns. Keep the row metadata for
-                          ;; diagnostics, but `compatible-preserved-thinking-trailer-iters`
+                          ;; replayed across user turns. Keep row diagnostics,
+                          ;; but `compatible-preserved-thinking-trailer-iters`
                           ;; rejects this entry before replay.
                           :assistant-message (:llm-assistant-message it)
                           :preserved-thinking/replay? false}])
@@ -2994,14 +2988,14 @@
                                                         :llm-messages effective-messages
                                                         :llm-provider (:provider resolved-model)
                                                         :llm-model (str (:name resolved-model))
-                                                        :metadata (iteration-metadata-with-usage iteration
-                                                                    (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
-                                                                             :actual   (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
-                                                                             :fallback? false}
-                                                                      (seq (get-in iteration-error-data [:data :routed/trace]))
-                                                                      (assoc :fallback? true
-                                                                        :trace (vec (get-in iteration-error-data [:data :routed/trace]))))
-                                                                    tc)}
+                                                        :llm-routing (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
+                                                                              :actual   (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
+                                                                              :fallback? false}
+                                                                       (seq (get-in iteration-error-data [:data :routed/trace]))
+                                                                       (assoc :fallback? true
+                                                                         :trace (vec (get-in iteration-error-data [:data :routed/trace]))))
+                                                        :extension-snapshots (iteration-extension-snapshots iteration)
+                                                        :cache-created-tokens (iteration-cache-created-tokens tc)}
                                                  tc (assoc :tokens (:tokens tc)
                                                       :cost-usd (:cost-usd tc)))))]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
@@ -3093,11 +3087,10 @@
                                                   :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                   :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
                                                   :llm-assistant-message (:assistant-message iteration-result)
-                                                  :metadata (cond-> (iteration-metadata-with-usage iteration
-                                                                      (llm-routing-metadata pre-resolved-model iteration-result)
-                                                                      tc)
-                                                              (seq (:engine-timing iteration-result))
-                                                              (assoc :engine-timing (:engine-timing iteration-result)))}
+                                                  :llm-routing (llm-routing-summary pre-resolved-model iteration-result)
+                                                  :engine-timing (:engine-timing iteration-result)
+                                                  :extension-snapshots (iteration-extension-snapshots iteration)
+                                                  :cache-created-tokens (iteration-cache-created-tokens tc)}
                                            tc (assoc :tokens (:tokens tc)
                                                 :cost-usd (:cost-usd tc)))))
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
