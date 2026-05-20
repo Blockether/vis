@@ -1,12 +1,11 @@
 (ns com.blockether.vis.ext.foundation.doctor-test
   "Unit tests for foundation's `:ext/doctor-fn` sections:
-   ::system, ::agents-md, ::voice, ::scan-warnings.
+   ::agents-md and ::scan-warnings.
 
    Plan §6: each section returns expected message shapes for every
    input scenario; the composite `doctor-fn` stamps the right
    `:check-id` on every message."
   (:require
-   [clojure.string :as str]
    [com.blockether.vis.ext.foundation.doctor :as doctor]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -20,32 +19,6 @@
     vec))
 
 ;; ---------------------------------------------------------------------------
-;; ::system
-;; ---------------------------------------------------------------------------
-
-(defdescribe system-check-test
-  (it "emits 5 :info messages with OS / Java / Clojure / Memory / DB path"
-    (let [msgs     (section-msgs ::doctor/system {})
-          msg-text (mapv :message msgs)]
-      (expect (= 5 (count msgs)))
-      (expect (every? #(= :info (:level %)) msgs))
-      (expect (some #(str/starts-with? % "OS:") msg-text))
-      (expect (some #(str/starts-with? % "Java:") msg-text))
-      (expect (some #(str/starts-with? % "Clojure:") msg-text))
-      (expect (some #(str/starts-with? % "Memory:") msg-text))
-      (expect (some #(str/starts-with? % "DB path:") msg-text))))
-
-  (it "DB path message says '(no DB)' when env has no :db-info"
-    (let [msgs (section-msgs ::doctor/system {})
-          db   (some #(when (str/starts-with? (:message %) "DB path:") %) msgs)]
-      (expect (str/includes? (:message db) "(no DB)"))))
-
-  (it "DB path message includes the path when :db-info :path present"
-    (let [msgs (section-msgs ::doctor/system {:db-info {:path "/tmp/test.db"}})
-          db   (some #(when (str/starts-with? (:message %) "DB path:") %) msgs)]
-      (expect (str/includes? (:message db) "/tmp/test.db")))))
-
-;; ---------------------------------------------------------------------------
 ;; ::agents-md
 ;; ---------------------------------------------------------------------------
 
@@ -56,20 +29,6 @@
   ;; the agents scanner tests directly.
   (it "placeholder — AGENTS.md doctor message covered by agents scanner tests"
     (expect true)))
-
-;; ---------------------------------------------------------------------------
-;; ::voice
-;; ---------------------------------------------------------------------------
-
-(defdescribe voice-check-test
-  (it "emits voice extension, ffmpeg, and Piper espeak-ng-data diagnostics"
-    (let [msgs     (section-msgs ::doctor/voice {})
-          msg-text (mapv :message msgs)]
-      (expect (= 3 (count msgs)))
-      (expect (some #(str/starts-with? % "Voice:") msg-text))
-      (expect (some #(str/starts-with? % "ffmpeg:") msg-text))
-      (expect (some #(str/starts-with? % "Piper espeak-ng-data:") msg-text))
-      (expect (every? #{:info :warn :error} (mapv :level msgs))))))
 
 ;; ---------------------------------------------------------------------------
 ;; ::scan-warnings
@@ -87,17 +46,14 @@
   (it "doctor-fn is a function suitable for `:ext/doctor-fn`"
     (expect (fn? doctor/doctor-fn)))
 
-  (it "every emitted message carries one of the four documented :check-ids in section order"
+  (it "every emitted message carries one of the documented :check-ids in section order"
     (let [msgs (doctor/doctor-fn {})
           ids  (distinct (mapv :check-id msgs))]
-      (expect (every? #{::doctor/system
-                        ::doctor/agents-md
-                        ::doctor/voice
+      (expect (every? #{::doctor/agents-md
                         ::doctor/scan-warnings}
                 ids))
-      ;; Sections appear in the documented order - system, agents-md,
-      ;; voice, scan-warnings. Any present subset preserves that ordering.
-      (let [section-order [::doctor/system ::doctor/agents-md
-                           ::doctor/voice ::doctor/scan-warnings]
+      ;; Sections appear in the documented order: agents-md, scan-warnings.
+      ;; Any present subset preserves that ordering.
+      (let [section-order [::doctor/agents-md ::doctor/scan-warnings]
             present (filter (set ids) section-order)]
         (expect (= present ids))))))

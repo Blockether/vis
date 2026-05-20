@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.voice.core
   "Local voice output through sherpa-onnx Piper/VITS TTS."
-  (:require [clojure.java.io :as io]
+  (:require [babashka.process :as process]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis])
   (:import [java.io File FileInputStream FileOutputStream]
@@ -327,6 +328,78 @@
            :files (model-files)}
    :parakeet (parakeet-status)})
 
+(defn- executable? [cmd]
+  (try
+    (zero? (:exit (process/sh {:out :string :err :string :continue true}
+                    "command" "-v" cmd)))
+    (catch Throwable _ false)))
+
+(defn- resolved? [sym]
+  (boolean (requiring-resolve sym)))
+
+(defn- voice-runtime-message []
+  (let [asr? (resolved? 'com.blockether.vis.ext.voice.asr/transcribe-file!)
+        tts? (resolved? 'com.blockether.vis.ext.voice.core/synthesize-file!)]
+    {:level (if (or asr? tts?) :info :warn)
+     :check-id ::runtime
+     :message (str "Voice runtime: input=" (if asr? "loaded" "missing")
+                ", output=" (if tts? "loaded" "missing"))
+     :remediation (when-not (or asr? tts?)
+                    "Add/load vis-voice, then restart the channel.")}))
+
+(defn- ffmpeg-message []
+  (if (executable? "ffmpeg")
+    {:level :info
+     :check-id ::ffmpeg
+     :message "ffmpeg: installed"}
+    {:level :warn
+     :check-id ::ffmpeg
+     :message "ffmpeg: missing; Telegram voice input cannot convert .oga/.opus to WAV for ASR."
+     :remediation "Install ffmpeg and ensure it is on PATH for the Vis/Telegram process."}))
+
+(defn- piper-message []
+  (try
+    (let [dir      (model-dir)
+          files    (model-files dir)
+          data-dir (:data files)]
+      (if (model-installed? dir)
+        {:level :info
+         :check-id ::piper
+         :message (str "Piper model: installed - " dir)}
+        {:level :warn
+         :check-id ::piper
+         :message (str "Piper model: missing - " dir)
+         :remediation (str "Run `vis extensions voice models download --piper` or set "
+                        model-dir-env " to a complete Piper model directory. Expected espeak-ng-data: "
+                        data-dir)}))
+    (catch Throwable t
+      {:level :warn
+       :check-id ::piper
+       :message (str "Piper model: check failed: " (or (ex-message t) t))
+       :remediation "Run `vis extensions voice models status` for detailed voice model diagnostics."})))
+
+(defn- parakeet-message []
+  (try
+    (if (:installed? (:parakeet (model-status)))
+      {:level :info
+       :check-id ::parakeet
+       :message "Parakeet ASR model: installed"}
+      {:level :warn
+       :check-id ::parakeet
+       :message "Parakeet ASR model: missing"
+       :remediation "Run `vis extensions voice models download --parakeet` or set VIS_PARAKEET_MODEL_DIR."})
+    (catch Throwable t
+      {:level :warn
+       :check-id ::parakeet
+       :message (str "Parakeet ASR model: check failed: " (or (ex-message t) t))
+       :remediation "Run `vis extensions voice models status` for detailed voice model diagnostics."})))
+
+(defn doctor-fn [_environment]
+  [(voice-runtime-message)
+   (ffmpeg-message)
+   (piper-message)
+   (parakeet-message)])
+
 (defn- print-status! []
   (let [{:keys [piper parakeet]} (model-status)]
     (cli-out! (str "Piper: " (if (:installed? piper) "installed" "missing") " - " (:dir piper)))
@@ -371,6 +444,7 @@
      :ext/license   "Apache-2.0"
      :ext/kind      "voice"
      :ext/prompt    voice-response-prompt
+     :ext/doctor-fn doctor-fn
      :ext/settings  [{:key :voice/respond?
                       :type :toggle
                       :label "Voice responses"
