@@ -1,0 +1,120 @@
+# Bridge Vis Extension Design
+
+## Purpose
+
+The Bridge extension exposes Bridge's verification coordinator to the Vis
+agent loop. Vis remains responsible for conversation, workspace inspection,
+edits, channels, providers, and final-answer discipline. Bridge remains
+responsible for project profiles, verification policy, changed-file impact,
+evidence obligations, evidence command execution, receipts, and convergence.
+
+This extension is only an adapter between those systems.
+
+## Exposed API
+
+The model-facing namespace is `br/`.
+
+Mutation tools:
+
+- `(br/init)` bootstraps Bridge in the current workspace. If Bridge is already
+  configured, it returns the discovered profile path instead of failing.
+- `(br/run-evidence id)` runs one configured evidence command and writes the
+  Bridge receipt.
+
+Observation tools:
+
+- `(br/profile)` returns the active Bridge profile summary. When no profile is
+  configured, it returns discovery state and the next setup step instead of
+  failing.
+- `(br/check)` runs Bridge's verification status check for the current
+  workspace. When no profile is configured, it returns
+  `{:configured? false :status "unconfigured" ...}`.
+- The Vis adapter flattens `br/check` with `:status-summary`,
+  `:required-obligations`, `:evidence-receipts`, and `:next-action` so the
+  model can summarize status without reconstructing nested obligation buckets.
+- `(br/next)` returns the next suggested Bridge action, expressed as `br/*`
+  extension operations instead of shell commands.
+- A native Vis hint is emitted at `:turn.iteration/start`. When Bridge is
+  unconfigured it points to `(br/init)`. When Bridge has open verification
+  work it points to `(br/next)` for inspection, rather than directly
+  suggesting a mutation such as `br/run-evidence`.
+- `(br/list-evidence)` lists configured evidence commands. When no profile is
+  configured, it returns an empty command list plus setup guidance.
+- `(br/run-evidence id)` remains a failure when no profile exists, but the
+  error is concise and actionable rather than stack-oriented.
+
+All tools accept an optional opts map where relevant:
+
+```clojure
+{:profile "path/to/profile.edn"
+ :policy "path/to/verification-policy.yaml"
+ :changed-files ["src/foo.clj"]
+ :subject "core"
+ :out-dir ".bridge/ephemeral/evidence"
+ :out ".bridge/ephemeral/evidence/unit.yaml"
+ :timeout-seconds 300
+ :dry-run? true}
+```
+
+`br/run-evidence` supports `:dry-run? true` to return the execution plan
+without running a command or writing a receipt.
+
+## Runtime Flow
+
+1. The agent reproduces and inspects through normal Vis tools.
+2. If the repo is new to Bridge, the agent calls `(br/init)`.
+3. The agent edits through `v/patch`.
+4. The agent calls `(br/check)`.
+5. Bridge maps changed files to subsystems and policy obligations.
+6. The agent can call `(br/next)` to get the next recommended action as a
+   `br/*` operation.
+7. The extension may also emit a native Vis hint that reminds the model to
+   inspect Bridge state via `(br/next)` without automatically escalating into
+   evidence execution.
+8. When needed, the agent calls `(br/run-evidence id)` for a configured
+   command.
+9. The agent calls `(br/check)` again and reports clear status or remaining
+   obligations in the final answer.
+
+## Profile Discovery
+
+The extension resolves profile paths relative to the active Vis workspace
+root, then checks:
+
+1. `.bridge/profile.edn`
+2. `.bridge/persistent/profile.edn`
+
+Callers can override discovery with `{:profile "..."}`.
+
+## Boundaries
+
+Vis-owned:
+
+- user interaction and channels
+- model routing and provider selection
+- prompt assembly
+- filesystem edits
+- transcript and reproduction artifacts
+
+Bridge-owned:
+
+- `.bridge/profile.edn`
+- `.bridge/verification-policy.yaml`
+- subsystem and requirement matching
+- evidence command plans
+- evidence execution and receipts
+- convergence and completeness state
+
+Extension-owned:
+
+- profile discovery from the active workspace
+- converting Bridge library calls into plain Vis tool envelopes
+- emitting advisory native Vis hints that point to `br/*` operations
+- registering op tags and prompt guidance
+
+## Non-goals
+
+- No dedicated Bridge channel yet.
+- No duplicate policy engine inside Vis.
+- No direct storage poking into Vis or Bridge internals.
+- No automatic evidence execution without an explicit `br/run-evidence` call.
