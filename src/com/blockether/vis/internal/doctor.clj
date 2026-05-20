@@ -28,6 +28,37 @@
 ;; Run.
 ;; ---------------------------------------------------------------------------
 
+(defn- format-bytes [^long n]
+  (cond
+    (< n 1024)              (str n " B")
+    (< n (* 1024 1024))     (String/format java.util.Locale/US "%.1f KB"
+                              (object-array [(/ (double n) 1024.0)]))
+    (< n (* 1024 1024 1024)) (String/format java.util.Locale/US "%.1f MB"
+                               (object-array [(/ (double n) (* 1024.0 1024.0))]))
+    :else                   (String/format java.util.Locale/US "%.1f GB"
+                              (object-array [(/ (double n) (* 1024.0 1024.0 1024.0))]))))
+
+(defn- host-system-messages
+  [environment]
+  (let [rt      (Runtime/getRuntime)
+        used    (- (.totalMemory rt) (.freeMemory rt))
+        max-mem (.maxMemory rt)
+        db-path (or (some-> environment :db-info :path) "(no DB)")]
+    (mapv #(assoc % :ext "vis" :check-id ::system)
+      [{:level :info
+        :message (str "OS: " (System/getProperty "os.name") " "
+                   (System/getProperty "os.arch") " "
+                   (System/getProperty "os.version"))}
+       {:level :info
+        :message (str "Java: " (System/getProperty "java.version")
+                   " (" (System/getProperty "java.vendor") ")")}
+       {:level :info
+        :message (str "Clojure: " (clojure-version))}
+       {:level :info
+        :message (str "Memory: " (format-bytes used) " / " (format-bytes max-mem))}
+       {:level :info
+        :message (str "DB path: " db-path)}])))
+
 (defn- coerce-message
   "Best-effort sanity check on a doctor fn's returned message. Forces
    `:level` into the allowed set; missing/blank `:message` becomes a
@@ -73,11 +104,13 @@
    order. Activation-fn ignored: every registered extension's fn runs."
   [environment]
   (vec
-    (mapcat
-      (fn [ext]
-        (when-let [doctor-fn (:ext/doctor-fn ext)]
-          (run-one-extension (:ext/name ext) doctor-fn environment)))
-      (extension/registered-extensions))))
+    (concat
+      (host-system-messages environment)
+      (mapcat
+        (fn [ext]
+          (when-let [doctor-fn (:ext/doctor-fn ext)]
+            (run-one-extension (:ext/name ext) doctor-fn environment)))
+        (extension/registered-extensions)))))
 
 (defn exit-code
   "Compute the doctor exit code from a vec of messages. 0 / 1 / 2 by
@@ -121,16 +154,14 @@
       "")))
 
 (defn- message-label
-  [{:keys [check-id ext]}]
+  [{:keys [check-id]}]
   (or (some-> check-id name)
-    (some-> ext str)
     "?"))
 
 (defn- format-message
   "Render one diagnostic message line:
      `<icon> <label>: <message>`
-   where label is the message's `:check-id` name, falling back to
-   extension id only for anonymous extension diagnostics. Followed
+   where label is the message's `:check-id` name. Followed
    (optionally) by an indented `-> <remediation>`. `use-ansi?` controls
    whether to wrap level-colored bits."
   [{:keys [level message remediation] :as m} use-ansi?]
@@ -145,6 +176,16 @@
                 (str "\n      " dim "-> " remediation reset))]
     (str head tail)))
 
+(defn- format-extension-section
+  [ext-name messages use-ansi?]
+  (let [bold    (if use-ansi? (:bold ANSI) "")
+        rst     (if use-ansi? (:reset ANSI) "")
+        ext-str (str ext-name)
+        head    (str "  " bold ext-str rst)
+        rule    (str "  " (apply str (repeat (count ext-str) "─")))
+        body    (string/join "\n" (mapv #(format-message % use-ansi?) messages))]
+    (string/join "\n" [head rule body])))
+
 (defn format-output
   "Build the full TTY output from a vec of messages. Empty result
    prints a placeholder. Caller routes it to stdout. ANSI is
@@ -158,14 +199,16 @@
        "vis doctor\n\nNo diagnostic checks registered."
 
        :else
-       (let [body    (string/join "\n" (mapv #(format-message % use-ansi?) messages))
+       (let [grouped (group-by :ext messages)
+             ext-order (vec (distinct (mapv :ext messages)))
+             sections (mapv #(format-extension-section % (get grouped %) use-ansi?) ext-order)
              totals  (frequencies (mapv :level messages))
              summary (str "Summary: "
                        (or (:error totals) 0) " errors, "
                        (or (:warn totals)  0) " warnings, "
                        (or (:info totals)  0) " info")]
          (str bold "vis doctor" rst "\n\n"
-           body
+           (string/join "\n\n" sections)
            "\n\n" summary))))))
 
 ;; ---------------------------------------------------------------------------
