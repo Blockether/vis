@@ -45,14 +45,12 @@
   [n-iters forms-per-iter answer]
   (let [forms (vec (for [idx (range forms-per-iter)]
                      {:position      idx
-                      :engine-idx    idx
                       :code          "(+ 1 2)"
                       :result-render "3"
                       :result-kind   :value
                       :duration-ms   1
                       :success?      true
-                      :silent?       false
-                      :running?      false}))
+                      :silent?       false}))
         trace (vec (repeat n-iters
                      {:thinking "thinking line"
                       :forms    forms}))]
@@ -109,15 +107,13 @@
                                      (map-indexed
                                        (fn [idx {:keys [code result kind detail]}]
                                          {:position        idx
-                                          :engine-idx      idx
                                           :code            code
                                           :result-render   result
                                           :result-kind     kind
                                           :result-detail   detail
                                           :duration-ms     1
                                           :success?        true
-                                          :silent?         false
-                                          :running?        false})
+                                          :silent?         false})
                                        chunk))})))]
     {:role :assistant
      :ir (markdown->ir "done")
@@ -235,15 +231,12 @@
       (render/invalidate-cache!)
       (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
             m           {:role :assistant :text "Sending request to provider..."}
-            trace       [{:forms [{:position      0
-                                   :engine-idx    0
-                                   :code          "(+ 1 2)"
+            trace       [{:forms [{:code          "(+ 1 2)"
                                    :result-render huge-result
                                    :result-kind   :value
                                    :duration-ms   1
                                    :success?      true
-                                   :silent?       false
-                                   :running?      false}]}]
+                                   :silent?       false}]}]
             {:keys [visible]}
             (virtual/layout [m] bubble-w settings nil 30
               {:loading?       true
@@ -262,16 +255,13 @@
       (let [m              {:role :assistant :text "Sending request to provider..."}
             huge-result    (str/join " " (repeat 1000 "abcdefghij"))
             progress-entry (fn [i done?]
-                             {:forms [{:position      0
-                                       :engine-idx    0
-                                       :code          (str "(do (Thread/sleep 1000) " i ")")
+                             {:forms [{:code          (str "(do (Thread/sleep 1000) " i ")")
                                        :result-render (when done? huge-result)
                                        :result-kind   (when done? :value)
                                        :duration-ms   (if done? 1000 0)
                                        :success?      (when done? true)
                                        :started-at-ms (when-not done? 0)
-                                       :silent?       false
-                                       :running?      (not done?)}]})
+                                       :silent?       false}]})
             progress       {:iterations (vec (concat (map #(progress-entry % true) (range 300))
                                                [(progress-entry 300 false)]))}
             sample         (fn []
