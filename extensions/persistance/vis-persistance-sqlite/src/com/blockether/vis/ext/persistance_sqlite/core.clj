@@ -1004,7 +1004,7 @@
 (defn db-store-session-turn!
   "Create session_turn_soul + initial session_turn_state (version 0).
    Returns the session-turn-soul UUID."
-  [db-info {:keys [parent-session-id user-request messages status]}]
+  [db-info {:keys [parent-session-id user-request status]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
@@ -1039,7 +1039,6 @@
                        :session_turn_soul_id (str soul-id)
                        :version       0
                        :status        (normalize-status (or status :running))
-                       :messages      (when messages (->json messages))
                        :created_at    now}]})
           soul-id)))))
 
@@ -1454,7 +1453,7 @@
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status
             :qst.answer
-            :qst.messages :qst.iteration_count :qst.duration_ms
+            :qst.iteration_count :qst.duration_ms
             :qst.llm_input_tokens :qst.llm_output_tokens
             :qst.llm_reasoning_tokens :qst.llm_cached_tokens
             :qst.llm_total_cost_usd
