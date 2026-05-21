@@ -275,6 +275,7 @@
   (let [now-ms (System/currentTimeMillis)]
     (->> (vals channel-status)
       (filter #(seq (:text %)))
+      (remove #(= :ready (:phase %)))
       (remove #(status-expired? % now-ms))
       (sort-by #(long (or (:updated-at-ms %) 0)))
       last)))

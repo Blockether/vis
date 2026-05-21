@@ -262,12 +262,18 @@
     :input/append  (state/dispatch [:external-input :append text (:workspace-id event)])
     :input/insert  (state/dispatch [:external-input :insert text (:workspace-id event)])
     :status/set    (let [status-id (or id (:source event) :external)]
-                     (if (= :error level)
+                     (cond
+                       (= :error level)
                        (do
                          (state/dispatch [:channel-status-clear status-id])
                          (vis/notify! (or text "")
                            :level :error
                            :ttl-ms (or ttl-ms status-error-ttl-ms)))
+
+                       (= :ready (:phase event))
+                       (state/dispatch [:channel-status-clear status-id])
+
+                       :else
                        (let [until (when ttl-ms (+ (System/currentTimeMillis) (long ttl-ms)))]
                          (state/dispatch [:channel-status-set status-id
                                           (cond-> {:text text :level (or level :info)}
