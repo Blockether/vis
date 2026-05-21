@@ -117,6 +117,7 @@
         :session/trailer     pinned iter envelopes from prior turns; auto-pinned by engine each turn
 
     ENGINE FUNCTIONS (bare symbols; never namespace-qualify)
+      Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
       Memory:
         (fact-set!     :K {:body :scope? :tags?})      upsert; :scope default :session; tag :decision for audit-style

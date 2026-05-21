@@ -4,24 +4,17 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Session title          ● Recording 00:01  d8d6a0a1
-       (notification banner)     (or fallback placeholder)   (channel status + id + click target)
+       ✓ Copied!                 Session title          d8d6a0a1
+       (notification/status)     (or fallback placeholder)   (id target)
 
-   - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
-     Color-coded by `:level` (success / info / warn / error). Empty
-     when no notification is active. The host notifications module
-     is the single source of truth for cross-channel ephemeral
-     signals - any extension or channel can `(v/notify! ...)` and the
-     banner surfaces here. Voice/recording status is NOT rendered here;
-     it lives in the RIGHT slot so it cannot collide with notifications.
+   - LEFT: latest active host notification (`com.blockether.vis.core/notify!`),
+     otherwise live channel status. The session title does NOT live here.
    - CENTER: session title from app-db (`:title`). When the
      session has no title yet, falls back to a placeholder so
      the row never looks broken on a fresh run.
-   - RIGHT: short session id (first 8 chars of the UUID, the
-     same convention `vis sessions` uses) as the clickable
-     affordance that drops the FULL UUID onto the system
-     clipboard. Visual feedback is the LEFT-slot `✓ Copied!` notification
-     - same mechanism every other cross-channel signal flows through.
+   - RIGHT: short session id (first 8 chars of the UUID) as the clickable
+     affordance that drops the FULL UUID onto the system clipboard. No
+     notifications or channel statuses render here.
 
    Pure draw: reads `:title` and `:session` from app-db, the
    active notifications list from `vis.core/notifications`, writes
@@ -77,12 +70,6 @@
    bottom rule. `header-rows` adds the height contributed by registered
    `:tui.slot/header-row` extensions on top of this base."
   3)
-
-(def ^:private status-action-separator
-  "Gap between a live channel status (voice recording/transcribing) and
-   persistent right-side copy actions. TUI-specific because it sizes to
-   a fixed pair of terminal cells."
-  "  ")
 
 (defn- title-or-placeholder
   "Visible title for the active session. Delegates to the shared
@@ -485,15 +472,13 @@
   "Paint the header band starting at `header-top`, full width `cols`.
    Main content row is split 20% / 60% / 20%:
 
-   - LEFT 20%: ephemeral host notifications ONLY. The session
-     title does NOT live here; it lives in the centre slot. When no
-     notification is active the LEFT slot stays blank.
+   - LEFT 20%: latest notification, otherwise live channel status.
    - CENTER 60%: workspace title or workspace switcher. With one workspace,
      paint inert title text. With multiple workspaces, paint switchable
      workspace entries. When app-db has not yet materialised a workspace list,
      `workspace-entries` synthesises one placeholder workspace so a fresh
      session reads as `Untitled session` in the centre.
-   - RIGHT 20%: live channel status + session-id copy affordance.
+   - RIGHT 20%: stable session-id copy affordance only.
 
    Workspaces are part of the header row (no separate band). Overflow shows
    clickable left/right arrows that cycle through workspaces."
@@ -514,25 +499,18 @@
         full-uuid (full-id (:session db))
         id-copy-text (id-copy-block-text id-short)
         action-text (right-block-text id-short)
+        banner (latest-notification)
         status (latest-channel-status db)
-        status-raw (some-> status :text)
+        left-message (or banner status)
+        left-raw (some-> left-message :text)
+        left-level (some-> left-message :level)
+        left-cap (max 0 (- left-w edge-pad 1))
+        left-text (when (seq left-raw) (ellipsize left-raw left-cap))
         action-w (p/display-width action-text)
-        status-gap (if (and (seq status-raw) (pos? action-w)) status-action-separator "")
-        status-gap-w (p/display-width status-gap)
-        status-cap (max 0 (- right-slot-w edge-pad action-w status-gap-w))
-        status-text (when (seq status-raw) (ellipsize status-raw status-cap))
-        status-w (p/display-width (or status-text ""))
-        right-text (str (or status-text "") status-gap action-text)
-        right-w (p/display-width right-text)
+        right-w action-w
         id-copy-w (p/display-width id-copy-text)
         right-col (max right-x (- cols edge-pad right-w))
-        action-col (+ right-col status-w status-gap-w)
-        banner (latest-notification)
-        notif-text (some-> banner :text)
-        notif-level (some-> banner :level)
-        status-level (some-> status :level)
-        left-cap (max 0 (- left-w edge-pad 1))
-        notif-trim (when notif-text (ellipsize notif-text left-cap))
+        action-col right-col
         active-id (active-workspace-entry-id db workspaces)
         single-title (some-> workspaces first p/tab-display-label)]
     (draw-rule! g top-rule-row cols)
@@ -541,13 +519,12 @@
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
 
-    ;; LEFT 20%: notifications only. No title here — centre slot owns
-    ;; the active workspace/session label.
-    (when (seq notif-trim)
+    ;; LEFT 20%: latest notification, otherwise channel status. No title here.
+    (when (seq left-text)
       (p/clear-styles! g)
-      (p/set-colors! g (level->fg notif-level) t/terminal-bg)
+      (p/set-colors! g (level->fg left-level) t/terminal-bg)
       (p/enable! g p/BOLD)
-      (p/put-str! g (+ left-x edge-pad) content-row notif-trim)
+      (p/put-str! g (+ left-x edge-pad) content-row left-text)
       (p/clear-styles! g))
 
     ;; CENTER 60%: one inert title, or a switcher when multiple workspaces exist.
@@ -555,21 +532,11 @@
       (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
       (draw-center-title! g content-row center-x center-w single-title))
 
-    ;; RIGHT 20%: live status + session-id copy affordance.
+    ;; RIGHT 20%: stable session-id copy affordance only.
     (when (pos? right-w)
       (let [hovered-region (cr/hovered)
             id-hovered? (and (= content-row (get-in hovered-region [:bounds :row]))
                           (= :copy-id (:kind hovered-region)))]
-        (when (pos? status-w)
-          (p/clear-styles! g)
-          (p/set-colors! g (level->fg status-level) t/terminal-bg)
-          (p/enable! g p/BOLD)
-          (p/put-str! g right-col content-row status-text)
-          (p/clear-styles! g)
-          (when (pos? status-gap-w)
-            (p/set-colors! g t/header-fg t/terminal-bg)
-            (p/put-str! g (+ right-col status-w) content-row status-gap)
-            (p/clear-styles! g)))
         (when (pos? action-w)
           (p/clear-styles! g)
           (p/set-colors! g (if id-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
