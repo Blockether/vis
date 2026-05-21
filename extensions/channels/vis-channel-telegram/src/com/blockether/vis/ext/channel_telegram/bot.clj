@@ -98,10 +98,10 @@
    {"command" "export"  "description" "Export session as Markdown"}])
 
 (defn- voice-input-extension? []
-  (boolean (requiring-resolve 'com.blockether.vis.ext.voice.asr/transcribe-file!)))
+  (boolean (requiring-resolve 'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)))
 
 (defn- voice-output-extension? []
-  (boolean (requiring-resolve 'com.blockether.vis.ext.voice.core/synthesize-file!)))
+  (boolean (requiring-resolve 'com.blockether.vis.ext.foundation-voice.core/synthesize-file!)))
 
 (defn- voice-extension? []
   (or (voice-input-extension?) (voice-output-extension?)))
@@ -292,7 +292,7 @@
       {:file wav :delete? true})))
 
 (defn- transcribe-audio-file! [audio-file]
-  (let [asr-fn (or (requiring-resolve 'com.blockether.vis.ext.voice.asr/transcribe-file!)
+  (let [asr-fn (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)
                  (throw (ex-info "Parakeet ASR model is not on the classpath" {})))
         {:keys [file delete?]} (asr-ready-audio-file! audio-file)]
     (try
@@ -931,7 +931,7 @@
 (defn- set-voice-mode! [chat-id mode]
   (cond
     (not (voice-extension?))
-    "Voice is not loaded. Install/load vis-voice, then restart Telegram."
+    "Voice is not loaded. Install/load vis-foundation-voice, then restart Telegram."
 
     (not (some #{mode} voice-mode-order))
     "Unknown voice mode. Use off, input, output, duplex, or on."
@@ -949,7 +949,7 @@
 
 (defn- command-voice [chat-id arg]
   (if-not (voice-extension?)
-    {:message (vis/markdown->ir "Voice is not loaded. Install/load vis-voice, then restart Telegram.")}
+    {:message (vis/markdown->ir "Voice is not loaded. Install/load vis-foundation-voice, then restart Telegram.")}
     (if (str/blank? (or arg ""))
       (let [active (:voice-mode (chat-settings chat-id))
             modes  (available-voice-modes)]
@@ -1076,7 +1076,7 @@
   (contains? #{:output :duplex} (:voice-mode settings)))
 
 (defn- synthesize-answer-wav! [answer]
-  (let [synthesize-fn (or (requiring-resolve 'com.blockether.vis.ext.voice.core/synthesize-file!)
+  (let [synthesize-fn (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.core/synthesize-file!)
                         (throw (ex-info "Voice TTS is not on the classpath" {})))
         wav (java.io.File/createTempFile "vis-telegram-answer-" ".wav")]
     (synthesize-fn answer {:out-file wav})

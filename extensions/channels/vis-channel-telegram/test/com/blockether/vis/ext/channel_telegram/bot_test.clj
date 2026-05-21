@@ -88,7 +88,7 @@
                     tg/send-message! (fn [_token chat-id text & _opts]
                                        (reset! sent [chat-id text]))]
         (expect (true? (handle-command! "token" 42 "/voice duplex")))
-        (expect (= [42 "Voice is not loaded. Install/load vis-voice, then restart Telegram."]
+        (expect (= [42 "Voice is not loaded. Install/load vis-foundation-voice, then restart Telegram."]
                   @sent)))))
 
   ;; Removed: "/voice lists choices with an inline keyboard" — fixture
@@ -262,7 +262,7 @@
         (with-redefs [clojure.core/requiring-resolve
                       (fn [sym]
                         (case sym
-                          com.blockether.vis.ext.voice.asr/transcribe-file!
+                          com.blockether.vis.ext.foundation-voice.asr/transcribe-file!
                           (fn [file]
                             (deliver transcribed file)
                             "raw transcript")))

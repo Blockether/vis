@@ -406,7 +406,7 @@
    ;; Set of contributor ids the user wants hidden in the TUI
    ;; header / footer. Each extension that contributes a row /
    ;; segment / status registers under a keyword id (e.g. :goal
-   ;; from vis-goal, :voice from vis-voice). Adding the id to this
+   ;; from vis-goal, :voice from vis-foundation-voice). Adding the id to this
    ;; set skips that contributor's rendering. Default empty (every
    ;; registered contributor shows). See
    ;; `com.blockether.vis.ext.channel-tui.contributors`.
@@ -1406,7 +1406,7 @@
 (defn- speak-answer-async!
   [answer]
   (try
-    (when-let [speak (requiring-resolve 'com.blockether.vis.ext.voice.core/speak-answer-async!)]
+    (when-let [speak (requiring-resolve 'com.blockether.vis.ext.foundation-voice.core/speak-answer-async!)]
       (speak answer))
     (catch Throwable t
       (vis/notify! (str "Voice response failed: " (or (ex-message t) t))

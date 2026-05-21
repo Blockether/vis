@@ -49,7 +49,7 @@
    {:lib 'com.blockether/vis-provider-github-copilot :dir "extensions/providers/vis-provider-github-copilot"}
    {:lib 'com.blockether/vis-channel-telegram       :dir "extensions/channels/vis-channel-telegram"}
    {:lib 'com.blockether/vis-channel-tui            :dir "extensions/channels/vis-channel-tui"}
-   {:lib 'com.blockether/vis-exa                    :dir "extensions/common/vis-exa"}])
+   {:lib 'com.blockether/vis-foundation-exa                    :dir "extensions/common/vis-foundation-exa"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib -> mvn coord at the shared version. Passed
@@ -105,7 +105,7 @@
    "Lanterna-based TUI channel."
    'com.blockether/vis-channel-telegram
    "Telegram bot channel."
-   'com.blockether/vis-exa
+   'com.blockether/vis-foundation-exa
    "Exa MCP web/code search tools for the Vis SCI sandbox."})
 
 (defn- build-pom-data [lib]

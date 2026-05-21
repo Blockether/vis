@@ -4498,9 +4498,9 @@
 (def ^:private EXTENSION_RELOAD_DIRS
   ["extensions/channels/vis-channel-telegram/src"
    "extensions/channels/vis-channel-tui/src"
-   "extensions/common/vis-exa/src"
+   "extensions/common/vis-foundation-exa/src"
    "extensions/common/vis-foundation/src"
-   "extensions/common/vis-voice/src"
+   "extensions/common/vis-foundation-voice/src"
    "extensions/persistance/vis-persistance-sqlite/src"
    "extensions/providers/vis-provider-anthropic/src"
    "extensions/providers/vis-provider-github-copilot/src"
