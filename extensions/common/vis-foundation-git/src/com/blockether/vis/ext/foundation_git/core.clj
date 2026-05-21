@@ -131,26 +131,98 @@
                 :examples ["(git/log)" "(git/log 50)" "(git/log {:limit 50})"]})))
     (max 1 (min 200 (long raw)))))
 
+(defn- coerce-log-opts
+  "Map form for git/log. Accepts `:limit/:n` for count and `:path/:ref`
+   for filters. Returns `{:limit Long :path s|nil :ref s|nil}`. Anything
+   that is not a map throws the same :foundation-git/invalid-opts error
+   shape `coerce-log-limit` returns for the single-int path."
+  [m]
+  (when-not (map? m)
+    (throw (ex-info (str "git/log expected a map, got " (pr-str m))
+             {:type :foundation-git/invalid-opts :opts m})))
+  {:limit (coerce-log-limit (or (:limit m) (:n m)))
+   :path  (when-let [p (:path m)] (when (string? p) p))
+   :ref   (when-let [r (:ref m)]  (when (string? r) r))})
+
 (defn git-log-fn
   "Recent commits in the active workspace. Default limit is 20; max 200.
 
    Signatures:
-     (git/log)              ; default 20
-     (git/log 50)           ; integer limit
-     (git/log {:limit 50})  ; map form, also accepts :n
+     (git/log)                                 ; default 20
+     (git/log 50)                              ; integer limit
+     (git/log {:limit 50})                     ; map form, also accepts :n
+     (git/log {:path \"src/foo.clj\" :limit 5})  ; commits touching that path
+     (git/log {:ref \"main\" :limit 5})          ; log from a branch/sha
 
-   Returns:
-     {:branch \"main\"
-      :commits [{:sha :author :at :subject} ...]}"
+   Each commit map now carries: :sha :short-sha :author :email :at
+   :committer :committer-email :committed-at :subject :body :parents."
   ([env] (git-log-fn env nil))
   ([env arg]
    (let [root    (io/file (env-root env))
-         limit   (coerce-log-limit arg)
+         {:keys [limit path ref]} (cond
+                                    (nil? arg)     {:limit 20}
+                                    (integer? arg) {:limit (coerce-log-limit arg)}
+                                    (map? arg)     (coerce-log-opts arg)
+                                    :else          (do (coerce-log-limit arg) nil))
          status  (git-core/status-snapshot root)
-         commits (vec (or (git-core/recent-commits root limit) []))]
+         commits (vec (or (git-core/recent-commits root limit
+                            {:path path :ref ref}) []))]
      (extension/success
        {:result {:branch  (:branch status)
                  :commits commits}}))))
+
+(defn git-show-fn
+  "Detailed view of one commit.
+
+   `(git/show \"sha\")` or `(git/show {:rev \"sha\"})`. Returns the canonical
+   commit map (sha, author, email, committer, committed-at, parents,
+   subject, body) plus :files (per-file +/- numstat against the first
+   parent) and :stat totals."
+  ([env arg]
+   (let [rev (cond
+               (string? arg) arg
+               (map? arg)    (:rev arg)
+               :else         nil)]
+     (when-not (and (string? rev) (seq rev))
+       (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
+                {:type :foundation-git/invalid-opts :opts arg
+                 :examples ["(git/show \"HEAD\")"
+                            "(git/show \"abc1234\")"
+                            "(git/show {:rev \"HEAD~1\"})"]})))
+     (let [root   (io/file (env-root env))
+           result (git-core/show-commit root rev)]
+       (when-not result
+         (throw (ex-info (str "git/show could not resolve revision: " rev)
+                  {:type :foundation-git/unknown-rev :rev rev})))
+       (extension/success {:result result})))))
+
+(defn git-blame-fn
+  "Per-line blame for one tracked file.
+
+   `(git/blame \"src/foo.clj\")`           — whole file
+   `(git/blame {:path \"src/foo.clj\" :from 10 :to 40})` — line range
+
+   Returns `{:path :head :total :lines [{:line :sha :short-sha :author
+   :email :at :content :source-line} ...]}`. Outside the work tree or on
+   untracked files returns `:foundation-git/not-tracked`."
+  ([env arg]
+   (let [{:keys [path from to]}
+         (cond
+           (string? arg) {:path arg}
+           (map? arg)    arg
+           :else         (throw (ex-info (str "git/blame expected a path string or opts map, got " (pr-str arg))
+                                  {:type :foundation-git/invalid-opts :opts arg
+                                   :examples ["(git/blame \"src/foo.clj\")"
+                                              "(git/blame {:path \"src/foo.clj\" :from 10 :to 40})"]})))]
+     (when-not (and (string? path) (seq path))
+       (throw (ex-info (str "git/blame requires a non-blank :path, got " (pr-str arg))
+                {:type :foundation-git/invalid-opts :opts arg})))
+     (let [root   (io/file (env-root env))
+           result (git-core/blame-file root path {:from from :to to})]
+       (when-not result
+         (throw (ex-info (str "git/blame failed: file is outside the repo or not tracked: " path)
+                  {:type :foundation-git/not-tracked :path path})))
+       (extension/success {:result result})))))
 
 (def ^{:doc "Diff stat + porcelain for the currently bound workspace. Branch workspaces diff against their spawn commit; trunk workspaces diff against HEAD. Optional opts map accepted (e.g. {:stat? true}); result always includes stat, files, and porcelain. Returns {:branch :head :kind :stat {:files :+ :-} :files [...] :porcelain [...]}. JGit-backed; no host git binary needed."
        :arglists '([] [opts])} diff git-diff-fn)
@@ -158,8 +230,14 @@
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}. JGit-backed; no host git binary needed."
        :arglists '([])} status git-status-fn)
 
-(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a `{:limit N}` map. Returns {:branch :commits [{:sha :author :at :subject} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a `{:limit N :path P :ref R}` map. Returns {:branch :commits [{:sha :short-sha :author :email :at :committer :committer-email :committed-at :subject :body :parents [...]} ...]}. JGit-backed; no host git binary needed."
        :arglists '([] [arg])} log git-log-fn)
+
+(def ^{:doc "Detailed view of one commit. Accepts a sha string or {:rev sha}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. JGit-backed; no host git binary needed."
+       :arglists '([arg])} show git-show-fn)
+
+(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {:path P :from L :to L}. Returns {:path :head :total :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}. JGit-backed; no host git binary needed."
+       :arglists '([arg])} blame git-blame-fn)
 
 (defn- inject-env
   [env f args]
@@ -180,14 +258,24 @@
     {:before-fn inject-env
      :render-fn vis/render-string}))
 
+(def show-symbol
+  (vis/symbol #'show
+    {:before-fn inject-env
+     :render-fn vis/render-string}))
+
+(def blame-symbol
+  (vis/symbol #'blame
+    {:before-fn inject-env
+     :render-fn vis/render-string}))
+
 (def git-symbols
-  [diff-symbol status-symbol log-symbol])
+  [diff-symbol status-symbol log-symbol show-symbol blame-symbol])
 
 ;; =============================================================================
 ;; Op registry
 ;; =============================================================================
 
-(doseq [op [:git/diff :git/status :git/log]]
+(doseq [op [:git/diff :git/status :git/log :git/show :git/blame]]
   (vis/register-op! op {:tag :observation}))
 
 ;; =============================================================================
@@ -197,7 +285,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-git"
-     :ext/description    "JGit-backed observation tools under git/: diff, status, log. Activates only when the active workspace sits inside a repo."
+     :ext/description    "JGit-backed observation tools under git/: diff, status, log, show, blame. Activates only when the active workspace sits inside a repo."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
