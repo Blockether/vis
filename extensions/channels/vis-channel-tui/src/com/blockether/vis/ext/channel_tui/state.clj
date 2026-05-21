@@ -389,6 +389,13 @@
    ;; transcript can flip it off in Settings.
    :show-thinking          true
    :show-iterations        true
+   ;; Per-message meta footer (model / iters / tokens / cost / duration)
+   ;; rendered under each assistant bubble. `:full` keeps the canonical
+   ;; vis/format-meta-line; `:short` drops model + iters + tokens, leaving
+   ;; just `cost / duration` (+ any fallback suffix); `:off` removes the
+   ;; footer entirely (including the breathing row above it) so dense
+   ;; transcripts stop visually wasting the row pair per turn.
+   :message-meta           :full
    :show-silent            false
    :reasoning-level        :balanced
    :openai-codex-verbosity :low
@@ -550,6 +557,34 @@
    here for callers (and tests) that already reach in via the state
    namespace."
   vh/untitled-session-label)
+
+(def ^:private transcript-dump-markers
+  ["▾ REASONING ["
+   "▾ RESULT ["
+   "▾ ERROR ["
+   "RESULT [iteration"
+   "REASONING [iteration"])
+
+(defn transcript-dump-input?
+  "True when text looks like a copied Vis assistant trace/transcript, not a
+   fresh user prompt. These strings can enter `user_request` after accidental
+   bubble copy/paste, then poison ArrowUp history on resumed sessions."
+  [text]
+  (let [s (str text)]
+    (boolean
+      (or (some #(str/includes? s %) transcript-dump-markers)
+        (and (> (count s) 8000)
+          (boolean (re-find #"(?m)^\s*The user (wants|is|asked|reports|says|needs)\b" s))
+          (boolean (re-find #"(?m)^\s*\(def\s+" s)))))))
+
+(defn- history-user-texts
+  [history]
+  (->> (or history [])
+    (keep (fn [message]
+            (when (= :user (:role message))
+              (:text message))))
+    (remove transcript-dump-input?)
+    vec))
 
 (defn- workspace-number
   [entry]
@@ -842,9 +877,7 @@
 
 (reg-event-db :init-session
   (fn [db [_ session history]]
-    (let [user-history (->> (or history [])
-                         (filter #(= :user (:role %)))
-                         (mapv :text))]
+    (let [user-history (history-user-texts history)]
       (-> db
         ensure-workspaces
         (assoc :session session
@@ -1175,8 +1208,13 @@
   ;;      the right tool (`v/cat`, `z/symbols`, etc.) itself.
   (fn [db [_ text workspace-id]]
     (let [workspace-id (or workspace-id (current-workspace-id db))
-          source-db    (db-for-workspace db workspace-id)]
+          source-db    (db-for-workspace db workspace-id)
+          visible-text (input/expand-paste-placeholders text (:pastes source-db))]
       (cond
+        (transcript-dump-input? visible-text)
+        {:db db
+         :fx [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]}
+
         (:loading? source-db)
         (enqueue-message-result db workspace-id text)
 
@@ -1184,8 +1222,7 @@
         {:db db}
 
         :else
-        (let [visible-text (input/expand-paste-placeholders text (:pastes source-db))
-              workspace    (active-workspace source-db)
+        (let [workspace    (active-workspace source-db)
               agent-text   (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
                              (input/expand-file-mentions visible-text))
               token        (vis/cancellation-token)

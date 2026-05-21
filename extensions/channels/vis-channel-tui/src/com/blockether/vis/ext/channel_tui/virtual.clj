@@ -126,6 +126,7 @@
     (select-keys settings
       [:show-thinking :show-iterations :show-silent :show-iteration-headers
        :differentiate-turns :preview/default-lines
+       :message-meta
        :progress/live-iteration-limit])))
 
 (defn- height-key [message bubble-w settings _detail-expansions]
@@ -296,7 +297,11 @@
     {:keys [session-id detail-expansions tail-lines
             window-start window-num window-total-h]}]
    (let [show-timestamps? (boolean (get settings :show-timestamps false))
-         strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
+         meta-mode        (get settings :message-meta :full)
+         strip-ts (fn [m]
+                    (cond-> m
+                      (not show-timestamps?)        (dissoc :timestamp)
+                      (= :assistant (:role m))      (assoc :message-meta-mode meta-mode)))
          ;; Mid-window walker fast path: when caller specifies a
          ;; window into the bubble (only the bottom assistant
          ;; message during genuine mid-scroll), bypass the cached

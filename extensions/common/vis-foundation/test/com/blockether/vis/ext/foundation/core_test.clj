@@ -64,11 +64,11 @@
       (expect (= '[com.blockether.vis.ext.foundation.core] (get-in manifest ['v :nses])))
       (expect (not (contains? (get manifest 'v) :docs)))))
 
-  (it "defers doctor fn and reproduction command namespaces until use"
+  (it "defers doctor fn and repro command namespaces until use"
     (let [commands (into {} (map (juxt :cmd/name identity) (:ext/cli foundation/vis-extension)))
           calls    (atom [])]
       (expect (not (contains? commands "doctor")))
-      (expect (contains? commands "reproduction"))
+      (expect (contains? commands "repro"))
       (with-redefs [clojure.core/requiring-resolve
                     (fn [sym]
                       (swap! calls conj sym)
@@ -77,12 +77,12 @@
                         (fn [env] [{:level :info :message (:ok env)}])
                         com.blockether.vis.ext.foundation.transcript/cli-command
                         (fn [] {:cmd/run-fn (fn [parsed residual]
-                                              [:reproduction parsed residual])})))]
+                                              [:repro parsed residual])})))]
         (expect (= [] @calls))
         (expect (= [{:level :info :message true}]
                   ((:ext/doctor-fn foundation/vis-extension) {:ok true})))
-        (expect (= [:reproduction {:p true} ["y"]]
-                  ((get-in commands ["reproduction" :cmd/run-fn]) {:p true} ["y"])))
+        (expect (= [:repro {:p true} ["y"]]
+                  ((get-in commands ["repro" :cmd/run-fn]) {:p true} ["y"])))
         (expect (= ['com.blockether.vis.ext.foundation.doctor/doctor-fn
                     'com.blockether.vis.ext.foundation.transcript/cli-command]
                   @calls))))))

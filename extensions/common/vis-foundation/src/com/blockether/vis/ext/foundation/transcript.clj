@@ -1064,7 +1064,7 @@
 
 (defn cli-command []
   {:cmd/name  "repro"
-   :cmd/doc   "Reproduce a session as a Markdown transcript (turns, code, vars, reasoning, answers)."
+   :cmd/doc   "Reproduce a session as a bounded Markdown transcript (turns, code, vars, reasoning, answers); bounded by default."
    :cmd/usage "vis ext repro <SESSION-ID>"
    :cmd/args  [{:name "session-id" :kind :positional :type :string
                 :doc  "Session id (full UUID or unambiguous prefix)."}]

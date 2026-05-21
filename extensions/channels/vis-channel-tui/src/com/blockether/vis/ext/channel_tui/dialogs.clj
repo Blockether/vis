@@ -1101,6 +1101,11 @@
     :type :toggle
     :label "Show full execution trace"
     :description "Blocks, eval results, errors - the whole iteration history"}
+   {:key :message-meta
+    :type :choice
+    :choices [:full :short :off]
+    :label "Per-message meta footer"
+    :description "Footer under each assistant bubble: :full = model / iters / tokens / cost / duration, :short = cost + duration only, :off = hidden (also drops the breathing row above it)"}
    {:key :show-silent
     :type :toggle
     :label "Show silent system calls"
