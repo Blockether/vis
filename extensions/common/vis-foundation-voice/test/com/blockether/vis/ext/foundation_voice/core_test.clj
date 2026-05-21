@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-voice.core-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.foundation-voice.core :as voice]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -110,6 +111,28 @@
         @(voice/speak-answer-async! "hello")
         (expect (some #(= [:worker "hello"] (subvec % 0 2)) @calls))
         (expect (some #(= :play (first %)) @calls)))))
+
+  (it "clears the left header status when voice response completion becomes a left notification"
+    (let [events        (atom [])
+          notifications (atom [])]
+      (with-redefs [vis/publish-channel-event!
+                    (fn [channel event]
+                      (swap! events conj [channel event]))
+                    vis/notify!
+                    (fn [text & kvs]
+                      (swap! notifications conj [text kvs]))]
+        (#'voice/notify-progress! :ready "Voice response complete" 1 1)
+        (expect (= [[:tui {:op :status/clear
+                           :id :voice/piper
+                           :text "Voice response complete 100%"
+                           :level :info
+                           :model :voice/piper
+                           :phase :ready
+                           :bytes-read 1
+                           :bytes-total 1}]]
+                  @events))
+        (expect (= [["Voice response complete 100%" [:level :info :ttl-ms 3000]]]
+                  @notifications)))))
 
   (it "contributes spoken-answer prompt only for voice-response turns"
     (expect (nil? (voice/voice-response-prompt {})))
