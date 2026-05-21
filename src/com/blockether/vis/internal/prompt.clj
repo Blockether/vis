@@ -148,6 +148,8 @@
 
       Control:
         (done                 {:answer :trailer-drop :trailer-summarize})
+          :trailer-drop      [\"tN/iN\" \"tA/iX->tB/iY\" …]   pin scope or summary range
+          :trailer-summarize [{:scope-start \"tA/iX\" :scope-end \"tB/iY\" :summary \"…\"} …]
         (set-session-title!   \"title\")
         (satisfy-hint!        :hint/id [<scope> …])     evidence scopes from this turn; soft-warns if missing
 
