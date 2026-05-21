@@ -102,11 +102,10 @@
         :session/workspace   engine-rendered; current branch, trunk, head, dirty?, per-file diff stats
         :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born <scope>}}
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
-        :session/decisions   append-only audit (\"why we did X\")
-                             shape: {<kw> {:body :tags :born}}
-        :session/facts       everything durable that isn't a decision or spec —
-                             observations, preferences, behavioral directives, project conventions.
-                             shape: {<kw> {:body :scope #{:session :project} :born? :source?}}
+        :session/facts       everything durable the model needs to remember:
+                             observations, preferences, behavioral directives, project conventions,
+                             decisions (tag :decision when audit-style).
+                             shape: {<kw> {:body :scope #{:session :project} :tags #{kw} :born? :source?}}
                              :scope optional (default :session); :project mirrors cross-session
         :session/specs       requirements BUILT FROM facts
                              shape: {<kw> {:title :acceptance :facts :status :born :done-born?}}
@@ -120,8 +119,7 @@
     ENGINE FUNCTIONS (bare symbols; never namespace-qualify)
 
       Memory:
-        (decision!     :K {:body :tags})               append-only; no update, no remove
-        (fact-set!     :K {:body :scope?})             upsert; :scope optional (default :session)
+        (fact-set!     :K {:body :scope? :tags?})      upsert; :scope default :session; tag :decision for audit-style
         (fact-remove!  :K)
         (spec-set!     :K {:title :acceptance :facts :status})
         (spec-remove!  :K)
