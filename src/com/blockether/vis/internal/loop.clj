@@ -1,9 +1,7 @@
 (ns com.blockether.vis.internal.loop
   (:refer-clojure)
   (:require
-   [clj-reload.core :as clj-reload]
    [clojure.edn :as edn]
-   [clojure.set :as set]
    [charred.api :as json]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
@@ -28,7 +26,6 @@
    [sci.core :as sci]
    [taoensso.telemere :as tel])
   (:import
-   [java.io File]
    [java.security MessageDigest]))
 
 ;; =============================================================================
@@ -4103,7 +4100,7 @@
 
    If an extension with the same `:ext/name` is already registered,
    it is replaced (not duplicated). Enables hot-swap via
-   `reload-extension!`.
+   `reload-extension!` (removed for GraalVM native-image compatibility).
 
    Returns `environment` for chaining."
   [environment ext]
@@ -4473,316 +4470,6 @@
           "Failed to rebuild router after provider change")))
     new-cfg))
 
-;; ---------------------------------------------------------------------------
-;; Extension hot-reload. See plan §1 Q12-Q16 + caveats.
-;;
-;; Surgical for `:added` / `:removed` (full side-effect cleanup,
-;; symbol install). Still-present extension namespaces are delegated
-;; to clj-reload after the first baseline pass, so unchanged helper
-;; namespaces stop paying a full `(require :reload)` cost.
-;;
-;; SCI env refresh is scheduled, not performed in-place: the env that
-;; called `(v/reload-extensions!)` is still executing old bindings, so
-;; reset happens at the next `send!` boundary before user code runs.
-;; ---------------------------------------------------------------------------
-
-(def ^:const RELOAD_DEFAULT_TIMEOUT_MS
-  "Deprecated compatibility knob for `reload-extensions!`. Env refresh no
-   longer waits on busy turns; every cached env is marked dirty and rebuilt
-   at its next safe `send!` boundary."
-  0)
-
-(defn- now-ms ^long [] (System/currentTimeMillis))
-
-(def ^:private EXTENSION_RELOAD_DIRS
-  ["extensions/channels/vis-channel-telegram/src"
-   "extensions/channels/vis-channel-tui/src"
-   "extensions/common/vis-foundation-core/src"
-   "extensions/common/vis-foundation-bridge/src"
-   "extensions/common/vis-foundation-exa/src"
-   "extensions/common/vis-foundation-git/src"
-   "extensions/common/vis-foundation-voice/src"
-   "extensions/persistance/vis-persistance-sqlite/src"
-   "extensions/providers/vis-provider-anthropic/src"
-   "extensions/providers/vis-provider-github-copilot/src"
-   "extensions/providers/vis-provider-openai-codex/src"
-   "extensions/providers/vis-provider-standard/src"
-   "extensions/providers/vis-provider-zai/src"])
-
-(defn- user-extension-roots
-  []
-  (distinct
-    (keep identity
-      [(some-> (System/getProperty "user.dir")
-         (File. ".vis/vis-extensions")
-         .getPath)
-       (some-> (System/getProperty "user.home")
-         (File. ".vis/vis-extensions")
-         .getPath)])))
-
-(defn- extension-src-dirs-under
-  [root]
-  (let [root-file (File. ^String root)]
-    (if-not (and (.exists root-file) (.isDirectory root-file))
-      []
-      (->> (.listFiles root-file)
-        (filter #(.isDirectory ^File %))
-        (keep (fn [^File extension-dir]
-                (let [deps-file (File. extension-dir "deps.edn")
-                      src-dir   (File. extension-dir "src")]
-                  (when (and (.isFile deps-file) (.isDirectory src-dir))
-                    (.getPath src-dir)))))
-        sort
-        vec))))
-
-(defonce ^:private extension-reloader-state
-  (atom nil))
-
-(defn- existing-extension-reload-dirs
-  []
-  (vec
-    (filter (fn [path]
-              (let [f (File. ^String path)]
-                (and (.exists f) (.isDirectory f))))
-      (distinct
-        (concat EXTENSION_RELOAD_DIRS
-          (mapcat extension-src-dirs-under (user-extension-roots)))))))
-
-(defn- ensure-extension-reloader!
-  []
-  (let [dirs (existing-extension-reload-dirs)]
-    (when (seq dirs)
-      (if (= dirs (:dirs @extension-reloader-state))
-        :changed
-        (do
-          (clj-reload/init {:dirs dirs
-                            :output :quiet
-                            :no-reload '#{user}})
-          (reset! extension-reloader-state {:dirs dirs})
-          :all)))))
-
-(defn- extension-loader-nses
-  "Namespaces that load/register `ext`. Most extensions use their
-   `:ext/name` directly. Lightweight registrars and provider bundles
-   register one or more logical extension ids from a separate manifest ns;
-   those must declare `:ext/source-nses` so reload diffs against the loader ns,
-   not the logical extension id."
-  [ext]
-  (set (extension/ext-source-nses ext)))
-
-(defn- diff-extensions
-  "Compute the F1-lite diff between the current in-memory
-   `extension-registry` and a freshly-scanned `manifests` map
-   (manifest-id -> entry, where entry has `:nses`).
-
-   Returns `{:added [...] :removed [...] :reloaded [...]}`.
-
-   `:added` / `:reloaded` are manifest loader namespaces to require.
-   `:removed` is logical `:ext/name` ids to deregister.
-
-   This distinction is load-bearing: SQLite registers logical extension
-   `com.blockether.vis.ext.persistance-sqlite.core` from lightweight loader
-   `com.blockether.vis.ext.persistance-sqlite.registrar`; provider bundles
-   similarly register plan-specific logical ids from one loader ns. Treating
-   the logical id as the loader deregisters live side effects and skips the
-   registrar re-exec, leaving e.g. `:sqlite` unregistered."
-  [registered manifests]
-  (let [registered-loader-ns (set (mapcat extension-loader-nses registered))
-        manifest-ns          (set (mapcat :nses (vals manifests)))
-        added                (vec (sort (set/difference manifest-ns registered-loader-ns)))
-        removed              (->> registered
-                               (filter #(empty? (set/intersection (extension-loader-nses %) manifest-ns)))
-                               (map :ext/name)
-                               sort
-                               vec)
-        reloaded             (vec (sort (set/intersection registered-loader-ns manifest-ns)))]
-    {:added added :removed removed :reloaded reloaded}))
-
-(defn- record-error
-  "Append a `:phase`-tagged error to the orchestrator's accumulator."
-  [errors-atom ns-sym phase ^Throwable t]
-  (swap! errors-atom conj
-    {:ns          ns-sym
-     :phase       phase
-     :reason      (or (ex-message t) (str t))
-     :stack-trace (with-out-str (.printStackTrace t (java.io.PrintWriter. *out*)))}))
-
-(defn- require-ns!
-  "Require a namespace, optionally with `:reload`. Returns nil on
-   success or the Throwable on failure."
-  [ns-sym reload?]
-  (try
-    (if reload?
-      (require ns-sym :reload)
-      (require ns-sym))
-    nil
-    (catch Throwable t t)))
-
-(defn- reload-extension-namespaces!
-  [reload-candidates errors]
-  (if-let [plan (ensure-extension-reloader!)]
-    (let [started (now-ms)
-          result  (clj-reload/reload {:throw false
-                                      :log-fn (fn [& _])
-                                      :only plan})
-          failed  (:failed result)]
-      (when failed
-        (record-error errors failed :clj-reload (:exception result)))
-      {:engine :clj-reload
-       :plan plan
-       :unloaded (vec (:unloaded result))
-       :loaded (vec (:loaded result))
-       :failed failed
-       :duration-ms (- (now-ms) started)})
-    (let [started (now-ms)]
-      (doseq [ns-sym reload-candidates]
-        (when-let [t (require-ns! ns-sym true)]
-          (record-error errors ns-sym :require t)))
-      {:engine :require-reload
-       :plan :all
-       :unloaded []
-       :loaded (vec reload-candidates)
-       :failed nil
-       :duration-ms (- (now-ms) started)})))
-
-(defn- schedule-cached-env-refresh!
-  [id reason reload-id]
-  (let [k (cache-key id)]
-    (swap! cache update k
-      (fn [entry]
-        (cond-> entry
-          entry
-          (assoc :env-refresh {:status :scheduled
-                               :reason reason
-                               :reload-id reload-id
-                               :scheduled-at-ms (now-ms)}))))
-    k))
-
-(defn- refresh-cached-env-if-needed!
-  "Called with the session lock held, immediately before a turn starts.
-   If `reload-extensions!` marked this env dirty, rebuild the SCI env now so
-   the just-finished IR/render path never races its own symbol table."
-  [id entry]
-  (let [k       (cache-key id)
-        entry*  (or (get @cache k) entry)
-        refresh (:env-refresh entry*)]
-    (if (= :scheduled (:status refresh))
-      (let [old-env (:environment entry*)
-            title   (some-> (:session-title-atom old-env) deref)
-            new-env (create-environment (get-router)
-                      (cond-> {:db (config/resolve-db-spec)
-                               :session k}
-                        (:channel old-env) (assoc :channel (:channel old-env))
-                        title              (assoc :title title)))
-            updated (assoc entry*
-                      :environment new-env
-                      :env-refresh (assoc refresh
-                                     :status :refreshed
-                                     :refreshed-at-ms (now-ms)))]
-        (try (dispose-environment! old-env)
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::env-refresh-dispose-failed
-                       :data {:session-id k
-                              :error (ex-message t)}})))
-        (swap! cache assoc k updated)
-        updated)
-      entry*)))
-
-(defn reload-extensions!
-  "Re-discover extensions on the classpath, apply added/removed lifecycle
-   changes, then ask clj-reload to reload only changed already-loaded
-   extension namespaces (first call establishes the baseline with :all).
-
-   Cached SCI envs are not mutated while a turn is executing. They are
-   marked with `:env-refresh {:status :scheduled ...}` and rebuilt at the
-   next `send!` boundary before user code runs.
-
-   Returns structured data for renderers:
-     {:added [...]
-      :removed [...]
-      :reloaded [...]
-      :unchanged [...]
-      :reload-candidates [...]
-      :namespace-reload {:engine :clj-reload :plan :changed ...}
-      :env-refresh {:status :scheduled :scheduled N :when :before-next-turn}
-      :errors [...]
-      :duration-ms 123}"
-  ([] (reload-extensions! {}))
-  ([_opts]
-   (let [start         (now-ms)
-         errors        (atom [])
-         ;; Step 1: fresh scan.
-         _             (try ((requiring-resolve
-                               'com.blockether.vis.internal.manifest/rediscover!))
-                         (catch Throwable t
-                           (record-error errors :scan :require t)))
-         manifests     (try ((requiring-resolve
-                               'com.blockether.vis.internal.manifest/scan-extensions!))
-                         (catch Throwable t
-                           (record-error errors :scan :require t)
-                           {}))
-         ;; Step 2: diff.
-         registered    (extension/registered-extensions)
-         {:keys [added removed reloaded]} (diff-extensions registered manifests)
-         ;; Step 3a: :removed first - pull side effects before any
-         ;; new register-extension! could clash with their dispatch.
-         _             (doseq [ns-sym removed]
-                         (try (extension/deregister-extension! ns-sym)
-                           (catch Throwable t
-                             (record-error errors ns-sym :deregister t))))
-         ;; Step 3b: :added - require + the namespace's top-level form
-         ;; calls `register-extension!` itself.
-         _             (doseq [ns-sym added]
-                         (when-let [t (require-ns! ns-sym false)]
-                           (record-error errors ns-sym :require t)))
-         ;; Step 3c: still-present namespaces - clj-reload reloads only
-         ;; changed loaded files after the first :all baseline.
-         namespace-reload (reload-extension-namespaces! reloaded errors)
-         loaded-nses      (set (:loaded namespace-reload))
-         unloaded-nses    (set (:unloaded namespace-reload))
-         failed-nses      (set (keep identity [(:failed namespace-reload)]))
-         candidate-nses   (set reloaded)
-         reloaded*        (if (= :require-reload (:engine namespace-reload))
-                            (vec reloaded)
-                            (vec (sort (set/intersection candidate-nses loaded-nses))))
-         failed*          (vec (sort (set/difference
-                                       (set/intersection candidate-nses
-                                         (set/union unloaded-nses failed-nses))
-                                       (set reloaded*))))
-         unchanged        (vec (sort (set/difference candidate-nses (set reloaded*) (set failed*))))
-         ;; Step 4: schedule SCI env refresh. No lock wait; next `send!`
-         ;; rebuilds each dirty env before user code executes.
-         reload-id        (str (util/uuid))
-         envs-snapshot    (vec @cache)
-         env-scheduled    (atom [])]
-     (doseq [[id _entry] envs-snapshot]
-       (try
-         (swap! env-scheduled conj (schedule-cached-env-refresh! id :extension-reload reload-id))
-         (catch Throwable t
-           (record-error errors id :env-refresh-schedule t))))
-     (let [duration (- (now-ms) start)]
-       {:added                added
-        :removed              removed
-        :reloaded             reloaded*
-        :failed               failed*
-        :unchanged            unchanged
-        :reload-candidates    reloaded
-        :namespace-reload     namespace-reload
-        :reload-engine        (:engine namespace-reload)
-        :reload-plan          (:plan namespace-reload)
-        :errors               @errors
-        :env-refresh          {:status :scheduled
-                               :scheduled (count @env-scheduled)
-                               :env-ids @env-scheduled
-                               :when :before-next-turn
-                               :reload-id reload-id}
-        ;; Compatibility fields for old renderers/callers.
-        :envs-reseated        0
-        :env-reseat-deferred  @env-scheduled
-        :env-reseat-skipped   []
-        :duration-ms          duration
-        :blocked-ms           0}))))
-
 (defn- open-env!
   [id {:keys [channel external-id title workspace-id]}]
   (let [router (get-router)
@@ -4901,8 +4588,7 @@
      ;; finished and before the next user code executes.
      (.lock lock)
      (try
-       (let [{:keys [environment]} (refresh-cached-env-if-needed! id entry)]
-         (turn! environment message-vec opts))
+       (turn! (:environment entry) message-vec opts)
        (finally (.unlock lock))))))
 
 (defn close!

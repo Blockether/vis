@@ -2,9 +2,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-core.environment.core :as env-core]
-   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
@@ -58,7 +56,7 @@
       (expect (not (contains? syms 'reload-skills!)))
       (expect (not (contains? syms 'scan-warnings)))
       (expect (not (contains? syms 'reload-instructions!)))
-      (expect (contains? syms 'reload-extensions!))))
+      (expect (not (contains? syms 'reload-extensions!)))))
 
   (it "renders a prompt fragment for the unified v/ alias"
     (let [prompt (env-core/environment-prompt {})]
@@ -67,43 +65,8 @@
       (expect (not (str/includes? prompt "v/load-skill")))
       (expect (not (str/includes? prompt "reload-skills")))
       (expect (not (str/includes? prompt "reload-instructions!")))
-      (expect (str/includes? prompt "v/reload-extensions!"))
+      (expect (not (str/includes? prompt "v/reload-extensions!")))
       (expect (not (str/includes? prompt "`md/`")))))
-
-  (it "binds reload helper to an explicit envelope-returning tool fn"
-    (let [payload {:added [] :removed [] :reloaded []}
-          tool-fn (:ext.symbol/fn env-core/reload-extensions!-symbol)]
-      (expect (nil? (:ext.symbol/after-fn env-core/reload-extensions!-symbol)))
-      (with-redefs [vis/reload-extensions! (fn
-                                             ([] payload)
-                                             ([opts] (assoc payload :opts opts)))]
-        (let [wrapped (tool-fn)]
-          (expect (extension/tool-result? wrapped))
-          (expect (:success? wrapped))
-          (expect (= payload (:result wrapped)))))))
-
-  (it "renders reload results as tables with env refresh status"
-    (let [rendered ((deref #'env-core/render-reload-channel)
-                    {:added []
-                     :removed []
-                     :reloaded ['com.acme.changed]
-                     :failed ['com.acme.failed]
-                     :unchanged ['com.acme.same]
-                     :errors [{:ns 'com.acme.failed
-                               :phase :clj-reload
-                               :reason "boom"}]
-                     :reload-engine :clj-reload
-                     :reload-plan :changed
-                     :duration-ms 5
-                     :env-refresh {:status :scheduled
-                                   :scheduled 1
-                                   :when :before-next-turn}})]
-      (expect (= :ir (first rendered)))
-      (expect (= 3 (count (filter #(= :table (first %)) (drop 1 rendered)))))
-      (expect (str/includes? (pr-str rendered) "clj-reload"))
-      (expect (str/includes? (pr-str rendered) "failed"))
-      (expect (str/includes? (pr-str rendered) "boom"))
-      (expect (str/includes? (pr-str rendered) "scheduled / 1 scheduled / before-next-turn"))))
 
   (it "provides foundation environment info through ctx"
     (let [ctx (env-core/environment-ctx {})]

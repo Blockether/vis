@@ -1991,7 +1991,7 @@
   ;; Sidecar atom holding source-file markers per registered extension.
   ;; Keyed by :ext/name. Populated at register-time, dropped at
   ;; deregister-time. Read by the tool-envelope emitter for the
-  ;; UI extension provenance label and by `reload-extensions!`'s diff. Kept
+  ;; UI extension provenance label. Kept
   ;; OUT of the extension map itself so `extension/validate!` doesn't have
   ;; to know about runtime-derived fields. Plan §5.5.
   (atom {}))
@@ -2040,7 +2040,7 @@
 
    Also computes source-file markers (paths, max-mtime, sha256) and
    stores them in a sidecar atom read by the tool-envelope emitter
-   (UI extension provenance label) and `reload-extensions!`'s diff.
+   (UI extension provenance label).
 
    Idempotent on `:ext/name`. Returns the validated extension."
   [ext]
@@ -2157,7 +2157,7 @@
    subcommand, channel, provider, and persistence backend. Returns nil.
 
    Plan caveat: side-effect cleanup on `:removed` extensions. Used by
-   `reload-extensions!` when an extension disappears between scans."
+   Stays available for diagnostic surfaces."
   [ns-sym]
   (when-let [ext (get @extension-registry ns-sym)]
     (doseq [c (:ext/cli ext)]
@@ -2357,47 +2357,6 @@
                {:type :extension/no-registration
                 :namespace ns-sym
                 :registered (vec (keys @extension-registry))})))))
-
-#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
-(defn reload-extension!
-  "Reload an extension namespace and hot-swap it everywhere.
-
-   1. Forces `(require ns :reload)` - re-executes `register-extension!`
-   2. Updates the global registry (automatic via register-extension!)
-   3. If `environments` are provided, replaces the old version in
-      each live environment's `:extensions` atom immediately.
-
-   Arity:
-     (reload-extension! ns-sym)              - global registry only.
-     (reload-extension! ns-sym environment)  - hot-swap into one env.
-     (reload-extension! ns-sym environments) - hot-swap into all envs.
-
-   Returns the updated extension."
-  ([ns-sym]
-   (reload-extension! ns-sym nil))
-  ([ns-sym env-or-envs]
-   (require ns-sym :reload)
-   (let [exts (or (seq (registered-extensions-for-source-ns ns-sym))
-                (throw (ex-info (str "Namespace '" ns-sym
-                                  "' was reloaded but did not call register-extension!")
-                         {:type :extension/no-registration
-                          :namespace ns-sym
-                          :registered (vec (keys @extension-registry))})))
-         envs (cond
-                (nil? env-or-envs)        nil
-                (map? env-or-envs)        [env-or-envs]
-                (sequential? env-or-envs) env-or-envs)]
-     (doseq [environment envs]
-       (when-let [ext-atom (:extensions environment)]
-         (swap! ext-atom
-           (fn [installed]
-             (let [names   (set (map :ext/name exts))
-                   without (vec (remove #(contains? names (:ext/name %)) installed))]
-               (into without exts))))
-         (tel/log! {:level :info :id ::reload-hot-swap
-                    :data {:ext ns-sym :environment-id (:environment-id environment)}
-                    :msg (str "Hot-swapped extensions from '" ns-sym "' into environment " (:environment-id environment))})))
-     (vec exts))))
 
 ;; =============================================================================
 ;; Extension manifest catalog

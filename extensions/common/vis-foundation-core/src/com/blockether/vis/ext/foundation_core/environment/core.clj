@@ -243,10 +243,6 @@
 (defn- ir-text [s] [:span {} (str s)])
 (defn- ir-code [s] [:c {} (str s)])
 (defn- ir-p [& children] (into [:p {}] children))
-(defn- ir-cell [tag v] [tag {} (ir-text (present v))])
-(defn- ir-row [cell-tag values]
-  (into [:tr {}] (map #(ir-cell cell-tag %) values)))
-
 (defn- lines-channel
   [title lines]
   (into [:ir {}
@@ -299,109 +295,6 @@
     (when (seq content)
       [[:code {:lang "text"} content]])))
 
-(defn- reload-summary
-  [result]
-  (str "added " (count (:added result))
-    " / removed " (count (:removed result))
-    " / reloaded " (count (:reloaded result))
-    " / failed " (count (:failed result))
-    " / unchanged " (count (:unchanged result))
-    " / errors " (count (:errors result))))
-
-(defn- reload-summary-table
-  [result]
-  [:table {}
-   (ir-row :th ["Metric" "Value"])
-   (ir-row :td ["engine" (or (some-> (:reload-engine result) name) "require-reload")])
-   (ir-row :td ["plan" (or (some-> (:reload-plan result) name) "all")])
-   (ir-row :td ["added" (count (:added result))])
-   (ir-row :td ["removed" (count (:removed result))])
-   (ir-row :td ["reloaded" (count (:reloaded result))])
-   (ir-row :td ["failed" (count (:failed result))])
-   (ir-row :td ["unchanged" (count (:unchanged result))])
-   (ir-row :td ["errors" (count (:errors result))])
-   (ir-row :td ["duration-ms" (:duration-ms result)])
-   (ir-row :td ["env refresh" (str (name (get-in result [:env-refresh :status] :unknown))
-                                " / "
-                                (get-in result [:env-refresh :scheduled] 0)
-                                " scheduled / "
-                                (name (get-in result [:env-refresh :when] :unknown)))])])
-
-(defn- reload-action-rows
-  [result]
-  (concat
-    (map (fn [ns-sym] [(str ns-sym) "added"]) (:added result))
-    (map (fn [ns-sym] [(str ns-sym) "removed"]) (:removed result))
-    (map (fn [ns-sym] [(str ns-sym) "reloaded"]) (:reloaded result))
-    (map (fn [ns-sym] [(str ns-sym) "failed"]) (:failed result))
-    (map (fn [ns-sym] [(str ns-sym) "unchanged"]) (:unchanged result))))
-
-(defn- truncate-cell
-  [s n]
-  (let [s (present s)]
-    (if (> (count s) n)
-      (str (subs s 0 n) "…")
-      s)))
-
-(defn- reload-errors-table
-  [result]
-  (let [rows (take 5 (:errors result))]
-    (when (seq rows)
-      (into [:table {}
-             (ir-row :th ["Namespace" "Phase" "Reason"])]
-        (map (fn [{:keys [ns phase reason]}]
-               (ir-row :td [(str ns) (name phase) (truncate-cell reason 120)]))
-          rows)))))
-
-(defn- reload-actions-table
-  [result]
-  (let [rows (take 12 (reload-action-rows result))]
-    (when (seq rows)
-      (into [:table {}
-             (ir-row :th ["Namespace" "Action"])]
-        (map #(ir-row :td %) rows)))))
-
-(defn- reload-noisy?
-  "Happy path is silent (no errors, no failures, no env-reseat-skipped,
-   no blocked-ms wait, env-refresh status fine). Anything else earns the
-   table + per-ns breakdown."
-  [result]
-  (or (seq (:errors result))
-    (seq (:failed result))
-    (seq (:env-reseat-skipped result))
-    (pos? (long (or (:blocked-ms result) 0)))
-    (let [s (get-in result [:env-refresh :status])]
-      (and s (not (#{:scheduled :idle :ok} s))))))
-
-(defn- reload-happy-line
-  "One-line summary for the happy path. Mentions counts that matter and
-   silently elides the rest."
-  [result]
-  (let [parts (cond-> []
-                (seq (:reloaded result))  (conj (str (count (:reloaded result)) " reloaded"))
-                (seq (:added result))     (conj (str (count (:added result)) " added"))
-                (seq (:removed result))   (conj (str (count (:removed result)) " removed"))
-                (seq (:unchanged result)) (conj (str (count (:unchanged result)) " unchanged")))
-        body  (if (seq parts) (string/join ", " parts) "no changes")
-        env-q (get-in result [:env-refresh :scheduled] 0)]
-    (str " — " body
-      (when (:duration-ms result) (str " in " (:duration-ms result) "ms"))
-      (when (pos? (long env-q)) (str "; " env-q " env queued for next turn")))))
-
-(defn- render-reload-channel
-  [result]
-  (if-not (reload-noisy? result)
-    ;; Happy path: single line. Tables and bullets earn their space
-    ;; only when something is off.
-    [:ir {} (ir-p (ir-code "v/reload-extensions!") (ir-text (reload-happy-line result)))]
-    ;; Off-nominal: full diagnostic surface.
-    (into [:ir {}
-           (ir-p (ir-code "v/reload-extensions!")
-             (ir-text (str " — " (reload-summary result))))
-           (reload-summary-table result)]
-      (remove nil? [(reload-errors-table result)
-                    (reload-actions-table result)]))))
-
 (defn- env-renderers
   [sym]
   (case sym
@@ -411,8 +304,7 @@
     languages               {:render-fn render-languages-channel}
     monorepo                {:render-fn render-monorepo-channel}
     repositories            {:render-fn render-repositories-channel}
-    main-agent-instructions {:render-fn render-guidance-channel}
-    reload-extensions!      {:render-fn render-reload-channel}))
+    main-agent-instructions {:render-fn render-guidance-channel}))
 
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.
@@ -454,38 +346,22 @@
   ;; a public `v/` tool; it is emergency context for broken extension loads.
   (vec (vis/extension-load-failures)))
 
-(defn reload-extensions!
-  "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
-  ([] (vis/reload-extensions!))
-  ([opts] (vis/reload-extensions! opts)))
-
 (defn- main-agent-instructions-tool
   "Project guidance from AGENTS.md or CLAUDE.md fallback, returned in a canonical tool envelope."
   []
   (success-envelope (main-agent-instructions)))
 
-(defn- reload-extensions!-tool
-  "Reload extension registry. Returns diff in a canonical tool envelope: {:added :removed :reloaded :errors ...}."
-  ([]
-   (success-envelope (reload-extensions!)))
-  ([opts]
-   (success-envelope (reload-extensions! opts))))
-
 (def main-agent-instructions-symbol
   (env-data-symbol #'main-agent-instructions-tool 'main-agent-instructions))
-
-(def reload-extensions!-symbol
-  (env-data-symbol #'reload-extensions!-tool 'reload-extensions!))
 
 (def environment-symbols
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol
-   main-agent-instructions-symbol
-   reload-extensions!-symbol])
+   main-agent-instructions-symbol])
 
 (def ^:private FN_INDEX
   "One-line strategy for environment fns under the `v/` alias."
-  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change; use v/reload-extensions! only after extension changes.")
+  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change.")
 
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project
