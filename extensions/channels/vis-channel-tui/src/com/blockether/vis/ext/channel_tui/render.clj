@@ -3190,8 +3190,8 @@
                 ;; :value`) are hidden; errors keep their inline caret
                 ;; treatment above and never reach this branch.
                 show-result?  (and (= :tool result-kind)
-                               result-text
-                               (not (str/blank? (str result-text))))
+                                result-text
+                                (not (str/blank? (str result-text))))
                 result-lines  (when show-result?
                                 (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
                                       detail-entries (maybe-collapse-raw-text-block
@@ -3330,55 +3330,15 @@
         ;; One trace renderer means one visual contract: no iteration/block
         ;; label bands in live, completed, or cancelled bubbles.
         show-iteration-headers? false
-        static-limit   (max 1 (long (get settings :progress/live-iteration-limit 24)))
-        dynamic-limit  (when (and live? viewport-rows (pos? (long viewport-rows)))
-                         (let [budget (long (* 2 (long viewport-rows)))]
-                           (loop [i (dec (count iterations)) acc 0 kept 0]
-                             (cond
-                               (neg? i) kept
-                               (and (pos? kept) (>= acc budget)) kept
-                               :else
-                               (let [it (nth iterations i)
-                                     n-code (long (count (or (:forms it) [])))
-                                     thinking-rows (quot (count (or (:thinking it) "")) 80)
-                                     rows (+ 6 (* 12 n-code) thinking-rows)]
-                                 (recur (dec i) (+ acc rows) (inc kept)))))))
-        live-limit     (long (cond
-                               (nil? dynamic-limit) static-limit
-                               :else                (min static-limit (long dynamic-limit))))
+        ;; Per user directive: every iteration is always visible.
+        ;; The legacy PROGRESS HISTORY collapse + `:progress/live-
+        ;; iteration-limit` truncation were removed. `_` retains the
+        ;; settings binding shape callers may still pass through.
+        _live-iteration-limit (get settings :progress/live-iteration-limit)
         line-entry     (fn [line] {:line line :meta nil})
-        history-ctx    {:session-id session-id
-                        :session-turn-id session-turn-id
-                        :details-path nil
-                        :section :progress
-                        :kind :history}
-        history-node-id (detail-node-id history-ctx)
         grouped-iterations (collapse-repeated-error-runs iterations)
-        history-needed? (and live? (> (count grouped-iterations) live-limit))
-        history-expanded? (and history-needed?
-                            session-id
-                            (detail-expanded? detail-expansions session-id history-node-id false))
-        hidden-count   (if (and history-needed? (not history-expanded?))
-                         (- (count grouped-iterations) live-limit)
-                         0)
-        visible-iterations (if (pos? hidden-count)
-                             (subvec grouped-iterations hidden-count)
-                             grouped-iterations)
-        history-summary (when history-needed?
-                          (let [collapsed? (pos? hidden-count)
-                                summary-text (if collapsed?
-                                               (str "PROGRESS HISTORY / " hidden-count " iterations hidden")
-                                               (str "PROGRESS HISTORY / showing all " (count grouped-iterations) " iterations"))
-                                suffix     (detail-id-suffix history-ctx)
-                                left       (str (if collapsed? "▸ " "▾ ") summary-text)
-                                line       (format-detail-summary-line left suffix content-w)
-                                meta       (when session-id
-                                             {:kind :toggle-details
-                                              :session-id (str session-id)
-                                              :node-id (str history-node-id)
-                                              :collapsed? collapsed?})]
-                            [(cond-> (line-entry (str md-summary-marker line))
-                               meta (assoc :meta meta))]))
+        visible-iterations grouped-iterations
+        history-summary nil
         iter-entry-fn  (fn [[idx entry]]
                          (let [visible  (visible-iteration-entry entry show-silent?)
                                stripped (if show-thinking? visible (dissoc visible :thinking))

@@ -582,11 +582,16 @@
                           "\u241B[31mok\u241B[0m"))
           (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
 
-  (it "whole trace bubble copy expands hidden result bodies"
+  (it "whole trace bubble copy includes huge tool result bodies inline"
+    ;; Per user directive: collapsible disclosure was removed. Plain
+    ;; `:value` form results no longer paint at all; only `:tool` kind
+    ;; renders through the channel-render path, and its body is fully
+    ;; visible (and copyable) without any `chars hidden` summary.
     (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
-          trace       [{:forms [{:code          "(+ 1 2)"
+          trace       [{:forms [{:code          "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
                                  :result-render huge-result
-                                 :result-kind   :value
+                                 :result-kind   :tool
+                                 :result-detail {:op :v/patch :tag :mutation}
                                  :duration-ms   1
                                  :success?      true
                                  :silent?       false}]}]
