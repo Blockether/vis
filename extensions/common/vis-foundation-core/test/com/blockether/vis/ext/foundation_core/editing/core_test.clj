@@ -114,13 +114,13 @@
   ;; shim is gone and callers go straight to the engine. Tags
   ;; collapsed to observation/mutation values; ops not in the
   ;; registration table fail closed instead of defaulting to observation.
-  (doseq [[op tag] [[:v/cat         :op.tag/observation]
-                    [:z/locators    :op.tag/observation]
-                    [:v/rg          :op.tag/observation]
-                    [:v/patch       :op.tag/mutation]
-                    [:v/create-dirs :op.tag/mutation]
-                    [:v/delete      :op.tag/mutation]
-                    [:v/move        :op.tag/mutation]]]
+  (doseq [[op tag] [[:v/cat         :observation]
+                    [:z/locators    :observation]
+                    [:v/rg          :observation]
+                    [:v/patch       :mutation]
+                    [:v/create-dirs :mutation]
+                    [:v/delete      :mutation]
+                    [:v/move        :mutation]]]
     (expect (= tag (extension/op-tag op)))
     (expect (= {:tag tag} (extension/op-presentation op))))
   (let [thrown (try (extension/op-tag :v/extensions)

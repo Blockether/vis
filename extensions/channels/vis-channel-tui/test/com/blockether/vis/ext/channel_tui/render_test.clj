@@ -1117,7 +1117,7 @@
   (it "renders operation badges and color roles for tool result summaries"
     (render/invalidate-cache!)
     (let [trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render "1 file changed" :result-kind :tool :result-detail {:op :v/patch
-                                                                                                                                                                                               :tag :op.tag/mutation
+                                                                                                                                                                                               :tag :mutation
                                                                                                                                                                                                :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
@@ -1130,7 +1130,7 @@
     (render/invalidate-cache!)
     (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))
           trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render huge-result :result-kind :tool :result-detail {:op :v/patch
-                                                                                                                                                                                                :tag :op.tag/mutation
+                                                                                                                                                                                                :tag :mutation
                                                                                                                                                                                                 :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload     (render/format-answer-with-thinking-data
                         nil trace 96 {:show-iterations true} nil false
@@ -1144,7 +1144,7 @@
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
     (let [trace   [{:forms [{:code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil :result-render "Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)." :result-kind :tool :result-detail {:op :any
-                                                                                                                                                                                                                                                                     :tag :op.tag/observation
+                                                                                                                                                                                                                                                                     :tag :observation
                                                                                                                                                                                                                                                                      :color-role :tool-color/search
                                                                                                                                                                                                                                                                      :spec {:any ["alpha" "beta"] :paths ["src"]}
                                                                                                                                                                                                                                                                      :paths ["src"]} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
@@ -1276,7 +1276,7 @@
                    "- beta line\n"
                    "- gamma line")
             big-body (str body "\n\n" (apply str (repeat 4096 "x")))
-            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :op.tag/mutation
+            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :mutation
                                                                                                                                                                                          :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
@@ -1293,7 +1293,7 @@
       (let [body "Result: **important** and *subtle*."
             ;; Trip auto-collapse with filler.
             big-body (str body "\n" (apply str (repeat 4096 "y")))
-            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :op.tag/mutation
+            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :mutation
                                                                                                                                                                                          :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
@@ -1320,7 +1320,7 @@
                    "+changed\n"
                    "```\n")
             big-body (str body "\n" (apply str (repeat 4096 "z")))
-            trace [{:forms [{:code "(v/cat \"x\")" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/cat :tag :op.tag/observation
+            trace [{:forms [{:code "(v/cat \"x\")" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/cat :tag :observation
                                                                                                                                                 :color-role :tool-color/read} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"

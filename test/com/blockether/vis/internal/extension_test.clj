@@ -67,7 +67,7 @@
 
 (defdescribe symbol-renderer-test
   (it "requires a render fn for observed tool symbols"
-    (extension/register-op! :test.missing-renderer/demo {:tag :op.tag/observation})
+    (extension/register-op! :test.missing-renderer/demo {:tag :observation})
     (let [entry (extension/symbol
                   'demo
                   (fn [] (extension/success {:result {:secret "payload"}}))
@@ -86,7 +86,7 @@
                     (:type (ex-data e))))))))
 
   (it "uses the symbol-specific render-fn instead of dumping tool result data"
-    (extension/register-op! :test.renderer/demo {:tag :op.tag/observation})
+    (extension/register-op! :test.renderer/demo {:tag :observation})
     (let [entry (extension/symbol
                   'demo
                   (fn [] (extension/success {:result {:secret "payload"}}))

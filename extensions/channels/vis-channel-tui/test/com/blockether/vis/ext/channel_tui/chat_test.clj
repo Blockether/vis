@@ -185,7 +185,7 @@
               form    (-> trace :forms first)]
           (expect (= :tool (:result-kind form)))
           (expect (= {:symbol :v/cat
-                      :tag :op.tag/observation
+                      :tag :observation
                       :target {:path "x.txt"}}
                     (:result-detail form))))))))
 

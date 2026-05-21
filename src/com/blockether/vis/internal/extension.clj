@@ -86,7 +86,7 @@
 
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
-(s/def ::tag        keyword?)        ; #{:op.tag/observation :op.tag/mutation}
+(s/def ::tag        keyword?)        ; #{:observation :mutation}
 (s/def ::result     any?)            ; the actual SCI eval value; shape varies per tool
 (s/def ::success?   boolean?)
 (s/def ::metadata   (s/map-of keyword? any?))   ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
@@ -1291,7 +1291,7 @@
           (str "Extension '" (:ext/name ext) "' symbol '"
             (:ext.symbol/symbol sym-entry) "' is missing mandatory op tag for " op
             "; register it with (vis/register-op! " (pr-str op)
-            " {:tag :op.tag/observation}) or {:tag :op.tag/mutation}.")
+            " {:tag :observation}) or {:tag :mutation}.")
           {:type      :extension/missing-op-tag
            :extension (:ext/name ext)
            :symbol    (:ext.symbol/symbol sym-entry)
@@ -2412,21 +2412,21 @@
    map to the observation/mutation half of the OODA loop — see
    PLAN.md §2.1. The prior granular enum collapses into these two:
 
-     :op.tag/observation   reads state without changing it — cat,
+     :observation   reads state without changing it — cat,
                            ls, exists?, locators, rg, env
                            queries, registry lookups
 
-     :op.tag/mutation      mutates state — patch, write, append,
+     :mutation      mutates state — patch, write, append,
                            mkdir, touch, delete, move, copy.
 
    Channels that want to color tools by tag look it up themselves;
    the engine never carries presentation in the tool envelope."
-  #{:op.tag/observation :op.tag/mutation})
+  #{:observation :mutation})
 
 (def ^:private op-keyword->meta
   "Canonical op-keyword -> op-metadata table.
 
-     {:tag              :op.tag/observation | :op.tag/mutation  (required)
+     {:tag              :observation | :mutation  (required)
       :self-describing? true | false                            (optional)}
 
    `:self-describing?` true means the tool's body output is its own
@@ -2458,7 +2458,7 @@
   (contains? @op-keyword->meta op-keyword))
 
 (defn op-tag
-  "Return the registered `:op.tag/...` value for `op-keyword`. Unknown ops
+  "Return the registered `:observation | :mutation` value for `op-keyword`. Unknown ops
    fail closed; extensions must declare observation/mutation explicitly."
   [op-keyword]
   (if-let [tag (get-in @op-keyword->meta [op-keyword :tag])]

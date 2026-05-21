@@ -162,7 +162,7 @@
 ;; =============================================================================
 
 (doseq [op [:git/diff :git/status :git/log]]
-  (vis/register-op! op {:tag :op.tag/observation}))
+  (vis/register-op! op {:tag :observation}))
 
 ;; =============================================================================
 ;; Extension manifest
