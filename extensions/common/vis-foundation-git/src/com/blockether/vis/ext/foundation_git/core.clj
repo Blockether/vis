@@ -117,16 +117,18 @@
          head        (:head status)
          +sum        (reduce + 0 (map :+ files))
          -sum        (reduce + 0 (map :- files))
-         kind        (cond from :range :else (:kind ws))]
+         kind        (cond from :range :else (:kind ws))
+         range-mode? (= kind :range)]
      (extension/success
-       {:result (cond-> {:branch    (:branch ws)
-                         :head      head
+       {:result (cond-> {:head      head
                          :kind      kind
                          :from      base
                          :to        new-rev
                          :stat      {:files (count files) :+ +sum :- -sum}
                          :files     files
                          :porcelain porcelain}
+                  (and (not range-mode?) (:branch ws))
+                  (assoc :branch (:branch ws))
                   path (assoc :path path))}))))
 
 (defn git-status-fn

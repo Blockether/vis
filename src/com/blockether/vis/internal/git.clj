@@ -355,22 +355,50 @@
        (finally
          (try (.close repo) (catch Throwable _ nil)))))))
 
+(def ^:private body-byte-cap
+  "Per-commit cap for the full message body. Most commits are <500B but
+   merges, release notes, and ChatGPT-style commit messages can run
+   tens of KB; we truncate so a single (git/log {:limit 200}) call
+   can't dump 4MB of historical commit bodies into the model."
+  4096)
+
+(defn- cap-body
+  ^String [^String s]
+  (if (<= (count s) body-byte-cap)
+    s
+    (str (subs s 0 body-byte-cap)
+      "\n[…body truncated, " (- (count s) body-byte-cap) " more bytes]")))
+
+(defn- ident-millis
+  "Epoch milliseconds for a JGit PersonIdent's `when` field. Used to
+   keep `:at` consistent across git/log, git/show, and git/blame — JGit
+   exposes commit-time as POSIX seconds and PersonIdent.when as Java
+   millis, so we normalise to millis everywhere."
+  ^long [^PersonIdent ident]
+  (long (.getTime (.getWhen ident))))
+
 (defn- commit->map
   "Convert a JGit RevCommit into the canonical commit map. Centralised so
-   every git/* surface (log, show, blame line) returns the same shape."
+   every git/* surface (log, show, blame line) returns the same shape.
+   `:at` is the AUTHOR time in millis (when the work was done) and
+   `:committed-at` is the COMMITTER time in millis (when the object was
+   written). They're equal for normal commits; rebase / cherry-pick /
+   amend split them apart, which is exactly when the model needs the
+   distinction."
   [^RevCommit commit]
   (let [author    (.getAuthorIdent commit)
-        committer (.getCommitterIdent commit)]
-    {:sha              (some-> (.getId commit) .getName)
-     :short-sha        (some-> (.getId commit) .getName (subs 0 7))
+        committer (.getCommitterIdent commit)
+        sha       (some-> (.getId commit) .getName)]
+    {:sha              sha
+     :short-sha        (when sha (subs sha 0 7))
      :author           (some-> author .getName)
      :email            (some-> author .getEmailAddress)
-     :at               (long (.getCommitTime commit))
+     :at               (when author (ident-millis author))
      :committer        (some-> committer .getName)
      :committer-email  (some-> committer .getEmailAddress)
-     :committed-at     (long (.getCommitTime commit))
+     :committed-at     (when committer (ident-millis committer))
      :subject          (.getShortMessage commit)
-     :body             (.getFullMessage commit)
+     :body             (cap-body (.getFullMessage commit))
      :parents          (mapv (fn [^RevCommit p] (some-> (.getId p) .getName))
                          (.getParents commit))}))
 
@@ -471,19 +499,34 @@
       ;; trailing-newline files = N+1 (counts the final unterminated line).
       (if (= 10 (aget bs (dec len))) nl (inc nl)))))
 
+(def ^:private root-numstat-cap
+  "Max number of blob entries returned by root-commit-numstat. Repos
+   with thousands of files in the initial commit would otherwise blow
+   model context with one entry per path."
+  500)
+
 (defn- root-commit-numstat
   "Walk every blob reachable from `commit`'s tree and emit numstat-shaped
    entries. Binary blobs are flagged `:binary? true` with `:+ 0 :- 0`
    so we don't pretend null-byte counts are line counts. Text blobs go
    through `count-lines` like normal. Used when a commit has no parent
-   and the regular `diff-numstat` path has no tree to compare against."
+   and the regular `diff-numstat` path has no tree to compare against.
+
+   Capped at `root-numstat-cap`; callers see a trailing
+   `{:truncated? true :remaining N}` marker entry when the tree had more."
   [^Repository repo ^RevCommit commit]
   (with-open [reader (.newObjectReader repo)
               tw     (org.eclipse.jgit.treewalk.TreeWalk. repo)]
     (.addTree tw (.getTree commit))
     (.setRecursive tw true)
     (loop [acc []]
-      (if (.next tw)
+      (cond
+        (>= (count acc) root-numstat-cap)
+        (let [remaining (loop [n 0] (if (.next tw) (recur (inc n)) n))]
+          (cond-> acc
+            (pos? remaining) (conj {:truncated? true :remaining remaining})))
+
+        (.next tw)
         (let [path (.getPathString tw)
               oid  (.getObjectId tw 0)]
           (recur
@@ -493,7 +536,8 @@
                 (let [bytes (try (.getBytes (.open reader oid))
                               (catch Throwable _ (byte-array 0)))]
                   {:file path :+ (count-lines bytes) :- 0})))))
-        acc))))
+
+        :else acc))))
 
 (defn show-commit
   "Detailed view of a single commit. Returns the canonical commit map
@@ -601,7 +645,7 @@
      :short-sha   (when sha (subs sha 0 7))
      :author      (some-> author .getName)
      :email       (some-> author .getEmailAddress)
-     :at          (when author (long (.getTime (.getWhen author))))
+     :at          (when author (ident-millis author))
      :source-line (inc (.getSourceLine result i))
      :content     (.getString contents i)}))
 
@@ -736,8 +780,15 @@
              (when-let [^BlameResult base (run-blame repo rel nil)]
                (let [contents (.getResultContents base)
                      total    (.size contents)
-                     lo       (max 0 (dec (long (or from 1))))
-                     hi       (min (dec total) (dec (long (or to total))))
+                     lo            (max 0 (dec (long (or from 1))))
+                     hi-uncapped   (min (dec total) (dec (long (or to total))))
+                     explicit?     (or (some? from) (some? to))
+                     default-line-cap 1000
+                     hi            (if explicit?
+                                     hi-uncapped
+                                     (min hi-uncapped (+ lo default-line-cap -1)))
+                     truncated?    (and (not explicit?)
+                                     (> total (+ lo default-line-cap)))
                      cache    (atom {})
                      lines    (when (<= lo hi)
                                 (if ignored
@@ -748,6 +799,7 @@
                  {:path         rel
                   :head         (head-id repo)
                   :total        total
+                  :truncated?   truncated?
                   :ignored-revs (if ignored (vec (sort ignored)) [])
                   :lines        (or lines [])})))))
        (finally
