@@ -102,28 +102,31 @@
         :session/workspace   engine-rendered; current branch, trunk, head, dirty?, per-file diff stats
         :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born <scope>}}
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
-        :session/facts       everything durable the model needs to remember:
-                             observations, preferences, behavioral directives, project conventions,
-                             decisions (tag :decision when audit-style).
-                             shape: {<kw> {:body :scope #{:session :project} :tags #{kw} :born? :source?}}
+        :session/facts       everything durable the model needs to remember.
+                             Tags discriminate kinds: :decision (audit), :behavior (directive),
+                             :spec (formal requirement with :acceptance + :status + :facts refs).
+                             shape: {<kw> {:body :scope #{:session :project} :tags #{kw}
+                                           :born? :source?
+                                           ;; spec-only extras when :tags #{:spec}
+                                           :acceptance [string] :facts [<kw-ref>]
+                                           :status #{:draft :doing :done :cancelled}
+                                           :done-born scope?}}
                              :scope optional (default :session); :project mirrors cross-session
-        :session/specs       requirements BUILT FROM facts
-                             shape: {<kw> {:title :acceptance :facts :status :born :done-born?}}
-                             :status ∈ #{:draft :doing :done :cancelled}
-        :session/tasks       work items toward specs
+        :session/tasks       work items; :spec refs a fact tagged :spec
                              shape: {<kw> {:title :spec :depends-on :status :evidence :journal :born :blocked-on?}}
                              :status ∈ #{:todo :doing :done :blocked :cancelled}
-                             :spec REQUIRED. :evidence REQUIRED on :done. :journal engine-appended on every :status change.
+                             :spec REQUIRED (refs a fact tagged :spec). :evidence REQUIRED on :done.
+                             :journal engine-appended on every :status change.
         :session/trailer     pinned iter envelopes from prior turns; auto-pinned by engine each turn
 
     ENGINE FUNCTIONS (bare symbols; never namespace-qualify)
       Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
       Memory:
-        (fact-set!     :K {:body :scope? :tags?})      upsert; :scope default :session; tag :decision for audit-style
+        (fact-set!     :K {:body :scope? :tags?
+                           ;; spec-only extras when :tags #{:spec}
+                           :acceptance? :facts? :status?})
         (fact-remove!  :K)
-        (spec-set!     :K {:title :acceptance :facts :status})
-        (spec-remove!  :K)
         (task-set!     :K {:title :spec :depends-on :status :evidence :blocked-on})
         (task-remove!  :K)
 
@@ -131,18 +134,18 @@
         (defn foo [x] …)                              create / overwrite
         (def  foo nil)                                drop; engine forgets on next restore
 
-      Session introspection:
-        (iter        \"t<N>/i<N>\")                      one iter, full forms vec
-        (form        \"t<N>/i<N>/f<N>\")                 single form envelope
-        (turn        \"t<N>\")                           turn TOC: user-msg + answer + iter-scopes
-        (iter-heads  \"t<N>\")                           iter list with first-form head per iter
-        (turn-list)                                    all turns with head + status
+      Session introspection (introspect- prefix eases autocomplete):
+        (introspect-iter        \"t<N>/i<N>\")            one iter, full forms vec
+        (introspect-form        \"t<N>/i<N>/f<N>\")       single form envelope
+        (introspect-turn        \"t<N>\")                 turn TOC: user-msg + answer + iter-scopes
+        (introspect-iter-heads  \"t<N>\")                 iter list with first-form head per iter
+        (introspect-turn-list)                          all turns with head + status
 
       SCI symbol introspection:
-        (symbol-doc      'sym)
-        (symbol-source   'sym)
-        (symbol-meta     'sym)
-        (symbol-apropos  \"pattern\")
+        (introspect-symbol-doc      'sym)
+        (introspect-symbol-source   'sym)
+        (introspect-symbol-meta     'sym)
+        (introspect-symbol-apropos  \"pattern\")
 
       Control:
         (done                 {:answer :trailer-drop :trailer-summarize})
@@ -152,11 +155,11 @@
     ENGINE BEHAVIORS
       • Every *-set! call: new key → engine stamps :born; existing → merges partials.
       • (task-set! :K {:status <new>}) → engine appends {:status :scope} to :journal.
-      • (spec-set! :K {:status :done | :cancelled}) → engine stamps :done-born.
-      • (decision! :K …) called twice with same key → engine warns (append-only).
+      • (fact-set! :K {:tags #{:spec} :status :done | :cancelled}) → engine stamps :done-born.
       • *-remove! on non-existent key → silent no-op.
       • Soft warnings (engine never refuses): missing :spec on task-set!, missing :evidence
-        on :done task, missing :facts on spec-set!. Warnings appear as `;; ⚠ …` in next render.
+        on :done task, missing :acceptance on :spec-tagged fact. Warnings appear
+        as `;; ⚠ …` in next render.
 
     TRAILER
       At each (done …), engine:

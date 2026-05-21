@@ -1873,7 +1873,7 @@
              :session_state_id       (some-> (:session-state-id opts) ->ref)
              :session_turn_state_id  (some-> (:session-turn-state-id opts) ->ref)
              :session_turn_iteration_id                (some-> (:iteration-id opts) ->ref)
-             :session_turn_iteration_block_index       (:iteration-block-index opts)
+             :session_turn_iteration_block_index       (:iteration-form-index opts)
              :session_turn_iteration_block_id          (some-> (:iteration-block-id opts) str)
              :created_at                  now
              :updated_at                  now}]
@@ -1903,7 +1903,7 @@
                   (:session_state_id row)      (assoc :session-state-id (:session_state_id row))
                   (:session_turn_state_id row) (assoc :session-turn-state-id (:session_turn_state_id row))
                   (:session_turn_iteration_id row)               (assoc :iteration-id (:session_turn_iteration_id row))
-                  (:session_turn_iteration_block_index row)      (assoc :iteration-block-index (:session_turn_iteration_block_index row))
+                  (:session_turn_iteration_block_index row)      (assoc :iteration-form-index (:session_turn_iteration_block_index row))
                   (:session_turn_iteration_block_id row)         (assoc :iteration-block-id (:session_turn_iteration_block_id row)))
           aggregate-key (<-edn-text (:aggregate_key row))]
       {:id            (:id row)
@@ -1928,8 +1928,8 @@
     (:session-state-id opts)      (conj [:= :session_state_id (->ref (:session-state-id opts))])
     (:session-turn-state-id opts) (conj [:= :session_turn_state_id (->ref (:session-turn-state-id opts))])
     (:iteration-id opts)               (conj [:= :session_turn_iteration_id (->ref (:iteration-id opts))])
-    (contains? opts :iteration-block-index)
-    (conj [:= :session_turn_iteration_block_index (:iteration-block-index opts)])
+    (contains? opts :iteration-form-index)
+    (conj [:= :session_turn_iteration_block_index (:iteration-form-index opts)])
     (:iteration-block-id opts)         (conj [:= :session_turn_iteration_block_id (str (:iteration-block-id opts))])
     ;; index_data JSON field filtering.
     ;; :index-data in a query is a map of {field-key expected-value} pairs.

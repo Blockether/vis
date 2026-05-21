@@ -680,12 +680,11 @@
   ;; whole row sits on the `dialog-title-bg` accent stripe to match
   ;; the `draw-dialog-chrome!` title bar style.
   ;;
-  ;; Tab is the ONLY way to act on a suggestion (insert it into the
-  ;; input). Enter does nothing special while the menu is open — it
-  ;; falls through to the normal send path. Do not put `Enter run`
-  ;; back here without also restoring the matching dispatch in
-  ;; screen.clj `:send` branch.
+  ;; Enter runs the selected suggestion. Tab only completes the
+  ;; command text into the input so the user can edit args before
+  ;; running. Keep this in sync with screen.clj `:send` branch.
   [["↑↓/wheel" "select"]
+   ["Enter" "run"]
    ["Tab" "complete"]])
 
 (defn- draw-slash-title-bar!
@@ -752,7 +751,7 @@
 
    Visual stack from top to bottom:
      (top margin row — terminal-bg gap)
-     [Slash commands  …  Enter run]   ; title bar (dialog-title-bg accent)
+     [Slash commands  …  Enter run  …  Tab complete]   ; title bar (dialog-title-bg accent)
      ─────────────────────────────────────────   ; border under title (dialog-border)
      suggestion rows…
 
