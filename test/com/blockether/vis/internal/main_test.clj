@@ -32,8 +32,20 @@
   (it "keeps known commands and unknown help out of root run shortcut"
     (let [root (#'main/root-command)]
       (expect (false? (#'main/root-run-shortcut? root ["providers" "list"])))
+      (expect (false? (#'main/root-run-shortcut? root ["sessions" "export" "42d580bb" "--md"])))
       (expect (false? (#'main/root-run-shortcut? root ["sessions" "--help"])))
       (expect (false? (#'main/root-run-shortcut? root ["--help"]))))))
+
+(defdescribe sessions-command-test
+  (it "registers canonical session verbs under host-owned sessions command"
+    (let [{:keys [command]} (commandline/find-leaf (#'main/root-command) ["vis" "sessions"])
+          help             (commandline/render-command command ["vis" "sessions"])]
+      (expect (.contains help "vis sessions <list|show|fork|delete|search|export>"))
+      (expect (.contains help "list"))
+      (expect (.contains help "show"))
+      (expect (.contains help "fork"))
+      (expect (.contains help "delete"))
+      (expect (.contains help "export")))))
 
 (defdescribe provider-override-error-test
   (it "marks unknown --provider as user error"

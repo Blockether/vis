@@ -22,10 +22,6 @@
      `(transcript->md  data)`             -> Markdown string
      `(transcript-md   db-info session-id)`  -> DB lookup + Markdown string
 
-     `cli-command` mounts `vis ext repro <SESSION-ID>`
-     through `:ext/cli`, keeping extension-owned commands under
-     `vis ext`.
-
    Canonical data shape:
 
      {:session {:id :title :channel :model :provider :created-at}
@@ -1000,75 +996,3 @@
    (if-let [data (transcript db-info session-id)]
      (transcript->md data opts)
      (str "Session not found: " session-id "\n"))))
-
-;; =============================================================================
-;; CLI command - `vis ext repro <SESSION-ID>`. Foundation owns
-;; it, mounted through `:ext/cli` rather than direct global registration.
-;; =============================================================================
-
-(defn- println-original!
-  [^String s]
-  (.println ^java.io.PrintStream vis/original-stdout s)
-  (.flush ^java.io.PrintStream vis/original-stdout))
-
-(defn- reproduction-usage! []
-  (println-original! "Usage: vis ext repro <SESSION-ID>")
-  (println-original! "")
-  (println-original! "Prints one bounded Markdown diagnostic artifact:")
-  (println-original! "  every turn, iteration, executed code preview,")
-  (println-original! "  vars, reasoning trace, final answer, and raw LLM diagnostics with bounded previews.")
-  (println-original! "")
-  (println-original! "No mode flags are supported. The artifact is bounded by default.")
-  (println-original! "")
-  (println-original! "List sessions with:  vis sessions"))
-
-(defn- parse-reproduction-residual
-  [residual]
-  (reduce (fn [acc token]
-            (let [s (str token)]
-              (cond
-                (:error acc) acc
-                (str/starts-with? s "--") (assoc acc :error (str "Flags are not supported: " s))
-                (:session-id acc) (assoc acc :error (str "Unexpected extra argument: " s))
-                :else (assoc acc :session-id (str/trim s)))))
-    {}
-    residual))
-
-(defn- cli-reproduction-run!
-  [_parsed residual]
-  (vis/init-cli!)
-  (let [{:keys [session-id error]} (parse-reproduction-residual residual)
-        cid-input (some-> session-id str/trim not-empty)]
-    (cond
-      error
-      (do (println-original! error)
-        (println-original! "")
-        (reproduction-usage!)
-        (System/exit 1))
-
-      (nil? cid-input)
-      (do (reproduction-usage!)
-        (System/exit 1))
-
-      :else
-      ;; `resolve-session-ref` is prefix-aware and existence-checks the
-      ;; result; `vis/db-resolve-session-id` only accepts full UUIDs and
-      ;; would silently fail on the very prefixes the help text advertises.
-      (let [d        (vis/db-info)
-            resolved (resolve-session-ref d cid-input)]
-        (if (nil? resolved)
-          (do (println-original! (str "Session not found: " cid-input))
-            (System/exit 1))
-          (do (println-original! (transcript-md d resolved))
-            (System/exit 0)))))))
-
-(defn cli-command []
-  {:cmd/name  "repro"
-   :cmd/doc   "Reproduce a session as a bounded Markdown transcript (turns, code, vars, reasoning, answers); bounded by default."
-   :cmd/usage "vis ext repro <SESSION-ID>"
-   :cmd/args  [{:name "session-id" :kind :positional :type :string
-                :doc  "Session id (full UUID or unambiguous prefix)."}]
-   :cmd/examples ["vis ext repro eeaf9651-06c7-4dda-9e97-877fcef06337"
-                  "vis ext repro eeaf9651"
-                  "vis ext repro eeaf9651 > REPRODUCTION.md"]
-   :cmd/run-fn cli-reproduction-run!})

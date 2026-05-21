@@ -1367,14 +1367,25 @@
   "Resolve a user-supplied session reference (full UUID or an
    unambiguous prefix) to the canonical UUID. Scans every channel
    because forks are channel-agnostic; the user typed an id, we find
-   it. Returns nil on miss or ambiguous prefix."
+   it. Returns nil on miss or ambiguous prefix. Existence-checks full
+   UUID strings; backend `db-resolve-session-id` only parses them."
   [d input]
-  (let [s (str input)]
-    (or (try (persistance/db-resolve-session-id d s) (catch Throwable _ nil))
-      (let [all     (mapcat #(lp/by-channel %) [:tui :telegram :cli])
-            matches (vec (filter #(str/starts-with? (str (:id %)) s) all))]
-        (when (= 1 (count matches))
-          (persistance/db-resolve-session-id d (str (:id (first matches)))))))))
+  (let [s (some-> input str str/trim)]
+    (when (seq s)
+      (letfn [(existing-id [id]
+                (when (and id (try (persistance/db-get-session d id)
+                                (catch Throwable _ nil)))
+                  id))]
+        (or (try (existing-id (persistance/db-resolve-session-id d s))
+              (catch Throwable _ nil))
+          (let [matches (->> [:tui :telegram :cli]
+                          (mapcat #(or (persistance/db-list-sessions d %) []))
+                          (filter #(str/starts-with? (str (:id %)) s))
+                          (map :id)
+                          distinct
+                          vec)]
+            (when (= 1 (count matches))
+              (existing-id (first matches)))))))))
 
 (defn- cli-fork-session!
   "Fork a session by id. Creates a new `session_state` row
@@ -1478,8 +1489,130 @@
         (stdout! (str "\n  " (count rows) " session(s)\n"))
         (stdout! "  Resume with: vis channels tui --session-id <ID>  (full or short)")
         (stdout! "  Or latest:   vis channels tui --resume")
-        (stdout! "  Fork:        vis sessions --fork <ID> [--title TITLE]"))))
+        (stdout! "  Show:        vis sessions show <ID>")
+        (stdout! "  Fork:        vis sessions fork <ID> [--title TITLE]")
+        (stdout! "  Export:      vis sessions export <ID> --md"))))
   (shutdown-agents))
+
+(defn- cli-sessions-list!
+  [parsed _residual]
+  (config/init-cli!)
+  (let [channel (get parsed "channel")
+        ch      (when (and channel (not= "all" channel))
+                  (when (contains? known-channels channel) channel))]
+    (when (and channel (not (contains? known-channel-filters channel)))
+      (stdout! (str "Unknown channel: " channel
+                 ". Expected one of: " (str/join ", " (sort known-channel-filters))
+                 ". Showing all sessions."))
+      (stdout! ""))
+    (cli-list-sessions! ch)))
+
+(defn- session-or-exit!
+  [d cid-input]
+  (let [resolved (resolve-session-by-prefix d cid-input)]
+    (if-let [session (when resolved (persistance/db-get-session d resolved))]
+      (assoc session :id resolved)
+      (do (stdout! (str "Session not found: " cid-input))
+        (stdout! "")
+        (stdout! "List existing sessions with:")
+        (stdout! "  vis sessions list")
+        (shutdown-agents)
+        (System/exit 1)))))
+
+(defn- session-detail-row
+  [d session]
+  (session-row d session))
+
+(defn- cli-show-session!
+  [parsed _residual]
+  (config/init-cli!)
+  (let [d       (lp/db-info)
+        session (session-or-exit! d (get parsed "session-id"))
+        row     (session-detail-row d session)
+        states  (persistance/db-list-session-states d (:id session))]
+    (stdout! (str "\n  Session " (:id session)))
+    (stdout! "  ─────────────────────────────────")
+    (stdout! (str "  Title:        " (:title row)))
+    (stdout! (str "  Channel:      " (:last-channel row)))
+    (stdout! (str "  Turns:        " (:turns row)))
+    (stdout! (str "  Forks:        " (:forks row)))
+    (stdout! (str "  Created:      " (:created row)))
+    (stdout! (str "  Last turn:    " (:last-turn row)))
+    (when-let [model (:model session)]
+      (stdout! (str "  Model:        " model)))
+    (when-let [provider (:provider session)]
+      (stdout! (str "  Provider:     " (name provider))))
+    (when (seq states)
+      (stdout! "")
+      (stdout! "  States")
+      (print-table!
+        [{:key :version   :label "Version"  :width 7  :align :right}
+         {:key :state-id  :label "State ID" :width 36 :align :left}
+         {:key :parent    :label "Parent"   :width 8  :align :left}
+         {:key :turns     :label "Turns"    :width 5  :align :right}
+         {:key :created   :label "Created"  :width 16 :align :left}]
+        (mapv (fn [state]
+                {:version  (:version state)
+                 :state-id (str (:state-id state))
+                 :parent   (if-let [p (:parent-state-id state)]
+                             (subs (str p) 0 8)
+                             "-")
+                 :turns    (:turn-count state)
+                 :created  (or (fmt/format-date (:created-at state)) "-")})
+          states)))
+    (stdout! "")
+    (stdout! (str "  Resume:  vis channels tui --session-id " (:id session)))
+    (stdout! (str "  Export:  vis sessions export " (subs (str (:id session)) 0 8) " --md"))
+    (stdout! "")
+    (shutdown-agents)))
+
+(defn- html-escape
+  [s]
+  (str/escape (str s) {\& "&amp;" \< "&lt;" \> "&gt;" \" "&quot;"}))
+
+(defn- export-html-document
+  [title markdown]
+  (str "<!doctype html>\n"
+    "<html><head><meta charset=\"utf-8\"><title>"
+    (html-escape (or title "Vis session"))
+    "</title></head><body>\n"
+    (render/render (render/markdown->ir markdown) :html)
+    "\n</body></html>\n"))
+
+(defn- cli-export-session!
+  [parsed _residual]
+  (config/init-cli!)
+  (let [d         (lp/db-info)
+        session   (session-or-exit! d (get parsed "session-id"))
+        md?       (boolean (get parsed "md"))
+        html-path (some-> (get parsed "html") str/trim not-empty)]
+    (when (and md? html-path)
+      (stdout! "Choose either --md or --html PATH, not both.")
+      (shutdown-agents)
+      (System/exit 2))
+    (let [markdown (render/session->markdown d (:id session))]
+      (if html-path
+        (let [target (io/file html-path)]
+          (when-let [parent (.getParentFile target)]
+            (.mkdirs parent))
+          (spit target (export-html-document (:title session) markdown))
+          (stdout! (str "Exported HTML: " (.getPath target))))
+        (write-stdout! markdown)))
+    (shutdown-agents)))
+
+(defn- cli-delete-session!
+  [parsed _residual]
+  (config/init-cli!)
+  (let [d       (lp/db-info)
+        session (session-or-exit! d (get parsed "session-id"))]
+    (lp/delete! (:id session))
+    (stdout! (str "Deleted session " (:id session)))
+    (shutdown-agents)))
+
+(defn- cli-fork-session-command!
+  [parsed _residual]
+  (config/init-cli!)
+  (cli-fork-session! (get parsed "session-id") (get parsed "title")))
 
 (def ^:private search-field-labels
   {"answer_text"   "answer"
@@ -1536,33 +1669,17 @@
             (shutdown-agents)))))))
 
 (defn- cli-sessions!
-  "`vis sessions` handler.
-
-   Two modes:
-   - List   --  `vis sessions [all|tui|telegram|cli]`
-   - Fork   --  `vis sessions --fork <SESSION-ID> [--title TITLE]`
-
-   The `parsed` map carries the spec'd flags; the bare positional
-   `channel` (if present) is also in `parsed`. Anything not in the
-   spec is rejected upstream by `commandline/dispatch!`."
-  [parsed _residual]
+  "`vis sessions` default handler. Bare `vis sessions` lists all
+   sessions; every other operation is a canonical subcommand."
+  [_parsed residual]
   (config/init-cli!)
-  (let [fork-target (get parsed "fork")
-        title       (get parsed "title")
-        channel     (get parsed "channel")]
-    (cond
-      (and (some? fork-target) (not (str/blank? fork-target)))
-      (cli-fork-session! fork-target title)
-
-      :else
-      (let [ch (when (and channel (not= "all" channel))
-                 (when (contains? known-channels channel) channel))]
-        (when (and channel (not (contains? known-channel-filters channel)))
-          (stdout! (str "Unknown channel: " channel
-                     ". Expected one of: " (str/join ", " (sort known-channel-filters))
-                     ". Showing all sessions."))
-          (stdout! ""))
-        (cli-list-sessions! ch)))))
+  (if (seq residual)
+    (do (stdout! (str "Unknown sessions command: " (first residual)))
+      (stdout! "")
+      (stdout! "Run: vis sessions --help")
+      (shutdown-agents)
+      (System/exit 2))
+    (cli-list-sessions! nil)))
 
 ;;; ── `vis providers` ─────────────────────────────────────────────────────
 
@@ -2036,18 +2153,14 @@
           :cmd/subcommands #(registry/registered-under ["providers"])}
 
          {:cmd/name  "sessions"
-          :cmd/doc   "List sessions stored on disk, or fork / search them."
-          :cmd/usage "vis sessions [all|tui|telegram|cli] [--fork ID [--title TITLE]]"
-          :cmd/args  [{:name "channel" :kind :positional :type :string
-                       :doc  "Optional channel filter (all|tui|telegram|cli; default all)."}
-                      {:name "fork"  :kind :flag :type :string
-                       :doc  "Fork the session with the given id (full UUID or unambiguous prefix)."}
-                      {:name "title" :kind :flag :type :string
-                       :doc  "Title to set on the new fork (used with --fork)."}]
+          :cmd/doc   "List, show, fork, delete, search, or export persisted sessions."
+          :cmd/usage "vis sessions <list|show|fork|delete|search|export> [...]"
           :cmd/examples ["vis sessions"
-                         "vis sessions telegram"
-                         "vis sessions --fork 3a7b2c1d-..."
-                         "vis sessions --fork 3a7b2c1d --title \"Branch A\""
+                         "vis sessions list"
+                         "vis sessions show 3a7b2c1d"
+                         "vis sessions fork 3a7b2c1d --title \"Branch A\""
+                         "vis sessions export 3a7b2c1d --md"
+                         "vis sessions export 3a7b2c1d --html out.html"
                          "vis sessions search \"foo bar\""]
           :cmd/subcommands #(registry/registered-under ["sessions"])
           :cmd/run-fn cli-sessions!}
@@ -2117,7 +2230,56 @@
 ;;; ── `vis sessions` subcommands ──────────────────────────────────────────
 
 (doseq [spec
-        [{:cmd/name   "search"
+        [{:cmd/name   "list"
+          :cmd/parent ["sessions"]
+          :cmd/doc    "List persisted sessions."
+          :cmd/usage  "vis sessions list [all|tui|telegram|cli]"
+          :cmd/args   [{:name "channel" :kind :positional :type :string
+                        :doc  "Optional channel filter (all|tui|telegram|cli; default all)."}]
+          :cmd/examples ["vis sessions list"
+                         "vis sessions list tui"]
+          :cmd/run-fn cli-sessions-list!}
+         {:cmd/name   "show"
+          :cmd/parent ["sessions"]
+          :cmd/doc    "Show one session's metadata, turns, and fork states."
+          :cmd/usage  "vis sessions show <SESSION-ID>"
+          :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
+                        :doc  "Session id (full UUID or unambiguous prefix)."}]
+          :cmd/examples ["vis sessions show 3a7b2c1d"]
+          :cmd/run-fn cli-show-session!}
+         {:cmd/name   "fork"
+          :cmd/parent ["sessions"]
+          :cmd/doc    "Fork a session from its latest state."
+          :cmd/usage  "vis sessions fork <SESSION-ID> [--title TITLE]"
+          :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
+                        :doc  "Session id (full UUID or unambiguous prefix)."}
+                       {:name "title" :kind :flag :type :string
+                        :doc  "Title to set on the new fork."}]
+          :cmd/examples ["vis sessions fork 3a7b2c1d"
+                         "vis sessions fork 3a7b2c1d --title \"Branch A\""]
+          :cmd/run-fn cli-fork-session-command!}
+         {:cmd/name   "delete"
+          :cmd/parent ["sessions"]
+          :cmd/doc    "Delete a session tree from persistent storage."
+          :cmd/usage  "vis sessions delete <SESSION-ID>"
+          :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
+                        :doc  "Session id (full UUID or unambiguous prefix)."}]
+          :cmd/examples ["vis sessions delete 3a7b2c1d"]
+          :cmd/run-fn cli-delete-session!}
+         {:cmd/name   "export"
+          :cmd/parent ["sessions"]
+          :cmd/doc    "Export a session as Markdown on stdout or HTML to a file."
+          :cmd/usage  "vis sessions export <SESSION-ID> [--md | --html PATH]"
+          :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
+                        :doc  "Session id (full UUID or unambiguous prefix)."}
+                       {:name "md" :kind :flag :type :boolean
+                        :doc  "Print Markdown to stdout (default)."}
+                       {:name "html" :kind :flag :type :string
+                        :doc  "Write HTML export to PATH."}]
+          :cmd/examples ["vis sessions export 3a7b2c1d --md"
+                         "vis sessions export 3a7b2c1d --html out.html"]
+          :cmd/run-fn cli-export-session!}
+         {:cmd/name   "search"
           :cmd/parent ["sessions"]
           :cmd/doc    "Full-text search across answers, thinking, comments, prompts, and expressions."
           :cmd/usage  "vis sessions search <query> [--limit N]"
