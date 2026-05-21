@@ -212,6 +212,7 @@
   (let [apply-settings-option  (var-get #'dlg/apply-settings-option)
         activate-settings-row! (var-get #'dlg/activate-settings-row!)
         settings-option-label  (var-get #'dlg/settings-option-label)
+        settings-render-entries (var-get #'dlg/settings-render-entries)
         settings-rows          (var-get #'dlg/settings-rows)
         theme-picker-items     (var-get #'dlg/theme-picker-items)
         palette-commands       (var-get #'dlg/palette-commands)
@@ -255,7 +256,7 @@
                                     :name nil}
               {}))))
 
-    (testing "settings row activation immediately notifies on-change callbacks and requests modal-background redraw"
+    (testing "settings row activation notifies on-change without redrawing behind the modal"
       (let [values  (atom {:show-timestamps false})
             changed (atom nil)
             calls   (atom [])]
@@ -265,9 +266,18 @@
           {:key :show-timestamps :type :toggle})
         (is (= {:show-timestamps true} @values))
         (is (= {:show-timestamps true} @changed))
-        (is (= [[:change {:show-timestamps true}]
-                [:redraw {:show-timestamps true}]]
-              @calls))))
+        (is (= [[:change {:show-timestamps true}]] @calls))))
+
+    (testing "settings descriptions wrap into paint rows instead of truncating inline"
+      (let [rows    [{:type :section :label "Terminal UI"}
+                     {:key :show-thinking
+                      :type :toggle
+                      :label "Show model thinking"
+                      :description "Stream reasoning deltas inside each iteration bubble without collapsing this text into ellipsis."}]
+            entries (settings-render-entries rows 24 16)]
+        (is (< 2 (count entries)))
+        (is (some #(= :option-desc (:part %)) entries))
+        (is (every? #(not (str/includes? (str (:text %)) "...")) entries))))
 
     (testing "theme picker rows label registered themes"
       (is (= [{:theme-id :vis-dark :label "Vis Dark"}

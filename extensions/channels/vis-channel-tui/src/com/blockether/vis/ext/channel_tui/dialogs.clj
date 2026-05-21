@@ -1461,8 +1461,6 @@
   [callbacks values]
   (when-let [f (:on-change callbacks)]
     (f values))
-  (when-let [f (:redraw-ui callbacks)]
-    (f))
   values)
 
 (defn- settings-selectable?
@@ -1622,15 +1620,44 @@
   [label inner-w]
   (ellipsize (str "◆ " label) (max 0 (- inner-w 2))))
 
-(defn- settings-label-width
-  [rows labels]
-  (max 1
-    (reduce max 0
-      (map count
-        (keep-indexed (fn [idx row]
-                        (when (settings-selectable? row)
-                          (nth labels idx)))
-          rows)))))
+(defn- settings-wrap-lines
+  [s w]
+  (let [w (max 1 (long w))
+        s (str/trim (str (or s "")))]
+    (if (str/blank? s)
+      []
+      (vec (remove str/blank? (render/wrap-text s w))))))
+
+(defn- settings-render-entries
+  "Flatten logical settings rows into paint rows. Descriptions wrap under
+   their owning option instead of stealing a fixed inline column and
+   collapsing to `...` on narrow dialogs / long extension labels."
+  [rows option-w desc-w]
+  (let [option-w (max 1 (long option-w))
+        desc-w   (max 1 (long desc-w))]
+    (vec
+      (mapcat
+        (fn [idx {:keys [type label description]}]
+          (case type
+            :section
+            [{:row-idx idx :part :section}]
+
+            :subsection
+            [{:row-idx idx :part :subsection}]
+
+            :info
+            (let [text  (str label
+                          (when-not (str/blank? (str (or description "")))
+                            (str "  " description)))
+                  lines (settings-wrap-lines text (max 1 (- option-w 2)))]
+              (mapv (fn [line] {:row-idx idx :part :info-line :text line})
+                (or (seq lines) [""])))
+
+            (let [desc-lines (settings-wrap-lines description desc-w)]
+              (into [{:row-idx idx :part :option}]
+                (mapv (fn [line] {:row-idx idx :part :option-desc :text line})
+                  desc-lines)))))
+        (range) rows))))
 
 (defn- settings-tab-geometry
   [left inner-w]
@@ -1689,8 +1716,6 @@
          scroll         (atom 0)
          values         (atom (or settings {}))
          check-w        4
-         gap            "  "
-         gap-w          (count gap)
          switch-tab!    (fn [tab-id]
                           (let [rows (settings-rows tab-id extension-rows)]
                             (reset! active-tab tab-id)
@@ -1713,9 +1738,6 @@
              list-top      (min hint-row (+ content-top 2))
              visible-h     (max 1 (- content-h 2))
              _             (swap! selected #(clamp % 0 (max 0 (dec n))))
-             _             (swap! scroll #(visible-window-start @selected % visible-h n))
-             scrollable?   (> n visible-h)
-             paint-w       (if scrollable? (max 1 (dec inner-w)) inner-w)
              option-indent (settings-option-indent)
              ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
              ;; option row for the selection gutter (`>` glyph + 1
@@ -1723,37 +1745,46 @@
              ;; `(inc left)` (the dialog's inner edge) by the row
              ;; loop; option body shifts right by the gutter.
              option-x      (+ left 2 option-indent p/SELECTION_WIDTH)
-             option-w      (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
              labels        (mapv #(settings-option-label % @values) rows)
-             label-w       (settings-label-width rows labels)
-             actual-desc-w (max 1 (- option-w check-w label-w gap-w))]
+             base-paint-w  inner-w
+             base-option-w (max 1 (- base-paint-w 2 option-indent p/SELECTION_WIDTH))
+             base-desc-w   (max 1 (- base-option-w check-w))
+             base-entries  (settings-render-entries rows base-option-w base-desc-w)
+             scrollable?   (> (count base-entries) visible-h)
+             paint-w       (if scrollable? (max 1 (dec inner-w)) inner-w)
+             option-w      (max 1 (- paint-w 2 option-indent p/SELECTION_WIDTH))
+             desc-x        (+ option-x check-w)
+             desc-w        (max 1 (- option-w check-w))
+             entries       (settings-render-entries rows option-w desc-w)
+             visual-n      (count entries)
+             selected-visual (or (first
+                                   (keep-indexed
+                                     (fn [entry-idx {:keys [row-idx part]}]
+                                       (when (and (= row-idx @selected)
+                                               (not= part :option-desc))
+                                         entry-idx))
+                                     entries))
+                               0)
+             _             (swap! scroll #(visible-window-start selected-visual % visible-h visual-n))]
 
          (draw-settings-tabs! g left tabs-row inner-w @active-tab)
          (p/set-colors! g t/dialog-border t/dialog-bg)
          (p/draw-separator! g left right tabs-sep-row)
 
          (dotimes [i visible-h]
-           (let [idx   (+ @scroll i)
-                 row-y (+ list-top i)]
-             (if (< idx n)
-               (let [{:keys [key type description]} (nth rows idx)
-                     label      (nth labels idx)
-                     selected?  (= idx @selected)
-                     state-mark (case type
-                                  :section    "    "
-                                  :subsection "    "
-                                  :info       "    "
-                                  :action     "[↗] "
-                                  :env-var    "[↗] "
-                                  :choice     "[->] "
-                                  (if (get @values key true) "[✓] " "[ ] "))
-                     label-pad  (str label
-                                  (apply str (repeat (max 0 (- label-w (count label))) \space)))
-                     desc       (or description "")
-                     desc-trunc (if (<= (count desc) actual-desc-w)
-                                  desc
-                                  (str (subs desc 0 (max 0 (dec actual-desc-w))) "..."))]
-                 (case type
+           (let [entry-idx (+ @scroll i)
+                 row-y     (+ list-top i)]
+             (if (< entry-idx visual-n)
+               (let [{:keys [row-idx part text]} (nth entries entry-idx)
+                     {:keys [key type label]}    (nth rows row-idx)
+                     option-label                (nth labels row-idx)
+                     selected?                   (= row-idx @selected)
+                     state-mark                  (case type
+                                                   :action  "[↗] "
+                                                   :env-var "[↗] "
+                                                   :choice  "[->] "
+                                                   (if (get @values key true) "[✓] " "[ ] "))]
+                 (case part
                    :section
                    (do
                      (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -1770,41 +1801,42 @@
                      (p/styled g [p/BOLD]
                        (p/put-str! g (+ left 2) row-y (settings-subsection-text label paint-w))))
 
-                   :info
+                   :info-line
                    (do
                      (p/set-colors! g t/dialog-hint t/dialog-bg)
                      (p/fill-rect! g (inc left) row-y paint-w 1)
                      (p/put-str! g (+ left 2) row-y
-                       (ellipsize (str label gap desc-trunc) (max 1 (- paint-w 2)))))
+                       (ellipsize text (max 1 (- paint-w 2)))))
+
+                   :option-desc
+                   (do
+                     (p/set-colors! g t/dialog-hint t/dialog-bg)
+                     (p/fill-rect! g (inc left) row-y paint-w 1)
+                     (p/put-str! g desc-x row-y (ellipsize text desc-w)))
 
                    ;; Selection visual: leading `> ` cursor glyph and
-                   ;; BOLD label text. The body palette stays normal
-                   ;; (`dialog-fg` / `dialog-bg`) so the description
-                   ;; column keeps its dim hint color either way —
-                   ;; previously the inverse-on-accent path squashed
-                   ;; both columns into the title-fg color.
+                   ;; BOLD label text. Descriptions wrap beneath the
+                   ;; option on dim rows, so long labels no longer force
+                   ;; descriptions into an ellipsis-only column.
                    (do
                      (p/set-colors! g t/dialog-fg t/dialog-bg)
                      (p/fill-rect! g (inc left) row-y paint-w 1)
                      ;; Cursor glyph in the dialog padding column.
                      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                      (p/draw-selection-marker! g (inc left) row-y selected?)
-                     ;; Option label (left half).
+                     ;; Option label.
                      (p/set-colors! g t/dialog-fg t/dialog-bg)
                      (if selected?
                        (p/styled g [p/BOLD]
                          (p/put-str! g option-x row-y
-                           (ellipsize (str state-mark label-pad) option-w)))
+                           (ellipsize (str state-mark option-label) option-w)))
                        (p/put-str! g option-x row-y
-                         (ellipsize (str state-mark label-pad) option-w)))
-                     ;; Description (right half), dimmed.
-                     (p/set-colors! g t/dialog-hint t/dialog-bg)
-                     (p/put-str! g (+ option-x check-w label-w gap-w) row-y desc-trunc))))
+                         (ellipsize (str state-mark option-label) option-w))))))
                (do
                  (p/set-colors! g t/dialog-fg t/dialog-bg)
                  (p/fill-rect! g (inc left) row-y paint-w 1)))))
 
-         (draw-scrollbar! g (+ left inner-w) list-top visible-h n @scroll)
+         (draw-scrollbar! g (+ left inner-w) list-top visible-h visual-n @scroll)
          (draw-hint-bar! g left hint-row inner-w [["<-/-> Tab" "switch"] ["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)

@@ -8,6 +8,7 @@
             [bridge.next :as br-next]
             [bridge.policy :as policy]
             [bridge.profile :as br-profile]
+            [clojure.pprint :as pprint]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]))
@@ -487,6 +488,149 @@
                   [:br/run-evidence :op.tag/mutation]]]
   (vis/register-op! op {:tag tag}))
 
+;; =============================================================================
+;; CLI surface -- `vis ext bridge <subcommand>`
+;;
+;; Mirrors the SCI alias (`br/init`, `br/check`, ...) so the binary
+;; reflects the same operations the model sees inside iterations.
+;; Every subcommand thin-wraps the matching tool fn with an empty
+;; env (workspace-root defaults to `user.dir`), prints the resulting
+;; map as EDN, and exits non-zero on tool failure or open Bridge
+;; obligations.
+;; =============================================================================
+
+(defn- println-original!
+  [s]
+  (.println ^java.io.PrintStream System/out (str s)))
+
+(defn- pprint-edn
+  [v]
+  (with-out-str (pprint/pprint v)))
+
+(defn- cli-result-status
+  "Translate a `bridge-tool` result map into a process exit code.
+   `extension/failure` payloads expose `:status :error`; success
+   payloads carry the underlying tool result under `:result`. We
+   exit non-zero on failure or when the underlying tool reports any
+   open Bridge issues."
+  [result]
+  (let [tool-result (:result result)]
+    (cond
+      (= :error (:status result))                       1
+      (= "unconfigured" (:status tool-result))          1
+      (pos? (long (or (:issue-count tool-result) 0)))   1
+      :else                                             0)))
+
+(defn- emit-result!
+  "Print the tool result (EDN) and exit with the derived status."
+  [result]
+  (println-original! (pprint-edn result))
+  (System/exit (cli-result-status result)))
+
+(defn- parse-kv-opts
+  "Parse a residual arg vector into a Bridge opts map. Supported
+   flags: `--profile PATH`, `--policy PATH`, `--changed-file PATH`
+   (repeatable), `--subject S`, `--out PATH`, `--out-dir PATH`,
+   `--timeout-seconds N`, `--dry-run`. Unknown flags raise so the
+   user sees a structural error instead of a silent drop."
+  [residual]
+  (loop [xs (vec residual)
+         opts {}]
+    (let [[head & tail] xs]
+      (cond
+        (nil? head) opts
+
+        (= "--dry-run" head)
+        (recur (vec tail) (assoc opts :dry-run? true))
+
+        (#{"--profile" "--policy" "--subject" "--out" "--out-dir"} head)
+        (let [k (case head
+                  "--profile" :profile
+                  "--policy"  :policy
+                  "--subject" :subject
+                  "--out"     :out
+                  "--out-dir" :out-dir)]
+          (recur (vec (rest tail)) (assoc opts k (first tail))))
+
+        (= "--changed-file" head)
+        (recur (vec (rest tail))
+          (update opts :changed-files (fnil conj []) (first tail)))
+
+        (= "--timeout-seconds" head)
+        (recur (vec (rest tail))
+          (assoc opts :timeout-seconds (parse-long (str (first tail)))))
+
+        (str/starts-with? (str head) "--")
+        (throw (ex-info (str "Unknown bridge flag: " head)
+                 {:flag head}))
+
+        :else
+        (throw (ex-info (str "Unexpected positional argument: " head)
+                 {:arg head}))))))
+
+(defn- cli-env [] {})
+
+(defn- cli-init!
+  [_parsed residual]
+  (let [opts (parse-kv-opts residual)]
+    (emit-result! (init (cli-env) opts))))
+
+(defn- cli-profile!
+  [_parsed residual]
+  (emit-result! (profile (cli-env) (parse-kv-opts residual))))
+
+(defn- cli-check!
+  [_parsed residual]
+  (emit-result! (check (cli-env) (parse-kv-opts residual))))
+
+(defn- cli-next!
+  [_parsed residual]
+  (emit-result! (next (cli-env) (parse-kv-opts residual))))
+
+(defn- cli-list-evidence!
+  [_parsed residual]
+  (emit-result! (list-evidence (cli-env) (parse-kv-opts residual))))
+
+(defn- cli-run-evidence!
+  [_parsed residual]
+  (let [[id & rest-args] (vec residual)]
+    (when (str/blank? (str id))
+      (println-original! "Usage: vis ext bridge run-evidence <id> [--dry-run] [...flags]")
+      (System/exit 1))
+    (emit-result! (run-evidence (cli-env) id (parse-kv-opts rest-args)))))
+
+(def ^:private bridge-cli
+  [{:cmd/name      "bridge"
+    :cmd/doc       "Bridge verification coordinator -- mirrors the `br/` SCI alias."
+    :cmd/usage     "vis ext bridge <init|profile|check|next|list-evidence|run-evidence> [flags]"
+    :cmd/subcommands
+    [{:cmd/name  "init"
+      :cmd/doc   "Bootstrap Bridge for this workspace (.bridge/profile.edn etc)."
+      :cmd/usage "vis ext bridge init"
+      :cmd/run-fn cli-init!}
+     {:cmd/name  "profile"
+      :cmd/doc   "Print the active Bridge profile summary."
+      :cmd/usage "vis ext bridge profile [--profile PATH] [--policy PATH]"
+      :cmd/run-fn cli-profile!}
+     {:cmd/name  "check"
+      :cmd/doc   "Run Bridge check for the workspace; exits non-zero on open obligations."
+      :cmd/usage "vis ext bridge check [--changed-file PATH ...] [--profile PATH] [--policy PATH]"
+      :cmd/run-fn cli-check!}
+     {:cmd/name  "next"
+      :cmd/doc   "Print the next suggested Bridge action(s)."
+      :cmd/usage "vis ext bridge next [--changed-file PATH ...] [--profile PATH]"
+      :cmd/run-fn cli-next!}
+     {:cmd/name  "list-evidence"
+      :cmd/doc   "List evidence commands configured by the active profile."
+      :cmd/usage "vis ext bridge list-evidence [--profile PATH]"
+      :cmd/run-fn cli-list-evidence!}
+     {:cmd/name  "run-evidence"
+      :cmd/doc   "Run a configured evidence command and write its receipt."
+      :cmd/usage "vis ext bridge run-evidence <id> [--dry-run] [--subject S] [--out PATH] [--out-dir PATH] [--timeout-seconds N] [--profile PATH]"
+      :cmd/examples ["vis ext bridge run-evidence unit --dry-run"
+                     "vis ext bridge run-evidence unit --timeout-seconds 300"]
+      :cmd/run-fn cli-run-evidence!}]}])
+
 (def vis-extension
   (vis/extension
     {:ext/name "bridge"
@@ -497,6 +641,7 @@
      :ext/license "Apache-2.0"
      :ext/sci {:ext.sci/alias 'br
                :ext.sci/symbols bridge-symbols}
+     :ext/cli bridge-cli
      :ext/hooks bridge-hooks
      :ext/kind "verification"
      :ext/prompt bridge-prompt}))

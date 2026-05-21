@@ -1561,7 +1561,7 @@
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
   [^TextGraphics g
-   {:keys [role text timestamp status] :as message}
+   {:keys [role text timestamp status turn-separator?] :as message}
    start-row left max-w
    & [{:keys [viewport-top viewport-h]
        :or   {viewport-top 0 viewport-h 0}}]]
@@ -1573,10 +1573,11 @@
         ;; meta line, dim the role label too. Skips markdown so a
         ;; bare text like \"Cancelled by user.\" reads naturally.
         cancelled? (= :cancelled status)
-        ;; Turn separators no longer add top spacer rows. The regular
-        ;; per-message flow is enough; extra rows after Vis->You made
-        ;; resumed chats look like they had a double top margin.
-        top-sep-h 0
+        ;; Optional visual turn divider between a completed Vis answer and
+        ;; the next You prompt. `virtual/with-turn-separator` marks only
+        ;; user bubbles after assistant bubbles, so this stays outside
+        ;; assistant reasoning/answer zones.
+        top-sep-h (if turn-separator? 1 0)
         label     (cond
                     queued? "Queued"
                     user?   "You"
@@ -1654,6 +1655,11 @@
     ;; Role label (bold, role-colored) + optional resources badge +
     ;; timestamp. Resources sit in the top-right chrome instead of
     ;; taking one row per link under the answer body.
+
+    (when (pos? top-sep-h)
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-border t/terminal-bg)
+      (p/put-str! g bx start-row (p/horiz-line bubble-w)))
 
     (let [label-row (+ start-row top-sep-h)]
       (p/clear-styles! g)
@@ -2323,9 +2329,9 @@
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
-  [{:keys [text role prewrapped-lines status] :as message} max-w]
+  [{:keys [text role prewrapped-lines status turn-separator?] :as message} max-w]
   (let [bubble-w   max-w
-        top-sep-h  0
+        top-sep-h  (if turn-separator? 1 0)
         h-pad      2
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
         ;; Same contract: virtual.clj projection populates
