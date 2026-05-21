@@ -471,6 +471,39 @@
           out (-> (cat-tool path :tail 3) :result)]
       (expect (= (numbered-tuples 18 ["L18" "L19" "L20"]) (:lines out))))))
 
+(defdescribe vis-cat-range-arity-test
+  ;; G1 from the v/cat probe (C9): the offset+count arity feels awkward
+  ;; when the model already knows both endpoints ("convert end=100 to
+  ;; n=51 mentally"). The :range arity takes inclusive start..end.
+  (it "(v/cat path :range start end) reads inclusive 1-based start..end"
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
+          path (write-temp! "range/inclusive.txt" (str body "\n"))
+          cat-tool (private-fn "cat-tool")
+          out (-> (cat-tool path :range 5 10) :result)]
+      ;; 5..10 inclusive = 6 lines (L5, L6, L7, L8, L9, L10).
+      (expect (= 6 (count (:lines out))))
+      (expect (= [[5 "L5"] [6 "L6"] [7 "L7"] [8 "L8"] [9 "L9"] [10 "L10"]]
+                (:lines out)))))
+
+  (it ":range with start == end reads exactly one line"
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 11)))
+          path (write-temp! "range/single.txt" (str body "\n"))
+          cat-tool (private-fn "cat-tool")
+          out (-> (cat-tool path :range 7 7) :result)]
+      (expect (= [[7 "L7"]] (:lines out)))))
+
+  (it ":range rejects start > end, non-positive ints, and the wrong kw"
+    (let [path (write-temp! "range/invalid.txt" "a\nb\nc\n")
+          cat-tool (private-fn "cat-tool")]
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(cat-tool path :range 10 5)))
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(cat-tool path :range 0 5)))
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(cat-tool path :range -1 5)))
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(cat-tool path :not-range 1 5))))))
+
 (defdescribe vis-cat-line-truncation-test
   (it "individual lines longer than max-line-length get a per-line truncation suffix"
     ;; A minified-JS-style line: one 5000-char blob plus a normal short line.
