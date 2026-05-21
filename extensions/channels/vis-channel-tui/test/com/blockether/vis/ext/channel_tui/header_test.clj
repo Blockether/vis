@@ -136,7 +136,25 @@
       (let [write-by-text (fn [text]
                             (some #(when (= text (:text %)) %) @writes))]
         (expect (= 1 (:col (write-by-text status-shown))))
-        (expect (= t/footer-warning-fg (:fg (write-by-text status-shown))))))))
+        (expect (= t/footer-warning-fg (:fg (write-by-text status-shown)))))))
+
+  (it "does not render stale ready voice status forever"
+    (let [uuid   "123e4567-e89b-12d3-a456-426614174000"
+          status "Voice response complete 100%"
+          writes (atom [])
+          db     {:title "Chat"
+                  :session {:id uuid}
+                  :channel-status {:voice/piper {:text status
+                                                 :phase :ready
+                                                 :level :info
+                                                 :updated-at-ms 1}}}]
+      (cr/reset!)
+      (with-redefs-fn {#'header/latest-notification (fn [] nil)}
+        (fn []
+          (cr/begin-frame!)
+          (header/draw-header! (dummy-text-graphics writes) db 0 80)
+          (cr/commit-frame!)))
+      (expect (not-any? #(= status (:text %)) @writes)))))
 
 (defdescribe draw-header-color-test
   (it "renders the lone workspace title as inert center text, not on the left"
