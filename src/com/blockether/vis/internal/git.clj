@@ -527,30 +527,51 @@
      :source-line (inc (.getSourceLine result i))
      :content     (.getString contents i)}))
 
-(defn- find-nearest-matching-line
-  "Search a BlameResult for a line whose text equals `target`, preferring
-   the line whose index is closest to `hint-i`. Returns the matched
-   index or nil. Used to map a line through a re-blame after peeling
-   past an ignored commit, where line numbers shift but text typically
-   stays close."
-  [^BlameResult result ^String target ^long hint-i]
+(defn- normalize-ws
+  "Collapse runs of ASCII whitespace into a single space and trim. Used
+   as the fallback equality predicate when peeling past whitespace-only
+   refactor commits: the bytes differ but the underlying line is the
+   same once normalized."
+  [^String s]
+  (when s
+    (-> s
+      (.replaceAll "\\s+" " ")
+      (.trim))))
+
+(defn- find-line-with [^BlameResult result eq? hint-i]
   (let [contents (.getResultContents result)
-        n        (.size contents)]
+        n        (long (.size contents))
+        hi       (long hint-i)]
     (when (pos? n)
       (loop [delta 0]
-        (let [a (- hint-i delta)
-              b (+ hint-i delta)]
+        (let [a (- hi delta)
+              b (+ hi delta)]
           (cond
             (and (>= a 0) (< a n)
-              (= target (.getString contents a)))
+              (eq? (.getString contents a)))
             a
             (and (not= a b) (>= b 0) (< b n)
-              (= target (.getString contents b)))
+              (eq? (.getString contents b)))
             b
             (and (< a 0) (>= b n))
             nil
             :else
             (recur (inc delta))))))))
+
+(defn- find-nearest-matching-line
+  "Search a BlameResult for a line whose text matches `target`, preferring
+   the line whose index is closest to `hint-i`. Returns the matched
+   index or nil. Used to map a line through a re-blame after peeling
+   past an ignored commit, where line numbers shift but text typically
+   stays close.
+
+   Tries exact byte equality first; falls back to a whitespace-normalized
+   compare so peeling past pure whitespace / formatter commits still
+   finds the corresponding line in the parent blame."
+  [^BlameResult result ^String target ^long hint-i]
+  (or (find-line-with result #(.equals target ^String %) hint-i)
+    (let [tn (normalize-ws target)]
+      (find-line-with result #(.equals tn (normalize-ws ^String %)) hint-i))))
 
 (def ^:private max-blame-peel-depth
   "Hard cap on how many ignored commits we'll peel through for a single

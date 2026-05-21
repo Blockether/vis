@@ -227,12 +227,12 @@
          (cond
            (string? arg) {:rev arg}
            (map? arg)    arg
-           :else         (do (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
-                                      {:type :foundation-git/invalid-opts :opts arg
-                                       :examples ["(git/show \"HEAD\")"
-                                                  "(git/show \"abc1234\")"
-                                                  "(git/show {:rev \"HEAD~1\"})"
-                                                  "(git/show {:rev \"HEAD\" :patch? true})"]}))))]
+           :else         (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
+                                  {:type :foundation-git/invalid-opts :opts arg
+                                   :examples ["(git/show \"HEAD\")"
+                                              "(git/show \"abc1234\")"
+                                              "(git/show {:rev \"HEAD~1\"})"
+                                              "(git/show {:rev \"HEAD\" :patch? true})"]})))]
      (when-not (and (string? rev) (seq rev))
        (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
                 {:type :foundation-git/invalid-opts :opts arg})))
