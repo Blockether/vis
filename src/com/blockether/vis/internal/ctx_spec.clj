@@ -197,30 +197,27 @@
     :summary ::trailer-summary))
 
 ;; =============================================================================
-;; Workspace — engine-rendered
+;; Workspace — engine-rendered. Keys are :git/* (VCS-discriminator
+;; namespace). Future hg/jj/etc support will slot in as :hg/branch
+;; :hg/head etc without colliding.
 ;; =============================================================================
 
-(s/def :session.workspace/branch  string?)
-(s/def :session.workspace/trunk   string?)
-(s/def :session.workspace/head    string?)
-(s/def :session.workspace/dirty?  boolean?)
+(s/def :git/branch  string?)
+(s/def :git/trunk   string?)
+(s/def :git/head    string?)
+(s/def :git/dirty?  boolean?)
 
-(s/def :session.workspace.file/added    nat-int?)
-(s/def :session.workspace.file/removed  nat-int?)
+(s/def :git.file/added    nat-int?)
+(s/def :git.file/removed  nat-int?)
 
-(s/def :session.workspace/file-stats
-  (s/keys :req-un [:session.workspace.file/added
-                   :session.workspace.file/removed]))
+(s/def :git/file-stats
+  (s/keys :req-un [:git.file/added :git.file/removed]))
 
-(s/def :session.workspace/stats
-  (s/map-of string? :session.workspace/file-stats))
+(s/def :git/stats
+  (s/map-of string? :git/file-stats))
 
 (s/def ::workspace
-  (s/keys :req-un [:session.workspace/branch
-                   :session.workspace/trunk
-                   :session.workspace/head
-                   :session.workspace/dirty?
-                   :session.workspace/stats]))
+  (s/keys :req [:git/branch :git/trunk :git/head :git/dirty? :git/stats]))
 
 ;; =============================================================================
 ;; Symbol directory — engine-rendered from SCI introspection + engine-side :born index
