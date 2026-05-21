@@ -102,7 +102,9 @@
       No assistant/tool messages persist between iters — CTX is the working memory.
 
       Subtrees:
-        :session/workspace   engine-rendered; current branch, trunk, head, dirty?, per-file diff stats
+        :session/workspace   engine-rendered; current VCS state. Keys are :git/* (VCS-discriminator
+                             namespace). Future hg/jj support slots in as :hg/* :jj/* without colliding.
+                             shape: {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
         :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born}}
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
         :session/facts       everything durable. Single bucket. Tags discriminate kinds:
