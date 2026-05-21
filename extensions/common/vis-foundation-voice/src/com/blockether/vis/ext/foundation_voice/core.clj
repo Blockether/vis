@@ -71,16 +71,18 @@
 
 (defn- notify-progress!
   [phase label bytes-read bytes-total]
-  (let [event {:op :status/set
-               :id :voice/piper
-               :text (progress-text label bytes-read bytes-total)
-               :level (if (= :error phase) :error :info)
-               :model :voice/piper
-               :phase phase
-               :bytes-read bytes-read
-               :bytes-total bytes-total}]
+  (let [text  (progress-text label bytes-read bytes-total)
+        level (if (= :error phase) :error :info)
+        event (cond-> {:op (if (= :ready phase) :status/clear :status/set)
+                       :id :voice/piper
+                       :text text
+                       :level level
+                       :model :voice/piper
+                       :phase phase
+                       :bytes-read bytes-read
+                       :bytes-total bytes-total})]
     (vis/publish-channel-event! :tui event)
-    (vis/notify! (:text event) :level (:level event) :ttl-ms 3000)))
+    (vis/notify! text :level level :ttl-ms 3000)))
 
 (defn- download!
   ([url path] (download! url path notify-progress!))

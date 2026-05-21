@@ -87,22 +87,14 @@
       (cr/commit-frame!)
       (expect (= [] (cr/current)))))
 
-  (it "keeps voice channel status on the right without stealing the notification lane"
+  (it "renders notifications only on the left and suppresses duplicate channel status text"
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
           status-text   "● Recording 00:01"
           notification  "✓ Copied!"
           id-rendered   "123e4567"
-          action-w      (p/display-width (right-block-text "123e4567"))
           id-w          (p/display-width id-rendered)
           cols          80
-          right-slot-w  (quot cols 5)
-          right-x       (- cols right-slot-w)
-          gap-w         (p/display-width "  ")
-          status-cap    (max 0 (- right-slot-w 1 action-w gap-w))
-          status-shown  (p/truncate-cols status-text status-cap)
-          status-w      (p/display-width status-shown)
-          expected-right-col (max right-x (- cols 1 status-w gap-w action-w))
-          expected-id-col    (+ expected-right-col status-w gap-w)
+          expected-id-col (- cols 1 id-w)
           db            {:title "Chat"
                          :session {:id uuid}
                          :channel-status {:voice/input {:text status-text
@@ -119,10 +111,32 @@
                             (some #(when (= text (:text %)) %) @writes))
             copy-hit      (some #(when (= :copy-id (:kind %)) %) (cr/current))]
         (expect (= 1 (:col (write-by-text notification))))
-        (expect (= expected-right-col (:col (write-by-text status-shown))))
-        (expect (= t/footer-warning-fg (:fg (write-by-text status-shown))))
+        (expect (= t/footer-fg-strong (:fg (write-by-text notification))))
+        (expect (nil? (write-by-text status-text)))
         (expect (= {:row 1 :col expected-id-col :width id-w}
-                  (:bounds copy-hit)))))))
+                  (:bounds copy-hit))))))
+
+  (it "renders channel status on the left when no notification is active"
+    (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
+          status-text   "● Recording 00:01"
+          left-slot-w   16
+          status-shown  (p/truncate-cols status-text (- left-slot-w 2))
+          db            {:title "Chat"
+                         :session {:id uuid}
+                         :channel-status {:voice/input {:text status-text
+                                                        :level :warn
+                                                        :updated-at-ms 1}}}
+          writes        (atom [])]
+      (cr/reset!)
+      (with-redefs-fn {#'header/latest-notification (fn [] nil)}
+        (fn []
+          (cr/begin-frame!)
+          (header/draw-header! (dummy-text-graphics writes) db 0 80)
+          (cr/commit-frame!)))
+      (let [write-by-text (fn [text]
+                            (some #(when (= text (:text %)) %) @writes))]
+        (expect (= 1 (:col (write-by-text status-shown))))
+        (expect (= t/footer-warning-fg (:fg (write-by-text status-shown))))))))
 
 (defdescribe draw-header-color-test
   (it "renders the lone workspace title as inert center text, not on the left"

@@ -22,7 +22,7 @@ to the same two values.
 
 **2. Two surfaces for model interaction:**
 - **SCI symbols** (extensions register them with a `:tag`): `v/cat`, `v/patch`, `git/diff`, …
-- **Engine primitives** (bare symbols, hidden, peer with `done`): per-subtree mutators (`rule-set!`, `rule-remove!`, `decision!`, `fact-set!`, `fact-remove!`, `spec-set!`, `spec-remove!`, `task-set!`, `task-remove!`), and introspection (`iter`, `form`, `turn`, `iter-heads`, `turn-list`, `symbol-doc`, `symbol-source`, `symbol-meta`, `symbol-apropos`).
+- **Engine primitives** (bare symbols, hidden, peer with `done`): per-subtree mutators (`fact-set!`, `fact-remove!`, `task-set!`, `task-remove!`), and introspection (`introspect-iter`, `introspect-form`, `introspect-turn`, `introspect-iter-heads`, `introspect-turn-list`, `introspect-symbol-doc`, `introspect-symbol-source`, `introspect-symbol-meta`, `introspect-symbol-apropos`).
 
 Workspace mutations (`spawn-branch!`, `apply-to-trunk!`, `discard!`) are
 internal Clojure functions in `src/.../internal/workspace.clj`; they are
@@ -63,13 +63,17 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 ;; Facts — everything durable that isn't a spec or task.
 ;; Includes observations, preferences, behavioral directives, project
 ;; conventions, decisions (tag :decision when audit-style).
-(fact-set!     :K {:body string :scope #{:session :project} :tags #{keyword}})
+(fact-set!     :K {:body       string
+                   :scope      #{:session :project}     ; optional, default :session
+                   :tags       #{keyword}               ; optional, default empty
+
+                   ;; spec-only extras (engine soft-validates when :tags #{:spec})
+                   :acceptance [string]
+                   :facts      [<kw-ref>]
+                   :status     #{:draft :doing :done :cancelled}})
 (fact-remove!  :K)
 
-;; Specs — requirements built FROM facts
-(spec-set!     :K {:title string :acceptance [string] :facts [<kw-ref>]
-                   :status #{:draft :doing :done :cancelled}})
-(spec-remove!  :K)
+;; (specs are now facts tagged :spec — see fact-set! shape above)
 
 ;; Tasks — work items; engine auto-journals on :status change
 (task-set!     :K {:title string :spec <kw-ref> :depends-on [<kw-ref>]
@@ -83,7 +87,7 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 ;;   task-set!      : :status change → auto-append {:status :scope} to :journal
 ;;                    :status :done without :evidence → soft warn
 ;;                    :status :blocked without :blocked-on → soft warn
-;;   spec-set!      : :status :done | :cancelled → auto-stamp :done-born
+;;   fact-set!      : :tags #{:spec} + :status :done | :cancelled → auto-stamp :done-born
 ;;   *-remove!      : non-existent key → silent no-op
 ;;   satisfy-hint!  : engine validates evidence scopes exist this turn; soft warns if missing
 
@@ -93,16 +97,16 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 
 ;; ─── INTROSPECTION (engine primitives — bare symbols, hidden-sym set) ───
 ;; Session structure
-(iter       "tN/iN")             ; → {:scope :forms [{:scope :tag :src :result :error}]}
-(form       "tN/iN/fK")          ; → {:scope :tag :src :result :error}
-(turn       "tN")                ; → {:scope :user-msg :answer :iter-scopes [...]}
-(iter-heads "tN")                ; → [{:scope :head :tag} …]
-(turn-list)                      ; → [{:scope :user-msg-head :status} …]
+(introspect-iter       "tN/iN")             ; → {:scope :forms [{:scope :tag :src :result :error}]}
+(introspect-form       "tN/iN/fK")          ; → {:scope :tag :src :result :error}
+(introspect-turn       "tN")                ; → {:scope :user-msg :answer :iter-scopes [...]}
+(introspect-iter-heads "tN")                ; → [{:scope :head :tag} …]
+(introspect-turn-list)                      ; → [{:scope :user-msg-head :status} …]
 ;; SCI symbols (moved from foundation; no longer registered as v/ ops)
-(symbol-doc     'sym)            ; → string or nil
-(symbol-source  'sym)            ; → string (full def source)
-(symbol-meta    'sym)            ; → map (full (meta #'sym))
-(symbol-apropos "pattern")       ; → vec of matching syms
+(introspect-symbol-doc     'sym)            ; → string or nil
+(introspect-symbol-source  'sym)            ; → string (full def source)
+(introspect-symbol-meta    'sym)            ; → map (full (meta #'sym))
+(introspect-symbol-apropos "pattern")       ; → vec of matching syms
 
 ;; ─── FINAL ───
 (done {:answer            "markdown string"
@@ -145,16 +149,16 @@ read from the rendered text, write back via the operators below.
 Subtrees:
   :session/workspace  engine-managed; current branch + per-file diff stats
   :session/symbols    engine-managed; live SCI symbols {:arglists :doc :born}
-  :session/facts      everything durable the model needs to remember:
-                      observations, preferences, behavioral directives, project conventions,
-                      decisions (tag :decision when audit-style).
-                      shape: {<kw> {:body string :scope #{:session :project} :tags #{kw} :born scope? :source?}}
+  :session/facts      everything durable the model needs to remember.
+                      Tags discriminate kinds: :decision (audit), :behavior (directive),
+                      :spec (formal requirement with :acceptance + :status + :facts refs).
+                      shape: {<kw> {:body string :scope #{:session :project} :tags #{kw}
+                                    :born scope? :source?
+                                    ;; spec-only extras when :tags #{:spec}
+                                    :acceptance [string] :facts [<kw-ref>]
+                                    :status #{:draft :doing :done :cancelled}
+                                    :done-born scope?}}
                       :scope optional (default :session); :project mirrors to project_fact
-  :session/specs      requirements built FROM facts (model-managed)
-                      shape: {<kw> {:title :acceptance [string]
-                                    :facts [<kw-ref>]
-                                    :status keyword :born scope :done-born scope?}}
-                      :status ∈ #{:draft :doing :done :cancelled}
   :session/tasks      work items toward specs (model-managed)
                       shape: {<kw> {:title :spec <kw-ref>
                                     :depends-on [<kw-ref>]
@@ -173,14 +177,12 @@ auto-journals on status changes; soft-warns on missing required fields):
 
   Facts         (fact-set! :K {:body :scope? :tags?})
                 (fact-remove! :K)
-  Specs         (spec-set! :K {:title :acceptance :facts :status})
-                (spec-remove! :K)
   Tasks         (task-set! :K {:title :spec :depends-on :status :evidence :blocked-on})
                 (task-remove! :K)
 
   All *-set! calls merge partial maps into existing entries.
   task-set! with :status change auto-appends to :journal.
-  spec-set! with :status :done | :cancelled auto-stamps :done-born.
+  fact-set! with :tags #{:spec} and :status :done | :cancelled auto-stamps :done-born.
 
 Symbol lifecycle (native SCI; persisted by engine):
   (defn foo [x] …)          ; create / overwrite; survives turns
@@ -196,17 +198,17 @@ Final form per iter:
 
 Engine introspection (bare primitives — not registered as v/ ops):
   Session structure:
-    (iter "tN/iN")           one iter, full forms vec
-    (form "tN/iN/fK")        single form envelope
-    (turn "tN")              turn TOC: user-msg + answer + iter-scopes
-    (iter-heads "tN")        iter list with first-form head per iter
-    (turn-list)              all turns, with head + status
+    (introspect-iter "tN/iN")           one iter, full forms vec
+    (introspect-form "tN/iN/fK")        single form envelope
+    (introspect-turn "tN")              turn TOC: user-msg + answer + iter-scopes
+    (introspect-iter-heads "tN")        iter list with first-form head per iter
+    (introspect-turn-list)              all turns, with head + status
 
   SCI symbols:
-    (symbol-doc 'sym)        docstring or nil
-    (symbol-source 'sym)     full def source as string
-    (symbol-meta 'sym)       full var metadata
-    (symbol-apropos "pattern")  matching symbol list
+    (introspect-symbol-doc 'sym)        docstring or nil
+    (introspect-symbol-source 'sym)     full def source as string
+    (introspect-symbol-meta 'sym)       full var metadata
+    (introspect-symbol-apropos "pattern")  matching symbol list
 
 Scope coordinates:
   Format    "t<N>/i<N>/f<N>"     e.g. "t3/i2/f1"
@@ -231,7 +233,7 @@ Engine hint rules:
 | trailer entry is summary shape | `;; summarized in t<N>` |
 | `:result` value in a pinned form exceeds threshold (e.g. 4kB) | `;; ⚠ result is <size>; consider summarizing or dropping` |
 | `:session/trailer` count exceeds threshold (e.g. 30) | `;; :session/trailer (32 entries; 5 summarized)` |
-| `:session/symbols` symbol's `:born` points into a turn now summarized | `;; born iter summarized; (form …) for original source` |
+| `:session/symbols` symbol's `:born` points into a turn now summarized | `;; born iter summarized; (introspect-form …) for original source` |
 
 Nothing else. Engine never explains schema in render.
 
@@ -311,21 +313,21 @@ trailer (mutated via `done`).
 
  :session/facts        ; everything durable the model needs to remember:
                        ; observations, preferences, behavioral directives,
-                       ; project conventions, decisions (tagged :decision).
+                       ; project conventions, decisions (tag :decision),
+                       ; specs (tag :spec with :acceptance + :status + :facts refs).
                        ; :scope :project mirrors cross-session.
-   {<kw> {:body   string
-          :scope  :session | :project        ; default :session; :project mirrors to project_fact
-          :tags   #{kw}                      ; default empty; tag :decision for audit-style facts
-          :born   "tN/iN/fK"                 ; OPTIONAL — engine-derived facts may omit
-          :source :project-mirror}}          ; engine-set when loaded from project_fact
+   {<kw> {:body       string                 ; required
+          :scope      :session | :project    ; default :session; :project mirrors to project_fact
+          :tags       #{kw}                  ; default empty; discriminates kinds
+          :born       "tN/iN/fK"             ; OPTIONAL — engine-derived facts may omit
+          :source     :project-mirror        ; engine-set when loaded from project_fact
 
- :session/specs        ; formal requirements; specs are BASED ON facts
-   {<kw> {:title      string
+          ;; SPEC-ONLY EXTRAS (engine soft-validates when :tags #{:spec})
           :acceptance [string]
-          :facts      [<kw-ref>]             ; refs into :session/facts
+          :facts      [<kw-ref>]             ; refs into other facts the spec is built from
           :status     :draft | :doing | :done | :cancelled
-          :born       "tN/iN/fK"
-          :done-born  "tN/iN/fK"}}           ; scope where :status became :done/:cancelled
+          :done-born  "tN/iN/fK"}}           ; engine-stamps when :status terminal
+
 
  :session/tasks        ; work items; ALWAYS point to a spec; require evidence on done
    {<kw> {:title       string
@@ -359,10 +361,10 @@ Engine warns (does NOT refuse) on:
 
 | call | required field | rule |
 |---|---|---|
-| `task-set!` | `:spec` | task must reference a spec |
+| `task-set!` | `:spec` | task must reference a fact tagged `:spec` |
 | `task-set!` with `:status :done` | `:evidence` | required vec of scopes proving completion |
 | `task-set!` with `:status :blocked` | `:blocked-on` | required free-text reason |
-| `spec-set!` | `:facts` | vec may be empty but field should exist |
+| `fact-set!` with `:tags #{:spec}` | `:acceptance` | vec may be empty but field should exist |
 | `satisfy-hint!` | evidence vec | required non-empty vec of scopes |
 
 Soft schema — engine warns via `;; ⚠ task :wire-render missing :spec` in next render, never refuses the write.
@@ -373,7 +375,7 @@ Soft schema — engine warns via `;; ⚠ task :wire-render missing :spec` in nex
 |---|---|---|
 | any `*-set!` on a NEW key | `:born` | engine stamps `<current-form-scope>` |
 | `task-set!` that changes `:status` | `:journal` | engine appends `{:status <new> :scope <current-form-scope>}` |
-| `spec-set!` with `:status :done` or `:cancelled` | `:done-born` | engine stamps `<current-form-scope>` |
+| `fact-set!` with `:tags #{:spec}` and `:status :done`/`:cancelled` | `:done-born` | engine stamps `<current-form-scope>` |
 
 Model never writes `:born`, `:journal`, or `:done-born` directly; they grow from the call patterns above.
 
@@ -416,9 +418,9 @@ Engine primitives don't go through `register-op!`. They're bound in the SCI hidd
 |---|---|
 | `(defn …)` `(def …)` | `:mutation` |
 | `(fact-set! …)` `(fact-remove! …)` | `:mutation` |
-| `(spec-set! …)` `(spec-remove! …)` `(task-set! …)` `(task-remove! …)` | `:mutation` |
-| `(iter …)` `(form …)` `(turn …)` `(iter-heads …)` `(turn-list)` | `:observation` |
-| `(symbol-doc …)` `(symbol-source …)` `(symbol-meta …)` `(symbol-apropos …)` | `:observation` |
+| `(task-set! …)` `(task-remove! …)` | `:mutation` |
+| `(introspect-iter …)` `(introspect-form …)` `(introspect-turn …)` `(introspect-iter-heads …)` `(introspect-turn-list)` | `:observation` |
+| `(introspect-symbol-doc …)` `(introspect-symbol-source …)` `(introspect-symbol-meta …)` `(introspect-symbol-apropos …)` | `:observation` |
 | arithmetic, string ops, `get-in`, `filter`, plain expressions | `:observation` |
 | `(done …)` `(set-session-title! …)` `(satisfy-hint! …)` | excluded from trailer |
 
@@ -478,16 +480,15 @@ Nothing else. No per-subtree schema explanation in the render.
     :no-bcrypt-dep         {:body "deps.edn does not include bcrypt yet"
                             :born "t3/i3/f1"}
     :no-llm-compaction     {:body "Never LLM-compact ctx; deterministic rules only"
-                            :tags #{:decision :ctx :design} :born "t3/i2/f1"}}
-
- :session/specs
-   {:auth-bcrypt {:title      "switch auth/check to bcrypt"
-                  :acceptance ["check/1 calls bcrypt/check"
-                               "stored-hash plumbed"
-                               "tests cover wrong-password path"]
-                  :facts      [:auth-literal-compare :no-bcrypt-dep]
-                  :status     :doing
-                  :born       "t5/i1/f1"}}
+                            :tags #{:decision :ctx :design} :born "t3/i2/f1"}
+    :auth-bcrypt           {:body       "switch auth/check to bcrypt"
+                            :tags       #{:spec}
+                            :acceptance ["check/1 calls bcrypt/check"
+                                         "stored-hash plumbed"
+                                         "tests cover wrong-password path"]
+                            :facts      [:auth-literal-compare :no-bcrypt-dep]
+                            :status     :doing
+                            :born       "t5/i1/f1"}}
 
  :session/tasks
    {:add-bcrypt-dep {:title      "add bcrypt to deps.edn"
@@ -599,7 +600,7 @@ MODEL >
  :session/rules
    {:likes-yellow {:body "user likes yellow color" :scope :session :born "t1/i1/f1"}
     :has-pet-dog  {:body "user has a dog"          :scope :session :born "t3/i1/f1"}}
- :session/decisions {} :session/specs {} :session/tasks {}
+ :session/tasks {}
  :session/trailer
    [{:scope "t1/i1" :summary "set :likes-yellow"}
     {:scope "t2/i1" :summary "computed 17*23 = 391"}
@@ -609,7 +610,7 @@ MODEL >
 **Observations:**
 - One bucket (`:session/rules`) holds user facts + behavior rules.
 - Trailer holds three summaries — minimal token cost for the historical iters.
-- `(turn "t4")` returns the conversational answer on demand without bloating trailer.
+- `(introspect-turn "t4")` returns the conversational answer on demand without bloating trailer.
 
 ---
 
@@ -723,8 +724,9 @@ USER > Działaj — spec + plan.
 ```
 ```clojure
 MODEL >
-(spec-set! :logging-edn
-           {:title      "src/logging.clj emits structured EDN events"
+(fact-set! :logging-edn
+           {:body       "src/logging.clj emits structured EDN events"
+            :tags       #{:spec}
             :acceptance ["emit-event takes a map and prints (pr-str …)"
                          "log/2 delegates to emit-event"
                          "no str/format remains in src/logging.clj"]
@@ -754,11 +756,7 @@ MODEL >
 ### CTX AFTER TURN 2 (excerpt)
 
 ```clojure
-:session/specs
-  {:logging-edn {:title      "src/logging.clj emits structured EDN events"
-                 :acceptance […]
-                 :facts      [:logging-current-shape :no-event-fn]
-                 :status     :draft :born "t2/i1/f1"}}
+;; spec :logging-edn now lives as a fact tagged :spec in :session/facts
 :session/tasks
   {:introduce-emit-event {:title "introduce emit-event fn" :spec :logging-edn
                           :depends-on [] :status :todo :born "t2/i1/f2"}
@@ -836,7 +834,7 @@ MODEL >
 (task-set! :rewire-log {:status :done :evidence ["t3/i3/f1"]})    ;; same v/patch covered both
 => :ok
 
-(spec-set! :logging-edn {:status :done})
+(fact-set! :logging-edn {:status :done})
 ;; engine stamps :done-born "t4/i5/f1"
 => :ok
 
@@ -849,10 +847,7 @@ MODEL >
 ```clojure
 :session/facts {:emit-event-shape {:body "emit-event takes {:level :msg :ts?} and prints (pr-str)" :born "t4/i3/f1"}}
 
-:session/specs
-  {:logging-edn {:title "…" :facts [:logging-current-shape :no-event-fn]    ;; refs point to dropped facts — soft
-                 :acceptance […]
-                 :status :done :born "t2/i1/f1" :done-born "t4/i5/f1"}}
+;; spec :logging-edn (in :session/facts tagged :spec) is now :status :done
 
 :session/tasks
   {:introduce-emit-event {…done with evidence + journal…}
@@ -968,7 +963,7 @@ MODEL >
 ### Engine changes
 
 1. **CTX storage** — `session_state.ctx TEXT` (already exists or add).
-2. **Per-subtree functions** — `fact-set!` / `fact-remove!` / `spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `satisfy-hint!`. Bind in SCI hidden-sym set; engine validates shape, stamps `:born`, auto-journals on task `:status` changes, soft-warns on missing required fields. Write through to `session_state.ctx` blob.
+2. **Per-subtree functions** — `fact-set!` / `fact-remove!` / `task-set!` / `task-remove!` / `satisfy-hint!`. Bind in SCI hidden-sym set; engine validates shape, stamps `:born`, auto-journals on task `:status` changes, soft-warns on missing required fields. Spec semantics are encoded as `:tags #{:spec}` on a fact; engine soft-validates `:acceptance` field. Write through to `session_state.ctx` blob.
 3. **`iter` / `form` / `turn` / `iter-heads` / `turn-list`** — bind in SCI hidden-sym set; SELECT against `session_turn` / `session_turn_iteration`.
 4. **`(done {…})`** — handle `:trailer-drop` and `:trailer-summarize` keys; engine auto-pin loop.
 5. **Trailer comparator** — parse `t<N>/i<N>` segments for sort.
@@ -994,7 +989,7 @@ MODEL >
 ### Prompt changes
 
 **Already done in `src/.../internal/prompt.clj`:**
-- Session vocabulary (turn / iter / form / scope) — added.
+- Session vocabulary (introspect-turn / iter / form / scope) — added.
 - Fence vs block — fence is the markdown delimiter; form is the unit.
 
 **Deferred until engine ships the new CTX:**
@@ -1029,8 +1024,8 @@ MODEL >
  :session/workspace  {:branch :trunk :head :dirty? :stats}
  :session/symbols    {sym {:arglists :doc :born}}
 
- :session/facts      {keyword {:body :scope? :tags? :born? :source?}}
- :session/specs      {keyword {:title :acceptance :facts :status :born :done-born?}}
+ :session/facts      {keyword {:body :scope? :tags? :born? :source?
+                               :acceptance? :facts? :status? :done-born?}}
  :session/tasks      {keyword {:title :spec :depends-on :status
                                :evidence :journal :born :blocked-on?}}
 
@@ -1038,8 +1033,8 @@ MODEL >
                       {:scope :summary}]}                                    ; summary entry
 ```
 
-Eight substantive subtrees. Two engine-rendered; five memos via
-per-subtree functions (`rule-*`, `decision!`, `fact-*`, `spec-*`, `task-*`);
+Five substantive subtrees. Two engine-rendered; two memos via
+per-subtree functions (`fact-*` and `task-*`);
 one trailer via `done`. Symbols managed natively via `defn` / `(def x nil)`
 against existing Vis persistence.
 
