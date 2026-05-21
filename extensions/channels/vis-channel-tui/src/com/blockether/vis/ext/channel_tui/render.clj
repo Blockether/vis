@@ -2439,7 +2439,6 @@
     [(:type err) (:message err) (get-in err [:data :raw-data])]))
 
 (def ^:private auto-collapse-line-threshold 12)
-(def ^:private reasoning-auto-collapse-line-threshold 10)
 (def ^:private auto-collapse-char-threshold 700)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
@@ -2703,7 +2702,10 @@
   [x]
   (if (channel-ir? x) (vis/render x :plain) (str x)))
 
-(defn- channel-body-copy-text
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} channel-body-copy-text
+  ;; Retained alongside `tag-copy-block-body` for callers that still pass
+  ;; disclosure-copy payloads. The toggle UI itself is gone, but the
+  ;; helpers stay so external code can compose its own copy flow.
   [x]
   (if (channel-ir? x) (vis/render x :markdown) (str x)))
 
@@ -2759,7 +2761,7 @@
   ;; suffix into the clipboard.
   #{:toggle-details})
 
-(defn- entries->body-text
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} entries->body-text
   "Reconstruct the user-readable body text from a vec of `{:line :meta}`
    entries. Strips the leading paint marker (one zero-width / format
    codepoint) ONLY when present; plain answer-markdown rows have no
@@ -3319,7 +3321,7 @@
    assistant bubbles. Live progress and final/cancel rendering must call this
    instead of formatting iterations themselves. The only caller-specific UI is
    the trailer after these entries (spinner, final answer, or cancelled note)."
-  [{:keys [iterations content-w settings now-ms viewport-rows session-id
+  [{:keys [iterations content-w settings now-ms session-id
            session-turn-id detail-expansions live? suppress-trace?]
     :or   {live? false suppress-trace? false}}]
   (let [raw-iterations (or iterations [])
@@ -3332,13 +3334,11 @@
         show-iteration-headers? false
         ;; Per user directive: every iteration is always visible.
         ;; The legacy PROGRESS HISTORY collapse + `:progress/live-
-        ;; iteration-limit` truncation were removed. `_` retains the
-        ;; settings binding shape callers may still pass through.
+        ;; iteration-limit` truncation were removed; the settings key is
+        ;; accepted only for back-compatibility with old callers.
         _live-iteration-limit (get settings :progress/live-iteration-limit)
-        line-entry     (fn [line] {:line line :meta nil})
         grouped-iterations (collapse-repeated-error-runs iterations)
         visible-iterations grouped-iterations
-        history-summary nil
         iter-entry-fn  (fn [[idx entry]]
                          (let [visible  (visible-iteration-entry entry show-silent?)
                                stripped (if show-thinking? visible (dissoc visible :thinking))
@@ -3374,8 +3374,7 @@
                              (cached* k render!)
                              (render!))))]
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
-      (vec (concat (or history-summary [])
-             (mapcat iter-entry-fn visible-iterations))))))
+      (vec (mapcat iter-entry-fn visible-iterations)))))
 
 (defn- queued-preview
   [text]

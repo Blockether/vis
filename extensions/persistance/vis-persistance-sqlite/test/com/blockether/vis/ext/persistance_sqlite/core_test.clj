@@ -25,7 +25,6 @@
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
-   [com.blockether.vis.internal.env.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [honey.sql :as sql]
@@ -2221,8 +2220,8 @@
   "Eval `src` in `ctx` with a fresh def-sink bound; derive dep edges
    from a source walk; persist the iteration. Returns iteration-id."
   [store turn-id ctx src]
-  (let [sink (sp/fresh-sink-atom)]
-    (binding [sp/*def-sink-atom* sink]
+  (let [sink (env/fresh-sink-atom)]
+    (binding [env/*def-sink-atom* sink]
       (sci/eval-string+ ctx src {:ns (sci/find-ns ctx 'user)}))
     (let [snap (lp/def-sink->vars-snapshot @sink src nil)
           deps (->> (lp/dep-edges-from-source src)
@@ -2408,7 +2407,7 @@
         ;; whatever a + b are bound to at restore time.
         (let [ctx2 (sci/init {:namespaces {'user {}}})]
           (doseq [entry restored]
-            (binding [sp/*def-sink-atom* (sp/fresh-sink-atom)]
+            (binding [env/*def-sink-atom* (env/fresh-sink-atom)]
               (sci/eval-string+ ctx2 (:expr entry) {:ns (sci/find-ns ctx2 'user)})))
           ;; New a (100) + new b (5) = 105; (use-c) = 1050.
           (let [r-c     (sci/eval-string+ ctx2 "c"     {:ns (sci/find-ns ctx2 'user)})
@@ -2491,7 +2490,7 @@
           ;; values. Returning 300 means every layer cooperated.
           (let [ctx2 (sci/init {:namespaces {'user {}}})]
             (doseq [entry restored]
-              (binding [sp/*def-sink-atom* (sp/fresh-sink-atom)]
+              (binding [env/*def-sink-atom* (env/fresh-sink-atom)]
                 (sci/eval-string+ ctx2 (:expr entry) {:ns (sci/find-ns ctx2 'user)})))
             (let [r (sci/eval-string+ ctx2 "(pipeline 5)" {:ns (sci/find-ns ctx2 'user)})]
               (expect (= 300 (:val r)))))
@@ -2501,7 +2500,7 @@
           ;; not just a coincidence of the original eval order.
           (let [ctx3 (sci/init {:namespaces {'user {}}})]
             (try
-              (binding [sp/*def-sink-atom* (sp/fresh-sink-atom)]
+              (binding [env/*def-sink-atom* (env/fresh-sink-atom)]
                 (sci/eval-string+ ctx3 (:expr (by-name "pipeline"))
                   {:ns (sci/find-ns ctx3 'user)}))
               ;; defn defines the fn (it does not eval the body); the

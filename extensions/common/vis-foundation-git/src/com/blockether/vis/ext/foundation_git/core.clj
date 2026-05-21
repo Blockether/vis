@@ -88,7 +88,8 @@
                :examples ["(git/diff)"
                           "(git/diff {:from \"HEAD~3\"})"
                           "(git/diff {:from \"main\" :to \"feature\"})"
-                          "(git/diff {:path \"src/foo.clj\"})"]})))
+                          "(git/diff {:path \"src/foo.clj\"})"
+                          "(git/diff {:from \"HEAD~1\" :patch? true})"]})))
    (let [{:keys [from to path]} (or opts {})
          _ (doseq [[k v] {:from from :to to :path path}]
              (when (and (some? v) (not (string? v)))
@@ -109,8 +110,9 @@
                        (and from (not ws-base)) nil  ;; :from + no :to -> base..WT
                        ws-base                  "HEAD"  ;; default workspace shape
                        :else                    nil)
+         patch?      (boolean (:patch? opts))
          status      (git-core/status-snapshot root-file)
-         files       (vec (or (git-core/diff-numstat root-file base new-rev path) []))
+         files       (vec (or (git-core/diff-numstat root-file base new-rev path patch?) []))
          porcelain   (if new-rev [] (vec (or (:entries status) [])))
          head        (:head status)
          +sum        (reduce + 0 (map :+ files))
@@ -210,23 +212,32 @@
 (defn git-show-fn
   "Detailed view of one commit.
 
-   `(git/show \"sha\")` or `(git/show {:rev \"sha\"})`. Returns the canonical
-   commit map (sha, author, email, committer, committed-at, parents,
-   subject, body) plus :files (per-file +/- numstat against the first
-   parent) and :stat totals."
+   Signatures:
+     (git/show \"sha\")
+     (git/show {:rev \"sha\"})
+     (git/show {:rev \"sha\" :patch? true})  ; per-file unified diff
+
+   Returns the canonical commit map (sha, author, email, committer,
+   committed-at, parents, subject, body) plus :files (per-file +/-
+   numstat against the first parent) and :stat totals. With
+   `:patch? true` every file entry also carries `:patch` with the
+   unified-diff text (truncated at ~64KB per file)."
   ([env arg]
-   (let [rev (cond
-               (string? arg) arg
-               (map? arg)    (:rev arg)
-               :else         nil)]
+   (let [{:keys [rev patch?]}
+         (cond
+           (string? arg) {:rev arg}
+           (map? arg)    arg
+           :else         (do (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
+                                      {:type :foundation-git/invalid-opts :opts arg
+                                       :examples ["(git/show \"HEAD\")"
+                                                  "(git/show \"abc1234\")"
+                                                  "(git/show {:rev \"HEAD~1\"})"
+                                                  "(git/show {:rev \"HEAD\" :patch? true})"]}))))]
      (when-not (and (string? rev) (seq rev))
        (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
-                {:type :foundation-git/invalid-opts :opts arg
-                 :examples ["(git/show \"HEAD\")"
-                            "(git/show \"abc1234\")"
-                            "(git/show {:rev \"HEAD~1\"})"]})))
+                {:type :foundation-git/invalid-opts :opts arg})))
      (let [root   (io/file (env-root env))
-           result (git-core/show-commit root rev)]
+           result (git-core/show-commit root rev {:with-patch? (boolean patch?)})]
        (when-not result
          (throw (ex-info (str "git/show could not resolve revision: " rev)
                   {:type :foundation-git/unknown-rev :rev rev})))
@@ -235,32 +246,47 @@
 (defn git-blame-fn
   "Per-line blame for one tracked file.
 
-   `(git/blame \"src/foo.clj\")`           — whole file
-   `(git/blame {:path \"src/foo.clj\" :from 10 :to 40})` — line range
+   Signatures:
+     (git/blame \"src/foo.clj\")                      ; whole file
+     (git/blame {:path \"src/foo.clj\" :from 10 :to 40})  ; line range
+     (git/blame {:path \"src/foo.clj\"
+                 :ignore-revs [\"abc123\" \"def456\"]}) ; peel past those commits
 
-   Returns `{:path :head :total :lines [{:line :sha :short-sha :author
-   :email :at :content :source-line} ...]}`. Outside the work tree or on
-   untracked files returns `:foundation-git/not-tracked`."
+   `:ignore-revs` accepts sha prefixes or full shas. For every line
+   attributed to one of those commits, the function re-blames the file
+   from that commit's parent and re-maps the line by content proximity.
+   Useful for skipping noisy whitespace / formatter / mass-rename
+   commits so the real authorship surfaces.
+
+   Returns `{:path :head :total :ignored-revs :lines [...]}`. Outside the
+   work tree or on untracked files throws `:foundation-git/not-tracked`."
   ([env arg]
-   (let [{:keys [path from to]}
+   (let [{:keys [path from to ignore-revs]}
          (cond
            (string? arg) {:path arg}
            (map? arg)    arg
            :else         (throw (ex-info (str "git/blame expected a path string or opts map, got " (pr-str arg))
                                   {:type :foundation-git/invalid-opts :opts arg
                                    :examples ["(git/blame \"src/foo.clj\")"
-                                              "(git/blame {:path \"src/foo.clj\" :from 10 :to 40})"]})))]
+                                              "(git/blame {:path \"src/foo.clj\" :from 10 :to 40})"
+                                              "(git/blame {:path \"src/foo.clj\" :ignore-revs [\"abc1234\"]})"]})))]
      (when-not (and (string? path) (seq path))
        (throw (ex-info (str "git/blame requires a non-blank :path, got " (pr-str arg))
                 {:type :foundation-git/invalid-opts :opts arg})))
+     (when (and (some? ignore-revs) (not (sequential? ignore-revs)))
+       (throw (ex-info (str "git/blame :ignore-revs must be a vector/list of sha strings, got " (pr-str ignore-revs))
+                {:type :foundation-git/invalid-opts :opts arg :key :ignore-revs})))
      (let [root   (io/file (env-root env))
-           result (git-core/blame-file root path {:from from :to to})]
+           result (git-core/blame-file root path
+                    {:from from :to to
+                     :ignore-revs (when (seq ignore-revs)
+                                    (vec (filter string? ignore-revs)))})]
        (when-not result
          (throw (ex-info (str "git/blame failed: file is outside the repo or not tracked: " path)
                   {:type :foundation-git/not-tracked :path path})))
        (extension/success {:result result})))))
 
-(def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts map: {:from ref :to ref :path P} for arbitrary range + path filter. :to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [...] :porcelain [...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts map: {:from ref :to ref :path P :patch? bool} for arbitrary range + path filter; :patch? true includes per-file unified-diff text (truncated at ~64KB/file). :to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [{:file :+ :- [:patch]}] :porcelain [...]}. JGit-backed; no host git binary needed."
        :arglists '([] [opts])} diff git-diff-fn)
 
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}. JGit-backed; no host git binary needed."
@@ -269,10 +295,10 @@
 (def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a `{:limit N :path P :ref R :since D :until D :author S}` map. :since/:until accept ISO date strings, epoch ms/s, or java.util.Date. :author is a case-insensitive substring match on name OR email. Returns {:branch :commits [{:sha :short-sha :author :email :at :committer :committer-email :committed-at :subject :body :parents [...]} ...]}. JGit-backed; no host git binary needed."
        :arglists '([] [arg])} log git-log-fn)
 
-(def ^{:doc "Detailed view of one commit. Accepts a sha string or {:rev sha}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. JGit-backed; no host git binary needed."
+(def ^{:doc "Detailed view of one commit. Accepts a sha string or {:rev sha :patch? bool}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. With :patch? true each file entry also carries :patch with the unified-diff text. JGit-backed; no host git binary needed."
        :arglists '([arg])} show git-show-fn)
 
-(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {:path P :from L :to L}. Returns {:path :head :total :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {:path P :from L :to L :ignore-revs [sha ...]}. :ignore-revs peels past noisy commits (whitespace/formatters/renames) by re-blaming from each ignored commit's parent. Returns {:path :head :total :ignored-revs :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}. JGit-backed; no host git binary needed."
        :arglists '([arg])} blame git-blame-fn)
 
 (defn- inject-env
