@@ -80,10 +80,13 @@
 ;;; ── Text ───────────────────────────────────────────────────────────────────
 
 (defn- sanitize-for-lanterna
-  "Strip control characters (0x00-0x1F except tab/newline) that Lanterna
-   rejects with IllegalArgumentException. Replaces them with spaces."
+  "Strip paint-only/control characters that must never hit raw Lanterna
+   putString. Control chars become spaces. Inline style sentinels are removed:
+   styled painters consume them, but raw fallback paths must not show PUA tofu."
   ^String [^String s]
-  (.replaceAll s "[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]" " "))
+  (-> s
+    (.replaceAll "[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]" " ")
+    (.replaceAll "[\\uE110-\\uE119]" "")))
 
 (defn put-str!
   "Draw a string at (col, row). Control characters are sanitized."

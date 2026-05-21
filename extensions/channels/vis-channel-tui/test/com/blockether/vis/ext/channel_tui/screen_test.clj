@@ -149,6 +149,21 @@
       (expect (false? (live-progress-only-change? base scrolled)))
       (expect (false? (boolean (partial-live-frame? base scrolled true {:total-h 100} false))))))
 
+  (it "does not use partial live repaint while cancellation is in flight"
+    (let [base {:loading? true
+                :cancelling? true
+                :messages [{:role :assistant :text "live"}]
+                :input {:lines [""]}
+                :progress {:iterations []}
+                :render-version 1
+                :layout {:total-h 10}}
+          cancelling (assoc base
+                       :progress {:iterations [:new]}
+                       :render-version 2
+                       :layout {:total-h 12})]
+      (expect (live-progress-only-change? base cancelling))
+      (expect (false? (boolean (partial-live-frame? base cancelling true {:total-h 10} false))))))
+
   (it "classifies header hover bumps as header-only repaints"
     (let [base {:loading? false
                 :messages [{:role :assistant :text "stable body"}]
