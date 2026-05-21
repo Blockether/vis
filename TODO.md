@@ -10,7 +10,39 @@ Ranking po ROI (wpływ na real-world model loop / koszt zaimplementowania).
 
 ## 🔥 Critical
 
-### [ ] T1 — Surface structured `:failures` / `:reason` / `:loop-hint` in tool error envelope
+### [x] T1 — Surface structured `:failures` / `:reason` / `:loop-hint` in tool error envelope ✅
+
+**Status:** Done. Re-probe `target/probe/logs/s9_v3.log`.
+
+**Decision summary**
+- Kept the `throw` contract — engine MUST surface failures loudly via
+  the iteration trailer, otherwise the environment would silently
+  swallow business errors. (User: "po to są te failures żeby środowisko
+  się ogarnęło".)
+- Fix lives at the **rendering** seam, not the throw seam.
+- `patch-safe` / `patch-envelope-safe` rewritten to return
+  `{:success? :failures :checks :loop-hint :message}` directly (jeden
+  patch, jebać kompatybilność wsteczną).
+- `patch-tool` projects failures into `(extension/failure ...)` with a
+  full `:error` map.
+- `tool-result->public-value` re-throws as before — model still sees
+  the exception in the trailer.
+- NEW: `ex->op-error` lifts structured ex-data into `:data` when
+  throwable is `:type :vis/tool-failure`. `error-lines` in `ctx.clj`
+  already renders `:data` as `;; ! data {…}` so the trailer carries
+  `:reason`, `:failures`, `:loop-hint`, `:checks` verbatim. Model reads
+  them without try/catch.
+
+**Re-probe evidence (`s9_v3.log`)**
+- `:reason :stale` directly observable
+- `:failures` carries per-edit map: `:edit-index :path :matches
+  :filtered-matches :consecutive-failures :stale {…}`
+- `:loop-hint` nil (1st failure; threshold is 3)
+- Model self-reports: "trailer info enough to act on without try/catch"
+
+<details><summary>Original spec</summary>
+
+#### Original T1 spec
 
 **Problem (S9)** — Model wywołuje `v/patch` ze stale `:expected-mtime`.
 `patch-safe` rzuca `ExceptionInfo` z bogatym `ex-data` (`:failures` zawiera
@@ -30,9 +62,15 @@ bez ręcznego `(try ... (catch clojure.lang.ExceptionInfo e (ex-data e)))`.
 - Filtr na whitelistę (nie kopiować `:throwable`).
 - Test: po stale patch model widzi `(:reason (:error result))` = `:stale`.
 
-**Open questions**
-- Czy whitelist per-op, czy globalny dla wszystkich `v/*`?
-- Jak mapować `:checks` (lista) — pełna czy bounded preview?
+**Open questions resolved**
+- Whitelist per-op vs globalny — chose globalny via `:type
+  :vis/tool-failure`. Every tool that uses `extension/failure` with a
+  structured `:error` gets the lift for free.
+- `:checks` preview bounding — kept full list (per-check
+  `:search-preview` already bounded to 180 chars). Revisit if real-world
+  batches blow up the trailer.
+
+</details>
 
 ---
 
