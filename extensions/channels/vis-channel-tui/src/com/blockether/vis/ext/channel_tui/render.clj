@@ -994,7 +994,12 @@
 (def ^:private code-text-inset-markers
   #{code-marker code-ok-marker code-err-marker code-status-marker
     result-marker err-result-marker
-    md-code-marker th-md-code-marker})
+    md-code-marker th-md-code-marker
+    thinking-marker
+    th-md-h1-marker th-md-h2-marker th-md-h3-marker
+    th-md-bold-marker th-md-bullet-marker th-md-quote-marker
+    th-md-hr-marker th-md-summary-marker
+    th-md-table-head-marker th-md-table-sep-marker th-md-table-row-marker})
 
 (defn- ansi-code->fg [code current-fg base-fg]
   (case code
@@ -1804,7 +1809,8 @@
                   (cond
               ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
-                    (do (p/set-colors! g t/iteration-header-fg bg-color)
+                    (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
 
               ;; ── Thinking - dimmed bg, italic ──

@@ -1568,30 +1568,51 @@
     (reduce + 0)))
 
 (defn- preserved-thinking-replay-messages
-  "Provider-agnostic preserved-thinking replay. Returns at most the single
-   canonical `:assistant-message` from the immediately previous compatible
-   iteration; empty vec when none.
+  "Provider-agnostic preserved-thinking replay. Returns every compatible
+   `:assistant-message` from `trailer-iters` in arrival order.
 
-   This is intentionally conservative for Z.ai/GLM. Session
-   a9389e1d showed that replaying a long run of assistant messages can
-   contaminate the next step, amplify token usage, and make GLM believe a
-   previous answer is still active. If preserved thinking is useful, the
-   only state we trust is the last model step in the same live user
-   turn. Older iterations remain visible through the trailer.
+   Why every message, not just the last:
+     - Z.ai / GLM-5.x preserved thinking (`clear_thinking: false`) keeps
+       reasoning_content across assistant turns only when each prior
+       assistant message echoes the model's full reasoning back. Drop a
+       step and GLM either re-derives the same scratch state at every
+       iteration (observed: session 3102ad16, 26 iterations re-reading
+       the same file with `cached_tokens` pinned at 2368) or starts to
+       hallucinate that an earlier conclusion is still live.
+     - Anthropic extended thinking signs each block with an HMAC and
+       refuses replay if the chain is broken; sending only the last
+       block fails signature validation as soon as the model produced
+       more than one block since the user message.
+     - OpenAI Responses encrypted reasoning items must replay in order
+       — the next call rejects a single isolated item with
+       'reasoning without following item'.
 
-   The wire serializer for the active model translates the canonical
-   message to its native shape; iteration-loop never branches on provider."
+   The earlier conservative 'last-only' policy (rationale comment
+   referenced session a9389e1d) was tuned for pre-`clear_thinking`
+   GLM-4.6 where any replay contaminated the next step. The modern
+   GLM-5.1 + Anthropic 4.x + OpenAI Responses contract all want full
+   chains; pi-ai's `transform-messages.js` follows the same approach
+   (every prior assistant `thinking` block preserved when same model).
+
+   `compatible-preserved-thinking-trailer-iters` upstream has already
+   filtered iterations to (a) same provider+model as the target call,
+   (b) opted in via `:preserved-thinking/replay?` (live-turn freshly
+   produced iterations), (c) carrying a valid `:assistant-message`,
+   (d) signature-compatible with the replay target. Anything that
+   reaches this fn is safe to replay verbatim.
+
+   The wire serializer for the active model translates each canonical
+   message to its native shape; iteration-loop never branches on
+   provider."
   [trailer-iters]
-  (if-let [msg (some->> trailer-iters
-                 reverse
-                 (keep #(some-> % second :assistant-message))
-                 first)]
-    ;; Keep this call so oversized single-step reasoning is still observable
-    ;; to future budget instrumentation. We intentionally do not drop the
-    ;; immediately previous step by size: single-step continuity beats replay.
-    (do (replay-reasoning-chars msg)
-      [msg])
-    []))
+  (let [msgs (vec (keep #(some-> % second :assistant-message) trailer-iters))]
+    (when (seq msgs)
+      ;; Keep this call so oversized reasoning chains are observable to
+      ;; future budget instrumentation. Sum across the full chain instead
+      ;; of just the latest step — budget watchers care about cumulative
+      ;; replay size, not single-step size.
+      (doseq [m msgs] (replay-reasoning-chars m)))
+    msgs))
 
 (defn- replay-context
   "Small identity map for deciding whether preserved-thinking can be
