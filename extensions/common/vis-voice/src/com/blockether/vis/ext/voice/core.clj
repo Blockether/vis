@@ -376,7 +376,7 @@
       {:level :warn
        :check-id ::piper
        :message (str "Piper model: check failed: " (or (ex-message t) t))
-       :remediation "Run `vis extensions voice models status` for detailed voice model diagnostics."})))
+       :remediation "Run `vis ext voice models status` for detailed voice model diagnostics."})))
 
 (defn- parakeet-message []
   (try
@@ -392,7 +392,7 @@
       {:level :warn
        :check-id ::parakeet
        :message (str "Parakeet ASR model: check failed: " (or (ex-message t) t))
-       :remediation "Run `vis extensions voice models status` for detailed voice model diagnostics."})))
+       :remediation "Run `vis ext voice models status` for detailed voice model diagnostics."})))
 
 (defn doctor-fn [_environment]
   [(voice-runtime-message)

@@ -2313,22 +2313,91 @@
     (and (contains? stream-truncated-types (:type data))
       (zero? (or (:content-acc-len data) 0)))))
 
+(def ^:private MAX_MAX_TOKENS_EXCEEDED_RETRIES
+  "Max transparent retries for `:svar.llm/max-tokens-exceeded` per
+   iteration. Each retry bumps `:extra-body {:max_tokens N}` by
+   `MAX_TOKENS_RETRY_BUMP_FACTOR` so a reasoning-heavy iteration that
+   burnt the auto-budget on hidden thinking gets another shot with
+   headroom. 1 retry = 2 total attempts; subsequent bumps would either
+   exceed the provider's output ceiling or pay 2-4× for the same
+   reasoning content, so we cap retries here and let the next iteration
+   redistribute the work instead."
+  1)
+
+(def ^:private MAX_TOKENS_RETRY_BUMP_FACTOR
+  "Multiplier applied to the previous `max_tokens` on a max-tokens
+   retry. 2.0 doubles the budget, which empirically covers the
+   reasoning-heavy iterations observed on session 52983a42 (Copilot
+   Claude burning the full 2048 auto-budget on hidden reasoning before
+   ever opening a code fence) without overshooting the provider's
+   output-cap on subsequent calls."
+  2.0)
+
+(defn- max-tokens-exceeded-error?
+  "True when an exception represents `:svar.llm/max-tokens-exceeded`
+   from svar's `ask-code!*` blank-content guard. The model produced
+   reasoning but the visible content slot was empty because the
+   provider's `finish_reason: \"length\"` truncated the response.
+   Retry-able via `:extra-body {:max_tokens N}` bump."
+  [^Throwable e]
+  (= :svar.llm/max-tokens-exceeded (:type (ex-data e))))
+
+(defn- bumped-max-tokens-extra-body
+  "Build an `:extra-body` override that doubles the previous `max_tokens`.
+   `prev-max` comes from the error's `:output-tokens` (svar reports
+   exactly how many tokens the truncated call produced — that number
+   equals the cap the provider enforced). Falls back to 8192 × factor
+   for callers that lost the count along the way."
+  [prev-extra-body prev-max]
+  (let [base   (long (or prev-max 8192))
+        bumped (long (Math/ceil (* (double base) MAX_TOKENS_RETRY_BUMP_FACTOR)))]
+    (assoc (or prev-extra-body {}) :max_tokens bumped)))
+
+(defn- max-tokens-exhausted?
+  "True for `:svar.llm/max-tokens-exceeded` errors that survived all
+   per-iteration retries. See svar's `ask-code!*` blank-content guard
+   for the underlying detection."
+  [iteration-error-data]
+  (= :svar.llm/max-tokens-exceeded (:type iteration-error-data)))
+
 (defn- llm-provider-error-context
   [iteration iteration-error-data]
-  (let [output-overflow? (stream-output-overflow? iteration-error-data)
-        message (if output-overflow?
+  (let [output-overflow?    (stream-output-overflow? iteration-error-data)
+        max-tokens-exhaust? (max-tokens-exhausted? iteration-error-data)
+        data                (:data iteration-error-data)
+        reasoning-length    (some-> data :reasoning-length long)
+        output-tokens       (some-> data :output-tokens long)
+        message (cond
+                  output-overflow?
                   "Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens)."
+                  max-tokens-exhaust?
+                  (str "Provider truncated the response at max_tokens ("
+                    (or output-tokens "?")
+                    " tokens consumed, "
+                    (or reasoning-length "?")
+                    " went to hidden reasoning, 0 to visible content). "
+                    "Vis already retried once with a doubled budget; this iteration"
+                    " still hit the cap.")
+                  :else
                   (str "LLM call failed: " (:message iteration-error-data)))
-        hint (if output-overflow?
+        hint (cond
+               output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
+               max-tokens-exhaust?
+               "Shorten the next probe so reasoning + answer fit inside the budget: trim file reads with narrower :start/:max-lines on v/cat, drop unrelated context from defs, and emit `(done ...)` early if the previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               :else
                "Adjust your approach or finish with `(done ...)` using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate
-             :type      (if output-overflow?
-                          :llm-provider/output-budget-exhausted
-                          :llm-provider/call-failed)
+             :type      (cond
+                          output-overflow?    :llm-provider/output-budget-exhausted
+                          max-tokens-exhaust? :llm-provider/max-tokens-exhausted
+                          :else               :llm-provider/call-failed)
              :iteration (inc (long iteration))
              :message   message
              :hint      hint}
+      max-tokens-exhaust?
+      (assoc :reasoning-length reasoning-length
+        :output-tokens output-tokens)
       (and (not output-overflow?) (:type iteration-error-data))
       (assoc :source-type (:type iteration-error-data)))))
 
@@ -2746,22 +2815,48 @@
                            {:stable-prompt-messages stable-prompt-messages
                             :initial-user-content   user-request
                             :previous-turn-context  nil})
+        ;; The cumulative `:input-tokens` field sums `prompt_tokens`
+        ;; from every iteration in this turn — useful for billing /
+        ;; budget accounting but MUST NOT be passed to the
+        ;; context-pressure hint, which compares against the model's
+        ;; per-call context window. Session 3102ad16 (2026-05-20)
+        ;; surfaced the bug: after 13 iterations the cumulative input
+        ;; crossed the 50% threshold even though each individual
+        ;; request stayed at ~10K tokens. The model received fake
+        ;; \"Context pressure: ~115K / 200K (58%)\" warnings and started
+        ;; emitting `(satisfy-hint! :vis.foundation/context-pressure)`
+        ;; defensively while still operating on a tiny window.
+        ;;
+        ;; `:last-iter-input` carries the most recent SINGLE-CALL
+        ;; `prompt_tokens`, which is the right proxy for \"what the next
+        ;; request will look like\". Reasoning tokens from a preserved-
+        ;; thinking-enabled provider already flow into the next iter's
+        ;; `prompt_tokens` server-side, so a single last-iter snapshot
+        ;; already captures that growth without us re-computing it.
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
-                          :cache-creation-tokens 0})
+                          :cache-creation-tokens 0
+                          :last-iter-input 0 :last-iter-reasoning 0
+                          :iter-count 0})
         accumulate-usage! (fn [api-usage]
                             (when api-usage
                               (swap! usage-atom
                                 (fn [acc]
-                                  (-> acc
-                                    (update :input-tokens + (or (:prompt_tokens api-usage) 0))
-                                    (update :output-tokens + (or (:completion_tokens api-usage) 0))
-                                    (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
-                                    (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
-                                                               (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
-                                                               0))
-                                    (update :cache-creation-tokens + (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
-                                                                       (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
-                                                                       0)))))))
+                                  (let [iter-in     (long (or (:prompt_tokens api-usage) 0))
+                                        iter-reason (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))]
+                                    (-> acc
+                                      (update :input-tokens + iter-in)
+                                      (update :output-tokens + (or (:completion_tokens api-usage) 0))
+                                      (update :reasoning-tokens + iter-reason)
+                                      (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
+                                                                 (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
+                                                                 0))
+                                      (update :cache-creation-tokens + (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
+                                                                         (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
+                                                                         0))
+                                      ;; Per-iter snapshots: overwrite, not accumulate.
+                                      (assoc :last-iter-input iter-in)
+                                      (assoc :last-iter-reasoning iter-reason)
+                                      (update :iter-count inc)))))))
         ;; Per-iteration token + cost projection. The schema's
         ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
         ;; carry one row per iteration so a future `vis report`
@@ -2963,7 +3058,21 @@
                                        :session-title (:title current-session)
                                        :title-refresh? (zero? (long iteration))
                                        :turn-position turn-position
-                                       :input-tokens (:input-tokens @usage-atom)
+                                       ;; Use `:last-iter-input` so the hint reflects the SIZE OF
+                                       ;; THE NEXT REQUEST instead of the cumulative-turn total.
+                                       ;; `:input-tokens` (cumulative) is kept on the snapshot for
+                                       ;; budget-aware extensions that want to surface turn-level
+                                       ;; spend separately. Falls back to cumulative on iter 0
+                                       ;; (before any provider call produced a `prompt_tokens`
+                                       ;; reading) so first-iter hints are not gated on a missing
+                                       ;; sample.
+                                       :input-tokens (let [u @usage-atom]
+                                                       (if (pos? (long (:iter-count u)))
+                                                         (long (:last-iter-input u))
+                                                         (long (:input-tokens u))))
+                                       :cumulative-input-tokens (:input-tokens @usage-atom)
+                                       :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
+                                       :iter-count (:iter-count @usage-atom)
                                        :context-limit effective-context-limit})
                     current-ctx-map (vctx/build
                                       {:environment environment
@@ -3010,7 +3119,18 @@
                     resolved-model pre-resolved-model
                     effective-routing (or routing {})
                     iteration-result
-                    (loop [attempt 0]
+                    ;; Per-iteration retry state.
+                    ;;   `:attempt`              — generic counter shared by every retry policy.
+                    ;;   `:max-tokens-attempt`   — separate counter so a stream-truncated retry
+                    ;;                              earlier in the call doesn't burn the max-tokens
+                    ;;                              quota (and vice versa).
+                    ;;   `:current-extra-body`   — carries any caller-supplied extra-body PLUS the
+                    ;;                              max_tokens bumps applied so far. Re-merged with
+                    ;;                              svar's auto-params downstream; explicit override
+                    ;;                              wins per `preserve-auto-params` merge order.
+                    (loop [attempt 0
+                           max-tokens-attempt 0
+                           current-extra-body extra-body]
                       (let [result (try
                                      (run-iteration environment effective-messages
                                        {:iteration iteration :reasoning-level reasoning-level
@@ -3022,10 +3142,11 @@
                                         {:user-request user-request
                                          :previous-iterations trailer-iters
                                          :previous-blocks (vec (mapcat (comp :blocks second) trailer-iters))}
-                                        :extra-body extra-body})
+                                        :extra-body current-extra-body})
                                      (catch Exception e
-                                       (if (and (stream-truncated-error? e)
-                                             (< attempt MAX_STREAM_TRUNCATED_RETRIES))
+                                       (cond
+                                         (and (stream-truncated-error? e)
+                                           (< attempt MAX_STREAM_TRUNCATED_RETRIES))
                                          (do
                                            (tel/log! {:level :warn
                                                       :id ::stream-truncated-retry
@@ -3035,13 +3156,54 @@
                                                              :type (:type (ex-data e))}}
                                              (str "Stream truncated, transparent retry "
                                                (inc attempt) "/" MAX_STREAM_TRUNCATED_RETRIES))
-                                           ::retry)
+                                           ::retry-stream)
+
+                                         ;; Max-tokens cap: model burnt the entire output
+                                         ;; budget on hidden reasoning before opening a code
+                                         ;; fence. Double the budget and try once more so the
+                                         ;; turn doesn't fail when the same call would have
+                                         ;; succeeded with a slightly larger ceiling. Reasoning-
+                                         ;; heavy iterations on Copilot Claude (session
+                                         ;; 52983a42) hit this when the provider's
+                                         ;; finish_reason: \"length\" left content-acc empty.
+                                         (and (max-tokens-exceeded-error? e)
+                                           (< max-tokens-attempt MAX_MAX_TOKENS_EXCEEDED_RETRIES))
+                                         (let [data    (ex-data e)
+                                               prev-max (or (:output-tokens data)
+                                                          (:max_tokens current-extra-body)
+                                                          8192)
+                                               bumped   (bumped-max-tokens-extra-body
+                                                          current-extra-body prev-max)]
+                                           (tel/log! {:level :warn
+                                                      :id ::max-tokens-exceeded-retry
+                                                      :data {:iteration iteration
+                                                             :attempt (inc max-tokens-attempt)
+                                                             :max-retries MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                                             :prev-max prev-max
+                                                             :new-max (:max_tokens bumped)
+                                                             :reasoning-length (:reasoning-length data)}}
+                                             (str "max_tokens exhausted on reasoning (~"
+                                               (or (:reasoning-length data) "?")
+                                               " reasoning tokens); retry "
+                                               (inc max-tokens-attempt) "/"
+                                               MAX_MAX_TOKENS_EXCEEDED_RETRIES
+                                               " with max_tokens=" (:max_tokens bumped)))
+                                           ;; Bump max-tokens-attempt so a second cap-hit
+                                           ;; doesn't loop forever; keep `attempt` flat so a
+                                           ;; subsequent stream-truncated still has its own
+                                           ;; quota.
+                                           {::retry-max-tokens bumped})
+
+                                         :else
                                          (handle-iteration-exception! e
                                            {:iteration iteration :messages effective-messages
                                             :routing effective-routing :reasoning-level reasoning-level}))))]
-                        (if (= result ::retry)
-                          (recur (inc attempt))
-                          result)))]
+                        (cond
+                          (= result ::retry-stream)
+                          (recur (inc attempt) max-tokens-attempt current-extra-body)
+                          (and (map? result) (contains? result ::retry-max-tokens))
+                          (recur attempt (inc max-tokens-attempt) (::retry-max-tokens result))
+                          :else result)))]
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
                   ;; mid-call, `cancel!` flipped the flag BEFORE
@@ -3063,12 +3225,42 @@
                     (let [llm-provider-error (llm-provider-error-context iteration iteration-error-data)
                           error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
                           trace-entry {:iteration iteration :error iteration-error-data :final? false}
-                          empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
-                                            (:reasoning (:data iteration-error-data)))
+                          ;; Preserve forensic evidence on every error
+                          ;; path, not just `:empty-content`. Pre-fix
+                          ;; only empty-content carried `:reasoning`
+                          ;; into the DB row; `:max-tokens-exceeded`
+                          ;; (svar.llm) and any other generate-time
+                          ;; failure had their reasoning silently
+                          ;; dropped. Session 52983a42 iter 14 surfaced
+                          ;; the bug — model emitted ~2.2K reasoning
+                          ;; tokens before the cap-truncation, but the
+                          ;; persisted row had `:thinking nil` so the
+                          ;; transcript could not show what the model
+                          ;; was actually thinking about.
+                          ;;
+                          ;; INTEGRITY NOTE: `err-data` is the raw
+                          ;; `ex-data` of svar's thrown exception (see
+                          ;; `exception->iteration-error-data` →
+                          ;; `format-exception` which just attaches
+                          ;; `(ex-data t)` verbatim). `:reasoning` /
+                          ;; `:content` / `:partial-content` /
+                          ;; `:api-usage` are produced by svar's
+                          ;; `envelope-data` (`internal/llm.clj`) which
+                          ;; only `assoc`s the SSE-accumulator values
+                          ;; — NO transformation, no synthesis. The
+                          ;; same `reasoning` variable feeds the
+                          ;; success path's `:thinking` column. We
+                          ;; never invent reasoning text here.
+                          err-data            (:data iteration-error-data)
+                          err-reasoning       (:reasoning err-data)
+                          err-partial-content (or (:content err-data)
+                                                (:partial-content err-data))
+                          err-api-usage       (or (:api-usage iteration-result)
+                                                (:api-usage err-data))
                           err-iteration-id (persistance/db-store-iteration! (:db-info environment)
-                                             (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                                               (cond-> {:session-turn-id session-turn-id :vars [] :code ""
-                                                        :thinking empty-reasoning :duration-ms 0 :llm-full-duration-ms 0 :error iteration-error-data
+                                             (let [tc (iteration-token-cost err-api-usage)]
+                                               (cond-> {:session-turn-id session-turn-id :vars [] :code (or err-partial-content "")
+                                                        :thinking err-reasoning :duration-ms 0 :llm-full-duration-ms 0 :error iteration-error-data
                                                         :llm-messages effective-messages
                                                         :llm-provider (:provider resolved-model)
                                                         :llm-model (str (:name resolved-model))
@@ -3090,7 +3282,7 @@
                       (emit-hook! on-chunk
                         {:phase     :iteration-error
                          :iteration (inc (long iteration))
-                         :thinking  empty-reasoning
+                         :thinking  err-reasoning
                          :error     iteration-error-data
                          :done?     true}
                         "on-chunk (iteration error)")

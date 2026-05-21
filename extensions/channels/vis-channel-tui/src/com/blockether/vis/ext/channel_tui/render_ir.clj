@@ -347,7 +347,7 @@
    the literal `[x]` / `[ ]` prefix is stripped from the first run."
   [ordered? runs]
   (when-not ordered?
-    (let [first-text (some-> runs first :text str)]
+    (let [first-text (or (some-> runs first :text str) "")]
       (cond
         (re-find #"^\[[xX]\]\s+" first-text)
         {:marker "☑️  " :prefix #"^\[[xX]\]\s+"}
