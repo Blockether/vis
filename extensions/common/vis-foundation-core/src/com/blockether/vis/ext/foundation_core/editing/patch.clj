@@ -333,12 +333,13 @@
     0x202F 0x205F 0x3000})
 
 (defn- normalize-line
-  "Trim + fold typographic dashes/quotes/spaces to ASCII. Last-resort
-   fuzzy comparison key — see Codex `seek_sequence::normalise`."
+  "Fold typographic dashes/quotes/spaces to ASCII. Does NOT trim — the
+   `:unicode` pass is intentionally single-purpose so it stays orthogonal
+   to the `:trim` / `:rstrip` passes (and so the destructive `:trim` pass
+   keeps running last)."
   [^String s]
-  (let [trimmed (str/trim s)
-        sb (StringBuilder.)]
-    (doseq [^Character ch trimmed]
+  (let [sb (StringBuilder.)]
+    (doseq [^Character ch s]
       (let [cp (int ch)]
         (cond
           (contains? dash-codepoints cp)         (.append sb \-)
@@ -357,16 +358,95 @@
         (recur (inc k))
         false))))
 
-(defn seek-sequence
-  "Find `pattern` (a vec of strings) inside `lines` (vec of strings)
-   starting at `start`. When `eof?` is true, first try the EOF position
-   then fall back to `start`.
+(def ^:private fuzzy-passes
+  "Per-line fuzzy strategies. `seek-sequence-with-pass` orchestrates them
+   in two phases so the structure-preserving `:relative-indent` pass can
+   run BEFORE `:trim` (which destroys indentation structure).
 
-   Match strictness, in order: exact -> rstrip -> trim -> Unicode
-   normalize. Returns the start index or nil."
+   Layout convention (must stay in sync with `seek-sequence-with-pass`):
+     index 0  :exact
+     index 1  :rstrip
+     index 2  :unicode    <- last of the tight-equality passes
+     index 3  :trim       <- looser, runs only after :relative-indent
+
+   Each entry is `[<pass-name> <cmp-fn>]`. The pass keyword is returned
+   alongside the start index so failure messages can tell the model
+   *why* an edit went fuzzy (e.g. `:trim` = indentation drift)."
+  [[:exact   =]
+   [:rstrip  (fn [^String a ^String b] (= (str/trimr a) (str/trimr b)))]
+   [:unicode (fn [^String a ^String b] (= (normalize-line a) (normalize-line b)))]
+   [:trim    (fn [^String a ^String b] (= (str/trim a)  (str/trim b)))]])
+
+(defn- leading-ws-count
+  "Count of leading space/tab characters on `line`."
+  ^long [^String line]
+  (loop [i 0]
+    (if (and (< i (count line))
+          (let [c (.charAt line i)]
+            (or (= c \space) (= c \tab))))
+      (recur (inc i))
+      i)))
+
+(defn- min-leading-indent
+  "Smallest leading-whitespace count across non-blank `lines`, or nil if
+   every line is blank. Used by relative-indent matcher."
+  [lines]
+  (let [counts (->> lines
+                 (remove str/blank?)
+                 (map leading-ws-count))]
+    (when (seq counts)
+      (apply min counts))))
+
+(defn- de-indent
+  "Strip `n` leading chars from `line` if it has them. Blank lines are
+   left alone (mirrors Python's textwrap.dedent semantics — blank lines
+   don't constrain indent)."
+  [^long n ^String line]
+  (cond
+    (str/blank? line) line
+    (>= (count line) n) (subs line n)
+    :else line))
+
+(defn- seek-relative-indent
+  "5th fuzzy pass (Aider-style): try matching `pattern` after stripping
+   the common leading indent from both pattern and each candidate
+   window. Lets a SEARCH block authored at one indent level still match
+   the same code at a different level — common LLM whitespace quirk.
+
+   Returns `{:start <i> :indent-delta <n>}` where `:indent-delta` is the
+   number of leading WS chars the *file's* matched window carries minus
+   the pattern's, or nil when no window matches. Callers use
+   `:indent-delta` to re-indent the `replace` lines."
+  [lines pattern start]
+  (let [plen (count pattern)
+        llen (count lines)]
+    (when (and (pos? plen) (<= plen llen))
+      (let [p-indent (or (min-leading-indent pattern) 0)
+            p-deindented (mapv #(de-indent p-indent %) pattern)
+            end (- llen plen)]
+        (loop [i start]
+          (when (<= i end)
+            (let [window (subvec lines i (+ i plen))
+                  w-indent (or (min-leading-indent window) 0)
+                  w-deindented (mapv #(de-indent w-indent %) window)]
+              (if (= p-deindented w-deindented)
+                {:start i :indent-delta (- (long w-indent) (long p-indent))}
+                (recur (inc i))))))))))
+
+(defn seek-sequence-with-pass
+  "Like `seek-sequence` but returns `{:start <i> :pass <kw> :indent-delta <n>?}`
+   so callers can surface which fuzzy pass produced the hit. `pass` is one of
+   `:exact :rstrip :unicode :relative-indent :trim`. nil when no pass matches.
+
+   Pass priority is deliberately:
+     :exact → :rstrip → :unicode → :relative-indent → :trim
+   `:relative-indent` runs BEFORE `:trim` because `:trim` is destructive
+   (it drops both leading and trailing whitespace from each line and so
+   collapses different indentation structures to the same key). The more
+   structure-preserving `:relative-indent` should win whenever it can."
   [lines pattern start eof?]
   (cond
-    (empty? pattern) start
+    (empty? pattern) {:start start :pass :exact}
 
     (> (count pattern) (count lines)) nil
 
@@ -376,19 +456,86 @@
           end  (- llen plen)
           eof-start (when eof? (max 0 (- llen plen)))
           search-start (or eof-start start)
-          cmps [=
-                (fn [^String a ^String b] (= (str/trimr a) (str/trimr b)))
-                (fn [^String a ^String b] (= (str/trim a)  (str/trim b)))
-                (fn [^String a ^String b] (= (normalize-line a) (normalize-line b)))]]
-      (loop [pass cmps]
-        (if-let [cmp (first pass)]
-          (let [hit (loop [i search-start]
-                      (cond
-                        (> i end) nil
-                        (match-at? lines pattern i cmp) i
-                        :else (recur (inc i))))]
-            (or hit (recur (next pass))))
-          nil)))))
+          run-pass (fn [cmp]
+                     (loop [i search-start]
+                       (cond
+                         (> i end) nil
+                         (match-at? lines pattern i cmp) i
+                         :else (recur (inc i)))))
+          [exact-pass-pairs trim-pass-pair] (split-at 3 fuzzy-passes)
+          ;; First sweep: exact, rstrip, unicode. Order matters.
+          tight-hit (reduce
+                      (fn [_ [pass-name cmp]]
+                        (when-let [hit (run-pass cmp)]
+                          (reduced {:start hit :pass pass-name})))
+                      nil
+                      exact-pass-pairs)]
+      (or tight-hit
+        ;; Second: structure-preserving relative-indent before the
+        ;; destructive `:trim` pass.
+        (when-let [{:keys [start indent-delta]}
+                   (seek-relative-indent lines pattern search-start)]
+          {:start start :pass :relative-indent :indent-delta indent-delta})
+        ;; Last resort: trim. Pass is named `:trim` here but corresponds
+        ;; to the 3rd entry in `fuzzy-passes` — see split-at above.
+        (let [[pass-name cmp] (first trim-pass-pair)]
+          (when-let [hit (run-pass cmp)]
+            {:start hit :pass pass-name}))))))
+
+(defn seek-sequence
+  "Find `pattern` (a vec of strings) inside `lines` (vec of strings)
+   starting at `start`. When `eof?` is true, first try the EOF position
+   then fall back to `start`.
+
+   Match strictness, in order: exact -> rstrip -> trim -> Unicode
+   normalize -> relative-indent. Returns the start index or nil.
+   For pass attribution use `seek-sequence-with-pass`."
+  [lines pattern start eof?]
+  (:start (seek-sequence-with-pass lines pattern start eof?)))
+
+(defn split-content-lines
+  "Split a file blob into a vec of lines, preserving empty trailing
+   element behaviour consistent with `compute-update`. Public so the
+   exact-replace path can share the same line view as the envelope."
+  [^String s]
+  (let [arr (.split s "\n" -1)
+        v   (vec arr)]
+    (if (and (pos? (count v)) (= "" (peek v)))
+      (pop v)
+      v)))
+
+(defn char-offset-at-line
+  "Char offset in `content` where 0-based line `line-idx` starts.
+   Returns `(count content)` if `line-idx` reaches past the last line.
+   Public so the exact-replace path can map line indices back to char
+   positions for substring splicing."
+  ^long [^String content ^long line-idx]
+  (loop [pos 0 i 0]
+    (if (= i line-idx)
+      pos
+      (let [nl (str/index-of content "\n" pos)]
+        (if nl
+          (recur (inc (long nl)) (inc i))
+          (count content))))))
+
+(defn apply-indent-delta
+  "Re-indent `lines` by `delta` leading spaces (positive adds, negative
+   strips). Blank lines untouched. Used by exact-replace when a fuzzy
+   :relative-indent hit fires and the `replace` payload must follow the
+   file's actual indentation rather than the SEARCH block's."
+  [delta lines]
+  (cond
+    (zero? delta) (vec lines)
+    (pos? delta) (let [pad (apply str (repeat delta \space))]
+                   (mapv (fn [^String l]
+                           (if (str/blank? l) l (str pad l)))
+                     lines))
+    :else (let [strip (- (long delta))]
+            (mapv (fn [^String l]
+                    (if (str/blank? l)
+                      l
+                      (subs l (min strip (leading-ws-count l)))))
+              lines))))
 
 ;; =============================================================================
 ;; compute-update — produce new file content from chunks (parity with
