@@ -108,7 +108,7 @@ new key. No counters subtree. No mint operator.
  :session/tasks      {keyword {:title :spec :status :deps :added-turn :done-turn}}
 
  ;; model-managed only via (done {:trailer … :trailer-drop …})
- :session/trailer    [{:t :i :note :forms [{:tag :src :result :error}]}]}
+ :session/trailer    [{:scope :note :forms [{:scope :tag :src :result :error}]}]}
 ```
 
 Seven substantive subtrees. Two engine-rendered, four memos via `mem-*`,
@@ -122,7 +122,7 @@ resolve to canonical `:op.tag/observation` or `:op.tag/mutation`.
 
 ### Registered ops (verified)
 
-From `extensions/common/vis-foundation/src/.../core.clj` and `.../editing/core.clj`:
+From `extensions/common/vis-foundation-core/src/.../core.clj` and `.../editing/core.clj`:
 
 | op | tag |
 |---|---|
@@ -187,7 +187,7 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Plain text in th
 
  ;; ──────────────────────────────────────────────────────────────────
  ;; :session/symbols — SCI user-defined symbols that are live right now.
- ;;   :defined [t i] = the iter coord where the current definition was set.
+ ;;   :born <scope-string> = the form coord (t<N>/i<N>/f<N>) where the current definition was set.
  ;;   Symbols (defined as) nil are dropped from this view automatically.
  ;;
  ;;   To call    : (build-ws "x")
@@ -197,8 +197,8 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Plain text in th
  ;;   To inspect : (meta #'build-ws)        — live arglists/doc.
  ;; ──────────────────────────────────────────────────────────────────
  :session/symbols
-   {auth-check {:arglists ([tok]) :doc "literal-compare check; deprecated" :defined [5 1]}
-    emit-event {:arglists ([{:keys [level msg] :as ev}]) :defined [4 1]}}
+   {auth-check {:arglists ([tok]) :doc "literal-compare check; deprecated" :born "t5/i1/f1"}
+    emit-event {:arglists ([{:keys [level msg] :as ev}]) :born "t4/i1/f1"}}
 
  ;; ──────────────────────────────────────────────────────────────────
  ;; :session/rules — durable facts about the user and how to respond.
@@ -268,7 +268,7 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Plain text in th
  ;; ──────────────────────────────────────────────────────────────────
  ;; :session/trailer — pinned iter envelopes from prior turns.
  ;;   Sorted by [t i] ascending. Each entry captures one iter:
- ;;     {:t turn  :i iter  :note "…"  :forms [{:tag :src :result :error}]}
+ ;;     {:scope "t<N>/i<N>" :note "…" :forms [{:scope "t<N>/i<N>/f<N>" :tag :src :result :error}]}
  ;;   :tag ∈ #{:observation :mutation}.
  ;;   Per-form keys :result/:error are dropped when default.
  ;;   :done forms are excluded.
@@ -281,17 +281,17 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Plain text in th
  ;;   Full session detail via (v/session-state).
  ;; ──────────────────────────────────────────────────────────────────
  :session/trailer
-   [{:t 3 :i 2 :note "auth literal compare on \"secret\""
-     :forms [{:tag :op.tag/observation :src "(v/cat \"src/auth.clj\")"
+   [{:scope "t3/i2" :note "auth literal compare on \"secret\""
+     :forms [{:scope "t3/i2/f1" :tag :op.tag/observation :src "(v/cat \"src/auth.clj\")"
               :result "(ns auth)\n(defn check [tok] (= tok \"secret\"))\n"}
-             {:tag :op.tag/mutation    :src "(defn auth-check [tok] (= tok \"secret\"))"}
-             {:tag :op.tag/mutation    :src "(mem-set! [:session/tasks :wire :status] :doing)"}]}
-    {:t 3 :i 4 :note "patched check/1 → bcrypt verify"
-     :forms [{:tag :op.tag/mutation :src "(v/patch [{:path \"src/auth.clj\" :search \"…\" :replace \"…\"}])"
+             {:scope "t3/i2/f2" :tag :op.tag/mutation    :src "(defn auth-check [tok] (= tok \"secret\"))"}
+             {:scope "t3/i2/f3" :tag :op.tag/mutation    :src "(mem-set! [:session/tasks :wire :status] :doing)"}]}
+    {:scope "t3/i4" :note "patched check/1 → bcrypt verify"
+     :forms [{:scope "t3/i4/f1" :tag :op.tag/mutation :src "(v/patch [{:path \"src/auth.clj\" :search \"…\" :replace \"…\"}])"
               :result {:applied 1 :path "src/auth.clj"}}
-             {:tag :op.tag/mutation :src "(mem-set! [:session/tasks :wire :status] :done)"}]}
-    {:t 5 :i 1 :note "git status post-patch"
-     :forms [{:tag :op.tag/observation :src "(git/status)"
+             {:scope "t3/i4/f2" :tag :op.tag/mutation :src "(mem-set! [:session/tasks :wire :status] :done)"}]}
+    {:scope "t5/i1" :note "git status post-patch"
+     :forms [{:scope "t5/i1/f1" :tag :op.tag/observation :src "(git/status)"
               :result {:branch "feat/auth-bcrypt" :ahead 1 :modified ["src/auth.clj"]}}]}]}
 ```
 
@@ -399,7 +399,7 @@ USER > Pokaż mi src/auth.clj i powiedz co tam jest.
 ```
 ```clojure
 MODEL >
-(v/cat "src/auth.clj")          ;; iter [1 1]
+(v/cat "src/auth.clj")          ;; scope t1/i1
 => "(ns auth)\n(defn check [tok] (= tok \"secret\"))\n"
 
 (done {:answer "Plik definiuje `check/1`: literal compare na `\"secret\"`."})
@@ -425,13 +425,13 @@ Pin the patch iter for cross-turn recall.
 
 ```clojure
 MODEL >
-(v/cat "src/auth.clj")          ;; iter [2 1]
+(v/cat "src/auth.clj")          ;; scope t2/i1
 => "(ns auth)\n(defn check [tok] (= tok \"secret\"))\n"
 
 (v/patch [{:path "src/auth.clj"
            :search "(defn check [tok] (= tok \"secret\"))"
            :replace "(defn check [tok] (bcrypt/check tok stored-hash))"}])
-;; iter [2 2]
+;; scope t2/i2
 => {:applied 1 :path "src/auth.clj"}
 
 (done {:answer  "Zamieniono `check` na bcrypt verify."
@@ -448,8 +448,8 @@ MODEL >
     :stats {"src/auth.clj" {:added 1 :removed 1}}}
  :session/symbols   {}
  :session/trailer
-   [{:t 2 :i 2 :note "patched check/1 → bcrypt verify"
-     :forms [{:tag :op.tag/mutation
+   [{:scope "t2/i2" :note "patched check/1 → bcrypt verify"
+     :forms [{:scope "t2/i2/f1" :tag :op.tag/mutation
               :src "(v/patch [{:path \"src/auth.clj\" :search \"(defn check [tok] (= tok \\\"secret\\\"))\"
                               :replace \"(defn check [tok] (bcrypt/check tok stored-hash))\"}])"
               :result {:applied 1 :path "src/auth.clj"}}]}]
@@ -494,10 +494,10 @@ USER > Działaj.
 MODEL >
 (mem-set! [:session/tasks :introduce-emit-event :status] :doing)
 
-(v/cat "src/logging.clj")          ;; iter [2 2]
+(v/cat "src/logging.clj")          ;; scope t2/i2
 => "(ns logging)\n(defn log [level msg] (println (str/format \"%s: %s\" level msg)))\n"
 
-(defn emit-event [{:keys [level msg] :as ev}]   ;; iter [2 3]
+(defn emit-event [{:keys [level msg] :as ev}]   ;; scope t2/i3
   (println (pr-str ev)))
 => #'vis.user/emit-event
 
@@ -522,17 +522,17 @@ MODEL >
    {:branch "feat/logging" :trunk "main" :head "ghi9012" :dirty? true
     :stats {"src/logging.clj" {:added 5 :removed 2}}}
  :session/symbols
-   {emit-event {:arglists ([{:keys [level msg] :as ev}]) :defined [2 3]}}
+   {emit-event {:arglists ([{:keys [level msg] :as ev}]) :born "t2/i3/f1"}}
  :session/tasks
    {:introduce-emit-event {:status :done :done-turn 2 :added-turn 1 :spec :logging-edn :deps []}
     :convert-call-sites   {:status :todo :deps [:introduce-emit-event] :added-turn 1 …}
     :wire-levels          {:status :todo :deps [:introduce-emit-event] :added-turn 1 …}}
  :session/trailer
-   [{:t 2 :i 3 :note "defined emit-event"
-     :forms [{:tag :op.tag/mutation
+   [{:scope "t2/i3" :note "defined emit-event"
+     :forms [{:scope "t2/i3/f1" :tag :op.tag/mutation
               :src "(defn emit-event [{:keys [level msg] :as ev}]\n  (println (pr-str ev)))"}]}
-    {:t 2 :i 4 :note "patched src/logging.clj to use emit-event"
-     :forms [{:tag :op.tag/mutation
+    {:scope "t2/i4" :note "patched src/logging.clj to use emit-event"
+     :forms [{:scope "t2/i4/f1" :tag :op.tag/mutation
               :src "(v/patch [{:path \"src/logging.clj\" :search \"…\" :replace \"…\"}])"
               :result {:applied 1}}]}]}
 ```
@@ -548,7 +548,7 @@ MODEL >
           {:body "emit-event auto-stamps :ts (UTC ms) if absent"
            :tags #{:logging :api}})
 
-(defn emit-event [{:keys [level msg] :as ev}]   ;; iter [3 2]
+(defn emit-event [{:keys [level msg] :as ev}]   ;; scope t3/i2
   (println (pr-str (assoc ev :ts (or (:ts ev) (System/currentTimeMillis))))))
 => #'vis.user/emit-event
 
@@ -564,13 +564,13 @@ MODEL >
 ### CTX AFTER TURN 3 (symbols + trailer excerpt)
 ```clojure
 :session/symbols
-  {emit-event {:arglists ([{:keys [level msg] :as ev}]) :defined [3 2]}}   ;; coord refreshed
+  {emit-event {:arglists ([{:keys [level msg] :as ev}]) :born "t3/i2/f1"}}   ;; born refreshed on redef
 
 :session/trailer
-  [{:t 2 :i 3 :note "defined emit-event" :forms […]}
-   {:t 2 :i 4 :note "patched src/logging.clj to use emit-event" :forms […]}
-   {:t 3 :i 2 :note "added auto-ts stamping to emit-event"
-    :forms [{:tag :op.tag/mutation
+  [{:scope "t2/i3" :note "defined emit-event" :forms […]}
+   {:scope "t2/i4" :note "patched src/logging.clj to use emit-event" :forms […]}
+   {:scope "t3/i2" :note "added auto-ts stamping to emit-event"
+    :forms [{:scope "t3/i2/f1" :tag :op.tag/mutation
              :src "(defn emit-event [{:keys [level msg] :as ev}]\n  (println (pr-str (assoc ev :ts (or (:ts ev) (System/currentTimeMillis))))))"}]}]
 ```
 
@@ -594,10 +594,10 @@ USER > OK, już nie potrzebuję emit-event. Wyczyść też ślady promocji z tra
 ```
 ```clojure
 MODEL >
-(def emit-event nil)               ;; iter [5 1]
+(def emit-event nil)               ;; scope t5/i1
 
 (done {:answer       "Usunięte. `emit-event` od następnej tury nieaktywne. Wyczyszczone wpisy z trailera."
-       :trailer-drop [[2 3] [2 4] [3 2]]})
+       :trailer-drop ["t2/i3" "t2/i4" "t3/i2"]})
 => :done
 ```
 
@@ -662,9 +662,9 @@ MODEL >
    Lean **shorten in render**. Examples above render canonical to
    match codebase exactly.
 
-2. **`:defined [t i]` semantics.** Currently = LAST redef coord. Earlier
-   open question (first-def vs last-redef) is resolved here in favour of
-   last-redef. Confirm.
+2. **`:born <scope>` semantics on `:session/symbols`.** Currently = LAST
+   redef coord. Earlier open question (first-def vs last-redef) resolved
+   in favour of last-redef. Confirm.
 
 3. **Workspace branch spawn — engine or model?** `:branch "main"` on a
    fresh session: should engine auto-spawn before any `v/patch`, or rely
@@ -680,7 +680,7 @@ MODEL >
 6. **Big result handling in trailer entries.** A 47kB file body in
    `:forms[0] :result` is real. Three policies discussed: inline verbatim,
    truncate at render, inline + soft warn. Lean **inline + soft warn**
-   (`;; ⚠ trailer entry [3 2] form 0 result is 47kB; consider :note summary`).
+   (`;; ⚠ trailer entry t3/i2/f1 result is 47kB; consider :note summary`).
    Model can `:trailer-drop` if size matters.
 
 7. **Auto-prune of `:session/trailer`.** Grows unbounded otherwise.
@@ -692,7 +692,7 @@ MODEL >
    model wants to remember. Engine fills `:error` map, `:result` is
    dropped (nil + error present → drop result).
 
-9. **Pin from earlier turn.** `(done {:trailer [{:t 3 :i 2 :note "…"}]})`
+9. **Pin from earlier turn.** `(done {:trailer [{:scope "t3/i2" :note "…"}]})`
    — explicit `:t` overrides the default-to-current rule.
 
 10. **`(meta #'sym)` survives `restore-sandbox!`?** Open. To probe live
@@ -714,7 +714,7 @@ MODEL >
  :session/specs      {keyword {:title :acceptance :status :added-turn}}
  :session/tasks      {keyword {:title :spec :status :deps :added-turn :done-turn}}
 
- :session/trailer    [{:t :i :note :forms [{:tag :src :result :error}]}]}
+ :session/trailer    [{:scope :note :forms [{:scope :tag :src :result :error}]}]}
 ```
 
 Seven substantive subtrees. Two engine-rendered, four memos (mem-*), one
