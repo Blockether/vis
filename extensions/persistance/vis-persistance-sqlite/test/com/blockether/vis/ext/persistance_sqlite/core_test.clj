@@ -112,16 +112,16 @@
          :aggregate-key :tool/trace
          :kind :trace/tool-result
          :iteration-id iid
-         :iteration-block-index 0
+         :iteration-form-index 0
          :content {:ok true}})
       (let [rows (vis/db-list-extension-aggregates s
                    {:extension-id 'test.ext.alpha
                     :iteration-id iid
-                    :iteration-block-index 0})]
+                    :iteration-form-index 0})]
         (expect (= 1 (count rows)))
         (expect (= {:iteration-id (str iid)
-                    :iteration-block-index 0}
-                  (select-keys (:scope (first rows)) [:iteration-id :iteration-block-index])))
+                    :iteration-form-index 0}
+                  (select-keys (:scope (first rows)) [:iteration-id :iteration-form-index])))
         (expect (= {:ok true} (:content (first rows))))))))
 
 (defdescribe sqlite-extension-aggregate-index-data-filter-test

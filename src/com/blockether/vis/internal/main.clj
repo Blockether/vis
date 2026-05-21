@@ -845,7 +845,7 @@
       (stdout! (if (= :start (:status chunk))
                  (str head (trace-title "⌁" "response parse") " " (trace-dim "started")
                    (when-let [n (:raw-length chunk)] (str " " (trace-dim (str "raw=" n " chars"))))
-                   (when-let [n (:block-count chunk)] (str " " (trace-dim (str "blocks=" n)))))
+                   (when-let [n (:form-count chunk)] (str " " (trace-dim (str "blocks=" n)))))
                  (str head (trace-ok "✓ response parsed")
                    (when-let [n (:forms chunk)] (str " forms=" n))
                    (when-let [n (:code-length chunk)] (str " " (trace-dim (str "code=" n " chars"))))

@@ -328,6 +328,12 @@
      {:limit Integer/MAX_VALUE
       :selected-index selected-index})))
 
+(defn- runnable-slash-command-for-input
+  [screen input-state selected-index]
+  (or (slash/selected-suggestion
+        (slash-suggestions-for-input screen input-state selected-index))
+    (slash-command-for-input screen input-state)))
+
 (defn- command-argv
   [args]
   (if (str/blank? args)
@@ -2628,16 +2634,13 @@
                          (recur))
 
                        :send
-                       ;; Enter does NOT pick the highlighted slash
-                       ;; suggestion any more — Tab is the only key that
-                       ;; acts on the menu. Enter still runs an EXACT
-                       ;; slash command (the user typed `/clear` in
-                       ;; full and hit Enter), or otherwise submits the
-                       ;; input as a normal message. Keep this in sync
-                       ;; with the slash overlay title bar in render.clj
-                       ;; (`slash-title-hints`) which advertises only
-                       ;; `↑↓/wheel select` and `Tab complete`.
-                       (do (if-let [cmd (slash-command-for-input screen state)]
+                       ;; Enter runs the highlighted slash suggestion
+                       ;; again. This restores the original TUI contract:
+                       ;; type `/`, pick with arrows/wheel, hit Enter to
+                       ;; run. Tab remains completion-only, inserting the
+                       ;; command text for editing before execution.
+                       (do (if-let [cmd (runnable-slash-command-for-input
+                                          screen state (:slash-command-index @state/app-db))]
                              (do (run-command! cmd (:slash/args cmd))
                                (state/dispatch [:reset-input]))
                              (submit-input! @state/app-db state))

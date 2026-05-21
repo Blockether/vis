@@ -636,7 +636,7 @@
             (try
               {:source source :result (sci/eval-form sci-ctx form)}
               (catch Throwable e
-                (let [err-map (try (extension/ex->op-error e {:block-source source})
+                (let [err-map (try (extension/ex->op-error e {:form-source source})
                                 (catch Throwable _
                                   {:message (or (ex-message e)
                                               (.getName (class e)))}))
@@ -710,7 +710,7 @@
                              :def-sink @def-sink
                              :lru     @lru
                              :forms   []
-                             :error   (try (extension/ex->op-error e {:block-source code})
+                             :error   (try (extension/ex->op-error e {:form-source code})
                                         (catch Throwable _
                                           {:message (or (ex-message e)
                                                       (.getName (class e)))}))}))))
@@ -723,7 +723,7 @@
                               :channel @channel-sink
                               :def-sink @def-sink
                               :lru     @lru
-                              :error   (try (extension/ex->op-error e {:block-source code})
+                              :error   (try (extension/ex->op-error e {:form-source code})
                                          (catch Throwable _
                                            {:message (or (ex-message e)
                                                        (.getName (class e)))}))}))]
@@ -808,7 +808,7 @@
                           :channel []
                           :def-sink []
                           :lru {}
-                          :error (try (extension/ex->op-error e {:block-source code})
+                          :error (try (extension/ex->op-error e {:form-source code})
                                    (catch Throwable _
                                      {:message (or (ex-message e)
                                                  (.getName (class e)))
@@ -842,7 +842,7 @@
      (instance? Throwable err)
      (try (extension/ex->op-error err
             (cond-> {}
-              code (assoc :block-source code)))
+              code (assoc :form-source code)))
        (catch Throwable _
          {:message (or (ex-message err) (.getName (class err)))}))
      :else
@@ -953,7 +953,7 @@
 ;; the model repeatedly emitting `(done ...)` next to a single
 ;; broken `(def ...)`.
 ;;
-;; Returns the error from the form at `form-idx` in `block-results`
+;; Returns the error from the form at `form-idx` in `form-results`
 ;; or nil when that form's evaluation succeeded. `form-idx` may be
 ;; nil (older answer-atom payloads) or out-of-bounds (defensive
 ;; against shape drift) - both yield nil (no discard).
@@ -961,16 +961,16 @@
 
 (defn answer-form-error
   "Return the `:error` produced by the form at `form-idx` in
-   `block-results`, or nil when the form succeeded or `form-idx`
+   `form-results`, or nil when the form succeeded or `form-idx`
    is missing/out-of-bounds. Pure; no side effects. Public so the
    loop and tests can both reach it without re-implementing the
    bounds check."
-  [block-results form-idx]
+  [form-results form-idx]
   (when (and form-idx
           (integer? form-idx)
           (not (neg? form-idx))
-          (< form-idx (count block-results)))
-    (:error (nth block-results form-idx))))
+          (< form-idx (count form-results)))
+    (:error (nth form-results form-idx))))
 
 ;; ---------------------------------------------------------------------------
 ;; Parsed form helpers
@@ -1042,25 +1042,25 @@
   [ask-result]
   (let [blocks     (or (:blocks ask-result) [])
         all-blocks (or (:all-blocks ask-result) blocks)]
-    {:block-count         (count blocks)
-     :all-block-count     (count all-blocks)
-     :dropped-block-count (max 0 (- (count all-blocks) (count blocks)))
+    {:form-count         (count blocks)
+     :all-form-count     (count all-blocks)
+     :dropped-form-count (max 0 (- (count all-blocks) (count blocks)))
      :saw-fence?          (boolean (:saw-fence? ask-result))
      :malformed?          (boolean (:malformed? ask-result))}))
 
 (defn- empty-code-error-with-observation
   "Use svar 0.5.5 fence observations to make no-code retries precise."
   [default-error ask-result]
-  (let [{:keys [all-block-count dropped-block-count saw-fence? malformed?]}
+  (let [{:keys [all-form-count dropped-form-count saw-fence? malformed?]}
         (ask-code-block-observation ask-result)]
     (cond
       malformed?
       "LLM returned a malformed Markdown code fence. Emit one complete ```clojure``` block with opener and closer on their own lines."
 
-      (and saw-fence? (pos? dropped-block-count))
+      (and saw-fence? (pos? dropped-form-count))
       (str "LLM returned fenced blocks, but none survived Clojure selection. "
         "Use a ```clojure``` fence; untagged or other-language fences are dropped. "
-        "Dropped blocks: " dropped-block-count " of " all-block-count ".")
+        "Dropped blocks: " dropped-form-count " of " all-form-count ".")
 
       saw-fence?
       "LLM returned fenced content, but no executable Clojure block was selected. Use exactly one ```clojure``` block."
@@ -1181,7 +1181,7 @@
 ;;     SCI as a parse error or unresolved-symbol error and the model
 ;;     self-corrects from the structured error.
 ;;   - `duplicate-fenced-blocks?` + `dedupe-fenced-block-code` +
-;;     `executable-block-source`/-`sources` — dedup now happens inline
+;;     `executable-form-source`/-`sources` — dedup now happens inline
 ;;     in `code-entries-preflight` on the block vector directly.
 
 (defn- code-entries-preflight
@@ -1950,7 +1950,7 @@
                          :started-at-ms parse-started-at-ms
                          :provider-duration-ms provider-duration-ms
                          :raw-length (count (or (:raw ask-result-raw) ""))
-                         :block-count (:block-count code-observation)
+                         :form-count (:form-count code-observation)
                          :code-observation code-observation}))
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
@@ -2156,10 +2156,10 @@
                               :render-segments render-segments
                               :vis/structurally-silent? (boolean structurally-silent?)}))
                      (range) code-entries)
-          code-blocks    (mapv :block executed)
-          block-results  (mapv :result executed)
-          block-segments (mapv :render-segments executed)
-          block-silents  (mapv :vis/structurally-silent? executed)
+          form-sources    (mapv :block executed)
+          form-results  (mapv :result executed)
+          form-segments (mapv :render-segments executed)
+          form-silents  (mapv :vis/structurally-silent? executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
@@ -2215,7 +2215,7 @@
                              structurally-silent? (assoc :vis/structurally-silent? true)
                              (:vis/silent result) (assoc :vis/silent true)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
-                     (range) code-blocks block-results block-segments block-silents))
+                     (range) form-sources form-results form-segments form-silents))
           silent-form-idxs (into #{}
                              (keep-indexed (fn [idx block]
                                              (when (or (:vis/silent block)
@@ -2245,7 +2245,7 @@
         ;; their boundary via `:channel/messages-renderer-fn`.
         (let [final-answer    value
               total-forms     (count code-entries)
-              own-form-error  (answer-form-error block-results form-idx)
+              own-form-error  (answer-form-error form-results form-idx)
               gate-error      (when (nil? own-form-error)
                                 (final-answer-gate-error environment iteration-position blocks value active-extensions
                                   (assoc answer-validation-context
@@ -2265,7 +2265,7 @@
                               (nil? (get-in blocks [form-idx :error])))
                             (assoc-in [form-idx :error]
                               (op-error validation-error
-                                {:code (get code-blocks form-idx)
+                                {:code (get form-sources form-idx)
                                  :phase :vis/final-answer-validation})))
               ;; Re-emit a `:phase :form-result` chunk for the
               ;; answer-bearing form when the validator attached an
