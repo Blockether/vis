@@ -37,6 +37,7 @@
   (:require
    [babashka.fs :as fs]
    [clojure.java.io :as io]
+   [clojure.set :as set]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-core.editing.patch :as patch]
@@ -218,12 +219,20 @@
      (read-file path n)            ; first n lines from line 1
      (read-file path offset n)     ; n lines starting at line `offset` (1-based)
 
-   Returns {:path :lines [[N text]...] :next-offset N? :truncated? B}.
+   Returns
+   `{:path :lines [[N text]…] :next-offset N? :eof? B :truncated? B
+     :mtime EPOCH-MS :size BYTES}`.
+
    `:lines` is a vec of `[line-number, text]` tuples — line number first so
    the model destructures `[ln t]` without offset arithmetic.
    `:next-offset` is nil at EOF, integer otherwise.
-   `:truncated?` is true when the byte cap (64KB) chopped the window short;
-   model paginates with `:next-offset` regardless.
+   `:eof? true` iff the window reached end-of-file (unambiguous; distinct
+   from `:truncated?` which only fires when the 64KB byte cap chopped the
+   window short mid-file). Together they let the model tell
+   `:seen-whole-file?` from `:more-remains-paginate`.
+   `:mtime` and `:size` mirror `File.lastModified` / `File.length`; pass
+   them as `:expected-mtime` / `:expected-size` on a subsequent
+   `v/patch` to fail closed if the file changed since the read.
    Each call's `:lines` payload is bounded by `max-cat-window-bytes`; that
    is also the persistence-blob ceiling (one Nippy row per call).
    Streaming: never slurps the whole file. Lines outside the window are
@@ -235,7 +244,9 @@
    (let [f        (ensure-existing-file! (safe-path path))
          byte-cap (long max-cat-window-bytes)
          skip     (dec (long offset))
-         limit    (long n)]
+         limit    (long n)
+         mtime    (.lastModified f)
+         size     (.length f)]
      (with-open [^java.io.BufferedReader rdr (io/reader f)]
        (loop [skipped 0]
          (when (and (< skipped skip)
@@ -255,7 +266,10 @@
              {:path        (rel-path f)
               :lines       lines
               :next-offset next-offset
-              :truncated?  (= stop :bytes)})
+              :eof?        eof?
+              :truncated?  (= stop :bytes)
+              :mtime       mtime
+              :size        size})
 
            (>= read-count limit)
            (recur acc bytes-used read-count :limit)
@@ -295,7 +309,9 @@
   (let [n        (long n)
         f        (ensure-existing-file! (safe-path path))
         byte-cap (long max-cat-window-bytes)
-        buf      (java.util.ArrayDeque.)]
+        buf      (java.util.ArrayDeque.)
+        mtime    (.lastModified f)
+        size     (.length f)]
     (with-open [^java.io.BufferedReader rdr (io/reader f)]
       (loop [total 0]
         (let [line (.readLine rdr)]
@@ -323,7 +339,10 @@
               {:path        (rel-path f)
                :lines       numbered
                :next-offset nil
-               :truncated?  bytes-truncated?})
+               :eof?        true
+               :truncated?  bytes-truncated?
+               :mtime       mtime
+               :size        size})
             (do
               (when (>= (.size buf) n) (.removeFirst buf))
               (.addLast buf line)
@@ -519,6 +538,16 @@
 ;; =============================================================================
 
 (def ^:private patch-required-keys #{:path :search :replace})
+(def ^:private patch-optional-keys
+  "Optional keys recognised on exact-replace edit maps.
+   - :after / :before  positional anchors (string; first exact occurrence)
+   - :nth              :first | :last | :all | 1-based positive integer
+   - :expected-mtime   epoch-ms; fail if file mtime differs (staleness guard)
+   - :expected-size    bytes;    fail if file size differs (staleness guard)"
+  #{:after :before :nth :expected-mtime :expected-size})
+
+(def ^:private patch-allowed-keys
+  (set/union patch-required-keys patch-optional-keys))
 
 (defn- coerce-patch-edits
   [edits]
@@ -532,25 +561,157 @@
               (throw (ex-info "v/patch edit must be a map"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
-            (let [missing (seq (remove #(contains? edit %) patch-required-keys))]
+            (let [missing (seq (remove #(contains? edit %) patch-required-keys))
+                  unknown (seq (remove patch-allowed-keys (keys edit)))]
               (when missing
                 (throw (ex-info "v/patch edit missing required keys"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :missing (vec missing)
+                          :edit edit})))
+              (when unknown
+                (throw (ex-info "v/patch edit has unknown keys"
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :unknown (vec unknown)
+                          :allowed (vec patch-allowed-keys)
                           :edit edit}))))
+            (let [nth-spec (:nth edit)]
+              (when (and (some? nth-spec)
+                      (not (or (#{:first :last :all} nth-spec)
+                             (and (integer? nth-spec) (pos? nth-spec)))))
+                (throw (ex-info "v/patch :nth must be :first, :last, :all or a positive integer"
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :nth nth-spec :edit edit}))))
             (update edit :path str))
       edits)))
 
-(defn- occurrence-count
+(defn- find-substring-positions
+  "All 0-based char positions where `needle` appears in `haystack`.
+   Throws on blank needle (would yield infinite matches)."
   [^String haystack ^String needle]
   (when (str/blank? needle)
     (throw (ex-info "v/patch :search must be non-blank"
              {:type :ext.foundation.editing/invalid-patch-search})))
-  (loop [idx 0 n 0]
+  (loop [idx 0 acc []]
     (let [hit (str/index-of haystack needle idx)]
       (if (nil? hit)
-        n
-        (recur (+ hit (count needle)) (inc n))))))
+        acc
+        (recur (+ (long hit) (count needle)) (conj acc (long hit)))))))
+
+(defn- filter-positions-by-anchors
+  "Drop positions that fall outside `:after` / `:before` boundaries.
+   `:after S` requires the match to start at-or-after the END of the first
+   exact occurrence of S. `:before S` requires the match's end to land
+   at-or-before the START of the first occurrence of S. Either anchor
+   missing in the file fails the whole edit."
+  [positions search-len ^String content {:keys [after before]}]
+  (let [after-pos (when after (str/index-of content (str after)))
+        before-pos (when before (str/index-of content (str before)))
+        anchor-error (cond
+                       (and after (nil? after-pos))   {:anchor :after  :value after}
+                       (and before (nil? before-pos)) {:anchor :before :value before})]
+    (if anchor-error
+      {:anchor-error anchor-error}
+      (let [floor   (if after  (+ (long after-pos) (count (str after)))  0)
+            ceiling (if before (long before-pos) Long/MAX_VALUE)]
+        {:positions (vec (filter (fn [^long p]
+                                   (and (>= p floor)
+                                     (<= (+ p (long search-len)) ceiling)))
+                           positions))}))))
+
+(defn- select-by-nth
+  "Pick concrete positions to mutate given `:nth` semantics.
+   nil / :first -> [first] when any; :last -> [last]; :all -> every position;
+   1-based integer -> exactly that one or nil when out of range."
+  [positions nth-spec]
+  (let [positions (vec positions)
+        n (count positions)]
+    (cond
+      (zero? n) nil
+      (= :all nth-spec) positions
+      (= :last nth-spec) [(peek positions)]
+      (or (nil? nth-spec) (= :first nth-spec)) [(first positions)]
+      (and (integer? nth-spec) (pos? nth-spec) (<= nth-spec n))
+      [(nth positions (dec nth-spec))]
+      :else nil)))
+
+(defn- apply-substring-replacements
+  "Splice `replace-text` into `content` at each `position`. Process from
+   END to START so earlier offsets stay valid."
+  [^String content positions search-len ^String replace-text]
+  (loop [^String out content
+         remaining (sort > positions)]
+    (if-let [pos (first remaining)]
+      (recur (str (subs out 0 pos)
+               replace-text
+               (subs out (+ (long pos) (long search-len))))
+        (next remaining))
+      out)))
+
+(defn- compute-window-indent-delta
+  "Even when a non-`:relative-indent` pass succeeded (e.g. `:trim`), the
+   matched window may sit at a different absolute indent than the SEARCH
+   block. Compute the delta so the `:replace` payload can be re-indented
+   uniformly. Returns 0 when either side has no non-blank line."
+  ^long [content-lines pattern line-start]
+  (let [window (subvec content-lines line-start (+ (long line-start) (count pattern)))
+        p-indent (#'patch/min-leading-indent pattern)
+        w-indent (#'patch/min-leading-indent window)]
+    (if (and p-indent w-indent)
+      (- (long w-indent) (long p-indent))
+      0)))
+
+(defn- fuzzy-line-match
+  "Line-based fuzzy fallback used only when exact substring search returns
+   zero hits AND `:search` spans multiple lines. Runs the 5-pass matcher
+   (exact -> rstrip -> trim -> unicode -> relative-indent) and converts
+   the line hit back to char offsets. Returns `{:char-start :char-end
+   :pass :indent-delta :line-start :line-end}` or nil.
+
+   Indent-delta is computed for EVERY non-exact pass, not just
+   `:relative-indent` — a `:trim` hit on a pattern authored at a
+   different indentation still needs `:replace` shifted to match the
+   file's actual indent."
+  [^String content ^String search]
+  (let [content-lines (patch/split-content-lines content)
+        search-lines  (patch/split-content-lines search)]
+    (when (and (>= (count search-lines) 2)
+            (seq content-lines))
+      (when-let [{:keys [start pass indent-delta]}
+                 (patch/seek-sequence-with-pass content-lines search-lines 0 false)]
+        (when (not= :exact pass)
+          (let [line-end   (+ (long start) (count search-lines))
+                char-start (patch/char-offset-at-line content start)
+                char-end-raw (patch/char-offset-at-line content line-end)
+                ;; If the matched window does NOT touch EOF and ended at a
+                ;; newline (char-offset-at-line of a non-final line is one
+                ;; past the preceding `\n`), keep the trailing newline
+                ;; OUTSIDE the replaced region so the user's `:replace`
+                ;; doesn't need to know about it.
+                char-end   (if (and (< char-end-raw (count content))
+                                 (pos? char-end-raw)
+                                 (= \newline (.charAt content (dec char-end-raw))))
+                             (dec char-end-raw)
+                             char-end-raw)
+                delta (or indent-delta
+                        (compute-window-indent-delta content-lines search-lines start))]
+            {:char-start char-start
+             :char-end   char-end
+             :pass       pass
+             :indent-delta delta
+             :line-start start
+             :line-end   line-end}))))))
+
+(defn- adjust-replace-for-indent
+  "For `:relative-indent` fuzzy hits, re-indent the user's `:replace`
+   lines so they sit at the file's actual indentation rather than the
+   indentation the SEARCH block was authored at. No-op for other passes."
+  [^String replace-text ^long indent-delta]
+  (if (zero? indent-delta)
+    replace-text
+    (let [lines (patch/split-content-lines replace-text)
+          adjusted (patch/apply-indent-delta indent-delta lines)
+          trailing-nl? (str/ends-with? replace-text "\n")]
+      (str (str/join "\n" adjusted) (when trailing-nl? "\n")))))
 
 (def ^:private patch-search-preview-chars 180)
 
@@ -562,6 +723,98 @@
       (str (subs s 0 patch-search-preview-chars)
         "...<+" (- (count s) patch-search-preview-chars) " chars>"))))
 
+(defn- nearest-match-context
+  "For a failed edit, capture a small around-the-hit window so the model
+   can see WHERE on disk its `:search` would have landed (or almost
+   landed). Returns `{:line N :pass KW :context [[ln text] ...]}` or nil.
+   Lines are 1-based; window is ±3 lines around the hit."
+  [^String content ^String search]
+  (when-let [hit (fuzzy-line-match content search)]
+    (let [lines      (patch/split-content-lines content)
+          start-line (long (:line-start hit))
+          end-line   (long (:line-end hit))
+          ctx-from   (max 0 (- start-line 3))
+          ctx-to     (min (count lines) (+ end-line 3))]
+      {:line (inc start-line)
+       :pass (:pass hit)
+       :indent-delta (:indent-delta hit)
+       :context (mapv (fn [i] [(inc i) (nth lines i)])
+                  (range ctx-from ctx-to))})))
+
+;; -----------------------------------------------------------------------------
+;; Per-path consecutive-failure tracker (Roo-style loop detector)
+;;
+;; A process-wide atom of `{absolute-path consecutive-fail-count}`. We bump
+;; on every failed v/patch invocation that touched the path and reset to
+;; zero when the same path's plan applies cleanly. Once the count crosses
+;; `patch-fail-loop-threshold`, the error message escalates with a hard
+;; "stop blind retry" hint that nudges the model out of the loop.
+;; -----------------------------------------------------------------------------
+
+(def ^:private patch-fail-counts (atom {}))
+(def ^:private patch-fail-loop-threshold 3)
+
+(defn- bump-patch-fail-count!
+  ^long [^java.io.File file]
+  (let [abs (.getAbsolutePath file)]
+    (long (get (swap! patch-fail-counts update abs (fnil inc 0)) abs))))
+
+(defn- clear-patch-fail-count!
+  [^java.io.File file]
+  (let [abs (.getAbsolutePath file)]
+    (swap! patch-fail-counts dissoc abs)))
+
+(defn- patch-loop-hint
+  [^long n path]
+  (when (>= n patch-fail-loop-threshold)
+    (str "Consecutive v/patch failures on " path ": " n
+      ". STOP retrying with similar :search. Re-read the file (v/cat path :tail"
+      " or with the offset shown above), then build ONE cohesive edit plan with"
+      " :after/:before anchors or :nth selection, or switch to the Codex"
+      " envelope for multi-hunk atomicity.")))
+
+;; -----------------------------------------------------------------------------
+;; Staleness check: :expected-mtime / :expected-size
+;; -----------------------------------------------------------------------------
+
+(defn- staleness-check
+  "Return nil when the file's on-disk mtime/size matches the edit's
+   expectations (or no expectations were given), else a structured
+   `:stale` failure carrying the actual vs. expected values."
+  [^java.io.File file {:keys [expected-mtime expected-size]}]
+  (let [actual-mtime (.lastModified file)
+        actual-size  (.length file)]
+    (cond
+      (and (some? expected-mtime) (not= (long expected-mtime) actual-mtime))
+      {:reason :stale-mtime :expected-mtime expected-mtime :actual-mtime actual-mtime
+       :actual-size actual-size}
+
+      (and (some? expected-size) (not= (long expected-size) actual-size))
+      {:reason :stale-size :expected-size expected-size :actual-size actual-size
+       :actual-mtime actual-mtime})))
+
+;; -----------------------------------------------------------------------------
+;; patch-analysis (rewritten)
+;;
+;; Per-edit pipeline:
+;;   1. Coerce/validate edit map (anchors, :nth, mtime/size types).
+;;   2. Read current file content (post-state if a prior edit hit the same path).
+;;   3. mtime/size guard → :stale failure if mismatched.
+;;   4. Exact substring search → vec of char positions.
+;;   5. Filter by :after / :before anchors.
+;;   6. Select target positions via :nth (:first | :last | :all | int).
+;;   7. If no positions selected:
+;;        a. zero exact AND search is multi-line → fuzzy line-based fallback
+;;           (5 passes incl. relative-indent). On hit, apply with optional
+;;           re-indent of `:replace`.
+;;        b. otherwise → fail with structured diagnostics.
+;;   8. Apply replacement(s) end-to-start, update post-state.
+;;
+;; All failures populate `:failures` with `:matches`, `:filtered-matches`,
+;; `:reason`, optional `:nearest` (fuzzy candidate with ±3 line context),
+;; and the original anchors so the surfaced ex-message stays actionable.
+;; -----------------------------------------------------------------------------
+
 (defn- patch-analysis
   [edits]
   (let [edits (coerce-patch-edits edits)]
@@ -570,56 +823,157 @@
            states {}
            checks []
            failures []]
-      (if-let [{:keys [path search replace]} (first remaining)]
+      (if-let [{:keys [path search replace after before nth] :as edit} (first remaining)]
         (let [file    (ensure-existing-file! (safe-path path))
               rel     (rel-path file)
-              before  (or (get-in states [path :before]) (slurp file))
-              current (or (get-in states [path :after]) before)
+              before-text (or (get-in states [path :before]) (slurp file))
+              current (or (get-in states [path :after]) before-text)
               search  (str search)
               replace (str replace)
-              matches (occurrence-count current search)
-              check   {:edit-index idx
-                       :path rel
-                       :matches matches
-                       :search-preview (search-preview search)}]
-          (if (= 1 matches)
-            (recur (inc idx)
-              (next remaining)
-              (assoc states path {:file file
-                                  :path rel
-                                  :before before
-                                  :after (str/replace-first current
-                                           (re-pattern (java.util.regex.Pattern/quote search))
-                                           (java.util.regex.Matcher/quoteReplacement replace))})
-              (conj checks check)
-              failures)
-            (recur (inc idx)
-              (next remaining)
-              states
-              (conj checks check)
-              (conj failures check))))
+              stale   (when-not (contains? states path)
+                        (staleness-check file edit))
+              all-positions (find-substring-positions current search)
+              anchor-result (filter-positions-by-anchors all-positions (count search) current
+                              {:after after :before before})
+              filtered-positions (:positions anchor-result)
+              selected (when (nil? (:anchor-error anchor-result))
+                         (select-by-nth filtered-positions nth))
+              base-check {:edit-index idx
+                          :path rel
+                          :matches (count all-positions)
+                          :filtered-matches (count (or filtered-positions []))
+                          :search-preview (search-preview search)
+                          :anchors (cond-> {}
+                                     after  (assoc :after (search-preview (str after)))
+                                     before (assoc :before (search-preview (str before)))
+                                     nth    (assoc :nth nth))}]
+          (cond
+            stale
+            (let [check (assoc base-check :reason :stale :stale stale)]
+              (recur (inc idx) (next remaining) states
+                (conj checks check) (conj failures check)))
+
+            (:anchor-error anchor-result)
+            (let [check (assoc base-check :reason :anchor-not-found
+                          :anchor-error (:anchor-error anchor-result))]
+              (recur (inc idx) (next remaining) states
+                (conj checks check) (conj failures check)))
+
+            (seq selected)
+            (let [new-content (apply-substring-replacements current selected (count search) replace)
+                  check       (assoc base-check :applied-positions (vec selected) :pass :exact)]
+              (recur (inc idx) (next remaining)
+                (assoc states path {:file file
+                                    :path rel
+                                    :before before-text
+                                    :after new-content})
+                (conj checks check) failures))
+
+            ;; Zero or out-of-range -> try fuzzy if multi-line
+            :else
+            (if-let [fuzzy (and (zero? (count all-positions))
+                             (not after) (not before) (nil? nth)
+                             (fuzzy-line-match current search))]
+              (let [{:keys [char-start char-end pass indent-delta]} fuzzy
+                    rewritten (adjust-replace-for-indent replace indent-delta)
+                    ;; Line-based fuzzy matches whole lines, so the
+                    ;; substring being replaced may include the trailing
+                    ;; `\n` of the last matched line. If the model's
+                    ;; `:replace` did not include a trailing newline
+                    ;; (typical when authoring a SEARCH block by hand),
+                    ;; preserve the line boundary by reapplying it.
+                    matched-ends-with-nl? (and (> char-end 0)
+                                            (= \newline (.charAt current (dec char-end))))
+                    replace-ends-with-nl? (str/ends-with? rewritten "\n")
+                    rewritten (if (and matched-ends-with-nl?
+                                    (not replace-ends-with-nl?))
+                                (str rewritten "\n")
+                                rewritten)
+                    new-content (str (subs current 0 char-start)
+                                  rewritten
+                                  (subs current char-end))
+                    check (assoc base-check :pass pass
+                            :indent-delta indent-delta
+                            :applied-positions [char-start])]
+                (recur (inc idx) (next remaining)
+                  (assoc states path {:file file
+                                      :path rel
+                                      :before before-text
+                                      :after new-content})
+                  (conj checks check) failures))
+              (let [reason (cond
+                             (and nth (pos? (count filtered-positions))) :nth-out-of-range
+                             (and (or after before)
+                               (pos? (count all-positions))
+                               (zero? (count filtered-positions)))
+                             :anchors-exclude-all-matches
+                             (zero? (count all-positions)) :no-match
+                             :else :ambiguous-no-anchor)
+                    nearest (when (zero? (count all-positions))
+                              (nearest-match-context current search))
+                    check (cond-> (assoc base-check :reason reason)
+                            nearest (assoc :nearest nearest))]
+                (recur (inc idx) (next remaining) states
+                  (conj checks check) (conj failures check))))))
         {:plans (vals states)
          :checks checks
          :failures failures
          :valid? (empty? failures)}))))
 
+(defn- explain-failure
+  [{:keys [edit-index path matches filtered-matches reason anchors nearest stale anchor-error]}]
+  (let [head (str "edit " edit-index " in " path)]
+    (case reason
+      :stale (str head
+               " failed: file changed since :expected-" (name (:reason stale))
+               " check (expected " (or (:expected-mtime stale) (:expected-size stale))
+               ", actual " (or (:actual-mtime stale) (:actual-size stale))
+               "). Re-read the file before retrying.")
+      :anchor-not-found (str head " failed: "
+                          (name (:anchor anchor-error))
+                          " anchor not found in file ("
+                          (pr-str (:value anchor-error)) ").")
+      :nth-out-of-range (str head " failed: :nth=" (:nth anchors)
+                          " exceeds available matches (" filtered-matches ").")
+      :anchors-exclude-all-matches (str head " failed: :after/:before anchors exclude all "
+                                     matches " exact match(es).")
+      :no-match (cond-> (str head " failed: no exact match.")
+                  nearest (str " Nearest fuzzy candidate at line " (:line nearest)
+                            " (pass " (name (:pass nearest)) ") - inspect context above."))
+      :ambiguous-no-anchor (str head " failed: matched " matches
+                             " time(s) and no :after/:before/:nth selector.")
+      (str head " failed."))))
+
 (defn- patch-failure-message
   [failures]
-  (let [{:keys [edit-index path matches]} (first failures)]
-    (if (= 1 (count failures))
-      (str "v/patch edit " edit-index " failed in " path
-        "; matched " matches " time(s)")
-      (str "v/patch " (count failures) " edits failed; first edit " edit-index
-        " in " path " matched " matches " time(s)"))))
+  (if (= 1 (count failures))
+    (str "v/patch " (explain-failure (first failures)))
+    (str "v/patch " (count failures) " edits failed; first: "
+      (explain-failure (first failures)))))
 
 (defn- patch-plan
   [edits]
   (let [{:keys [plans failures checks]} (patch-analysis edits)]
     (when (seq failures)
-      (throw (ex-info (patch-failure-message failures)
-               {:type :ext.foundation.editing/patch-search-not-unique
-                :failures failures
-                :checks checks})))
+      ;; Bump per-path counter for every distinct file that failed.
+      (let [paths (->> failures (map :path) distinct)
+            counts (into {}
+                     (for [p paths]
+                       (let [f (try (safe-path p) (catch Throwable _ nil))]
+                         (when f [p (bump-patch-fail-count! f)]))))
+            failures-with-count (mapv (fn [f]
+                                        (let [n (get counts (:path f))]
+                                          (cond-> f n (assoc :consecutive-failures n))))
+                                  failures)
+            hint (some (fn [[p n]]
+                         (patch-loop-hint n p))
+                   counts)
+            base-msg (patch-failure-message failures-with-count)]
+        (throw (ex-info (cond-> base-msg hint (str "\n" hint))
+                 {:type :ext.foundation.editing/patch-search-not-unique
+                  :failures failures-with-count
+                  :checks checks
+                  :loop-hint hint}))))
     plans))
 
 (defn patch-safe
@@ -627,7 +981,11 @@
   (let [plans (vec (patch-plan edits))]
     (doseq [{:keys [file after]} plans]
       (spit file after))
-    (mapv #(select-keys % [:path :before :after]) plans)))
+    (doseq [{:keys [file]} plans]
+      (clear-patch-fail-count! file))
+    (mapv (fn [{:keys [path before after]}]
+            {:path path :before before :after after})
+      plans)))
 
 ;; =============================================================================
 ;; Codex `apply_patch` envelope mode
@@ -1402,10 +1760,14 @@
      "  (v/cat path offset n)   — n lines starting at ABSOLUTE 1-based offset."
      "  (v/cat path :tail)      — last 400 lines (tail; explicit, no auto-magic)."
      "  (v/cat path :tail n)    — last n lines."
-     "  result: {:vis.op :v/cat :path :lines :next-offset :truncated?}. :lines is a"
-     "  vec of `[<line-number> <text>]` tuples — destructure with `[n t]`, no offset"
-     "  math. Page with `(:next-offset prev)` until it is nil (EOF or tail)."
-     "  :truncated? is true when the 64KB window cap fired; paginate via :next-offset."
+     "  result: {:vis.op :v/cat :path :lines :next-offset :eof? :truncated?"
+     "          :mtime :size}. :lines is a vec of `[<line-number> <text>]`"
+     "  tuples — destructure with `[n t]`, no offset math."
+     "  Page with `(:next-offset prev)` until `:eof? true`. `:truncated?` only"
+     "  fires when the 64KB window cap chopped the window mid-file; paginate via"
+     "  :next-offset regardless. Thread `:mtime` / `:size` into a subsequent"
+     "  v/patch as :expected-mtime / :expected-size to fail closed if the file"
+     "  was rewritten between read and patch."
      ""
      "  (v/ls path)             — directory tree. opts: {:depth :hidden? :respect-gitignore?}."
      "  result: {:vis.op :v/ls :path :type :entry-count :children [...]} where"
@@ -1420,11 +1782,24 @@
      "  :paths :hits [{:path :line :text}]}."
      ""
      "EDIT"
-     "  (v/patch [{:path :search :replace}])  — exact-replace; each :search must match exactly once."
+     "  (v/patch [{:path :search :replace}])  — exact-replace; replaces the FIRST"
+     "  exact occurrence (no global uniqueness requirement). Multi-line :search"
+     "  also gets a 5-pass fuzzy fallback (exact/rstrip/trim/unicode/relative-indent)"
+     "  when zero exact matches are found."
+     "  Optional edit keys:"
+     "    :after  \"context\"     — only match occurrences AFTER first exact hit of context"
+     "    :before \"context\"     — only match occurrences ending BEFORE first exact hit of context"
+     "    :nth :first|:last|:all|N — occurrence selector (default :first; N is 1-based)"
+     "    :expected-mtime MS    — staleness guard; pair with (:mtime (v/cat path))"
+     "    :expected-size BYTES  — staleness guard; pair with (:size  (v/cat path))"
      "  (v/patch \"*** Begin Patch\\n... *** End Patch\\n\")  — Codex envelope (Add/Update/Delete/Move)."
      "  Both modes validate the full plan before any write; one failure aborts the batch."
      "  On failure, v/patch reports match counts in :checks/:failures and writes nothing."
-     "  v/patch returns diff + post-image — that IS the write evidence. Do NOT v/cat to verify."
+     "  Failures carry :reason (:no-match|:nth-out-of-range|:anchor-not-found|:stale|\u2026),"
+     "  :nearest (line + fuzzy pass + context window for the closest candidate), and after"
+     "  3+ consecutive failures on the same path a :loop-hint nudging you to stop blind"
+     "  retries. v/patch returns diff + post-image — that IS the write evidence. Do NOT v/cat to verify."
+     "  Prefer batching related edits in a single v/patch call."
      ""
      "PATH OPS"
      "  v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?."
