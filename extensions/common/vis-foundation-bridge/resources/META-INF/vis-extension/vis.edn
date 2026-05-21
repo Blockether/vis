@@ -1,0 +1,2 @@
+{foundation-bridge
+ {:nses [com.blockether.vis.ext.foundation-bridge.core]}}

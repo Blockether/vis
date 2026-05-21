@@ -33,7 +33,7 @@
 
 **Status:** `done`
 
-**Outcome:** Prompt-control tag protocol fully retired. Per-turn dynamic state lives in `ctx` under `:session` / `:llm-provider` / `:project` / `:extensions` / `:defs`. Static prose lives in `;; -- TAG --` comment sections. Per-iteration trailer carries prior REPL observations plus `;; ctx = <edn>` for fresh state. Provider failures emit `;; llm-provider-error = <edn>` and thread `[:llm-provider :error]` into next-iteration `ctx`. Regression tests in `test/com/blockether/vis/internal/ctx_test.clj` and `extensions/common/vis-foundation/test/.../transcript_test.clj` assert the retired wrappers stay out of live prompt/trailer paths.
+**Outcome:** Prompt-control tag protocol fully retired. Per-turn dynamic state lives in `ctx` under `:session` / `:llm-provider` / `:project` / `:extensions` / `:defs`. Static prose lives in `;; -- TAG --` comment sections. Per-iteration trailer carries prior REPL observations plus `;; ctx = <edn>` for fresh state. Provider failures emit `;; llm-provider-error = <edn>` and thread `[:llm-provider :error]` into next-iteration `ctx`. Regression tests in `test/com/blockether/vis/internal/ctx_test.clj` and `extensions/common/vis-foundation-core/test/.../transcript_test.clj` assert the retired wrappers stay out of live prompt/trailer paths.
 
 ### T-002 — Strengthen tool prompts from codebase source
 
