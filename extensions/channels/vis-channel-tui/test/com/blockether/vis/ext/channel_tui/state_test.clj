@@ -82,7 +82,7 @@
                 "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n...")))
     (expect (false?
               (state/transcript-dump-input?
-                "Dobra, wróć do (def reload-result (v/reload-extensions!))"))))
+                "Dobra, wróć do (def snapshot-result (v/snapshot))"))))
 
   (it "filters poisoned transcript dumps out of resumed input history"
     (let [poison "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n..."]
