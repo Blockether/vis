@@ -60,12 +60,10 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 ;; auto-journals on status transitions, soft-warns on missing required
 ;; fields. No generic path-keyed mutator.
 
-;; Decisions — APPEND-ONLY (no update, no remove)
-(decision!     :K {:body string :tags #{keyword}})
-
-;; Facts — everything durable that isn't a decision or spec
-;; Includes observations, preferences, behavioral directives, project conventions.
-(fact-set!     :K {:body string :scope #{:session :project}})   ; :scope optional, default :session
+;; Facts — everything durable that isn't a spec or task.
+;; Includes observations, preferences, behavioral directives, project
+;; conventions, decisions (tag :decision when audit-style).
+(fact-set!     :K {:body string :scope #{:session :project} :tags #{keyword}})
 (fact-remove!  :K)
 
 ;; Specs — requirements built FROM facts
@@ -86,7 +84,6 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 ;;                    :status :done without :evidence → soft warn
 ;;                    :status :blocked without :blocked-on → soft warn
 ;;   spec-set!      : :status :done | :cancelled → auto-stamp :done-born
-;;   decision!      : second call with same key → warn (append-only)
 ;;   *-remove!      : non-existent key → silent no-op
 ;;   satisfy-hint!  : engine validates evidence scopes exist this turn; soft warns if missing
 
@@ -148,11 +145,10 @@ read from the rendered text, write back via the operators below.
 Subtrees:
   :session/workspace  engine-managed; current branch + per-file diff stats
   :session/symbols    engine-managed; live SCI symbols {:arglists :doc :born}
-  :session/decisions  append-only "why we did X" audit (model-managed)
-                      shape: {<kw> {:body string :tags #{kw} :born scope}}
-  :session/facts      everything durable that isn't a decision or spec —
-                      observations, preferences, behavioral directives, project conventions.
-                      shape: {<kw> {:body string :scope #{:session :project} :born scope? :source?}}
+  :session/facts      everything durable the model needs to remember:
+                      observations, preferences, behavioral directives, project conventions,
+                      decisions (tag :decision when audit-style).
+                      shape: {<kw> {:body string :scope #{:session :project} :tags #{kw} :born scope? :source?}}
                       :scope optional (default :session); :project mirrors to project_fact
   :session/specs      requirements built FROM facts (model-managed)
                       shape: {<kw> {:title :acceptance [string]
@@ -175,8 +171,7 @@ Subtrees:
 Per-subtree mutation functions (engine validates shape; stamps :born;
 auto-journals on status changes; soft-warns on missing required fields):
 
-  Decisions     (decision! :K {:body :tags})              ; append-only
-  Facts         (fact-set! :K {:body :scope?})
+  Facts         (fact-set! :K {:body :scope? :tags?})
                 (fact-remove! :K)
   Specs         (spec-set! :K {:title :acceptance :facts :status})
                 (spec-remove! :K)
@@ -314,16 +309,13 @@ trailer (mutated via `done`).
 
  ;; ── MODEL-MANAGED MEMOS ──
 
- :session/decisions    ; append-only audit ("why we did X")
-   {<kw> {:body  string
-          :tags  #{kw}
-          :born  "tN/iN/fK"}}
-
  :session/facts        ; everything durable the model needs to remember:
-                       ; observations, user preferences, behavioral directives,
-                       ; project conventions. :scope :project mirrors cross-session.
+                       ; observations, preferences, behavioral directives,
+                       ; project conventions, decisions (tagged :decision).
+                       ; :scope :project mirrors cross-session.
    {<kw> {:body   string
           :scope  :session | :project        ; default :session; :project mirrors to project_fact
+          :tags   #{kw}                      ; default empty; tag :decision for audit-style facts
           :born   "tN/iN/fK"                 ; OPTIONAL — engine-derived facts may omit
           :source :project-mirror}}          ; engine-set when loaded from project_fact
 
@@ -423,7 +415,7 @@ Engine primitives don't go through `register-op!`. They're bound in the SCI hidd
 | head pattern | tag |
 |---|---|
 | `(defn …)` `(def …)` | `:mutation` |
-| `(decision! …)` `(fact-set! …)` `(fact-remove! …)` | `:mutation` |
+| `(fact-set! …)` `(fact-remove! …)` | `:mutation` |
 | `(spec-set! …)` `(spec-remove! …)` `(task-set! …)` `(task-remove! …)` | `:mutation` |
 | `(iter …)` `(form …)` `(turn …)` `(iter-heads …)` `(turn-list)` | `:observation` |
 | `(symbol-doc …)` `(symbol-source …)` `(symbol-meta …)` `(symbol-apropos …)` | `:observation` |
@@ -477,10 +469,6 @@ Nothing else. No per-subtree schema explanation in the render.
    {auth-check {:arglists ([tok]) :doc "literal-compare check; deprecated" :born "t5/i1/f1"}
     emit-event {:arglists ([{:keys [level msg] :as ev}]) :born "t4/i1/f1"}}
 
- :session/decisions
-   {:no-llm-compaction {:body "Never LLM-compact ctx; deterministic rules only"
-                        :tags #{:ctx :design} :born "t3/i2/f1"}}
-
  :session/facts
    {:caveman-pl            {:body "respond in PL caveman style" :scope :session :born "t1/i1/f1"}
     :real-db-tests         {:body "tests must hit real SQLite — no mocks" :scope :project
@@ -488,7 +476,9 @@ Nothing else. No per-subtree schema explanation in the render.
     :auth-literal-compare  {:body "src/auth.clj uses `(= tok \"secret\")` for check/1"
                             :born "t3/i2/f1"}
     :no-bcrypt-dep         {:body "deps.edn does not include bcrypt yet"
-                            :born "t3/i3/f1"}}
+                            :born "t3/i3/f1"}
+    :no-llm-compaction     {:body "Never LLM-compact ctx; deterministic rules only"
+                            :tags #{:decision :ctx :design} :born "t3/i2/f1"}}
 
  :session/specs
    {:auth-bcrypt {:title      "switch auth/check to bcrypt"
@@ -978,7 +968,7 @@ MODEL >
 ### Engine changes
 
 1. **CTX storage** — `session_state.ctx TEXT` (already exists or add).
-2. **Per-subtree functions** — `decision!` / `fact-set!` / `fact-remove!` / `spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `satisfy-hint!`. Bind in SCI hidden-sym set; engine validates shape, stamps `:born`, auto-journals on task `:status` changes, soft-warns on missing required fields. Write through to `session_state.ctx` blob.
+2. **Per-subtree functions** — `fact-set!` / `fact-remove!` / `spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `satisfy-hint!`. Bind in SCI hidden-sym set; engine validates shape, stamps `:born`, auto-journals on task `:status` changes, soft-warns on missing required fields. Write through to `session_state.ctx` blob.
 3. **`iter` / `form` / `turn` / `iter-heads` / `turn-list`** — bind in SCI hidden-sym set; SELECT against `session_turn` / `session_turn_iteration`.
 4. **`(done {…})`** — handle `:trailer-drop` and `:trailer-summarize` keys; engine auto-pin loop.
 5. **Trailer comparator** — parse `t<N>/i<N>` segments for sort.
@@ -1039,8 +1029,7 @@ MODEL >
  :session/workspace  {:branch :trunk :head :dirty? :stats}
  :session/symbols    {sym {:arglists :doc :born}}
 
- :session/decisions  {keyword {:body :tags :born}}
- :session/facts      {keyword {:body :scope? :born? :source?}}
+ :session/facts      {keyword {:body :scope? :tags? :born? :source?}}
  :session/specs      {keyword {:title :acceptance :facts :status :born :done-born?}}
  :session/tasks      {keyword {:title :spec :depends-on :status
                                :evidence :journal :born :blocked-on?}}
