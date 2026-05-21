@@ -1221,7 +1221,7 @@
 
    The previous implementation called `(name sym)` on a non-aliased
    symbol, which returns the whole dotted string
-   (`\"com.blockether.vis.ext.voice.core\"`). `titleize-label` only
+   (`\"com.blockether.vis.ext.foundation-voice.core\"`). `titleize-label` only
    splits on `[-_\\s]+`, so the whole thing was treated as ONE token and
    the user saw `\"Com.blockether.vis.ext.voice.core\"` in the dialog.
 

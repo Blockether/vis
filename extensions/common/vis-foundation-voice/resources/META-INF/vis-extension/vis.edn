@@ -1,0 +1,2 @@
+{foundation-voice
+ {:nses [com.blockether.vis.ext.foundation-voice.core]}}
