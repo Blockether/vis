@@ -1869,20 +1869,15 @@
                 @puts))
 
       ;; Title row: BOLD keys for each [key action] hint pair.
-      ;; Tab is the only completion key — Enter is intentionally NOT
-      ;; advertised here (Enter falls through to the normal send path;
-      ;; only Tab acts on the highlighted suggestion).
-      (doseq [k ["↑↓/wheel" "Tab"]]
+      ;; Enter runs selected slash suggestion; Tab completes text only.
+      (doseq [k ["↑↓/wheel" "Enter" "Tab"]]
         (expect (some #(and (= title-row (:row %))
                          (= k (:text %))
                          (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                   @puts)))
-      (expect (not-any? #(and (= title-row (:row %))
-                           (= "Enter" (:text %)))
-                @puts))
 
       ;; Title row: action words rendered NON-BOLD next to their keys.
-      (doseq [a [" select" " complete"]]
+      (doseq [a [" select" " run" " complete"]]
         (expect (some #(and (= title-row (:row %))
                          (= a (:text %))
                          (not (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)))
