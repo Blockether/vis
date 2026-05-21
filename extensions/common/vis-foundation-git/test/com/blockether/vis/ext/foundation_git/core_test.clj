@@ -356,8 +356,10 @@
             (.setString config "user" nil "name" "Noisy Bot")
             (.setString config "user" nil "email" "noise@example.invalid")
             (.save config))
-          ;; Layer 2: whitespace-only refactor (noisy).
-          (spit-rel root "src/a.clj" "(ns a)\n\n")
+          ;; Layer 2: whitespace-only reformat that actually touches L1
+          ;; (extra space between `ns` and `a`). JGit attributes L1 to
+          ;; this commit because the line bytes changed.
+          (spit-rel root "src/a.clj" "(ns  a)\n")
           (-> g .add (.addFilepattern "src/a.clj") .call)
           (-> g .commit (.setMessage "reformat") .call))
         (let [noisy-sha (-> (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 1)
