@@ -375,17 +375,19 @@
       (expect (false? (:truncated? out)))))
 
   (it ":truncated? true when a window would exceed max-cat-window-bytes"
-    ;; Each line is ~70KB; the byte cap is 64KB. First line is always
-    ;; included (guarantees one-line forward progress), second line
-    ;; would push past the cap -> stop with :truncated? true and a
-    ;; :next-offset for the caller to paginate.
-    (let [huge (apply str (repeat 70000 "x"))
-          path (write-temp! "huge.txt" (str huge "\n" huge "\n" huge "\n"))
+    ;; Per-line trunc caps each line at ~2000 chars; the WINDOW cap is
+    ;; 256KB. Use 200 lines of ~1500 chars (each below the per-line cap)
+    ;; so the byte-cap fires on cumulative volume, not on a single huge
+    ;; line. First line always included for forward progress.
+    (let [chunky (apply str (repeat 1500 "x"))
+          body (string/join "\n" (repeat 200 chunky))
+          path (write-temp! "huge.txt" (str body "\n"))
           read-file (private-fn "read-file")
-          out  (read-file path 1 10)]
+          out  (read-file path 1 500)]
       (expect (true? (:truncated? out)))
-      (expect (= 1 (count (:lines out))))
-      (expect (= 2 (:next-offset out)))))
+      (expect (pos? (count (:lines out))))
+      (expect (< (count (:lines out)) 200))
+      (expect (some? (:next-offset out)))))
 
   (it "persistence-blob contract: :lines bytes are bounded by max-cat-window-bytes"
     ;; This is the storage claim: a single v/cat call cannot persist
@@ -398,7 +400,8 @@
           line-bytes (reduce + 0 (map (fn [[_ ^String s]]
                                         (inc (count (.getBytes s "UTF-8"))))
                                    (:lines out)))]
-      (expect (<= line-bytes 65536))))
+      ;; 256KB window cap (bumped from 64KB).
+      (expect (<= line-bytes (* 256 1024)))))
 
   (it "rejects bad positional args (non-positive ints, non-int types)"
     (let [path (write-temp! "validate.txt" "x\n")
@@ -434,24 +437,31 @@
       (expect (pos-int? (:size out)))))
 
   (it ":truncated? true when byte cap drops older lines from the tail window"
-    (let [huge (apply str (repeat 70000 "x"))
-          path (write-temp! "htail.txt" (str huge "\n" huge "\n" huge "\n"))
+    ;; Same trick as the read-file byte-cap test: use 200 × 1500-char
+    ;; lines so cumulative volume blows the 256KB window cap, not the
+    ;; per-line 2000-char cap. Most-recent line is the LAST one included.
+    (let [chunky (apply str (repeat 1500 "x"))
+          body (string/join "\n" (repeat 200 chunky))
+          path (write-temp! "htail.txt" (str body "\n"))
           tail-file (private-fn "tail-file")
-          out  (tail-file path 10)]
+          out  (tail-file path 500)]
       (expect (true? (:truncated? out)))
-      (expect (= 1 (count (:lines out))))
-      ;; Most-recent line wins; file has 3 huge lines -> line 3.
-      (expect (= 3 (ffirst (:lines out)))))))
+      (expect (pos? (count (:lines out))))
+      (expect (< (count (:lines out)) 200))
+      ;; Last kept line should be line 200 (most-recent wins on tail).
+      (expect (= 200 (first (peek (:lines out))))))))
 
 (defdescribe vis-cat-tool-arities-test
-  (it "(v/cat path :tail) defaults to default-cat-limit lines from the end"
-    (let [body (string/join "\n" (map #(str "L" %) (range 1 601)))
+  (it "(v/cat path :tail) defaults to default-cat-limit (2000) lines from the end"
+    ;; Bumped from 400 → 2000 for industry parity with Claude Code / Roo Code.
+    ;; Use a file with >2000 lines so the tail default actually clamps.
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 2401)))
           path (write-temp! "big-tail.txt" (str body "\n"))
           cat-tool (private-fn "cat-tool")
           out (-> (cat-tool path :tail) :result)]
-      (expect (= 400 (count (:lines out))))
-      (expect (= 201 (ffirst (:lines out))))
-      (expect (= 600 (first (peek (:lines out)))))
+      (expect (= 2000 (count (:lines out))))
+      (expect (= 401 (ffirst (:lines out))))
+      (expect (= 2400 (first (peek (:lines out)))))
       (expect (nil? (:next-offset out)))))
 
   (it "(v/cat path :tail n) honours an explicit count"
@@ -460,6 +470,27 @@
           cat-tool (private-fn "cat-tool")
           out (-> (cat-tool path :tail 3) :result)]
       (expect (= (numbered-tuples 18 ["L18" "L19" "L20"]) (:lines out))))))
+
+(defdescribe vis-cat-line-truncation-test
+  (it "individual lines longer than max-line-length get a per-line truncation suffix"
+    ;; A minified-JS-style line: one 5000-char blob plus a normal short line.
+    (let [long-line (apply str (repeat 5000 "x"))
+          path (write-temp! "long-line.txt" (str long-line "\nshort line\n"))
+          read-file (private-fn "read-file")
+          out (read-file path)
+          [_ first-text] (first (:lines out))]
+      ;; Output capped at 2000 chars + suffix; short line untouched.
+      (expect (string/includes? first-text "…<+"))
+      (expect (string/includes? first-text "chars truncated"))
+      (expect (< (count first-text) 2100))
+      (expect (= [2 "short line"] (nth (:lines out) 1)))
+      (expect (= 1 (:long-line-truncations out)))))
+
+  (it ":long-line-truncations key is ABSENT when no line was truncated"
+    (let [path (write-temp! "short-lines.txt" "a\nb\nc\n")
+          read-file (private-fn "read-file")
+          out (read-file path)]
+      (expect (not (contains? out :long-line-truncations))))))
 
 (defn- cat-result
   "Construct the plain-map shape `cat-tool` produces, for renderer-contract
