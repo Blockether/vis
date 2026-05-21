@@ -25,12 +25,12 @@
      `::scope-turn`  e.g. \"t3\"
 
    Edge inventory across subtrees (validated as soft warnings, not by spec):
-     spec  → facts  via `:session.spec/facts`   (vec of `::entry-key`)
-     spec  → tasks  via `:session.spec/tasks`   (vec of `::entry-key`)
-     task  → spec   via `:session.task/spec`    (single `::entry-key`)
-     task  → tasks  via `:session.task/depends-on` (DAG of `::entry-key`)
-     task  → facts  via `:session.task/facts`   (OWNED — cascade-removed on task-remove!)
-     fact  → *      via `:session.fact/connections` (any `::entry-key`)"
+     spec  → facts  via `:session.spec/grounding-facts` (vec of `::entry-key`)
+     spec  → tasks  via `:session.spec/serving-tasks`   (vec of `::entry-key`)
+     task  → spec   via `:session.task/serves-spec`     (single `::entry-key`)
+     task  → tasks  via `:session.task/blocked-by-tasks` (vec of `::entry-key`)
+
+   Facts are leaves: no tags, no generic connections. Tasks do not own facts."
   (:require [clojure.spec.alpha :as s]
             [clojure.spec.gen.alpha :as gen]))
 
@@ -77,7 +77,6 @@
 
 (s/def ::content string?)
 (s/def ::title   string?)
-(s/def ::tags    (s/coll-of keyword? :kind set?))
 (s/def ::born    ::scope-form)
 (s/def ::summary string?)
 
@@ -85,21 +84,19 @@
 ;; Fact — observations, decisions, rules, behavior
 ;; =============================================================================
 
-(s/def :session.fact/connections
-  (s/coll-of ::entry-key :kind vector?))
-
 (s/def ::fact
-  (s/keys :req-un [::content ::born]
-    :opt-un [::tags :session.fact/connections]))
+  (s/and
+    (s/keys :req-un [::content ::born])
+    #(not (contains? % :tags))
+    #(not (contains? % :connections))))
 
 ;; =============================================================================
 ;; Task — work items
 ;; =============================================================================
 
-(s/def :session.task/spec        ::entry-key)
-(s/def :session.task/depends-on  (s/coll-of ::entry-key :kind vector?))
-(s/def :session.task/facts       (s/coll-of ::entry-key :kind vector?))
-(s/def :session.task/status      #{:todo :doing :done :cancelled})
+(s/def :session.task/serves-spec      ::entry-key)
+(s/def :session.task/blocked-by-tasks (s/coll-of ::entry-key :kind vector?))
+(s/def :session.task/status           #{:todo :doing :done :cancelled})
 (s/def :session.task/evidence    (s/coll-of ::scope-form :kind vector?))
 
 (s/def :session.task.journal-entry/scope  ::scope-form)
@@ -113,20 +110,22 @@
   (s/coll-of :session.task/journal-entry :kind vector?))
 
 (s/def ::task
-  (s/keys :req-un [::title
-                   :session.task/spec
-                   :session.task/status
-                   ::born]
-    :opt-un [:session.task/depends-on
-             :session.task/facts
-             :session.task/evidence
-             :session.task/journal]))
+  (s/and
+    (s/keys :req-un [::title
+                     :session.task/serves-spec
+                     :session.task/status
+                     ::born]
+      :opt-un [:session.task/blocked-by-tasks
+               :session.task/evidence
+               :session.task/journal])
+    #(not (contains? % :spec))
+    #(not (contains? % :depends-on))
+    #(not (contains? % :facts))))
 
 ;; Soft rules (engine-side validators; not enforced by spec):
 ;;   - :status :done MUST have non-empty :evidence
-;;   - :facts entries must not appear in any OTHER task's :facts (exclusive ownership)
-;;   - :spec must point to an existing key in :session/specs
-;;   - :depends-on entries must point to existing keys in :session/tasks
+;;   - :serves-spec must point to an existing key in :session/specs
+;;   - :blocked-by-tasks entries must point to existing keys in :session/tasks
 
 ;; =============================================================================
 ;; Spec — formal requirements
@@ -135,10 +134,10 @@
 (s/def :session.spec/acceptance
   (s/coll-of string? :kind vector? :min-count 1))
 
-(s/def :session.spec/facts
+(s/def :session.spec/grounding-facts
   (s/coll-of ::entry-key :kind vector?))
 
-(s/def :session.spec/tasks
+(s/def :session.spec/serving-tasks
   (s/coll-of ::entry-key :kind vector?))
 
 (s/def :session.spec/status
@@ -147,18 +146,21 @@
 (s/def :session.spec/done-born ::scope-form)
 
 (s/def ::spec
-  (s/keys :req-un [::title
-                   :session.spec/acceptance
-                   :session.spec/status
-                   ::born]
-    :opt-un [:session.spec/facts
-             :session.spec/tasks
-             :session.spec/done-born]))
+  (s/and
+    (s/keys :req-un [::title
+                     :session.spec/acceptance
+                     :session.spec/status
+                     ::born]
+      :opt-un [:session.spec/grounding-facts
+               :session.spec/serving-tasks
+               :session.spec/done-born])
+    #(not (contains? % :facts))
+    #(not (contains? % :tasks))))
 
 ;; Soft rules:
 ;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
-;;   - :facts entries must point to existing keys in :session/facts
-;;   - :tasks entries must point to existing keys in :session/tasks
+;;   - :grounding-facts entries must point to existing keys in :session/facts
+;;   - :serving-tasks entries must point to existing keys in :session/tasks
 
 ;; =============================================================================
 ;; Trailer entries — verbatim pin OR summary

@@ -54,7 +54,7 @@
       (expect (not (s/valid? ::cs/scope-turn "t3/i2"))))))
 
 (defdescribe fact-test
-  (describe "::fact — {:content :born :tags? :connections?}"
+  (describe "::fact — {:content :born}; no tags or connections"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/fact)))
 
@@ -70,44 +70,49 @@
     (it "rejects bad :born scope"
       (expect (not (s/valid? ::cs/fact {:content "x" :born "bad-scope"}))))
 
-    (it "rejects :tags as vec (must be set)"
+    (it "rejects retired :tags"
       (expect (not (s/valid? ::cs/fact
-                     {:content "x" :born "t1/i1/f1" :tags [:a :b]}))))
+                     {:content "x" :born "t1/i1/f1" :tags #{:a}}))))
 
-    (it "rejects :connections as set (must be vec)"
+    (it "rejects retired :connections"
       (expect (not (s/valid? ::cs/fact
-                     {:content "x" :born "t1/i1/f1" :connections #{:a}}))))
+                     {:content "x" :born "t1/i1/f1" :connections [:a]}))))
 
     (it "allows unknown keys (open schema)"
       (expect (s/valid? ::cs/fact
                 {:content "x" :born "t1/i1/f1" :random-field 42})))))
 
 (defdescribe task-test
-  (describe "::task — {:title :spec :status :born + optional fields}"
+  (describe "::task — {:title :serves-spec :status :born + optional fields}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/task)))
 
     (it "minimal valid"
       (expect (s/valid? ::cs/task
-                {:title "x" :spec :the-spec :status :todo :born "t1/i1/f1"})))
+                {:title "x" :serves-spec :the-spec :status :todo :born "t1/i1/f1"})))
 
-    (it "rejects missing :spec (required ref)"
+    (it "rejects missing :serves-spec (required ref)"
       (expect (not (s/valid? ::cs/task
                      {:title "x" :status :todo :born "t1/i1/f1"}))))
 
     (it "rejects :blocked status (dropped from enum)"
       (expect (not (s/valid? ::cs/task
-                     {:title "x" :spec :s :status :blocked :born "t1/i1/f1"}))))
+                     {:title "x" :serves-spec :s :status :blocked :born "t1/i1/f1"}))))
 
     (it "rejects :evidence with iter-scope (must be form-scope)"
       (expect (not (s/valid? ::cs/task
-                     {:title "x" :spec :s :status :done :born "t1/i1/f1"
+                     {:title "x" :serves-spec :s :status :done :born "t1/i1/f1"
                       :evidence ["t3/i2"]}))))
 
     (it "rejects :journal entry missing :scope"
       (expect (not (s/valid? ::cs/task
-                     {:title "x" :spec :s :status :done :born "t1/i1/f1"
-                      :journal [{:status :doing}]}))))))
+                     {:title "x" :serves-spec :s :status :done :born "t1/i1/f1"
+                      :journal [{:status :doing}]}))))
+
+    (it "rejects retired task link fields"
+      (expect (not (s/valid? ::cs/task
+                     {:title "x" :serves-spec :s :status :todo :born "t1/i1/f1"
+                      :spec :s :depends-on [] :facts []}))))))
 
 (defdescribe spec-test
   (describe "::spec — {:title :acceptance :status :born + optional refs}"
@@ -132,7 +137,13 @@
     (it "rejects :acceptance with non-strings"
       (expect (not (s/valid? ::cs/spec
                      {:title "x" :acceptance [:keyword]
-                      :status :draft :born "t1/i1/f1"}))))))
+                      :status :draft :born "t1/i1/f1"}))))
+
+    (it "rejects retired spec link fields"
+      (expect (not (s/valid? ::cs/spec
+                     {:title "x" :acceptance ["c"]
+                      :status :draft :born "t1/i1/f1"
+                      :facts [] :tasks []}))))))
 
 (defdescribe trailer-test
   (describe "::trailer-form, ::trailer-pin, ::trailer-summary, ::trailer-entry"
@@ -267,13 +278,13 @@
                  :session/specs
                  {:auth {:title "switch auth to bcrypt"
                          :acceptance ["check/1 uses bcrypt"]
-                         :facts [:auth-fact]
-                         :tasks [:add-dep]
+                         :grounding-facts [:auth-fact]
+                         :serving-tasks [:add-dep]
                          :status :doing
                          :born "t5/i1/f1"}}
                  :session/tasks
                  {:add-dep {:title "add bcrypt"
-                            :spec :auth :depends-on [] :facts []
+                            :serves-spec :auth :blocked-by-tasks []
                             :status :done
                             :evidence ["t5/i2/f1"]
                             :journal [{:status :doing :scope "t5/i1/f2"}

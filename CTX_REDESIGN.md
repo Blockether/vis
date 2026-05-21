@@ -91,29 +91,26 @@ Three model-managed memo subtrees + engine views + trailer:
 
  ;; ── MODEL-MANAGED MEMOS ──
  :session/specs
-   {<kw> {:title       string                        ; required
-          :acceptance  [string]                      ; required, non-empty vec
-          :facts       [<kw-ref>]                    ; refs to grounding facts
-          :tasks       [<kw-ref>]                    ; refs to tasks serving this spec
-          :status      :draft | :doing | :done | :cancelled
-          :born        "tN/iN/fK"                    ; required, engine-stamped
-          :done-born   "tN/iN/fK"}}                  ; engine-stamps on terminal status
+   {<kw> {:title           string                    ; required
+          :acceptance      [string]                  ; required, non-empty vec
+          :grounding-facts [<kw-ref>]                ; refs to :session/facts
+          :serving-tasks   [<kw-ref>]                ; refs to :session/tasks
+          :status          :draft | :doing | :done | :cancelled
+          :born            "tN/iN/fK"                ; required, engine-stamped
+          :done-born       "tN/iN/fK"}}              ; engine-stamps on terminal status
 
  :session/tasks
-   {<kw> {:title       string                        ; required
-          :spec        <kw-ref>                      ; required, ONE spec served
-          :depends-on  [<kw-ref>]                    ; optional, DAG of other tasks
-          :facts       [<kw-ref>]                    ; OWNED facts; cascade-removed on task-remove!
-          :status      :todo | :doing | :done | :cancelled
-          :evidence    [<scope-string>]              ; required on :done
-          :journal     [{:status :scope}]            ; engine-appended on every :status change
-          :born        "tN/iN/fK"}}                  ; required, engine-stamped
+   {<kw> {:title            string                   ; required
+          :serves-spec      <kw-ref>                 ; required, ONE :session/specs key
+          :blocked-by-tasks [<kw-ref>]               ; optional, prerequisite :session/tasks keys
+          :status           :todo | :doing | :done | :cancelled
+          :evidence         [<scope-string>]         ; required on :done
+          :journal          [{:status :scope}]       ; engine-appended on every :status change
+          :born             "tN/iN/fK"}}             ; required, engine-stamped
 
  :session/facts
-   {<kw> {:content     string                        ; required
-          :tags        #{keyword}                    ; optional, default empty
-          :connections [<kw-ref>]                    ; optional, refs to facts/tasks/specs
-          :born        "tN/iN/fK"}}                  ; required, engine-stamped
+   {<kw> {:content          string                   ; required
+          :born             "tN/iN/fK"}}             ; required, engine-stamped
 
  ;; ── TRAILER ──
  :session/trailer
@@ -141,13 +138,13 @@ Six substantive subtrees.
 
 ```clojure
 ;; ─── MEMO MUTATION ───
-(spec-set!     :K {:title :acceptance :facts? :tasks? :status})
+(spec-set!     :K {:title :acceptance :grounding-facts? :serving-tasks? :status})
 (spec-remove!  :K)
 
-(task-set!     :K {:title :spec :depends-on? :facts? :status :evidence?})
-(task-remove!  :K)               ; CASCADE: removes facts in :facts
+(task-set!     :K {:title :serves-spec :blocked-by-tasks? :status :evidence?})
+(task-remove!  :K)
 
-(fact-set!     :K {:content :tags? :connections?})
+(fact-set!     :K {:content})
 (fact-remove!  :K)
 
 ;; ─── SYMBOLS (native SCI; engine persists via existing restore-sandbox!) ───
@@ -225,7 +222,6 @@ Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engin
 - `*-set!` new key → stamp `:born <current-form-scope>`; existing → merge partials.
 - `task-set!` with `:status` change → append `{:status :scope}` to `:journal`.
 - `spec-set!` with `:status :done | :cancelled` → stamp `:done-born`.
-- `task-remove!` cascades: for each fact-ref in the task's `:facts`, remove that fact from `:session/facts` (exclusive ownership).
 - `*-remove!` non-existent key → silent no-op.
 
 ### Soft validations (engine warns; never refuses)
@@ -233,12 +229,11 @@ Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engin
 | call | required field | hint |
 |---|---|---|
 | `spec-set!` | `:acceptance` | non-empty vec of strings |
-| `task-set!` | `:spec` | refs an existing key in `:session/specs` |
+| `task-set!` | `:serves-spec` | refs an existing key in `:session/specs` |
 | `task-set!` with `:status :done` | `:evidence` | non-empty vec of scopes |
 | `fact-set!` | `:content` | non-empty string |
 | `satisfy-hint!` | evidence vec | non-empty vec of scopes |
-| any ref (`:facts`, `:tasks`, `:spec`, `:depends-on`, `:connections`) | target key must exist | soft warn on dangling |
-| task's `:facts` | not in another task's `:facts` | soft warn on duplicate ownership |
+| any ref (`:grounding-facts`, `:serving-tasks`, `:serves-spec`, `:blocked-by-tasks`) | target key must exist | soft warn on dangling |
 
 Warnings appear as `;; ⚠ …` annotations in the next CTX render.
 
@@ -318,17 +313,16 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Engine emits spa
       :acceptance  ["check/1 calls bcrypt/check"
                     "stored-hash plumbed"
                     "tests cover wrong-password path"]
-      :facts       [:auth-literal-compare :no-bcrypt-dep]
-      :tasks       [:add-bcrypt-dep :replace-check]
+      :grounding-facts [:auth-literal-compare :no-bcrypt-dep]
+      :serving-tasks   [:add-bcrypt-dep :replace-check]
       :status      :doing
       :born        "t5/i1/f1"}}
 
  :session/tasks
    {:add-bcrypt-dep
      {:title       "add bcrypt to deps.edn"
-      :spec        :auth-bcrypt
-      :depends-on  []
-      :facts       []
+      :serves-spec      :auth-bcrypt
+      :blocked-by-tasks []
       :status      :done
       :evidence    ["t5/i2/f1"]
       :journal     [{:status :doing :scope "t5/i1/f2"}
@@ -336,9 +330,8 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Engine emits spa
       :born        "t5/i1/f2"}
     :replace-check
      {:title       "replace literal compare with bcrypt/check"
-      :spec        :auth-bcrypt
-      :depends-on  [:add-bcrypt-dep]
-      :facts       []
+      :serves-spec      :auth-bcrypt
+      :blocked-by-tasks [:add-bcrypt-dep]
       :status      :doing
       :journal     [{:status :doing :scope "t6/i1/f1"}]
       :born        "t5/i1/f3"}}
@@ -544,26 +537,23 @@ MODEL >
             :acceptance  ["emit-event takes a map and prints (pr-str …)"
                           "log/2 delegates to emit-event"
                           "no str/format remains in src/logging.clj"]
-            :facts       [:logging-current :no-event-fn]
-            :tasks       []
+            :grounding-facts [:logging-current :no-event-fn]
+            :serving-tasks   []
             :status      :draft})
 
 (task-set! :introduce-emit-event
            {:title       "introduce emit-event fn"
-            :spec        :logging-edn
-            :depends-on  []
-            :facts       []
+            :serves-spec      :logging-edn
+            :blocked-by-tasks []
             :status      :todo})
 
 (task-set! :rewire-log
            {:title       "rewire log/2 through emit-event"
-            :spec        :logging-edn
-            :depends-on  [:introduce-emit-event]
-            :facts       []
+            :serves-spec      :logging-edn
+            :blocked-by-tasks [:introduce-emit-event]
             :status      :todo})
 
-;; Update spec's :tasks ref to include the just-created tasks
-(spec-set! :logging-edn {:tasks [:introduce-emit-event :rewire-log]})
+(spec-set! :logging-edn {:serving-tasks [:introduce-emit-event :rewire-log]})
 
 (done {:answer "Spec `:logging-edn` + 2 taski."})
 => :done
@@ -604,9 +594,8 @@ MODEL >
 :session/tasks
   {:introduce-emit-event
      {:title       "introduce emit-event fn"
-      :spec        :logging-edn
-      :depends-on  []
-      :facts       []
+      :serves-spec      :logging-edn
+      :blocked-by-tasks []
       :status      :done
       :evidence    ["t3/i1/f2" "t3/i1/f3"]
       :journal     [{:status :doing :scope "t3/i1/f1"}
@@ -647,8 +636,7 @@ Deterministic `;;` annotations next to entries:
 | `:result` value in pinned form exceeds threshold (4kB) | `;; ⚠ result is <size>; consider summarizing` |
 | `:session/trailer` count exceeds threshold | `;; :session/trailer (32 entries; 5 summaries)` |
 | missing required field on memo | `;; ⚠ task :K missing :evidence (status :done)` |
-| dangling cross-subtree ref | `;; ⚠ task :K :spec refs nonexistent spec :foo` |
-| duplicate fact ownership | `;; ⚠ fact :K in two tasks' :facts vecs (exclusive ownership)` |
+| dangling cross-subtree ref | `;; ⚠ task :K :serves-spec refs nonexistent spec :foo` |
 
 ---
 
@@ -682,7 +670,7 @@ Deterministic `;;` annotations next to entries:
 
 #### Memo verbs
 
-3. **`spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `fact-set!` / `fact-remove!`** bound in SCI hidden-sym set. Validate shape via `ctx_spec.clj` specs (`s/explain-data`), stamp `:born`, auto-journal on task `:status` change, auto-stamp `:done-born` on spec terminal, cascade-remove on `task-remove!`, soft-warn on missing required fields and dangling refs.
+3. **`spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `fact-set!` / `fact-remove!`** bound in SCI hidden-sym set. Validate shape via `ctx_spec.clj` specs (`s/explain-data`), stamp `:born`, auto-journal on task `:status` change, auto-stamp `:done-born` on spec terminal, soft-warn on missing required fields and dangling refs.
 
 #### Introspection
 
@@ -721,9 +709,9 @@ Deterministic `;;` annotations next to entries:
    - `:v/engine-symbol-documentation` `:v/engine-symbol-source-code` `:v/engine-symbol-metadata` `:v/engine-symbol-apropos` (replaced by engine `introspect-symbol-*`).
 2. **No additions** — introspection ops are engine primitives.
 
-### Prompt changes (deferred until engine ships)
+### Prompt changes
 
-Replace the `Subtrees:` block and `Memory:` operators in `CORE_SYSTEM_PROMPT` with the spec-centric three-subtree layout. Update `Trailer` section with range summary semantics.
+`CORE_SYSTEM_PROMPT` now uses the spec-centric three-subtree layout: explicit `:grounding-facts`, `:serving-tasks`, `:serves-spec`, and `:blocked-by-tasks`; no fact tags or generic connections.
 
 ### Code rename (legacy → form)
 
@@ -742,13 +730,13 @@ Done in commit `776ca1ce`. Scope URL format reshape (`turn/<prefix>/iteration/N/
  :session/hints      {hint-id {:body :importance :satisfy-with}}
 
  :session/specs
-   {keyword {:title :acceptance :facts :tasks :status :born :done-born?}}
+   {keyword {:title :acceptance :grounding-facts :serving-tasks :status :born :done-born?}}
 
  :session/tasks
-   {keyword {:title :spec :depends-on :facts :status :evidence :journal :born}}
+   {keyword {:title :serves-spec :blocked-by-tasks :status :evidence :journal :born}}
 
  :session/facts
-   {keyword {:content :tags? :connections? :born}}
+   {keyword {:content :born}}
 
  :session/trailer
    [{:scope :forms [{:scope :tag :src :result :error}]}                  ; verbatim pin
