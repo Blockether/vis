@@ -203,24 +203,24 @@
          model-dir-option :model-dir
          :or {speaker-id 0 speed 1.0}}]
   (let [dir (or model-dir-option (model-dir))
-        ;; Vis answers travel as raw Markdown source. The TTS engine
-        ;; wants plain prose with no Markdown markup, so lift the
-        ;; Markdown to IR via `vis/markdown->ir` and walk it to plain
-        ;; text. The Markdown-answer pipeline produces exactly two
-        ;; shapes: `{:answer string}` and the needs-input map; a raw
-        ;; string is accepted as the prompt-side caller convention.
+        ;; Vis answers can reach this boundary as raw Markdown (CLI /
+        ;; Telegram) or canonical IR (TUI, after response rendering). The
+        ;; TTS engine wants plain prose, so normalize either shape to text.
+        ir-answer? (and (vector? text) (= :ir (first text)))
         md     (cond
                  (nil? text)                                        nil
+                 ir-answer?                                         nil
                  (and (map? text) (string? (:answer text)))         (:answer text)
                  (and (map? text) (string? (:answer/text text)))    (:answer/text text)
                  (string? text)                                     text
                  :else
-                 (throw (ex-info "voice/synthesize-file! accepts Markdown answers only"
+                 (throw (ex-info "voice/synthesize-file! accepts Markdown answers or canonical IR only"
                           {:type :voice/invalid-text
                            :got-type (some-> text class .getName)})))
-        spoken (if (str/blank? (str md))
-                 ""
-                 (vis/extract-text (vis/markdown->ir md)))]
+        spoken (cond
+                 ir-answer? (vis/extract-text text)
+                 (str/blank? (str md)) ""
+                 :else (vis/extract-text (vis/markdown->ir md)))]
     (ensure-model! dir)
     (when (str/blank? spoken)
       (throw (ex-info "TTS text is blank" {:type :voice/blank-tts-text})))

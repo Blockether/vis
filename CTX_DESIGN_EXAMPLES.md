@@ -3,51 +3,93 @@
 Goal: stress-test the proposed CTX shape with realistic flows.
 Read these, mark what feels invented, what feels essential, what's missing.
 
+## Rationale
+
+Two anchors fix this design.
+
+**1. Vis's op-tag taxonomy is the canonical mutation/observation source.**
+Every op registered through `vis/register-op!` carries a `:tag` of either
+`:op.tag/observation` or `:op.tag/mutation`. The taxonomy is registered
+once in extension source and consumed by every channel renderer
+(`channel_tui/render.clj` maps the tag to colour). The trailer entries in
+this design reuse those exact keyword values: zero translation layer,
+zero risk of drift. Forms that are not registered ops — `defn`, `def`,
+the `mem-*` verbs, plain expressions — are classified by engine-side
+pattern at trailer-promotion time and resolve to the same two values.
+
+**2. The model's SCI surface is the registered `:v/` and extension table,
+nothing more.** All cross-turn introspection rides on
+`(v/session-state)` and `(v/session-report)` — the only registered
+introspection ops. There is no per-turn fetch surface (no `v/turn-*`, no
+`v/iterations`); model filters the structured map returned by
+`v/session-state` instead. Workspace mutations (branch spawn, apply,
+discard) live as internal Clojure fns in `src/.../internal/workspace.clj`
+and are reached through engine flows, not SCI calls; the model sees
+workspace as a read-only block in CTX (`:session/workspace`) plus the
+`git/` extension's observation triplet (`git/diff`, `git/status`,
+`git/log`). File mutations go through the registered editing surface
+(`v/patch`, `v/move`, `v/delete`, `v/copy`, `v/create-dirs`,
+`v/delete-if-exists`).
+
+Together these mean: the trailer is **a structured replay of forms that
+were already inside Vis's existing classification machinery**, with the
+same vocabulary the rest of the system uses. No new tag domain, no
+shadow op table.
+
 ## Conventions
 
 - `USER >` — user message
 - `MODEL >` — what model emits in a single ```clojure``` code block per iter
 - `=> …` — engine eval result
-- `CTX AFTER TURN N:` — full CTX blob rendered the way model sees it in the next user message
-- Lazy fetches via `(v/turn-message N)`, `(v/iterations N)`, `(v/turn-answer N)`, `(v/turn-toc from to)`
+- `CTX AFTER TURN N:` — rendered CTX block the model sees in the next user message
+- Lazy history fetches: `(v/session-state)` / `(v/session-report)` — the ONLY registered
+  introspection ops; per-turn ops (`v/turn-*`, `v/iterations`) do NOT exist.
 
 ## Operator API — final
 
 ```clojure
-;; ─── MEMOS (mid-turn; model writes; stored in session_state.ctx blob) ───
-(mem-set!    path value)         ; assoc-in semantics
-(mem-update! path f & args)      ; update-in semantics
-(mem-remove! path)               ; dissoc-in semantics
+;; ─── MEMOS (mid-turn; model writes; stored in session_state.ctx) ───
+(mem-set!    path value)         ; assoc-in
+(mem-update! path f & args)      ; update-in
+(mem-remove! path)               ; dissoc-in
 
-;; ─── SYMBOLS (native SCI + existing Vis persistence machinery) ───
-(defn foo [x] …)                 ; create / overwrite — auto-persists in definition_state
+;; ─── SYMBOLS (native SCI + Vis's existing definition_state machinery) ───
+(defn foo [x] …)                 ; create / overwrite — auto-persists
 (def  foo nil)                   ; drop — engine treats latest expression IS NULL as forgotten
 
-;; ─── FINAL ───
-(done {:answer "markdown string"})
+;; ─── FINAL + TRAILER ───
+(done {:answer       "markdown string"
+       :trailer      [{:i N :note "..."} …]      ; pin iters of current turn (omit :t = current)
+       :trailer-drop [[t i] …]})                  ; drop by composite coord
 ```
 
 **No `ctx` symbol. No `(ctx)` fn. No reads in eval.**
 
-CTX is always rendered into the user message of the next turn with inline
-`;;` comments explaining each subtree. Model reads from the rendered text,
-writes back via the four verbs above.
+CTX is always rendered into the user message of the next turn as a bare
+EDN literal under a `;; ctx` marker, **NEVER** as `(def ctx {…})`. Two
+reasons:
+
+1. **No SCI binding** — `ctx` is not a var; model attempting `(get-in ctx …)`
+   errors with `Unable to resolve symbol: ctx`. Footgun structurally impossible.
+2. **Storage / render separation** — the rendered text is a read-only snapshot;
+   the persistent state lives in `session_state.ctx` (SQLite TEXT blob).
+   Mutations go through `mem-*` verbs and `done` keys, never through SCI bindings.
 
 ## Entry keys
 
-All entries in `:session/{rules, decisions, specs, tasks}` are keyed by
+Model-managed memos (`:rules :decisions :specs :tasks`) are keyed by
 **model-chosen keywords**. Cross-table refs are bare keywords.
 
 ```clojure
-(mem-set! [:session/tasks :wire-symbol-render]
-          {:title "Render :session.env/symbols from definition_state"
+(mem-set! [:session/tasks :wire-trailer-render]
+          {:title  "Render :session/trailer with per-form envelopes"
            :spec   :ctx-redesign
            :status :todo
            :deps   [:dissoc-counters]})
 ```
 
-Engine stamps `:added-turn (:session/turn ctx)` automatically on first
-`mem-set!` to a new key. No counters subtree. No mint operator.
+Engine stamps `:added-turn (:session/turn ctx)` on first `mem-set!` to a
+new key. No counters subtree. No mint operator.
 
 ## Storage shape
 
@@ -56,28 +98,74 @@ Engine stamps `:added-turn (:session/turn ctx)` automatically on first
  :session/turn   N
 
  ;; engine-rendered views (NOT stored as EDN — derived per dump)
- ;;
- ;; :session.env/symbols   — derived from definition_soul + latest definition_state
- ;;                          (rows whose latest expression IS NOT NULL only)
- ;; :session.env/workspace — derived from workspace/for-session + workspace/status
- :session.env/symbols    {sym {:arglists :doc :turn}}
- :session.env/workspace  {:branch :trunk :head :dirty? :diff-stat}
+ :session/workspace  {:branch :trunk :head :dirty? :stats}
+ :session/symbols    {sym {:arglists :doc :defined}}
 
  ;; model-managed memos (stored as EDN inside session_state.ctx)
  :session/rules      {keyword {:body :scope :added-turn}}
  :session/decisions  {keyword {:body :tags :added-turn}}
  :session/specs      {keyword {:title :acceptance :status :added-turn}}
- :session/tasks      {keyword {:title :spec :status :deps :added-turn :done-turn}}}
+ :session/tasks      {keyword {:title :spec :status :deps :added-turn :done-turn}}
+
+ ;; model-managed only via (done {:trailer … :trailer-drop …})
+ :session/trailer    [{:t :i :note :forms [{:tag :src :result :error}]}]}
 ```
 
-Six substantive subtrees. Two engine-derived (`:session.env/symbols`,
-`:session.env/workspace`); four model-managed (`:session/rules`,
-`:decisions`, `:specs`, `:tasks`).
+Seven substantive subtrees. Two engine-rendered, four memos via `mem-*`,
+one trailer via `done`.
+
+## Tag classification (cross-validated against source)
+
+For REGISTERED ops, engine reads `:tag` from `extension/op-tag` table.
+For non-registered forms, engine derives by head-symbol pattern. Both
+resolve to canonical `:op.tag/observation` or `:op.tag/mutation`.
+
+### Registered ops (verified)
+
+From `extensions/common/vis-foundation/src/.../core.clj` and `.../editing/core.clj`:
+
+| op | tag |
+|---|---|
+| `:v/cat` `:v/ls` `:v/rg` `:v/exists?` `:v/snapshot` | `:op.tag/observation` |
+| `:v/repositories` `:v/git` `:v/languages` `:v/monorepo` `:v/main-agent-instructions` | `:op.tag/observation` |
+| `:v/session-state` `:v/session-report` | `:op.tag/observation` |
+| `:v/engine-symbol-documentation` `:v/engine-symbol-source-code` `:v/engine-symbol-metadata` `:v/engine-symbol-apropos` | `:op.tag/observation` |
+| `:v/patch` `:v/create-dirs` `:v/copy` `:v/move` `:v/delete` `:v/delete-if-exists` | `:op.tag/mutation` |
+| `:v/refresh!` `:v/reload-extensions!` | `:op.tag/mutation` |
+
+From `extensions/common/vis-foundation-git/src/.../core.clj`:
+
+| op | tag |
+|---|---|
+| `:git/diff` `:git/status` `:git/log` | `:op.tag/observation` |
+
+From `extensions/common/vis-exa/src/.../core.clj`: all `:op.tag/observation`.
+
+### Non-registered forms (engine derives by head symbol)
+
+| head pattern | tag |
+|---|---|
+| `(defn …)` `(def …)` | `:op.tag/mutation` |
+| `(mem-set! …)` `(mem-update! …)` `(mem-remove! …)` | `:op.tag/mutation` |
+| arithmetic, str ops, `get-in`, `filter`, plain expressions | `:op.tag/observation` |
+| `(done …)` | excluded from trailer (it IS the finalizer) |
+
+### Render-shortening question (open)
+
+Storage / canonical = namespaced (`:op.tag/observation`). For CTX render
+in the user message, do we shorten to bare `:observation` to save tokens?
+Lean **shorten in render**, keep canonical in storage. Examples below
+render canonical to match codebase exactly.
+
+### Compactness rules per form
+
+- Drop `:result` when value is the trivial default (`:ok` for `:mem`, `#'sym` for `:def`/`:defn`).
+- Drop `:result` when nil but `:error` is present (error implies no result).
+- Drop `:error` when nil.
 
 ## Rendered CTX block (what model actually sees)
 
-Note the leading `;; ctx` marker and the bare EDN map. **No `(def ctx …)`.**
-This is plain text in the user message, not code to evaluate.
+Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Plain text in the user message, not code.
 
 ```clojure
 ;; ════════════════════════════════════════════════════════════════════
@@ -88,57 +176,51 @@ This is plain text in the user message, not code to evaluate.
  :session/turn 7
 
  ;; ──────────────────────────────────────────────────────────────────
- ;; :session.env/workspace — current workspace + diff against trunk.
- ;;   Derived from workspace state; full diff lives in (v/workspace.diff).
+ ;; :session/workspace — current workspace + diff against trunk.
+ ;;   :stats is per-file added/removed. Full diff via (git/diff).
  ;; ──────────────────────────────────────────────────────────────────
- :session.env/workspace
-   {:branch "feat/ctx-redesign" :trunk "main"
-    :head "abc1234" :dirty? true
-    :diff-stat "+47 -12 across 3 files"}
+ :session/workspace
+   {:branch "feat/ctx-redesign" :trunk "main" :head "abc1234" :dirty? true
+    :stats  {"src/auth.clj"     {:added 5  :removed 2}
+             "src/logging.clj"  {:added 47 :removed 0}
+             "test/x.clj"       {:added 0  :removed 12}}}
 
  ;; ──────────────────────────────────────────────────────────────────
- ;; :session.env/symbols — SCI user-defined symbols that are live right now.
- ;;   :turn = the turn in which the symbol was last (re)defined.
+ ;; :session/symbols — SCI user-defined symbols that are live right now.
+ ;;   :defined [t i] = the iter coord where the current definition was set.
  ;;   Symbols (defined as) nil are dropped from this view automatically.
  ;;
  ;;   To call    : (build-ws "x")
  ;;                — invoke as a normal function; it is already live.
- ;;
- ;;   To create  : (defn build-ws [id] …)
- ;;                — engine persists it; survives turn boundary.
- ;;
- ;;   To drop    : (def build-ws nil)
- ;;                — engine drops on next restore; gone from this view.
- ;;
- ;;   To inspect : (meta #'build-ws) for live arglists/doc.
+ ;;   To create  : (defn build-ws [id] …)   — engine persists it; survives turn boundary.
+ ;;   To drop    : (def build-ws nil)       — engine drops on next restore.
+ ;;   To inspect : (meta #'build-ws)        — live arglists/doc.
  ;; ──────────────────────────────────────────────────────────────────
- :session.env/symbols
-   {build-ws   {:arglists ([id])                              :doc "Workspace builder" :turn 4}
-    emit-event {:arglists ([{:keys [level msg] :as ev}])      :doc "Event emitter"     :turn 5}}
+ :session/symbols
+   {auth-check {:arglists ([tok]) :doc "literal-compare check; deprecated" :defined [5 1]}
+    emit-event {:arglists ([{:keys [level msg] :as ev}]) :defined [4 1]}}
 
  ;; ──────────────────────────────────────────────────────────────────
  ;; :session/rules — durable facts about the user and how to respond.
- ;;   Captures user-stated preferences, behavioral directives, and project
+ ;;   Captures user-stated preferences, behavioral directives, project
  ;;   conventions. Read these before every answer.
  ;;   Shape   : {:body string :scope #{:session :project}}
  ;;
  ;;   To add  : (mem-set!    [:session/rules :caveman-pl]
- ;;                          {:body "respond in PL caveman style"
- ;;                           :scope :session})
+ ;;                          {:body "respond in PL caveman" :scope :session})
  ;;   To drop : (mem-remove! [:session/rules :caveman-pl])
  ;;
- ;;   :scope :project mirrors to the project_rule table and loads into
- ;;   every new session in this repo.
+ ;;   :scope :project mirrors to the project_rule table; loads into every
+ ;;   new session in this repo.
  ;; ──────────────────────────────────────────────────────────────────
  :session/rules
-   {:caveman-pl     {:body "respond in PL caveman style" :scope :session :added-turn 1}
-    :likes-yellow   {:body "user likes yellow color"     :scope :session :added-turn 1}
-    :real-db-tests  {:body "tests must hit real SQLite — no mocks" :scope :project :added-turn 7}}
+   {:caveman-pl    {:body "respond in PL caveman style" :scope :session :added-turn 1}
+    :likes-yellow  {:body "user likes yellow color"     :scope :session :added-turn 1}
+    :real-db-tests {:body "tests must hit real SQLite — no mocks" :scope :project :added-turn 7}}
 
  ;; ──────────────────────────────────────────────────────────────────
- ;; :session/decisions — append-only "why we did X". Read-back for design
- ;;   rationale questions; never updated; never auto-pruned.
- ;;   Shape   : {:body string :tags #{keyword}}
+ ;; :session/decisions — append-only "why we did X". Never updated;
+ ;;   never auto-pruned. Shape : {:body string :tags #{keyword}}
  ;;
  ;;   To add  : (mem-set! [:session/decisions :no-llm-compaction]
  ;;                       {:body "Never LLM-compact ctx; deterministic rules only"
@@ -150,7 +232,7 @@ This is plain text in the user message, not code to evaluate.
        :tags #{:ctx :design} :added-turn 3}}
 
  ;; ──────────────────────────────────────────────────────────────────
- ;; :session/specs — formal requirements with acceptance criteria.
+ ;; :session/specs — formal requirements + acceptance criteria.
  ;;   Shape   : {:title string :acceptance [string] :status keyword}
  ;;   :status ∈ #{:draft :doing :done :cancelled}
  ;;
@@ -162,43 +244,67 @@ This is plain text in the user message, not code to evaluate.
       {:title "new CTX model"
        :acceptance ["no LLM compaction"
                     "no counters / no scratchpad concept"
-                    "symbols persist via existing definition_state machinery"]
+                    "symbols persist via existing definition_state machinery"
+                    "trailer carries per-form envelopes with :tag classification"]
        :status :doing :added-turn 4}}
 
  ;; ──────────────────────────────────────────────────────────────────
- ;; :session/tasks — work items. Reference specs and other tasks by keyword.
+ ;; :session/tasks — work items. Reference specs / other tasks by keyword.
  ;;   Shape   : {:title string :spec keyword :status keyword :deps [keyword]}
  ;;   :status ∈ #{:todo :doing :done :blocked :cancelled}
  ;;
- ;;   To add     : (mem-set! [:session/tasks :wire-symbol-render]
+ ;;   To add     : (mem-set! [:session/tasks :wire-trailer-render]
  ;;                          {:title "…" :spec :ctx-redesign
  ;;                           :status :todo :deps [:dissoc-counters]})
- ;;   To advance : (mem-set! [:session/tasks :wire-symbol-render :status] :doing)
+ ;;   To advance : (mem-set! [:session/tasks :wire-trailer-render :status] :doing)
  ;; ──────────────────────────────────────────────────────────────────
  :session/tasks
-   {:dissoc-counters
-      {:title "remove :session/counters and gen-id"
-       :spec :ctx-redesign :status :done :deps []
-       :added-turn 4 :done-turn 5}
-    :wire-symbol-render
-      {:title "render :session.env/symbols from definition_state"
-       :spec :ctx-redesign :status :doing :deps [:dissoc-counters]
-       :added-turn 4}}}
+   {:dissoc-counters       {:title "remove :session/counters" :spec :ctx-redesign
+                            :status :done :deps [] :added-turn 4 :done-turn 5}
+    :wire-trailer-render   {:title "render :session/trailer with per-form envelopes"
+                            :spec :ctx-redesign :status :doing
+                            :deps [:dissoc-counters] :added-turn 4}}
+
+ ;; ──────────────────────────────────────────────────────────────────
+ ;; :session/trailer — pinned iter envelopes from prior turns.
+ ;;   Sorted by [t i] ascending. Each entry captures one iter:
+ ;;     {:t turn  :i iter  :note "…"  :forms [{:tag :src :result :error}]}
+ ;;   :tag ∈ #{:observation :mutation}.
+ ;;   Per-form keys :result/:error are dropped when default.
+ ;;   :done forms are excluded.
+ ;;
+ ;;   To pin   : (done {:answer "..." :trailer [{:i M :note "..."} …]})
+ ;;              — engine fills :forms from this turn's iter rows; stamps :t.
+ ;;              — pin a prior turn's iter by providing explicit :t.
+ ;;   To drop  : (done {:answer "..." :trailer-drop [[t i] …]})
+ ;;
+ ;;   Full session detail via (v/session-state).
+ ;; ──────────────────────────────────────────────────────────────────
+ :session/trailer
+   [{:t 3 :i 2 :note "auth literal compare on \"secret\""
+     :forms [{:tag :op.tag/observation :src "(v/cat \"src/auth.clj\")"
+              :result "(ns auth)\n(defn check [tok] (= tok \"secret\"))\n"}
+             {:tag :op.tag/mutation    :src "(defn auth-check [tok] (= tok \"secret\"))"}
+             {:tag :op.tag/mutation    :src "(mem-set! [:session/tasks :wire :status] :doing)"}]}
+    {:t 3 :i 4 :note "patched check/1 → bcrypt verify"
+     :forms [{:tag :op.tag/mutation :src "(v/patch [{:path \"src/auth.clj\" :search \"…\" :replace \"…\"}])"
+              :result {:applied 1 :path "src/auth.clj"}}
+             {:tag :op.tag/mutation :src "(mem-set! [:session/tasks :wire :status] :done)"}]}
+    {:t 5 :i 1 :note "git status post-patch"
+     :forms [{:tag :op.tag/observation :src "(git/status)"
+              :result {:branch "feat/auth-bcrypt" :ahead 1 :modified ["src/auth.clj"]}}]}]}
 ```
 
 ---
 
 ## Example 1 — pure conversation, recall-after-5-turns
 
-User chatting, no code. Tests whether `:session/rules` carries trivial
-user facts as well as behavioral directives.
+User chatting, no code. Tests `:session/rules` as the single bucket for user facts + behavior.
 
 ### Turn 1
-
 ```
 USER > Lubię żółty.
 ```
-
 ```clojure
 MODEL >
 (mem-set! [:session/rules :likes-yellow]
@@ -210,11 +316,9 @@ MODEL >
 ```
 
 ### Turn 2
-
 ```
 USER > Ile jest 17 * 23?
 ```
-
 ```clojure
 MODEL >
 (* 17 23)
@@ -225,11 +329,9 @@ MODEL >
 ```
 
 ### Turn 3
-
 ```
 USER > Mam psa.
 ```
-
 ```clojure
 MODEL >
 (mem-set! [:session/rules :has-pet-dog]
@@ -241,11 +343,9 @@ MODEL >
 ```
 
 ### Turn 4
-
 ```
 USER > Powiedz coś po polsku.
 ```
-
 ```clojure
 MODEL >
 (done {:answer "Cześć! Co słychać?"})
@@ -253,13 +353,11 @@ MODEL >
 ```
 
 ### Turn 5
-
 ```
 USER > Co lubię?
 ```
 
-Model reads from the rendered CTX block:
-
+Model reads the `;; ctx` block, sees:
 ```clojure
 :session/rules
   {:likes-yellow {:body "user likes yellow color" :scope :session :added-turn 1}
@@ -277,35 +375,28 @@ MODEL >
 ```clojure
 {:session/id   "01HXYZ"
  :session/turn 5
- :session.env/workspace {:branch "main" :trunk "main" :head "abc1234"
-                         :dirty? false :diff-stat "clean"}
- :session.env/symbols   {}                       ; no defs in this session
+ :session/workspace {:branch "main" :trunk "main" :head "abc1234" :dirty? false :stats {}}
+ :session/symbols   {}
  :session/rules
    {:likes-yellow {:body "user likes yellow color" :scope :session :added-turn 1}
     :has-pet-dog  {:body "user has a dog"          :scope :session :added-turn 3}}
- :session/decisions {} :session/specs {} :session/tasks {}}
+ :session/decisions {} :session/specs {} :session/tasks {}
+ :session/trailer   []}
 ```
 
 **Observations:**
-- Conversation works without any per-turn breadcrumb. `:session/rules`
-  carries the facts; `(v/turn-message N)` / `(v/turn-answer N)` give
-  per-turn detail on demand.
-- One bucket (`:session/rules`) holds both trivial facts and behavioral
-  rules. Coherence is enforced by single-bucket-per-concept design.
+- One bucket (`:session/rules`) holds both trivial facts and behavioral rules.
+- No `:session/trailer` entries — conversation needed no pinned iter.
+- `(v/session-state)` returns structured session data; model filters by turn.
 
 ---
 
-## Example 2 — read-patch-verify (workspace state surfaces in env)
-
-Coding flow. Tests that `:session.env/workspace` reflects edits and the
-model orients off it.
+## Example 2 — read-patch-verify (workspace stats reflect edits)
 
 ### Turn 1
-
 ```
 USER > Pokaż mi src/auth.clj i powiedz co tam jest.
 ```
-
 ```clojure
 MODEL >
 (v/cat "src/auth.clj")          ;; iter [1 1]
@@ -316,29 +407,25 @@ MODEL >
 ```
 
 ### CTX AFTER TURN 1
-
 ```clojure
-{:session/id   "01HXYZ"
- :session/turn 1
- :session.env/workspace {:branch "main" :trunk "main" :head "abc1234"
-                         :dirty? false :diff-stat "clean"}
- :session.env/symbols   {}
- :session/rules {} :session/decisions {} :session/specs {} :session/tasks {}}
+{:session/turn 1
+ :session/workspace {:branch "main" :trunk "main" :head "abc1234" :dirty? false :stats {}}
+ :session/symbols {} :session/rules {} :session/decisions {} :session/specs {}
+ :session/tasks {} :session/trailer []}
 ```
 
 ### Turn 2
-
 ```
 USER > Zamień to literal compare na bcrypt verify.
 ```
 
-Within this turn the model re-reads (cheap, definitive) then patches.
-The iter trailer of this turn marks the just-completed `v/cat` result
-as superseded once the `v/patch` lands.
+Within turn: re-read (cheap), patch. Engine renders supersede marker on
+the iter-1 `v/cat` in this turn's trailer (within-turn chat ping-pong).
+Pin the patch iter for cross-turn recall.
 
 ```clojure
 MODEL >
-(v/cat "src/auth.clj")          ;; iter [2 1] — fresh read
+(v/cat "src/auth.clj")          ;; iter [2 1]
 => "(ns auth)\n(defn check [tok] (= tok \"secret\"))\n"
 
 (v/patch [{:path "src/auth.clj"
@@ -346,43 +433,37 @@ MODEL >
            :replace "(defn check [tok] (bcrypt/check tok stored-hash))"}])
 ;; iter [2 2]
 => {:applied 1 :path "src/auth.clj"}
-;; (within-turn trailer notes iter [2 1] v/cat src/auth.clj :superseded-by [2 2])
 
-(done {:answer "Zamieniono `check` na bcrypt verify."})
+(done {:answer  "Zamieniono `check` na bcrypt verify."
+       :trailer [{:i 2 :note "patched check/1 → bcrypt verify"}]})
 => :done
 ```
 
 ### CTX AFTER TURN 2
 
 ```clojure
-{:session/id   "01HXYZ"
- :session/turn 2
- :session.env/workspace {:branch "feat/auth-bcrypt" :trunk "main"
-                         :head "def5678" :dirty? true
-                         :diff-stat "+1 -1 in src/auth.clj"}
- :session.env/symbols   {}
+{:session/turn 2
+ :session/workspace
+   {:branch "feat/auth-bcrypt" :trunk "main" :head "def5678" :dirty? true
+    :stats {"src/auth.clj" {:added 1 :removed 1}}}
+ :session/symbols   {}
+ :session/trailer
+   [{:t 2 :i 2 :note "patched check/1 → bcrypt verify"
+     :forms [{:tag :op.tag/mutation
+              :src "(v/patch [{:path \"src/auth.clj\" :search \"(defn check [tok] (= tok \\\"secret\\\"))\"
+                              :replace \"(defn check [tok] (bcrypt/check tok stored-hash))\"}])"
+              :result {:applied 1 :path "src/auth.clj"}}]}]
  :session/rules {} :session/decisions {} :session/specs {} :session/tasks {}}
 ```
 
-**Observations:**
-- No `:session/file-truth` cache. Workspace diff-stat is the cross-turn
-  signal that "something is pending".
-- Cross-turn there is no preserved file-state cache; FS is the truth,
-  re-read via `v/cat` on demand.
-
 ---
 
-## Example 3 — spec + tasks + decision + symbols lifecycle
-
-Multi-turn coding job. Tests `:session/specs`, `:session/tasks`,
-`:session/decisions`, and native symbol persistence (no scratchpad).
+## Example 3 — spec + tasks + decision + symbols lifecycle + trailer
 
 ### Turn 1
-
 ```
 USER > Zaplanuj refactor logging do strukturalnych eventów (EDN, nie text).
 ```
-
 ```clojure
 MODEL >
 (mem-set! [:session/specs :logging-edn]
@@ -391,46 +472,32 @@ MODEL >
                         "all logs go through emit-event"
                         "log levels preserved"]
            :status :draft})
-=> :ok
-
 (mem-set! [:session/tasks :introduce-emit-event]
           {:title "introduce emit-event fn"
            :spec :logging-edn :status :todo :deps []})
-=> :ok
-
 (mem-set! [:session/tasks :convert-call-sites]
           {:title "convert str/format call-sites"
            :spec :logging-edn :status :todo :deps [:introduce-emit-event]})
-=> :ok
-
 (mem-set! [:session/tasks :wire-levels]
           {:title "wire levels through emit-event"
            :spec :logging-edn :status :todo :deps [:introduce-emit-event]})
-=> :ok
 
 (done {:answer "Spec `:logging-edn` zapisany. Trzy taski, zaczynam od `:introduce-emit-event`."})
 => :done
 ```
 
 ### Turn 2
-
 ```
 USER > Działaj.
 ```
-
-Model reads `:session/tasks` in CTX, sees `:introduce-emit-event` has no
-deps, picks it. Defines `emit-event` normally — Vis's existing
-`definition_state` machinery persists it for free.
-
 ```clojure
 MODEL >
 (mem-set! [:session/tasks :introduce-emit-event :status] :doing)
-=> :ok
 
-(v/cat "src/logging.clj")
+(v/cat "src/logging.clj")          ;; iter [2 2]
 => "(ns logging)\n(defn log [level msg] (println (str/format \"%s: %s\" level msg)))\n"
 
-(defn emit-event [{:keys [level msg] :as ev}]
+(defn emit-event [{:keys [level msg] :as ev}]   ;; iter [2 3]
   (println (pr-str ev)))
 => #'vis.user/emit-event
 
@@ -440,84 +507,77 @@ MODEL >
 => {:applied 1}
 
 (mem-set! [:session/tasks :introduce-emit-event :status] :done)
-=> :ok
 
-(done {:answer "Task `:introduce-emit-event` done. `emit-event` w pliku, i w runtime persistowane przez Vis."})
+(done {:answer  "Task `:introduce-emit-event` done. `emit-event` w pliku, persisted by Vis."
+       :trailer [{:i 3 :note "defined emit-event"}
+                 {:i 4 :note "patched src/logging.clj to use emit-event"}]})
 => :done
 ```
 
-### CTX AFTER TURN 2
+### CTX AFTER TURN 2 (excerpt)
 
 ```clojure
 {:session/turn 2
- :session.env/workspace {:branch "feat/logging" :trunk "main" :head "ghi9012"
-                         :dirty? true :diff-stat "+5 -2 in src/logging.clj"}
- :session.env/symbols
-   {emit-event {:arglists ([{:keys [level msg] :as ev}]) :doc nil :turn 2}}
- :session/specs
-   {:logging-edn {:title "…" :status :draft :added-turn 1 …}}
+ :session/workspace
+   {:branch "feat/logging" :trunk "main" :head "ghi9012" :dirty? true
+    :stats {"src/logging.clj" {:added 5 :removed 2}}}
+ :session/symbols
+   {emit-event {:arglists ([{:keys [level msg] :as ev}]) :defined [2 3]}}
  :session/tasks
-   {:introduce-emit-event {:title "…" :spec :logging-edn :status :done
-                           :added-turn 1 :done-turn 2 :deps []}
-    :convert-call-sites   {:title "…" :spec :logging-edn :status :todo
-                           :deps [:introduce-emit-event] :added-turn 1}
-    :wire-levels          {:title "…" :spec :logging-edn :status :todo
-                           :deps [:introduce-emit-event] :added-turn 1}}
- :session/decisions {} :session/rules {}}
+   {:introduce-emit-event {:status :done :done-turn 2 :added-turn 1 :spec :logging-edn :deps []}
+    :convert-call-sites   {:status :todo :deps [:introduce-emit-event] :added-turn 1 …}
+    :wire-levels          {:status :todo :deps [:introduce-emit-event] :added-turn 1 …}}
+ :session/trailer
+   [{:t 2 :i 3 :note "defined emit-event"
+     :forms [{:tag :op.tag/mutation
+              :src "(defn emit-event [{:keys [level msg] :as ev}]\n  (println (pr-str ev)))"}]}
+    {:t 2 :i 4 :note "patched src/logging.clj to use emit-event"
+     :forms [{:tag :op.tag/mutation
+              :src "(v/patch [{:path \"src/logging.clj\" :search \"…\" :replace \"…\"}])"
+              :result {:applied 1}}]}]}
 ```
 
-### Turn 3 — symbol survives turn boundary; redefine + decision
-
-Engine restored `emit-event` via existing `restore-sandbox!`. It's live.
+### Turn 3 — redefine + decision
 
 ```
 USER > Wait, emit-event powinno mieć timestamp dodawany przez engine, nie przez caller.
 ```
-
 ```clojure
 MODEL >
 (mem-set! [:session/decisions :emit-event-auto-ts]
-          {:body "emit-event auto-stamps :ts (UTC ms) if absent; callers pass only domain fields"
+          {:body "emit-event auto-stamps :ts (UTC ms) if absent"
            :tags #{:logging :api}})
-=> :ok
 
-(defn emit-event [{:keys [level msg] :as ev}]
+(defn emit-event [{:keys [level msg] :as ev}]   ;; iter [3 2]
   (println (pr-str (assoc ev :ts (or (:ts ev) (System/currentTimeMillis))))))
 => #'vis.user/emit-event
-;; latest definition_state row updates; :turn for this sym becomes 3
 
 (mem-set! [:session/tasks :auto-stamp-ts]
-          {:title "emit-event auto-stamp :ts"
-           :spec :logging-edn :status :todo
-           :deps [:introduce-emit-event]})
-=> :ok
+          {:title "emit-event auto-stamp :ts" :spec :logging-edn
+           :status :todo :deps [:introduce-emit-event]})
 
-(done {:answer "Decyzja `:emit-event-auto-ts` zapisana. `emit-event` zaktualizowane, task `:auto-stamp-ts` dodany."})
+(done {:answer  "Decyzja `:emit-event-auto-ts` zapisana. `emit-event` zaktualizowane, task `:auto-stamp-ts` dodany."
+       :trailer [{:i 2 :note "added auto-ts stamping to emit-event"}]})
 => :done
 ```
 
-### CTX AFTER TURN 3
-
+### CTX AFTER TURN 3 (symbols + trailer excerpt)
 ```clojure
-{:session/turn 3
- :session.env/workspace {…}
- :session.env/symbols
-   {emit-event {:arglists ([{:keys [level msg] :as ev}]) :doc nil :turn 3}}  ; :turn bumped on redef
- :session/decisions
-   {:emit-event-auto-ts {:body "emit-event auto-stamps :ts (UTC ms) …"
-                         :tags #{:logging :api} :added-turn 3}}
- :session/tasks
-   {…
-    :auto-stamp-ts {:status :todo :deps [:introduce-emit-event] :added-turn 3 …}}
- …}
+:session/symbols
+  {emit-event {:arglists ([{:keys [level msg] :as ev}]) :defined [3 2]}}   ;; coord refreshed
+
+:session/trailer
+  [{:t 2 :i 3 :note "defined emit-event" :forms […]}
+   {:t 2 :i 4 :note "patched src/logging.clj to use emit-event" :forms […]}
+   {:t 3 :i 2 :note "added auto-ts stamping to emit-event"
+    :forms [{:tag :op.tag/mutation
+             :src "(defn emit-event [{:keys [level msg] :as ev}]\n  (println (pr-str (assoc ev :ts (or (:ts ev) (System/currentTimeMillis))))))"}]}]
 ```
 
-### Turn 4 — call the symbol restored from prior turn
-
+### Turn 4 — call symbol restored across turn boundary
 ```
 USER > Pokaż wynik wywołania emit-event z {:level :info :msg "ok"}.
 ```
-
 ```clojure
 MODEL >
 (with-out-str (emit-event {:level :info :msg "ok"}))
@@ -527,91 +587,66 @@ MODEL >
 => :done
 ```
 
-### Turn 5 — drop the symbol via `(def x nil)`
+### Turn 5 — drop symbol + clean older trailer
 
 ```
-USER > OK, juz nie potrzebuję emit-event.
+USER > OK, już nie potrzebuję emit-event. Wyczyść też ślady promocji z trailera.
 ```
-
 ```clojure
 MODEL >
-(def emit-event nil)
-=> #'vis.user/emit-event
-;; latest definition_state row gets expression IS NULL → engine drops on next restore
+(def emit-event nil)               ;; iter [5 1]
 
-(done {:answer "Usunięte. `emit-event` od następnej tury nie będzie materializowane."})
+(done {:answer       "Usunięte. `emit-event` od następnej tury nieaktywne. Wyczyszczone wpisy z trailera."
+       :trailer-drop [[2 3] [2 4] [3 2]]})
 => :done
 ```
 
 ### CTX AFTER TURN 5
-
 ```clojure
-{:session/turn 5
- :session.env/workspace {…}
- :session.env/symbols   {}                          ; emit-event omitted (latest expression IS NULL)
- …}
+:session/symbols {}                 ;; emit-event omitted (latest expression IS NULL)
+:session/trailer []                 ;; dropped
 ```
-
-Turn 6 starts: engine's `restore-sandbox!` skips the nil-bound row.
-`emit-event` is unavailable unless redefined.
 
 ---
 
 ## Example 4 — cross-session project rule
 
-Session A teaches a project rule. Session B (next day, same repo) picks it up.
-
 ### Session A, Turn 7
-
 ```
 USER > Pamiętaj, w tym projekcie testy muszą uderzać w prawdziwy SQLite, nigdy mockować.
 ```
-
 ```clojure
 MODEL >
 (mem-set! [:session/rules :real-db-tests]
-          {:body "tests must hit real SQLite — no mocks"
-           :scope :project})         ;; ← triggers mirror to project_rule table
-=> :ok
+          {:body "tests must hit real SQLite — no mocks" :scope :project})
 
 (done {:answer "Reguła `:real-db-tests` zapisana jako project-scoped."})
 => :done
 ```
 
 ### Engine side-effect
-
 ```sql
 INSERT INTO project_rule (repo_id, rule_key, body, added_at)
 VALUES ('repo:vis', 'real-db-tests', 'tests must hit real SQLite — no mocks', …)
 ```
 
 ### Session B start (next day, same repo)
-
-Engine loads `:session/rules` from new `session_state.ctx` = `{}`,
-then merges project_rule rows for this repo:
-
 ```clojure
 :session/rules
   {:real-db-tests {:body "tests must hit real SQLite — no mocks"
                    :scope :project
-                   :source :project-mirror}}    ; engine-set; not from this session
+                   :source :project-mirror}}      ;; engine-set; not from this session
 ```
 
 ### Session B, Turn 1
-
 ```
 USER > Dodaj test dla emit-event.
 ```
-
-Model reads `:session/rules :real-db-tests :body` from rendered CTX.
-
 ```clojure
 MODEL >
 (v/cat "test/logging_test.clj")
-=> …existing tests…
-
-(v/patch [{…test using real next.jdbc + tmp sqlite file…}])
-=> {:applied 1}
+…
+(v/patch [{…real-DB test…}])
 
 (done {:answer "Test dodany. Używa tmp SQLite jak wymaga reguła `:real-db-tests`."})
 => :done
@@ -621,55 +656,72 @@ MODEL >
 
 ## Cross-cutting questions still open
 
-1. **`:turn` semantics on `:session.env/symbols`.**
-   - `:turn` = first-def (creation, immutable across redefs), or
-   - `:turn` = last-redef (mutable; refreshed every time the form changes).
-   Lean **last-redef** — more actionable ("is this fresh?"). First-def is
-   reachable via DB query on demand.
+1. **Render-shortening of tag value.** Storage / canonical =
+   `:op.tag/observation`. In CTX user-message render: shorten to bare
+   `:observation` for tokens vs keep canonical for consistency.
+   Lean **shorten in render**. Examples above render canonical to
+   match codebase exactly.
 
-2. **Workspace branch spawn — engine or model?**
-   `:session.env/workspace :branch` reads `"main"` when the session has no
-   workspace branch yet. Should the engine auto-spawn before any `v/patch`,
-   or rely on existing Vis flow? Today the existing flow handles this; no
-   change proposed.
+2. **`:defined [t i]` semantics.** Currently = LAST redef coord. Earlier
+   open question (first-def vs last-redef) is resolved here in favour of
+   last-redef. Confirm.
 
-3. **Spec status auto-promotion.**
-   Example 3 didn't bump `:logging-edn :status` from `:draft` to `:doing`
-   when first task started. Lean **manual** — explicit and inspectable.
+3. **Workspace branch spawn — engine or model?** `:branch "main"` on a
+   fresh session: should engine auto-spawn before any `v/patch`, or rely
+   on existing Vis flow? Today's flow handles this; no change proposed.
 
-4. **Overwrite warning on existing key.**
-   `(mem-set! [:session/tasks :X] …)` when `:X` already exists with a
-   different shape — silent replace, or `;; ⚠ overwriting [:session/tasks :X]
-   (prior :status was :doing)`? Lean **warn**, never refuse.
+4. **Spec status auto-promotion.** Example 3 didn't bump `:logging-edn`
+   from `:draft` to `:doing`. Lean **manual**.
 
-5. **Cross-turn symbol use of `(meta #'sym)`.**
-   After restore, does `(meta #'build-ws)` return the full `:arglists`/`:doc`
-   the model expects? Depends on whether Vis's `restore-sandbox!` re-evals
-   the source form (preserves meta) or only restores the value
-   (loses meta). To probe live before locking the prompt copy.
+5. **Overwrite warning on existing memo key.** Silent replace vs
+   `;; ⚠ overwriting [:session/tasks :X] (prior :status was :doing)`.
+   Lean **warn**, never refuse.
+
+6. **Big result handling in trailer entries.** A 47kB file body in
+   `:forms[0] :result` is real. Three policies discussed: inline verbatim,
+   truncate at render, inline + soft warn. Lean **inline + soft warn**
+   (`;; ⚠ trailer entry [3 2] form 0 result is 47kB; consider :note summary`).
+   Model can `:trailer-drop` if size matters.
+
+7. **Auto-prune of `:session/trailer`.** Grows unbounded otherwise.
+   Options: model-only drop, engine FIFO at cap, engine age-out. Lean
+   **model-only** with count surfaced in render comment
+   (`;; :session/trailer (12 entries)`).
+
+8. **Promote post-error iters.** Yes — test failures are exactly what
+   model wants to remember. Engine fills `:error` map, `:result` is
+   dropped (nil + error present → drop result).
+
+9. **Pin from earlier turn.** `(done {:trailer [{:t 3 :i 2 :note "…"}]})`
+   — explicit `:t` overrides the default-to-current rule.
+
+10. **`(meta #'sym)` survives `restore-sandbox!`?** Open. To probe live
+    before locking the prompt copy that recommends introspection.
 
 ---
 
 ## Final minimum-viable shape
 
 ```clojure
-{:session/id     "01HXYZ"
- :session/turn   N
+{:session/id   "01HXYZ"
+ :session/turn N
 
- :session.env/symbols    {sym {:arglists :doc :turn}}
- :session.env/workspace  {:branch :trunk :head :dirty? :diff-stat}
+ :session/workspace  {:branch :trunk :head :dirty? :stats}
+ :session/symbols    {sym {:arglists :doc :defined}}
 
- :session/rules     {keyword {:body :scope :added-turn}}
- :session/decisions {keyword {:body :tags :added-turn}}
- :session/specs     {keyword {:title :acceptance :status :added-turn}}
- :session/tasks     {keyword {:title :spec :status :deps :added-turn :done-turn}}}
+ :session/rules      {keyword {:body :scope :added-turn}}
+ :session/decisions  {keyword {:body :tags :added-turn}}
+ :session/specs      {keyword {:title :acceptance :status :added-turn}}
+ :session/tasks      {keyword {:title :spec :status :deps :added-turn :done-turn}}
+
+ :session/trailer    [{:t :i :note :forms [{:tag :src :result :error}]}]}
 ```
 
-Six substantive subtrees. Two engine-rendered, four model-managed via
-`mem-set!` / `mem-update!` / `mem-remove!`. Symbols managed natively via
-`defn` / `(def x nil)` against existing Vis persistence.
+Seven substantive subtrees. Two engine-rendered, four memos (mem-*), one
+trailer (done). Symbols managed natively via `defn` / `(def x nil)` against
+existing Vis persistence.
 
-Cross-turn history lives entirely in SQLite (`session_turn`,
-`session_turn_iteration`); reach it via foundation calls
-(`v/turn-message`, `v/turn-answer`, `v/iterations`, `v/turn-toc`).
-Never preloaded into the prompt.
+Cross-turn raw history stays in SQLite (`session_turn`,
+`session_turn_iteration`); reach via `(v/session-state)` /
+`(v/session-report)` (the only registered introspection ops). Never
+preloaded into the prompt.

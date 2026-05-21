@@ -1854,6 +1854,43 @@
 
 ;;; ── `vis ext` ───────────────────────────────────────────────────────────
 
+(defn- ext-help-extra-sections
+  "Build the `INSTALLED EXTENSIONS` help section appended to
+   `vis ext --help`. Every registered extension is listed -- not
+   only those that ship a `:ext/cli` subcommand -- so users discover
+   SCI-only extensions (e.g. bridge before it grew a CLI surface)
+   instead of guessing why their `vis ext <name>` invocation 404s.
+
+   Each row is `<name>  <description>` with a trailing tag when the
+   extension has no CLI surface (`(no CLI)`) or only exposes SCI
+   symbols (`(sci: alias)`). This section is the canonical answer to
+   \"what is installed?\"; `vis ext list` remains the wide tabular
+   view with author / owner / license / version."
+  []
+  (let [exts (extension/registered-extensions)]
+    (when (seq exts)
+      (let [col-w (->> exts
+                    (map (comp count str :ext/name))
+                    (reduce max 0)
+                    (+ 2)
+                    (max 16))
+            pad   (fn [s w] (str s (apply str (repeat (max 0 (- w (count (str s)))) \space))))
+            row   (fn [e]
+                    (let [cli?  (seq (:ext/cli e))
+                          alias (some-> (get-in e [:ext/sci :ext.sci/alias]) name)
+                          tag   (cond
+                                  cli?  nil
+                                  alias (str "(sci: " alias "/)")
+                                  :else "(no CLI)")]
+                      (str "  " (pad (:ext/name e) col-w)
+                        (or (:ext/description e) "")
+                        (when tag (str "  " tag)))))]
+        [{:title "INSTALLED EXTENSIONS"
+          :body  (str (str/join "\n" (map row exts))
+                   "\n\n  "
+                   (format "%d extension(s) registered. Run `vis ext list` for full metadata."
+                     (count exts)))}]))))
+
 (def ^:private extensions-table-cols
   [{:key :namespace :label "Namespace"   :width 28 :align :left}
    {:key :group     :label "Group"       :width 18 :align :left}
@@ -2060,7 +2097,8 @@
          {:cmd/name  "ext"
           :cmd/doc   "Inspect, scaffold, or run an extension-contributed CLI command."
           :cmd/usage "vis ext <list|scaffold|...> [args...]"
-          :cmd/subcommands #(registry/registered-under ["ext"])}
+          :cmd/subcommands #(registry/registered-under ["ext"])
+          :cmd/extra-sections #(ext-help-extra-sections)}
 
          {:cmd/name  "update"
           :cmd/doc   "Update the source checkout used by this Vis installation."

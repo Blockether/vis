@@ -278,22 +278,52 @@
     flags))
 
 (defn- format-subcommand-lines
-  "Render each subcommand as `name + doc`. When the children mix host-owned
-   canonical entries (`:cmd/internal? true`) with extension contributions,
-   internal entries render first, then a dim `----` divider labelled
-   `extensions`, then the contributed entries. Order inside each group is
-   preserved (registration order)."
+  "Render each subcommand as `name + doc`. Order is preserved
+   (registration order). When the caller wants the host-canonical
+   commands rendered separately from extension contributions, it
+   filters `children` itself and calls this twice; this fn no longer
+   mixes groups under a single header."
   [children col-width]
-  (let [fmt         (fn [c]
-                      (str "  " (pad-visible-right (magenta (:cmd/name c)) col-width)
-                        (:cmd/doc c)))
-        internal    (filterv (comp boolean :cmd/internal?) children)
-        contributed (filterv (complement (comp boolean :cmd/internal?)) children)]
-    (if (and (seq internal) (seq contributed))
-      (-> (mapv fmt internal)
-        (conj (dim "  ---- extensions ----"))
-        (into (mapv fmt contributed)))
-      (mapv fmt children))))
+  (let [fmt (fn [c]
+              (str "  " (pad-visible-right (magenta (:cmd/name c)) col-width)
+                (:cmd/doc c)))]
+    (mapv fmt children)))
+
+(defn- split-children
+  "Split children into host-owned canonical entries (`:cmd/internal?`
+   true) and extension-contributed entries. Order is preserved inside
+   each group."
+  [children]
+  {:internal    (filterv (comp boolean :cmd/internal?) children)
+   :contributed (filterv (complement (comp boolean :cmd/internal?)) children)})
+
+(defn- render-extra-section
+  "Render a single `:cmd/extra-sections` entry. Each entry is a map
+   `{:title string :body string-or-fn}`; a fn body is invoked with no
+   args so the caller can defer expensive lookups (registered
+   extensions, runtime tables, ...) until help is actually requested.
+   Blank body collapses the whole section."
+  [{:keys [title body]}]
+  (let [text (cond
+               (fn? body)     (try (body) (catch Throwable _ ""))
+               (string? body) body
+               :else          (str body))]
+    (when-not (str/blank? text)
+      (str "\n" (section title) "\n" text))))
+
+(defn- collect-extra-sections
+  "Resolve `:cmd/extra-sections` into a vector of rendered section
+   strings. `:cmd/extra-sections` itself may be a fn returning a
+   sequence of entry maps, or the entry sequence directly."
+  [cmd]
+  (let [raw (:cmd/extra-sections cmd)
+        entries (cond
+                  (nil? raw) []
+                  (fn? raw)  (try (raw) (catch Throwable _ []))
+                  :else      raw)]
+    (->> entries
+      (keep render-extra-section)
+      vec)))
 
 ;; ---- Usage line + multi-paragraph doc ---------------------------------------
 
@@ -347,9 +377,20 @@
          (when-let [d (doc-block (:cmd/doc cmd))]
            (str "\n" (section "DESCRIPTION") "\n" d))
 
-         (when (seq children)
-           (str "\n" (section "SUBCOMMANDS") "\n"
-             (str/join "\n" (format-subcommand-lines children sub-w))))
+         (let [{:keys [internal contributed]} (split-children children)]
+           (cond
+             (and (seq internal) (seq contributed))
+             (str "\n" (section "COMMANDS") "\n"
+               (str/join "\n" (format-subcommand-lines internal sub-w))
+               "\n\n" (section "EXTENSION COMMANDS") "\n"
+               (str/join "\n" (format-subcommand-lines contributed sub-w)))
+
+             (seq children)
+             (str "\n" (section "SUBCOMMANDS") "\n"
+               (str/join "\n" (format-subcommand-lines children sub-w)))))
+
+         (when-let [extras (seq (collect-extra-sections cmd))]
+           (str/join "" extras))
 
          (when (seq pos)
            (str "\n" (section "ARGUMENTS") "\n"

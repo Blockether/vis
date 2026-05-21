@@ -1523,7 +1523,7 @@
       (expect (some #(str/includes? (:text %) "3 iters (2 silent)")
                 @puts))))
 
-  (it "keeps turn separators as blank spacer rows, not a border on You"
+  (it "draws configured turn separators above the next You prompt"
     (let [puts    (atom [])
           fg      (atom nil)
           bg      (atom nil)
@@ -1552,9 +1552,11 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :user :text "hello" :turn-separator? true}
                      4 2 30 {:viewport-h 40})]
-      (expect (= 5 height))
-      (expect (not-any? #(str/includes? (:text %) "──") @puts))
+      (expect (= 6 height))
       (expect (some #(and (= 4 (:row %))
+                       (str/includes? (:text %) "──"))
+                @puts))
+      (expect (some #(and (= 5 (:row %))
                        (= "You" (:text %))
                        (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                 @puts))))

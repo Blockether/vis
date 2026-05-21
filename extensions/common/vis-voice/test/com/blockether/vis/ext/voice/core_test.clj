@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.voice.core-test
-  (:require [com.blockether.vis.ext.voice.core :as voice]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.ext.voice.core :as voice]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe voice-config-test
@@ -52,6 +53,27 @@
                         :model-dir (voice/model-dir)
                         :out-file (str (.getAbsoluteFile out))}
                       result))))
+        (finally
+          (.delete out)))))
+
+  (it "accepts canonical IR answers from the TUI response pipeline"
+    (let [out    (java.io.File/createTempFile "vis-voice-ir-test" ".wav")
+          spoken (atom nil)]
+      (try
+        (with-redefs [voice/ensure-model! identity
+                      com.blockether.vis.ext.voice.core/new-instance
+                      (fn [class-name & _args] {:class class-name})
+                      com.blockether.vis.ext.voice.core/call!
+                      (fn [_target method & args]
+                        (when (= "generate" method)
+                          (reset! spoken (first args)))
+                        (when (= "save" method)
+                          nil)
+                        (when (= "generate" method)
+                          :audio))]
+          (let [result (voice/synthesize-file! [:ir {} [:p {} "hello"]] {:out-file out})]
+            (expect (str/includes? @spoken "hello"))
+            (expect (= (str (.getAbsoluteFile out)) (:out-file result)))))
         (finally
           (.delete out)))))
 

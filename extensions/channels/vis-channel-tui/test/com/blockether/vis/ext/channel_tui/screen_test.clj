@@ -45,6 +45,9 @@
 (def ^:private header-hover-only-change?
   (deref #'screen/header-hover-only-change?))
 
+(def ^:private handle-channel-event!
+  (deref #'screen/handle-channel-event!))
+
 (def ^:private submit-input!
   (deref #'screen/submit-input!))
 
@@ -259,6 +262,21 @@
          (expect (some #{:model} ids))
          (expect (some #{:providers} ids))
          (expect (not-any? #{:model} (mapv :id dlg/palette-commands)))))))
+
+(defdescribe channel-status-error-routing-test
+  (it "routes error status events to the notification lane only"
+    (let [events   (atom [])
+          notified (atom nil)]
+      (with-redefs [state/dispatch (fn [event] (swap! events conj event))
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (handle-channel-event! {:op :status/set
+                                :id :voice/piper
+                                :text "Voice response failed: synthesize-file"
+                                :level :error})
+        (expect (= [[:channel-status-clear :voice/piper]] @events))
+        (expect (= ["Voice response failed: synthesize-file"
+                    [:level :error :ttl-ms 5000]]
+                  @notified))))))
 
 (defdescribe workspace-entry-click-test
   (it "switches to the clicked workspace and refreshes active session state"
