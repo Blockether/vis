@@ -929,6 +929,7 @@
   "True when the render loop may use the live-bubble-only repaint path."
   [previous-db db same-size? last-layout slash-suggestions-visible?]
   (and (:loading? db)
+    (not (:cancelling? db))
     same-size?
     last-layout
     (not (:mouse-selection db))
