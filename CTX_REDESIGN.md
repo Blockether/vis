@@ -85,7 +85,7 @@ Three model-managed memo subtrees + engine views + trailer:
  :session/turn    N
 
  ;; ── ENGINE-RENDERED VIEWS ──
- :session/workspace  {:branch :trunk :head :dirty? :stats}
+ :session/workspace  {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
  :session/symbols    {sym {:arglists :doc :born}}
  :session/hints      {hint-id {:body :importance :satisfy-with}}
 
@@ -302,9 +302,9 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Engine emits spa
  :session/turn 7
 
  :session/workspace
-   {:branch "feat/ctx-redesign" :trunk "main" :head "abc1234" :dirty? true
-    :stats  {"src/auth.clj"    {:added 5 :removed 2}
-             "src/logging.clj" {:added 47 :removed 0}}}
+   {:git/branch "feat/ctx-redesign" :git/trunk "main" :git/head "abc1234" :git/dirty? true
+    :git/stats  {"src/auth.clj"    {:added 5 :removed 2}
+                 "src/logging.clj" {:added 47 :removed 0}}}
 
  :session/symbols
    {auth-check {:arglists ([tok]) :doc "literal-compare check" :born "t5/i1/f1"}
@@ -443,7 +443,7 @@ MODEL >
 ```clojure
 {:session/id   "01HXYZ"
  :session/turn 5
- :session/workspace {:branch "main" :dirty? false :stats {}}
+ :session/workspace {:git/branch "main" :git/trunk "main" :git/head "abc1234" :git/dirty? false :git/stats {}}
  :session/symbols   {}
  :session/hints     {}
  :session/specs     {}
@@ -501,8 +501,8 @@ MODEL >
 ### CTX AFTER TURN 2 (excerpt)
 ```clojure
 :session/workspace
-  {:branch "feat/auth-bcrypt" :dirty? true
-   :stats {"src/auth.clj" {:added 1 :removed 1}}}
+  {:git/branch "feat/auth-bcrypt" :git/trunk "main" :git/head "def5678" :git/dirty? true
+   :git/stats {"src/auth.clj" {:added 1 :removed 1}}}
 :session/facts {}                                     ; stale fact removed
 :session/trailer
   [{:scope "t2/i1"
@@ -701,12 +701,14 @@ Deterministic `;;` annotations next to entries:
 
 #### Workspace
 
-10. **`:session/workspace`** rendered from `(workspace/for-session db-info session-id)` + `(workspace/status db-info ws-id)` + `(workspace/trunk-info)`. Engine merges Vis-native keys into the flat `:session/workspace` shape:
-    - `:branch`  ← `(:git/branch (ws/status …))`
-    - `:trunk`   ← `(:branch (ws/trunk-info))`
-    - `:head`    ← `(:git/head (ws/status …))`
-    - `:dirty?`  ← `(:git/dirty? (ws/status …))`
-    - `:stats`   ← derived via `git diff --numstat <trunk> HEAD` (per-file added/removed)
+10. **`:session/workspace`** rendered from `(workspace/for-session db-info session-id)` + `(workspace/status db-info ws-id)` + `(workspace/trunk-info)`. The Vis-native `:git/*` keys flow through directly to CTX — namespacing is preserved as a VCS discriminator. Future Mercurial/jj/etc support adds `:hg/*` / `:jj/*` alongside without colliding.
+
+    Engine picks the relevant keys:
+    - `:git/branch`  from `(ws/status …)`
+    - `:git/trunk`   from `(ws/trunk-info) :branch`
+    - `:git/head`    from `(ws/status …)`
+    - `:git/dirty?`  from `(ws/status …)`
+    - `:git/stats`   derived via `git diff --numstat <trunk> HEAD` (per-file added/removed)
 
 #### Symbols
 
@@ -735,7 +737,7 @@ Done in commit `776ca1ce`. Scope URL format reshape (`turn/<prefix>/iteration/N/
 {:session/id     "01HXYZ"
  :session/turn   N
 
- :session/workspace  {:branch :trunk :head :dirty? :stats}
+ :session/workspace  {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
  :session/symbols    {sym {:arglists :doc :born}}
  :session/hints      {hint-id {:body :importance :satisfy-with}}
 
