@@ -2780,76 +2780,23 @@
     str/trim))
 
 (defn- maybe-collapse-block
-  [{:keys [session-id detail-expansions session-turn-id iteration-number
-           block-number kind summary summary-marker body-marker lines max-w color-role
-           raw-text]}]
+  "Always render the body fully inline. Collapsible disclosure rows
+   were removed per user directive: no `▾`/`▸` toggle, no auto-collapse
+   threshold. The function name is retained for call-site compatibility
+   and reads as a historical no-op."
+  [{:keys [body-marker lines max-w raw-text]}]
   (let [body-value (or raw-text (str/join "\n" lines))
         ir-entries (when (channel-ir? body-value)
-                     (ir-body-entries body-value body-marker max-w))
-        entries (or ir-entries
-                  (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))
-        size-lines (or lines (mapv :line entries))
-        size-text (channel-body-plain-text body-value)]
-    (if (or (nil? session-id)
-          (not (auto-collapse-needed? size-lines size-text)))
-      entries
-      (let [detail-ctx {:session-id session-id
-                        :session-turn-id session-turn-id
-                        :iteration-number iteration-number
-                        :block-number block-number
-                        :details-path nil
-                        :section :iteration
-                        :kind kind
-                        :color-role color-role}
-            node-id    (detail-node-id detail-ctx)
-            collapsed? (not (detail-expanded? detail-expansions session-id node-id false))]
-        (vec (concat
-               (detail-summary-entries (assoc detail-ctx
-                                         :marker summary-marker
-                                         :max-w max-w
-                                         :summary summary
-                                         :hidden-entries entries
-                                         :collapsed? collapsed?
-                                         :node-id node-id))
-               (when-not collapsed?
-                 (tag-copy-block-body entries node-id
-                   (channel-body-copy-text body-value)))))))))
+                     (ir-body-entries body-value body-marker max-w))]
+    (or ir-entries
+      (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))))
 
 (defn- maybe-collapse-thinking-entries
-  "Collapse completed reasoning behind one clickable disclosure row.
-
-   Live streaming stays uncollapsed (handled by `live-preview?` at the
-   call site) so the user can watch work happen. Once the iteration is
-   persisted/finalized, the reasoning becomes compact system context:
-   visible by count, expandable on demand, but no longer glued above the
-   final answer as ordinary assistant prose."
-  [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
-  (let [entries (vec entries)]
-    (if (or (nil? session-id)
-          (empty? entries)
-          (<= (count entries) reasoning-auto-collapse-line-threshold))
-      entries
-      (let [detail-ctx {:session-id session-id
-                        :session-turn-id session-turn-id
-                        :iteration-number iteration-number
-                        :details-path nil
-                        :section :thinking
-                        :kind :reasoning}
-            node-id    (detail-node-id detail-ctx)
-            expanded?  (detail-expanded? detail-expansions session-id node-id false)
-            summary    (detail-summary-entries
-                         (assoc detail-ctx
-                           :marker th-md-summary-marker
-                           :max-w max-w
-                           :summary "REASONING"
-                           :hidden-entries entries
-                           :collapsed? (not expanded?)
-                           :node-id node-id))]
-        (vec (concat
-               summary
-               (when expanded?
-                 (tag-copy-block-body entries node-id
-                   (entries->body-text entries)))))))))
+  "Always return reasoning entries inline. Collapsible disclosure was
+   removed per user directive — reasoning stays fully visible whether
+   streaming or finalized."
+  [{:keys [entries]}]
+  (vec entries))
 
 (defn- markdown-fence-marker-line?
   "True for standalone Markdown fence opener/closer lines. Tool
@@ -2872,39 +2819,14 @@
     (str/join "\n")))
 
 (defn- maybe-collapse-raw-text-block
-  "Render a result block without wrapping huge collapsed
-   bodies first. `wrap-text` is intentionally display-width-aware and
-   expensive on long single-line data dumps; when the detail row is
-   collapsed by default, the first frame only needs the summary hint."
-  [{:keys [session-id detail-expansions session-turn-id iteration-number
-           block-number kind summary summary-marker raw-text max-w color-role]
-    :as opts}]
-  (let [raw-value (if (channel-ir? raw-text) raw-text (str/trim (str raw-text)))
-        raw-size-text (channel-body-plain-text raw-value)]
+  "Render a result block fully inline. Collapsible disclosure was
+   removed per user directive — the body always paints in place."
+  [{:keys [raw-text max-w] :as opts}]
+  (let [raw-value (if (channel-ir? raw-text) raw-text (str/trim (str raw-text)))]
     (when-not (channel-body-blank? raw-value)
-      (let [detail-ctx {:session-id session-id
-                        :session-turn-id session-turn-id
-                        :iteration-number iteration-number
-                        :block-number block-number
-                        :details-path nil
-                        :section :iteration
-                        :kind kind
-                        :color-role color-role}
-            node-id    (detail-node-id detail-ctx)
-            collapsed? (not (detail-expanded? detail-expansions session-id node-id false))]
-        (if (and session-id
-              collapsed?
-              (> (count raw-size-text) auto-collapse-char-threshold))
-          (detail-summary-entries (assoc detail-ctx
-                                    :marker summary-marker
-                                    :max-w max-w
-                                    :summary summary
-                                    :hidden-entries [{:line raw-size-text :meta nil}]
-                                    :collapsed? true
-                                    :node-id node-id))
-          (let [lines (when-not (channel-ir? raw-value)
-                        (wrap-text raw-size-text max-w))]
-            (maybe-collapse-block (assoc opts :lines lines :raw-text raw-value))))))))
+      (let [lines (when-not (channel-ir? raw-value)
+                    (wrap-text (channel-body-plain-text raw-value) max-w))]
+        (maybe-collapse-block (assoc opts :lines lines :raw-text raw-value))))))
 
 (defn- strip-paint-markers-line
   "Return user-visible text for a prewrapped internal painter line.
@@ -3262,7 +3184,15 @@
                                                (wrap-text (form-error-headline error) fill-w)))
                 tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
-                result-lines  (when (and result-text (not (str/blank? (str result-text))))
+                ;; Per user directive: only tool calls show a result
+                ;; pane (the channel-render-fn output — "what the tool
+                ;; changed"). Plain-value form results (`:result-kind
+                ;; :value`) are hidden; errors keep their inline caret
+                ;; treatment above and never reach this branch.
+                show-result?  (and (= :tool result-kind)
+                               result-text
+                               (not (str/blank? (str result-text))))
+                result-lines  (when show-result?
                                 (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
                                       detail-entries (maybe-collapse-raw-text-block
                                                        {:session-id      session-id
@@ -3277,9 +3207,7 @@
                                                         :body-marker         r-marker
                                                         :raw-text            result-text
                                                         :max-w               fill-w})
-                                      summary-entry?  (= :toggle-details (get-in (first detail-entries) [:meta :kind]))
                                       badge-entry     (when (and tool-badge
-                                                              (not summary-entry?)
                                                               (not (self-describing-tool-result? result-detail)))
                                                         {:line (str md-summary-marker tool-badge)
                                                          :meta {:kind :tool-badge

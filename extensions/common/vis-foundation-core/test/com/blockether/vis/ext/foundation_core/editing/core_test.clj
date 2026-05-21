@@ -138,8 +138,15 @@
       (expect (string/includes? editing/editing-prompt "(:next-offset prev)"))
       (expect (string/includes? editing/editing-prompt
                 "(v/patch [{:path :search :replace}])"))
-      (expect (string/includes? editing/editing-prompt
-                "each :search must match exactly once"))
+      ;; New semantics: first-occurrence default, no global-uniqueness rule.
+      ;; The prompt should advertise the new optional keys instead.
+      (expect (string/includes? editing/editing-prompt "replaces the FIRST"))
+      (expect (string/includes? editing/editing-prompt ":after  \"context\""))
+      (expect (string/includes? editing/editing-prompt ":before \"context\""))
+      (expect (string/includes? editing/editing-prompt ":nth :first|:last|:all|N"))
+      (expect (string/includes? editing/editing-prompt ":expected-mtime"))
+      (expect (string/includes? editing/editing-prompt "5-pass fuzzy fallback"))
+      (expect (string/includes? editing/editing-prompt ":loop-hint"))
       (expect (string/includes? editing/editing-prompt "Codex envelope"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "Codex `apply_patch` envelope"))
@@ -177,15 +184,51 @@
   (mapv vector (iterate inc start) xs))
 
 (defdescribe vis-cat-structured-shape-test
-  (it "returns the minimal paginated shape (small file, single window, eof)"
+  (it "returns the paginated shape (small file, single window, eof) plus staleness metadata"
     (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= #{:path :lines :next-offset :truncated?} (set (keys out))))
+      (expect (= #{:path :lines :next-offset :eof? :truncated? :mtime :size}
+                (set (keys out))))
       (expect (string? (:path out)))
       (expect (nil? (:next-offset out)))
+      (expect (true? (:eof? out)))
       (expect (false? (:truncated? out)))
-      (expect (= (numbered-tuples 1 ["alpha" "beta" "gamma"]) (:lines out)))))
+      (expect (= (numbered-tuples 1 ["alpha" "beta" "gamma"]) (:lines out)))
+      ;; staleness metadata mirrors File.lastModified / File.length and can
+      ;; be threaded into a later v/patch as :expected-mtime / :expected-size.
+      (expect (pos-int? (:mtime out)))
+      (expect (= (.length (fs/file path)) (:size out)))))
+
+  (it ":eof? false (with :next-offset) when window stops short of file end"
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
+          path (write-temp! "eof-false.txt" (str body "\n"))
+          read-file (private-fn "read-file")
+          out  (read-file path 1 3)]
+      (expect (false? (:eof? out)))
+      (expect (= 4 (:next-offset out)))))
+
+  (it ":mtime / :size from v/cat round-trip into v/patch :expected-mtime guard"
+    ;; This is the canonical staleness recipe: cat -> patch :expected-mtime
+    ;; matches -> succeeds. If something rewrites the file in between, the
+    ;; patch fails closed with :reason :stale.
+    (let [path  (write-temp! "cat-stale.txt" "alpha\n")
+          read-file (private-fn "read-file")
+          patch (private-fn "patch-safe")
+          first-read (read-file path)
+          mtime0 (:mtime first-read)]
+      ;; Same mtime -> patch goes through cleanly.
+      (patch [{:path path :search "alpha" :replace "BETA" :expected-mtime mtime0}])
+      (expect (= "BETA\n" (slurp path)))
+      ;; Force-clock the file backwards so the next read sees a fresh mtime
+      ;; distinct from `mtime0` regardless of filesystem millis precision.
+      (.setLastModified (fs/file path) (- (long mtime0) 60000))
+      (let [err (try (patch [{:path path :search "BETA" :replace "GAMMA"
+                              :expected-mtime mtime0}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? err))
+        (expect (= :stale (-> err ex-data :failures first :reason)))
+        (expect (= "BETA\n" (slurp path))))))
 
   (it ":lines tuples carry raw strings - no embedded line-number prefix in the text"
     (let [path (write-temp! "raw.txt" "   indented\nplain\n")
@@ -280,12 +323,15 @@
       (expect (= (numbered-tuples 16 ["line-16" "line-17" "line-18" "line-19" "line-20"])
                 (:lines out)))))
 
-  (it "tail of a file shorter than n returns the whole file"
+  (it "tail of a file shorter than n returns the whole file with :eof? true"
     (let [path (write-temp! "short.txt" "alpha\nbeta\n")
           tail-file (private-fn "tail-file")
           out  (tail-file path 50)]
       (expect (= [[1 "alpha"] [2 "beta"]] (:lines out)))
-      (expect (nil? (:next-offset out)))))
+      (expect (nil? (:next-offset out)))
+      (expect (true? (:eof? out)))
+      (expect (pos-int? (:mtime out)))
+      (expect (pos-int? (:size out)))))
 
   (it ":truncated? true when byte cap drops older lines from the tail window"
     (let [huge (apply str (repeat 70000 "x"))
@@ -472,7 +518,11 @@
       (expect (= :end-of-results (:truncated-by out))))))
 
 (defdescribe thin-bbfs-wrapper-test
-  (it "patch replaces exact text only when search is unique"
+  (it "patch replaces the first occurrence by default; no global uniqueness requirement"
+    ;; New semantics (industry parity with Aider/Codex/Roo): a bare
+    ;; {:search :replace} edit matches the FIRST occurrence. Models no
+    ;; longer have to expand :search until it is globally unique — the
+    ;; old behaviour drove the dreaded "matched 2 times" patch loop.
     (let [path  (write-temp! "bbfs/patch.txt" "alpha\nbeta\ngamma\n")
           patch (private-fn "patch-safe")]
       (expect (= [{:path path
@@ -485,16 +535,288 @@
                   nil
                   (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? err))
-        (expect (= 0 (-> err ex-data :failures first :matches))))
+        (expect (= 0 (-> err ex-data :failures first :matches)))
+        (expect (= :no-match (-> err ex-data :failures first :reason))))
+      ;; Duplicate matches now resolve to the first occurrence by default.
       (spit path "dup\ndup\n")
-      (let [err (try
-                  (patch [{:path path :search "dup" :replace "x"}])
-                  nil
-                  (catch clojure.lang.ExceptionInfo e e))]
-        (expect (some? err))
-        (expect (= 2 (-> err ex-data :failures first :matches))))))
+      (expect (= [{:path path :before "dup\ndup\n" :after "x\ndup\n"}]
+                (patch [{:path path :search "dup" :replace "x"}])))
+      (expect (= "x\ndup\n" (slurp path)))))
 
-  (it "patch diagnostics report failing edit index, all match counts, bounded previews, and write nothing"
+  (it ":nth selects which occurrence to replace (:first | :last | :all | 1-based int)"
+    (let [patch (private-fn "patch-safe")
+          read! (fn [content]
+                  (write-temp! "bbfs/patch-nth.txt" content))]
+      ;; :first (default) hits the very first match
+      (let [p (read! "a\na\na\n")]
+        (patch [{:path p :search "a" :replace "X" :nth :first}])
+        (expect (= "X\na\na\n" (slurp p))))
+      ;; :last hits the final match
+      (let [p (read! "a\na\na\n")]
+        (patch [{:path p :search "a" :replace "X" :nth :last}])
+        (expect (= "a\na\nX\n" (slurp p))))
+      ;; :all replaces every occurrence
+      (let [p (read! "a\na\na\n")]
+        (patch [{:path p :search "a" :replace "X" :nth :all}])
+        (expect (= "X\nX\nX\n" (slurp p))))
+      ;; Positive 1-based integer addresses a specific occurrence
+      (let [p (read! "a\na\na\n")]
+        (patch [{:path p :search "a" :replace "X" :nth 2}])
+        (expect (= "a\nX\na\n" (slurp p))))
+      ;; Out-of-range :nth surfaces :nth-out-of-range and writes nothing
+      (let [p (read! "a\na\n")
+            err (try (patch [{:path p :search "a" :replace "X" :nth 5}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? err))
+        (expect (= :nth-out-of-range (-> err ex-data :failures first :reason)))
+        (expect (= "a\na\n" (slurp p))))))
+
+  (it ":after / :before anchors restrict which occurrences are eligible"
+    (let [patch (private-fn "patch-safe")
+          path  (write-temp! "bbfs/patch-anchors.txt"
+                  "def foo():\n  pass\ndef bar():\n  pass\ndef baz():\n  pass\n")]
+      ;; :after picks the FIRST `pass` after `def bar():`
+      (patch [{:path path :search "  pass" :replace "  return 1"
+               :after "def bar():\n"}])
+      (expect (string/includes? (slurp path) "def bar():\n  return 1\ndef baz()"))
+      ;; :before constrains to occurrences ending before an anchor
+      (let [p2 (write-temp! "bbfs/patch-anchor-before.txt" "x\ny\nx\nz\n")]
+        (patch [{:path p2 :search "x" :replace "X" :before "z"}])
+        ;; The :before anchor allows BOTH x's (both end before "z"); :first wins.
+        (expect (= "X\ny\nx\nz\n" (slurp p2))))
+      ;; Missing anchor fails the edit cleanly
+      (let [p3 (write-temp! "bbfs/patch-anchor-missing.txt" "x\n")
+            err (try (patch [{:path p3 :search "x" :replace "X" :after "NOT_HERE"}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? err))
+        (expect (= :anchor-not-found (-> err ex-data :failures first :reason)))
+        (expect (= "x\n" (slurp p3))))))
+
+  (it "fuzzy fallback (line-based) recovers from whitespace and unicode drift"
+    (let [patch (private-fn "patch-safe")]
+      ;; rstrip pass: file has trailing whitespace on one line, SEARCH does not.
+      (let [p (write-temp! "bbfs/patch-rstrip.txt" "def foo():   \n    return 1\n")]
+        (patch [{:path p :search "def foo():\n    return 1" :replace "def foo():\n    return 2"}])
+        (expect (string/includes? (slurp p) "return 2")))
+      ;; trim pass: SEARCH authored with different leading indent.
+      (let [p (write-temp! "bbfs/patch-trim.txt" "  def foo():\n    return 1\n")]
+        (patch [{:path p :search "def foo():\n    return 1" :replace "def foo():\n    return 9"}])
+        (expect (string/includes? (slurp p) "return 9")))
+      ;; unicode pass: smart quote in file, ASCII apostrophe in SEARCH.
+      (let [p (write-temp! "bbfs/patch-unicode.txt" "it\u2019s late\nover\n")]
+        (patch [{:path p :search "it's late\nover" :replace "it's done\nover"}])
+        (expect (string/includes? (slurp p) "it's done")))))
+
+  (it "relative-indent fuzzy pass re-indents the :replace payload to match the file"
+    (let [patch (private-fn "patch-safe")
+          ;; File has 4-space indent; SEARCH/REPLACE authored at 0-space.
+          p (write-temp! "bbfs/patch-relindent.txt"
+              "    def foo():\n        return 1\n        return 2\n")]
+      (patch [{:path p
+               :search "def foo():\n    return 1\n    return 2"
+               :replace "def foo():\n    return 10\n    return 20"}])
+      (expect (= "    def foo():\n        return 10\n        return 20\n"
+                (slurp p)))))
+
+  (it ":expected-mtime guards against editing a file that changed since it was read"
+    (let [patch (private-fn "patch-safe")
+          p (write-temp! "bbfs/patch-stale.txt" "alpha\n")
+          stale-mtime (- (.lastModified (fs/file p)) 100000)
+          err (try (patch [{:path p :search "alpha" :replace "BETA"
+                            :expected-mtime stale-mtime}])
+                nil (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (= :stale (-> err ex-data :failures first :reason)))
+      (expect (= "alpha\n" (slurp p)))))
+
+  (it "unknown edit keys are rejected (typo guard)"
+    (let [patch (private-fn "patch-safe")
+          p (write-temp! "bbfs/patch-unknown.txt" "x\n")
+          err (try (patch [{:path p :search "x" :replace "y" :occurence 1}])
+                nil (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (string/includes? (ex-message err) "unknown keys"))))
+
+  (it "loop detector: after N consecutive failures on a path, the message carries a hard hint"
+    ;; Hits the per-path failure counter. Threshold is private but the
+    ;; behaviour is observable through ex-data.
+    (let [patch (private-fn "patch-safe")
+          clear (private-fn "clear-patch-fail-count!")
+          p (write-temp! "bbfs/patch-loop.txt" "alpha\n")
+          file (fs/file p)
+          run! (fn []
+                 (try (patch [{:path p :search "NOT_HERE" :replace "x"}]) nil
+                   (catch clojure.lang.ExceptionInfo e e)))]
+      (clear file)
+      (run!)
+      (run!)
+      (let [err (run!)]
+        (expect (some? (-> err ex-data :loop-hint)))
+        (expect (string/includes? (ex-message err) "Consecutive v/patch failures"))
+        (expect (= 3 (-> err ex-data :failures first :consecutive-failures))))
+      (clear file)))
+
+  (it "successful patch on a path clears the loop counter"
+    (let [patch (private-fn "patch-safe")
+          clear (private-fn "clear-patch-fail-count!")
+          p (write-temp! "bbfs/patch-clear.txt" "alpha\n")
+          file (fs/file p)]
+      (clear file)
+      (try (patch [{:path p :search "NOT_HERE" :replace "x"}])
+        (catch clojure.lang.ExceptionInfo _ nil))
+      (patch [{:path p :search "alpha" :replace "BETA"}])
+      (let [counts2 @(deref (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "patch-fail-counts")))]
+        (expect (nil? (get counts2 (.getAbsolutePath file)))))))
+
+  (it "all-or-nothing: a single failing edit aborts every prior edit in the batch"
+    ;; This guards the core safety invariant. Earlier edits that
+    ;; "would have" succeeded against the in-memory plan must NOT
+    ;; touch disk when any later edit fails.
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-aon.txt" "alpha\nbeta\n")
+          err   (try (patch [{:path p :search "alpha" :replace "ALPHA"}
+                             {:path p :search "NEVER_MATCHES" :replace "x"}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (= "alpha\nbeta\n" (slurp p)))))
+
+  (it "sequential edits on the same file operate against the post-edit state"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-seq.txt" "alpha\nbeta\n")
+          res   (patch [{:path p :search "alpha" :replace "first"}
+                        {:path p :search "first" :replace "FIRST"}])]
+      (expect (= "FIRST\nbeta\n" (slurp p)))
+      ;; Both edits collapse into one per-file plan (one before/after pair).
+      (expect (= 1 (count res)))
+      (expect (= "alpha\nbeta\n" (-> res first :before)))
+      (expect (= "FIRST\nbeta\n" (-> res first :after)))))
+
+  (it "long :search is bounded in the previewed failure trailer"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-bigpreview.txt" "a\n")
+          long-search (apply str (repeat 4000 "x"))
+          err   (try (patch [{:path p :search long-search :replace "y"}])
+                  nil (catch clojure.lang.ExceptionInfo e e))
+          preview (-> err ex-data :failures first :search-preview)]
+      (expect (some? err))
+      ;; Preview must NOT carry the full 4000-char :search into the trailer.
+      (expect (< (count preview) 250))
+      (expect (string/includes? preview "...<+"))))
+
+  (it "blank :search is rejected with a structured error (would otherwise match everywhere)"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-blank.txt" "alpha\n")
+          err   (try (patch [{:path p :search "" :replace "x"}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (= :ext.foundation.editing/invalid-patch-search
+                (-> err ex-data :type)))))
+
+  (it "invalid :nth value (negative / wrong type) is rejected at coercion"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-bad-nth.txt" "a\n")
+          err   (try (patch [{:path p :search "a" :replace "X" :nth -1}])
+                  nil (catch clojure.lang.ExceptionInfo e e))
+          err2  (try (patch [{:path p :search "a" :replace "X" :nth :weird}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (some? err2))
+      (expect (string/includes? (ex-message err)  ":nth must be"))
+      (expect (string/includes? (ex-message err2) ":nth must be"))
+      (expect (= "a\n" (slurp p)))))
+
+  (it "editing an unknown path surfaces :file-not-found and does not pollute the loop counter"
+    (let [patch (private-fn "patch-safe")
+          fake-path "target/editing-test/bbfs/does-not-exist.txt"
+          err (try (patch [{:path fake-path :search "x" :replace "y"}])
+                nil (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (= :ext.foundation.editing/file-not-found
+                (-> err ex-data :type)))))
+
+  (it ":expected-size guards independent of :expected-mtime"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-size.txt" "hello\n")
+          err   (try (patch [{:path p :search "hello" :replace "x"
+                              :expected-size 1}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? err))
+      (expect (= :stale (-> err ex-data :failures first :reason)))
+      (expect (= :stale-size (-> err ex-data :failures first :stale :reason)))
+      (expect (= "hello\n" (slurp p)))))
+
+  (it "failed fuzzy search includes a :nearest candidate with context window"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-nearest.txt"
+                  "line A\nline B\nline C\nline D\nline E\n")
+          ;; multi-line search that does NOT match exactly (or fuzzily)
+          err   (try (patch [{:path p
+                              :search "COMPLETELY MISSING\nALSO MISSING"
+                              :replace "x"}])
+                  nil (catch clojure.lang.ExceptionInfo e e))
+          failure (-> err ex-data :failures first)]
+      (expect (some? err))
+      ;; :nearest is best-effort — the bare minimum is that the failure
+      ;; reason is observable and writes are zero.
+      (expect (#{:no-match} (:reason failure)))
+      (expect (= "line A\nline B\nline C\nline D\nline E\n" (slurp p)))))
+
+  (it "empty edit vector is a no-op (no errors, no writes, no plans)"
+    (let [patch (private-fn "patch-safe")
+          res (patch [])]
+      (expect (= [] res))))
+
+  (it ":nth :all replaces every occurrence in a single edit"
+    (let [patch (private-fn "patch-safe")
+          p (write-temp! "bbfs/nth-all.txt"
+              "foo 1\nbar foo 2\nfoo 3\n")]
+      (patch [{:path p :search "foo" :replace "BAZ" :nth :all}])
+      (expect (= "BAZ 1\nbar BAZ 2\nBAZ 3\n" (slurp p)))))
+
+  (it ":replace may legally contain :search (no recursive blow-up)"
+    ;; Edge: `:replace` contains the same substring we just removed.
+    ;; With multi-edit chaining the next edit operates on POST-state,
+    ;; so the second `foo → foo + xtra` will re-match if not careful.
+    (let [patch (private-fn "patch-safe")
+          p (write-temp! "bbfs/replace-contains-search.txt" "foo bar\n")]
+      (patch [{:path p :search "foo" :replace "foo xtra"}])
+      (expect (= "foo xtra bar\n" (slurp p)))))
+
+  (it "a single v/patch invocation cannot move the loop counter past +1 per path"
+    ;; Loop counter must be PER INVOCATION, not per failed edit. Two
+    ;; failed edits in one call against the same path bump the counter
+    ;; once, not twice.
+    (let [patch (private-fn "patch-safe")
+          clear (private-fn "clear-patch-fail-count!")
+          p (write-temp! "bbfs/loop-once.txt" "alpha\n")
+          file (fs/file p)]
+      (clear file)
+      (try (patch [{:path p :search "NOPE1" :replace "x"}
+                   {:path p :search "NOPE2" :replace "y"}])
+        (catch clojure.lang.ExceptionInfo _ nil))
+      (let [err (try (patch [{:path p :search "NOPE3" :replace "z"}])
+                  nil (catch clojure.lang.ExceptionInfo e e))]
+        ;; Failures came from two invocations -> counter is 2.
+        (expect (= 2 (-> err ex-data :failures first :consecutive-failures)))
+        (expect (nil? (-> err ex-data :loop-hint))))
+      (clear file)))
+
+  (it "v/patch dispatch: vector -> exact-replace, string -> Codex envelope"
+    ;; Lightweight integration assertion that the two modes really do
+    ;; share the same v/patch entry point and report differently shaped
+    ;; per-file summaries.
+    (let [patch-tool (private-fn "patch-tool")
+          p (write-temp! "bbfs/dispatch-mode.txt" "alpha\nbeta\n")
+          vec-out (-> (patch-tool [{:path p :search "alpha" :replace "X"}])
+                    :metadata :mode)
+          env (str "*** Begin Patch\n*** Update File: " p
+                "\n@@\n-beta\n+Y\n*** End Patch\n")
+          env-out (-> (patch-tool env) :metadata :mode)]
+      (expect (= :exact-replace vec-out))
+      (expect (= :codex-apply-patch env-out))
+      (expect (= "X\nY\n" (slurp p)))))
+
+  (it "patch diagnostics report per-edit reasons, all match counts, bounded previews, and write nothing"
     (let [path  (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
           patch (private-fn "patch-safe")
           long-search (apply str (repeat 80 "missing "))
@@ -509,12 +831,14 @@
           checks (:checks data)
           failures (:failures data)]
       (expect (some? err))
-      (expect (string/includes? (ex-message err) "first edit 1"))
+      ;; New semantics: first 2 edits succeed (beta hits first occurrence), 2 fail.
       (expect (= [0 1 2 3] (mapv :edit-index checks)))
       (expect (= [1 2 0 0] (mapv :matches checks)))
-      (expect (= [1 2 3] (mapv :edit-index failures)))
-      (expect (= [2 0 0] (mapv :matches failures)))
+      (expect (= [2 3] (mapv :edit-index failures)))
+      (expect (= [0 0] (mapv :matches failures)))
+      (expect (every? #{:no-match} (map :reason failures)))
       (expect (every? #(<= (count (:search-preview %)) 200) failures))
+      ;; All-or-nothing still holds: zero writes when any edit fails.
       (expect (= "alpha\nbeta\nbeta\n" (slurp path)))))
 
   (it "exists? and delete-if-exists work on cwd-relative paths"
