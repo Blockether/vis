@@ -10,8 +10,9 @@
   (:require [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io ByteArrayOutputStream File]
            [org.eclipse.jgit.api Git Status]
+           [org.eclipse.jgit.blame BlameResult]
            [org.eclipse.jgit.diff DiffEntry DiffFormatter Edit RawTextComparator]
-           [org.eclipse.jgit.lib BranchTrackingStatus Repository]
+           [org.eclipse.jgit.lib BranchTrackingStatus PersonIdent Repository]
            [org.eclipse.jgit.revwalk RevCommit RevWalk]
            [org.eclipse.jgit.storage.file FileRepositoryBuilder]
            [org.eclipse.jgit.treewalk AbstractTreeIterator CanonicalTreeParser FileTreeIterator]))
@@ -209,47 +210,210 @@
   "Return git-numstat-like entries using JGit.
 
    `old-rev` is required. `new-rev` nil means compare `old-rev` to the
-   working tree, matching `git diff <old-rev>` for tracked files."
-  [^File start old-rev new-rev]
+   working tree, matching `git diff <old-rev>` for tracked files.
+   When `path` is non-nil, restrict the diff to entries whose old- or
+   new-path matches that repo-relative path (prefix match for dirs)."
+  ([^File start old-rev new-rev] (diff-numstat start old-rev new-rev nil))
+  ([^File start old-rev new-rev path]
+   (when-let [^Repository repo (open-repository start)]
+     (try
+       (with-open [out       (ByteArrayOutputStream.)
+                   formatter (doto (DiffFormatter. out)
+                               (.setRepository repo)
+                               (.setDiffComparator RawTextComparator/DEFAULT)
+                               (.setDetectRenames true))]
+         (if-let [old-tree (tree-parser repo old-rev)]
+           (let [^AbstractTreeIterator new-tree (if new-rev
+                                                  (tree-parser repo new-rev)
+                                                  (FileTreeIterator. repo))
+                 untracked (when-not new-rev (untracked-paths repo))
+                 path-match? (cond
+                               (nil? path) (constantly true)
+                               (= "" path) (constantly true)
+                               :else       (fn [p]
+                                             (or (= p path)
+                                               (.startsWith ^String p (str path "/")))))]
+             (if new-tree
+               (->> (.scan formatter ^AbstractTreeIterator old-tree new-tree)
+                 (remove #(contains? untracked (diff-path %)))
+                 (filter #(path-match? (diff-path %)))
+                 (mapv #(entry-numstat formatter %)))
+               []))
+           []))
+       (finally
+         (try (.close repo) (catch Throwable _ nil)))))))
+
+(defn- commit->map
+  "Convert a JGit RevCommit into the canonical commit map. Centralised so
+   every git/* surface (log, show, blame line) returns the same shape."
+  [^RevCommit commit]
+  (let [author    (.getAuthorIdent commit)
+        committer (.getCommitterIdent commit)]
+    {:sha              (some-> (.getId commit) .getName)
+     :short-sha        (some-> (.getId commit) .getName (subs 0 7))
+     :author           (some-> author .getName)
+     :email            (some-> author .getEmailAddress)
+     :at               (long (.getCommitTime commit))
+     :committer        (some-> committer .getName)
+     :committer-email  (some-> committer .getEmailAddress)
+     :committed-at     (long (.getCommitTime commit))
+     :subject          (.getShortMessage commit)
+     :body             (.getFullMessage commit)
+     :parents          (mapv (fn [^RevCommit p] (some-> (.getId p) .getName))
+                         (.getParents commit))}))
+
+(defn recent-commits
+  "Recent commits for `start`, newest first, using JGit only.
+
+   `opts` is an optional map:
+     :path        restrict to commits touching this repo-relative path
+     :ref         start log from this branch/sha (default HEAD)"
+  ([^File start n] (recent-commits start n nil))
+  ([^File start n opts]
+   (when-let [^Repository repo (open-repository start)]
+     (try
+       (let [^Git git (Git/wrap repo)
+             {:keys [path ref]} (or opts {})]
+         (try
+           (let [cmd (.. git log (setMaxCount (int (max 1 n))))
+                 _   (when (and ref (string? ref))
+                       (when-let [oid (.resolve repo ^String ref)]
+                         (.add cmd oid)))
+                 _   (when (and path (string? path) (seq path))
+                       (.addPath cmd path))]
+             (mapv commit->map (.call cmd)))
+           (finally
+             (try (.close git) (catch Throwable _ nil)))))
+       (finally
+         (try (.close repo) (catch Throwable _ nil)))))))
+
+(defn- count-lines
+  "Number of LF-delimited lines in a byte array. JGit emits one entry per
+   blob; root-commit numstat reports `+N` where N = line count."
+  ^long [^bytes bs]
+  (if (zero? (alength bs))
+    0
+    (let [len (alength bs)
+          nl  (reduce (fn [n i] (if (= 10 (aget bs i)) (inc n) n))
+                0 (range len))]
+      ;; Match `wc -l` semantics: trailing-newline files = N lines, no-
+      ;; trailing-newline files = N+1 (counts the final unterminated line).
+      (if (= 10 (aget bs (dec len))) nl (inc nl)))))
+
+(defn- root-commit-numstat
+  "Walk every blob reachable from `commit`'s tree and emit numstat-shaped
+   entries (`{:file path :+ <lines> :- 0}`). Used when a commit has no
+   parent, where the regular `diff-numstat` path has no tree to compare
+   against."
+  [^Repository repo ^RevCommit commit]
+  (with-open [reader (.newObjectReader repo)
+              tw     (org.eclipse.jgit.treewalk.TreeWalk. repo)]
+    (.addTree tw (.getTree commit))
+    (.setRecursive tw true)
+    (loop [acc []]
+      (if (.next tw)
+        (let [path (.getPathString tw)
+              oid  (.getObjectId tw 0)
+              bytes (try (.getBytes (.open reader oid)) (catch Throwable _ (byte-array 0)))]
+          (recur (conj acc {:file path :+ (count-lines bytes) :- 0})))
+        acc))))
+
+(defn show-commit
+  "Detailed view of a single commit. Returns the canonical commit map
+   enriched with `:files` (numstat against first parent, or every blob
+   in the commit's tree for root commits) and `:stat` totals."
+  [^File start rev]
   (when-let [^Repository repo (open-repository start)]
     (try
-      (with-open [out       (ByteArrayOutputStream.)
-                  formatter (doto (DiffFormatter. out)
-                              (.setRepository repo)
-                              (.setDiffComparator RawTextComparator/DEFAULT)
-                              (.setDetectRenames true))]
-        (if-let [old-tree (tree-parser repo old-rev)]
-          (let [^AbstractTreeIterator new-tree (if new-rev
-                                                 (tree-parser repo new-rev)
-                                                 (FileTreeIterator. repo))
-                untracked (when-not new-rev (untracked-paths repo))]
-            (if new-tree
-              (->> (.scan formatter ^AbstractTreeIterator old-tree new-tree)
-                (remove #(contains? untracked (diff-path %)))
-                (mapv #(entry-numstat formatter %)))
-              []))
-          []))
+      (when-let [oid (try (.resolve repo ^String rev) (catch Throwable _ nil))]
+        (with-open [walk (RevWalk. repo)]
+          (let [commit  (.parseCommit walk oid)
+                _       (.parseBody walk commit)
+                base    (commit->map commit)
+                parents (.getParents commit)
+                parent  (when (pos? (alength parents))
+                          (some-> ^RevCommit (aget parents 0) .getId .getName))
+                files   (vec (or (if parent
+                                   (diff-numstat start parent
+                                     (.getName (.getId commit)))
+                                   (root-commit-numstat repo commit))
+                              []))
+                +sum    (reduce + 0 (map :+ files))
+                -sum    (reduce + 0 (map :- files))]
+            (assoc base
+              :files files
+              :stat  {:files (count files) :+ +sum :- -sum}))))
       (finally
         (try (.close repo) (catch Throwable _ nil))))))
 
-(defn recent-commits
-  "Recent commits for `start`, newest first, using JGit only."
-  [^File start n]
-  (when-let [^Repository repo (open-repository start)]
-    (try
-      (let [^Git git (Git/wrap repo)]
-        (try
-          (->> (.. git log (setMaxCount (int (max 1 n))) call)
-            (mapv (fn [^RevCommit commit]
-                    (let [author (.getAuthorIdent commit)]
-                      {:sha     (some-> (.getId commit) .getName)
-                       :author  (some-> author .getName)
-                       :at      (long (.getCommitTime commit))
-                       :subject (.getShortMessage commit)}))))
-          (finally
-            (try (.close git) (catch Throwable _ nil)))))
-      (finally
-        (try (.close repo) (catch Throwable _ nil))))))
+(defn- repo-relative-path
+  "Normalise an absolute or repo-relative path against the repo work tree.
+   Returns a forward-slash-separated path JGit's BlameCommand expects, or
+   nil if `path` escapes the work tree."
+  [^Repository repo ^String path]
+  (let [^File work-tree (.getWorkTree repo)
+        ^File work-can  (.getCanonicalFile work-tree)
+        ^File f         (let [^File candidate (java.io.File. path)]
+                          (if (.isAbsolute candidate)
+                            candidate
+                            (java.io.File. work-tree path)))
+        ^File can       (try (.getCanonicalFile f) (catch Throwable _ nil))]
+    (when can
+      (let [^String work-prefix (str (.getPath work-can) java.io.File/separator)
+            ^String can-path    (.getPath can)]
+        (when (or (= can-path (.getPath work-can))
+                (.startsWith can-path work-prefix))
+          (let [rel (subs can-path (count work-prefix))]
+            (clojure.string/replace rel java.io.File/separator "/")))))))
+
+(defn blame-file
+  "Per-line blame for `path` inside the repo containing `start`. Returns
+   `{:path :head :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}`
+   or nil when `path` is outside the repo / not tracked.
+
+   `opts` map:
+     :from L  1-based start line (inclusive)
+     :to   L  1-based end line   (inclusive)"
+  ([^File start path] (blame-file start path nil))
+  ([^File start path opts]
+   (when-let [^Repository repo (open-repository start)]
+     (try
+       (when-let [rel (repo-relative-path repo path)]
+         (let [^Git git (Git/wrap repo)
+               {:keys [from to]} (or opts {})]
+           (try
+             (let [^BlameResult result (.. git blame (setFilePath rel) call)]
+               (when result
+                 (.computeAll result)
+                 (let [contents   (.getResultContents result)
+                       total      (.size contents)
+                       lo         (max 0 (dec (long (or from 1))))
+                       hi-default (dec total)
+                       hi         (min hi-default
+                                    (dec (long (or to total))))
+                       lines      (when (<= lo hi)
+                                    (mapv
+                                      (fn [i]
+                                        (let [^RevCommit commit  (.getSourceCommit result i)
+                                              ^PersonIdent author (when commit (.getSourceAuthor result i))
+                                              sha     (some-> commit .getId .getName)]
+                                          {:line       (inc i)
+                                           :sha        sha
+                                           :short-sha  (when sha (subs sha 0 7))
+                                           :author     (some-> author .getName)
+                                           :email      (some-> author .getEmailAddress)
+                                           :at         (when author (long (.getTime (.getWhen author))))
+                                           :source-line (inc (.getSourceLine result i))
+                                           :content    (.getString contents i)}))
+                                      (range lo (inc hi))))]
+                   {:path  rel
+                    :head  (head-id repo)
+                    :total total
+                    :lines (or lines [])})))
+             (finally
+               (try (.close git) (catch Throwable _ nil))))))
+       (finally
+         (try (.close repo) (catch Throwable _ nil)))))))
 
 (defn working-tree-status
   "Return git facts for `start` (default cwd).

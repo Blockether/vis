@@ -107,4 +107,129 @@
       (catch clojure.lang.ExceptionInfo e
         (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
         (expect (clojure.string/includes? (ex-message e) "git/log expected"))
-        (expect (clojure.string/includes? (ex-message e) "(git/log {:limit 50})"))))))
+        (expect (clojure.string/includes? (ex-message e) "(git/log {:limit 50})")))))
+
+  (it "enriches each commit map with body, email, committer, parents, short-sha"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [result (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 1)
+              commit (first (get-in result [:result :commits]))]
+          (expect (string? (:sha commit)))
+          (expect (= 7 (count (:short-sha commit))))
+          (expect (= "vis-test@example.invalid" (:email commit)))
+          (expect (= "Vis Test" (:committer commit)))
+          (expect (= "vis-test@example.invalid" (:committer-email commit)))
+          (expect (integer? (:committed-at commit)))
+          (expect (= "base" (:body commit)))
+          (expect (vector? (:parents commit)))
+          (expect (= 0 (count (:parents commit)))))
+        (finally (cleanup root)))))
+
+  (it "restricts log to commits touching a path when :path is provided"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-rel root "src/b.clj" "(ns b)\n")
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern "src/b.clj") .call)
+          (-> g .commit (.setMessage "add b") .call))
+        (let [all  (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 10)
+              only-a (git/git-log-fn {:workspace/root (.getCanonicalPath root)}
+                       {:path "src/a.clj" :limit 10})]
+          (expect (= 2 (count (get-in all [:result :commits]))))
+          (expect (= 1 (count (get-in only-a [:result :commits]))))
+          (expect (= "base" (:subject (first (get-in only-a [:result :commits]))))))
+        (finally (cleanup root))))))
+
+(defdescribe git-show-test
+  (it "returns commit detail with per-file numstat against the parent"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "add x") .call))
+        (let [result (git/git-show-fn {:workspace/root (.getCanonicalPath root)} "HEAD")
+              data   (:result result)]
+          (expect (extension/tool-result? result))
+          (expect (= "add x" (:subject data)))
+          (expect (= 1 (get-in data [:stat :files])))
+          (expect (= 1 (get-in data [:stat :+])))
+          (expect (= [{:file "src/a.clj" :+ 1 :- 0}] (:files data)))
+          (expect (= 1 (count (:parents data)))))
+        (finally (cleanup root)))))
+
+  (it "handles root commit (no parent) by diffing against the empty tree"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [result (git/git-show-fn {:workspace/root (.getCanonicalPath root)} "HEAD")
+              data   (:result result)]
+          (expect (= "base" (:subject data)))
+          (expect (= [] (:parents data)))
+          ;; Root commit numstat is reported against the empty tree; the
+          ;; single committed file shows up as one row of additions.
+          (expect (= 1 (get-in data [:stat :files]))))
+        (finally (cleanup root)))))
+
+  (it "rejects empty or bogus rev with a clean ex-info"
+    (try
+      (git/git-show-fn {:workspace/root "/no/repo"} "")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))))
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (try (git/git-show-fn {:workspace/root (.getCanonicalPath root)} "deadbeef")
+          (expect false)
+          (catch clojure.lang.ExceptionInfo e
+            (expect (= :foundation-git/unknown-rev (:type (ex-data e))))))
+        (finally (cleanup root))))))
+
+(defdescribe git-blame-test
+  (it "returns per-line blame with sha, author, content for the whole file"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)} "src/a.clj")
+              data   (:result result)]
+          (expect (extension/tool-result? result))
+          (expect (= "src/a.clj" (:path data)))
+          (expect (= 1 (:total data)))
+          (expect (= 1 (count (:lines data))))
+          (let [line (first (:lines data))]
+            (expect (= 1 (:line line)))
+            (expect (= "Vis Test" (:author line)))
+            (expect (= "(ns a)" (:content line)))
+            (expect (string? (:sha line)))
+            (expect (= 7 (count (:short-sha line))))))
+        (finally (cleanup root)))))
+
+  (it "honours :from/:to range so blame on huge files is cheap to summarise"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-rel root "big.txt" (clojure.string/join "\n" (map str (range 1 21))))
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern "big.txt") .call)
+          (-> g .commit (.setMessage "add big") .call))
+        (let [data (:result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
+                              {:path "big.txt" :from 5 :to 8}))]
+          (expect (= [5 6 7 8] (mapv :line (:lines data))))
+          (expect (= ["5" "6" "7" "8"] (mapv :content (:lines data)))))
+        (finally (cleanup root)))))
+
+  (it "rejects bad arg shapes with foundation-git/invalid-opts"
+    (try
+      (git/git-blame-fn {:workspace/root "/repo"} 42)
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))))
+    (try
+      (git/git-blame-fn {:workspace/root "/repo"} {})
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))))))
