@@ -1985,27 +1985,27 @@
   (doseq [{:persistance/keys [id ns]} entries]
     (persistance/register-backend! id ns)))
 
-(def ^:private EXTENSIONS_PARENT ["extensions"])
+(def ^:private EXT_PARENT ["ext"])
 
-(defn- mount-under-extensions
-  "Auto-place an `:ext/cli` entry under the `vis extensions` parent.
+(defn- mount-under-ext
+  "Auto-place an `:ext/cli` entry under the `vis ext` parent.
 
-   Authors who want nested placement (e.g. `vis extensions git status`)
-   can pass `:cmd/parent [\"extensions\" \"git\"]` and the dispatcher
-   respects it AS LONG AS the first element is `\"extensions\"`. Any
+   Authors who want nested placement (e.g. `vis ext git status`)
+   can pass `:cmd/parent [\"ext\" \"git\"]` and the dispatcher
+   respects it AS LONG AS the first element is `\"ext\"`. Any
    other parent is rejected."
   [{:cmd/keys [parent name] :as entry}]
   (cond
     (or (nil? parent) (= [] parent))
-    (assoc entry :cmd/parent EXTENSIONS_PARENT)
+    (assoc entry :cmd/parent EXT_PARENT)
 
-    (= "extensions" (first parent))
+    (= "ext" (first parent))
     entry
 
     :else
     (throw (ex-info
              (str ":ext/cli entry '" name "' has :cmd/parent " (pr-str parent)
-               " -- extension-owned CLI mounts only under [\"extensions\" ...].")
+               " -- extension-owned CLI mounts only under [\"ext\" ...].")
              {:type :ext/cli-bad-parent
               :entry entry}))))
 
@@ -2039,7 +2039,7 @@
                       :persistance (count (:ext/persistance ext))
                       :themes      (count (:ext/theme ext))}
                :msg (str "Extension '" ns-sym "' registered globally")})
-    (doseq [c (:ext/cli ext)]      (registry/register-cmd! (mount-under-extensions c)))
+    (doseq [c (:ext/cli ext)]      (registry/register-cmd! (mount-under-ext c)))
     (doseq [c (:ext/channels ext)] (registry/register-channel! c))
     (dispatch-providers!   (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
@@ -2142,7 +2142,7 @@
   [ns-sym]
   (when-let [ext (get @extension-registry ns-sym)]
     (doseq [c (:ext/cli ext)]
-      (let [mounted (mount-under-extensions c)]
+      (let [mounted (mount-under-ext c)]
         (try (registry/deregister-cmd! (:cmd/parent mounted) (:cmd/name mounted))
           (catch Throwable t
             (tel/log! {:level :warn :id ::deregister-cmd-failed
@@ -2510,17 +2510,9 @@
     (count (mapcat :nses (vals manifests)))))
 
 ;; =============================================================================
-;; CLI bridge -- the `vis extensions` parent
-;;
-;; Self-registers a top-level `extensions` command into the registry
-;; whose subcommands are computed lazily from every command registered
-;; with `:cmd/parent ["extensions"]`. Extensions populate this slot
-;; through `:ext/cli` on `extension`; the `register-extension!`
-;; dispatcher above forwards each entry to `register-cmd!`.
+;; CLI bridge -- the `vis ext` parent lives in `internal.main` next to the
+;; other top-level built-in parents (`providers`, `sessions`, `doctor`,
+;; `update`). Extensions populate it via `:ext/cli` on `extension`;
+;; `register-extension!` above forwards each entry through `mount-under-ext`
+;; to `register-cmd!`.
 ;; =============================================================================
-
-(registry/register-cmd!
-  {:cmd/name        "extensions"
-   :cmd/doc         "Run an extension-provided CLI command."
-   :cmd/usage       "vis extensions <cmd> [args...]"
-   :cmd/subcommands #(registry/registered-under ["extensions"])})

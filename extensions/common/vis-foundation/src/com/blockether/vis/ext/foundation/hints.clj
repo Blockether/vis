@@ -102,29 +102,71 @@
                "`(set-session-title! \"...\")`; do not namespace-qualify it.")})))
 
 (defn context-pressure-hint
-  "Return a `:high`-importance hint when the estimated input tokens
-   for the assembled prompt-so-far cross
+  "Return a `:high`-importance hint when the most recent provider
+   request's `prompt_tokens` crossed
    `CONTEXT_PRESSURE_THRESHOLD * context-limit`, otherwise nil.
 
    Inputs from the host-supplied ctx:
 
-     `:input-tokens`  - estimated tokens of the assembled prompt-so-far
-     `:context-limit` - effective context window for the resolved model
+     `:input-tokens`             - `prompt_tokens` of the LAST iteration
+                                   (proxy for the NEXT request's size).
+                                   On iter 0 the host falls back to the
+                                   pre-call estimate so the very first
+                                   request can still trigger if it is
+                                   already over budget.
+     `:cumulative-input-tokens`  - sum of `prompt_tokens` across every
+                                   iteration of this turn (turn-level
+                                   budget signal; rendered in the hint
+                                   message but not compared against
+                                   `context-limit`).
+     `:cumulative-reasoning-tokens` - reasoning tokens this turn so far.
+                                   Surfaced for the model's awareness
+                                   on `:reasoning-style :server-managed`
+                                   providers where the user otherwise has
+                                   no visibility into hidden think budget.
+     `:iter-count`               - completed-iteration count this turn,
+                                   used to phrase the message and to
+                                   suppress the hint on the very first
+                                   call.
+     `:context-limit`            - effective per-call input window for
+                                   the resolved model (`:input-limit`
+                                   from models.dev when present).
+
+   Why `:input-tokens` is now last-iter and not cumulative:
+     The earlier policy compared cumulative `:input-tokens` against
+     `context-limit`, conflating two semantically different sizes
+     (turn-spend vs per-call cap). Session 3102ad16 (2026-05-20)
+     triggered the hint on iteration 13 at ~115K cumulative even
+     though each provider request still fit inside ~10K tokens; the
+     model started defensively `(satisfy-hint! :vis.foundation/
+     context-pressure)` and looping. Comparing the SAME-SHAPED number
+     (per-call request size vs per-call cap) keeps the hint honest.
 
    Returns nil when either input is missing or non-positive - the
    hint is purely advisory and must never fail the iteration."
-  [{:keys [input-tokens context-limit]}]
+  [{:keys [input-tokens context-limit
+           cumulative-input-tokens cumulative-reasoning-tokens iter-count]}]
   (let [used (long (or input-tokens 0))
         limit (long (or context-limit 0))]
     (when (and (pos? used)
             (pos? limit)
             (>= (/ (double used) (double limit))
               CONTEXT_PRESSURE_THRESHOLD))
-      (let [pct (long (Math/round (* 100.0 (/ (double used) (double limit)))))]
+      (let [pct (long (Math/round (* 100.0 (/ (double used) (double limit)))))
+            cum-in (long (or cumulative-input-tokens 0))
+            cum-rs (long (or cumulative-reasoning-tokens 0))
+            iters  (long (or iter-count 0))
+            cumul-clause (when (and (pos? iters) (or (pos? cum-in) (pos? cum-rs)))
+                           (str " Turn so far: " iters " iteration(s), ~" cum-in
+                             " cumulative input tokens"
+                             (when (pos? cum-rs)
+                               (str ", ~" cum-rs " reasoning tokens"))
+                             " billed."))]
         {:importance :high
-         :text (str "Context pressure: ~" used " / " limit " input tokens (~"
-                 pct "%) of this model's effective window. "
-                 "Converge now - finalise the answer via `(done ...)`, "
+         :text (str "Context pressure: next request is ~" used " / " limit
+                 " input tokens (~" pct "%) of this model's effective window."
+                 cumul-clause
+                 " Converge now - finalise the answer via `(done ...)`, "
                  "avoid dumping more file contents, diffs, or repeated diagnostics. "
                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 

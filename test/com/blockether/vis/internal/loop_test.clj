@@ -38,6 +38,71 @@
 (def ^:private compatible-preserved-thinking-trailer-iters
   (deref #'lp/compatible-preserved-thinking-trailer-iters))
 
+(def ^:private max-tokens-exceeded-error?
+  (deref #'lp/max-tokens-exceeded-error?))
+
+(def ^:private bumped-max-tokens-extra-body
+  (deref #'lp/bumped-max-tokens-extra-body))
+
+(def ^:private llm-provider-error-context
+  (deref #'lp/llm-provider-error-context))
+
+(defdescribe max-tokens-exceeded-retry-test
+  (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
+    (let [e (ex-info "max_tokens hit" {:type :svar.llm/max-tokens-exceeded
+                                       :output-tokens 2048
+                                       :reasoning-length 1900})]
+      (expect (true? (max-tokens-exceeded-error? e)))))
+
+  (it "does not confuse other svar errors with the max-tokens variant"
+    ;; `:svar.llm/empty-content` is the genuine \"model returned nothing useful\"
+    ;; failure mode. It must NOT trigger the max-tokens-bump retry path — that
+    ;; would burn provider tokens without any chance of fixing the underlying
+    ;; problem (the model is confused, more budget will not help).
+    (let [e (ex-info "blank" {:type :svar.llm/empty-content})]
+      (expect (false? (max-tokens-exceeded-error? e))))
+    (let [e (ex-info "http" {:type :svar.core/http-error :status 500})]
+      (expect (false? (max-tokens-exceeded-error? e)))))
+
+  (it "doubles max_tokens from the reported `:output-tokens`"
+    ;; Provider reports the exact number it cut off at — doubling that gives
+    ;; the next attempt enough headroom in the common case (reasoning ate
+    ;; roughly all of the budget).
+    (expect (= {:max_tokens 4096} (bumped-max-tokens-extra-body nil 2048)))
+    (expect (= {:max_tokens 16000} (bumped-max-tokens-extra-body nil 8000)))
+    ;; Preserves caller-supplied extra-body keys so the bump does not drop
+    ;; their overrides (e.g. `:store false` for Codex).
+    (expect (= {:store false :max_tokens 4096}
+              (bumped-max-tokens-extra-body {:store false} 2048))))
+
+  (it "falls back to 8192 when no previous max is known"
+    ;; Defensive: the error carries no `:output-tokens` (older svar version,
+    ;; or non-streaming path). Use a moderate-sized cap as fallback so we
+    ;; don't accidentally explode the request body.
+    (expect (= {:max_tokens 16384} (bumped-max-tokens-extra-body nil nil)))))
+
+(defdescribe llm-provider-error-context-test
+  (it "surfaces dedicated copy + hint for :svar.llm/max-tokens-exceeded"
+    (let [iter-err {:type :svar.llm/max-tokens-exceeded
+                    :data {:reasoning-length 1900
+                           :output-tokens 2048}}
+          ctx (llm-provider-error-context 3 iter-err)]
+      (expect (= :llm-provider/max-tokens-exhausted (:type ctx)))
+      (expect (= 1900 (:reasoning-length ctx)))
+      (expect (= 2048 (:output-tokens ctx)))
+      (expect (str/includes? (:message ctx) "max_tokens"))
+      (expect (str/includes? (:message ctx) "hidden reasoning"))
+      (expect (str/includes? (:hint ctx) ":start"))))
+
+  (it "keeps the legacy `:llm-provider/output-budget-exhausted` mapping"
+    ;; Anthropic native `:svar.core/stream-incomplete + :reason max_output_tokens`
+    ;; uses the older detection path; the rewritten context fn must not
+    ;; regress that surface.
+    (let [iter-err {:type :svar.core/stream-incomplete
+                    :data {:reason "max_output_tokens"}}
+          ctx (llm-provider-error-context 2 iter-err)]
+      (expect (= :llm-provider/output-budget-exhausted (:type ctx))))))
+
 (defn- stub-iter
   "Build a synthetic trailer-iters entry for preserved-thinking tests.
    `id` is any unique label for the position; `provider`/`model` control
