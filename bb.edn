@@ -1,5 +1,0 @@
-{:deps {bridge/bridge {:local/root "../bridge"}}
- :tasks
- {bridge {:doc "Run bridge CLI with Babashka"
-          :requires ([bridge.cli :as cli])
-          :task (apply cli/-main *command-line-args*)}}}
