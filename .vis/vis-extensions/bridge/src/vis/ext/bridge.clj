@@ -492,8 +492,8 @@
     {:ext/name "bridge"
      :ext/description "Bridge verification coordinator tools under `br/`."
      :ext/version "0.1.0"
-     :ext/author "local"
-     :ext/owner "local"
+     :ext/author "enajski"
+     :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/sci {:ext.sci/alias 'br
                :ext.sci/symbols bridge-symbols}
