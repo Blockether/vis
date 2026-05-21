@@ -396,7 +396,7 @@
                                    (diff-numstat start parent
                                      (.getName (.getId commit)))
                                    (root-commit-numstat repo commit))
-                              []))
+                               []))
                 +sum    (reduce + 0 (map :+ files))
                 -sum    (reduce + 0 (map :- files))]
             (assoc base

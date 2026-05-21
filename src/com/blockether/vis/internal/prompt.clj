@@ -98,36 +98,35 @@
       Reading from a `ctx` symbol will error. Read the rendered text directly;
       mutate via the engine functions below.
 
+      Each iter the engine re-renders CTX with this turn's pins already visible.
+      No assistant/tool messages persist between iters — CTX is the working memory.
+
       Subtrees:
         :session/workspace   engine-rendered; current branch, trunk, head, dirty?, per-file diff stats
-        :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born <scope>}}
+        :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born}}
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
-        :session/facts       everything durable the model needs to remember.
-                             Tags discriminate kinds: :decision (audit), :behavior (directive),
-                             :spec (formal requirement with :acceptance + :status + :facts refs).
-                             shape: {<kw> {:body :scope #{:session :project} :tags #{kw}
-                                           :born? :source?
-                                           ;; spec-only extras when :tags #{:spec}
-                                           :acceptance [string] :facts [<kw-ref>]
-                                           :status #{:draft :doing :done :cancelled}
-                                           :done-born scope?}}
+        :session/facts       everything durable. Single bucket. Tags discriminate kinds:
+                             :decision, :rule, :behavior, :spec, :acceptance, :observation, …
+                             shape: {<kw> {:content :tags? :connections? :born :scope? :source?}}
                              :scope optional (default :session); :project mirrors cross-session
-        :session/tasks       work items; :spec refs a fact tagged :spec
-                             shape: {<kw> {:title :spec :depends-on :status :evidence :journal :born :blocked-on?}}
+                             :connections is a vec of refs to other facts or tasks
+        :session/tasks       work items
+                             shape: {<kw> {:title :connections? :status :evidence?
+                                           :journal :born :blocked-on?}}
                              :status ∈ #{:todo :doing :done :blocked :cancelled}
-                             :spec REQUIRED (refs a fact tagged :spec). :evidence REQUIRED on :done.
-                             :journal engine-appended on every :status change.
-        :session/trailer     pinned iter envelopes from prior turns; auto-pinned by engine each turn
+                             :evidence REQUIRED on :done; :blocked-on REQUIRED on :blocked
+                             :journal engine-appended on every :status change
+                             :connections typically references a spec-tagged fact + prereq tasks
+        :session/trailer     pinned iter envelopes; engine auto-pins per iter;
+                             drop/summarize via done keys
 
     ENGINE FUNCTIONS (bare symbols; never namespace-qualify)
       Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
       Memory:
-        (fact-set!     :K {:body :scope? :tags?
-                           ;; spec-only extras when :tags #{:spec}
-                           :acceptance? :facts? :status?})
+        (fact-set!     :K {:content :tags? :connections? :scope?})
         (fact-remove!  :K)
-        (task-set!     :K {:title :spec :depends-on :status :evidence :blocked-on})
+        (task-set!     :K {:title :connections? :status :evidence? :blocked-on?})
         (task-remove!  :K)
 
       Symbols (native SCI; engine persists across turns):
@@ -155,18 +154,21 @@
     ENGINE BEHAVIORS
       • Every *-set! call: new key → engine stamps :born; existing → merges partials.
       • (task-set! :K {:status <new>}) → engine appends {:status :scope} to :journal.
-      • (fact-set! :K {:tags #{:spec} :status :done | :cancelled}) → engine stamps :done-born.
       • *-remove! on non-existent key → silent no-op.
-      • Soft warnings (engine never refuses): missing :spec on task-set!, missing :evidence
-        on :done task, missing :acceptance on :spec-tagged fact. Warnings appear
-        as `;; ⚠ …` in next render.
+      • Soft warnings (engine never refuses): missing :content on fact-set!,
+        missing :evidence on :done task, missing :blocked-on on :blocked task.
+        Warnings appear as `;; ⚠ …` in next render.
 
     TRAILER
-      At each (done …), engine:
-        1. Auto-pins every current-turn iter whose :forms (excluding `done`) is non-empty.
-        2. Applies :trailer-drop      — removes entries by exact :scope match.
-        3. Applies :trailer-summarize — replaces a verbatim pin's :forms with a :summary string.
-        4. Sorts by scope; persists.
+      Engine auto-pins each iter as it executes. After eval, before next iter
+      renders, if the iter's :forms (excluding `done`) is non-empty:
+        Append {:scope \"t<cur>/i<N>\" :forms [{:scope :tag :src :result :error}]}
+        to :session/trailer.
+
+      At (done …):
+        1. Apply :trailer-drop      — remove entries by exact :scope match.
+        2. Apply :trailer-summarize — replace a verbatim pin's :forms with a :summary string.
+        3. Sort by scope; persist.
 
       Entry shapes:
         Verbatim pin    {:scope \"t<N>/i<N>\" :forms [{:scope :tag :src :result :error}]}
