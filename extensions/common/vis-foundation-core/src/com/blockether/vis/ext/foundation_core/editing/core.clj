@@ -986,6 +986,32 @@
     (str "v/patch " (count failures) " edits failed; first: "
       (explain-failure (first failures)))))
 
+(defn- non-exact-passes-for-path
+  "Pull the non-`:exact` fuzzy passes that fired against `rel-path` out
+   of `:checks`, preserving edit order. Returns nil when every check on
+   that path used `:exact` so the caller can omit the `:passes` key
+   entirely (no `:exact` noise in the trailer)."
+  [checks rel-path]
+  (let [ps (->> checks
+             (filter #(= rel-path (:path %)))
+             (keep :pass)
+             (remove #{:exact})
+             vec)]
+    (when (seq ps) ps)))
+
+(defn- indent-delta-for-path
+  "Pull the FIRST non-zero `:indent-delta` from a `:relative-indent`
+   check for `rel-path`, if any. Used purely as an alarm signal so the
+   model knows the renderer re-shifted its `:replace` payload."
+  [checks rel-path]
+  (some (fn [c]
+          (when (and (= rel-path (:path c))
+                  (= :relative-indent (:pass c))
+                  (some? (:indent-delta c))
+                  (not (zero? (long (:indent-delta c)))))
+            (long (:indent-delta c))))
+    checks))
+
 (defn patch-safe
   "Apply exact-replace v/patch edits to the filesystem.
 
@@ -996,8 +1022,13 @@
 
    Success shape:
      {:success? true
-      :plans    [{:path :before :after} ...]
+      :plans    [{:path :before :after :passes? :indent-delta?} ...]
       :checks   [<per-edit-check> ...]}
+
+   `:passes` lists the non-`:exact` fuzzy passes that fired against this
+   plan's path, in edit order. Absent when every match was byte-exact —
+   no `:exact` noise in the trailer. Same for `:indent-delta`: present
+   only when a `:relative-indent` pass auto-shifted `:replace`.
 
    Failure shape:
      {:success? false
@@ -1037,7 +1068,11 @@
           (clear-patch-fail-count! file))
         {:success? true
          :plans (mapv (fn [{:keys [path before after]}]
-                        {:path path :before before :after after})
+                        (let [passes (non-exact-passes-for-path checks path)
+                              idelta (indent-delta-for-path checks path)]
+                          (cond-> {:path path :before before :after after}
+                            passes (assoc :passes passes)
+                            idelta (assoc :indent-delta idelta))))
                   plans)
          :checks checks}))))
 
@@ -1129,7 +1164,12 @@
    per-hunk planning errors land in `:failures` with `:reason`
    keys (`:invalid-patch`, `:empty-patch`, `:patch-old-lines-not-found`,
    etc.) so the tool-failure envelope can surface them verbatim to the
-   model without ex-data spelunking."
+   model without ex-data spelunking.
+
+   Envelope mode never goes fuzzy — Codex's `@@` context headers do
+   positional disambiguation — so plans carry no `:passes` /
+   `:indent-delta` keys (those are exclusive to exact-replace's fuzzy
+   fallback)."
   [^String patch-text]
   (let [plan-attempt (try
                        (let [{:keys [hunks]} (patch/parse-patch patch-text)]
@@ -1445,21 +1485,32 @@
 
 (defn- patch-result-file-summary
   "Build a per-file summary map that lives on `:result` of `v/patch`.
-   Keeps the model trailer compact (no raw before/after) while carrying
-   enough info — path, op, line deltas, capped unified diff — for the
-   channel renderer to paint a useful preview."
-  [{:keys [op path before after move-to]}]
-  (let [lines-before (if before (count (str/split-lines before)) 0)
-        lines-after  (if after  (count (str/split-lines after))  0)
-        diff-text    (unified-diff-text before after)]
-    (cond-> {:path         path
-             :op           (or op :update)
-             :changed?     (not= before after)
-             :lines-before lines-before
-             :lines-after  lines-after
-             :delta-lines  (- lines-after lines-before)}
-      move-to   (assoc :move-to move-to)
-      diff-text (assoc :diff diff-text))))
+
+   Minimal shape — every key is necessary signal, no redundant counters:
+
+     {:path     <rel-path>
+      :op       :add | :update | :delete | :update-move
+      :changed? <bool>            — false on no-op edits
+      :diff     <unified-diff>    — the WRITE evidence; omitted only
+                                    when both before+after are nil
+      :move-to  <rel-path>        — only when envelope :update-move
+      :passes   [<pass-kw> ...]   — ONLY when a non-:exact fuzzy pass
+                                    fired; absent = byte-exact match
+      :indent-delta <n>}          — ONLY when :relative-indent fuzzy
+                                    auto-shifted :replace by N spaces
+
+   Line counts (`:lines-before` / `:lines-after` / `:delta-lines`) were
+   intentionally dropped: the `:diff` carries the exact change and the
+   scalars duplicated that information at the cost of trailer bloat."
+  [{:keys [op path before after move-to passes indent-delta]}]
+  (let [diff-text (unified-diff-text before after)]
+    (cond-> {:path     path
+             :op       (or op :update)
+             :changed? (not= before after)}
+      diff-text     (assoc :diff diff-text)
+      move-to       (assoc :move-to move-to)
+      (seq passes)  (assoc :passes (vec passes))
+      indent-delta  (assoc :indent-delta indent-delta))))
 
 (defn- patch-tool
   "Edit files. Accepts two input shapes:
@@ -1687,9 +1738,15 @@
                    (str path ":" line " " text)) hits)))))))
 
 (defn- channel-render-patch
-  "Channel preview: one header line + per-file stats and (capped) unified
-   diff. All the diff data lives on `:result` itself (see
-   `patch-result-file-summary`) so this renderer is a pure projection."
+  "Channel preview: one header line per file + (capped) unified diff.
+   Pure projection over the summary map (`patch-result-file-summary`).
+
+   No line counts in the header — the diff itself carries the line-level
+   change and adding scalars duplicated that information. The header
+   instead surfaces structural fuzzy alarms: `:passes` (non-`:exact`
+   fuzzy passes that fired) and `:indent-delta` (auto re-indent applied
+   by `:relative-indent`). These signal \"verify the diff carefully\";
+   their absence means byte-exact match."
   [result]
   (let [files   (if (sequential? result) result [result])
         changed (count (filter :changed? files))]
@@ -1697,23 +1754,16 @@
       (ir-p "Patched " (count files) " file(s)"
         (when (pos? changed) (str ", " changed " changed")) ".")
       (mapcat
-        (fn [{:keys [path op diff move-to changed?]
-              raw-lines-before :lines-before
-              raw-lines-after :lines-after
-              raw-delta-lines :delta-lines}]
-          (let [lines-before (long (or raw-lines-before 0))
-                lines-after  (long (or raw-lines-after 0))
-                delta-lines  (long (or raw-delta-lines (- lines-after lines-before)))
-                delta-str (cond
-                            (pos? delta-lines) (str " +" delta-lines)
-                            (neg? delta-lines) (str " " delta-lines)
-                            :else              "")
-                header    (str (name (or op :update))
-                            " " (or path "?")
-                            (when move-to (str " -> " move-to))
-                            " [" lines-before " -> " lines-after
-                            " lines" delta-str "]"
-                            (when (false? changed?) " (no-op)"))]
+        (fn [{:keys [path op diff move-to changed? passes indent-delta]}]
+          (let [header (str (name (or op :update))
+                         " " (or path "?")
+                         (when move-to (str " -> " move-to))
+                         (when (seq passes)
+                           (str " [fuzzy: " (str/join "," (map name passes)) "]"))
+                         (when indent-delta
+                           (str " [indentΔ " (if (pos? indent-delta) "+" "")
+                             indent-delta "]"))
+                         (when (false? changed?) " (no-op)"))]
             (cond-> [(ir-p (ir-code header))]
               diff (conj (ir-code-block "diff" (bounded-render-text diff))))))
         files))))

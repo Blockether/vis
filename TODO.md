@@ -74,7 +74,47 @@ bez ręcznego `(try ... (catch clojure.lang.ExceptionInfo e (ex-data e)))`.
 
 ---
 
-### [ ] T2 — Thread `:matched-pass` from analysis checks into per-file v/patch result
+### [x] T2 — Thread `:passes` from analysis into per-file v/patch summary; drop redundant line counters ✅
+
+**Status:** Done. Re-probe `target/probe/logs/s7_v2.log`.
+
+**Decision summary**
+- Per-file summary shape trimmed to the minimum signal set:
+  ```
+  {:path :op :changed? :diff
+   :move-to?  (envelope :update-move only)
+   :passes?   (only when a non-`:exact` fuzzy pass fired)
+   :indent-delta? (only when `:relative-indent` auto-shifted :replace)}
+  ```
+- `:lines-before`, `:lines-after`, `:delta-lines` REMOVED. The `:diff`
+  already carries that information and the scalar counters duplicated it
+  at the cost of trailer bloat.
+- `:passes` is an **alarm signal only** — absent when every match was
+  byte-exact (default, no noise). Present iff Vis had to relax to one
+  of `:rstrip / :unicode / :relative-indent / :trim`. Vector preserves
+  edit order and the keyword names tell the model which strategy.
+- `:indent-delta` is present only when `:relative-indent` fired AND the
+  delta was non-zero. Tells the model: “Vis auto-shifted your :replace
+  N spaces; verify the diff matches your intent.”
+- TUI/channel renderer follows the same rule — no `[N -> M lines]`
+  header noise; only `[fuzzy: rstrip,trim]` / `[indentΔ +4]` alarm tags
+  when applicable.
+
+**Re-probe evidence (`s7_v2.log`)**
+Model did multi-line 0-indent fuzzy attempt (failed via `:no-match`),
+then single-line exact substring (succeeded). Final trailer carried:
+```
+[{:path "target/probe/s7_fuzzy.py" :op :update :changed? true :diff "…"}]
+```
+Model self-reports verbatim:
+- “:passes is a precise alarm — present iff a non-:exact pass fired. Worth the byte.”
+- “line counters not in returned map. I did not miss them — :diff already encodes the change.”
+
+<details><summary>Original spec</summary>
+
+#### Original T2 spec
+
+[same as below — implementation matches]
 
 **Problem (S7)** — Fuzzy fallback w S7 strzelił poprawnie ale model nie wie
 KTÓRY pass zadziałał. `patch-result-file-summary` projektuje tylko

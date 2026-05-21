@@ -851,6 +851,80 @@
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "channel-render-bash"))))
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "journal-render-bash"))))))
 
+(defdescribe patch-summary-shape-test
+  ;; The summary IS what the model reads back as the v/patch result
+  ;; AND what the channel renderer projects. Every key counts; redundant
+  ;; signal pollutes the iteration trailer.
+  (it "byte-exact match: no :passes key, no :indent-delta, no line counters"
+    (let [patch (private-fn "patch-safe")
+          summary (private-fn "patch-result-file-summary")
+          p (write-temp! "summary/exact.txt" "alpha\nbeta\n")
+          r (patch [{:path p :search "alpha" :replace "ALPHA"}])
+          s (summary (first (:plans r)))]
+      (expect (true? (:success? r)))
+      (expect (= #{:path :op :changed? :diff} (set (keys s))))
+      (expect (not (contains? s :passes)))
+      (expect (not (contains? s :indent-delta)))
+      (expect (not (contains? s :lines-before)))
+      (expect (not (contains? s :lines-after)))
+      (expect (not (contains? s :delta-lines)))))
+
+  (it "fuzzy :rstrip pass surfaces as :passes [:rstrip], in edit order"
+    (let [patch (private-fn "patch-safe")
+          summary (private-fn "patch-result-file-summary")
+          ;; File has trailing whitespace the SEARCH lacks → :rstrip pass
+          p (write-temp! "summary/rstrip.txt" "def hi():   \n    return 1\n")
+          r (patch [{:path p :search "def hi():\n    return 1" :replace "def hi():\n    return 2"}])
+          plan (first (:plans r))
+          s (summary plan)]
+      (expect (true? (:success? r)))
+      (expect (= [:rstrip] (:passes s)))
+      (expect (not (contains? s :indent-delta)))))
+
+  (it "fuzzy :relative-indent surfaces both :passes AND :indent-delta"
+    (let [patch (private-fn "patch-safe")
+          summary (private-fn "patch-result-file-summary")
+          ;; File at 4-space indent, SEARCH authored at 0-space
+          p (write-temp! "summary/relindent.txt"
+              "    def f():\n        return 1\n        return 2\n")
+          r (patch [{:path p
+                     :search "def f():\n    return 1\n    return 2"
+                     :replace "def f():\n    return 10\n    return 20"}])
+          s (summary (first (:plans r)))]
+      (expect (true? (:success? r)))
+      (expect (or (= [:relative-indent] (:passes s))
+                ;; :trim may catch first depending on pass ordering; either
+                ;; way :indent-delta should be present so the model knows
+                ;; Vis auto-shifted the replace payload.
+                (= [:trim] (:passes s))))
+      (expect (= 4 (:indent-delta s)))))
+
+  (it "passes for several non-exact edits on the same path appear in edit order"
+    ;; Fuzzy only fires for multi-line searches, so both edits below are
+    ;; multi-line. First edit hits :rstrip (file has trailing space the
+    ;; SEARCH lacks). Second hits :unicode (file has ’ smart quote, SEARCH
+    ;; uses ASCII '). The result projects both passes in edit order.
+    (let [patch (private-fn "patch-safe")
+          summary (private-fn "patch-result-file-summary")
+          p (write-temp! "summary/mixed.txt"
+              "def alpha():   \n    return 1\nit\u2019s late\nfor now\n")
+          r (patch [{:path p :search "def alpha():\n    return 1" :replace "def alpha():\n    return 2"}
+                    {:path p :search "it's late\nfor now" :replace "it's done\nfor real"}])
+          s (summary (first (:plans r)))]
+      (expect (true? (:success? r)))
+      (expect (= [:rstrip :unicode] (:passes s)))))
+
+  (it "envelope mode never carries :passes / :indent-delta (no fuzzy in Codex grammar)"
+    (let [patch-tool (private-fn "patch-tool")
+          p (write-temp! "summary/env.txt" "line1\nline2\n")
+          env (str "*** Begin Patch\n*** Update File: " p
+                "\n@@\n-line1\n+LINE1\n*** End Patch\n")
+          out (patch-tool env)
+          first-file (first (:result out))]
+      (expect (true? (:success? out)))
+      (expect (not (contains? first-file :passes)))
+      (expect (not (contains? first-file :indent-delta))))))
+
 (defdescribe editing-renderer-guidance-test
   (it "patch renderer reports patched paths as IR and tolerates sparse summaries"
     (let [render-patch (private-fn "channel-render-patch")
@@ -861,6 +935,37 @@
       (expect (= :ir (first rendered)))
       (expect (string/includes? joined "Patched"))
       (expect (string/includes? joined "target/editing-test/out.txt"))))
+
+  (it "patch renderer surfaces :passes as a fuzzy alarm in the header"
+    (let [render-patch (private-fn "channel-render-patch")
+          rendered (render-patch [{:path "src/foo.py"
+                                   :op :update
+                                   :changed? true
+                                   :diff ""
+                                   :passes [:rstrip :trim]}])
+          joined (string/join " " (filter string? (tree-seq sequential? seq rendered)))]
+      (expect (string/includes? joined "[fuzzy: rstrip,trim]"))))
+
+  (it "patch renderer surfaces :indent-delta when relative-indent fired"
+    (let [render-patch (private-fn "channel-render-patch")
+          rendered (render-patch [{:path "src/foo.py"
+                                   :op :update
+                                   :changed? true
+                                   :diff ""
+                                   :passes [:relative-indent]
+                                   :indent-delta 4}])
+          joined (string/join " " (filter string? (tree-seq sequential? seq rendered)))]
+      (expect (string/includes? joined "[indentΔ +4]"))))
+
+  (it "patch renderer says nothing about fuzzy when only exact matches fired"
+    (let [render-patch (private-fn "channel-render-patch")
+          rendered (render-patch [{:path "src/foo.py"
+                                   :op :update
+                                   :changed? true
+                                   :diff ""}])
+          joined (string/join " " (filter string? (tree-seq sequential? seq rendered)))]
+      (expect (not (string/includes? joined "fuzzy")))
+      (expect (not (string/includes? joined "indentΔ")))))
   (it "patch diff stays compact for large files"
     (let [diff-fn (private-fn "unified-diff-text")
           before  (string/join "\n" (map #(str "line-" %) (range 1500)))
