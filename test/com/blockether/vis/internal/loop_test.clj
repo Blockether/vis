@@ -32,6 +32,88 @@
 (def ^:private ask-code-block-observation
   (deref #'lp/ask-code-block-observation))
 
+(def ^:private preserved-thinking-replay-messages
+  (deref #'lp/preserved-thinking-replay-messages))
+
+(def ^:private compatible-preserved-thinking-trailer-iters
+  (deref #'lp/compatible-preserved-thinking-trailer-iters))
+
+(defn- stub-iter
+  "Build a synthetic trailer-iters entry for preserved-thinking tests.
+   `id` is any unique label for the position; `provider`/`model` control
+   how `compatible-preserved-thinking-trailer-iters` filters; the rest
+   default to a same-model, replay-eligible canonical thinking block."
+  [{:keys [id provider model thinking signature replay?]
+    :or   {provider :zai-coding-plan model "glm-5.1" replay? true}}]
+  [id
+   {:assistant-message {:role "assistant"
+                        :content [{:type "thinking"
+                                   :thinking (or thinking (str "think-" id))
+                                   :thinking-signature (or signature (str "sig-" id))}]}
+    :llm-provider provider
+    :llm-model model
+    :preserved-thinking/replay? replay?}])
+
+(defdescribe preserved-thinking-replay-test
+  (it "returns every compatible assistant message in arrival order"
+    ;; Why every message, not just the last: GLM clear_thinking,
+    ;; Anthropic HMAC chains, and OpenAI Responses encrypted reasoning
+    ;; all require the full assistant chain since the last user turn.
+    ;; Returning only the latest step (the pre-fix behaviour) made GLM
+    ;; re-derive scratch state each iteration — see session 3102ad16
+    ;; where `cached_tokens` stayed pinned at 2368 across 26 iterations.
+    (let [target  {:provider :zai-coding-plan :model "glm-5.1"}
+          trailer (mapv #(stub-iter {:id %}) [1 2 3])
+          compat  (compatible-preserved-thinking-trailer-iters trailer target)
+          replays (preserved-thinking-replay-messages compat)]
+      (expect (= 3 (count compat)))
+      (expect (= 3 (count replays)))
+      (expect (= ["think-1" "think-2" "think-3"]
+                (mapv (fn [m] (-> m :content first :thinking)) replays)))))
+
+  (it "drops iterations from a different provider/model"
+    ;; Cross-provider replay is forbidden: provider-native thinking
+    ;; signatures are not portable (z.ai = raw text, Anthropic = HMAC,
+    ;; OpenAI Responses = JSON reasoning item). The compatible filter
+    ;; must reject mismatches before this fn sees them.
+    (let [target  {:provider :zai-coding-plan :model "glm-5.1"}
+          trailer [(stub-iter {:id 1})
+                   (stub-iter {:id 2 :provider :anthropic :model "claude-sonnet-4.6"})
+                   (stub-iter {:id 3})]
+          compat  (compatible-preserved-thinking-trailer-iters trailer target)
+          replays (preserved-thinking-replay-messages compat)]
+      (expect (= 2 (count replays)))
+      (expect (= ["think-1" "think-3"]
+                (mapv (fn [m] (-> m :content first :thinking)) replays)))))
+
+  (it "drops iterations explicitly flagged :preserved-thinking/replay? false"
+    ;; Cross-turn trailer seeds carry the opt-out flag so historical
+    ;; iterations stay visible in transcripts but their opaque thinking
+    ;; state is not replayed into a new user turn.
+    (let [target  {:provider :zai-coding-plan :model "glm-5.1"}
+          trailer [(stub-iter {:id 1 :replay? false})
+                   (stub-iter {:id 2 :replay? true})]
+          compat  (compatible-preserved-thinking-trailer-iters trailer target)
+          replays (preserved-thinking-replay-messages compat)]
+      (expect (= 1 (count replays)))
+      (expect (= ["think-2"]
+                (mapv (fn [m] (-> m :content first :thinking)) replays)))))
+
+  (it "returns empty when no iteration has an :assistant-message"
+    ;; Iterations that errored before the model produced a usable
+    ;; assistant turn (e.g. provider HTTP 4xx mid-stream) lack
+    ;; `:assistant-message`; the compatible filter drops them so the
+    ;; replay never tries to send an empty/partial block.
+    (let [target  {:provider :zai-coding-plan :model "glm-5.1"}
+          trailer [[1 {:llm-provider :zai-coding-plan
+                       :llm-model "glm-5.1"
+                       :preserved-thinking/replay? true}]]
+          compat  (compatible-preserved-thinking-trailer-iters trailer target)
+          replays (preserved-thinking-replay-messages compat)]
+      (expect (zero? (count compat)))
+      (expect (zero? (count replays))))))
+
+
 (def ^:private parse-top-level-forms
   (deref #'lp/parse-top-level-forms))
 
@@ -272,18 +354,29 @@
     (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
       (expect (= ::router router))
       (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
-      (expect (not (contains? opts :semantic-timeout-ms)))))
+      ;; Semantic timeout is now auto-added by `with-default-ask-code-idle-timeout`
+      ;; (default 4min, catches transport-alive-but-model-silent stalls).
+      (expect (= lp/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
 
   (it "preserves explicit ask-code idle timeout overrides"
     (expect (= 42 (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms 42})))))
     (expect (contains? (:opts (captured-ask-code-opts {:idle-timeout-ms nil})) :idle-timeout-ms))
     (expect (nil? (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms nil}))))))
 
-  (it "keeps semantic timeout opt-in"
-    (expect (nil? lp/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+  (it "uses a four-minute semantic timeout by default and accepts overrides"
+    ;; Codex/Claude over Copilot can sit silent for minutes while the
+    ;; model reasons server-side; idle-timeout-ms keeps resetting on
+    ;; SSE pings. The semantic watchdog surfaces \"transport alive but
+    ;; no model events\" inside 4 minutes — see session da9f0b47
+    ;; (2026-05-20) for the 11-minute pre-fix stall.
+    (expect (= (* 4 60 1000) lp/ASK_CODE_SEMANTIC_TIMEOUT_MS))
     (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
       (expect (= 180000 (:semantic-timeout-ms opts)))
-      (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))))
+      (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))
+    (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms nil}))]
+      ;; Explicit nil opts the call out of the watchdog.
+      (expect (contains? opts :semantic-timeout-ms))
+      (expect (nil? (:semantic-timeout-ms opts))))))
 
 (defdescribe parse-top-level-forms-test
   (it "keeps quote reader macro attached when streaming top-level forms"
