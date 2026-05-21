@@ -1,10 +1,12 @@
 (ns com.blockether.vis.ext.foundation-voice.core
   "Local voice output through sherpa-onnx Piper/VITS TTS."
   (:require [babashka.process :as process]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis])
   (:import [java.io File FileInputStream FileOutputStream]
+           [java.lang ProcessBuilder$Redirect]
            [java.net URL]
            [org.apache.commons.compress.archivers.tar TarArchiveInputStream]
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorInputStream]))
@@ -262,6 +264,140 @@
              {:type :voice/missing-player
               :tried ["VIS_VOICE_PLAYER" "afplay" "paplay" "aplay" "ffplay"]}))))
 
+(def ^:private tts-worker-code
+  (str "(require '[clojure.edn :as edn] "
+    "'[clojure.string :as str] "
+    "'[com.blockether.vis.ext.foundation-voice.core :as voice]) "
+    "(let [reader (java.io.BufferedReader. *in*)] "
+    "(doseq [line (line-seq reader)] "
+    "(when-not (str/blank? line) "
+    "(let [{:keys [answer-file out-file response-file]} (edn/read-string line)] "
+    "(try (voice/synthesize-file! (edn/read-string (slurp answer-file)) "
+    "{:out-file (java.io.File. out-file)}) "
+    "(spit response-file (pr-str {:ok? true})) "
+    "(catch Throwable t "
+    "(spit response-file (pr-str {:ok? false :message (or (ex-message t) (str t)) :data (ex-data t)}))))))))"))
+
+(defn- java-bin []
+  (str (io/file (System/getProperty "java.home")
+         "bin"
+         (if (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "win")
+           "java.exe"
+           "java"))))
+
+(defn- tts-worker-argv
+  []
+  [(java-bin)
+   "-XX:+IgnoreUnrecognizedVMOptions"
+   "--enable-native-access=ALL-UNNAMED"
+   "--sun-misc-unsafe-memory-access=allow"
+   "-cp" (System/getProperty "java.class.path")
+   "clojure.main"
+   "-e" tts-worker-code])
+
+(defn- voice-log-file []
+  (let [log-file (io/file (System/getProperty "user.home") ".vis" "vis.log")]
+    (.mkdirs (.getParentFile log-file))
+    log-file))
+
+(defn- start-tts-worker!
+  [log-file]
+  (let [pb (ProcessBuilder. ^java.util.List (tts-worker-argv))]
+    (.redirectErrorStream pb true)
+    (.redirectOutput pb (ProcessBuilder$Redirect/appendTo (io/file log-file)))
+    (.start pb)))
+
+(defonce ^:private tts-worker-state (atom nil))
+
+(defn- live-process?
+  [process]
+  (and process (.isAlive ^Process process)))
+
+(defn- stop-tts-worker! []
+  (when-let [{:keys [process writer]} @tts-worker-state]
+    (try (.close ^java.io.Writer writer) (catch Throwable _))
+    (try (.destroy ^Process process) (catch Throwable _)))
+  (reset! tts-worker-state nil))
+
+(defonce ^:private tts-worker-shutdown-hook
+  (delay
+    (.addShutdownHook (Runtime/getRuntime)
+      (Thread. ^Runnable stop-tts-worker! "vis-voice-tts-worker-shutdown"))))
+
+(defn- ensure-tts-worker!
+  [log-file]
+  (let [{:keys [process] :as existing} @tts-worker-state]
+    (if (live-process? process)
+      existing
+      (let [_       @tts-worker-shutdown-hook
+            process (start-tts-worker! log-file)
+            writer  (java.io.BufferedWriter.
+                      (java.io.OutputStreamWriter. (.getOutputStream ^Process process)))]
+        (reset! tts-worker-state {:process process
+                                  :writer writer
+                                  :log-file (str log-file)})))))
+
+(defn- wait-for-response-file!
+  [response-file process log-file]
+  (loop [remaining-ms 120000]
+    (cond
+      (.isFile ^File response-file)
+      (let [{:keys [ok? message data]} (edn/read-string (slurp response-file))]
+        (when-not ok?
+          (throw (ex-info (str "Voice synthesis worker failed; log: " log-file)
+                   (assoc (or data {})
+                     :type :voice/tts-worker-failed
+                     :log-file (str log-file)
+                     :message message))))
+        true)
+
+      (not (live-process? process))
+      (do
+        (reset! tts-worker-state nil)
+        (throw (ex-info (str "Voice synthesis worker exited before response; log: " log-file)
+                 {:type :voice/tts-worker-exited
+                  :log-file (str log-file)})))
+
+      (not (pos? remaining-ms))
+      (throw (ex-info (str "Voice synthesis worker timed out; log: " log-file)
+               {:type :voice/tts-worker-timeout
+                :log-file (str log-file)}))
+
+      :else
+      (do
+        (Thread/sleep 25)
+        (recur (- remaining-ms 25))))))
+
+(defn- synthesize-file-in-worker!
+  "Run sherpa-onnx TTS in a persistent child JVM so native stdout/stderr goes to ~/.vis/vis.log, never Lanterna."
+  [answer {:keys [out-file]}]
+  (when (str/blank? (str out-file))
+    (throw (ex-info "TTS output file is required" {:type :voice/missing-output-file})))
+  (let [out-file      (io/file out-file)
+        parent        (.getParentFile out-file)
+        answer-file   (File/createTempFile "vis-voice-answer-" ".edn")
+        response-file (File/createTempFile "vis-voice-response-" ".edn")
+        log-file      (voice-log-file)]
+    (when parent (.mkdirs parent))
+    (spit answer-file (pr-str answer))
+    (.delete response-file)
+    (try
+      (let [{:keys [process writer]} (ensure-tts-worker! log-file)
+            command {:answer-file (str answer-file)
+                     :out-file (str out-file)
+                     :response-file (str response-file)}]
+        (locking writer
+          (.write ^java.io.Writer writer (pr-str command))
+          (.write ^java.io.Writer writer "\n")
+          (.flush ^java.io.Writer writer)
+          (wait-for-response-file! response-file process log-file))
+        {:voice (piper-voice)
+         :model-dir (model-dir)
+         :out-file (str (.getAbsoluteFile out-file))})
+      (finally
+        (try (.delete answer-file) (catch Throwable _))
+        (try (.delete response-file) (catch Throwable _))))))
+
 (defn voice-response-prompt
   [env]
   (when (true? (get-in env [:turn/features :voice-response?]))
@@ -291,7 +427,7 @@
       (try
         (notify-progress! :synthesize "Synthesizing voice response" 0 -1)
         (let [wav (File/createTempFile "vis-voice-response-" ".wav")]
-          (synthesize-file! answer {:out-file wav})
+          (synthesize-file-in-worker! answer {:out-file wav})
           (notify-progress! :play "Speaking..." 0 -1)
           (let [{:keys [process]} (play-file! wav)]
             (future
