@@ -175,14 +175,22 @@
   (s/keys :req-un [:session.trailer.pin/scope
                    :session.trailer.pin/forms]))
 
-(s/def :session.trailer.summary/scope           ::scope-iter)
-(s/def :session.trailer.summary/summary         string?)
-(s/def :session.trailer.summary/summarized-born ::scope-form)
+(s/def :session.trailer.summary/scope-start  ::scope-iter)
+(s/def :session.trailer.summary/scope-end    ::scope-iter)
+(s/def :session.trailer.summary/summary      string?)
+(s/def :session.trailer.summary/born         ::scope-form)
 
 (s/def ::trailer-summary
-  (s/keys :req-un [:session.trailer.summary/scope
+  (s/keys :req-un [:session.trailer.summary/scope-start
+                   :session.trailer.summary/scope-end
                    :session.trailer.summary/summary
-                   :session.trailer.summary/summarized-born]))
+                   :session.trailer.summary/born]))
+
+;; Soft rules:
+;;   :scope-start must be ≤ :scope-end per scope comparator.
+;;   New summary must NOT partially overlap an existing summary;
+;;   partial overlap is rejected with an explain message at validation time.
+;;   Engine stamps :born to the scope of the (done {:trailer-summarize …}) form.
 
 (s/def ::trailer-entry
   (s/or :pin     ::trailer-pin
