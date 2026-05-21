@@ -224,7 +224,7 @@
       (str/replace #"/" ".")
       (str/replace #"[^A-Za-z0-9_.:-]" "-"))))
 
-(defn- block-index
+(defn- form-index
   [block]
   (or (:position block) (:idx block) (:id block) 0))
 
@@ -233,7 +233,7 @@
   (or (get-in block [:envelope :ref])
     (str "turn/" (subs (str (:id turn)) 0 8)
       "/iteration/" (:position iteration)
-      "/block/" (inc (long (block-index block))))))
+      "/block/" (inc (long (form-index block))))))
 
 (defn- envelope-duration-ms
   [envelope]
@@ -390,7 +390,7 @@
              :turn-id        (:id turn)
              :iteration-id   (:id iteration)
              :iteration      (:position iteration)
-             :form-position  (inc (long (block-index block)))
+             :form-position  (inc (long (form-index block)))
              :role (:role block)
              :status         (event-status error true (:timeout? block))
              :duration-ms    (block-duration-ms block)
@@ -432,7 +432,7 @@
       (assoc :sha256 (:llm-raw-response-sha256 iteration))
       (seq blocks)
       (assoc :executable-blocks blocks
-        :block-count (count blocks)
+        :form-count (count blocks)
         :block-langs (mapv :lang blocks)))))
 
 (defn- llm-diagnostic-row
@@ -715,7 +715,7 @@
                            :raw-length        (:llm-raw-response-length iter)
                            :raw-sha256        (:llm-raw-response-sha256 iter)
                            :executable-blocks executable-blocks
-                           :block-count       (count executable-blocks)
+                           :form-count       (count executable-blocks)
                            :block-langs       (mapv :lang executable-blocks)})))
                 (:iterations turn)))
       turns)))

@@ -332,9 +332,9 @@
           out (channel-render-cat r)]
       (expect (vector? out))
       (expect (= :ir (first out)))
-      (let [code-blocks (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq out))
-            body (last (first code-blocks))]
-        (expect (= 1 (count code-blocks)))
+      (let [form-sources (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq out))
+            body (last (first form-sources))]
+        (expect (= 1 (count form-sources)))
         (expect (string/includes? body "1: only-line")))))
 
   (it "v/cat channel renderer separates inline text/code tokens with spaces"

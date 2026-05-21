@@ -422,7 +422,7 @@
    (transport / spec / wrapping failures).
 
    Optional opts:
-     :block-source  the verbatim source the form was built from;
+     :form-source  the verbatim source the form was built from;
                     embedded in `:block.source` so the model
                     sees its own input echoed back.
      :form-row      block-global row of the FAILING form's first
@@ -431,7 +431,7 @@
      :form-col      block-global col of the FAILING form's start.
                     Translation applies only on `:line == 1`.
      :hint          override / pre-supply a recovery hint string."
-  [^Throwable t & [{:keys [block-source form-row form-col hint]}]]
+  [^Throwable t & [{:keys [form-source form-row form-col hint]}]]
   (let [d         (ex-data t)
         sci?      (= :sci/error      (:type d))
         edamame?  (= :edamame/error  (:type d))
@@ -461,8 +461,8 @@
                                 (str (:phase d))))   :sci/analysis
                     sci?                           :sci/runtime
                     :else                          :preflight)
-        block     (when block-source
-                    (cond-> {:source block-source :phase phase}
+        block     (when form-source
+                    (cond-> {:source form-source :phase phase}
                       row    (assoc :row row)
                       col    (assoc :col col)
                       opened (assoc :opened-loc opened)))

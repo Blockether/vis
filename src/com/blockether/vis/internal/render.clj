@@ -1231,7 +1231,7 @@
     (second form)))
 
 (defn parse-block-display
-  "Parse `block-source` into ordered render segments — each top-level form
+  "Parse `form-source` into ordered render segments — each top-level form
    classified as `{:kind :code|:title|:answer-ref ...}`. Consecutive `:code`
    forms collapse into a single `:code` segment so a prelude of `(def …)`
    lines renders as one code block instead of N.
@@ -1248,8 +1248,8 @@
 
    Pure helper. Never throws — parser failure degrades to one `:code`
    segment with the full source. Empty / blank / nil input returns `[]`."
-  [block-source]
-  (let [src (str (or block-source ""))]
+  [form-source]
+  (let [src (str (or form-source ""))]
     (cond
       (str/blank? src) []
 
@@ -1310,8 +1310,8 @@
    Pure-code blocks and mixed blocks (any `:code` segment present) are
    NOT structurally silent: the prelude is genuinely useful work to show.
    Blank / nil input is not considered silent — there is no block to hide."
-  [block-source]
-  (let [src (str (or block-source ""))]
+  [form-source]
+  (let [src (str (or form-source ""))]
     (and (not (str/blank? src))
       (let [segs (parse-block-display src)]
         (not-any? #(= :code (:kind %)) segs)))))

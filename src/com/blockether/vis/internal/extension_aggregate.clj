@@ -84,11 +84,11 @@
     (:iteration-id scope)
     (assoc :iteration-id (:iteration-id scope))
 
-    (:iteration-block-index scope)
-    (assoc :iteration-block-index (:iteration-block-index scope))
+    (:iteration-form-index scope)
+    (assoc :iteration-form-index (:iteration-form-index scope))
 
-    (:block-index scope)
-    (assoc :iteration-block-index (:block-index scope))
+    (:form-index scope)
+    (assoc :iteration-form-index (:form-index scope))
 
     (:iteration-block-id scope)
     (assoc :iteration-block-id (:iteration-block-id scope))
@@ -131,12 +131,12 @@
     (= :block scope)
     (let [iteration-id (require-scope-id scope :iteration-id
                          (safe-deref (:current-iteration-id-atom env)))
-          block-index  (safe-deref (:current-form-idx-atom env))]
+          form-index  (safe-deref (:current-form-idx-atom env))]
       {:session-soul-id       (:session-id env)
        :session-state-id      (current-session-state-id env)
        :session-turn-state-id (latest-turn-state-id env)
        :iteration-id               iteration-id
-       :iteration-block-index      (require-scope-id scope :iteration-block-index block-index)})
+       :iteration-form-index      (require-scope-id scope :iteration-form-index form-index)})
 
     :else
     (throw (ex-info "Unknown extension aggregate scope"

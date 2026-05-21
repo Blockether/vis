@@ -632,7 +632,7 @@
       (assoc :sha256 (:llm-raw-response-sha256 iteration))
       blocks
       (assoc :executable-blocks blocks
-        :block-count (count blocks)
+        :form-count (count blocks)
         :block-langs (mapv :lang blocks)))))
 
 (defn- llm-diagnostic-row

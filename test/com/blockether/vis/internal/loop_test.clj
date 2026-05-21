@@ -289,9 +289,9 @@
 
 (defdescribe ask-code-block-observation-test
   (it "summarizes svar 0.5.5 fence observations"
-    (expect (= {:block-count 1
-                :all-block-count 3
-                :dropped-block-count 2
+    (expect (= {:form-count 1
+                :all-form-count 3
+                :dropped-form-count 2
                 :saw-fence? true
                 :malformed? true}
               (ask-code-block-observation
@@ -303,9 +303,9 @@
                  :malformed? true}))))
 
   (it "keeps pre-0.5.5 shape compatible"
-    (expect (= {:block-count 1
-                :all-block-count 1
-                :dropped-block-count 0
+    (expect (= {:form-count 1
+                :all-form-count 1
+                :dropped-form-count 0
                 :saw-fence? false
                 :malformed? false}
               (ask-code-block-observation
