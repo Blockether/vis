@@ -41,7 +41,9 @@
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
         ;; RLM prompt teaches deep exploration / combine / refine across
         ;; iterations with worked-example code; cap guards against drift.
-        (expect (< (count prompt) 8000)))))
+        ;; Bumped 8000 → 9000 after the v/rg sweep added context/regex/
+        ;; output-mode idioms + the v/cat :range arity doc.
+        (expect (< (count prompt) 9000)))))
 
   (it "contributes environment info through ctx"
     (let [ctx ((:ext/ctx foundation/vis-extension) {})]

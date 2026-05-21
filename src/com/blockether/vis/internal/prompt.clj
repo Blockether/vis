@@ -107,18 +107,21 @@
                              shape: {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
         :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born}}
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
-        :session/facts       everything durable. Single bucket. Tags discriminate kinds:
-                             :decision, :rule, :behavior, :spec, :acceptance, :observation, …
-                             shape: {<kw> {:content :tags? :connections? :born :scope? :source?}}
-                             :scope optional (default :session); :project mirrors cross-session
-                             :connections is a vec of refs to other facts or tasks
+        :session/specs       formal requirements
+                             shape: {<kw> {:title :acceptance :grounding-facts?
+                                           :serving-tasks? :status :born :done-born?}}
+                             :grounding-facts refs :session/facts; :serving-tasks refs :session/tasks
         :session/tasks       work items
-                             shape: {<kw> {:title :connections? :status :evidence?
-                                           :journal :born :blocked-on?}}
-                             :status ∈ #{:todo :doing :done :blocked :cancelled}
-                             :evidence REQUIRED on :done; :blocked-on REQUIRED on :blocked
+                             shape: {<kw> {:title :serves-spec :blocked-by-tasks?
+                                           :status :evidence? :journal :born}}
+                             :serves-spec refs one :session/specs key
+                             :blocked-by-tasks refs prerequisite :session/tasks keys
+                             :status ∈ #{:todo :doing :done :cancelled}
+                             :evidence REQUIRED on :done
                              :journal engine-appended on every :status change
-                             :connections typically references a spec-tagged fact + prereq tasks
+        :session/facts       durable observations/decisions/rules/behavior
+                             shape: {<kw> {:content :born :scope? :source?}}
+                             facts are leaves: no :tags, no :connections
         :session/trailer     pinned iter envelopes; engine auto-pins per iter;
                              drop/summarize via done keys
 
@@ -126,10 +129,12 @@
       Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
       Memory:
-        (fact-set!     :K {:content :tags? :connections? :scope?})
-        (fact-remove!  :K)
-        (task-set!     :K {:title :connections? :status :evidence? :blocked-on?})
+        (spec-set!     :K {:title :acceptance :grounding-facts? :serving-tasks? :status})
+        (spec-remove!  :K)
+        (task-set!     :K {:title :serves-spec :blocked-by-tasks? :status :evidence?})
         (task-remove!  :K)
+        (fact-set!     :K {:content :scope?})
+        (fact-remove!  :K)
 
       Symbols (native SCI; engine persists across turns):
         (defn foo [x] …)                              create / overwrite
@@ -159,8 +164,9 @@
       • Every *-set! call: new key → engine stamps :born; existing → merges partials.
       • (task-set! :K {:status <new>}) → engine appends {:status :scope} to :journal.
       • *-remove! on non-existent key → silent no-op.
-      • Soft warnings (engine never refuses): missing :content on fact-set!,
-        missing :evidence on :done task, missing :blocked-on on :blocked task.
+      • Soft warnings (engine never refuses): missing :acceptance on spec-set!,
+        missing :serves-spec on task-set!, missing :evidence on :done task,
+        missing :content on fact-set!, dangling refs.
         Warnings appear as `;; ⚠ …` in next render.
 
     TRAILER
@@ -176,7 +182,7 @@
 
       Entry shapes:
         Verbatim pin    {:scope \"t<N>/i<N>\" :forms [{:scope :tag :src :result :error}]}
-        Summary entry   {:scope \"t<N>/i<N>\" :summary \"…\" :summarized-born \"tM/iM/fK\"}
+        Summary entry   {:scope-start \"tA/iX\" :scope-end \"tB/iY\" :summary \"…\" :born \"tM/iM/fK\"}
 
       :tag is :observation or :mutation. :result and :error dropped when default.
       `(done …)` forms are excluded from :forms.
@@ -195,13 +201,13 @@
     DONE
       (done {:answer            \"markdown string\"
              :trailer-drop      [\"t<N>/i<N>\" …]
-             :trailer-summarize [{:scope \"t<N>/i<N>\" :summary \"…\"} …]})
+             :trailer-summarize [{:scope-start \"tA/iX\" :scope-end \"tB/iY\" :summary \"…\"} …]})
 
       (done …) is a claim of completeness, not a sign-off after activity.
       Before calling done:
         1. Re-read the CURRENT-USER-MESSAGE.
         2. Enumerate acceptance criteria — explicit or implied.
-        3. For each criterion, point to evidence: a task's :evidence scope, a fact's :body,
+        3. For each criterion, point to evidence: a task's :evidence scope, a fact's :content,
            a trailer pin's :result. No evidence → another iter.
         4. Emit done only when every criterion maps to observed data.
 

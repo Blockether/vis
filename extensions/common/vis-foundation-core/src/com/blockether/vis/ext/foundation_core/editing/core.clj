@@ -52,7 +52,7 @@
 ;; Tunables
 ;; =============================================================================
 
-(def ^:private default-grep-limit 50)
+(def ^:private default-grep-limit 250)
 (def ^:private default-list-depth 5)
 (def ^:private render-preview-chars 3000)
 
@@ -431,16 +431,42 @@
 ;; rg
 ;; =============================================================================
 
+(defn- compile-needles
+  "Pre-compile needles when `:regex? true`; nil otherwise (literal mode).
+   Bad patterns surface as a structured invalid-rg-spec error."
+  [needles regex?]
+  (when regex?
+    (mapv (fn [n]
+            (try (java.util.regex.Pattern/compile n)
+              (catch java.util.regex.PatternSyntaxException e
+                (throw (ex-info (str "v/rg :regex? true — invalid regex pattern: "
+                                  (pr-str n))
+                         {:type :ext.foundation.editing/invalid-rg-spec
+                          :pattern n
+                          :reason (ex-message e)})))))
+      needles)))
+
 (defn- coerce-rg-spec
-  "Coerce the single public v/rg spec map. Regex syntax is never
-   interpreted. Exactly one of :all or :any is required. Every public
-   collection field is a vector; no shorthand arities or scalar paths."
+  "Coerce the single public v/rg spec map. Exactly one of :all or :any
+   is required. Every public collection field is a vector; no shorthand
+   arities or scalar paths.
+
+   Optional keys (all default to off):
+     :limit       max hits / files / count entries (default 250)
+     :context N   shorthand for :before N + :after N
+     :before N    lines of context BEFORE each hit (content mode only)
+     :after  N    lines of context AFTER  each hit (content mode only)
+     :files-only? true → return only distinct paths (no per-line hits)
+     :counts?     true → return per-file match counts (no per-line hits)
+     :regex?      true → interpret needles as java.util.regex patterns;
+                  literal substring otherwise (default)."
   [spec]
   (when-not (map? spec)
     (throw (ex-info "v/rg takes one spec map: {:all [...] :paths [...]}."
              {:type :ext.foundation.editing/invalid-rg-spec
               :got  (type spec)})))
-  (let [allowed-keys #{:all :any :paths :include :exclude :hidden? :respect-gitignore?}
+  (let [allowed-keys #{:all :any :paths :include :exclude :hidden? :respect-gitignore?
+                       :limit :context :before :after :files-only? :counts? :regex?}
         unknown-keys (seq (remove allowed-keys (keys spec)))
         _ (when unknown-keys
             (throw (ex-info "v/rg spec has unknown keys."
@@ -471,23 +497,150 @@
         include (when (contains? spec :include)
                   (vector-of-strings :include nil))
         exclude (when (contains? spec :exclude)
-                  (vector-of-strings :exclude nil))]
+                  (vector-of-strings :exclude nil))
+        nonneg-int! (fn [k]
+                      (when (contains? spec k)
+                        (let [v (get spec k)]
+                          (when-not (and (integer? v) (not (neg? v)))
+                            (throw (ex-info (str "v/rg :" (name k) " must be a non-negative integer")
+                                     {:type :ext.foundation.editing/invalid-rg-spec
+                                      :field k :got v}))))))
+        _ (run! nonneg-int! [:limit :context :before :after])
+        limit-spec (:limit spec)
+        _ (when (and limit-spec (not (pos? limit-spec)))
+            (throw (ex-info "v/rg :limit must be a positive integer"
+                     {:type :ext.foundation.editing/invalid-rg-spec
+                      :field :limit :got limit-spec})))
+        limit (or limit-spec default-grep-limit)
+        context-shared (or (:context spec) 0)
+        before-ctx (or (:before spec) context-shared)
+        after-ctx  (or (:after  spec) context-shared)
+        files-only? (boolean (:files-only? spec))
+        counts?     (boolean (:counts? spec))
+        _ (when (and files-only? counts?)
+            (throw (ex-info "v/rg :files-only? and :counts? are mutually exclusive"
+                     {:type :ext.foundation.editing/invalid-rg-spec
+                      :spec spec})))
+        _ (when (and (or files-only? counts?)
+                  (or (pos? before-ctx) (pos? after-ctx)))
+            (throw (ex-info "v/rg :before / :after / :context only apply to content mode (not :files-only? / :counts?)"
+                     {:type :ext.foundation.editing/invalid-rg-spec
+                      :spec spec})))
+        regex? (boolean (:regex? spec))
+        patterns (compile-needles needles regex?)]
     {:op op
      :needles needles
      :paths paths
      :include (or include [])
      :exclude (or exclude [])
      :hidden? (boolean (:hidden? spec))
-     :respect-gitignore? (get spec :respect-gitignore? true)}))
+     :respect-gitignore? (get spec :respect-gitignore? true)
+     :limit limit
+     :before-ctx before-ctx
+     :after-ctx  after-ctx
+     :files-only? files-only?
+     :counts? counts?
+     :regex? regex?
+     :patterns patterns}))
+
+(defn- make-line-matcher
+  "Return a `(fn [line] boolean)` predicate. Default mode is literal
+   substring (`str/includes?`); `:regex? true` uses pre-compiled
+   `java.util.regex.Pattern` objects. `:all` means every needle must
+   match the same line; `:any` means at least one."
+  [op needles patterns regex?]
+  (cond
+    (and (= op :all) regex?)
+    (fn [^String line] (every? #(re-find % line) patterns))
+
+    (and (= op :any) regex?)
+    (fn [^String line] (boolean (some #(re-find % line) patterns)))
+
+    (= op :all)
+    (fn [^String line] (every? #(str/includes? line %) needles))
+
+    :else
+    (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
+
+(def ^:private rg-line-preview-chars
+  "Per-line text cap for v/rg hits. Mirrors Roo Code's 500-char cap so
+   matching lines from minified JS / wide log files don't bloat the
+   trailer."
+  500)
+
+(defn- truncate-rg-line
+  [^String s]
+  (if (<= (count s) rg-line-preview-chars)
+    s
+    (str (subs s 0 rg-line-preview-chars) "…<+" (- (count s) rg-line-preview-chars) " chars>")))
+
+(defn- search-file-content
+  "Walk one file once, emit hits with optional context. Content-mode helper.
+   Returns a vec of hit maps; an empty vec means no match. Long lines are
+   truncated to `rg-line-preview-chars` to bound trailer growth."
+  [^File f matches? before-ctx after-ctx]
+  (try
+    (let [path  (rel-path f)
+          lines (with-open [r (io/reader f)] (vec (line-seq r)))
+          n     (count lines)
+          before-ctx (long before-ctx)
+          after-ctx  (long after-ctx)
+          want-before? (pos? before-ctx)
+          want-after?  (pos? after-ctx)]
+      (loop [i 0
+             out (transient [])]
+        (cond
+          (>= i n) (persistent! out)
+          (matches? (nth lines i))
+          (let [line-no (inc i)
+                text    (truncate-rg-line (nth lines i))
+                hit (cond-> {:path path :line line-no :text text}
+                      want-before?
+                      (assoc :before
+                        (mapv (fn [j] [(inc j) (truncate-rg-line (nth lines j))])
+                          (range (max 0 (- i before-ctx)) i)))
+                      want-after?
+                      (assoc :after
+                        (mapv (fn [j] [(inc j) (truncate-rg-line (nth lines j))])
+                          (range (inc i) (min n (+ i after-ctx 1))))))]
+            (recur (inc i) (conj! out hit)))
+          :else (recur (inc i) out))))
+    (catch Throwable _ [])))
+
+(defn- file-has-any-hit?
+  "Short-circuit: true on first matching line. Used by :files-only? mode
+   so we exit each file as fast as possible."
+  [^File f matches?]
+  (try
+    (with-open [r (io/reader f)]
+      (boolean (some matches? (line-seq r))))
+    (catch Throwable _ false)))
+
+(defn- count-hits-in-file
+  "Total matching lines in `f`. Used by :counts? mode — returns the
+   real count regardless of the global :limit (since the limit caps
+   FILE entries, not per-file lines)."
+  [^File f matches?]
+  (try
+    (with-open [r (io/reader f)]
+      (count (filter matches? (line-seq r))))
+    (catch Throwable _ 0)))
 
 (defn- grep-files
-  "Search with the one public v/rg spec map. Exactly one of :all or
-   :any is required. :paths defaults to the current directory.
-   :include/:exclude are glob vectors. Acquisition has a private hard
-   cap; bind the result and slice for tighter display."
+  "Search with the public v/rg spec map. Three output modes, picked by
+   `:files-only?` / `:counts?` / (default content).
+
+   Returns one of:
+     {:hits   [{:path :line :text :before? :after?} ...] :truncated-by KW}  ;; content
+     {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW}  ;; files-only
+     {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
+
+   `:truncated-by` is `:limit` when the configured limit clamped the
+   result, `:end-of-results` otherwise. Per-line text is capped at 500
+   chars (`rg-line-preview-chars`) with a `…<+N chars>` suffix."
   [spec]
-  (let [{:keys [op needles paths include exclude hidden? respect-gitignore?]} (coerce-rg-spec spec)
-        limit default-grep-limit
+  (let [{:keys [op needles patterns paths include exclude hidden? respect-gitignore?
+                limit before-ctx after-ctx files-only? counts? regex?]} (coerce-rg-spec spec)
         glob-matcher (fn [pattern]
                        (.getPathMatcher (java.nio.file.FileSystems/getDefault)
                          (str "glob:" pattern)))
@@ -524,10 +677,7 @@
                             acc
                             (conj acc f)))
                   []))
-        matches-line? (fn [line]
-                        (case op
-                          :all (every? #(str/includes? line %) needles)
-                          :any (boolean (some #(str/includes? line %) needles))))
+        matches? (make-line-matcher op needles patterns regex?)
         walk (fn walk [ignore-node root ^File f]
                (cond
                  (and (not hidden?) (.isHidden f)) []
@@ -541,31 +691,39 @@
                           (let [ignore-node (when respect-gitignore?
                                               (load-ignore-node root))]
                             (walk ignore-node root root))))
-                (sort-by rel-path))
-        hits (atom [])
-        seen (atom #{})
-        capped? (atom false)]
-    (doseq [^File f files :while (not @capped?)]
-      (try
-        (with-open [r (io/reader f)]
-          (loop [line-no 1
-                 lines (line-seq r)]
-            (when-let [line (first lines)]
-              (when (matches-line? line)
-                (let [hit {:path (rel-path f)
-                           :line line-no
-                           :text (subs line 0 (min 400 (count line)))}
-                      hit-key [(:path hit) (:line hit) (:text hit)]]
-                  (when-not (contains? @seen hit-key)
-                    (swap! seen conj hit-key)
-                    (swap! hits conj hit)
-                    (when (>= (count @hits) limit)
-                      (reset! capped? true)))))
-              (when-not @capped?
-                (recur (inc line-no) (rest lines))))))
-        (catch Throwable _ nil)))
-    {:hits (vec @hits)
-     :truncated-by (if @capped? :internal-cap :end-of-results)}))
+                (sort-by rel-path))]
+    (cond
+      files-only?
+      (let [out (atom [])
+            capped? (atom false)]
+        (doseq [^File f files :while (not @capped?)]
+          (when (file-has-any-hit? f matches?)
+            (swap! out conj (rel-path f))
+            (when (>= (count @out) limit) (reset! capped? true))))
+        {:files (vec @out)
+         :truncated-by (if @capped? :limit :end-of-results)})
+
+      counts?
+      (let [out (atom [])
+            capped? (atom false)]
+        (doseq [^File f files :while (not @capped?)]
+          (let [c (count-hits-in-file f matches?)]
+            (when (pos? c)
+              (swap! out conj {:path (rel-path f) :count c})
+              (when (>= (count @out) limit) (reset! capped? true)))))
+        {:counts (vec @out)
+         :truncated-by (if @capped? :limit :end-of-results)})
+
+      :else
+      (let [out (atom [])
+            capped? (atom false)]
+        (doseq [^File f files :while (not @capped?)]
+          (doseq [hit (search-file-content f matches? before-ctx after-ctx)
+                  :while (not @capped?)]
+            (swap! out conj hit)
+            (when (>= (count @out) limit) (reset! capped? true))))
+        {:hits (vec @out)
+         :truncated-by (if @capped? :limit :end-of-results)}))))
 
 ;; =============================================================================
 ;; Thin babashka.fs wrappers
@@ -1409,47 +1567,94 @@
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Literal file-content search. Returns a plain Clojure map:
-     {:vis.op :v/rg :hit-count N :truncated-by K :first-hit \"path:line\"
-      :spec SPEC :paths [...] :hits [{:path :line :text} ...]}
-   Use `(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})`
-   for OR, or `(v/rg {:all [\"defn\" \"handler\"] :paths [\"src\"]})` for
-   same-line AND. Exactly one of :all/:any. Strings are literal substrings
-   (`|` is a pipe character, not regex alternation). No positional shorthand.
-   :paths defaults to [\".\"]. All collection fields are vectors. Optional
-   filters: :include / :exclude glob vectors, :hidden?, :respect-gitignore?.
-   Unknown keys throw. For pure path discovery without content matching,
-   use a vacuous spec like `(v/rg {:any [\"\"] :include [\"**/*.clj\"]})` or `v/ls`."
+  "File-content search. Three output modes — default is content (hits with
+   optional context); `:files-only? true` returns just distinct paths;
+   `:counts? true` returns per-file match counts.
+
+   Spec map:
+     {:all [\"a\" \"b\"]      — AND: every needle on same line
+      :any [\"a\" \"b\"]      — OR: at least one needle on a line
+      :paths [\"src\"]        — search roots (default [\".\"])
+      :include [\"**/*.clj\"] — glob filters (vector)
+      :exclude [\"**/test/**\"]
+      :hidden? false :respect-gitignore? true
+      :limit 250            — cap hits / files / counts (default 250)
+      :context N            — N lines before AND after each hit (alias)
+      :before  N            — lines before each hit
+      :after   N            — lines after  each hit
+      :files-only? false    — return only distinct paths
+      :counts?     false    — return per-file match counts
+      :regex?      false}   — needles are java.util.regex patterns
+   Exactly one of :all/:any. Strings are literal substrings by default;
+   pass :regex? true to treat them as full regex (e.g. `\\bdef login\\b`).
+
+   Result shape varies by mode (the tool envelope's `:result` always
+   carries `:vis.op :v/rg` plus a `:mode` discriminator):
+     content     (:mode :content)     {:hits [...]  :hit-count N  ...}
+     files-only? (:mode :files-only)  {:files [...] :file-count N ...}
+     counts?     (:mode :counts)      {:counts [...] :file-count N ...}"
   ([spec]
-   (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
+   (let [{:keys [paths include exclude files-only? counts? regex?
+                 before-ctx after-ctx limit] :as coerced} (coerce-rg-spec spec)
          out (grep-files spec)
-         hits (vec (:hits out))
-         hit-count (count hits)
-         first-hit (when (pos? hit-count)
-                     (let [{:keys [path line]} (nth hits 0)]
-                       (str path ":" line)))]
+         mode (cond files-only? :files-only
+                counts?     :counts
+                :else       :content)
+         shared {:vis.op       :v/rg
+                 :mode         mode
+                 :truncated-by (:truncated-by out)
+                 :spec         spec
+                 :paths        paths
+                 :limit        limit
+                 :regex?       regex?}
+         result (case mode
+                  :content
+                  (let [hits (vec (:hits out))]
+                    (assoc shared
+                      :hits hits
+                      :hit-count (count hits)
+                      :first-hit (when (pos? (count hits))
+                                   (let [{:keys [path line]} (nth hits 0)]
+                                     (str path ":" line)))
+                      :context (cond-> {}
+                                 (pos? before-ctx) (assoc :before before-ctx)
+                                 (pos? after-ctx)  (assoc :after  after-ctx))))
+                  :files-only
+                  (let [files (vec (:files out))]
+                    (assoc shared
+                      :files files
+                      :file-count (count files)))
+                  :counts
+                  (let [counts (vec (:counts out))]
+                    (assoc shared
+                      :counts counts
+                      :file-count (count counts)
+                      :total-matches (reduce + 0 (map :count counts)))))]
      (tool-success
        {:op :v/rg
         :path (if (= 1 (count paths))
                 (first paths)
                 ".")
         :kind :dir
-        :result {:vis.op       :v/rg
-                 :hit-count    hit-count
-                 :truncated-by (:truncated-by out)
-                 :first-hit    first-hit
-                 :spec         spec
-                 :paths        paths
-                 :hits         hits}
-        :info {:spec spec
-               :query-op (:op coerced)
-               :paths paths
-               :include include
-               :exclude exclude
-               :hit-count hit-count
-               :truncated-by (:truncated-by out)}
-        :presentation {:kind :search-hits
-                       :row-keys [:path :line :text]}})))
+        :result result
+        :info (cond-> {:spec spec
+                       :query-op (:op coerced)
+                       :paths paths
+                       :include include
+                       :exclude exclude
+                       :mode mode
+                       :truncated-by (:truncated-by out)}
+                (= mode :content)
+                (assoc :hit-count (:hit-count result))
+                (= mode :files-only)
+                (assoc :file-count (:file-count result))
+                (= mode :counts)
+                (assoc :file-count (:file-count result)
+                  :total-matches (:total-matches result)))
+        :presentation (case mode
+                        :content    {:kind :search-hits :row-keys [:path :line :text]}
+                        :files-only {:kind :search-files}
+                        :counts     {:kind :search-counts})})))
   ([_spec _opts]
    (throw (ex-info "v/rg takes exactly one spec map: {:all [\"literal\"] :paths [\"src\"] :include [\"**/*.clj\"]}. Use :any for OR. No query+opts shorthand."
             {:type :ext.foundation.editing/invalid-rg-arity
@@ -1850,18 +2055,67 @@
     (ir-code-block "text"
       (bounded-render-text (str/join "\n" (tree-lines tree))))))
 
+(defn- render-rg-hit-block
+  "Render one content-mode hit with optional :before / :after context.
+   Context lines use a `  N│ text` gutter; the matched line uses `▶ N│ text`
+   so the anchor stands out without diff symbols."
+  [{:keys [path line text before after]}]
+  (let [head (str path ":" line)
+        ctx-line (fn [marker [ln t]] (str marker " " ln "│ " t))
+        body-lines (concat
+                     (map #(ctx-line " " %) (or before []))
+                     [(ctx-line "▶" [line text])]
+                     (map #(ctx-line " " %) (or after [])))]
+    [head (str/join "\n" body-lines)]))
+
 (defn- channel-render-rg
-  "Channel preview: full hit list from the plain map."
-  [{:keys [hits truncated-by]}]
-  (ir-root
-    (ir-p "Searched — " (count hits) " hit(s), truncated-by "
-      (ir-code (name (or truncated-by :none))) ".")
-    (when (seq hits)
-      (ir-code-block "text"
-        (bounded-render-text
-          (str/join "\n"
-            (map (fn [{:keys [path line text]}]
-                   (str path ":" line " " text)) hits)))))))
+  "Channel preview — mode-aware. Content mode renders each hit with its
+   `:before` / `:after` context (when present) so the trailer reads like a
+   miniature grep -C output. `:files-only` shows distinct paths.
+   `:counts` shows per-file totals."
+  [{:keys [mode hits files counts truncated-by hit-count file-count
+           total-matches]}]
+  (case mode
+    :files-only
+    (ir-root
+      (ir-p "Searched — " (or file-count (count files)) " file(s) with at least"
+        " one match, truncated-by " (ir-code (name (or truncated-by :none))) ".")
+      (when (seq files)
+        (ir-code-block "text"
+          (bounded-render-text (str/join "\n" files)))))
+
+    :counts
+    (ir-root
+      (ir-p "Searched — " (or file-count (count counts)) " file(s) with matches"
+        (when total-matches (str " (" total-matches " total match(es))"))
+        ", truncated-by " (ir-code (name (or truncated-by :none))) ".")
+      (when (seq counts)
+        (ir-code-block "text"
+          (bounded-render-text
+            (str/join "\n"
+              (map (fn [{:keys [path count]}] (format "%-50s %d" path count))
+                counts))))))
+
+    ;; default: :content (or unset — legacy maps without :mode)
+    (ir-root
+      (ir-p "Searched — " (or hit-count (count hits)) " hit(s), truncated-by "
+        (ir-code (name (or truncated-by :none))) ".")
+      (when (seq hits)
+        (let [rendered (mapv render-rg-hit-block hits)
+              any-context? (some #(or (seq (:before %)) (seq (:after %))) hits)]
+          (if any-context?
+            ;; Context-rich: one labelled block per hit.
+            (apply ir-root
+              (mapcat (fn [[head body]]
+                        [(ir-p (ir-code head))
+                         (ir-code-block "text" (bounded-render-text body))])
+                rendered))
+            ;; Plain: flat one-line-per-hit block, like the old renderer.
+            (ir-code-block "text"
+              (bounded-render-text
+                (str/join "\n"
+                  (map (fn [{:keys [path line text]}]
+                         (str path ":" line " " text)) hits))))))))))
 
 (defn- channel-render-patch
   "Channel preview: one header line per file + (capped) unified diff.
@@ -2051,10 +2305,37 @@
      ""
      "  (v/rg {:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]})"
      "  (v/rg {:all [\"defn\" \"foo\"] :paths [\"src\"]})"
-     "  Exactly one of :all/:any required. Literal substrings only (no regex);"
+     "  Exactly one of :all/:any required. Literal substrings by default;"
      "  `|` is a pipe character. All collection fields are vectors. Unknown keys"
-     "  throw. result: {:vis.op :v/rg :hit-count :truncated-by :first-hit :spec"
-     "  :paths :hits [{:path :line :text}]}."
+     "  throw."
+     ""
+     "  Optional spec keys:"
+     "    :limit N        max hits/files/counts (default 250)"
+     "    :context N      shorthand for :before N + :after N"
+     "    :before N       N lines of context BEFORE each hit (content mode)"
+     "    :after  N       N lines of context AFTER  each hit (content mode)"
+     "    :files-only? B  return only distinct paths (no per-line hits)"
+     "    :counts? B      return per-file match counts (no per-line hits)"
+     "    :regex? B       interpret needles as java regex (default false; literal)"
+     ""
+     "  Result shape varies by mode (`:mode` discriminator on the result map):"
+     "    content (default) {:vis.op :v/rg :mode :content :hit-count :truncated-by"
+     "                       :first-hit :hits [{:path :line :text :before? :after?}]}"
+     "    :files-only?      {:vis.op :v/rg :mode :files-only :file-count :files [paths]}"
+     "    :counts?          {:vis.op :v/rg :mode :counts :file-count :total-matches"
+     "                       :counts [{:path :count}]}"
+     "  `:truncated-by` is `:limit` when the configured limit clamped the result,"
+     "  `:end-of-results` otherwise. Per-line text capped at 500 chars."
+     ""
+     "  Idioms:"
+     "    ;; counts only — cheap, exact (the cap does NOT hide the real per-file count):"
+     "    (v/rg {:any [\"TODO\"] :paths [\".\"] :counts? true})"
+     "    ;; hits with 2 lines of surrounding context:"
+     "    (v/rg {:all [\"FIXME\"] :paths [\"src\"] :context 2})"
+     "    ;; regex with word boundaries (skip false matches like test_login):"
+     "    (v/rg {:any [\"\\\\blogin\\\\b\"] :paths [\"src\"] :regex? true})"
+     "    ;; distinct file paths matching a marker:"
+     "    (v/rg {:any [\"TODO\"] :paths [\".\"] :files-only? true})"
      ""
      "EDIT"
      "  (v/patch [{:path :search :replace}])  — exact-replace; replaces the FIRST"
