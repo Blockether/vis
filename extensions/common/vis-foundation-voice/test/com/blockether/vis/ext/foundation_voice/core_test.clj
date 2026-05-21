@@ -77,6 +77,40 @@
         (finally
           (.delete out)))))
 
+  (it "redirects child TTS stdout and stderr away from the parent terminal into the Vis log"
+    (let [log-file (java.io.File/createTempFile "vis-voice-log-test" ".log")]
+      (try
+        (spit log-file "before\n")
+        (with-redefs [com.blockether.vis.ext.foundation-voice.core/tts-worker-argv
+                      (fn []
+                        ["sh" "-c" "printf sherpa-out; printf sherpa-err >&2"])]
+          (let [captured (with-out-str
+                           (let [process (#'voice/start-tts-worker! log-file)]
+                             (expect (zero? (.waitFor ^Process process)))))]
+            (expect (= "" captured))
+            (let [logged (slurp log-file)]
+              (expect (str/starts-with? logged "before\n"))
+              (expect (str/includes? logged "sherpa-out"))
+              (expect (str/includes? logged "sherpa-err")))))
+        (finally
+          (.delete log-file)))))
+
+  (it "uses the isolated worker for async TUI voice responses"
+    (let [calls (atom [])]
+      (with-redefs [com.blockether.vis.ext.foundation-voice.core/notify-progress!
+                    (fn [& args] (swap! calls conj (into [:notify] args)))
+                    com.blockether.vis.ext.foundation-voice.core/synthesize-file-in-worker!
+                    (fn [answer {:keys [out-file]}]
+                      (swap! calls conj [:worker answer (str out-file)])
+                      {:out-file (str out-file)})
+                    voice/play-file!
+                    (fn [wav]
+                      (swap! calls conj [:play (str wav)])
+                      {:process (.start (ProcessBuilder. ^java.util.List ["sh" "-c" "true"]))})]
+        @(voice/speak-answer-async! "hello")
+        (expect (some #(= [:worker "hello"] (subvec % 0 2)) @calls))
+        (expect (some #(= :play (first %)) @calls)))))
+
   (it "contributes spoken-answer prompt only for voice-response turns"
     (expect (nil? (voice/voice-response-prompt {})))
     (let [prompt (voice/voice-response-prompt {:turn/features {:voice-response? true}})]
