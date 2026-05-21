@@ -148,14 +148,33 @@
       (expect (string/includes? editing/editing-prompt "5-pass fuzzy fallback"))
       (expect (string/includes? editing/editing-prompt ":loop-hint"))
       (expect (string/includes? editing/editing-prompt "Codex envelope"))
+      ;; New (T3-T6): explicit anti-loop guidance + idioms.
+      ;; T5 — bulk rename idiom in the prompt body.
+      (expect (string/includes? editing/editing-prompt "Bulk rename idiom"))
+      (expect (string/includes? editing/editing-prompt ":nth :all"))
+      ;; T6 — Codex envelope EOF append idiom.
+      (expect (string/includes? editing/editing-prompt "EOF-append"))
+      (expect (string/includes? editing/editing-prompt "*** End of File"))
+      ;; T4 — :diff hunk header IS the line-number signal.
+      (expect (string/includes? editing/editing-prompt "`@@ -N,X +M,Y @@`"))
+      ;; T3 — prompt no longer carries the contradiction.
+      ;; Old text "Do NOT v/cat to verify" was paired with "any prior read is stale; re-read".
+      ;; Both lines are gone in favor of one unambiguous Stale-read rule.
+      (expect (not (string/includes? editing/editing-prompt "Do NOT v/cat to verify")))
+      (expect (not (string/includes? editing/editing-prompt "any prior read of the same path is stale")))
+      (expect (string/includes? editing/editing-prompt "Stale-read rule"))
+      (expect (string/includes? editing/editing-prompt "never re-cat just to verify"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "Codex `apply_patch` envelope"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "validate the full plan against the live filesystem\n   before any write"))
+      ;; T3 — the old prompt told the model to read ":checks/:failures" and
+      ;; "Do NOT v/cat to verify" in two contradictory bullets. The rewrite
+      ;; replaces both with one explicit Stale-read rule and a `;; ! data`
+      ;; trailer recipe; assert the NEW shape instead.
       (expect (string/includes? editing/editing-prompt
-                "On failure, v/patch reports match counts"))
-      (expect (string/includes? editing/editing-prompt
-                "Do NOT v/cat to verify"))
+                ";; ! data {:reason"))
+      (expect (string/includes? editing/editing-prompt "Stale-read rule"))
       (expect (string/includes? editing/editing-prompt "RULES"))
       (expect (string/includes? editing/editing-prompt "Execute side effects"))
       (expect (not (string/includes? editing/editing-prompt "read-all-lines")))
