@@ -213,6 +213,9 @@
                 (:type (ex-data err)))))))
 
 (defdescribe envelope-apply-test
+  ;; patch-envelope-safe now returns a STRUCTURED MAP, never throws on
+  ;; normal failure paths. Success: {:success? true :plans [...] :checks}.
+  ;; Failure: {:success? false :failures [...] :checks :loop-hint :message}.
   (it "applies a Codex Update hunk through patch-envelope-safe"
     (let [f (write-temp! "envelope/a.txt" "def greet():\n    print(\"Hi\")\n    return 1\n")
           envelope (private-fn "patch-envelope-safe")
@@ -223,8 +226,9 @@
                 "+    print(\"Hello\")\n"
                 "*** End Patch\n")
           result (envelope env)]
-      (expect (= 1 (count result)))
-      (expect (= :update (-> result first :op)))
+      (expect (true? (:success? result)))
+      (expect (= 1 (count (:plans result))))
+      (expect (= :update (-> result :plans first :op)))
       (expect (= "def greet():\n    print(\"Hello\")\n    return 1\n" (slurp f)))))
 
   (it "applies Add + Delete in one envelope"
@@ -239,7 +243,8 @@
                 "*** Delete File: " del-path "\n"
                 "*** End Patch\n")
           result (envelope env)]
-      (expect (= 2 (count result)))
+      (expect (true? (:success? result)))
+      (expect (= 2 (count (:plans result))))
       (expect (= "hello\nworld\n" (slurp add-path)))
       (expect (false? (fs/exists? del-path)))))
 
@@ -257,16 +262,17 @@
                 " line2\n"
                 "*** End Patch\n")
           result (envelope env)]
-      (expect (= :update-move (-> result first :op)))
+      (expect (true? (:success? result)))
+      (expect (= :update-move (-> result :plans first :op)))
       (expect (false? (fs/exists? src)))
       (expect (= "LINE1\nline2\n" (slurp dest)))))
 
-  (it "rejects path escape outside cwd"
+  (it "rejects path escape outside cwd as a structured failure (no throw)"
     (let [envelope (private-fn "patch-envelope-safe")
-          err (try (envelope "*** Begin Patch\n*** Add File: ../escape.txt\n+hi\n*** End Patch\n")
-                (catch clojure.lang.ExceptionInfo e e))]
-      (expect (some? err))
-      (expect (= :ext.foundation.editing/path-escape (:type (ex-data err))))))
+          result (envelope "*** Begin Patch\n*** Add File: ../escape.txt\n+hi\n*** End Patch\n")]
+      (expect (false? (:success? result)))
+      (expect (= :path-escape (-> result :failures first :reason)))
+      (expect (string? (:message result)))))
 
   (it "validates entire envelope before any write (all-or-nothing)"
     (let [keep-path (write-temp! "envelope/keep.txt" "keep me\n")
@@ -282,9 +288,8 @@
                 "-not in file\n"
                 "+x\n"
                 "*** End Patch\n")
-          err (try (envelope env)
-                (catch clojure.lang.ExceptionInfo e e))]
-      (expect (some? err))
+          result (envelope env)]
+      (expect (false? (:success? result)))
       (expect (= "keep me\n" (slurp keep-path)))
       (expect (= "I have only this\n" (slurp bad-target))))))
 

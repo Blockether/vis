@@ -20,7 +20,6 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.parse-diagnose :as pd]
    [com.blockether.vis.internal.paren-repair :as paren-repair]
-   [com.blockether.vis.internal.env.sci-patches :as sci-patches]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
@@ -609,8 +608,8 @@
         ;; from source parsing post-eval, not from this hook — SCI
         ;; analyzes references at compile time so the runtime resolve
         ;; hook never sees init-body symbols.
-        def-sink     (sci-patches/fresh-sink-atom)
-        lru          (sci-patches/fresh-lru-atom)
+        def-sink     (env/fresh-sink-atom)
+        lru          (env/fresh-lru-atom)
         turn-position (when env
                         (some-> (:current-turn-position-atom env) deref))
         ;; Live tool-event callback only - no longer accumulated into a vec.
@@ -687,9 +686,9 @@
                                 (binding [extension/*tool-event-sink* record-tool-event
                                           extension/*render-sink*         channel-sink
                                           extension/*sink-position*       sink-pos
-                                          sci-patches/*def-sink-atom*     def-sink
-                                          sci-patches/*lru-atom*          lru
-                                          sci-patches/*current-turn-position* turn-position]
+                                          env/*def-sink-atom*     def-sink
+                                          env/*lru-atom*          lru
+                                          env/*current-turn-position* turn-position]
                                   (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
                                     (if (or (seq parsed-forms) parse-error)
                                       (sci/with-bindings
@@ -769,7 +768,7 @@
       (not (:timeout? execution-result)) (assoc :timeout? false))))
 
 ;; Mandatory-docstring contract is enforced in the SCI sandbox by
-;; `sci-patches/patched-eval-def`: `(def NAME "doc" VAL)` already
+;; `env/patched-eval-def`: `(def NAME "doc" VAL)` already
 ;; binds `:doc` as var metadata at eval time. The legacy
 ;; `extract-defining-name` + `attach-doc-meta!` post-eval source-parse
 ;; path was redundant after Phase 2 and has been removed.
@@ -798,8 +797,8 @@
                        (let [{:keys [parse-error repaired-source]} (parse-top-level-forms code)
                              validation-code (or repaired-source code)]
                          (when-not parse-error
-                           (sci-patches/validate-non-empty-block! validation-code)
-                           (sci-patches/validate-no-banned-defs! validation-code)))
+                           (env/validate-non-empty-block! validation-code)
+                           (env/validate-no-banned-defs! validation-code)))
                        (run-with-timing sci-ctx code sandbox-ns timeout-ms
                          start-time tool-event-fn environment)
                        (catch Throwable e

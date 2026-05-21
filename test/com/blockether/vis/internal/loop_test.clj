@@ -2,7 +2,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
-   [com.blockether.vis.internal.env.sci-patches :as sp]
+   [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci])
@@ -727,8 +727,8 @@
   "Run `code` in `ctx` with a fresh def-sink bound; return the sink contents.
    Mirrors how the engine binds `*def-sink-atom*` around iteration eval."
   [ctx code]
-  (let [sink (sp/fresh-sink-atom)]
-    (binding [sp/*def-sink-atom* sink]
+  (let [sink (env/fresh-sink-atom)]
+    (binding [env/*def-sink-atom* sink]
       (sci/eval-string+ ctx code {:ns (sci/find-ns ctx 'user)}))
     @sink))
 
