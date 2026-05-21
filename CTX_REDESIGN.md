@@ -948,8 +948,20 @@ MODEL >
    model to drop or summarize observation pins whose target was later
    mutated. Engine never enforces.
 
-9. **`(meta #'sym)` survives `restore-sandbox!`?** Probe needed before
-   locking prompt copy that recommends introspection.
+9. ~~**`(meta #'sym)` survives `restore-sandbox!`?**~~ **RESOLVED.**
+   YES — for any model-emitted `def`/`defn`. `restore-sandbox!` uses the
+   `:eval` path (re-runs the original source string) for any expression
+   whose head is in `DEF_HEADS_FOR_RESTORE` (`def`, `defn`, `defn-`,
+   `defmacro`, `defonce`, `defmulti`). Re-eval reattaches all metadata:
+   `:doc`, `:arglists`, custom `^{...}` tags. The `:data` path (which
+   loses `:doc`/`:arglists`) only fires for vars persisted without a
+   source string — edge case not triggered by normal model code.
+
+   Implication: `:session/symbols` render can rely on `(meta #'sym)` for
+   `:arglists` and `:doc`. The `:born <scope>` field is NOT in native
+   var meta — engine maintains a separate `{sym-name → scope-string}`
+   index per session and merges it into the render. Var meta stays
+   clean; engine bookkeeping stays out of the model's source forms.
 
 10. **Naming collision** for engine introspection ops (`iter`, `form`,
     `turn`). SCI shadowing is benign (local bindings work), but model
