@@ -60,7 +60,7 @@ shadow op table.
 ;; ─── FINAL + TRAILER ───
 (done {:answer       "markdown string"
        :trailer      [{:i N :note "..."} …]      ; pin iters of current turn (omit :t = current)
-       :trailer-drop [[t i] …]})                  ; drop by composite coord
+       :trailer-drop ["t<N>/i<N>" …]})              ; drop by iter scope; use "t<N>/i<N>/f<N>" for single-form drop
 ```
 
 **No `ctx` symbol. No `(ctx)` fn. No reads in eval.**
@@ -267,7 +267,7 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Plain text in th
 
  ;; ──────────────────────────────────────────────────────────────────
  ;; :session/trailer — pinned iter envelopes from prior turns.
- ;;   Sorted by [t i] ascending. Each entry captures one iter:
+ ;;   Sorted by scope (engine comparator parses t<N>/i<N> segments). Each entry captures one iter:
  ;;     {:scope "t<N>/i<N>" :note "…" :forms [{:scope "t<N>/i<N>/f<N>" :tag :src :result :error}]}
  ;;   :tag ∈ #{:observation :mutation}.
  ;;   Per-form keys :result/:error are dropped when default.
@@ -276,7 +276,7 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Plain text in th
  ;;   To pin   : (done {:answer "..." :trailer [{:i M :note "..."} …]})
  ;;              — engine fills :forms from this turn's iter rows; stamps :t.
  ;;              — pin a prior turn's iter by providing explicit :t.
- ;;   To drop  : (done {:answer "..." :trailer-drop [[t i] …]})
+ ;;   To drop  : (done {:answer "..." :trailer-drop ["t<N>/i<N>" …]})
  ;;
  ;;   Full session detail via (v/session-state).
  ;; ──────────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation `v/`: session-state/session-report, file I/O (cat/ls/rg/patch), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, reproduction CLI."
+     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), env snapshot + project guidance (snapshot/repositories/git/languages/monorepo/main-agent-instructions/reload-extensions!), reproduction CLI (vis ext repro). Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

@@ -53,10 +53,19 @@
   ;; The extension registry shape changed; presence of 'v vs absence
   ;; of 'md is now covered by the manifest test below.
 
-  (it "documents markdown builders on the extension descriptor"
+  (it "documents the kernel surface on the extension descriptor"
+    ;; Regression: prior copy advertised a v/ markdown DSL
+    ;; (h1/p/table/file-link/join/code-block) that was torn out in
+    ;; commit 40da53d0 (\"demo: tear out v/ markdown DSL\"). Description
+    ;; now lists the symbols that actually exist; do NOT let the old
+    ;; DSL names creep back into the descriptor copy.
     (let [doc (:ext/description foundation/vis-extension)]
-      (expect (str/includes? doc "markdown answer builders"))
-      (expect (str/includes? doc "file-link"))))
+      (expect (str/includes? doc "session-state"))
+      (expect (str/includes? doc "file I/O"))
+      (expect (str/includes? doc "engine-symbol-"))
+      (expect (str/includes? doc "vis ext repro"))
+      (expect (not (str/includes? doc "file-link")))
+      (expect (not (str/includes? doc "answer builders")))))
 
   (it "ships a namespace-only manifest"
     (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
