@@ -34,6 +34,17 @@
     (-> g .add (.addFilepattern "src/a.clj") .call)
     (-> g .commit (.setMessage "base") .call)))
 
+(defn- spit-binary-rel
+  "Write a deliberately-binary blob (null bytes interleaved) at `rel`
+   under `root`. Used by binary-detection tests so we don't have to
+   ship real binary fixtures in the repo."
+  [^java.io.File root rel]
+  (let [f (io/file root rel)]
+    (.mkdirs (.getParentFile f))
+    (clojure.java.io/copy
+      (byte-array (concat (range 0 100) (repeat 100 0) (range 0 56)))
+      f)))
+
 (defdescribe git-diff-test
   (it "accepts optional opts map and reads diff/status through JGit"
     (let [root (make-tmp-dir)]
@@ -308,6 +319,86 @@
           (expect false)
           (catch clojure.lang.ExceptionInfo e
             (expect (= :foundation-git/unknown-rev (:type (ex-data e))))))
+        (finally (cleanup root))))))
+
+(defdescribe binary-detection-test
+  (it "git/show flags binary file entries with :binary? true and +0 -0"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-binary-rel root "data.bin")
+        (spit-rel root "docs/x.md" "hello\n")
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern ".") .call)
+          (-> g .commit (.setMessage "add mixed") .call))
+        (let [data (:result (git/git-show-fn {:workspace/root (.getCanonicalPath root)}
+                              {:rev "HEAD"}))
+              by-file (into {} (map (juxt :file identity)) (:files data))]
+          (expect (true? (:binary? (get by-file "data.bin"))))
+          (expect (= 0 (:+ (get by-file "data.bin"))))
+          (expect (nil? (:binary? (get by-file "docs/x.md"))))
+          (expect (= 1 (:+ (get by-file "docs/x.md")))))
+        (finally (cleanup root)))))
+
+  (it "git/show :patch? returns 'Binary files differ' instead of UTF-8 garbage"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-binary-rel root "data.bin")
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern ".") .call)
+          (-> g .commit (.setMessage "add bin") .call))
+        (let [data (:result (git/git-show-fn {:workspace/root (.getCanonicalPath root)}
+                              {:rev "HEAD" :patch? true}))
+              entry (first (filter #(= "data.bin" (:file %)) (:files data)))]
+          ;; Root-commit path doesn't go through entry-patch (no parent
+          ;; tree to diff against). The :patch key is only populated for
+          ;; non-root commits, so we assert the numstat flag here and
+          ;; cover entry-patch's binary handling in the diff test below.
+          (expect (true? (:binary? entry))))
+        (finally (cleanup root)))))
+
+  (it "git/diff :patch? returns binary marker line for binary entries"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-binary-rel root "data.bin")
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern ".") .call)
+          (-> g .commit (.setMessage "v1") .call))
+        (let [f (io/file root "data.bin")]
+          (clojure.java.io/copy
+            (byte-array (concat (range 0 80) (repeat 80 0) (range 0 96)))
+            f))
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern ".") .call)
+          (-> g .commit (.setMessage "v2") .call))
+        (let [data (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                              {:from "HEAD~1" :to "HEAD" :patch? true}))
+              entry (first (:files data))]
+          (expect (true? (:binary? entry)))
+          (expect (= 0 (:+ entry)))
+          (expect (= 0 (:- entry)))
+          (expect (clojure.string/includes? (:patch entry) "Binary files"))
+          (expect (clojure.string/includes? (:patch entry) "differ")))
+        (finally (cleanup root)))))
+
+  (it "git/blame refuses binary blobs with :foundation-git/binary"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-binary-rel root "data.bin")
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern ".") .call)
+          (-> g .commit (.setMessage "add bin") .call))
+        (try
+          (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
+            {:path "data.bin"})
+          (expect false)
+          (catch clojure.lang.ExceptionInfo e
+            (expect (= :foundation-git/binary (:type (ex-data e))))
+            (expect (clojure.string/includes? (ex-message e) "binary blob"))
+            (expect (clojure.string/includes? (ex-message e) "git/log"))))
         (finally (cleanup root))))))
 
 (defdescribe git-blame-test
