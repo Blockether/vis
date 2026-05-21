@@ -12,8 +12,8 @@
   (:import [java.io ByteArrayOutputStream File]
            [org.eclipse.jgit.api Git Status]
            [org.eclipse.jgit.blame BlameResult]
-           [org.eclipse.jgit.diff DiffEntry DiffFormatter Edit RawTextComparator]
-           [org.eclipse.jgit.lib BranchTrackingStatus PersonIdent Repository]
+           [org.eclipse.jgit.diff DiffEntry DiffFormatter Edit RawText RawTextComparator]
+           [org.eclipse.jgit.lib BranchTrackingStatus ObjectId ObjectReader PersonIdent Repository]
            [org.eclipse.jgit.revwalk RevCommit RevWalk]
            [org.eclipse.jgit.storage.file FileRepositoryBuilder]
            [org.eclipse.jgit.treewalk AbstractTreeIterator CanonicalTreeParser FileTreeIterator]))
@@ -181,20 +181,80 @@
     "DELETE" (.getOldPath entry)
     (.getNewPath entry)))
 
+(def ^:private binary-peek-bytes
+  "How many bytes to read before classifying a blob as binary. JGit's
+   own DiffFormatter uses the same window via `RawText.isBinary`; a
+   binary marker in the first 8KB is the canonical heuristic git C
+   itself ships with (null byte or non-text byte pattern)."
+  8192)
+
+(defn- blob-peek
+  "Read at most `binary-peek-bytes` from `oid` via `reader`. Returns the
+   byte array (possibly short) or nil when the blob can't be opened."
+  ^bytes [^ObjectReader reader ^ObjectId oid]
+  (try
+    (let [loader (.open reader oid)]
+      (with-open [stream (.openStream loader)]
+        (let [buf (byte-array binary-peek-bytes)
+              n   (.read stream buf 0 binary-peek-bytes)]
+          (cond
+            (neg? n)                       (byte-array 0)
+            (= n binary-peek-bytes)        buf
+            :else                          (java.util.Arrays/copyOf buf n)))))
+    (catch Throwable _ nil)))
+
+(defn- binary-blob?
+  "True when the blob `oid` looks binary (null byte / non-text pattern
+   in first `binary-peek-bytes`). Missing or empty blobs are NOT binary."
+  [^ObjectReader reader ^ObjectId oid]
+  (boolean
+    (when (and oid (not= oid (ObjectId/zeroId)))
+      (when-let [peek (blob-peek reader oid)]
+        (and (pos? (alength peek))
+          (RawText/isBinary peek))))))
+
+(defn- diff-entry-blob-id
+  "Resolve the active blob id for one side of a DiffEntry. JGit gives
+   us an AbbreviatedObjectId which may be incomplete; `toObjectId` makes
+   it real when it can. Returns nil for the zero id (missing side, e.g.
+   ADD entry's old side or DELETE entry's new side)."
+  ^ObjectId [^DiffEntry entry side]
+  (let [aid (case side
+              :old (.getOldId entry)
+              :new (.getNewId entry))]
+    (when aid
+      (let [oid (.toObjectId aid)]
+        (when (and oid (not= oid (ObjectId/zeroId)))
+          oid)))))
+
+(defn- entry-binary?
+  "True when either side of `entry` is a binary blob. Conservative: a
+   single binary side is enough to flip the entry to binary, mirroring
+   git's behaviour for adds, deletes, and modifies."
+  [^Repository repo ^DiffEntry entry]
+  (with-open [reader (.newObjectReader repo)]
+    (or (binary-blob? reader (diff-entry-blob-id entry :old))
+      (binary-blob? reader (diff-entry-blob-id entry :new)))))
+
 (defn- entry-numstat
-  [^DiffFormatter formatter ^DiffEntry entry]
+  "Numstat for one DiffEntry. Binary entries are flagged `:binary? true`
+   and reported as `:+ 0 :- 0` so callers can distinguish 'no real text
+   changes' from 'this is a binary blob, line counts are meaningless'."
+  [^Repository repo ^DiffFormatter formatter ^DiffEntry entry]
   (let [path (diff-path entry)]
-    (try
-      (let [edits (.toEditList (.toFileHeader formatter entry))
-            adds  (reduce (fn [n ^Edit edit]
-                            (+ n (- (.getEndB edit) (.getBeginB edit))))
-                    0 edits)
-            dels  (reduce (fn [n ^Edit edit]
-                            (+ n (- (.getEndA edit) (.getBeginA edit))))
-                    0 edits)]
-        {:file path :+ adds :- dels})
-      (catch Throwable _
-        {:file path :+ 0 :- 0}))))
+    (if (entry-binary? repo entry)
+      {:file path :+ 0 :- 0 :binary? true}
+      (try
+        (let [edits (.toEditList (.toFileHeader formatter entry))
+              adds  (reduce (fn [n ^Edit edit]
+                              (+ n (- (.getEndB edit) (.getBeginB edit))))
+                      0 edits)
+              dels  (reduce (fn [n ^Edit edit]
+                              (+ n (- (.getEndA edit) (.getBeginA edit))))
+                      0 edits)]
+          {:file path :+ adds :- dels})
+        (catch Throwable _
+          {:file path :+ 0 :- 0})))))
 
 (def ^:private default-patch-byte-cap
   "Per-entry cap for unified-diff text. Huge binary or generated diffs
@@ -203,28 +263,40 @@
   65536)
 
 (defn- entry-patch
-  "Format `entry` as unified-diff text using a fresh DiffFormatter that
-   inherits `template`'s repository and rename detection. JGit's
-   DiffFormatter has no setOutputStream so we build one per entry; that
-   keeps the shared formatter used by the numstat path untouched."
+  "Format `entry` as unified-diff text. Binary entries skip JGit's
+   formatter entirely and return a deterministic 'Binary files differ'
+   marker so callers never see UTF-8-garbled bytes leaking into the
+   patch string. Text entries go through a fresh DiffFormatter — JGit
+   has no setOutputStream so we build one per entry to keep the shared
+   numstat formatter untouched."
   [^Repository repo ^DiffEntry entry ^long byte-cap]
-  (let [out (ByteArrayOutputStream.)
-        ^DiffFormatter local (doto (DiffFormatter. out)
-                               (.setRepository repo)
-                               (.setDiffComparator RawTextComparator/DEFAULT)
-                               (.setDetectRenames true))]
-    (try
-      (.format local entry)
-      (.flush local)
-      (let [bytes (.toByteArray out)
-            n     (alength bytes)]
-        (if (<= n byte-cap)
-          (String. bytes "UTF-8")
-          (str (String. bytes 0 (int byte-cap) "UTF-8")
-            "\n[…patch truncated, " (- n byte-cap) " more bytes]")))
-      (catch Throwable _ "")
-      (finally
-        (try (.close local) (catch Throwable _ nil))))))
+  (if (entry-binary? repo entry)
+    (let [op (some-> (.getChangeType entry) .name)
+          old-path (.getOldPath entry)
+          new-path (.getNewPath entry)]
+      (str "Binary files "
+        (case op
+          "ADD"    (str "/dev/null and b/" new-path)
+          "DELETE" (str "a/" old-path " and /dev/null")
+          (str "a/" old-path " and b/" new-path))
+        " differ\n"))
+    (let [out (ByteArrayOutputStream.)
+          ^DiffFormatter local (doto (DiffFormatter. out)
+                                 (.setRepository repo)
+                                 (.setDiffComparator RawTextComparator/DEFAULT)
+                                 (.setDetectRenames true))]
+      (try
+        (.format local entry)
+        (.flush local)
+        (let [bytes (.toByteArray out)
+              n     (alength bytes)]
+          (if (<= n byte-cap)
+            (String. bytes "UTF-8")
+            (str (String. bytes 0 (int byte-cap) "UTF-8")
+              "\n[…patch truncated, " (- n byte-cap) " more bytes]")))
+        (catch Throwable _ "")
+        (finally
+          (try (.close local) (catch Throwable _ nil)))))))
 
 (defn- untracked-paths
   [^Repository repo]
@@ -273,7 +345,7 @@
                  (remove #(contains? untracked (diff-path %)))
                  (filter #(path-match? (diff-path %)))
                  (mapv (fn [^DiffEntry e]
-                         (let [ns (entry-numstat formatter e)]
+                         (let [ns (entry-numstat repo formatter e)]
                            (if with-patch?
                              (assoc ns :patch (entry-patch repo e
                                                 default-patch-byte-cap))
@@ -401,9 +473,10 @@
 
 (defn- root-commit-numstat
   "Walk every blob reachable from `commit`'s tree and emit numstat-shaped
-   entries (`{:file path :+ <lines> :- 0}`). Used when a commit has no
-   parent, where the regular `diff-numstat` path has no tree to compare
-   against."
+   entries. Binary blobs are flagged `:binary? true` with `:+ 0 :- 0`
+   so we don't pretend null-byte counts are line counts. Text blobs go
+   through `count-lines` like normal. Used when a commit has no parent
+   and the regular `diff-numstat` path has no tree to compare against."
   [^Repository repo ^RevCommit commit]
   (with-open [reader (.newObjectReader repo)
               tw     (org.eclipse.jgit.treewalk.TreeWalk. repo)]
@@ -412,9 +485,14 @@
     (loop [acc []]
       (if (.next tw)
         (let [path (.getPathString tw)
-              oid  (.getObjectId tw 0)
-              bytes (try (.getBytes (.open reader oid)) (catch Throwable _ (byte-array 0)))]
-          (recur (conj acc {:file path :+ (count-lines bytes) :- 0})))
+              oid  (.getObjectId tw 0)]
+          (recur
+            (conj acc
+              (if (binary-blob? reader oid)
+                {:file path :+ 0 :- 0 :binary? true}
+                (let [bytes (try (.getBytes (.open reader oid))
+                              (catch Throwable _ (byte-array 0)))]
+                  {:file path :+ (count-lines bytes) :- 0})))))
         acc))))
 
 (defn show-commit
@@ -634,24 +712,44 @@
                ignored (when (seq ignore-revs)
                          (->> ignore-revs
                            (keep #(normalize-sha repo %))
-                           set))]
-           (when-let [^BlameResult base (run-blame repo rel nil)]
-             (let [contents (.getResultContents base)
-                   total    (.size contents)
-                   lo       (max 0 (dec (long (or from 1))))
-                   hi       (min (dec total) (dec (long (or to total))))
-                   cache    (atom {})
-                   lines    (when (<= lo hi)
-                              (if ignored
-                                (mapv #(peel-blame-line repo rel base % ignored cache)
-                                  (range lo (inc hi)))
-                                (mapv #(blame-line-record base %)
-                                  (range lo (inc hi)))))]
-               {:path         rel
-                :head         (head-id repo)
-                :total        total
-                :ignored-revs (if ignored (vec (sort ignored)) [])
-                :lines        (or lines [])}))))
+                           set))
+               head-binary?
+               ;; Open HEAD's tree properly: resolve HEAD -> parseCommit
+               ;; -> getTree -> TreeWalk.forPath. JGit doesn't expose a
+               ;; one-shot path-to-blob lookup, hence the four-step dance.
+               ;; Wrapped in try/catch because any of resolve/parseCommit
+               ;; can throw on detached / empty repos; we treat unknown
+               ;; status as 'not binary' so blame falls through to its
+               ;; normal codepath instead of refusing.
+               (try
+                 (with-open [reader (.newObjectReader repo)
+                             walk   (RevWalk. repo)]
+                   (when-let [head-id (.resolve repo "HEAD")]
+                     (let [commit (.parseCommit walk head-id)
+                           tree   (.getTree commit)]
+                       (with-open [tw (org.eclipse.jgit.treewalk.TreeWalk/forPath
+                                        repo ^String rel tree)]
+                         (when tw (binary-blob? reader (.getObjectId tw 0)))))))
+                 (catch Throwable _ false))]
+           (if head-binary?
+             {:path rel :binary? true :head (head-id repo) :total 0 :ignored-revs [] :lines []}
+             (when-let [^BlameResult base (run-blame repo rel nil)]
+               (let [contents (.getResultContents base)
+                     total    (.size contents)
+                     lo       (max 0 (dec (long (or from 1))))
+                     hi       (min (dec total) (dec (long (or to total))))
+                     cache    (atom {})
+                     lines    (when (<= lo hi)
+                                (if ignored
+                                  (mapv #(peel-blame-line repo rel base % ignored cache)
+                                    (range lo (inc hi)))
+                                  (mapv #(blame-line-record base %)
+                                    (range lo (inc hi)))))]
+                 {:path         rel
+                  :head         (head-id repo)
+                  :total        total
+                  :ignored-revs (if ignored (vec (sort ignored)) [])
+                  :lines        (or lines [])})))))
        (finally
          (try (.close repo) (catch Throwable _ nil)))))))
 
