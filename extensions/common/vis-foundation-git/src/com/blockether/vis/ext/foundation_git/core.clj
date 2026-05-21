@@ -170,7 +170,7 @@
 
 (def vis-extension
   (vis/extension
-    {:ext/name           "git"
+    {:ext/name           "foundation-git"
      :ext/description    "JGit-backed observation tools under git/: diff, status, log. Activates only when the active workspace sits inside a repo."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"

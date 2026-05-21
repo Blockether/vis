@@ -139,7 +139,7 @@ From `extensions/common/vis-foundation-git/src/.../core.clj`:
 |---|---|
 | `:git/diff` `:git/status` `:git/log` | `:op.tag/observation` |
 
-From `extensions/common/vis-exa/src/.../core.clj`: all `:op.tag/observation`.
+From `extensions/common/vis-foundation-exa/src/.../core.clj`: all `:op.tag/observation`.
 
 ### Non-registered forms (engine derives by head symbol)
 
