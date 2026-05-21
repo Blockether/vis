@@ -53,48 +53,79 @@
 ;; =============================================================================
 
 (defn git-diff-fn
-  "Diff the active workspace. For a branch-kind workspace, diffs the
-   workspace HEAD against the commit it was spawned from (recorded in
-   `:workspace/id`'s row as `commit_id`). Otherwise diffs the working
-   tree against HEAD.
+  "Diff inside the active workspace's repository.
+
+   No opts -> default workspace diff (branch workspaces diff against the
+   commit they were spawned from; trunk workspaces diff working tree vs
+   HEAD). With opts the model can ask for an arbitrary range or path.
+
+   Opts map keys:
+     :from   base ref (string; sha, branch name, HEAD~N, ...).
+     :to     target ref (string). nil with :from means working tree.
+     :path   repo-relative path to restrict the diff to (string).
 
    Returns:
      {:branch    \"vis/abc\" | nil
       :head      \"sha\"
-      :kind      :trunk | :branch | nil
+      :kind      :trunk | :branch | nil | :range
+      :from      <resolved base ref or nil for WT-only diffs>
+      :to        <resolved target ref or nil for working-tree>
+      :path      <:path filter, when present>
       :stat      {:files N :+ N :- N}
       :files     [{:file :+ :-} ...]
-      :porcelain [{:status :file} ...]}"
-  ([env]
-   (git-diff-fn env nil))
+      :porcelain [{:status :file} ...]}
+
+   `:porcelain` only carries entries when the diff includes the working
+   tree (i.e. :to is nil). For ref-to-ref diffs it's an empty vec."
+  ([env] (git-diff-fn env nil))
   ([env opts]
    (when (and (some? opts) (not (map? opts)))
      (throw (ex-info (str "git/diff expected optional opts map, got " (pr-str opts) ". "
-                       "Call (git/diff) or (git/diff {:stat? true}).")
+                       "Call (git/diff), (git/diff {:from \"sha\"}), or (git/diff {:from \"a\" :to \"b\" :path \"src\"}).")
               {:type :foundation-git/invalid-opts
                :opts opts
                :expected "nil or map"
-               :examples ["(git/diff)" "(git/diff {:stat? true})"]})))
-   (let [root        (env-root env)
+               :examples ["(git/diff)"
+                          "(git/diff {:from \"HEAD~3\"})"
+                          "(git/diff {:from \"main\" :to \"feature\"})"
+                          "(git/diff {:path \"src/foo.clj\"})"]})))
+   (let [{:keys [from to path]} (or opts {})
+         _ (doseq [[k v] {:from from :to to :path path}]
+             (when (and (some? v) (not (string? v)))
+               (throw (ex-info (str "git/diff " k " must be a string, got " (pr-str v))
+                        {:type :foundation-git/invalid-opts :opts opts :key k :value v}))))
+         root        (env-root env)
          root-file   (io/file root)
          ws-id       (:workspace/id env)
          db-info     (:db-info env)
          ws          (when (and db-info ws-id) (vis/workspace-get db-info ws-id))
-         base        (when (and (= :branch (:kind ws)) (:commit-id ws))
+         ws-base     (when (and (= :branch (:kind ws)) (:commit-id ws))
                        (:commit-id ws))
+         ;; explicit :from wins over the workspace default; explicit :to
+         ;; switches us into ref-to-ref mode where porcelain is empty.
+         base        (or from ws-base "HEAD")
+         new-rev     (cond
+                       (some? to)               to
+                       (and from (not ws-base)) nil  ;; :from + no :to -> base..WT
+                       ws-base                  "HEAD"  ;; default workspace shape
+                       :else                    nil)
          status      (git-core/status-snapshot root-file)
-         files       (vec (or (git-core/diff-numstat root-file (or base "HEAD") (when base "HEAD")) []))
-         porcelain   (vec (or (:entries status) []))
+         files       (vec (or (git-core/diff-numstat root-file base new-rev path) []))
+         porcelain   (if new-rev [] (vec (or (:entries status) [])))
          head        (:head status)
          +sum        (reduce + 0 (map :+ files))
-         -sum        (reduce + 0 (map :- files))]
+         -sum        (reduce + 0 (map :- files))
+         kind        (cond from :range :else (:kind ws))]
      (extension/success
-       {:result {:branch    (:branch ws)
-                 :head      head
-                 :kind      (:kind ws)
-                 :stat      {:files (count files) :+ +sum :- -sum}
-                 :files     files
-                 :porcelain porcelain}}))))
+       {:result (cond-> {:branch    (:branch ws)
+                         :head      head
+                         :kind      kind
+                         :from      base
+                         :to        new-rev
+                         :stat      {:files (count files) :+ +sum :- -sum}
+                         :files     files
+                         :porcelain porcelain}
+                  path (assoc :path path))}))))
 
 (defn git-status-fn
   "Working-tree status of the active workspace as parsed porcelain.
@@ -132,17 +163,20 @@
     (max 1 (min 200 (long raw)))))
 
 (defn- coerce-log-opts
-  "Map form for git/log. Accepts `:limit/:n` for count and `:path/:ref`
-   for filters. Returns `{:limit Long :path s|nil :ref s|nil}`. Anything
-   that is not a map throws the same :foundation-git/invalid-opts error
-   shape `coerce-log-limit` returns for the single-int path."
+  "Map form for git/log. Accepts `:limit/:n` for count, `:path/:ref` for
+   commit selection, and `:since/:until/:author` for time + author filters.
+   Returns a normalised opts map; anything not-a-map throws the same
+   :foundation-git/invalid-opts shape as `coerce-log-limit`."
   [m]
   (when-not (map? m)
     (throw (ex-info (str "git/log expected a map, got " (pr-str m))
              {:type :foundation-git/invalid-opts :opts m})))
-  {:limit (coerce-log-limit (or (:limit m) (:n m)))
-   :path  (when-let [p (:path m)] (when (string? p) p))
-   :ref   (when-let [r (:ref m)]  (when (string? r) r))})
+  {:limit  (coerce-log-limit (or (:limit m) (:n m)))
+   :path   (when-let [p (:path m)] (when (string? p) p))
+   :ref    (when-let [r (:ref m)]  (when (string? r) r))
+   :since  (:since m)
+   :until  (:until m)
+   :author (when-let [a (:author m)] (when (string? a) a))})
 
 (defn git-log-fn
   "Recent commits in the active workspace. Default limit is 20; max 200.
@@ -159,14 +193,16 @@
   ([env] (git-log-fn env nil))
   ([env arg]
    (let [root    (io/file (env-root env))
-         {:keys [limit path ref]} (cond
-                                    (nil? arg)     {:limit 20}
-                                    (integer? arg) {:limit (coerce-log-limit arg)}
-                                    (map? arg)     (coerce-log-opts arg)
-                                    :else          (do (coerce-log-limit arg) nil))
+         {:keys [limit path ref since until author]}
+         (cond
+           (nil? arg)     {:limit 20}
+           (integer? arg) {:limit (coerce-log-limit arg)}
+           (map? arg)     (coerce-log-opts arg)
+           :else          (do (coerce-log-limit arg) nil))
          status  (git-core/status-snapshot root)
          commits (vec (or (git-core/recent-commits root limit
-                            {:path path :ref ref}) []))]
+                            {:path   path  :ref   ref
+                             :since  since :until until :author author}) []))]
      (extension/success
        {:result {:branch  (:branch status)
                  :commits commits}}))))
@@ -224,13 +260,13 @@
                   {:type :foundation-git/not-tracked :path path})))
        (extension/success {:result result})))))
 
-(def ^{:doc "Diff stat + porcelain for the currently bound workspace. Branch workspaces diff against their spawn commit; trunk workspaces diff against HEAD. Optional opts map accepted (e.g. {:stat? true}); result always includes stat, files, and porcelain. Returns {:branch :head :kind :stat {:files :+ :-} :files [...] :porcelain [...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts map: {:from ref :to ref :path P} for arbitrary range + path filter. :to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [...] :porcelain [...]}. JGit-backed; no host git binary needed."
        :arglists '([] [opts])} diff git-diff-fn)
 
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}. JGit-backed; no host git binary needed."
        :arglists '([])} status git-status-fn)
 
-(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a `{:limit N :path P :ref R}` map. Returns {:branch :commits [{:sha :short-sha :author :email :at :committer :committer-email :committed-at :subject :body :parents [...]} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a `{:limit N :path P :ref R :since D :until D :author S}` map. :since/:until accept ISO date strings, epoch ms/s, or java.util.Date. :author is a case-insensitive substring match on name OR email. Returns {:branch :commits [{:sha :short-sha :author :email :at :committer :committer-email :committed-at :subject :body :parents [...]} ...]}. JGit-backed; no host git binary needed."
        :arglists '([] [arg])} log git-log-fn)
 
 (def ^{:doc "Detailed view of one commit. Accepts a sha string or {:rev sha}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. JGit-backed; no host git binary needed."

@@ -262,26 +262,85 @@
      :parents          (mapv (fn [^RevCommit p] (some-> (.getId p) .getName))
                          (.getParents commit))}))
 
+(defn- ->date
+  "Coerce `x` into a java.util.Date. Accepts already-a-Date, epoch ms
+   (long), epoch seconds (long < 1e12), `java.time.Instant`, or an ISO-8601
+   date / datetime string. Returns nil for nil. Throws ex-info for
+   anything else so callers see a clean usage error instead of a JVM
+   cast deep in JGit."
+  ^java.util.Date [x]
+  (cond
+    (nil? x)                      nil
+    (instance? java.util.Date x)  x
+    (instance? java.time.Instant x) (java.util.Date/from x)
+    (number? x)                   (java.util.Date.
+                                    (long (if (< (long x) 100000000000)
+                                            (* (long x) 1000)
+                                            x)))
+    (string? x)
+    (let [s ^String x]
+      (try
+        (cond
+          (re-matches #"\d{4}-\d{2}-\d{2}" s)
+          (java.util.Date/from (.toInstant (.atStartOfDay (java.time.LocalDate/parse s)
+                                             (java.time.ZoneId/systemDefault))))
+          :else
+          (java.util.Date/from (java.time.Instant/parse s)))
+        (catch Throwable t
+          (throw (ex-info (str "git: cannot parse date " (pr-str x))
+                   {:type :foundation-git/invalid-date :date x} t)))))
+    :else
+    (throw (ex-info (str "git: cannot coerce to date " (pr-str x))
+             {:type :foundation-git/invalid-date :date x}))))
+
 (defn recent-commits
   "Recent commits for `start`, newest first, using JGit only.
 
    `opts` is an optional map:
      :path        restrict to commits touching this repo-relative path
-     :ref         start log from this branch/sha (default HEAD)"
+     :ref         start log from this branch/sha (default HEAD)
+     :since       lower-bound author date — Date, epoch ms/s, ISO string
+     :until       upper-bound author date — same coercion as :since
+     :author      substring match on author name OR email (case-insensitive)"
   ([^File start n] (recent-commits start n nil))
   ([^File start n opts]
    (when-let [^Repository repo (open-repository start)]
      (try
        (let [^Git git (Git/wrap repo)
-             {:keys [path ref]} (or opts {})]
+             {:keys [path ref since until author]} (or opts {})
+             since-d (->date since)
+             until-d (->date until)
+             auth-q  (when (and author (string? author) (seq author))
+                       (clojure.string/lower-case author))]
          (try
-           (let [cmd (.. git log (setMaxCount (int (max 1 n))))
+           (let [cmd (.. git log (setMaxCount (int (max 1 (* 4 n)))))
                  _   (when (and ref (string? ref))
                        (when-let [oid (.resolve repo ^String ref)]
                          (.add cmd oid)))
                  _   (when (and path (string? path) (seq path))
-                       (.addPath cmd path))]
-             (mapv commit->map (.call cmd)))
+                       (.addPath cmd path))
+                 _   (cond
+                       (and since-d until-d)
+                       (.setRevFilter cmd
+                         (org.eclipse.jgit.revwalk.filter.CommitTimeRevFilter/between
+                           since-d until-d))
+                       since-d
+                       (.setRevFilter cmd
+                         (org.eclipse.jgit.revwalk.filter.CommitTimeRevFilter/after since-d))
+                       until-d
+                       (.setRevFilter cmd
+                         (org.eclipse.jgit.revwalk.filter.CommitTimeRevFilter/before until-d)))
+                 matches? (fn [m]
+                            (or (nil? auth-q)
+                              (clojure.string/includes?
+                                (clojure.string/lower-case
+                                  (str (:author m) " " (:email m)))
+                                auth-q)))]
+             (->> (.call cmd)
+               (map commit->map)
+               (filter matches?)
+               (take (max 1 n))
+               vec))
            (finally
              (try (.close git) (catch Throwable _ nil)))))
        (finally

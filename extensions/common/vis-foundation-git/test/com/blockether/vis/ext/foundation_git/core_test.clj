@@ -54,9 +54,54 @@
       (catch clojure.lang.ExceptionInfo e
         (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
         (expect (clojure.string/includes? (ex-message e)
-                  "git/diff expected optional opts map, got :bad"))
-        (expect (clojure.string/includes? (ex-message e)
-                  "Call (git/diff) or (git/diff {:stat? true})."))))))
+                  "git/diff expected optional opts map, got :bad")))))
+
+  (it "accepts {:from sha :to sha} for arbitrary range diff"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "add x") .call)
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n(def y 2)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "add y") .call))
+        (let [result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                       {:from "HEAD~1" :to "HEAD"})
+              data   (:result result)]
+          (expect (= :range (:kind data)))
+          (expect (= "HEAD~1" (:from data)))
+          (expect (= "HEAD" (:to data)))
+          (expect (= 1 (get-in data [:stat :files])))
+          (expect (= 1 (get-in data [:stat :+])))
+          (expect (= [] (:porcelain data))))
+        (finally (cleanup root)))))
+
+  (it "applies :path filter to limit a diff to one subtree"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+          (spit-rel root "docs/x.md" "hello\n")
+          (-> g .add (.addFilepattern ".") .call)
+          (-> g .commit (.setMessage "add stuff") .call))
+        (let [result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                       {:from "HEAD~1" :to "HEAD" :path "src"})
+              data   (:result result)]
+          (expect (= "src" (:path data)))
+          (expect (every? #(clojure.string/starts-with? (:file %) "src/")
+                    (:files data))))
+        (finally (cleanup root)))))
+
+  (it "rejects non-string :from/:to/:path with foundation-git/invalid-opts"
+    (try
+      (git/git-diff-fn {:workspace/root "/repo"} {:from 42})
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
+        (expect (clojure.string/includes? (ex-message e) "git/diff :from must be a string"))))))
 
 (defdescribe git-status-test
   (it "returns branch, head, cleanliness, and entries from JGit"
@@ -124,6 +169,44 @@
           (expect (= "base" (:body commit)))
           (expect (vector? (:parents commit)))
           (expect (= 0 (count (:parents commit)))))
+        (finally (cleanup root)))))
+
+  (it "filters commits by :author substring (case-insensitive name OR email)"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [match (git/git-log-fn {:workspace/root (.getCanonicalPath root)}
+                      {:author "VIS" :limit 5})
+              miss  (git/git-log-fn {:workspace/root (.getCanonicalPath root)}
+                      {:author "nobody" :limit 5})]
+          (expect (pos? (count (get-in match [:result :commits]))))
+          (expect (zero? (count (get-in miss  [:result :commits])))))
+        (finally (cleanup root)))))
+
+  (it "filters commits by :since/:until ISO date strings"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [now    (System/currentTimeMillis)
+              tmrw   (+ now (* 24 60 60 1000))
+              future (git/git-log-fn {:workspace/root (.getCanonicalPath root)}
+                       {:since tmrw :limit 5})
+              all    (git/git-log-fn {:workspace/root (.getCanonicalPath root)}
+                       {:since 0 :limit 5})]
+          (expect (zero? (count (get-in future [:result :commits]))))
+          (expect (pos? (count (get-in all [:result :commits])))))
+        (finally (cleanup root)))))
+
+  (it "throws :foundation-git/invalid-date for unparseable date strings"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (try
+          (git/git-log-fn {:workspace/root (.getCanonicalPath root)}
+            {:since "not-a-date"})
+          (expect false)
+          (catch clojure.lang.ExceptionInfo e
+            (expect (= :foundation-git/invalid-date (:type (ex-data e))))))
         (finally (cleanup root)))))
 
   (it "restricts log to commits touching a path when :path is provided"
