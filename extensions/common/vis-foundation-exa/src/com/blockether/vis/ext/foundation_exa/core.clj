@@ -588,7 +588,7 @@
     :description "Optional JSON config file path. Lower priority than explicit vars."}])
 
 (doseq [op [:exa/web-search :exa/code-context]]
-  (vis/register-op! op {:tag :op.tag/observation}))
+  (vis/register-op! op {:tag :observation}))
 
 (def vis-extension
   (vis/extension
