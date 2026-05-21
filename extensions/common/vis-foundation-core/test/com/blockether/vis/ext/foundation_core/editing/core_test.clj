@@ -46,16 +46,99 @@
     (fs/create-dirs rel)
     rel))
 
+(defdescribe cwd-safety-test
+  ;; THE non-negotiable invariant: every v/* tool that touches the
+  ;; filesystem must refuse any path that escapes (workspace/cwd).
+  ;; safe-path is the single gate; this suite proves every mutation
+  ;; tool actually routes through it.
+  (let [escape-paths ["../escape.txt"
+                      "../../etc/passwd"
+                      "/etc/passwd"
+                      "target/../../escape.txt"]]
+
+    (it "v/patch (exact-replace) refuses to write outside cwd"
+      (let [patch (private-fn "patch-safe")]
+        (doseq [p escape-paths]
+          (let [r (patch [{:path p :search "x" :replace "y"}])]
+            (expect (false? (:success? r)))
+            (expect (= :path-escape (-> r :failures first :reason)))))))
+
+    (it "v/write refuses to create files outside cwd"
+      ;; Note: we deliberately do NOT (.exists) the escape path here; the
+      ;; check is whether `write-safe` REFUSED to act. /etc/passwd exists
+      ;; on macOS regardless of our actions; what matters is :reason :path-escape
+      ;; and the cwd guard kicking in before any IO.
+      (let [write (private-fn "write-safe")]
+        (doseq [p escape-paths]
+          (let [r (write {:path p :content "hi"})]
+            (expect (false? (:success? r)))
+            (expect (= :path-escape (-> r :failures first :reason)))))))
+
+    (it "v/create-dirs refuses to mkdir outside cwd"
+      (let [create (private-fn "create-dirs-safe")]
+        (doseq [p escape-paths]
+          (let [err (try (create p) nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+            (expect (some? err))
+            (expect (= :ext.foundation.editing/path-escape
+                      (:type (ex-data err))))))))
+
+    (it "v/copy refuses src OR dest outside cwd"
+      (let [copy (private-fn "copy-safe")
+            inside (write-temp! "cwd-safety/copy-src.txt" "x")]
+        (doseq [p escape-paths]
+          (let [err1 (try (copy p inside) nil (catch clojure.lang.ExceptionInfo e e))
+                err2 (try (copy inside p) nil (catch clojure.lang.ExceptionInfo e e))]
+            (expect (some? err1))
+            (expect (some? err2))
+            (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
+            (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
+
+    (it "v/move refuses src OR dest outside cwd"
+      (let [move (private-fn "move-safe")
+            inside (write-temp! "cwd-safety/move-src.txt" "x")]
+        (doseq [p escape-paths]
+          (let [err1 (try (move p inside) nil (catch clojure.lang.ExceptionInfo e e))
+                err2 (try (move inside p) nil (catch clojure.lang.ExceptionInfo e e))]
+            (expect (some? err1))
+            (expect (some? err2))
+            (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
+            (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
+
+    (it "v/delete and v/delete-if-exists refuse paths outside cwd"
+      (let [del   (private-fn "delete-safe")
+            del-if (private-fn "delete-if-exists-safe")]
+        (doseq [p escape-paths]
+          (let [err1 (try (del p) nil (catch clojure.lang.ExceptionInfo e e))
+                err2 (try (del-if p) nil (catch clojure.lang.ExceptionInfo e e))]
+            (expect (some? err1))
+            (expect (some? err2))
+            (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
+            (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
+
+    (it "v/cat (read) ALSO refuses paths outside cwd"
+      ;; Defense in depth: even reads can't leak through path traversal.
+      (let [cat (private-fn "read-file")]
+        (doseq [p escape-paths]
+          (let [err (try (cat p) nil (catch clojure.lang.ExceptionInfo e e))]
+            (expect (some? err))
+            (expect (= :ext.foundation.editing/path-escape
+                      (:type (ex-data err))))))))))
+
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 10 (count editing/editing-symbols)))
-    (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize 'bash}
+    ;; cat, ls, rg, patch, write, create-dirs, copy, move, delete,
+    ;; delete-if-exists, exists?
+    (expect (= 11 (count editing/editing-symbols)))
+    ;; `write` IS exposed (T9 added it as the whole-file primitive).
+    ;; `edit` / `cwd` / `parent` / etc. remain banned.
+    (expect (not-any? #{'edit 'cwd 'parent 'file-name 'extension 'relativize 'bash}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
               (map :ext.symbol/symbol editing/editing-symbols)))
-    (expect (some #{'patch}
-              (map :ext.symbol/symbol editing/editing-symbols)))
+    (expect (some #{'patch} (map :ext.symbol/symbol editing/editing-symbols)))
+    (expect (some #{'write} (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'write-lines 'update-file}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'preview 'silent!}
@@ -101,7 +184,7 @@
     (expect (not (string/includes? editing/editing-prompt "(v/rg :include/:exclude"))))
 
   (it "registers observed fn-symbols with tool-specific renderers"
-    (doseq [sym-name '[cat ls rg patch create-dirs copy move delete delete-if-exists exists?]]
+    (doseq [sym-name '[cat ls rg patch write create-dirs copy move delete delete-if-exists exists?]]
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
                     editing/editing-symbols)]
         (expect (some? entry))
@@ -147,34 +230,33 @@
       (expect (string/includes? editing/editing-prompt ":expected-mtime"))
       (expect (string/includes? editing/editing-prompt "5-pass fuzzy fallback"))
       (expect (string/includes? editing/editing-prompt ":loop-hint"))
-      (expect (string/includes? editing/editing-prompt "Codex envelope"))
-      ;; New (T3-T6): explicit anti-loop guidance + idioms.
+      ;; Codex envelope grammar was retired; the prompt should not
+      ;; mention it any more (and patch-symbol's docstring should follow).
+      (expect (not (string/includes? editing/editing-prompt "Codex envelope")))
+      (expect (not (string/includes? editing/editing-prompt "*** Begin Patch")))
+      (expect (not (string/includes? editing/editing-prompt "*** End Patch")))
+      (expect (not (string/includes? editing/editing-prompt "*** Add File")))
+      (expect (not (string/includes? editing/editing-prompt "*** Move to")))
+      (expect (not (string/includes? (:ext.symbol/doc patch-symbol)
+                     "Codex `apply_patch` envelope")))
+      ;; The single mutation-primitive list is what replaced the envelope
+      ;; example block.
+      (expect (string/includes? editing/editing-prompt
+                "Single mutation primitive per intent"))
+      (expect (string/includes? editing/editing-prompt "v/write"))
       ;; T5 — bulk rename idiom in the prompt body.
       (expect (string/includes? editing/editing-prompt "Bulk rename idiom"))
       (expect (string/includes? editing/editing-prompt ":nth :all"))
-      ;; T6 — Codex envelope EOF append idiom.
-      (expect (string/includes? editing/editing-prompt "EOF-append"))
-      (expect (string/includes? editing/editing-prompt "*** End of File"))
       ;; T4 — :diff hunk header IS the line-number signal.
       (expect (string/includes? editing/editing-prompt "`@@ -N,X +M,Y @@`"))
       ;; T3 — prompt no longer carries the contradiction.
-      ;; Old text "Do NOT v/cat to verify" was paired with "any prior read is stale; re-read".
-      ;; Both lines are gone in favor of one unambiguous Stale-read rule.
       (expect (not (string/includes? editing/editing-prompt "Do NOT v/cat to verify")))
       (expect (not (string/includes? editing/editing-prompt "any prior read of the same path is stale")))
       (expect (string/includes? editing/editing-prompt "Stale-read rule"))
       (expect (string/includes? editing/editing-prompt "never re-cat just to verify"))
-      (expect (string/includes? (:ext.symbol/doc patch-symbol)
-                "Codex `apply_patch` envelope"))
-      (expect (string/includes? (:ext.symbol/doc patch-symbol)
-                "validate the full plan against the live filesystem\n   before any write"))
-      ;; T3 — the old prompt told the model to read ":checks/:failures" and
-      ;; "Do NOT v/cat to verify" in two contradictory bullets. The rewrite
-      ;; replaces both with one explicit Stale-read rule and a `;; ! data`
-      ;; trailer recipe; assert the NEW shape instead.
+      ;; T1 — structured trailer recipe for failures.
       (expect (string/includes? editing/editing-prompt
                 ";; ! data {:reason"))
-      (expect (string/includes? editing/editing-prompt "Stale-read rule"))
       (expect (string/includes? editing/editing-prompt "RULES"))
       (expect (string/includes? editing/editing-prompt "Execute side effects"))
       (expect (not (string/includes? editing/editing-prompt "read-all-lines")))
@@ -817,20 +899,13 @@
         (expect (nil? (:loop-hint r))))
       (clear file)))
 
-  (it "v/patch dispatch: vector -> exact-replace, string -> Codex envelope"
-    ;; Lightweight integration assertion that the two modes really do
-    ;; share the same v/patch entry point and report differently shaped
-    ;; per-file summaries.
+  (it "v/patch reports :exact-replace as its only mode (envelope retired)"
     (let [patch-tool (private-fn "patch-tool")
           p (write-temp! "bbfs/dispatch-mode.txt" "alpha\nbeta\n")
           vec-out (-> (patch-tool [{:path p :search "alpha" :replace "X"}])
-                    :metadata :mode)
-          env (str "*** Begin Patch\n*** Update File: " p
-                "\n@@\n-beta\n+Y\n*** End Patch\n")
-          env-out (-> (patch-tool env) :metadata :mode)]
+                    :metadata :mode)]
       (expect (= :exact-replace vec-out))
-      (expect (= :codex-apply-patch env-out))
-      (expect (= "X\nY\n" (slurp p)))))
+      (expect (= "X\nbeta\n" (slurp p)))))
 
   (it "patch diagnostics report per-edit reasons, all match counts, bounded previews, and write nothing"
     (let [path  (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
@@ -933,12 +1008,13 @@
       (expect (true? (:success? r)))
       (expect (= [:rstrip :unicode] (:passes s)))))
 
-  (it "envelope mode never carries :passes / :indent-delta (no fuzzy in Codex grammar)"
+  (it "successful v/patch with byte-exact match carries no :passes / :indent-delta"
+    ;; This used to be tested against envelope mode; envelope is retired.
+    ;; Byte-exact single-edit success on exact-replace still must omit the
+    ;; fuzzy alarm keys.
     (let [patch-tool (private-fn "patch-tool")
-          p (write-temp! "summary/env.txt" "line1\nline2\n")
-          env (str "*** Begin Patch\n*** Update File: " p
-                "\n@@\n-line1\n+LINE1\n*** End Patch\n")
-          out (patch-tool env)
+          p (write-temp! "summary/byte-exact.txt" "line1\nline2\n")
+          out (patch-tool [{:path p :search "line1" :replace "LINE1"}])
           first-file (first (:result out))]
       (expect (true? (:success? out)))
       (expect (not (contains? first-file :passes)))
