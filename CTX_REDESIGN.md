@@ -22,7 +22,7 @@ to the same two values.
 
 **2. Two surfaces for model interaction:**
 - **SCI symbols** (extensions register them with a `:tag`): `v/cat`, `v/patch`, `git/diff`, …
-- **Engine primitives** (bare symbols, hidden, peer with `done`): `mem-set!`, `mem-update!`, `mem-remove!`, `iter`, `form`, `turn`, `iter-heads`, `turn-list`.
+- **Engine primitives** (bare symbols, hidden, peer with `done`): per-subtree mutators (`rule-set!`, `rule-remove!`, `decision!`, `fact-set!`, `fact-remove!`, `spec-set!`, `spec-remove!`, `task-set!`, `task-remove!`), and introspection (`iter`, `form`, `turn`, `iter-heads`, `turn-list`, `symbol-doc`, `symbol-source`, `symbol-meta`, `symbol-apropos`).
 
 Workspace mutations (`spawn-branch!`, `apply-to-trunk!`, `discard!`) are
 internal Clojure functions in `src/.../internal/workspace.clj`; they are
@@ -55,16 +55,41 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 
 ```clojure
 ;; ─── MEMOS (mid-turn; model writes; stored in session_state.ctx) ───
-(mem-set!    path value)         ; assoc-in
-(mem-update! path f & args)      ; update-in
-(mem-remove! path)               ; dissoc-in
+;;
+;; Per-subtree functions. Engine validates shape, stamps :born,
+;; auto-journals on status transitions, soft-warns on missing required
+;; fields. No generic path-keyed mutator.
 
-;; Engine auto-stamps :born on first mem-set! to a new entry.
-;; Engine auto-appends to :journal on tasks when :status changes.
-;; Engine warns (does NOT refuse) on missing required fields:
-;;   :session/tasks :K → :spec required
-;;   :session/tasks :K :status :done → :evidence required
-;;   :session/specs :K → :facts may be empty but field should exist
+;; Rules — durable behavior + facts about user (upsert; merges partials)
+(rule-set!     :K {:body string :scope #{:session :project}})
+(rule-remove!  :K)
+
+;; Decisions — APPEND-ONLY (no update, no remove)
+(decision!     :K {:body string :tags #{keyword}})
+
+;; Facts — observations
+(fact-set!     :K {:body string})
+(fact-remove!  :K)
+
+;; Specs — requirements built FROM facts
+(spec-set!     :K {:title string :acceptance [string] :facts [<kw-ref>]
+                   :status #{:draft :doing :done :cancelled}})
+(spec-remove!  :K)
+
+;; Tasks — work items; engine auto-journals on :status change
+(task-set!     :K {:title string :spec <kw-ref> :depends-on [<kw-ref>]
+                   :status #{:todo :doing :done :blocked :cancelled}
+                   :evidence [<scope>] :blocked-on string?})
+(task-remove!  :K)
+
+;; Engine behaviors:
+;;   *-set!         : new key → stamp :born; existing → merge partials
+;;   task-set!      : :status change → auto-append {:status :scope} to :journal
+;;                    :status :done without :evidence → soft warn
+;;                    :status :blocked without :blocked-on → soft warn
+;;   spec-set!      : :status :done | :cancelled → auto-stamp :done-born
+;;   decision!      : second call with same key → warn (append-only)
+;;   *-remove!      : non-existent key → silent no-op
 
 ;; ─── SYMBOLS (native SCI; Vis's existing definition_state machinery persists) ───
 (defn foo [x] …)                 ; create / overwrite — auto-persists
@@ -150,13 +175,22 @@ Subtrees:
   :session/trailer    pinned iter envelopes from prior turns
                       auto-pinned by engine each turn; you drop/summarize via done
 
-Mutation operators (memos):
-  (mem-set!    [:session/X <kw>] <value>)        ; assoc-in
-  (mem-update! [:session/X <kw>] f & args)       ; update-in
-  (mem-remove! [:session/X <kw>])                ; dissoc-in
-  Engine stamps :born on first mem-set! to a new key.
-  Engine appends to :journal on (mem-set! [:session/tasks :K :status] <new>).
-  Engine warns (does not refuse) on missing required fields.
+Per-subtree mutation functions (engine validates shape; stamps :born;
+auto-journals on status changes; soft-warns on missing required fields):
+
+  Rules         (rule-set! :K {:body :scope})
+                (rule-remove! :K)
+  Decisions     (decision! :K {:body :tags})              ; append-only
+  Facts         (fact-set! :K {:body})
+                (fact-remove! :K)
+  Specs         (spec-set! :K {:title :acceptance :facts :status})
+                (spec-remove! :K)
+  Tasks         (task-set! :K {:title :spec :depends-on :status :evidence :blocked-on})
+                (task-remove! :K)
+
+  All *-set! calls merge partial maps into existing entries.
+  task-set! with :status change auto-appends to :journal.
+  spec-set! with :status :done | :cancelled auto-stamps :done-born.
 
 Symbol lifecycle (native SCI; persisted by engine):
   (defn foo [x] …)          ; create / overwrite; survives turns
@@ -246,16 +280,17 @@ At each `(done …)`, engine runs in this order:
 Memos (`:rules :decisions :specs :tasks`) keyed by model-chosen keywords. Cross-table refs are bare keywords.
 
 ```clojure
-(mem-set! [:session/tasks :wire-trailer-render]
-          {:title       "Render :session/trailer with per-form envelopes"
-           :spec        :ctx-redesign
-           :status      :todo
-           :depends-on  [:dissoc-counters]})
+(task-set! :wire-trailer-render
+           {:title      "Render :session/trailer with per-form envelopes"
+            :spec       :ctx-redesign
+            :status     :todo
+            :depends-on [:dissoc-counters]})
 ```
 
-Engine stamps `:born <current-form-scope>` on first `mem-set!` to a new key.
-Engine appends to `:journal` on every `:status` mutation. No counters
-subtree. No mint operator.
+Engine stamps `:born <current-form-scope>` on first `task-set!` to a new
+key. Engine appends to `:journal` on every `:status` change. No counters
+subtree. No mint operator. No path-keyed mutator (the legacy `mem-*`
+verbs are gone).
 
 ---
 
@@ -337,23 +372,24 @@ trailer (mutated via `done`).
 
 Engine warns (does NOT refuse) on:
 
-| subtree | field | rule |
+| call | required field | rule |
 |---|---|---|
-| `:session/tasks` `:K` | `:spec` | required — task must reference a spec |
-| `:session/tasks` `:K` with `:status :done` | `:evidence` | required vec of scopes |
-| `:session/specs` `:K` | `:facts` | vec may be empty but field should exist |
+| `task-set!` | `:spec` | task must reference a spec |
+| `task-set!` with `:status :done` | `:evidence` | required vec of scopes proving completion |
+| `task-set!` with `:status :blocked` | `:blocked-on` | required free-text reason |
+| `spec-set!` | `:facts` | vec may be empty but field should exist |
 
 Soft schema — engine warns via `;; ⚠ task :wire-render missing :spec` in next render, never refuses the write.
 
-## Engine-auto-appended fields
+## Engine-auto-stamped fields
 
-| trigger | field | shape |
+| call pattern | field | shape |
 |---|---|---|
-| `mem-set! [:session/tasks :K :status] <new>` | `:journal` | engine appends `{:status <new> :scope <current-form-scope>}` |
-| `mem-set! [:session/specs :K :status] :done` or `:cancelled` | `:done-born` | engine stamps `<current-form-scope>` |
-| `mem-set!` to a NEW key in any memo subtree | `:born` | engine stamps `<current-form-scope>` |
+| any `*-set!` on a NEW key | `:born` | engine stamps `<current-form-scope>` |
+| `task-set!` that changes `:status` | `:journal` | engine appends `{:status <new> :scope <current-form-scope>}` |
+| `spec-set!` with `:status :done` or `:cancelled` | `:done-born` | engine stamps `<current-form-scope>` |
 
-Journal entries auto-append on each `:status` change. Model never writes `:journal` directly; it grows from `:status` mutations.
+Model never writes `:born`, `:journal`, or `:done-born` directly; they grow from the call patterns above.
 
 
 ---
@@ -393,7 +429,8 @@ Engine primitives don't go through `register-op!`. They're bound in the SCI hidd
 | head pattern | tag |
 |---|---|
 | `(defn …)` `(def …)` | `:mutation` |
-| `(mem-set! …)` `(mem-update! …)` `(mem-remove! …)` | `:mutation` |
+| `(rule-set! …)` `(rule-remove! …)` `(decision! …)` `(fact-set! …)` `(fact-remove! …)` | `:mutation` |
+| `(spec-set! …)` `(spec-remove! …)` `(task-set! …)` `(task-remove! …)` | `:mutation` |
 | `(iter …)` `(form …)` `(turn …)` `(iter-heads …)` `(turn-list)` | `:observation` |
 | `(symbol-doc …)` `(symbol-source …)` `(symbol-meta …)` `(symbol-apropos …)` | `:observation` |
 | arithmetic, string ops, `get-in`, `filter`, plain expressions | `:observation` |
@@ -509,14 +546,13 @@ USER > Lubię żółty.
 ```
 ```clojure
 MODEL >
-(mem-set! [:session/rules :likes-yellow]
-          {:body "user likes yellow color" :scope :session})
+(rule-set! :likes-yellow {:body "user likes yellow color" :scope :session})
 => :ok
 
 (done {:answer "Zapamiętane — kolor żółty."})
 => :done
 ```
-Engine auto-pin: iter contains only `mem-set!` + `done`. After excluding `done`, `:forms` = `[mem-set!]`. Pinned.
+Engine auto-pin: iter contains only `rule-set!` + `done`. After excluding `done`, `:forms` = `[rule-set!]`. Pinned.
 
 ### Turn 2
 ```
@@ -538,8 +574,7 @@ USER > Mam psa.
 ```
 ```clojure
 MODEL >
-(mem-set! [:session/rules :has-pet-dog]
-          {:body "user has a dog" :scope :session})
+(rule-set! :has-pet-dog {:body "user has a dog" :scope :session})
 => :ok
 
 (done {:answer "Ok, pies zapamiętany."})
@@ -677,12 +712,12 @@ MODEL >
 (v/cat "src/logging.clj")          ;; scope t1/i1/f1
 => "(ns logging)\n(defn log [level msg] (println (str/format \"%s: %s\" level msg)))\n"
 
-(mem-set! [:session/facts :logging-current-shape]
-          {:body "src/logging.clj: log/2 uses str/format to write text to stdout"})
+(fact-set! :logging-current-shape
+           {:body "src/logging.clj: log/2 uses str/format to write text to stdout"})
 => :ok
 
-(mem-set! [:session/facts :no-event-fn]
-          {:body "No emit-event or structured-logging fn exists yet"})
+(fact-set! :no-event-fn
+           {:body "No emit-event or structured-logging fn exists yet"})
 => :ok
 
 (done {:answer "Przeczytałem `src/logging.clj`, zapisałem dwa fakty. Następna tura: spec."})
@@ -706,28 +741,28 @@ USER > Działaj — spec + plan.
 ```
 ```clojure
 MODEL >
-(mem-set! [:session/specs :logging-edn]
-          {:title      "src/logging.clj emits structured EDN events"
-           :acceptance ["emit-event takes a map and prints (pr-str …)"
-                        "log/2 delegates to emit-event"
-                        "no str/format remains in src/logging.clj"]
-           :facts      [:logging-current-shape :no-event-fn]
-           :status     :draft})
+(spec-set! :logging-edn
+           {:title      "src/logging.clj emits structured EDN events"
+            :acceptance ["emit-event takes a map and prints (pr-str …)"
+                         "log/2 delegates to emit-event"
+                         "no str/format remains in src/logging.clj"]
+            :facts      [:logging-current-shape :no-event-fn]
+            :status     :draft})
 => :ok
 
-(mem-set! [:session/tasks :introduce-emit-event]
-          {:title      "introduce emit-event fn"
-           :spec       :logging-edn
-           :depends-on []
-           :status     :todo})
+(task-set! :introduce-emit-event
+           {:title      "introduce emit-event fn"
+            :spec       :logging-edn
+            :depends-on []
+            :status     :todo})
 ;; engine warns: ;; ⚠ task :introduce-emit-event lacks :evidence (only required on :done)
 => :ok
 
-(mem-set! [:session/tasks :rewire-log]
-          {:title      "rewire log/2 through emit-event"
-           :spec       :logging-edn
-           :depends-on [:introduce-emit-event]
-           :status     :todo})
+(task-set! :rewire-log
+           {:title      "rewire log/2 through emit-event"
+            :spec       :logging-edn
+            :depends-on [:introduce-emit-event]
+            :status     :todo})
 => :ok
 
 (done {:answer "Spec `:logging-edn` zapisany (2 facty). 2 taski."})
@@ -756,7 +791,7 @@ USER > Zaczynaj.
 ```
 ```clojure
 MODEL >
-(mem-set! [:session/tasks :introduce-emit-event :status] :doing)
+(task-set! :introduce-emit-event {:status :doing})
 ;; engine appends to :journal: {:status :doing :scope "t3/i1/f1"}
 => :ok
 
@@ -769,10 +804,9 @@ MODEL >
            :replace "(defn emit-event [{:keys [level msg] :as ev}]\n  (println (pr-str ev)))\n\n(defn log [level msg]\n  (emit-event {:level level :msg msg}))"}])
 => {:applied 1}
 
-(mem-set! [:session/tasks :introduce-emit-event :status]   :done)
+(task-set! :introduce-emit-event {:status :done :evidence ["t3/i2/f1" "t3/i3/f1"]})
 ;; engine appends to :journal: {:status :done :scope "t3/i4/f1"}
-(mem-set! [:session/tasks :introduce-emit-event :evidence] ["t3/i2/f1" "t3/i3/f1"])
-;; t3/i2/f1 = defn emit-event; t3/i3/f1 = v/patch
+;; t3/i2/f1 = defn emit-event; t3/i3/f1 = v/patch (engine stamped both atomically above)
 => :ok
 
 (done {:answer       "Task `:introduce-emit-event` done. Evidence pinned."
@@ -804,24 +838,23 @@ USER > Kontynuuj.
 ```clojure
 MODEL >
 ;; the fact :logging-current-shape now describes pre-patch state — stale.
-(mem-remove! [:session/facts :logging-current-shape])
+(fact-remove! :logging-current-shape)
 => :ok
 
 ;; we can promote :no-event-fn → :event-fn-exists, but simpler: drop and re-fact
-(mem-remove! [:session/facts :no-event-fn])
-(mem-set! [:session/facts :emit-event-shape]
-          {:body "emit-event takes {:level :msg :ts?} and prints (pr-str)"})
+(fact-remove! :no-event-fn)
+(fact-set! :emit-event-shape
+           {:body "emit-event takes {:level :msg :ts?} and prints (pr-str)"})
 => :ok
 
-(mem-set! [:session/tasks :rewire-log :status] :doing)
+(task-set! :rewire-log {:status :doing})
 => :ok
 
 ;; …work happens, second task done…
-(mem-set! [:session/tasks :rewire-log :status]    :done)
-(mem-set! [:session/tasks :rewire-log :evidence] ["t3/i3/f1"])    ;; same v/patch covered both
+(task-set! :rewire-log {:status :done :evidence ["t3/i3/f1"]})    ;; same v/patch covered both
 => :ok
 
-(mem-set! [:session/specs :logging-edn :status] :done)
+(spec-set! :logging-edn {:status :done})
 ;; engine stamps :done-born "t4/i5/f1"
 => :ok
 
@@ -865,8 +898,8 @@ USER > Pamiętaj, w tym projekcie testy muszą uderzać w prawdziwy SQLite, nigd
 ```
 ```clojure
 MODEL >
-(mem-set! [:session/rules :real-db-tests]
-          {:body "tests must hit real SQLite — no mocks" :scope :project})
+(rule-set! :real-db-tests
+           {:body "tests must hit real SQLite — no mocks" :scope :project})
 
 (done {:answer "Reguła `:real-db-tests` zapisana jako project-scoped."})
 => :done
@@ -953,16 +986,18 @@ MODEL >
 ### Engine changes
 
 1. **CTX storage** — `session_state.ctx TEXT` (already exists or add).
-2. **`mem-set!` / `mem-update!` / `mem-remove!`** — bind in SCI hidden-sym set; write through to `session_state.ctx` blob.
+2. **Per-subtree functions** — `rule-set!` / `rule-remove!` / `decision!` / `fact-set!` / `fact-remove!` / `spec-set!` / `spec-remove!` / `task-set!` / `task-remove!`. Bind in SCI hidden-sym set; engine validates shape, stamps `:born`, auto-journals on task `:status` changes, soft-warns on missing required fields. Write through to `session_state.ctx` blob.
 3. **`iter` / `form` / `turn` / `iter-heads` / `turn-list`** — bind in SCI hidden-sym set; SELECT against `session_turn` / `session_turn_iteration`.
 4. **`(done {…})`** — handle `:trailer-drop` and `:trailer-summarize` keys; engine auto-pin loop.
 5. **Trailer comparator** — parse `t<N>/i<N>` segments for sort.
-6. **CTX render** — pretty-print blob with inline `;;` schema comments per subtree; bare EDN literal under `;; ctx` marker.
+6. **CTX render** — pretty-print blob as bare EDN literal under `;; ctx` marker. NO inline schema-explanation comments (those live ONLY in the system prompt). Add deterministic provenance hints only: `;; loaded from project_rule` for `:source :project-mirror`, `;; summarized in t<N>` for summary entries, `;; ⚠ result is <size>` for big results, `;; ⚠ task :K missing :spec` for soft schema violations.
 7. **Symbol persistence** — already exists (`restore-sandbox!` + `definition_state.expression IS NULL` semantics).
 
 ### Foundation extension changes
 
-1. **Remove**: `:v/session-state`, `:v/session-report` (if not used by non-SCI CLI).
+1. **Remove from `register-op!` doseq**:
+   - `:v/session-state` `:v/session-report` (replaced by engine `iter` / `form` / `turn` / `iter-heads` / `turn-list`).
+   - `:v/engine-symbol-documentation` `:v/engine-symbol-source-code` `:v/engine-symbol-metadata` `:v/engine-symbol-apropos` (replaced by engine `symbol-doc` / `symbol-source` / `symbol-meta` / `symbol-apropos`).
 2. **No additions** — introspection ops are engine primitives, not extension ops.
 
 ### Workspace integration
@@ -971,13 +1006,18 @@ MODEL >
 
 ### Persistance changes
 
-1. **`project_rule`** table — `(repo_id, rule_key, body, scope, added_at)`. Mirrored on `mem-set!` with `:scope :project`.
+1. **`project_rule`** table — `(repo_id, rule_key, body, scope, added_at)`. Mirrored on `rule-set!` with `:scope :project`.
 2. **Session resume** — merge `project_rule` rows into `:session/rules` on session start.
 
-### Prompt changes (already done in `src/.../internal/prompt.clj`)
+### Prompt changes
 
+**Already done in `src/.../internal/prompt.clj`:**
 - Session vocabulary (turn / iter / form / scope) — added.
 - Fence vs block — fence is the markdown delimiter; form is the unit.
+
+**Deferred until engine ships the new CTX:**
+- Replace the `Read \`ctx\` first. Engine context keys:` block with the schema documentation in this file's §"System prompt — required additions".
+- Drop the `Use \`def\` for working memory.` and `No separate memory API.` lines (no longer true — per-subtree functions ARE the memory API).
 
 ### Code rename (legacy → form)
 
@@ -1018,7 +1058,8 @@ MODEL >
                       {:scope :summary}]}                                    ; summary entry
 ```
 
-Eight substantive subtrees. Two engine-rendered, five memos via `mem-*`,
+Eight substantive subtrees. Two engine-rendered; five memos via
+per-subtree functions (`rule-*`, `decision!`, `fact-*`, `spec-*`, `task-*`);
 one trailer via `done`. Symbols managed natively via `defn` / `(def x nil)`
 against existing Vis persistence.
 
