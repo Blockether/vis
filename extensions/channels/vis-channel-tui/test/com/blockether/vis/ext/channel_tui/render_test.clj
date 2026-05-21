@@ -90,10 +90,14 @@
       (expect (str/includes? body "result"))
       (expect (not (str/includes? body ":ir")))))
 
-  (it "renders channel sink IR stored as a value without EDN dumping"
+  (it "renders channel sink IR returned by a tool without EDN dumping"
+    ;; Tool results carry their channel-render IR via `:result-render`.
+    ;; Plain `:value` form results are now hidden per user directive;
+    ;; only `:tool` kind reaches the result pane, so the test asserts the
+    ;; IR contract for the case the renderer actually paints.
     (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
           lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(def t (z/forms \"x.clj\"))" :comment nil :render-segments nil :result-render ir :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                                         :forms [{:code "(def t (z/forms \"x.clj\"))" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   60 1 {})
           visible-lines (mapv (comp strip-sentinels strip-ansi) lines)
           body (str/join "\n" visible-lines)
@@ -128,21 +132,17 @@
     ;;   <status line ✓>            inside the code-block region.
     ;;   code-ok-pad
     ;;   iteration-pad
-    ;;   <result>
-    ;;   iteration-pad
+    ;; Plain `:value` form results no longer render — the trailing
+    ;; result row is gone for non-tool forms per user directive.
     (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                                         :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   40 1 {})
           bodies (mapv (comp strip-ansi body-of) lines)
           status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
       (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
       (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))
       (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
-      ;; Result rows carry both a leading line-marker and an inline
-      ;; result-text format sentinel (U+206E), so `body-of` alone
-      ;; doesn't strip down to the bare token. Use a contains check
-      ;; instead of a strict equality.
-      (expect (some #(str/includes? % "3") bodies))))
+      (expect (not-any? #(str/includes? (or % "") "3") bodies))))
 
   (it "pads displayed form comments by one column"
     (let [lines (format-iteration-entry {:iteration 0
@@ -358,7 +358,9 @@
 
   (it "uses the same trace renderer for live progress and cancelled bubbles"
     (let [ir       [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
-          iter     {:forms [{:code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+          ;; Tool-kind result so the channel-render IR actually paints —
+          ;; plain `:value` results are hidden per user directive.
+          iter     {:forms [{:code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
           settings {:show-thinking true :show-iterations true}
           live     (:lines (render/progress->lines-data
                              {:iterations [iter]} 80 settings
@@ -426,7 +428,11 @@
       (expect (some (fn [ln] (str/includes? (strip-ansi ln) "thinking thinking"))
                 (:lines full)))))
 
-  (it "live progress collapses huge results when session context is available"
+  (it "live progress hides plain value results entirely"
+    ;; Per user directive: only tool calls show a result pane; plain
+    ;; `:value` form results never paint a body, regardless of size.
+    ;; No `RESULT` label, no `chars hidden` summary, no toggle-details
+    ;; click region — collapsible UI is gone.
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
           payload     (render/progress->lines-data
@@ -441,35 +447,17 @@
                          :turn-start-ms     0
                          :session-id   "session"
                          :detail-expansions {}})]
-      (expect (str/includes? (:text payload) "RESULT"))
-      (expect (str/includes? (:text payload) "chars hidden"))
+      (expect (not (str/includes? (:text payload) "RESULT")))
+      (expect (not (str/includes? (:text payload) "chars hidden")))
       (expect (not (str/includes? (:text payload) huge-result)))
-      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
+      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
-  (it "live progress bounds old iteration history by default while keeping latest work visible"
+  (it "live progress always renders every iteration with no PROGRESS HISTORY toggle"
+    ;; Per user directive: no collapsible iteration history. Every
+    ;; iteration paints in place; the `PROGRESS HISTORY` summary band
+    ;; and `:progress/live-iteration-limit` truncation are gone.
     (let [mk-entry (fn [n]
-                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
-          payload   (render/progress->lines-data
-                      {:iterations (mapv mk-entry (range 80))}
-                      80
-                      {:show-thinking true
-                       :show-iterations true
-                       :progress/live-iteration-limit 8}
-                      {:now-ms            1000
-                       :turn-start-ms     0
-                       :session-id   "session"
-                       :detail-expansions {}})
-          body      (strip-ansi (:text payload))]
-      (expect (< (count (:lines payload)) 90))
-      (expect (str/includes? body "PROGRESS HISTORY"))
-      (expect (str/includes? body "72 iterations hidden"))
-      (expect (str/includes? body "(+ 79 1)"))
-      (expect (not (str/includes? body "(+ 0 1)")))
-      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
-
-  (it "expanded live progress history renders the hidden iterations on demand"
-    (let [mk-entry (fn [n]
-                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
+                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
           payload   (render/progress->lines-data
                       {:iterations (mapv mk-entry (range 12))}
                       80
@@ -479,11 +467,13 @@
                       {:now-ms            1000
                        :turn-start-ms     0
                        :session-id   "session"
-                       :detail-expansions {["session" "progress:history"] true}})
+                       :detail-expansions {}})
           body      (strip-ansi (:text payload))]
-      (expect (str/includes? body "showing all 12 iterations"))
+      (expect (not (str/includes? body "PROGRESS HISTORY")))
+      (expect (not (str/includes? body "iterations hidden")))
       (expect (str/includes? body "(+ 0 1)"))
-      (expect (str/includes? body "(+ 11 1)"))))
+      (expect (str/includes? body "(+ 11 1)"))
+      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "toggles :vis/silent forms in live progress traces"
     (let [progress {:iterations
@@ -508,7 +498,9 @@
       (expect (not (str/includes? hidden-body "set-session-title!")))
       (expect (str/includes? hidden-body "(+ 1 2)"))
       (expect (str/includes? shown-body "set-session-title!"))
-      (expect (str/includes? shown-body ":vis/silent")))))
+      ;; Plain `:value` result bodies (`:vis/silent`, `3`) are hidden
+      ;; per user directive — only tool channel-render output paints.
+      (expect (not (str/includes? shown-body ":vis/silent"))))))
 
 (defdescribe progress-streaming-perf-test
   (it "per-iteration cache keeps live-stream tick under 50 ms with 15 iterations"
@@ -591,16 +583,17 @@
       ;; The pre-existing `:events`-driven interleaved variant was
       ;; removed when the runtime contract dropped `:events`. Resume /
       ;; live now share a flat layout: thinking first, then all code
-      ;; blocks, then their results. Pin that ordering here.
+      ;; blocks. Plain `:value` form results are hidden per user
+      ;; directive, so only code (not `2`) follows the reasoning.
       (let [lines (format-iteration-entry
                     {:thinking "alpha\nbeta"
                      :error nil
-                     :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                     :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                     60 1 {:show-header? true})
             body  (strip-ansi (str/join "\n" (map body-of lines)))]
         (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
         (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
-        (expect (< (.indexOf body "(+ 1 1)") (.indexOf body "2")))))))
+        (expect (neg? (.indexOf body "2")))))))
 
 (defdescribe paint-styled-line-stacking-test
   ;; The Polish bug report: `> **Lącznie:**` inside a quote rendered
@@ -1047,7 +1040,10 @@
       (expect (not (str/includes? body "REASONING")))
       (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
-  (it "collapses completed reasoning to a compact clickable summary when it is more than ten lines"
+  (it "renders every reasoning line inline regardless of length"
+    ;; Per user directive: collapsible disclosure rows were removed.
+    ;; Long reasoning paints in place — no `▸ REASONING` summary,
+    ;; no `lines hidden` hint, no toggle-details click region.
     (render/invalidate-cache!)
     (let [cid      "session"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
@@ -1057,36 +1053,35 @@
                      96 {:show-thinking true :show-iterations true} nil false
                      {:session-id cid
                       :session-turn-id turn-id})
-          body     (strip-ansi (:text payload))
-          rows     (mapv (comp strip-sentinels body-of) (:lines payload))
-          summary  (first (filter #(str/includes? % "REASONING") rows))]
-      (expect (some? summary))
-      (expect (str/includes? summary "▸ REASONING"))
-      (expect (str/includes? summary "lines hidden"))
-      (expect (not (str/includes? body "long-reason-01")))
+          body     (strip-ansi (:text payload))]
+      (expect (str/includes? body "long-reason-01"))
+      (expect (str/includes? body "long-reason-11"))
       (expect (str/includes? body "done"))
-      (expect (some #(and (= :toggle-details (:kind %)) (:collapsed? %)) (:line-meta payload)))))
+      (expect (not (str/includes? body "REASONING")))
+      (expect (not (str/includes? body "lines hidden")))
+      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
-  (it "expands completed reasoning when its detail node is toggled open"
+  (it "renders very long reasoning fully inline with no toggle needed"
     (render/invalidate-cache!)
     (let [cid      "session"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
-          node-id  "thinking:t123e4567:i1:reasoning"
           thinking (str/join "\n\n" (map #(format "line-%02d detail text" %) (range 1 51)))
           payload  (render/format-answer-with-thinking-data
                      [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
                      96 {:show-thinking true :show-iterations true} nil false
                      {:session-id cid
-                      :session-turn-id turn-id
-                      :detail-expansions {[cid node-id] true}})
+                      :session-turn-id turn-id})
           body     (strip-ansi (:text payload))]
-      (expect (str/includes? body "▾ REASONING"))
+      (expect (not (str/includes? body "REASONING")))
       (expect (str/includes? body "line-01"))
       (expect (str/includes? body "line-25"))
       (expect (str/includes? body "line-50")))))
 
 (defdescribe auto-collapse-rendering-test
-  (it "renders legacy preview-kind entries as ordinary results without PREVIEW/RAW switchers"
+  (it "hides legacy preview-kind result bodies entirely"
+    ;; Per user directive: only `:tool` result-kind paints a body via
+    ;; the channel-render IR. `:preview` (and any other non-tool kind)
+    ;; renders no result pane, no PREVIEW/RAW switcher, no toggle.
     (render/invalidate-cache!)
     (let [body "only line of preview output"
           trace [{:forms [{:code "(v/cat file)" :comment nil :render-segments nil :result-render body :result-kind :preview :result-detail {:raw "{:secret \"raw-only\"}"} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
@@ -1094,23 +1089,27 @@
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
                      :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
-      (expect (str/includes? (:text payload) body))
+      (expect (not (str/includes? (:text payload) body)))
       (expect (not (str/includes? (:text payload) "raw-only")))
       (expect (not (str/includes? (:text payload) "PREVIEW")))
       (expect (not (str/includes? (:text payload) "● RAW")))
       (expect (not-any? #(= :preview-switcher (:kind %)) (:line-meta payload)))))
 
-  (it "pretty-prints Clojure result text without ANSI syntax colors"
+  (it "renders tool result text literally without ANSI syntax colors"
+    ;; Tools own their own output formatting via `:render-fn`; the TUI
+    ;; must paint the channel-render text verbatim, not re-tokenize it
+    ;; with zprint ANSI codes. Plain `:value` form results no longer
+    ;; render at all, so this assertion lives on the `:tool` path.
     (render/invalidate-cache!)
     (let [raw "{:b 2 :a [1 2 3]}"
-          trace [{:forms [{:code "{:b 2 :a [1 2 3]}" :comment nil :render-segments nil :result-render raw :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+          trace [{:forms [{:code "{:b 2 :a [1 2 3]}" :comment nil :render-segments nil :result-render raw :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
                      :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           text (:text payload)
-          result-lines (filter #(str/includes? % "{:a [1 2 3], :b 2}") (:lines payload))]
-      (expect (str/includes? text "{:a [1 2 3], :b 2}"))
+          result-lines (filter #(str/includes? % raw) (:lines payload))]
+      (expect (str/includes? text raw))
       (expect (seq result-lines))
       (expect (not-any? #(re-find #"\u001b\[[0-9;]*m" %) result-lines))))
 
@@ -1126,7 +1125,10 @@
       (expect (str/includes? (:text payload) "MUTATION patch"))
       (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
 
-  (it "does not duplicate edit badges when tool results auto-collapse"
+  (it "renders one MUTATION patch badge inline for huge tool results"
+    ;; Per user directive: huge tool results paint fully inline with
+    ;; their channel-render body — no `▸` collapse glyph, no duplicate
+    ;; badges. The badge appears exactly once above the diff body.
     (render/invalidate-cache!)
     (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))
           trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render huge-result :result-kind :tool :result-detail {:op :v/patch
@@ -1138,8 +1140,9 @@
                          :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
       (expect (= 1 (count (re-seq #"MUTATION patch" body))))
-      (expect (some #(str/starts-with? (body-of %) "▸ MUTATION patch") (:lines payload)))
-      (expect (not-any? #(str/starts-with? (body-of %) "  ▸ MUTATION patch") (:lines payload)))))
+      (expect (str/includes? body "Patched file."))
+      (expect (not-any? #(str/starts-with? (body-of %) "▸ MUTATION patch") (:lines payload)))
+      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
@@ -1156,10 +1159,13 @@
       (expect (not (str/includes? body "SEARCH any")))
       (expect (= 1 (count (re-seq #"Searched" body))))))
 
-  (it "does not wrap collapsed huge result bodies before rendering the summary"
+  (it "hides huge plain value results entirely without a collapse summary"
+    ;; Per user directive: collapsible disclosure was removed. Plain
+    ;; `:value` form results never paint a body — no `RESULT` label,
+    ;; no `chars hidden` summary, no `[iteration N · block M]` band.
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 4000 "abcdefghij"))
-          trace       [{:forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+          trace       [{:forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           turn-id     "123e4567-e89b-12d3-a456-426614174000"
           fut         (future
                         (render/format-answer-with-thinking-data
@@ -1170,22 +1176,16 @@
       (when (= ::timeout payload)
         (future-cancel fut))
       (expect (not= ::timeout payload))
-      (expect (str/includes? (:text payload) "RESULT"))
-      (expect (not (str/includes? (:text payload) "RESULT (Block 1)")))
-      (expect (str/includes? (:text payload) "chars hidden"))
-      ;; Compact label band `[iteration N · block M]` replaces the verbose
-      ;; `Turn: <uuid>, Iteration: N, Block: M` suffix the bubble used to
-      ;; emit. The bracket prefix anchors the new format.
-      (expect (str/includes? (:text payload) "[iteration 1 · block 1]"))
-      (let [summary-line (some #(when (str/includes? % "[iteration 1 · block 1]") %)
-                           (:lines payload))]
-        (expect (some? summary-line))
-        (expect (not (str/includes? summary-line p/INLINE_CODE_ON)))
-        (expect (not (str/includes? summary-line p/INLINE_CODE_OFF))))
-      (expect (not (str/includes? (:text payload) "t:")))
-      (expect (not (str/includes? (:text payload) huge-result)))))
+      (expect (not (str/includes? (:text payload) "RESULT")))
+      (expect (not (str/includes? (:text payload) "chars hidden")))
+      (expect (not (str/includes? (:text payload) "[iteration 1 · block 1]")))
+      (expect (not (str/includes? (:text payload) huge-result)))
+      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
-  (it "auto-collapses completed reasoning on the answer view and expands all content on demand"
+  (it "renders completed reasoning fully inline on the answer view"
+    ;; Per user directive: reasoning never collapses. The baseline
+    ;; render shows every line; the legacy `:detail-expansions` map is
+    ;; ignored because the toggle infrastructure is gone.
     (render/invalidate-cache!)
     (let [thinking (str/join "\n\n" (map #(str "line " % " detail text") (range 1 51)))
           trace    [{:thinking  thinking
@@ -1195,25 +1195,18 @@
                      :successes []}]
           opts     {:session-id "session"
                     :session-turn-id "turn-1"}
-          expanded-opts (assoc opts :detail-expansions
-                          {["session" "thinking:tturn-1:i1:reasoning"] true})
-          collapsed (render/format-answer-with-thinking-data
-                      [:ir {} [:p {} [:span {} "done"]]] trace 120
-                      {:show-iterations true :show-thinking true}
-                      nil false opts)
-          expanded  (render/format-answer-with-thinking-data
-                      [:ir {} [:p {} [:span {} "done"]]] trace 120
-                      {:show-iterations true :show-thinking true}
-                      nil false expanded-opts)]
-      (expect (str/includes? (:text collapsed) "▸ REASONING"))
-      (expect (str/includes? (:text collapsed) "lines hidden"))
-      (expect (not (str/includes? (:text collapsed) "line 25")))
-      (expect (str/includes? (:text expanded) "▾ REASONING"))
-      (expect (str/includes? (:text expanded) "line 1"))
-      (expect (str/includes? (:text expanded) "line 25"))
-      (expect (str/includes? (:text expanded) "line 50"))))
+          payload  (render/format-answer-with-thinking-data
+                     [:ir {} [:p {} [:span {} "done"]]] trace 120
+                     {:show-iterations true :show-thinking true}
+                     nil false opts)
+          body     (strip-ansi (:text payload))]
+      (expect (not (str/includes? body "REASONING")))
+      (expect (not (str/includes? body "lines hidden")))
+      (expect (str/includes? body "line 1 "))
+      (expect (str/includes? body "line 25"))
+      (expect (str/includes? body "line 50"))))
 
-  (it "paints collapsed info rows as bold text on the summary band"
+  (it "never paints a collapsed summary band"
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
           trace       [{:forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
@@ -1248,12 +1241,12 @@
       (render/draw-chat-bubble! graphics
         {:role :assistant :text (:text payload) :prewrapped-lines (:lines payload)}
         0 2 96 {:viewport-h 50})
-      ;; Compact iteration/block label band replaced the verbose
-      ;; `Turn: <uuid>, Iteration: N, Block: M` summary suffix.
-      (let [summary-put (some #(when (str/includes? (:text %) "[iteration 1 · block 1]") %) @puts)]
-        (expect (some? summary-put))
-        (expect (= t/md-summary-bg (:bg summary-put)))
-        (expect (contains? (:sgr summary-put) com.googlecode.lanterna.SGR/BOLD))))))
+      ;; Per user directive: collapsible disclosure was removed. The
+      ;; compact `[iteration N · block M]` band is gone with it; the
+      ;; painter must not emit any summary row for a hidden value
+      ;; result.
+      (expect (not-any? #(str/includes? (:text %) "[iteration 1 · block 1]") @puts))
+      (expect (not-any? #(str/includes? (:text %) huge-result) @puts)))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Tool detail result rendering. Tool render-fns may return Markdown-ish
