@@ -1321,17 +1321,23 @@
   "Read a window of a text file. Returns a plain Clojure map:
      {:vis.op :v/cat :path P :lines [[<line> <text>]…] :next-offset N? :truncated? B}
    Arities:
-     (v/cat path)               — first 400 lines from line 1.
-     (v/cat path n)             — first n lines from line 1.
-     (v/cat path offset n)      — n lines starting at ABSOLUTE 1-based offset.
-     (v/cat path :tail)         — LAST 400 lines (tail).
-     (v/cat path :tail n)       — last n lines.
+     (v/cat path)                       — first 2000 lines from line 1.
+     (v/cat path n)                     — first n lines from line 1.
+     (v/cat path offset n)              — n lines starting at ABSOLUTE 1-based offset.
+     (v/cat path :range start end)      — INCLUSIVE 1-based line range
+                                          [start, end]. start-end semantics
+                                          mirror Cline / Roo `start_line`/
+                                          `end_line`; pick this over offset+n
+                                          when you already know both endpoints.
+     (v/cat path :tail)                 — LAST 2000 lines (tail).
+     (v/cat path :tail n)               — last n lines.
    Result shape:
-     {:path P :lines [[<line-number> <text>] …] :next-offset N? :truncated? B}
+     {:path P :lines [[<line-number> <text>] …] :next-offset N? :truncated? B
+      :long-line-truncations N?}
    `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
    offset arithmetic. Filter content with `(filter (fn [[_ t]] …) :lines)`.
    `:next-offset` is nil at EOF or for tail; integer otherwise — pass to a
-   follow-up call to paginate. `:truncated?` is true when the 64KB byte
+   follow-up call to paginate. `:truncated?` is true when the 256KB byte
    cap chopped the window; paginate via `:next-offset` regardless."
   ([path]
    (cat-tool path 1 default-cat-limit))
@@ -1354,7 +1360,24 @@
                 tail? (assoc :tail? true))
         :presentation {:kind :source
                        :path (:path out)
-                       :line-key :lines}}))))
+                       :line-key :lines}})))
+  ([path range-kw start end]
+   ;; (v/cat path :range start end) — INCLUSIVE start..end (both 1-based).
+   ;; Mirrors Cline / Roo `start_line` / `end_line`. Probe C9 showed the
+   ;; existing `(v/cat path offset n)` arity felt unnatural for known-
+   ;; endpoint reads (\"had to convert end=100 to n=51 mentally\"); this
+   ;; arity removes the conversion.
+   (when-not (= range-kw :range)
+     (throw (ex-info "v/cat 4-arity must use :range as the second arg"
+              {:type :ext.foundation.editing/invalid-cat-args
+               :got range-kw})))
+   (when-not (and (integer? start) (integer? end)
+               (pos? start) (pos? end)
+               (<= start end))
+     (throw (ex-info "v/cat :range start/end must be positive ints with start <= end"
+              {:type :ext.foundation.editing/invalid-cat-args
+               :start start :end end})))
+   (cat-tool path start (inc (- (long end) (long start))))))
 
 (defn- ls-tool
   "List a directory as a plain Clojure map tree:
@@ -2001,11 +2024,14 @@
      "first lines/hits/entries); the full data lives in the bound def."
      ""
      "READ"
-     "  (v/cat path)            — 2000 lines from line 1."
-     "  (v/cat path n)          — n lines from line 1."
-     "  (v/cat path offset n)   — n lines starting at ABSOLUTE 1-based offset."
-     "  (v/cat path :tail)      — last 2000 lines (tail; explicit, no auto-magic)."
-     "  (v/cat path :tail n)    — last n lines."
+     "  (v/cat path)                  — 2000 lines from line 1."
+     "  (v/cat path n)                — first n lines from line 1."
+     "  (v/cat path offset n)         — n lines starting at ABSOLUTE 1-based offset."
+     "  (v/cat path :range start end) — INCLUSIVE 1-based line range [start, end]."
+     "                                  Use when you know both endpoints; avoids the"
+     "                                  offset+count conversion."
+     "  (v/cat path :tail)            — last 2000 lines (tail; explicit, no auto-magic)."
+     "  (v/cat path :tail n)          — last n lines."
      "  result: {:vis.op :v/cat :path :lines :next-offset :eof? :truncated?"
      "          :mtime :size :long-line-truncations?}. :lines is a vec of"
      "  `[<line-number> <text>]` tuples — destructure with `[n t]`, no offset"
