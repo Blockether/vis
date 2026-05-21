@@ -63,7 +63,7 @@
       (expect (str/includes? doc "session-state"))
       (expect (str/includes? doc "file I/O"))
       (expect (str/includes? doc "engine-symbol-"))
-      (expect (str/includes? doc "vis ext repro"))
+      (expect (not (str/includes? doc "vis ext repro")))
       (expect (not (str/includes? doc "file-link")))
       (expect (not (str/includes? doc "answer builders")))))
 
@@ -73,25 +73,17 @@
       (expect (= '[com.blockether.vis.ext.foundation-core.core] (get-in manifest ['foundation-core :nses])))
       (expect (not (contains? (get manifest 'foundation-core) :docs)))))
 
-  (it "defers doctor fn and repro command namespaces until use"
-    (let [commands (into {} (map (juxt :cmd/name identity) (:ext/cli foundation/vis-extension)))
-          calls    (atom [])]
-      (expect (not (contains? commands "doctor")))
-      (expect (contains? commands "repro"))
+  (it "defers doctor fn namespace until use and exports no CLI commands"
+    (let [calls (atom [])]
+      (expect (empty? (:ext/cli foundation/vis-extension)))
       (with-redefs [clojure.core/requiring-resolve
                     (fn [sym]
                       (swap! calls conj sym)
                       (case sym
                         com.blockether.vis.ext.foundation-core.doctor/doctor-fn
-                        (fn [env] [{:level :info :message (:ok env)}])
-                        com.blockether.vis.ext.foundation-core.transcript/cli-command
-                        (fn [] {:cmd/run-fn (fn [parsed residual]
-                                              [:repro parsed residual])})))]
+                        (fn [env] [{:level :info :message (:ok env)}])))]
         (expect (= [] @calls))
         (expect (= [{:level :info :message true}]
                   ((:ext/doctor-fn foundation/vis-extension) {:ok true})))
-        (expect (= [:repro {:p true} ["y"]]
-                  ((get-in commands ["repro" :cmd/run-fn]) {:p true} ["y"])))
-        (expect (= ['com.blockether.vis.ext.foundation-core.doctor/doctor-fn
-                    'com.blockether.vis.ext.foundation-core.transcript/cli-command]
+        (expect (= ['com.blockether.vis.ext.foundation-core.doctor/doctor-fn]
                   @calls))))))

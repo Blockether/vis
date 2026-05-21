@@ -488,7 +488,7 @@
 
   (it "recovers direct answers torn by nested Markdown code fences"
     (let [env    (lp/create-environment ::router {:db :memory})
-          answer "# Result\n\n```\nSUBCOMMANDS\n  repro\n```\n\nDone."
+          answer "# Result\n\n```\nSUBCOMMANDS\n  export\n```\n\nDone."
           raw    (str "```clojure\n(done {:answer \"" answer "\"})\n```")
           torn   "(done {:answer \"# Result\n\n"]
       (try

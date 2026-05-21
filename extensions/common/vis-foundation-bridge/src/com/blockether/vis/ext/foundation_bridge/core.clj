@@ -210,7 +210,7 @@
                   :opts (selected-opts opts)}})))
 
 (defn- bridge-tool
-  [op env opts f]
+  [op _env opts f]
   (let [started-at-ms (now-ms)
         opts* (normalize-opts opts)]
     (try
@@ -229,28 +229,21 @@
     (fn [opts]
       (let [{:keys [profile policy profile-path policy-path]} (load-profile+policy env opts)
             status (br-next/build-status profile {:changed-files (ensure-vector (:changed-files opts))
-                                                  :policy policy})]
-        (let [required-obligations (mapv obligation->flat
-                                     (concat (:failed-obligations status)
-                                       (:open-obligations status)))
-              recommended-obligations (mapv obligation->flat (:recommended-obligations status))
-              receipts (evidence-receipts status)
-              with-flat (assoc status
-                          :configured? true
-                          :profile-path profile-path
-                          :policy-path policy-path
-                          :required-obligations required-obligations
-                          :recommended-obligations recommended-obligations
-                          :evidence-receipts receipts)
-              flattened (assoc status
-                          :configured? true
-                          :profile-path profile-path
-                          :policy-path policy-path
-                          :required-obligations required-obligations
-                          :recommended-obligations recommended-obligations
-                          :evidence-receipts receipts
-                          :next-action (derived-next-action with-flat))]
-          (assoc flattened :status-summary (status-summary (assoc flattened :next-action (:next-action flattened)))))))))
+                                                  :policy policy})
+            required-obligations (mapv obligation->flat
+                                   (concat (:failed-obligations status)
+                                     (:open-obligations status)))
+            recommended-obligations (mapv obligation->flat (:recommended-obligations status))
+            receipts (evidence-receipts status)
+            with-flat (assoc status
+                        :configured? true
+                        :profile-path profile-path
+                        :policy-path policy-path
+                        :required-obligations required-obligations
+                        :recommended-obligations recommended-obligations
+                        :evidence-receipts receipts)
+            flattened (assoc with-flat :next-action (derived-next-action with-flat))]
+        (assoc flattened :status-summary (status-summary (assoc flattened :next-action (:next-action flattened))))))))
 
 (defn- next-suggestion
   [action]
@@ -278,6 +271,7 @@
   [status-result]
   (let [actions (keep status-obligation->suggestion
                   (or (:required-obligations status-result)
+                    #_{:clj-kondo/ignore [:unresolved-var]}
                     (br-next/planned-actions status-result)))]
     {:configured? true
      :status (:status status-result)
