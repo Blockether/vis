@@ -135,6 +135,7 @@
                   [:v/rg :observation]
                   [:v/exists? :observation]
                   [:v/patch :mutation]
+                  [:v/write :mutation]
                   [:v/create-dirs :mutation]
                   [:v/copy :mutation]
                   [:v/move :mutation]
@@ -770,8 +771,8 @@
     (str "Consecutive v/patch failures on " path ": " n
       ". STOP retrying with similar :search. Re-read the file (v/cat path :tail"
       " or with the offset shown above), then build ONE cohesive edit plan with"
-      " :after/:before anchors or :nth selection, or switch to the Codex"
-      " envelope for multi-hunk atomicity.")))
+      " :after/:before anchors or :nth selection. If you are rewriting the"
+      " whole file, switch to (v/write).")))
 
 ;; -----------------------------------------------------------------------------
 ;; Staleness check: :expected-mtime / :expected-size
@@ -1077,147 +1078,164 @@
          :checks checks}))))
 
 ;; =============================================================================
-;; Codex `apply_patch` envelope mode
-;; =============================================================================
+;; v/write — whole-file write primitive (create or overwrite)
 ;;
-;; `(v/patch "*** Begin Patch ... *** End Patch")` accepts the OpenAI Codex
-;; apply_patch grammar (Add/Update/Delete/Move) and applies all hunks
-;; atomically: every hunk is validated against the live filesystem before
-;; any write. This preserves Vis' all-or-nothing safety invariant; Codex
-;; itself applies hunks sequentially and may leave partial writes on
-;; failure.
+;; v/patch is great for surgical edits but awkward for full-file rewrites:
+;; the model would otherwise read the file, use whole content as :search
+;; and submit the new blob as :replace. v/write makes the common case
+;; ergonomic: one tool, one map, atomic semantics.
+;;
+;; Shape (parity with v/patch result):
+;;   {:success? true
+;;    :plan   {:path :before :after :op}}
+;;   {:success? false
+;;    :failures [<failure-with-:reason>]
+;;    :loop-hint <string-or-nil>
+;;    :message  <human-readable>}
+;;
+;; The `:overwrite?` knob defaults to true. `:expected-mtime` /
+;; `:expected-size` provide the same staleness guard as v/patch — pair
+;; them with (:mtime / :size) from a prior v/cat for atomic
+;; read-modify-write on existing files.
+;; =============================================================================
 
-(defn- envelope-plan-add
-  [{:keys [path contents]}]
-  (let [file   (safe-path path)
-        rel    (rel-path file)
-        exists (.exists file)]
-    (when (.isDirectory file)
-      (throw (ex-info (str "v/patch add target is a directory: " rel)
-               {:type :ext.foundation.editing/patch-add-is-dir :path rel})))
-    {:op :add
-     :path rel
-     :file file
-     :before (when exists (slurp file))
-     :after contents
-     :existed? exists}))
+(def ^:private write-required-keys #{:path :content})
+(def ^:private write-optional-keys
+  #{:expected-mtime :expected-size :overwrite?})
+(def ^:private write-allowed-keys
+  (set/union write-required-keys write-optional-keys))
 
-(defn- envelope-plan-delete
-  [{:keys [path]}]
-  (let [file (ensure-existing-file! (safe-path path))
-        rel  (rel-path file)
-        before (slurp file)]
-    {:op :delete
-     :path rel
-     :file file
-     :before before
-     :after nil}))
+(defn- coerce-write-args
+  [args]
+  (when-not (map? args)
+    (throw (ex-info "v/write expects a single map argument"
+             {:type :ext.foundation.editing/invalid-write-args
+              :got  (type args)})))
+  (let [missing (seq (remove #(contains? args %) write-required-keys))
+        unknown (seq (remove write-allowed-keys (keys args)))]
+    (when missing
+      (throw (ex-info "v/write missing required keys"
+               {:type :ext.foundation.editing/invalid-write-args
+                :missing (vec missing)
+                :args args})))
+    (when unknown
+      (throw (ex-info "v/write has unknown keys"
+               {:type :ext.foundation.editing/invalid-write-args
+                :unknown (vec unknown)
+                :allowed (vec write-allowed-keys)
+                :args args})))
+    (when-not (string? (:content args))
+      (throw (ex-info "v/write :content must be a string"
+               {:type :ext.foundation.editing/invalid-write-args
+                :got (type (:content args))}))))
+  (update args :path str))
 
-(defn- envelope-plan-update
-  [{:keys [path move-to chunks]}]
-  (let [file (ensure-existing-file! (safe-path path))
-        rel  (rel-path file)
-        before (slurp file)
-        {:keys [new]} (patch/compute-update {:original before
-                                             :chunks chunks
-                                             :path rel})
-        dest-file (when move-to (safe-path move-to))
-        dest-rel  (when dest-file (rel-path dest-file))]
-    {:op (if move-to :update-move :update)
-     :path rel
-     :file file
-     :before before
-     :after new
-     :move-to dest-rel
-     :dest-file dest-file}))
+(defn write-safe
+  "Whole-file write primitive: create a new file OR overwrite an
+   existing one with `:content`. Returns a structured result; **never
+   throws on normal failure paths** (file exists with overwrite? false,
+   stale mtime/size, path escape).
 
-(defn- envelope-plan
-  "Plan every hunk against the live filesystem. Pure with respect to
-   writes — IO is read-only here, mutation happens in `envelope-commit!`."
-  [hunks]
-  (mapv (fn [hunk]
-          (case (:op hunk)
-            :add    (envelope-plan-add hunk)
-            :delete (envelope-plan-delete hunk)
-            :update (envelope-plan-update hunk)))
-    hunks))
+   Required keys: `:path`, `:content` (string).
+   Optional keys:
+     :overwrite?       default true; when false and target exists
+                       → :reason :exists
+     :expected-mtime   staleness guard; mismatch → :reason :stale
+     :expected-size    staleness guard; mismatch → :reason :stale
 
-(defn- envelope-commit!
-  [plans]
-  (doseq [{:keys [op file after dest-file]} plans]
-    (case op
-      :add         (do (ensure-parent-dirs! file)
-                     (spit file after))
-      :delete      (fs/delete file)
-      :update      (spit file after)
-      :update-move (do (ensure-parent-dirs! dest-file)
-                     (spit dest-file after)
-                     (when-not (= (.getCanonicalPath file)
-                                 (.getCanonicalPath dest-file))
-                       (fs/delete file))))))
+   Success shape:
+     {:success? true
+      :plan {:path :before :after :op}
+      :checks [<check>]}
 
-(defn patch-envelope-safe
-  "Apply a Codex `apply_patch` envelope string.
+   Failure shape:
+     {:success? false
+      :failures [<failure-with-:reason>]
+      :checks   [<check>]
+      :loop-hint <string-or-nil>
+      :message  <human-readable>}"
+  [args]
+  (let [args (coerce-write-args args)
+        path (:path args)
+        content (str (:content args))
+        overwrite? (if (contains? args :overwrite?) (:overwrite? args) true)
+        expected-mtime (:expected-mtime args)
+        expected-size  (:expected-size  args)
+        resolved (try {:file (safe-path path) :rel (rel-path (safe-path path))}
+                   (catch clojure.lang.ExceptionInfo e
+                     {:error {:reason (case (:type (ex-data e))
+                                        :ext.foundation.editing/path-escape :path-escape
+                                        :path-error)
+                              :message (ex-message e)
+                              :data (ex-data e)}}))]
+    (if-let [perr (:error resolved)]
+      (let [check {:edit-index 0 :path path :reason (:reason perr) :path-error perr}
+            file-for-counter (try (safe-path path) (catch Throwable _ nil))
+            n (when file-for-counter (bump-patch-fail-count! file-for-counter))]
+        {:success? false
+         :failures [(cond-> check n (assoc :consecutive-failures n))]
+         :checks   [check]
+         :loop-hint (when (and file-for-counter n) (patch-loop-hint n path))
+         :message  (str "v/write failed: " (:message perr))})
+      (let [^java.io.File file (:file resolved)
+            rel (:rel resolved)
+            exists? (.exists file)
+            is-dir? (and exists? (.isDirectory file))
+            before  (when (and exists? (not is-dir?)) (slurp file))
+            actual-mtime (when exists? (.lastModified file))
+            actual-size  (when exists? (.length file))
+            fail (cond
+                   is-dir?
+                   {:reason :path-is-dir
+                    :message (str "v/write target is a directory: " rel)}
 
-   Same `{:success? :plans? :failures? :loop-hint? :message?}`
-   structured-return contract as `patch-safe`. Parse errors and
-   per-hunk planning errors land in `:failures` with `:reason`
-   keys (`:invalid-patch`, `:empty-patch`, `:patch-old-lines-not-found`,
-   etc.) so the tool-failure envelope can surface them verbatim to the
-   model without ex-data spelunking.
+                   (and (not overwrite?) exists?)
+                   {:reason :exists
+                    :path rel
+                    :message (str "v/write refused: " rel
+                               " already exists and :overwrite? is false")}
 
-   Envelope mode never goes fuzzy — Codex's `@@` context headers do
-   positional disambiguation — so plans carry no `:passes` /
-   `:indent-delta` keys (those are exclusive to exact-replace's fuzzy
-   fallback)."
-  [^String patch-text]
-  (let [plan-attempt (try
-                       (let [{:keys [hunks]} (patch/parse-patch patch-text)]
-                         (if (empty? hunks)
-                           {:error {:reason :empty-patch
-                                    :message "v/patch envelope contained no hunks"}}
-                           {:plans (envelope-plan hunks)}))
-                       (catch clojure.lang.ExceptionInfo e
-                         (let [{:keys [type] :as data} (ex-data e)]
-                           {:error {:reason (or (some-> type name keyword) :invalid-patch)
-                                    :message (ex-message e)
-                                    :data data}})))]
-    (if-let [err (:error plan-attempt)]
-      {:success? false
-       :failures [(assoc err :edit-index 0)]
-       :checks   []
-       :loop-hint nil
-       :message  (or (:message err) "v/patch envelope failed.")}
-      (let [plans (:plans plan-attempt)]
-        (envelope-commit! plans)
-        {:success? true
-         :plans (mapv (fn [{:keys [op path before after move-to]}]
-                        (cond-> {:op op :path path :before before :after after}
-                          move-to (assoc :move-to move-to)))
-                  plans)
-         :checks []}))))
+                   (and exists? (some? expected-mtime)
+                     (not= (long expected-mtime) (long actual-mtime)))
+                   {:reason :stale
+                    :stale  {:reason :stale-mtime
+                             :expected-mtime expected-mtime
+                             :actual-mtime actual-mtime
+                             :actual-size actual-size}
+                    :message (str "v/write refused: " rel
+                               " mtime changed since :expected-mtime")}
 
-(defn patch-envelope-check
-  "Plan a Codex envelope without writing. Returns the same shape as
-   `patch-envelope-safe` plus `:valid?` and `:failures` for callers that
-   need read-only envelope validation."
-  [^String patch-text]
-  (try
-    (let [{:keys [hunks]} (patch/parse-patch patch-text)
-          plans (envelope-plan hunks)]
-      {:valid? true
-       :mode :codex-apply-patch
-       :checks (mapv (fn [{:keys [op path move-to]}]
-                       (cond-> {:op op :path path}
-                         move-to (assoc :move-to move-to)))
-                 plans)
-       :failures []})
-    (catch clojure.lang.ExceptionInfo e
-      {:valid? false
-       :mode :codex-apply-patch
-       :checks []
-       :failures [{:message (ex-message e)
-                   :data (ex-data e)}]})))
+                   (and exists? (some? expected-size)
+                     (not= (long expected-size) (long actual-size)))
+                   {:reason :stale
+                    :stale  {:reason :stale-size
+                             :expected-size expected-size
+                             :actual-size actual-size
+                             :actual-mtime actual-mtime}
+                    :message (str "v/write refused: " rel
+                               " size changed since :expected-size")})]
+        (if fail
+          (let [n (bump-patch-fail-count! file)]
+            {:success? false
+             :failures [(cond-> (assoc fail :edit-index 0 :path rel) n
+                          (assoc :consecutive-failures n))]
+             :checks   [(assoc fail :edit-index 0 :path rel)]
+             :loop-hint (patch-loop-hint n rel)
+             :message  (cond-> (:message fail)
+                         (>= n patch-fail-loop-threshold)
+                         (str "\n" (patch-loop-hint n rel)))})
+          (do
+            (ensure-parent-dirs! file)
+            (spit file content)
+            (clear-patch-fail-count! file)
+            {:success? true
+             :plan {:path rel
+                    :before before
+                    :after content
+                    :op (if exists? :update :add)}
+             :checks [{:edit-index 0 :path rel
+                       :op (if exists? :update :add)
+                       :existed? exists?}]}))))))
 
 (defn- create-dirs-safe [path]
   (let [f (safe-path path)]
@@ -1484,16 +1502,16 @@
       (str/join "\n" (cap-diff-lines diff-lines)))))
 
 (defn- patch-result-file-summary
-  "Build a per-file summary map that lives on `:result` of `v/patch`.
+  "Build a per-file summary map that lives on `:result` of `v/patch` /
+   `v/write`.
 
    Minimal shape — every key is necessary signal, no redundant counters:
 
      {:path     <rel-path>
-      :op       :add | :update | :delete | :update-move
+      :op       :update | :add
       :changed? <bool>            — false on no-op edits
       :diff     <unified-diff>    — the WRITE evidence; omitted only
                                     when both before+after are nil
-      :move-to  <rel-path>        — only when envelope :update-move
       :passes   [<pass-kw> ...]   — ONLY when a non-:exact fuzzy pass
                                     fired; absent = byte-exact match
       :indent-delta <n>}          — ONLY when :relative-indent fuzzy
@@ -1502,36 +1520,40 @@
    Line counts (`:lines-before` / `:lines-after` / `:delta-lines`) were
    intentionally dropped: the `:diff` carries the exact change and the
    scalars duplicated that information at the cost of trailer bloat."
-  [{:keys [op path before after move-to passes indent-delta]}]
+  [{:keys [op path before after passes indent-delta]}]
   (let [diff-text (unified-diff-text before after)]
     (cond-> {:path     path
              :op       (or op :update)
              :changed? (not= before after)}
       diff-text     (assoc :diff diff-text)
-      move-to       (assoc :move-to move-to)
       (seq passes)  (assoc :passes (vec passes))
       indent-delta  (assoc :indent-delta indent-delta))))
 
 (defn- patch-tool
-  "Edit files. Accepts two input shapes:
+  "Surgical file editing. Single input shape: a vector of edit maps (a
+   single map is auto-wrapped). Each edit map carries:
 
-   1. Codex `apply_patch` envelope (string):
-        (v/patch \"*** Begin Patch\\n*** Update File: src/foo.clj\\n@@\\n-old\\n+new\\n*** End Patch\\n\")
-      Supports Add/Update/Delete/Move with `@@` context headers and
-      ` `/`+`/`-` line prefixes. Fuzzy line match (exact -> rstrip ->
-      trim -> Unicode-normalize) mirrors Codex' matcher.
+     {:path P :search S :replace R
+      :after \"context\"?  :before \"context\"?
+      :nth :first|:last|:all|N?
+      :expected-mtime MS?  :expected-size BYTES?}
 
-   2. Exact-replace vec (canonical):
-        (v/patch [{:path :search :replace}])
-      Every `:search` must match exactly once in the current file.
+   Replaces the FIRST occurrence by default. Use `:nth`, `:after` /
+   `:before` anchors, or extend `:search` with context to target a
+   specific occurrence. Multi-line `:search` gets a 5-pass fuzzy
+   fallback (exact -> rstrip -> unicode -> relative-indent -> trim)
+   when zero exact matches land.
 
-   Both modes validate the full plan against the live filesystem
-   before any write — a single failure aborts the entire batch and no
-   file is touched."
+   Companion primitives — each does ONE thing, no overlap with v/patch:
+     v/write    whole-file create or overwrite
+     v/move     rename / move
+     v/delete   delete (or v/delete-if-exists)
+
+   The full plan is validated against the live filesystem before any
+   write — a single failure aborts the entire batch and no file is
+   touched."
   [edits]
-  (let [envelope-mode? (patch/looks-like-patch? edits)
-        result (if envelope-mode? (patch-envelope-safe edits) (patch-safe edits))
-        mode   (if envelope-mode? :codex-apply-patch :exact-replace)]
+  (let [result (patch-safe edits)]
     (if (:success? result)
       (let [plans     (:plans result)
             summaries (mapv patch-result-file-summary plans)]
@@ -1540,7 +1562,7 @@
            :path (or (:path (first plans)) ".")
            :kind :file
            :result summaries
-           :info  {:mode          mode
+           :info  {:mode          :exact-replace
                    :file-count    (count summaries)
                    :changed-count (count (filter :changed? summaries))}}))
       ;; Failure: full structured `:error` map with `:reason`, per-edit
@@ -1554,7 +1576,7 @@
                                :resolved nil
                                :absolute nil
                                :kind :file}
-                      :mode mode
+                      :mode :exact-replace
                       :started-at-ms (now-ms)
                       :finished-at-ms (now-ms)
                       :duration-ms 0}
@@ -1563,7 +1585,55 @@
                       :failures (:failures result)
                       :checks   (:checks result)
                       :loop-hint (:loop-hint result)
-                      :mode     mode}})))))
+                      :mode     :exact-replace}})))))
+
+(defn- write-tool
+  "Whole-file write: create a new file OR overwrite an existing one.
+
+   (v/write {:path P :content S})                       create-or-overwrite
+   (v/write {:path P :content S :overwrite? false})     fail if file exists
+   (v/write {:path P :content S :expected-mtime MS})    staleness guard
+   (v/write {:path P :content S :expected-size  BYTES}) staleness guard
+
+   Returns the same per-file summary shape as `v/patch` (so the model
+   reads `:diff`, `:changed?`, etc. with one mental model). `:op` is
+   `:add` for new files and `:update` for overwrites. Failures land in
+   the structured error envelope as `;; ! data {:reason …}` — no
+   try/catch needed."
+  [args]
+  (let [result (write-safe args)]
+    (if (:success? result)
+      (let [plan (:plan result)
+            summary (patch-result-file-summary plan)]
+        (tool-success
+          {:op :v/write
+           :path (:path plan)
+           :kind :file
+           :result [summary]
+           :info  {:mode :write
+                   :file-count 1
+                   :changed-count (if (:changed? summary) 1 0)
+                   :op (:op plan)}}))
+      (let [first-failure (first (:failures result))]
+        (extension/failure
+          {:result   nil
+           :op       :v/write
+           :metadata {:target {:requested (str (or (:path first-failure)
+                                                 (:path args)
+                                                 "."))
+                               :resolved nil
+                               :absolute nil
+                               :kind :file}
+                      :mode :write
+                      :started-at-ms (now-ms)
+                      :finished-at-ms (now-ms)
+                      :duration-ms 0}
+           :error    {:message  (:message result)
+                      :reason   (:reason first-failure)
+                      :failures (:failures result)
+                      :checks   (:checks result)
+                      :loop-hint (:loop-hint result)
+                      :mode     :write}})))))
 
 (defn- create-dirs-tool
   "Ensure dir exists. Tool result."
@@ -1754,10 +1824,9 @@
       (ir-p "Patched " (count files) " file(s)"
         (when (pos? changed) (str ", " changed " changed")) ".")
       (mapcat
-        (fn [{:keys [path op diff move-to changed? passes indent-delta]}]
+        (fn [{:keys [path op diff changed? passes indent-delta]}]
           (let [header (str (name (or op :update))
                          " " (or path "?")
-                         (when move-to (str " -> " move-to))
                          (when (seq passes)
                            (str " [fuzzy: " (str/join "," (map name passes)) "]"))
                          (when indent-delta
@@ -1833,6 +1902,14 @@
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
 
+(def write-symbol
+  ;; v/write reuses the v/patch channel renderer because its `:result`
+  ;; shape is the same single-file summary (just always 1-file long).
+  (vis/symbol #'write-tool
+    {:symbol 'write
+     :render-fn channel-render-patch
+     :on-error-fn (tool-failure-on-error :v/write :file nil)}))
+
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
@@ -1875,6 +1952,7 @@
    ls-symbol
    rg-symbol
    patch-symbol
+   write-symbol
    create-dirs-symbol
    copy-symbol
    move-symbol
@@ -1933,41 +2011,46 @@
      "    (v/patch [{:path \"src/x.py\" :search \"old\" :replace \"new\" :nth :all}])"
      "    ;; Beats enumerating each line: same atomic plan, fewer entries."
      ""
-     "  (v/patch \"*** Begin Patch\\n... *** End Patch\\n\")  — Codex envelope mode."
-     "  Supports Add/Update/Delete/Move with @@ context headers. Reach for it when:"
-     "    - creating a new file       (*** Add File: path)"
-     "    - deleting                  (*** Delete File: path)"
-     "    - renaming                  (*** Move to: dest after *** Update File: src)"
-     "    - appending past EOF        (*** End of File marker; see example below)"
+     "  (v/write {:path P :content S})  — whole-file primitive (create OR"
+     "  overwrite). Use it when you have the full new content at hand:"
+     "    - creating a brand-new file"
+     "    - replacing the entire body of an existing file"
+     "  Optional keys:"
+     "    :overwrite?       default true; false → :reason :exists if path exists"
+     "    :expected-mtime   staleness guard (pair with :mtime from v/cat)"
+     "    :expected-size    staleness guard (pair with :size  from v/cat)"
+     "  Result shape mirrors v/patch's per-file summary:"
+     "    [{:path :op :changed? :diff}]"
+     "  with :op :add for new files and :update for overwrites."
      ""
-     "  Codex envelope EOF-append (cleanest way to add content past the last line):"
-     "    *** Begin Patch"
-     "    *** Update File: notes.md"
-     "    @@"
-     "     existing last line."
-     "    +Appended new line."
-     "    *** End of File"
-     "    *** End Patch"
+     "  Single mutation primitive per intent — there is exactly ONE tool for"
+     "  each kind of filesystem change:"
+     "    surgical edit (some lines of a file)      -> v/patch :search/:replace"
+     "    whole file create or overwrite            -> v/write"
+     "    rename / move                             -> v/move"
+     "    delete                                    -> v/delete (or v/delete-if-exists)"
+     "    new directory                             -> v/create-dirs"
+     "    file copy                                 -> v/copy"
      ""
-     "  Result shape (every successful patch; the trailer IS the write evidence):"
+     "  Result shape (every successful patch/write; the trailer IS the write evidence):"
      "    [{:path :op :changed? :diff"
      "       :passes        (only when fuzzy fired; absent = byte-exact)"
-     "       :indent-delta  (only when :relative-indent auto-shifted :replace)"
-     "       :move-to       (only for envelope :update-move)} ...]"
+     "       :indent-delta  (only when :relative-indent auto-shifted :replace)} ...]"
      "  The :diff is a unified diff; the `@@ -N,X +M,Y @@` hunk header tells you"
      "  WHICH lines changed. Do NOT v/cat the same path right after a successful"
-     "  v/patch — the :diff already shows exactly what landed and re-reading"
-     "  wastes an iteration."
+     "  v/patch / v/write — the :diff already shows exactly what landed and"
+     "  re-reading wastes an iteration."
      ""
-     "  Failure surface: a failed v/patch raises; the iteration trailer carries"
-     "  the structured ex-data as `;; ! data {:reason … :failures […] :checks […]"
-     "  :loop-hint …}`. Read those keys directly from the trailer — no try/catch"
-     "  needed. `:reason` values: :no-match | :nth-out-of-range | :anchor-not-found"
-     "  | :anchors-exclude-all-matches | :ambiguous-no-anchor | :stale"
-     "  | :file-not-found | :path-escape. `:loop-hint` only surfaces after 3+"
-     "  consecutive failures on the same path (\"stop blind retry, re-read, restate"
-     "  the plan\"). Both modes are atomic — one failed edit aborts every write in"
-     "  the batch."
+     "  Failure surface: a failed v/patch or v/write raises; the iteration"
+     "  trailer carries the structured ex-data as `;; ! data {:reason … :failures"
+     "  […] :checks […] :loop-hint …}`. Read those keys directly from the"
+     "  trailer — no try/catch needed. `:reason` values: :no-match"
+     "  | :nth-out-of-range | :anchor-not-found | :anchors-exclude-all-matches"
+     "  | :ambiguous-no-anchor | :stale | :file-not-found | :path-escape"
+     "  | :exists (v/write only when :overwrite? false). `:loop-hint` only"
+     "  surfaces after 3+ consecutive failures on the same path (\"stop blind"
+     "  retry, re-read, restate the plan\"). v/patch is atomic across all edits"
+     "  in the batch — one failed edit aborts every write."
      ""
      "  Prefer batching related edits in ONE v/patch call."
      ""
