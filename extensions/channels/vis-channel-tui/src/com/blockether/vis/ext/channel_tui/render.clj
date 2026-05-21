@@ -680,12 +680,11 @@
   ;; whole row sits on the `dialog-title-bg` accent stripe to match
   ;; the `draw-dialog-chrome!` title bar style.
   ;;
-  ;; Enter runs the selected suggestion. Tab only completes the
-  ;; command text into the input so the user can edit args before
-  ;; running. Keep this in sync with screen.clj `:send` branch.
+  ;; Enter and Tab both complete the selected suggestion into
+  ;; the input so the user can edit args before running. Keep this
+  ;; in sync with screen.clj slash-suggestion key handling.
   [["↑↓/wheel" "select"]
-   ["Enter" "run"]
-   ["Tab" "complete"]])
+   ["Enter/Tab" "complete"]])
 
 (defn- draw-slash-title-bar!
   "Render the slash-command overlay title row.
@@ -751,7 +750,7 @@
 
    Visual stack from top to bottom:
      (top margin row — terminal-bg gap)
-     [Slash commands  …  Enter run  …  Tab complete]   ; title bar (dialog-title-bg accent)
+     [Slash commands  …  Enter/Tab complete]   ; title bar (dialog-title-bg accent)
      ─────────────────────────────────────────   ; border under title (dialog-border)
      suggestion rows…
 
