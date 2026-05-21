@@ -46,8 +46,7 @@
                   [:v/move :mutation]
                   [:v/delete :mutation]
                   [:v/delete-if-exists :mutation]
-                  [:v/refresh! :mutation]
-                  [:v/reload-extensions! :mutation]]]
+                  [:v/refresh! :mutation]]]
   (vis/register-op! op {:tag tag}))
 
 (defn- lazy-doctor-fn
@@ -57,7 +56,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), env snapshot + project guidance (snapshot/repositories/git/languages/monorepo/main-agent-instructions/reload-extensions!). Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), env snapshot + project guidance (snapshot/repositories/git/languages/monorepo/main-agent-instructions). Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

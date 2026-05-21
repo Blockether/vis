@@ -334,7 +334,6 @@
 (def deregister-extension!               extension/deregister-extension!)
 (def extension-source-markers-of         extension/extension-source-markers-of)
 (def channel-contributions-for           extension/channel-contributions-for)
-(def reload-extensions!                  lp/reload-extensions!)
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
 ;; they fill extension id from the current extension context and reject caller-
