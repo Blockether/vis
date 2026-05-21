@@ -4232,6 +4232,32 @@
    "extensions/providers/vis-provider-standard/src"
    "extensions/providers/vis-provider-zai/src"])
 
+(defn- user-extension-roots
+  []
+  (distinct
+    (keep identity
+      [(some-> (System/getProperty "user.dir")
+         (File. ".vis/vis-extensions")
+         .getPath)
+       (some-> (System/getProperty "user.home")
+         (File. ".vis/vis-extensions")
+         .getPath)])))
+
+(defn- extension-src-dirs-under
+  [root]
+  (let [root-file (File. ^String root)]
+    (if-not (and (.exists root-file) (.isDirectory root-file))
+      []
+      (->> (.listFiles root-file)
+        (filter #(.isDirectory ^File %))
+        (keep (fn [^File extension-dir]
+                (let [deps-file (File. extension-dir "deps.edn")
+                      src-dir   (File. extension-dir "src")]
+                  (when (and (.isFile deps-file) (.isDirectory src-dir))
+                    (.getPath src-dir)))))
+        sort
+        vec))))
+
 (defonce ^:private extension-reloader-state
   (atom nil))
 
@@ -4241,7 +4267,9 @@
     (filter (fn [path]
               (let [f (File. ^String path)]
                 (and (.exists f) (.isDirectory f))))
-      EXTENSION_RELOAD_DIRS)))
+      (distinct
+        (concat EXTENSION_RELOAD_DIRS
+          (mapcat extension-src-dirs-under (user-extension-roots)))))))
 
 (defn- ensure-extension-reloader!
   []
