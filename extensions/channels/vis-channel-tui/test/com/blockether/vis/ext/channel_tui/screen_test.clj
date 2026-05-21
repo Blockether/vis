@@ -296,7 +296,17 @@
         (expect (= [[:channel-status-clear :voice/piper]] @events))
         (expect (= ["Voice response failed: synthesize-file"
                     [:level :error :ttl-ms 5000]]
-                  @notified))))))
+                  @notified)))))
+
+  (it "clears ready status events instead of storing them forever"
+    (let [events (atom [])]
+      (with-redefs [state/dispatch (fn [event] (swap! events conj event))]
+        (handle-channel-event! {:op :status/set
+                                :id :voice/piper
+                                :text "Voice response complete 100%"
+                                :phase :ready
+                                :level :info})
+        (expect (= [[:channel-status-clear :voice/piper]] @events))))))
 
 (defdescribe workspace-entry-click-test
   (it "switches to the clicked workspace and refreshes active session state"

@@ -78,6 +78,30 @@
         (finally
           (.delete out)))))
 
+  (it "speaks prose from Markdown lists and tables without Markdown punctuation"
+    (let [out    (java.io.File/createTempFile "vis-voice-markdown-test" ".wav")
+          spoken (atom nil)]
+      (try
+        (with-redefs [voice/ensure-model! identity
+                      com.blockether.vis.ext.foundation-voice.core/new-instance
+                      (fn [class-name & _args] {:class class-name})
+                      com.blockether.vis.ext.foundation-voice.core/call!
+                      (fn [_target method & args]
+                        (when (= "generate" method)
+                          (reset! spoken (first args)))
+                        (when (= "generate" method) :audio))]
+          (voice/synthesize-file!
+            "- first win\n- second win\n\n| Area | Result |\n|---|---|\n| TUI | fixed |\n"
+            {:out-file out})
+          (expect (str/includes? @spoken "first win"))
+          (expect (str/includes? @spoken "second win"))
+          (expect (str/includes? @spoken "Area: TUI; Result: fixed"))
+          (expect (not (str/includes? @spoken "- first")))
+          (expect (not (str/includes? @spoken "•")))
+          (expect (not (str/includes? @spoken "|"))))
+        (finally
+          (.delete out)))))
+
   (it "redirects child TTS stdout and stderr away from the parent terminal into the Vis log"
     (let [log-file (java.io.File/createTempFile "vis-voice-log-test" ".log")]
       (try
