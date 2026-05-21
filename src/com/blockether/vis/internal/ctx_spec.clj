@@ -31,7 +31,8 @@
      task  → tasks  via `:session.task/depends-on` (DAG of `::entry-key`)
      task  → facts  via `:session.task/facts`   (OWNED — cascade-removed on task-remove!)
      fact  → *      via `:session.fact/connections` (any `::entry-key`)"
-  (:require [clojure.spec.alpha :as s]))
+  (:require [clojure.spec.alpha :as s]
+            [clojure.spec.gen.alpha :as gen]))
 
 ;; =============================================================================
 ;; Scope coordinates
@@ -41,14 +42,28 @@
 (def ^:private scope-iter-re #"^t[1-9][0-9]*/i[1-9][0-9]*$")
 (def ^:private scope-turn-re #"^t[1-9][0-9]*$")
 
+(defn- pos-int-gen
+  "Bounded positive integer generator (1..1000) for scope segment indices."
+  []
+  (gen/large-integer* {:min 1 :max 1000}))
+
 (s/def ::scope-form
-  (s/and string? #(re-matches scope-form-re %)))
+  (s/with-gen
+    (s/and string? #(re-matches scope-form-re %))
+    #(gen/fmap (fn [[t i f]] (str "t" t "/i" i "/f" f))
+       (gen/tuple (pos-int-gen) (pos-int-gen) (pos-int-gen)))))
 
 (s/def ::scope-iter
-  (s/and string? #(re-matches scope-iter-re %)))
+  (s/with-gen
+    (s/and string? #(re-matches scope-iter-re %))
+    #(gen/fmap (fn [[t i]] (str "t" t "/i" i))
+       (gen/tuple (pos-int-gen) (pos-int-gen)))))
 
 (s/def ::scope-turn
-  (s/and string? #(re-matches scope-turn-re %)))
+  (s/with-gen
+    (s/and string? #(re-matches scope-turn-re %))
+    #(gen/fmap (fn [t] (str "t" t))
+       (pos-int-gen))))
 
 ;; =============================================================================
 ;; Entry keys (model-chosen keywords)
