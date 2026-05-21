@@ -570,8 +570,8 @@
    finds the corresponding line in the parent blame."
   [^BlameResult result ^String target ^long hint-i]
   (or (find-line-with result #(.equals target ^String %) hint-i)
-    (let [tn (normalize-ws target)]
-      (find-line-with result #(.equals tn (normalize-ws ^String %)) hint-i))))
+    (let [^String tn (normalize-ws target)]
+      (find-line-with result #(.equals tn ^String (normalize-ws ^String %)) hint-i))))
 
 (def ^:private max-blame-peel-depth
   "Hard cap on how many ignored commits we'll peel through for a single
