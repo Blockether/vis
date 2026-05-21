@@ -82,6 +82,13 @@
     (expect (= {:max_tokens 16384} (bumped-max-tokens-extra-body nil nil)))))
 
 (defdescribe llm-provider-error-context-test
+  ;; Iteration-error-data shape (built by `format-exception`):
+  ;;   {:class "..."      — exception class name
+  ;;    :message "..."    — ex-message
+  ;;    :data {...}       — raw `(ex-data t)` from svar, untouched
+  ;;    :context {...}}   — vis loop ctx snapshot
+  ;; So predicate / context helpers consume `(:data iter-err)` for any
+  ;; svar-side ex-info keys, NOT top-level. Tests reflect that.
   (it "surfaces dedicated copy + hint for :svar.llm/max-tokens-exceeded"
     (let [iter-err {:type :svar.llm/max-tokens-exceeded
                     :data {:reasoning-length 1900
@@ -95,11 +102,11 @@
       (expect (str/includes? (:hint ctx) ":start"))))
 
   (it "keeps the legacy `:llm-provider/output-budget-exhausted` mapping"
-    ;; Anthropic native `:svar.core/stream-incomplete + :reason max_output_tokens`
-    ;; uses the older detection path; the rewritten context fn must not
-    ;; regress that surface.
-    (let [iter-err {:type :svar.core/stream-incomplete
-                    :data {:reason "max_output_tokens"}}
+    ;; Anthropic native `:svar.core/stream-incomplete + :reason
+    ;; max_output_tokens` is detected through `:data` (nested), not
+    ;; top-level — `format-exception` puts raw `ex-data` under `:data`.
+    (let [iter-err {:data {:type :svar.core/stream-incomplete
+                           :reason "max_output_tokens"}}
           ctx (llm-provider-error-context 2 iter-err)]
       (expect (= :llm-provider/output-budget-exhausted (:type ctx))))))
 
@@ -177,7 +184,6 @@
           replays (preserved-thinking-replay-messages compat)]
       (expect (zero? (count compat)))
       (expect (zero? (count replays))))))
-
 
 (def ^:private parse-top-level-forms
   (deref #'lp/parse-top-level-forms))
@@ -479,6 +485,26 @@
       (expect (false? (:vis/structurally-silent? entry)))
       (expect (= src (:expr entry)))
       (expect (str/includes? (:repaired-source parsed) "\"setHotwordsFile\" \"/\""))))
+
+  (it "recovers direct answers torn by nested Markdown code fences"
+    (let [env    (lp/create-environment ::router {:db :memory})
+          answer "# Result\n\n```\nSUBCOMMANDS\n  repro\n```\n\nDone."
+          raw    (str "```clojure\n(done {:answer \"" answer "\"})\n```")
+          torn   "(done {:answer \"# Result\n\n"]
+      (try
+        (with-redefs [svar/ask-code! (fn [_ _]
+                                       {:blocks [{:lang "clojure" :source torn}]
+                                        :raw raw
+                                        :tokens {}})]
+          (let [result (lp/run-iteration env []
+                         {:iteration 0
+                          :resolved-model {:provider :test :name "test"}})]
+            (expect (= answer (get-in result [:final-result :answer :answer])))
+            (expect (nil? (get-in result [:blocks 0 :error])))
+            (expect (str/includes? (get-in result [:llm-executable-blocks 0 :source])
+                      "```\\nSUBCOMMANDS"))))
+        (finally
+          (lp/dispose-environment! env)))))
 
   (it "auto-repairs stray close delimiters before eval"
     (let [parsed ((var-get #'lp/parse-top-level-forms) "(def x 1))")]

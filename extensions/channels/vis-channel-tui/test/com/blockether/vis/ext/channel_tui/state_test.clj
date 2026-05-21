@@ -8,8 +8,12 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe default-settings-test
-  (it "keeps provider reasoning hidden in chat UI"
-    (expect (false? (:show-thinking state/default-settings)))
+  (it "shows provider reasoning in chat UI by default"
+    ;; Hidden-by-default policy was retired (state.clj): GLM `reasoning_content`,
+    ;; Copilot Claude `reasoning_text`, Codex / Anthropic thinking summaries
+    ;; are exactly the signal users want when an agent turn looks like it
+    ;; froze. Toggle stays available in Settings (`Show model thinking`).
+    (expect (true? (:show-thinking state/default-settings)))
     (expect (true? (:show-iterations state/default-settings)))))
 
 (defdescribe detail-toggle-test
@@ -70,6 +74,24 @@
               (input/input->text (:input @state/app-db))))
     (expect (nil? (:input-history-index @state/app-db)))
     (expect (nil? (:input-history-draft @state/app-db)))))
+
+(defdescribe transcript-dump-guard-test
+  (it "detects copied assistant trace dumps"
+    (expect (true?
+              (state/transcript-dump-input?
+                "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n...")))
+    (expect (false?
+              (state/transcript-dump-input?
+                "Dobra, wróć do (def reload-result (v/reload-extensions!))"))))
+
+  (it "filters poisoned transcript dumps out of resumed input history"
+    (let [poison "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n..."]
+      (reset! state/app-db {:render-version 0})
+      (state/dispatch [:init-session {:id "c1"}
+                       [{:role :user :text "safe prompt"}
+                        {:role :assistant :text "ok"}
+                        {:role :user :text poison}]])
+      (expect (= ["safe prompt"] (:input-history @state/app-db))))))
 
 (defdescribe channel-status-test
   (it "clears ttl-bound statuses only when the deadline still matches"
@@ -254,8 +276,18 @@
       (expect (= :medium
                 (get-in @state/app-db [:settings :openai-codex-verbosity])))))
 
-  (it "forces persisted show-thinking off"
+  (it "honours persisted show-thinking choice in either direction"
+    ;; Pre-2026-05 policy force-disabled `:show-thinking` on every load —
+    ;; even when the user had explicitly enabled it. That made the Settings
+    ;; toggle a one-way switch (off-by-default with no usable on) and
+    ;; silently overrode persisted user preference. We now honour both
+    ;; persisted true and persisted false; coerce non-booleans to bool so
+    ;; legacy strings/nils don't escape `:show-thinking`'s contract.
     (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:show-thinking true}})]
+      (state/init!)
+      (expect (true?
+                (get-in @state/app-db [:settings :show-thinking]))))
+    (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:show-thinking false}})]
       (state/init!)
       (expect (false?
                 (get-in @state/app-db [:settings :show-thinking])))))
@@ -486,6 +518,23 @@
                 @events)))))
 
 (defdescribe send-message-test
+  (it "refuses copied assistant transcript dumps before provider dispatch"
+    (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
+          db              {:session {:id "c1"}
+                           :active-workspace-id :main
+                           :messages []
+                           :messages-scroll 0
+                           :input-history []
+                           :settings {:reasoning-level :balanced
+                                      :openai-codex-verbosity :low}
+                           :pastes {}}
+          poison          "The user is reporting a bug\n\n▾ RESULT [iteration 1 · block 1]\n..."]
+      (with-redefs [input/expand-paste-placeholders (fn [text _] text)]
+        (let [{db' :db fx :fx} (send-message-fn db [:send-message poison])]
+          (expect (= db db'))
+          (expect (= [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]
+                    fx))))))
+
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
           db              {:session {:id "c1"}

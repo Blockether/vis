@@ -210,10 +210,20 @@
     ;; is in flight. Idle -> send-message. Busy -> enqueue with visible
     ;; feedback; drained from `:message-received` once :loading? clears.
     (when (and (seq (str/trim text)) (:session db))
-      (if (:loading? db)
-        (state/dispatch [:enqueue-message text])
-        (state/dispatch [:send-message text])))
-    (state/dispatch [:reset-input])))
+      (cond
+        (state/transcript-dump-input? text)
+        (vis/notify! "Input looks like copied assistant transcript; not sent"
+          :level :warn :ttl-ms 4000)
+
+        (:loading? db)
+        (do
+          (state/dispatch [:enqueue-message text])
+          (state/dispatch [:reset-input]))
+
+        :else
+        (do
+          (state/dispatch [:send-message text])
+          (state/dispatch [:reset-input]))))))
 
 (def ^:private copy-success-ttl-ms 1500)
 
