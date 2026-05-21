@@ -140,7 +140,7 @@
    the canonical `com.blockether.vis.ext.` package, so the table column
    stays narrow:
 
-     com.blockether.vis.ext.foundation.core      -> v/foundation.core
+     com.blockether.vis.ext.foundation-core.core      -> v/foundation.core
      com.blockether.vis.ext.provider-github-copilot -> v/provider-github-copilot
 
    Anything that doesn't start with the canonical prefix is returned

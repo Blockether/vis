@@ -1,8 +1,8 @@
 {:subsystems
  [{:name "bridge-extension",
-   :code-globs [".vis/vis-extensions/bridge/src/**/*"],
-   :docs-globs [".vis/vis-extensions/bridge/docs/**/*"],
-   :test-globs [".vis/vis-extensions/bridge/test/**/*"],
+   :code-globs ["extensions/common/vis-foundation-bridge/src/**/*"],
+   :docs-globs ["extensions/common/vis-foundation-bridge/docs/**/*"],
+   :test-globs ["extensions/common/vis-foundation-bridge/test/**/*"],
    :expected-artifacts
    ["change-intent-card" "verification-brief" "completeness-ledger"],
    :expected-evidence ["unit"],
@@ -25,7 +25,7 @@
  [{:id "unit",
    :kind "unit",
    :role "regression",
-   :command "cd .vis/vis-extensions/bridge && clojure -M:test",
+   :command "cd extensions/common/vis-foundation-bridge && clojure -M:test",
    :description "Run unit tests",
    :result-parser {:type "regex-status",
                    :rules

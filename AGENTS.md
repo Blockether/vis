@@ -17,6 +17,21 @@ safety  = headless terminal safe; observable > opaque; user owns data
 - Keep terminal/TUI paths headless-safe. Do not load graphical UI libs or add graphical TUI backends.
 - Root `README.md` stays tiny: one rationale paragraph + link to `docs/src/`. Long docs go through `docs/src/SUMMARY.md`.
 
+## Vocabulary (locked)
+
+Canonical units of the eval loop, used in prompts, code, docs, and persisted scope strings:
+
+- **turn** — one user-message → … → `(done …)` cycle.
+- **iter** — one provider round-trip inside a turn. An iter emits exactly one ` ```clojure ` fence.
+- **form** — one top-level parenthesized expression inside that fence. The unit of eval. An iter has N forms.
+- **fence** — the markdown ` ```clojure ` code block delimiter. Exactly one per iter. "Block" was the legacy name for this and only this.
+
+**Scope** is the canonical coordinate of a form: `t<turn>/i<iter>/f<form>`, e.g. `t3/i2/f1`.
+Every model-created entity that needs provenance carries `:born <scope-string>`.
+Do not invent alternate scope formats. Do not call individual forms "blocks".
+
+Legacy code may still say `block-source`, `block-results`, `:block-count` — these are scheduled to be renamed to `form-*`. New code uses `form-*`.
+
 ## Runtime / nREPL
 
 ```bash
@@ -35,7 +50,7 @@ Useful runtime probes:
 
 ```clojure
 (require '[com.blockether.vis.core :as vis] :reload)
-(require '[com.blockether.vis.ext.foundation.transcript :as tr] :reload)
+(require '[com.blockether.vis.ext.foundation-core.transcript :as tr] :reload)
 
 (tr/transcript db session-id)
 
