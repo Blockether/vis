@@ -7,7 +7,8 @@
    primitives for status, diff and log. Workspace lifecycle mutations
    stay in `com.blockether.vis.internal.workspace` because git worktree
    porcelain is still shell-backed there."
-  (:require [com.blockether.vis.internal.workspace :as workspace])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io ByteArrayOutputStream File]
            [org.eclipse.jgit.api Git Status]
            [org.eclipse.jgit.blame BlameResult]
@@ -195,6 +196,36 @@
       (catch Throwable _
         {:file path :+ 0 :- 0}))))
 
+(def ^:private default-patch-byte-cap
+  "Per-entry cap for unified-diff text. Huge binary or generated diffs
+   would otherwise blow LLM context; we truncate and append a marker so
+   the model knows there is more."
+  65536)
+
+(defn- entry-patch
+  "Format `entry` as unified-diff text using a fresh DiffFormatter that
+   inherits `template`'s repository and rename detection. JGit's
+   DiffFormatter has no setOutputStream so we build one per entry; that
+   keeps the shared formatter used by the numstat path untouched."
+  [^Repository repo ^DiffEntry entry ^long byte-cap]
+  (let [out (ByteArrayOutputStream.)
+        ^DiffFormatter local (doto (DiffFormatter. out)
+                               (.setRepository repo)
+                               (.setDiffComparator RawTextComparator/DEFAULT)
+                               (.setDetectRenames true))]
+    (try
+      (.format local entry)
+      (.flush local)
+      (let [bytes (.toByteArray out)
+            n     (alength bytes)]
+        (if (<= n byte-cap)
+          (String. bytes "UTF-8")
+          (str (String. bytes 0 (int byte-cap) "UTF-8")
+            "\n[…patch truncated, " (- n byte-cap) " more bytes]")))
+      (catch Throwable _ "")
+      (finally
+        (try (.close local) (catch Throwable _ nil))))))
+
 (defn- untracked-paths
   [^Repository repo]
   (try
@@ -212,9 +243,13 @@
    `old-rev` is required. `new-rev` nil means compare `old-rev` to the
    working tree, matching `git diff <old-rev>` for tracked files.
    When `path` is non-nil, restrict the diff to entries whose old- or
-   new-path matches that repo-relative path (prefix match for dirs)."
-  ([^File start old-rev new-rev] (diff-numstat start old-rev new-rev nil))
-  ([^File start old-rev new-rev path]
+   new-path matches that repo-relative path (prefix match for dirs).
+
+   When `with-patch?` is true, each entry carries a `:patch` field with
+   the per-file unified-diff text (truncated at `default-patch-byte-cap`)."
+  ([^File start old-rev new-rev] (diff-numstat start old-rev new-rev nil false))
+  ([^File start old-rev new-rev path] (diff-numstat start old-rev new-rev path false))
+  ([^File start old-rev new-rev path with-patch?]
    (when-let [^Repository repo (open-repository start)]
      (try
        (with-open [out       (ByteArrayOutputStream.)
@@ -237,7 +272,12 @@
                (->> (.scan formatter ^AbstractTreeIterator old-tree new-tree)
                  (remove #(contains? untracked (diff-path %)))
                  (filter #(path-match? (diff-path %)))
-                 (mapv #(entry-numstat formatter %)))
+                 (mapv (fn [^DiffEntry e]
+                         (let [ns (entry-numstat formatter e)]
+                           (if with-patch?
+                             (assoc ns :patch (entry-patch repo e
+                                                default-patch-byte-cap))
+                             ns)))))
                []))
            []))
        (finally
@@ -311,7 +351,7 @@
              since-d (->date since)
              until-d (->date until)
              auth-q  (when (and author (string? author) (seq author))
-                       (clojure.string/lower-case author))]
+                       (str/lower-case author))]
          (try
            (let [cmd (.. git log (setMaxCount (int (max 1 (* 4 n)))))
                  _   (when (and ref (string? ref))
@@ -380,30 +420,38 @@
 (defn show-commit
   "Detailed view of a single commit. Returns the canonical commit map
    enriched with `:files` (numstat against first parent, or every blob
-   in the commit's tree for root commits) and `:stat` totals."
-  [^File start rev]
-  (when-let [^Repository repo (open-repository start)]
-    (try
-      (when-let [oid (try (.resolve repo ^String rev) (catch Throwable _ nil))]
-        (with-open [walk (RevWalk. repo)]
-          (let [commit  (.parseCommit walk oid)
-                _       (.parseBody walk commit)
-                base    (commit->map commit)
-                parents (.getParents commit)
-                parent  (when (pos? (alength parents))
-                          (some-> ^RevCommit (aget parents 0) .getId .getName))
-                files   (vec (or (if parent
-                                   (diff-numstat start parent
-                                     (.getName (.getId commit)))
-                                   (root-commit-numstat repo commit))
-                               []))
-                +sum    (reduce + 0 (map :+ files))
-                -sum    (reduce + 0 (map :- files))]
-            (assoc base
-              :files files
-              :stat  {:files (count files) :+ +sum :- -sum}))))
-      (finally
-        (try (.close repo) (catch Throwable _ nil))))))
+   in the commit's tree for root commits) and `:stat` totals.
+
+   `opts` map:
+     :with-patch?  when true, every file entry also carries `:patch`
+                   with the per-file unified-diff text (truncated at
+                   `default-patch-byte-cap` bytes)."
+  ([^File start rev] (show-commit start rev nil))
+  ([^File start rev opts]
+   (when-let [^Repository repo (open-repository start)]
+     (try
+       (when-let [oid (try (.resolve repo ^String rev) (catch Throwable _ nil))]
+         (with-open [walk (RevWalk. repo)]
+           (let [commit  (.parseCommit walk oid)
+                 _       (.parseBody walk commit)
+                 base    (commit->map commit)
+                 parents (.getParents commit)
+                 parent  (when (pos? (alength parents))
+                           (some-> ^RevCommit (aget parents 0) .getId .getName))
+                 with-patch? (boolean (:with-patch? opts))
+                 files   (vec (or (if parent
+                                    (diff-numstat start parent
+                                      (.getName (.getId commit))
+                                      nil with-patch?)
+                                    (root-commit-numstat repo commit))
+                                []))
+                 +sum    (reduce + 0 (map :+ files))
+                 -sum    (reduce + 0 (map :- files))]
+             (assoc base
+               :files files
+               :stat  {:files (count files) :+ +sum :- -sum}))))
+       (finally
+         (try (.close repo) (catch Throwable _ nil)))))))
 
 (defn- repo-relative-path
   "Normalise an absolute or repo-relative path against the repo work tree.
@@ -425,52 +473,164 @@
           (let [rel (subs can-path (count work-prefix))]
             (clojure.string/replace rel java.io.File/separator "/")))))))
 
+(defn- run-blame
+  "Run JGit's blame on `rel` (repo-relative path) inside `repo`. When
+   `start-sha` is non-nil, walk back from that commit; otherwise start
+   at HEAD. Returns a fully computed `BlameResult` or nil."
+  ^BlameResult [^Repository repo ^String rel start-sha]
+  (let [^Git git (Git/wrap repo)]
+    (try
+      (let [cmd (.. git blame (setFilePath rel) (setFollowFileRenames true))]
+        (when start-sha
+          (try (.setStartCommit cmd (org.eclipse.jgit.lib.ObjectId/fromString ^String start-sha))
+            (catch Throwable _ nil)))
+        (when-let [^BlameResult r (.call cmd)]
+          (.computeAll r)
+          r))
+      (finally
+        (try (.close git) (catch Throwable _ nil))))))
+
+(defn- first-parent-sha
+  "Sha of the first parent of `sha`, or nil for root commits / unknown."
+  [^Repository repo ^String sha]
+  (try
+    (with-open [walk (RevWalk. repo)]
+      (let [oid     (.resolve repo ^String sha)
+            commit  (.parseCommit walk oid)
+            parents (.getParents commit)]
+        (when (pos? (alength parents))
+          (some-> ^RevCommit (aget parents 0) .getId .getName))))
+    (catch Throwable _ nil)))
+
+(defn- normalize-sha
+  "Resolve `s` (sha prefix, branch, HEAD~N, ...) to its full sha string
+   inside `repo`, or nil if it cannot be resolved."
+  [^Repository repo s]
+  (when (string? s)
+    (try (some-> (.resolve repo ^String s) .getName)
+      (catch Throwable _ nil))))
+
+(defn- blame-line-record
+  "Materialise the canonical per-line blame entry from index `i` of a
+   BlameResult."
+  [^BlameResult result ^long i]
+  (let [^RevCommit commit   (.getSourceCommit result i)
+        ^PersonIdent author (when commit (.getSourceAuthor result i))
+        sha                 (some-> commit .getId .getName)
+        contents            (.getResultContents result)]
+    {:line        (inc i)
+     :sha         sha
+     :short-sha   (when sha (subs sha 0 7))
+     :author      (some-> author .getName)
+     :email       (some-> author .getEmailAddress)
+     :at          (when author (long (.getTime (.getWhen author))))
+     :source-line (inc (.getSourceLine result i))
+     :content     (.getString contents i)}))
+
+(defn- find-nearest-matching-line
+  "Search a BlameResult for a line whose text equals `target`, preferring
+   the line whose index is closest to `hint-i`. Returns the matched
+   index or nil. Used to map a line through a re-blame after peeling
+   past an ignored commit, where line numbers shift but text typically
+   stays close."
+  [^BlameResult result ^String target ^long hint-i]
+  (let [contents (.getResultContents result)
+        n        (.size contents)]
+    (when (pos? n)
+      (loop [delta 0]
+        (let [a (- hint-i delta)
+              b (+ hint-i delta)]
+          (cond
+            (and (>= a 0) (< a n)
+              (= target (.getString contents a)))
+            a
+            (and (not= a b) (>= b 0) (< b n)
+              (= target (.getString contents b)))
+            b
+            (and (< a 0) (>= b n))
+            nil
+            :else
+            (recur (inc delta))))))))
+
+(def ^:private max-blame-peel-depth
+  "Hard cap on how many ignored commits we'll peel through for a single
+   line before giving up and returning the last attribution. Prevents
+   pathological loops on adversarial histories. 16 matches git itself's
+   default for `--ignore-rev` recursion in practice."
+  16)
+
+(defn- peel-blame-line
+  "For line `i` in `result`, if its source sha is in `ignored`, re-blame
+   the file starting at the parent of that sha and map the line forward
+   by content/index proximity. Recurse until the attribution leaves the
+   ignore set, the parent chain ends, or `max-blame-peel-depth` fires.
+   `cache` is an `atom {sha BlameResult}` shared across lines so each
+   peel-target re-blame happens at most once per call.
+
+   `i` is intentionally NOT primitive-hinted: Clojure caps primitive-
+   hinted fns at 4 args and this one takes 6."
+  [^Repository repo ^String rel ^BlameResult result i ignored cache]
+  (loop [^BlameResult res result i (long i) depth 0]
+    (let [^RevCommit commit (.getSourceCommit res i)
+          sha (some-> commit .getId .getName)]
+      (if (or (>= depth max-blame-peel-depth)
+            (nil? sha)
+            (not (contains? ignored sha)))
+        (blame-line-record res i)
+        (let [parent (first-parent-sha repo sha)]
+          (if (nil? parent)
+            (blame-line-record res i)
+            (let [target-content (.getString (.getResultContents res) i)
+                  alt (or (get @cache parent)
+                        (let [r (run-blame repo rel parent)]
+                          (swap! cache assoc parent r)
+                          r))
+                  alt-i (when alt
+                          (find-nearest-matching-line alt target-content i))]
+              (if (nil? alt-i)
+                (blame-line-record res i)
+                (recur alt (long alt-i) (inc depth))))))))))
+
 (defn blame-file
   "Per-line blame for `path` inside the repo containing `start`. Returns
-   `{:path :head :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}`
-   or nil when `path` is outside the repo / not tracked.
+   `{:path :head :total :ignored-revs :lines [...]}` or nil when `path` is
+   outside the repo / not tracked.
 
    `opts` map:
-     :from L  1-based start line (inclusive)
-     :to   L  1-based end line   (inclusive)"
+     :from L         1-based start line (inclusive)
+     :to   L         1-based end line   (inclusive)
+     :ignore-revs S  vec of sha strings (full or prefix) to peel past.
+                     Lines attributed to an ignored commit are re-blamed
+                     from that commit's parent, recursively. Capped at
+                     `max-blame-peel-depth` to keep adversarial inputs
+                     safe."
   ([^File start path] (blame-file start path nil))
   ([^File start path opts]
    (when-let [^Repository repo (open-repository start)]
      (try
        (when-let [rel (repo-relative-path repo path)]
-         (let [^Git git (Git/wrap repo)
-               {:keys [from to]} (or opts {})]
-           (try
-             (let [^BlameResult result (.. git blame (setFilePath rel) call)]
-               (when result
-                 (.computeAll result)
-                 (let [contents   (.getResultContents result)
-                       total      (.size contents)
-                       lo         (max 0 (dec (long (or from 1))))
-                       hi-default (dec total)
-                       hi         (min hi-default
-                                    (dec (long (or to total))))
-                       lines      (when (<= lo hi)
-                                    (mapv
-                                      (fn [i]
-                                        (let [^RevCommit commit  (.getSourceCommit result i)
-                                              ^PersonIdent author (when commit (.getSourceAuthor result i))
-                                              sha     (some-> commit .getId .getName)]
-                                          {:line       (inc i)
-                                           :sha        sha
-                                           :short-sha  (when sha (subs sha 0 7))
-                                           :author     (some-> author .getName)
-                                           :email      (some-> author .getEmailAddress)
-                                           :at         (when author (long (.getTime (.getWhen author))))
-                                           :source-line (inc (.getSourceLine result i))
-                                           :content    (.getString contents i)}))
-                                      (range lo (inc hi))))]
-                   {:path  rel
-                    :head  (head-id repo)
-                    :total total
-                    :lines (or lines [])})))
-             (finally
-               (try (.close git) (catch Throwable _ nil))))))
+         (let [{:keys [from to ignore-revs]} (or opts {})
+               ignored (when (seq ignore-revs)
+                         (->> ignore-revs
+                           (keep #(normalize-sha repo %))
+                           set))]
+           (when-let [^BlameResult base (run-blame repo rel nil)]
+             (let [contents (.getResultContents base)
+                   total    (.size contents)
+                   lo       (max 0 (dec (long (or from 1))))
+                   hi       (min (dec total) (dec (long (or to total))))
+                   cache    (atom {})
+                   lines    (when (<= lo hi)
+                              (if ignored
+                                (mapv #(peel-blame-line repo rel base % ignored cache)
+                                  (range lo (inc hi)))
+                                (mapv #(blame-line-record base %)
+                                  (range lo (inc hi)))))]
+               {:path         rel
+                :head         (head-id repo)
+                :total        total
+                :ignored-revs (if ignored (vec (sort ignored)) [])
+                :lines        (or lines [])}))))
        (finally
          (try (.close repo) (catch Throwable _ nil)))))))
 
