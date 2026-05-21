@@ -673,17 +673,44 @@ Deterministic `;;` annotations next to entries:
 
 ## Implementation surface (high-level)
 
-### Engine changes
+### Engine changes (probed against live source)
 
-1. **CTX storage** — `session_state.ctx TEXT` blob.
-2. **Memo verbs** — `spec-set!`, `spec-remove!`, `task-set!`, `task-remove!`, `fact-set!`, `fact-remove!` bound in SCI hidden-sym set. Engine validates shape via specs, stamps `:born`, auto-journals on task `:status` change, auto-stamps `:done-born` on spec terminal, cascade-removes on `task-remove!`, soft-warns on missing required fields and dangling refs.
-3. **Introspection** — `introspect-iter` / `introspect-form` / `introspect-turn` / `introspect-iter-heads` / `introspect-turn-list` SELECT against `session_turn` / `session_turn_iteration`. `introspect-symbol-*` query SCI introspection.
-4. **`(done …)`** — handle `:trailer-drop` and `:trailer-summarize` keys with range semantics.
-5. **Trailer comparator** — parse `t<N>/i<N>` segments for sort. Composite key handles pin vs summary.
-6. **Per-iter loop** — each iter rebuilds user message with fresh CTX render. No assistant/tool messages persist between iters.
-7. **CTX render** — bare EDN under `;; ctx` marker + deterministic `;;` provenance hints.
-8. **`:session/workspace :stats`** — derive from `git diff --numstat` against trunk.
-9. **`:session/symbols`** — filter `definition_state.expression IS NOT NULL`; merge `(meta #'sym)` with engine-side `:born` index.
+#### Schema migrations (edit V1 inline per AGENTS.md)
+
+1. **`session_state.ctx TEXT NOT NULL DEFAULT '{}'`** — currently MISSING. New column for the CTX blob.
+2. **`session_turn_iteration.form_results TEXT`** — currently MISSING. JSON vec of per-form envelopes `[{:source :result :error} …]`. Required because the runtime captures per-form results that today have nowhere to persist. Without this, `(introspect-form "tN/iN/fK")` cannot return `:result` / `:error`.
+
+#### Memo verbs
+
+3. **`spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `fact-set!` / `fact-remove!`** bound in SCI hidden-sym set. Validate shape via `ctx_spec.clj` specs (`s/explain-data`), stamp `:born`, auto-journal on task `:status` change, auto-stamp `:done-born` on spec terminal, cascade-remove on `task-remove!`, soft-warn on missing required fields and dangling refs.
+
+#### Introspection
+
+4. **`introspect-iter` / `introspect-form` / `introspect-turn` / `introspect-iter-heads` / `introspect-turn-list`** SELECT against `session_turn_soul` (position + user_request) + `session_turn_state` (status + answer_markdown) + `session_turn_iteration` (position + code + form_results JSON). Composite-key lookup is by (turn position, iter position, form position).
+5. **`introspect-symbol-doc` / `introspect-symbol-source` / `introspect-symbol-meta` / `introspect-symbol-apropos`** query SCI introspection via `(meta #'sym)` and `(ns-publics 'sandbox)`. Probed in Q9 — meta survives `restore-sandbox!` for any def/defn.
+
+#### Trailer
+
+6. **`(done …)`** handles `:trailer-drop` (`"tN/iN"` for pin, `"tA/iX->tB/iY"` for summary) and `:trailer-summarize` (vec of `{:scope-start :scope-end :summary}`) with range semantics + partial-overlap validation.
+7. **Trailer comparator** parses `t<N>/i<N>` segments for sort. Composite key handles pin (`:scope`) vs summary (`:scope-start`).
+
+#### Wire loop
+
+8. **Per-iter loop** rebuilds user message with fresh CTX render. No assistant/tool messages persist between iters.
+9. **CTX render** emits bare EDN under `;; ctx` marker + deterministic `;;` provenance hints.
+
+#### Workspace
+
+10. **`:session/workspace`** rendered from `(workspace/for-session db-info session-id)` + `(workspace/status db-info ws-id)` + `(workspace/trunk-info)`. Engine merges Vis-native keys into the flat `:session/workspace` shape:
+    - `:branch`  ← `(:git/branch (ws/status …))`
+    - `:trunk`   ← `(:branch (ws/trunk-info))`
+    - `:head`    ← `(:git/head (ws/status …))`
+    - `:dirty?`  ← `(:git/dirty? (ws/status …))`
+    - `:stats`   ← derived via `git diff --numstat <trunk> HEAD` (per-file added/removed)
+
+#### Symbols
+
+11. **`:session/symbols`** filters `definition_state.expression IS NOT NULL`; merges `(meta #'sym)` with an engine-maintained `{sym → :born-scope}` index per session. `:arglists` and `:doc` from var meta; `:born` from the index.
 
 ### Foundation extension changes
 
