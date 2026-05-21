@@ -75,6 +75,22 @@
     (it "nil is zero"   (expect (= 0 (p/display-width nil))))
     (it "empty is zero" (expect (= 0 (p/display-width ""))))))
 
+(defdescribe put-str-sanitizer-test
+  (it "strips inline style sentinels before raw Lanterna putString"
+    (let [captured (atom [])
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (putString
+                       ([_col _row text]
+                        (swap! captured conj text)
+                        this)))
+          line     (str "Searched — 0 hit(s), truncated-by "
+                     p/INLINE_CODE_ON "end-of-results" p/INLINE_CODE_OFF ".")]
+      (p/put-str! graphics 0 0 line)
+      (let [painted (apply str @captured)]
+        (expect (= "Searched — 0 hit(s), truncated-by end-of-results." painted))
+        (expect (not (clojure.string/includes? painted p/INLINE_CODE_ON)))
+        (expect (not (clojure.string/includes? painted p/INLINE_CODE_OFF)))))))
+
 (defdescribe col-prefix-end-test
   (describe "col-prefix-end returns the longest grapheme-safe prefix length"
     (it "ASCII matches max-cols verbatim"
