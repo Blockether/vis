@@ -78,6 +78,25 @@
           (expect (= [] (:porcelain data))))
         (finally (cleanup root)))))
 
+  (it "includes per-file unified-diff text when :patch? is true"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "v1") .call)
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 2)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "v2") .call))
+        (let [data (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                              {:from "HEAD~1" :to "HEAD" :patch? true}))
+              entry (first (:files data))]
+          (expect (string? (:patch entry)))
+          (expect (clojure.string/includes? (:patch entry) "-(def x 1)"))
+          (expect (clojure.string/includes? (:patch entry) "+(def x 2)")))
+        (finally (cleanup root)))))
+
   (it "applies :path filter to limit a diff to one subtree"
     (let [root (make-tmp-dir)]
       (try
@@ -257,6 +276,25 @@
           (expect (= 1 (get-in data [:stat :files]))))
         (finally (cleanup root)))))
 
+  (it "includes per-file unified-diff text when :patch? is true"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "add x") .call))
+        (let [no-patch (:result (git/git-show-fn {:workspace/root (.getCanonicalPath root)}
+                                  {:rev "HEAD"}))
+              with-patch (:result (git/git-show-fn {:workspace/root (.getCanonicalPath root)}
+                                    {:rev "HEAD" :patch? true}))
+              entry (first (:files with-patch))]
+          (expect (not (contains? (first (:files no-patch)) :patch)))
+          (expect (string? (:patch entry)))
+          (expect (clojure.string/includes? (:patch entry) "+++ b/src/a.clj"))
+          (expect (clojure.string/includes? (:patch entry) "+(def x 1)")))
+        (finally (cleanup root)))))
+
   (it "rejects empty or bogus rev with a clean ex-info"
     (try
       (git/git-show-fn {:workspace/root "/no/repo"} "")
@@ -304,6 +342,48 @@
           (expect (= [5 6 7 8] (mapv :line (:lines data))))
           (expect (= ["5" "6" "7" "8"] (mapv :content (:lines data)))))
         (finally (cleanup root)))))
+
+  (it "peels lines past :ignore-revs to surface the underlying author"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        ;; Layer 1: real authorship commit. The repo's `init-repo!` already
+        ;; committed src/a.clj as \"(ns a)\n\" with Vis Test as author. We
+        ;; need a second author for the \"noisy\" layer so the test can
+        ;; tell the two apart after peeling.
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (let [config (.. g getRepository getConfig)]
+            (.setString config "user" nil "name" "Noisy Bot")
+            (.setString config "user" nil "email" "noise@example.invalid")
+            (.save config))
+          ;; Layer 2: whitespace-only refactor (noisy).
+          (spit-rel root "src/a.clj" "(ns a)\n\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "reformat") .call))
+        (let [noisy-sha (-> (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 1)
+                          :result :commits first :sha)
+              ;; Without ignore: line 1 attributed to noisy refactor commit.
+              before (:result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
+                                {:path "src/a.clj"}))
+              ;; With ignore: peel past noisy commit, surface Vis Test.
+              after  (:result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
+                                {:path "src/a.clj" :ignore-revs [noisy-sha]}))
+              before-line (first (:lines before))
+              after-line  (first (:lines after))]
+          (expect (= "Noisy Bot" (:author before-line)))
+          (expect (= [noisy-sha] (:ignored-revs after)))
+          (expect (= "Vis Test" (:author after-line)))
+          (expect (not= (:sha before-line) (:sha after-line))))
+        (finally (cleanup root)))))
+
+  (it "rejects :ignore-revs that is not a sequence"
+    (try
+      (git/git-blame-fn {:workspace/root "/repo"}
+        {:path "src/foo.clj" :ignore-revs "abc"})
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
+        (expect (clojure.string/includes? (ex-message e) ":ignore-revs")))))
 
   (it "rejects bad arg shapes with foundation-git/invalid-opts"
     (try

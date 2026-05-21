@@ -815,6 +815,32 @@
 ;; and the original anchors so the surfaced ex-message stays actionable.
 ;; -----------------------------------------------------------------------------
 
+(defn- resolve-edit-target
+  "Resolve the edit's path to an existing file. Returns either
+   `{:file F :rel R}` or `{:error {:reason RK :message MSG}}` so the
+   caller folds path-level problems (escape, missing file, target is a
+   dir) into the same structured failure stream as match-level
+   problems. Keeps `patch-analysis` exception-free."
+  [path]
+  (try
+    (let [file (safe-path path)]
+      (cond
+        (not (.exists file))   {:error {:reason :file-not-found
+                                        :path (.getPath file)
+                                        :message (str "File not found: " (.getPath file))}}
+        (.isDirectory file)    {:error {:reason :path-is-dir
+                                        :path (.getPath file)
+                                        :message (str "Path is a directory, not a file: "
+                                                   (.getPath file))}}
+        :else                  {:file file :rel (rel-path file)}))
+    (catch clojure.lang.ExceptionInfo e
+      (let [{:keys [type] :as data} (ex-data e)]
+        {:error {:reason (case type
+                           :ext.foundation.editing/path-escape :path-escape
+                           :path-error)
+                 :message (ex-message e)
+                 :data data}}))))
+
 (defn- patch-analysis
   [edits]
   (let [edits (coerce-patch-edits edits)]
@@ -824,97 +850,106 @@
            checks []
            failures []]
       (if-let [{:keys [path search replace after before nth] :as edit} (first remaining)]
-        (let [file    (ensure-existing-file! (safe-path path))
-              rel     (rel-path file)
-              before-text (or (get-in states [path :before]) (slurp file))
-              current (or (get-in states [path :after]) before-text)
-              search  (str search)
-              replace (str replace)
-              stale   (when-not (contains? states path)
-                        (staleness-check file edit))
-              all-positions (find-substring-positions current search)
-              anchor-result (filter-positions-by-anchors all-positions (count search) current
-                              {:after after :before before})
-              filtered-positions (:positions anchor-result)
-              selected (when (nil? (:anchor-error anchor-result))
-                         (select-by-nth filtered-positions nth))
-              base-check {:edit-index idx
-                          :path rel
-                          :matches (count all-positions)
-                          :filtered-matches (count (or filtered-positions []))
-                          :search-preview (search-preview search)
-                          :anchors (cond-> {}
-                                     after  (assoc :after (search-preview (str after)))
-                                     before (assoc :before (search-preview (str before)))
-                                     nth    (assoc :nth nth))}]
-          (cond
-            stale
-            (let [check (assoc base-check :reason :stale :stale stale)]
+        (let [resolved (resolve-edit-target path)]
+          (if-let [path-error (:error resolved)]
+            (let [check {:edit-index idx
+                         :path path
+                         :reason (:reason path-error)
+                         :path-error path-error
+                         :search-preview (search-preview (str search))}]
               (recur (inc idx) (next remaining) states
                 (conj checks check) (conj failures check)))
+            (let [file    (:file resolved)
+                  rel     (:rel resolved)
+                  before-text (or (get-in states [path :before]) (slurp file))
+                  current (or (get-in states [path :after]) before-text)
+                  search  (str search)
+                  replace (str replace)
+                  stale   (when-not (contains? states path)
+                            (staleness-check file edit))
+                  all-positions (find-substring-positions current search)
+                  anchor-result (filter-positions-by-anchors all-positions (count search) current
+                                  {:after after :before before})
+                  filtered-positions (:positions anchor-result)
+                  selected (when (nil? (:anchor-error anchor-result))
+                             (select-by-nth filtered-positions nth))
+                  base-check {:edit-index idx
+                              :path rel
+                              :matches (count all-positions)
+                              :filtered-matches (count (or filtered-positions []))
+                              :search-preview (search-preview search)
+                              :anchors (cond-> {}
+                                         after  (assoc :after (search-preview (str after)))
+                                         before (assoc :before (search-preview (str before)))
+                                         nth    (assoc :nth nth))}]
+              (cond
+                stale
+                (let [check (assoc base-check :reason :stale :stale stale)]
+                  (recur (inc idx) (next remaining) states
+                    (conj checks check) (conj failures check)))
 
-            (:anchor-error anchor-result)
-            (let [check (assoc base-check :reason :anchor-not-found
-                          :anchor-error (:anchor-error anchor-result))]
-              (recur (inc idx) (next remaining) states
-                (conj checks check) (conj failures check)))
+                (:anchor-error anchor-result)
+                (let [check (assoc base-check :reason :anchor-not-found
+                              :anchor-error (:anchor-error anchor-result))]
+                  (recur (inc idx) (next remaining) states
+                    (conj checks check) (conj failures check)))
 
-            (seq selected)
-            (let [new-content (apply-substring-replacements current selected (count search) replace)
-                  check       (assoc base-check :applied-positions (vec selected) :pass :exact)]
-              (recur (inc idx) (next remaining)
-                (assoc states path {:file file
-                                    :path rel
-                                    :before before-text
-                                    :after new-content})
-                (conj checks check) failures))
+                (seq selected)
+                (let [new-content (apply-substring-replacements current selected (count search) replace)
+                      check       (assoc base-check :applied-positions (vec selected) :pass :exact)]
+                  (recur (inc idx) (next remaining)
+                    (assoc states path {:file file
+                                        :path rel
+                                        :before before-text
+                                        :after new-content})
+                    (conj checks check) failures))
 
-            ;; Zero or out-of-range -> try fuzzy if multi-line
-            :else
-            (if-let [fuzzy (and (zero? (count all-positions))
-                             (not after) (not before) (nil? nth)
-                             (fuzzy-line-match current search))]
-              (let [{:keys [char-start char-end pass indent-delta]} fuzzy
-                    rewritten (adjust-replace-for-indent replace indent-delta)
-                    ;; Line-based fuzzy matches whole lines, so the
-                    ;; substring being replaced may include the trailing
-                    ;; `\n` of the last matched line. If the model's
-                    ;; `:replace` did not include a trailing newline
-                    ;; (typical when authoring a SEARCH block by hand),
-                    ;; preserve the line boundary by reapplying it.
-                    matched-ends-with-nl? (and (> char-end 0)
-                                            (= \newline (.charAt current (dec char-end))))
-                    replace-ends-with-nl? (str/ends-with? rewritten "\n")
-                    rewritten (if (and matched-ends-with-nl?
-                                    (not replace-ends-with-nl?))
-                                (str rewritten "\n")
-                                rewritten)
-                    new-content (str (subs current 0 char-start)
-                                  rewritten
-                                  (subs current char-end))
-                    check (assoc base-check :pass pass
-                            :indent-delta indent-delta
-                            :applied-positions [char-start])]
-                (recur (inc idx) (next remaining)
-                  (assoc states path {:file file
-                                      :path rel
-                                      :before before-text
-                                      :after new-content})
-                  (conj checks check) failures))
-              (let [reason (cond
-                             (and nth (pos? (count filtered-positions))) :nth-out-of-range
-                             (and (or after before)
-                               (pos? (count all-positions))
-                               (zero? (count filtered-positions)))
-                             :anchors-exclude-all-matches
-                             (zero? (count all-positions)) :no-match
-                             :else :ambiguous-no-anchor)
-                    nearest (when (zero? (count all-positions))
-                              (nearest-match-context current search))
-                    check (cond-> (assoc base-check :reason reason)
-                            nearest (assoc :nearest nearest))]
-                (recur (inc idx) (next remaining) states
-                  (conj checks check) (conj failures check))))))
+                ;; Zero or out-of-range -> try fuzzy if multi-line
+                :else
+                (if-let [fuzzy (and (zero? (count all-positions))
+                                 (not after) (not before) (nil? nth)
+                                 (fuzzy-line-match current search))]
+                  (let [{:keys [char-start char-end pass indent-delta]} fuzzy
+                        rewritten (adjust-replace-for-indent replace indent-delta)
+                        ;; Line-based fuzzy matches whole lines, so the
+                        ;; substring being replaced may include the trailing
+                        ;; `\n` of the last matched line. If the model's
+                        ;; `:replace` did not include a trailing newline
+                        ;; (typical when authoring a SEARCH block by hand),
+                        ;; preserve the line boundary by reapplying it.
+                        matched-ends-with-nl? (and (> char-end 0)
+                                                (= \newline (.charAt current (dec char-end))))
+                        replace-ends-with-nl? (str/ends-with? rewritten "\n")
+                        rewritten (if (and matched-ends-with-nl?
+                                        (not replace-ends-with-nl?))
+                                    (str rewritten "\n")
+                                    rewritten)
+                        new-content (str (subs current 0 char-start)
+                                      rewritten
+                                      (subs current char-end))
+                        check (assoc base-check :pass pass
+                                :indent-delta indent-delta
+                                :applied-positions [char-start])]
+                    (recur (inc idx) (next remaining)
+                      (assoc states path {:file file
+                                          :path rel
+                                          :before before-text
+                                          :after new-content})
+                      (conj checks check) failures))
+                  (let [reason (cond
+                                 (and nth (pos? (count filtered-positions))) :nth-out-of-range
+                                 (and (or after before)
+                                   (pos? (count all-positions))
+                                   (zero? (count filtered-positions)))
+                                 :anchors-exclude-all-matches
+                                 (zero? (count all-positions)) :no-match
+                                 :else :ambiguous-no-anchor)
+                        nearest (when (zero? (count all-positions))
+                                  (nearest-match-context current search))
+                        check (cond-> (assoc base-check :reason reason)
+                                nearest (assoc :nearest nearest))]
+                    (recur (inc idx) (next remaining) states
+                      (conj checks check) (conj failures check))))))))
         {:plans (vals states)
          :checks checks
          :failures failures
@@ -951,11 +986,33 @@
     (str "v/patch " (count failures) " edits failed; first: "
       (explain-failure (first failures)))))
 
-(defn- patch-plan
+(defn patch-safe
+  "Apply exact-replace v/patch edits to the filesystem.
+
+   Returns a structured map; **never throws on normal failure paths**
+   (no-match, anchor-not-found, stale mtime, file not found, path
+   escape, ambiguous selection). Reserves exceptions for genuinely
+   unexpected errors (`SCI` interrupt, disk full, etc.).
+
+   Success shape:
+     {:success? true
+      :plans    [{:path :before :after} ...]
+      :checks   [<per-edit-check> ...]}
+
+   Failure shape:
+     {:success? false
+      :failures [<failure-check-with-:consecutive-failures>]
+      :checks   [<every-edit-check>]
+      :loop-hint <string-or-nil>
+      :message  <human-readable summary>}
+
+   `patch-tool` projects the result into the standard tool-success /
+   tool-failure envelope so the model sees `:reason`, `:loop-hint`,
+   and per-edit diagnostics in `:error` without `try/catch`."
   [edits]
   (let [{:keys [plans failures checks]} (patch-analysis edits)]
-    (when (seq failures)
-      ;; Bump per-path counter for every distinct file that failed.
+    (if (seq failures)
+      ;; Failure path: bump per-path loop counter, attach hint, return.
       (let [paths (->> failures (map :path) distinct)
             counts (into {}
                      (for [p paths]
@@ -965,27 +1022,24 @@
                                         (let [n (get counts (:path f))]
                                           (cond-> f n (assoc :consecutive-failures n))))
                                   failures)
-            hint (some (fn [[p n]]
-                         (patch-loop-hint n p))
-                   counts)
-            base-msg (patch-failure-message failures-with-count)]
-        (throw (ex-info (cond-> base-msg hint (str "\n" hint))
-                 {:type :ext.foundation.editing/patch-search-not-unique
-                  :failures failures-with-count
-                  :checks checks
-                  :loop-hint hint}))))
-    plans))
-
-(defn patch-safe
-  [edits]
-  (let [plans (vec (patch-plan edits))]
-    (doseq [{:keys [file after]} plans]
-      (spit file after))
-    (doseq [{:keys [file]} plans]
-      (clear-patch-fail-count! file))
-    (mapv (fn [{:keys [path before after]}]
-            {:path path :before before :after after})
-      plans)))
+            hint (some (fn [[p n]] (patch-loop-hint n p)) counts)]
+        {:success? false
+         :failures failures-with-count
+         :checks   checks
+         :loop-hint hint
+         :message  (cond-> (patch-failure-message failures-with-count)
+                     hint (str "\n" hint))})
+      ;; Success path: commit writes, clear counters, project plans.
+      (let [plans (vec plans)]
+        (doseq [{:keys [file after]} plans]
+          (spit file after))
+        (doseq [{:keys [file]} plans]
+          (clear-patch-fail-count! file))
+        {:success? true
+         :plans (mapv (fn [{:keys [path before after]}]
+                        {:path path :before before :after after})
+                  plans)
+         :checks checks}))))
 
 ;; =============================================================================
 ;; Codex `apply_patch` envelope mode
@@ -1068,20 +1122,40 @@
                        (fs/delete file))))))
 
 (defn patch-envelope-safe
-  "Apply a Codex `apply_patch` envelope string. Validates every hunk
-   before any write; throws ex-info on any failure with all writes
-   skipped. Returns a vec of `{:op :path :before :after :move-to?}`."
+  "Apply a Codex `apply_patch` envelope string.
+
+   Same `{:success? :plans? :failures? :loop-hint? :message?}`
+   structured-return contract as `patch-safe`. Parse errors and
+   per-hunk planning errors land in `:failures` with `:reason`
+   keys (`:invalid-patch`, `:empty-patch`, `:patch-old-lines-not-found`,
+   etc.) so the tool-failure envelope can surface them verbatim to the
+   model without ex-data spelunking."
   [^String patch-text]
-  (let [{:keys [hunks]} (patch/parse-patch patch-text)
-        _ (when (empty? hunks)
-            (throw (ex-info "v/patch envelope contained no hunks"
-                     {:type :ext.foundation.editing/empty-patch})))
-        plans (envelope-plan hunks)]
-    (envelope-commit! plans)
-    (mapv (fn [{:keys [op path before after move-to]}]
-            (cond-> {:op op :path path :before before :after after}
-              move-to (assoc :move-to move-to)))
-      plans)))
+  (let [plan-attempt (try
+                       (let [{:keys [hunks]} (patch/parse-patch patch-text)]
+                         (if (empty? hunks)
+                           {:error {:reason :empty-patch
+                                    :message "v/patch envelope contained no hunks"}}
+                           {:plans (envelope-plan hunks)}))
+                       (catch clojure.lang.ExceptionInfo e
+                         (let [{:keys [type] :as data} (ex-data e)]
+                           {:error {:reason (or (some-> type name keyword) :invalid-patch)
+                                    :message (ex-message e)
+                                    :data data}})))]
+    (if-let [err (:error plan-attempt)]
+      {:success? false
+       :failures [(assoc err :edit-index 0)]
+       :checks   []
+       :loop-hint nil
+       :message  (or (:message err) "v/patch envelope failed.")}
+      (let [plans (:plans plan-attempt)]
+        (envelope-commit! plans)
+        {:success? true
+         :plans (mapv (fn [{:keys [op path before after move-to]}]
+                        (cond-> {:op op :path path :before before :after after}
+                          move-to (assoc :move-to move-to)))
+                  plans)
+         :checks []}))))
 
 (defn patch-envelope-check
   "Plan a Codex envelope without writing. Returns the same shape as
@@ -1404,30 +1478,41 @@
    before any write — a single failure aborts the entire batch and no
    file is touched."
   [edits]
-  (cond
-    (patch/looks-like-patch? edits)
-    (let [plans     (patch-envelope-safe edits)
-          summaries (mapv patch-result-file-summary plans)]
-      (tool-success
-        {:op :v/patch
-         :path (or (:path (first plans)) ".")
-         :kind :file
-         :result summaries
-         :info  {:mode          :codex-apply-patch
-                 :file-count    (count summaries)
-                 :changed-count (count (filter :changed? summaries))}}))
-
-    :else
-    (let [plans     (patch-safe edits)
-          summaries (mapv patch-result-file-summary plans)]
-      (tool-success
-        {:op :v/patch
-         :path (or (:path (first plans)) ".")
-         :kind :file
-         :result summaries
-         :info  {:mode          :exact-replace
-                 :file-count    (count summaries)
-                 :changed-count (count (filter :changed? summaries))}}))))
+  (let [envelope-mode? (patch/looks-like-patch? edits)
+        result (if envelope-mode? (patch-envelope-safe edits) (patch-safe edits))
+        mode   (if envelope-mode? :codex-apply-patch :exact-replace)]
+    (if (:success? result)
+      (let [plans     (:plans result)
+            summaries (mapv patch-result-file-summary plans)]
+        (tool-success
+          {:op :v/patch
+           :path (or (:path (first plans)) ".")
+           :kind :file
+           :result summaries
+           :info  {:mode          mode
+                   :file-count    (count summaries)
+                   :changed-count (count (filter :changed? summaries))}}))
+      ;; Failure: full structured `:error` map with `:reason`, per-edit
+      ;; `:failures`, `:checks`, and the optional `:loop-hint` so the
+      ;; model can read them as plain map keys (no try/catch needed).
+      (let [first-failure (first (:failures result))]
+        (extension/failure
+          {:result   nil
+           :op       :v/patch
+           :metadata {:target {:requested (str (or (:path first-failure) "."))
+                               :resolved nil
+                               :absolute nil
+                               :kind :file}
+                      :mode mode
+                      :started-at-ms (now-ms)
+                      :finished-at-ms (now-ms)
+                      :duration-ms 0}
+           :error    {:message  (:message result)
+                      :reason   (:reason first-failure)
+                      :failures (:failures result)
+                      :checks   (:checks result)
+                      :loop-hint (:loop-hint result)
+                      :mode     mode}})))))
 
 (defn- create-dirs-tool
   "Ensure dir exists. Tool result."
