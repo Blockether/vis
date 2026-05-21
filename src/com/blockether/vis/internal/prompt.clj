@@ -102,12 +102,12 @@
         :session/workspace   engine-rendered; current branch, trunk, head, dirty?, per-file diff stats
         :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born <scope>}}
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
-        :session/rules       durable behavior + facts about user; :scope :session | :project
-                             shape: {<kw> {:body :scope :born}}
         :session/decisions   append-only audit (\"why we did X\")
                              shape: {<kw> {:body :tags :born}}
-        :session/facts       observations you recorded; :born OPTIONAL
-                             shape: {<kw> {:body :born?}}
+        :session/facts       everything durable that isn't a decision or spec —
+                             observations, preferences, behavioral directives, project conventions.
+                             shape: {<kw> {:body :scope #{:session :project} :born? :source?}}
+                             :scope optional (default :session); :project mirrors cross-session
         :session/specs       requirements BUILT FROM facts
                              shape: {<kw> {:title :acceptance :facts :status :born :done-born?}}
                              :status ∈ #{:draft :doing :done :cancelled}
@@ -120,10 +120,8 @@
     ENGINE FUNCTIONS (bare symbols; never namespace-qualify)
 
       Memory:
-        (rule-set!     :K {:body :scope})              upsert; :scope :project mirrors cross-session
-        (rule-remove!  :K)
         (decision!     :K {:body :tags})               append-only; no update, no remove
-        (fact-set!     :K {:body})                     upsert
+        (fact-set!     :K {:body :scope?})             upsert; :scope optional (default :session)
         (fact-remove!  :K)
         (spec-set!     :K {:title :acceptance :facts :status})
         (spec-remove!  :K)
@@ -150,7 +148,7 @@
       Control:
         (done                 {:answer :trailer-drop :trailer-summarize})
         (set-session-title!   \"title\")
-        (satisfy-hint!        :hint/id)
+        (satisfy-hint!        :hint/id [<scope> …])     evidence scopes from this turn; soft-warns if missing
 
     ENGINE BEHAVIORS
       • Every *-set! call: new key → engine stamps :born; existing → merges partials.
@@ -181,8 +179,10 @@
     HINTS
       :session/hints contains pending one-shot instructions from the engine.
       Read them before acting; satisfy by performing the requested action and
-      then calling (satisfy-hint! :hint/id) as its own top-level form. Hints
-      are transient — they do not survive the turn that satisfies them.
+      then calling (satisfy-hint! :hint/id [<scope> …]) as its own top-level
+      form. The vec of scopes points at this turn's iters that constitute
+      proof of satisfaction — same evidence pattern as task-set! :evidence.
+      Hints are transient — they do not survive the turn that satisfies them.
 
     DONE
       (done {:answer            \"markdown string\"

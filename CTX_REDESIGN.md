@@ -60,15 +60,12 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 ;; auto-journals on status transitions, soft-warns on missing required
 ;; fields. No generic path-keyed mutator.
 
-;; Rules — durable behavior + facts about user (upsert; merges partials)
-(rule-set!     :K {:body string :scope #{:session :project}})
-(rule-remove!  :K)
-
 ;; Decisions — APPEND-ONLY (no update, no remove)
 (decision!     :K {:body string :tags #{keyword}})
 
-;; Facts — observations
-(fact-set!     :K {:body string})
+;; Facts — everything durable that isn't a decision or spec
+;; Includes observations, preferences, behavioral directives, project conventions.
+(fact-set!     :K {:body string :scope #{:session :project}})   ; :scope optional, default :session
 (fact-remove!  :K)
 
 ;; Specs — requirements built FROM facts
@@ -84,12 +81,14 @@ Legacy code still says `block-source`, `block-results`, `:block-count`, `/block/
 
 ;; Engine behaviors:
 ;;   *-set!         : new key → stamp :born; existing → merge partials
+;;   fact-set!      : :scope optional; defaults to :session; :project mirrors to project_fact
 ;;   task-set!      : :status change → auto-append {:status :scope} to :journal
 ;;                    :status :done without :evidence → soft warn
 ;;                    :status :blocked without :blocked-on → soft warn
 ;;   spec-set!      : :status :done | :cancelled → auto-stamp :done-born
 ;;   decision!      : second call with same key → warn (append-only)
 ;;   *-remove!      : non-existent key → silent no-op
+;;   satisfy-hint!  : engine validates evidence scopes exist this turn; soft warns if missing
 
 ;; ─── SYMBOLS (native SCI; Vis's existing definition_state machinery persists) ───
 (defn foo [x] …)                 ; create / overwrite — auto-persists
@@ -149,14 +148,12 @@ read from the rendered text, write back via the operators below.
 Subtrees:
   :session/workspace  engine-managed; current branch + per-file diff stats
   :session/symbols    engine-managed; live SCI symbols {:arglists :doc :born}
-  :session/rules      durable behavior + facts about the user (model-managed)
-                      shape: {<kw> {:body string :scope #{:session :project} :born scope}}
-                      :scope :project mirrors to project_rule (cross-session)
   :session/decisions  append-only "why we did X" audit (model-managed)
                       shape: {<kw> {:body string :tags #{kw} :born scope}}
-  :session/facts      observations the model wants to remember (model-managed)
-                      shape: {<kw> {:body string :born scope?}}
-                      :born OPTIONAL (engine-derived facts may omit)
+  :session/facts      everything durable that isn't a decision or spec —
+                      observations, preferences, behavioral directives, project conventions.
+                      shape: {<kw> {:body string :scope #{:session :project} :born scope? :source?}}
+                      :scope optional (default :session); :project mirrors to project_fact
   :session/specs      requirements built FROM facts (model-managed)
                       shape: {<kw> {:title :acceptance [string]
                                     :facts [<kw-ref>]
@@ -178,10 +175,8 @@ Subtrees:
 Per-subtree mutation functions (engine validates shape; stamps :born;
 auto-journals on status changes; soft-warns on missing required fields):
 
-  Rules         (rule-set! :K {:body :scope})
-                (rule-remove! :K)
   Decisions     (decision! :K {:body :tags})              ; append-only
-  Facts         (fact-set! :K {:body})
+  Facts         (fact-set! :K {:body :scope?})
                 (fact-remove! :K)
   Specs         (spec-set! :K {:title :acceptance :facts :status})
                 (spec-remove! :K)
@@ -319,20 +314,18 @@ trailer (mutated via `done`).
 
  ;; ── MODEL-MANAGED MEMOS ──
 
- :session/rules        ; durable behavior + facts about the user
-   {<kw> {:body   string
-          :scope  :session | :project        ; :project mirrors to project_rule
-          :born   "tN/iN/fK"
-          :source :project-mirror}}          ; engine-set when loaded across sessions
-
  :session/decisions    ; append-only audit ("why we did X")
    {<kw> {:body  string
           :tags  #{kw}
           :born  "tN/iN/fK"}}
 
- :session/facts        ; observations the model wants to remember
-   {<kw> {:body  string
-          :born  "tN/iN/fK"}}                ; :born OPTIONAL — engine-derived facts may omit
+ :session/facts        ; everything durable the model needs to remember:
+                       ; observations, user preferences, behavioral directives,
+                       ; project conventions. :scope :project mirrors cross-session.
+   {<kw> {:body   string
+          :scope  :session | :project        ; default :session; :project mirrors to project_fact
+          :born   "tN/iN/fK"                 ; OPTIONAL — engine-derived facts may omit
+          :source :project-mirror}}          ; engine-set when loaded from project_fact
 
  :session/specs        ; formal requirements; specs are BASED ON facts
    {<kw> {:title      string
@@ -378,6 +371,7 @@ Engine warns (does NOT refuse) on:
 | `task-set!` with `:status :done` | `:evidence` | required vec of scopes proving completion |
 | `task-set!` with `:status :blocked` | `:blocked-on` | required free-text reason |
 | `spec-set!` | `:facts` | vec may be empty but field should exist |
+| `satisfy-hint!` | evidence vec | required non-empty vec of scopes |
 
 Soft schema — engine warns via `;; ⚠ task :wire-render missing :spec` in next render, never refuses the write.
 
@@ -429,7 +423,7 @@ Engine primitives don't go through `register-op!`. They're bound in the SCI hidd
 | head pattern | tag |
 |---|---|
 | `(defn …)` `(def …)` | `:mutation` |
-| `(rule-set! …)` `(rule-remove! …)` `(decision! …)` `(fact-set! …)` `(fact-remove! …)` | `:mutation` |
+| `(decision! …)` `(fact-set! …)` `(fact-remove! …)` | `:mutation` |
 | `(spec-set! …)` `(spec-remove! …)` `(task-set! …)` `(task-remove! …)` | `:mutation` |
 | `(iter …)` `(form …)` `(turn …)` `(iter-heads …)` `(turn-list)` | `:observation` |
 | `(symbol-doc …)` `(symbol-source …)` `(symbol-meta …)` `(symbol-apropos …)` | `:observation` |
@@ -483,20 +477,18 @@ Nothing else. No per-subtree schema explanation in the render.
    {auth-check {:arglists ([tok]) :doc "literal-compare check; deprecated" :born "t5/i1/f1"}
     emit-event {:arglists ([{:keys [level msg] :as ev}]) :born "t4/i1/f1"}}
 
- :session/rules
-   {:caveman-pl    {:body "respond in PL caveman style" :scope :session :born "t1/i1/f1"}
-    :real-db-tests {:body "tests must hit real SQLite — no mocks" :scope :project
-                    :source :project-mirror}}                                       ;; loaded from project_rule
-
  :session/decisions
    {:no-llm-compaction {:body "Never LLM-compact ctx; deterministic rules only"
                         :tags #{:ctx :design} :born "t3/i2/f1"}}
 
  :session/facts
-   {:auth-literal-compare {:body "src/auth.clj uses `(= tok \"secret\")` for check/1"
-                           :born "t3/i2/f1"}
-    :no-bcrypt-dep        {:body "deps.edn does not include bcrypt yet"
-                           :born "t3/i3/f1"}}
+   {:caveman-pl            {:body "respond in PL caveman style" :scope :session :born "t1/i1/f1"}
+    :real-db-tests         {:body "tests must hit real SQLite — no mocks" :scope :project
+                            :source :project-mirror}                                ;; loaded from project_fact
+    :auth-literal-compare  {:body "src/auth.clj uses `(= tok \"secret\")` for check/1"
+                            :born "t3/i2/f1"}
+    :no-bcrypt-dep         {:body "deps.edn does not include bcrypt yet"
+                            :born "t3/i3/f1"}}
 
  :session/specs
    {:auth-bcrypt {:title      "switch auth/check to bcrypt"
@@ -546,7 +538,7 @@ USER > Lubię żółty.
 ```
 ```clojure
 MODEL >
-(rule-set! :likes-yellow {:body "user likes yellow color" :scope :session})
+(fact-set! :likes-yellow {:body "user likes yellow color" :scope :session})
 => :ok
 
 (done {:answer "Zapamiętane — kolor żółty."})
@@ -574,7 +566,7 @@ USER > Mam psa.
 ```
 ```clojure
 MODEL >
-(rule-set! :has-pet-dog {:body "user has a dog" :scope :session})
+(fact-set! :has-pet-dog {:body "user has a dog" :scope :session})
 => :ok
 
 (done {:answer "Ok, pies zapamiętany."})
@@ -898,7 +890,7 @@ USER > Pamiętaj, w tym projekcie testy muszą uderzać w prawdziwy SQLite, nigd
 ```
 ```clojure
 MODEL >
-(rule-set! :real-db-tests
+(fact-set! :real-db-tests
            {:body "tests must hit real SQLite — no mocks" :scope :project})
 
 (done {:answer "Reguła `:real-db-tests` zapisana jako project-scoped."})
@@ -907,13 +899,13 @@ MODEL >
 
 ### Engine side-effect
 ```sql
-INSERT INTO project_rule (repo_id, rule_key, body, added_at)
+INSERT INTO project_fact (repo_id, fact_key, body, added_at)
 VALUES ('repo:vis', 'real-db-tests', 'tests must hit real SQLite — no mocks', …)
 ```
 
 ### Session B start (next day, same repo)
 ```clojure
-:session/rules
+:session/facts
   {:real-db-tests {:body "tests must hit real SQLite — no mocks"
                    :scope :project
                    :source :project-mirror}}      ;; engine-set; not from this session
@@ -986,7 +978,7 @@ MODEL >
 ### Engine changes
 
 1. **CTX storage** — `session_state.ctx TEXT` (already exists or add).
-2. **Per-subtree functions** — `rule-set!` / `rule-remove!` / `decision!` / `fact-set!` / `fact-remove!` / `spec-set!` / `spec-remove!` / `task-set!` / `task-remove!`. Bind in SCI hidden-sym set; engine validates shape, stamps `:born`, auto-journals on task `:status` changes, soft-warns on missing required fields. Write through to `session_state.ctx` blob.
+2. **Per-subtree functions** — `decision!` / `fact-set!` / `fact-remove!` / `spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `satisfy-hint!`. Bind in SCI hidden-sym set; engine validates shape, stamps `:born`, auto-journals on task `:status` changes, soft-warns on missing required fields. Write through to `session_state.ctx` blob.
 3. **`iter` / `form` / `turn` / `iter-heads` / `turn-list`** — bind in SCI hidden-sym set; SELECT against `session_turn` / `session_turn_iteration`.
 4. **`(done {…})`** — handle `:trailer-drop` and `:trailer-summarize` keys; engine auto-pin loop.
 5. **Trailer comparator** — parse `t<N>/i<N>` segments for sort.
@@ -1006,8 +998,8 @@ MODEL >
 
 ### Persistance changes
 
-1. **`project_rule`** table — `(repo_id, rule_key, body, scope, added_at)`. Mirrored on `rule-set!` with `:scope :project`.
-2. **Session resume** — merge `project_rule` rows into `:session/rules` on session start.
+1. **`project_fact`** table — `(repo_id, fact_key, body, scope, added_at)`. Mirrored on `fact-set!` with `:scope :project`.
+2. **Session resume** — merge `project_fact` rows into `:session/facts` on session start.
 
 ### Prompt changes
 
@@ -1047,9 +1039,8 @@ MODEL >
  :session/workspace  {:branch :trunk :head :dirty? :stats}
  :session/symbols    {sym {:arglists :doc :born}}
 
- :session/rules      {keyword {:body :scope :born}}
  :session/decisions  {keyword {:body :tags :born}}
- :session/facts      {keyword {:body :born?}}
+ :session/facts      {keyword {:body :scope? :born? :source?}}
  :session/specs      {keyword {:title :acceptance :facts :status :born :done-born?}}
  :session/tasks      {keyword {:title :spec :depends-on :status
                                :evidence :journal :born :blocked-on?}}
