@@ -57,6 +57,9 @@
 (def ^:private menu-commands
   (deref #'screen/menu-commands))
 
+(def ^:private runnable-slash-command-for-input
+  (deref #'screen/runnable-slash-command-for-input))
+
 (def ^:private copy-session-id!
   (deref #'screen/copy-session-id!))
 
@@ -261,7 +264,24 @@
       #(let [ids (mapv :id (menu-commands nil))]
          (expect (some #{:model} ids))
          (expect (some #{:providers} ids))
-         (expect (not-any? #{:model} (mapv :id dlg/palette-commands)))))))
+         (expect (not-any? #{:model} (mapv :id dlg/palette-commands))))))
+
+  (it "resolves Enter to the selected slash suggestion, then exact command fallback"
+    (let [commands [{:id :alpha :label "Alpha" :run-fn identity}
+                    {:id :beta :label "Beta" :run-fn identity}]]
+      (with-redefs-fn {#'screen/menu-commands (constantly commands)}
+        #(do
+           (expect (= :beta
+                     (:id (runnable-slash-command-for-input
+                            nil
+                            (input/paste-text (input/empty-input) "/")
+                            1))))
+           (expect (= {:id :beta :args "go"}
+                     (let [cmd (runnable-slash-command-for-input
+                                 nil
+                                 (input/paste-text (input/empty-input) "/beta go")
+                                 0)]
+                       {:id (:id cmd) :args (:slash/args cmd)}))))))))
 
 (defdescribe channel-status-error-routing-test
   (it "routes error status events to the notification lane only"
