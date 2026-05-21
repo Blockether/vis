@@ -334,12 +334,6 @@
      {:limit Integer/MAX_VALUE
       :selected-index selected-index})))
 
-(defn- runnable-slash-command-for-input
-  [screen input-state selected-index]
-  (or (slash/selected-suggestion
-        (slash-suggestions-for-input screen input-state selected-index))
-    (slash-command-for-input screen input-state)))
-
 (defn- command-argv
   [args]
   (if (str/blank? args)
@@ -2334,7 +2328,7 @@
                  (and (instance? KeyStroke key)
                    (seq (slash-suggestions-for-input screen (:input db) (:slash-command-index db)))
                    (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown
-                      KeyType/Tab KeyType/ReverseTab}
+                      KeyType/Enter KeyType/Tab KeyType/ReverseTab}
                     (.getKeyType ^KeyStroke key)))
                  (let [suggestions (slash-suggestions-for-input screen (:input db)
                                      (:slash-command-index db))
@@ -2355,7 +2349,8 @@
                      (= ktype KeyType/ReverseTab)
                      (state/dispatch [:move-slash-command-selection -1 (count suggestions)])
 
-                     (= ktype KeyType/Tab)
+                     (or (= ktype KeyType/Enter)
+                       (= ktype KeyType/Tab))
                      (when-let [suggestion (slash/selected-suggestion suggestions)]
                        (state/dispatch
                          [:update-input
@@ -2640,13 +2635,12 @@
                          (recur))
 
                        :send
-                       ;; Enter runs the highlighted slash suggestion
-                       ;; again. This restores the original TUI contract:
-                       ;; type `/`, pick with arrows/wheel, hit Enter to
-                       ;; run. Tab remains completion-only, inserting the
-                       ;; command text for editing before execution.
-                       (do (if-let [cmd (runnable-slash-command-for-input
-                                          screen state (:slash-command-index @state/app-db))]
+                       ;; If the slash overlay is visible, Enter was
+                       ;; handled above as completion, same as Tab.
+                       ;; Here Enter only runs an exact slash command
+                       ;; already present in the input, or submits a
+                       ;; normal message.
+                       (do (if-let [cmd (slash-command-for-input screen state)]
                              (do (run-command! cmd (:slash/args cmd))
                                (state/dispatch [:reset-input]))
                              (submit-input! @state/app-db state))
