@@ -1,0 +1,33 @@
+{:subsystems
+ [{:name "bridge-extension",
+   :code-globs [".vis/vis-extensions/bridge/src/**/*"],
+   :docs-globs [".vis/vis-extensions/bridge/docs/**/*"],
+   :test-globs [".vis/vis-extensions/bridge/test/**/*"],
+   :expected-artifacts
+   ["change-intent-card" "verification-brief" "completeness-ledger"],
+   :expected-evidence ["unit"],
+   :system-category "api",
+   :risk-class "medium"}],
+ :project-name "vis",
+ :artifact-paths
+ {:root ".bridge/ephemeral",
+  :phases ".bridge/ephemeral/phases",
+  :evidence ".bridge/ephemeral/evidence",
+  :evaluations ".bridge/ephemeral/evaluations"},
+ :test-paths ["test"],
+ :docs-paths ["docs"],
+ :phases [],
+ :kind "project-profile",
+ :verification-policy-path ".bridge/verification-policy.yaml",
+ :code-paths ["src"],
+ :root-path "..",
+ :canonical-commands
+ [{:id "unit",
+   :kind "unit",
+   :role "regression",
+   :command "cd .vis/vis-extensions/bridge && clojure -M:test",
+   :description "Run unit tests",
+   :result-parser {:type "regex-status",
+                   :rules
+                   [{:stream :stdout, :regex "0 failures", :status "passed"},
+                    {:stream :stdout, :regex "[^0] failures", :status "failed"}]}}]}

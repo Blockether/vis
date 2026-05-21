@@ -5,7 +5,10 @@
    [com.blockether.vis.internal.env.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
    [lazytest.core :refer [defdescribe it expect]]
-   [sci.core :as sci]))
+   [sci.core :as sci])
+  (:import
+   [java.nio.file Files]
+   [java.nio.file.attribute FileAttribute]))
 
 (defn- captured-ask-code-opts
   [opts]
@@ -120,8 +123,47 @@
 (def ^:private empty-code-error-with-observation
   (deref #'lp/empty-code-error-with-observation))
 
+(def ^:private existing-extension-reload-dirs
+  (deref #'lp/existing-extension-reload-dirs))
+
 (def ^:private multi-fence-hint     (deref #'lp/multi-fence-hint))
 (def ^:private attach-multi-fence-hint (deref #'lp/attach-multi-fence-hint))
+
+(defn- temp-dir
+  [prefix]
+  (str (Files/createTempDirectory prefix (make-array FileAttribute 0))))
+
+(defn- with-system-properties
+  [props f]
+  (let [previous (into {} (map (fn [[k _]] [k (System/getProperty k)])) props)]
+    (try
+      (doseq [[k v] props]
+        (System/setProperty k v))
+      (f)
+      (finally
+        (doseq [[k v] previous]
+          (if v
+            (System/setProperty k v)
+            (System/clearProperty k)))))))
+
+(defdescribe extension-reload-dirs-test
+  (it "includes project and global user extension src dirs"
+    (let [project-root (temp-dir "vis-project")
+          home-root    (temp-dir "vis-home")
+          project-ext  (java.io.File. project-root ".vis/vis-extensions/bridge")
+          global-ext   (java.io.File. home-root ".vis/vis-extensions/tools")
+          project-src  (java.io.File. project-ext "src")
+          global-src   (java.io.File. global-ext "src")]
+      (.mkdirs project-src)
+      (.mkdirs global-src)
+      (spit (java.io.File. project-ext "deps.edn") "{:paths [\"src\"]}")
+      (spit (java.io.File. global-ext "deps.edn") "{:paths [\"src\"]}")
+      (with-system-properties {"user.dir" project-root
+                               "user.home" home-root}
+        (fn []
+          (let [dirs (set (existing-extension-reload-dirs))]
+            (expect (contains? dirs (.getPath project-src)))
+            (expect (contains? dirs (.getPath global-src)))))))))
 
 (defdescribe multi-fence-hint-test
   (it "is nil for a single-fence entry"
