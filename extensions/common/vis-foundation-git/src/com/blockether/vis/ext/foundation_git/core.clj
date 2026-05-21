@@ -284,6 +284,10 @@
        (when-not result
          (throw (ex-info (str "git/blame failed: file is outside the repo or not tracked: " path)
                   {:type :foundation-git/not-tracked :path path})))
+       (when (:binary? result)
+         (throw (ex-info (str "git/blame refused: " path " is a binary blob, per-line blame is meaningless. "
+                           "Use (git/log {:path \"" path "\"}) for commit history instead.")
+                  {:type :foundation-git/binary :path path :head (:head result)})))
        (extension/success {:result result})))))
 
 (def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts map: {:from ref :to ref :path P :patch? bool} for arbitrary range + path filter; :patch? true includes per-file unified-diff text (truncated at ~64KB/file). :to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [{:file :+ :- [:patch]}] :porcelain [...]}. JGit-backed; no host git binary needed."
