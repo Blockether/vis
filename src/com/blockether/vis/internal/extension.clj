@@ -466,12 +466,31 @@
                       row    (assoc :row row)
                       col    (assoc :col col)
                       opened (assoc :opened-loc opened)))
-        cause-data (when cause (ex-data cause))]
+        cause-data (when cause (ex-data cause))
+        ;; A tool that returned `{:success? false :error <map>}` is
+        ;; un-structured back into a thrown ExceptionInfo by
+        ;; `tool-result->public-value`. The structured `:error` map
+        ;; carries the model-actionable info (`:reason`, `:failures`,
+        ;; `:loop-hint`, `:checks` …). Lift it into `:data` so the
+        ;; iteration trailer (`error-lines` in `ctx.clj`) renders it as
+        ;; `;; ! data {…}`. Without this lift the model only sees
+        ;; `:message` + `:trace` and has to decode `:reason` from prose.
+        tool-error-data (when (= :vis/tool-failure (:type d))
+                          (let [e (:error d)]
+                            (when (map? e)
+                              (not-empty
+                                (cond-> {}
+                                  (some? (:reason e))    (assoc :reason (:reason e))
+                                  (seq (:failures e))    (assoc :failures (:failures e))
+                                  (seq (:checks e))      (assoc :checks (:checks e))
+                                  (some? (:loop-hint e)) (assoc :loop-hint (:loop-hint e))
+                                  (some? (:mode e))      (assoc :mode (:mode e)))))))]
     (cond-> {:message message}
       (not (str/blank? trace))     (assoc :trace trace)
       hint                         (assoc :hint hint)
       block                        (assoc :block block)
-      cause-data                   (assoc :cause-data cause-data))))
+      cause-data                   (assoc :cause-data cause-data)
+      tool-error-data              (assoc :data tool-error-data))))
 
 (defn- render-error-context-text
   "Babashka-style source context text for `render-error-context` IR."
