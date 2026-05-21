@@ -277,11 +277,23 @@
             (str "  " (pad-visible-right token col-width) doc)))
     flags))
 
-(defn- format-subcommand-lines [children col-width]
-  (mapv (fn [c]
-          (str "  " (pad-visible-right (magenta (:cmd/name c)) col-width)
-            (:cmd/doc c)))
-    children))
+(defn- format-subcommand-lines
+  "Render each subcommand as `name + doc`. When the children mix host-owned
+   canonical entries (`:cmd/internal? true`) with extension contributions,
+   internal entries render first, then a dim `----` divider labelled
+   `extensions`, then the contributed entries. Order inside each group is
+   preserved (registration order)."
+  [children col-width]
+  (let [fmt         (fn [c]
+                      (str "  " (pad-visible-right (magenta (:cmd/name c)) col-width)
+                        (:cmd/doc c)))
+        internal    (filterv (comp boolean :cmd/internal?) children)
+        contributed (filterv (complement (comp boolean :cmd/internal?)) children)]
+    (if (and (seq internal) (seq contributed))
+      (-> (mapv fmt internal)
+        (conj (dim "  ---- extensions ----"))
+        (into (mapv fmt contributed)))
+      (mapv fmt children))))
 
 ;; ---- Usage line + multi-paragraph doc ---------------------------------------
 

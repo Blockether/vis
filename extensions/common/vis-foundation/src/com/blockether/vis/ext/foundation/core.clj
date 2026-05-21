@@ -61,14 +61,14 @@
 
 (defn- transcript-cli-command
   []
-  {:cmd/name  "reproduction"
-   :cmd/doc   "Print a complete, flag-free Markdown reproduction artifact for a session. It is always complete: every turn, iteration, prompt body, message envelope, executed code block, var, reasoning trace, final answer, and raw LLM diagnostic. Resolves an unambiguous id prefix the same way `vis sessions --fork` does."
-   :cmd/usage "vis extensions reproduction <SESSION-ID>"
+  {:cmd/name  "repro"
+   :cmd/doc   "Reproduce a session as a Markdown transcript (turns, code, vars, reasoning, answers)."
+   :cmd/usage "vis ext repro <SESSION-ID>"
    :cmd/args  [{:name "session-id" :kind :positional :type :string
                 :doc  "Session id (full UUID or unambiguous prefix)."}]
-   :cmd/examples ["vis extensions reproduction eeaf9651-06c7-4dda-9e97-877fcef06337"
-                  "vis extensions reproduction eeaf9651"
-                  "vis extensions reproduction eeaf9651 > REPRODUCTION.md"]
+   :cmd/examples ["vis ext repro eeaf9651-06c7-4dda-9e97-877fcef06337"
+                  "vis ext repro eeaf9651"
+                  "vis ext repro eeaf9651 > REPRODUCTION.md"]
    :cmd/run-fn #(lazy-cli-run-fn 'com.blockether.vis.ext.foundation.transcript/cli-command %1 %2)})
 
 (def vis-extension

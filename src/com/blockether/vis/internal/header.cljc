@@ -4,7 +4,7 @@
    Every channel — terminal TUI, web, Telegram, future surfaces —
    renders the same conceptual header band:
 
-       [LEFT 20%]   [CENTER 60% workspace switcher]   [RIGHT 20%]
+       [LEFT 30%]   [CENTER 40% workspace switcher]   [RIGHT 30%]
 
    The decisions a channel cannot make on its own (slot ratios, workspace
    switcher sizing/visibility caps, default labels, copy id length, glyphs)
@@ -20,19 +20,19 @@
 
 ;;; ── Slot ratios ────────────────────────────────────────────────────────
 ;;
-;; The header is conceptually a 3-column flex row with 20 / 60 / 20
+;; The header is conceptually a 3-column flex row with 30 / 40 / 30
 ;; split. Channels free to clamp / re-derive widths, but the ratios
 ;; are the same everywhere so a screenshot of the TUI and a screenshot
 ;; of the web UI feel like the same product.
 
 (def left-slot-ratio
   "Fraction of the total width given to the LEFT slot (notifications)."
-  1/5)
+  3/10)
 
 (def right-slot-ratio
   "Fraction of the total width given to the RIGHT slot (channel status +
    session-id copy affordance)."
-  1/5)
+  3/10)
 
 (defn slot-widths
   "Compute integer widths `[left center right]` for a header `cols` wide.

@@ -189,12 +189,13 @@
 (s/def :cmd/usage non-blank-string?)
 (s/def :cmd/run-fn ifn?)
 (s/def :cmd/owns-tty? boolean?)
+(s/def :cmd/internal? boolean?)  ;; host-owned canonical command, not an extension contribution
 
 ;; Where in the command tree this command mounts. Vector of parent
 ;; command-names from the root, EXCLUDING the root itself and the
 ;; command's own `:cmd/name`. Examples:
 ;;   []                  - top-level (`vis <name>`)
-;;   ["extensions"]      - nested under `vis extensions`
+;;   ["ext"]             - nested under `vis ext`
 ;;   ["channels"]        - nested under `vis channels`
 ;;   ["foo" "bar"]       - nested as `vis foo bar <name>`
 ;; Used by the CLI dispatcher's auto-mount via `registered-under`.
@@ -226,7 +227,7 @@
 (s/def ::command
   (s/keys :req [:cmd/name :cmd/doc]
     :opt [:cmd/usage :cmd/args :cmd/run-fn :cmd/subcommands
-          :cmd/owns-tty? :cmd/examples :cmd/parent]))
+          :cmd/owns-tty? :cmd/examples :cmd/parent :cmd/internal?]))
 
 (defn command
   "Build and validate a command map. Children are NOT validated

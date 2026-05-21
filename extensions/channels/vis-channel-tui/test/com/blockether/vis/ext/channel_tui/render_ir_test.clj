@@ -95,6 +95,11 @@
       (expect (= ["⬜ Pending" "   item wraps" "   here"] ts))
       (expect (every? #(<= (p/display-width %) 14) ts))))
 
+  (it "does not crash when a list item starts with a non-text inline node"
+    (let [lines (ir-tui/ir->lines [:ir [:ul [:li [:br] "after break"]]] 80)
+          ts    (texts lines)]
+      (expect (some #(str/includes? % "after break") ts))))
+
   (it "wrapped li uses hanging indent equal to marker width (NOT 3 spaces)"
     ;; This is the regression target: pre-IR code produced "   foo" continuation.
     (let [lines (ir-tui/ir->lines

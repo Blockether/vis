@@ -334,7 +334,7 @@
     (let [cmd  (transcript/cli-command)
           help (vis/render-command cmd ["vis" "extensions" (:cmd/name cmd)])]
       (expect (= "reproduction" (:cmd/name cmd)))
-      (expect (= "vis extensions reproduction <SESSION-ID>" (:cmd/usage cmd)))
+      (expect (= "vis ext repro <SESSION-ID>" (:cmd/usage cmd)))
       (expect (not (str/includes? (:cmd/usage cmd) "--")))
       (expect (not (str/includes? help "FLAGS")))
       (expect (not (str/includes? help "--prompts")))

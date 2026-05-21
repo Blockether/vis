@@ -19,12 +19,12 @@
    Built-in commands registered here:
      vis providers          - provider inspection, auth, and limits
      vis sessions      - list persisted sessions
-     vis extensions list    - list registered extensions
+     vis ext list           - list registered extensions
      vis channels <name>    - auto-mounted via the channel registry
 
    `vis doctor` is host-owned. Extensions plug diagnostics into it
    with `:ext/doctor-fn`; extension-owned CLI commands stay under
-   `vis extensions`."
+   `vis ext`."
 
   (:refer-clojure :exclude [agent run!])
   (:require
@@ -301,7 +301,7 @@
 (defn extension-help []
   (let [cmds (all-extension-cmds)]
     (if (empty? cmds)
-      "No extension commands available. Run 'vis extensions' to see registered extensions."
+      "No extension commands available. Run 'vis ext' to see registered extensions."
       (str "Extension commands:\n\n"
         (str/join "\n\n"
           (map (fn [{:keys [cmd doc ext-ns]}]
@@ -1166,7 +1166,7 @@
 
 (defn- print-section-heading!
   "Render a section heading line for a grouped table - used when
-   `vis extensions list` breaks the rows into per-`:ext/kind`
+   `vis ext list` breaks the rows into per-`:ext/kind`
    sub-tables. `width` is the total visible width of the surrounding
    table so the rule under the label spans the same column run."
   [label width]
@@ -1852,7 +1852,7 @@
     (stdout! (doctor/format-output msgs))
     (System/exit (int (doctor/exit-code msgs)))))
 
-;;; ── `vis extensions` ────────────────────────────────────────────────────
+;;; ── `vis ext` ───────────────────────────────────────────────────────────
 
 (def ^:private extensions-table-cols
   [{:key :namespace :label "Namespace"   :width 28 :align :left}
@@ -1948,7 +1948,7 @@
   (config/init-cli!)
   (let [{:keys [name dir force?] :as opts} (parse-scaffold-opts parsed residual)]
     (when-not name
-      (throw (ex-info "Usage: vis extensions scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+      (throw (ex-info "Usage: vis ext scaffold <name> [--dir DIR] [--namespace NS] [--force]"
                {:type :cli/usage})))
     (let [target-path (or dir (str ".vis/vis-extensions/" name))
           target (let [f (io/file target-path)]
@@ -2022,12 +2022,12 @@
 
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
-;; `providers`, `sessions`, `doctor` are the binary's own
-;; commands. They live at the top of the command tree -- `vis providers
-;; ...`, NOT `vis extensions providers ...` -- so they bypass
-;; `:ext/cli` (the extensions-subcommand slot, see below).
-;; Direct `register-cmd!` is the right plumbing here; vis-runtime
-;; is the host, not an extension contributing to `vis extensions`.
+;; `providers`, `sessions`, `doctor`, `update`, and `ext` are the
+;; binary's own parent commands. They live at the top of the command
+;; tree -- `vis providers ...`, NOT `vis ext providers ...` -- so they
+;; bypass `:ext/cli` (the `vis ext` subcommand slot). Direct
+;; `register-cmd!` is the right plumbing here; vis-runtime is the host,
+;; not an extension contributing to `vis ext`.
 
 (doseq [spec
         [{:cmd/name  "providers"
@@ -2057,89 +2057,105 @@
           :cmd/usage "vis doctor"
           :cmd/run-fn cli-doctor!}
 
+         {:cmd/name  "ext"
+          :cmd/doc   "Inspect, scaffold, or run an extension-contributed CLI command."
+          :cmd/usage "vis ext <list|scaffold|...> [args...]"
+          :cmd/subcommands #(registry/registered-under ["ext"])}
+
          {:cmd/name  "update"
           :cmd/doc   "Update the source checkout used by this Vis installation."
           :cmd/usage "vis update"
           :cmd/run-fn cli-update!}]]
   (registry/register-cmd! spec))
 
-;;; ── Extensions-namespaced subcommand: `vis extensions list` ─────────────
+;;; ── `vis providers` subcommands ─────────────────────────────────────────
+
+(doseq [spec
+        [{:cmd/name   "list"
+          :cmd/parent ["providers"]
+          :cmd/doc    "List registered providers with auth state, static limits, and base URLs."
+          :cmd/usage  "vis providers list"
+          :cmd/run-fn cli-providers-list!}
+         {:cmd/name   "status"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Show provider authentication status together with static/dynamic limits."
+          :cmd/usage  "vis providers status [provider]"
+          :cmd/examples ["vis providers status"
+                         "vis providers status github-copilot-business"
+                         "vis providers status openai-codex"]
+          :cmd/run-fn cli-providers-status!}
+         {:cmd/name   "limits"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Show provider rate-limit metadata and any dynamic quota report."
+          :cmd/usage  "vis providers limits [provider]"
+          :cmd/examples ["vis providers limits"
+                         "vis providers limits openai-codex"
+                         "vis providers limits ollama"]
+          :cmd/run-fn cli-providers-limits!}
+         {:cmd/name   "auth"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Run a provider's interactive authentication flow."
+          :cmd/usage  "vis providers auth <provider>"
+          :cmd/args   [{:name "provider" :kind :positional :type :string
+                        :doc  "Registered provider id (for example: github-copilot-business or openai-codex)."}]
+          :cmd/examples ["vis providers auth github-copilot-business"
+                         "vis providers auth github-copilot-individual"
+                         "vis providers auth openai-codex"]
+          :cmd/run-fn cli-providers-auth!}
+         {:cmd/name   "logout"
+          :cmd/parent ["providers"]
+          :cmd/doc    "Clear saved credentials for a provider."
+          :cmd/usage  "vis providers logout <provider>"
+          :cmd/args   [{:name "provider" :kind :positional :type :string
+                        :doc  "Registered provider id."}]
+          :cmd/examples ["vis providers logout github-copilot-business"
+                         "vis providers logout github-copilot-individual"
+                         "vis providers logout openai-codex"]
+          :cmd/run-fn cli-providers-logout!}]]
+  (registry/register-cmd! spec))
+
+;;; ── `vis sessions` subcommands ──────────────────────────────────────────
+
+(doseq [spec
+        [{:cmd/name   "search"
+          :cmd/parent ["sessions"]
+          :cmd/doc    "Full-text search across answers, thinking, comments, prompts, and expressions."
+          :cmd/usage  "vis sessions search <query> [--limit N]"
+          :cmd/args   [{:name "query" :kind :positional :type :string
+                        :doc  "FTS5 query (`foo bar` for AND, `foo OR bar`, `foo*` for prefix)."}
+                       {:name "limit" :kind :flag :type :string
+                        :doc  "Max hits to print (default 25)."}]
+          :cmd/examples ["vis sessions search \"znajduje nodes\""
+                         "vis sessions search \"refactor*\""
+                         "vis sessions search \"foo OR bar\" --limit 100"]
+          :cmd/run-fn cli-sessions-search!}]]
+  (registry/register-cmd! spec))
+
+;;; ── `vis ext` subcommands (host-owned canonical) ────────────────────────
 ;;
-;; `extensions list` introspects the extension registry, so it
-;; naturally lives under the `vis extensions <cmd>` parent. But it is
-;; a HOST-owned built-in, NOT a third-party contribution -- vis core
-;; is the host, never an extension. So it registers directly via
-;; `registry/register-cmd!` with `:cmd/parent ["extensions"]`, the
-;; same plumbing the top-level built-ins above use.
-#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
-(defonce --extensions-subcommands--init
-  (doseq [spec
-          [{:cmd/name   "list"
-            :cmd/parent ["providers"]
-            :cmd/doc    "List registered providers with auth state, static limits, and base URLs."
-            :cmd/usage  "vis providers list"
-            :cmd/run-fn cli-providers-list!}
-           {:cmd/name   "status"
-            :cmd/parent ["providers"]
-            :cmd/doc    "Show provider authentication status together with static/dynamic limits."
-            :cmd/usage  "vis providers status [provider]"
-            :cmd/examples ["vis providers status"
-                           "vis providers status github-copilot-business"
-                           "vis providers status openai-codex"]
-            :cmd/run-fn cli-providers-status!}
-           {:cmd/name   "limits"
-            :cmd/parent ["providers"]
-            :cmd/doc    "Show provider rate-limit metadata and any dynamic quota report."
-            :cmd/usage  "vis providers limits [provider]"
-            :cmd/examples ["vis providers limits"
-                           "vis providers limits openai-codex"
-                           "vis providers limits ollama"]
-            :cmd/run-fn cli-providers-limits!}
-           {:cmd/name   "auth"
-            :cmd/parent ["providers"]
-            :cmd/doc    "Run a provider's interactive authentication flow."
-            :cmd/usage  "vis providers auth <provider>"
-            :cmd/args   [{:name "provider" :kind :positional :type :string
-                          :doc  "Registered provider id (for example: github-copilot-business or openai-codex)."}]
-            :cmd/examples ["vis providers auth github-copilot-business"
-                           "vis providers auth github-copilot-individual"
-                           "vis providers auth openai-codex"]
-            :cmd/run-fn cli-providers-auth!}
-           {:cmd/name   "logout"
-            :cmd/parent ["providers"]
-            :cmd/doc    "Clear saved credentials for a provider."
-            :cmd/usage  "vis providers logout <provider>"
-            :cmd/args   [{:name "provider" :kind :positional :type :string
-                          :doc  "Registered provider id."}]
-            :cmd/examples ["vis providers logout github-copilot-business"
-                           "vis providers logout github-copilot-individual"
-                           "vis providers logout openai-codex"]
-            :cmd/run-fn cli-providers-logout!}
-           {:cmd/name   "search"
-            :cmd/parent ["sessions"]
-            :cmd/doc    "Full-text search across answers, thinking, comments, prompts, and expressions."
-            :cmd/usage  "vis sessions search <query> [--limit N]"
-            :cmd/args   [{:name "query" :kind :positional :type :string
-                          :doc  "FTS5 query (`foo bar` for AND, `foo OR bar`, `foo*` for prefix)."}
-                         {:name "limit" :kind :flag :type :string
-                          :doc  "Max hits to print (default 25)."}]
-            :cmd/examples ["vis sessions search \"znajduje nodes\""
-                           "vis sessions search \"refactor*\""
-                           "vis sessions search \"foo OR bar\" --limit 100"]
-            :cmd/run-fn cli-sessions-search!}
-           {:cmd/name   "list"
-            :cmd/parent ["extensions"]
-            :cmd/doc    "List every registered extension with metadata."
-            :cmd/usage  "vis extensions list"
-            :cmd/run-fn cli-extensions!}
-           {:cmd/name   "scaffold"
-            :cmd/parent ["extensions"]
-            :cmd/doc    "Create a user extension project scaffold."
-            :cmd/usage  "vis extensions scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-            :cmd/examples ["vis extensions scaffold my-tools"
-                           "vis extensions scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
-            :cmd/run-fn cli-extensions-scaffold!}]]
-    (registry/register-cmd! spec)))
+;; `list` and `scaffold` are NOT extension contributions -- they are
+;; the CANONICAL host commands the vis binary ships with. Extensions add
+;; to the `vis ext` parent through `:ext/cli`; the host marks its own
+;; entries with `:cmd/internal? true` so help and listing layers can
+;; tell host-owned canonical commands apart from extension-contributed
+;; ones at a glance.
+
+(doseq [spec
+        [{:cmd/name       "list"
+          :cmd/parent     ["ext"]
+          :cmd/internal?  true
+          :cmd/doc        "List every registered extension with metadata."
+          :cmd/usage      "vis ext list"
+          :cmd/run-fn     cli-extensions!}
+         {:cmd/name       "scaffold"
+          :cmd/parent     ["ext"]
+          :cmd/internal?  true
+          :cmd/doc        "Create a user extension project scaffold."
+          :cmd/usage      "vis ext scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+          :cmd/examples   ["vis ext scaffold my-tools"
+                           "vis ext scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
+          :cmd/run-fn     cli-extensions-scaffold!}]]
+  (registry/register-cmd! spec))
 
 ;; =============================================================================
 ;; Dispatcher entry point (-main)
@@ -2331,7 +2347,7 @@
 (defn- root-help-request?
   "True when args ask only for the root help screen. This path can skip
    extension discovery because the root tree lists built-in parent commands
-   only; extension-owned commands are mounted below `extensions` after
+   only; extension-owned commands are mounted below `ext` after
    discovery when that subtree is requested."
   [args]
   (or (empty? args)
@@ -2359,11 +2375,24 @@
       (contains? first-party-channel-bootstrap-nses channel)
       (boolean (some #{"--help" "-h"} more)))))
 
+(defn- ext-help-request?
+  "True for any `vis ext ...` help invocation. The `vis ext` subtree is
+   populated by `:ext/cli` mounts that only land after
+   `extension/discover-extensions!` has run, so help rendering for this
+   subtree MUST trigger full extension discovery before the renderer
+   reads `(registered-under [\"ext\"])`."
+  [args]
+  (= "ext" (first (vec args))))
+
 (defn- discover-fast-help-deps!
   [args]
-  (when (channel-help-request? args)
+  (cond
+    (channel-help-request? args)
     (when-let [ns-sym (get first-party-channel-bootstrap-nses (second (vec args)))]
-      (require ns-sym))))
+      (require ns-sym))
+
+    (ext-help-request? args)
+    (discover-all!)))
 
 (defn- fast-help-dispatched?
   [_measure? args]
