@@ -224,10 +224,18 @@
 ;; EXAMPLES help section.
 (s/def :cmd/examples (s/coll-of string? :kind vector?))
 
+;; Extra help sections appended after SUBCOMMANDS / EXTENSION COMMANDS.
+;; Each entry is `{:title string :body string-or-0-arg-fn}`. The whole
+;; value may also be a 0-arg fn returning a sequence of entries -- used
+;; when the body requires runtime discovery (e.g. installed
+;; extensions) that should not run at registration time.
+(s/def :cmd/extra-sections (s/or :static sequential? :dynamic ifn?))
+
 (s/def ::command
   (s/keys :req [:cmd/name :cmd/doc]
     :opt [:cmd/usage :cmd/args :cmd/run-fn :cmd/subcommands
-          :cmd/owns-tty? :cmd/examples :cmd/parent :cmd/internal?]))
+          :cmd/owns-tty? :cmd/examples :cmd/parent :cmd/internal?
+          :cmd/extra-sections]))
 
 (defn command
   "Build and validate a command map. Children are NOT validated

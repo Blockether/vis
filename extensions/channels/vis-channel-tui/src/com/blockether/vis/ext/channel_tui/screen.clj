@@ -226,6 +226,7 @@
           (state/dispatch [:reset-input]))))))
 
 (def ^:private copy-success-ttl-ms 1500)
+(def ^:private status-error-ttl-ms 5000)
 
 (defn- copy-session-id! [text]
   (vis/worker-future "vis-tui-copy-session-id"
@@ -260,16 +261,22 @@
     :input/replace (state/dispatch [:external-input :replace text (:workspace-id event)])
     :input/append  (state/dispatch [:external-input :append text (:workspace-id event)])
     :input/insert  (state/dispatch [:external-input :insert text (:workspace-id event)])
-    :status/set    (let [status-id (or id (:source event) :external)
-                         until     (when ttl-ms (+ (System/currentTimeMillis) (long ttl-ms)))]
-                     (state/dispatch [:channel-status-set status-id
-                                      (cond-> {:text text :level (or level :info)}
-                                        until (assoc :until until))])
-                     (when ttl-ms
-                       (vis/worker-future "vis-tui-status-expire"
-                         #(do
-                            (Thread/sleep (long ttl-ms))
-                            (state/dispatch [:channel-status-clear-if-until status-id until])))))
+    :status/set    (let [status-id (or id (:source event) :external)]
+                     (if (= :error level)
+                       (do
+                         (state/dispatch [:channel-status-clear status-id])
+                         (vis/notify! (or text "")
+                           :level :error
+                           :ttl-ms (or ttl-ms status-error-ttl-ms)))
+                       (let [until (when ttl-ms (+ (System/currentTimeMillis) (long ttl-ms)))]
+                         (state/dispatch [:channel-status-set status-id
+                                          (cond-> {:text text :level (or level :info)}
+                                            until (assoc :until until))])
+                         (when ttl-ms
+                           (vis/worker-future "vis-tui-status-expire"
+                             #(do
+                                (Thread/sleep (long ttl-ms))
+                                (state/dispatch [:channel-status-clear-if-until status-id until])))))))
     :status/clear  (state/dispatch [:channel-status-clear (or id (:source event) :external)])
     :notify        (vis/notify! (or text "") :level (or level :info) :ttl-ms (or ttl-ms copy-success-ttl-ms))
     nil))
@@ -2488,20 +2495,12 @@
                                      (state/dispatch [:set-config c]))
 
                                    :settings
-                                   (let [redraw-ui! (fn []
-                                                      (let [size   (screen-size screen)
-                                                            cols   (.getColumns size)
-                                                            rows   (.getRows size)
-                                                            layout (render-frame! screen cols rows @state/app-db
-                                                                     (System/currentTimeMillis))]
-                                                        (state/dispatch [:set-layout layout])))]
-                                     (when-let [s (with-dialog-lock
-                                                    #(dlg/settings-dialog! screen
-                                                       (:settings @state/app-db)
-                                                       {:on-change (fn [settings]
-                                                                     (state/dispatch [:update-settings settings]))
-                                                        :redraw-ui redraw-ui!}))]
-                                       (state/dispatch [:update-settings s])))
+                                   (when-let [s (with-dialog-lock
+                                                  #(dlg/settings-dialog! screen
+                                                     (:settings @state/app-db)
+                                                     {:on-change (fn [settings]
+                                                                   (state/dispatch [:update-settings settings]))}))]
+                                     (state/dispatch [:update-settings s]))
 
                             ;; No :quit branch - the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.

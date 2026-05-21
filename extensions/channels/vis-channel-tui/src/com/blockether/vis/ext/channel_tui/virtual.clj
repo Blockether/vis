@@ -249,11 +249,10 @@
     (= :assistant (:role (nth messages (dec idx))))))
 
 (defn- estimated-height-with-turn-separator
-  [_messages _settings bubble-w _idx message]
-  (let [bubble-w (long bubble-w)]
-    ;; Vis->You turn markers no longer add spacer rows; keep this seam
-    ;; so cached height math stays aligned with `render/bubble-height`.
-    (estimated-height message bubble-w)))
+  [messages settings bubble-w idx message]
+  (let [bubble-w (long bubble-w)
+        sep-h    (if (turn-separator? messages settings (long idx)) 1 0)]
+    (+ sep-h (estimated-height message bubble-w))))
 
 (defn- with-turn-separator
   [message messages settings ^long idx]
