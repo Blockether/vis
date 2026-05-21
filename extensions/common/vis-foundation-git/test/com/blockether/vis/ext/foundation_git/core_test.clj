@@ -86,4 +86,25 @@
           (expect (= "Vis Test" (:author commit)))
           (expect (string? (:sha commit)))
           (expect (integer? (:at commit))))
-        (finally (cleanup root))))))
+        (finally (cleanup root)))))
+
+  (it "accepts {:limit N} map form so model intuition does not blow up"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [r-map (git/git-log-fn {:workspace/root (.getCanonicalPath root)} {:limit 1})
+              r-n   (git/git-log-fn {:workspace/root (.getCanonicalPath root)} {:n 1})
+              r-nil (git/git-log-fn {:workspace/root (.getCanonicalPath root)} nil)]
+          (expect (= 1 (count (get-in r-map [:result :commits]))))
+          (expect (= 1 (count (get-in r-n   [:result :commits]))))
+          (expect (extension/tool-result? r-nil)))
+        (finally (cleanup root)))))
+
+  (it "rejects garbage arg with foundation-git/invalid-opts and a usage hint"
+    (try
+      (git/git-log-fn {:workspace/root "/repo"} :bad)
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
+        (expect (clojure.string/includes? (ex-message e) "git/log expected"))
+        (expect (clojure.string/includes? (ex-message e) "(git/log {:limit 50})"))))))
