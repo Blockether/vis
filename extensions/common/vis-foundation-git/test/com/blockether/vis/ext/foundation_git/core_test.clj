@@ -108,6 +108,30 @@
           (expect (clojure.string/includes? (:patch entry) "+(def x 2)")))
         (finally (cleanup root)))))
 
+  (it "omits :branch in :range mode since the workspace's branch is misleading there"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "v1") .call)
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 2)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "v2") .call))
+        (let [range-data    (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                                       {:from "HEAD~1" :to "HEAD"}))
+              default-data  (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                                       nil))]
+          (expect (= :range (:kind range-data)))
+          (expect (not (contains? range-data :branch)))
+          ;; Default (workspace) mode still surfaces :branch when JGit
+          ;; could resolve one for the bound workspace; the test repo
+          ;; has no workspace row so :branch stays absent here too,
+          ;; but the cond-> shape is the same.
+          (expect (not= :range (:kind default-data))))
+        (finally (cleanup root)))))
+
   (it "applies :path filter to limit a diff to one subtree"
     (let [root (make-tmp-dir)]
       (try
@@ -175,6 +199,21 @@
           (expect (extension/tool-result? r-nil)))
         (finally (cleanup root)))))
 
+  (it "caps very long commit bodies so a single log call cannot blow context"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [huge-body (apply str (repeat 6000 "x"))]
+          (spit-rel root "src/note.txt" "hi\n")
+          (with-open [g (org.eclipse.jgit.api.Git/open root)]
+            (-> g .add (.addFilepattern ".") .call)
+            (-> g .commit (.setMessage (str "big commit\n\n" huge-body)) .call)))
+        (let [commit (-> (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 1)
+                       :result :commits first)]
+          (expect (< (count (:body commit)) 5000))
+          (expect (clojure.string/includes? (:body commit) "body truncated")))
+        (finally (cleanup root)))))
+
   (it "rejects garbage arg with foundation-git/invalid-opts and a usage hint"
     (try
       (git/git-log-fn {:workspace/root "/repo"} :bad)
@@ -195,7 +234,14 @@
           (expect (= "vis-test@example.invalid" (:email commit)))
           (expect (= "Vis Test" (:committer commit)))
           (expect (= "vis-test@example.invalid" (:committer-email commit)))
+          ;; :at and :committed-at are both millis (Java units), not
+          ;; POSIX seconds. A commit-time of 2026-05-01 lands somewhere
+          ;; in the 1.7e12 range; seconds would have been ~1.7e9. We
+          ;; lock the unit here so a future regression to seconds is
+          ;; caught immediately.
           (expect (integer? (:committed-at commit)))
+          (expect (> (:committed-at commit) 1000000000000))
+          (expect (> (:at commit) 1000000000000))
           (expect (= "base" (:body commit)))
           (expect (vector? (:parents commit)))
           (expect (= 0 (count (:parents commit)))))
@@ -418,6 +464,30 @@
             (expect (= "(ns a)" (:content line)))
             (expect (string? (:sha line)))
             (expect (= 7 (count (:short-sha line))))))
+        (finally (cleanup root)))))
+
+  (it "caps default blame at 1000 lines and flags :truncated? when more exist"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        ;; 2000 lines so we go past the 1000-line default cap.
+        (spit-rel root "big.txt"
+          (clojure.string/join "\n" (map str (range 1 2001))))
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (-> g .add (.addFilepattern ".") .call)
+          (-> g .commit (.setMessage "add big") .call))
+        (let [no-range (:result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
+                                  "big.txt"))
+              explicit (:result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
+                                  {:path "big.txt" :from 1 :to 1500}))]
+          (expect (= 2000 (:total no-range)))
+          (expect (true? (:truncated? no-range)))
+          (expect (= 1000 (count (:lines no-range))))
+          (expect (= 2000 (:total explicit)))
+          ;; Explicit :from/:to bypasses the safety cap; honour exactly
+          ;; what the caller asked for.
+          (expect (false? (boolean (:truncated? explicit))))
+          (expect (= 1500 (count (:lines explicit)))))
         (finally (cleanup root)))))
 
   (it "honours :from/:to range so blame on huge files is cheap to summarise"
