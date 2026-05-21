@@ -109,19 +109,45 @@
                    {:branch nil :head nil :clean? true :entries []})]
     (extension/success {:result snapshot})))
 
+(defn- coerce-log-limit
+  "Normalize the (git/log ...) argument into a 1..200 integer.
+   Accepts nil, a positive integer, or a map carrying `:limit` / `:n`.
+   Throws a `:foundation-git/invalid-opts` ex-info with examples for
+   anything else, so the model sees a clear usage error instead of a
+   raw JVM ClassCastException from `(long ...)`."
+  ^long [arg]
+  (let [raw (cond
+              (nil? arg)     20
+              (integer? arg) arg
+              (map? arg)     (or (:limit arg) (:n arg) 20)
+              :else          ::bad)]
+    (when (or (= raw ::bad) (not (integer? raw)) (neg? (long raw)))
+      (throw (ex-info (str "git/log expected nil, a positive integer, or {:limit N}, got "
+                        (pr-str arg) ". "
+                        "Call (git/log), (git/log 50), or (git/log {:limit 50}).")
+               {:type :foundation-git/invalid-opts
+                :opts arg
+                :expected "nil, positive integer, or {:limit N}"
+                :examples ["(git/log)" "(git/log 50)" "(git/log {:limit 50})"]})))
+    (max 1 (min 200 (long raw)))))
+
 (defn git-log-fn
-  "Recent commits in the active workspace. Default limit is 20; pass a
-   positive int up to 200 to override.
+  "Recent commits in the active workspace. Default limit is 20; max 200.
+
+   Signatures:
+     (git/log)              ; default 20
+     (git/log 50)           ; integer limit
+     (git/log {:limit 50})  ; map form, also accepts :n
 
    Returns:
      {:branch \"main\"
       :commits [{:sha :author :at :subject} ...]}"
-  ([env] (git-log-fn env 20))
-  ([env n]
-   (let [root      (io/file (env-root env))
-         limit     (max 1 (min 200 (long (or n 20))))
-         status    (git-core/status-snapshot root)
-         commits   (vec (or (git-core/recent-commits root limit) []))]
+  ([env] (git-log-fn env nil))
+  ([env arg]
+   (let [root    (io/file (env-root env))
+         limit   (coerce-log-limit arg)
+         status  (git-core/status-snapshot root)
+         commits (vec (or (git-core/recent-commits root limit) []))]
      (extension/success
        {:result {:branch  (:branch status)
                  :commits commits}}))))
@@ -132,8 +158,8 @@
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}. JGit-backed; no host git binary needed."
        :arglists '([])} status git-status-fn)
 
-(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Returns {:branch :commits [{:sha :author :at :subject} ...]}. JGit-backed; no host git binary needed."
-       :arglists '([] [n])} log git-log-fn)
+(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a `{:limit N}` map. Returns {:branch :commits [{:sha :author :at :subject} ...]}. JGit-backed; no host git binary needed."
+       :arglists '([] [arg])} log git-log-fn)
 
 (defn- inject-env
   [env f args]
