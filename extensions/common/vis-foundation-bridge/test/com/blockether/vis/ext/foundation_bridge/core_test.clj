@@ -32,10 +32,10 @@
                    :phase :turn.iteration/start
                    :fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])}]
                 (get-in bridge/vis-extension [:ext/hooks])))
-      (expect (= :op.tag/observation (vis/op-tag :br/check)))
-      (expect (= :op.tag/observation (vis/op-tag :br/next)))
-      (expect (= :op.tag/mutation (vis/op-tag :br/init)))
-      (expect (= :op.tag/mutation (vis/op-tag :br/run-evidence))))))
+      (expect (= :observation (vis/op-tag :br/check)))
+      (expect (= :observation (vis/op-tag :br/next)))
+      (expect (= :mutation (vis/op-tag :br/init)))
+      (expect (= :mutation (vis/op-tag :br/run-evidence))))))
 
 (defdescribe bridge-unconfigured-workspace-test
   (it "can initialize an unconfigured workspace and run the CLI",

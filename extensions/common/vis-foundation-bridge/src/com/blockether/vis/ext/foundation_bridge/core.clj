@@ -480,12 +480,12 @@
     :phase :turn.iteration/start
     :fn bridge-hint}])
 
-(doseq [[op tag] [[:br/init :op.tag/mutation]
-                  [:br/profile :op.tag/observation]
-                  [:br/check :op.tag/observation]
-                  [:br/next :op.tag/observation]
-                  [:br/list-evidence :op.tag/observation]
-                  [:br/run-evidence :op.tag/mutation]]]
+(doseq [[op tag] [[:br/init :mutation]
+                  [:br/profile :observation]
+                  [:br/check :observation]
+                  [:br/next :observation]
+                  [:br/list-evidence :observation]
+                  [:br/run-evidence :mutation]]]
   (vis/register-op! op {:tag tag}))
 
 ;; =============================================================================

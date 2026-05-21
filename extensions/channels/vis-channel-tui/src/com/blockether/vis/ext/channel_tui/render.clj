@@ -1418,7 +1418,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- op-tag->color-role
-  "Channel-local mapping from the engine `:op.tag/...` value to a
+  "Channel-local mapping from the engine `:observation | :mutation` value to a
    TUI color role. Editing extensions emit `:tag` ONLY — they
    don't decide colors. This is the single point where the TUI
    binds the engine contract to its own theme vocabulary.
@@ -1430,8 +1430,8 @@
    needed, but the canonical mapping below uses just the tag."
   [op-tag]
   (case op-tag
-    :op.tag/observation :tool-color/read
-    :op.tag/mutation    :tool-color/edit
+    :observation :tool-color/read
+    :mutation    :tool-color/edit
     nil))
 
 (defn- tool-color-role->fg
@@ -2645,8 +2645,8 @@
   [detail]
   (when-let [tag (some-> detail :tag)]
     (let [label (case tag
-                  :op.tag/observation "OBSERVATION"
-                  :op.tag/mutation    "MUTATION"
+                  :observation "OBSERVATION"
+                  :mutation    "MUTATION"
                   nil)
           op    (:op detail)]
       (when label

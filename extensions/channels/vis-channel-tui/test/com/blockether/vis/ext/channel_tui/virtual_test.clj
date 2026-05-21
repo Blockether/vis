@@ -82,9 +82,9 @@
                     :kind (if (= op :v/cat) :preview :tool)
                     :detail {:op op
                              :tag (case op
-                                    (:v/cat :z/locators :v/rg :v/ls) :op.tag/observation
-                                    :v/patch :op.tag/mutation
-                                    :op.tag/observation)
+                                    (:v/cat :z/locators :v/rg :v/ls) :observation
+                                    :v/patch :mutation
+                                    :observation)
                              :presentation-kind (case op
                                                   (:v/cat :z/locators) :tool/read
                                                   :v/rg :tool/search
