@@ -54,27 +54,10 @@
   [env]
   (call-resolved! 'com.blockether.vis.ext.foundation-core.doctor/doctor-fn env))
 
-(defn- lazy-cli-run-fn
-  [command-sym parsed residual]
-  (let [cmd (call-resolved! command-sym)]
-    ((:cmd/run-fn cmd) parsed residual)))
-
-(defn- transcript-cli-command
-  []
-  {:cmd/name  "repro"
-   :cmd/doc   "Reproduce a session as a Markdown transcript (turns, code, vars, reasoning, answers)."
-   :cmd/usage "vis ext repro <SESSION-ID>"
-   :cmd/args  [{:name "session-id" :kind :positional :type :string
-                :doc  "Session id (full UUID or unambiguous prefix)."}]
-   :cmd/examples ["vis ext repro eeaf9651-06c7-4dda-9e97-877fcef06337"
-                  "vis ext repro eeaf9651"
-                  "vis ext repro eeaf9651 > REPRODUCTION.md"]
-   :cmd/run-fn #(lazy-cli-run-fn 'com.blockether.vis.ext.foundation-core.transcript/cli-command %1 %2)})
-
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), env snapshot + project guidance (snapshot/repositories/git/languages/monorepo/main-agent-instructions/reload-extensions!), reproduction CLI (vis ext repro). Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), env snapshot + project guidance (snapshot/repositories/git/languages/monorepo/main-agent-instructions/reload-extensions!). Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -87,7 +70,6 @@
      :ext/hooks          hints/hooks
      :ext/ctx            environment/environment-ctx
      :ext/prompt         combined-prompt
-     :ext/doctor-fn       lazy-doctor-fn
-     :ext/cli            [(transcript-cli-command)]}))
+     :ext/doctor-fn       lazy-doctor-fn}))
 
 (vis/register-extension! vis-extension)

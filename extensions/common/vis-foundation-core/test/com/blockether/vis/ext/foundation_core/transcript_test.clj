@@ -330,17 +330,6 @@
           (expect (str/includes? out "Session not found")))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "exposes a flag-free repro CLI command"
-    (let [cmd  (transcript/cli-command)
-          help (vis/render-command cmd ["vis" "ext" (:cmd/name cmd)])]
-      (expect (= "repro" (:cmd/name cmd)))
-      (expect (= "vis ext repro <SESSION-ID>" (:cmd/usage cmd)))
-      (expect (not (str/includes? (:cmd/usage cmd) "--")))
-      (expect (not (str/includes? help "FLAGS")))
-      (expect (not (str/includes? help "--prompts")))
-      (expect (not (str/includes? help "--dialog")))
-      (expect (str/includes? help "bounded by default"))))
-
   (it "resolves an unambiguous short id prefix end-to-end (regression for the CLI — the help text advertises prefix support, the code must deliver)"
     (let [s (vis/db-create-connection! :memory)]
       (try
@@ -352,8 +341,7 @@
           ;; The prefix-aware resolver returns the canonical UUID.
           (expect (= (str cid) (str (resolve s prefix))))
           (expect (= (str cid) (str (resolve s full))))
-          ;; And the prefix flows through `transcript-md` so the reproduction
-          ;; CLI (which calls the same helper now) renders a real artifact
+          ;; And the prefix flows through `transcript-md` so callers render a real artifact
           ;; instead of the "Session not found" fallback string.
           (expect (string? md))
           (expect (str/includes? md "# Diagnostic report"))

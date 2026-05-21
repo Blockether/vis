@@ -45,8 +45,8 @@
    :cmd/subcommands
    [{:cmd/name "list"     :cmd/doc "List every registered extension." :cmd/internal? true}
     {:cmd/name "scaffold" :cmd/doc "Create a user extension scaffold." :cmd/internal? true}
-    {:cmd/name "repro"    :cmd/doc "Reproduce a session as Markdown."}
-    {:cmd/name "voice"    :cmd/doc "Voice extension commands."}]
+    {:cmd/name "voice"    :cmd/doc "Voice extension commands."}
+    {:cmd/name "audit"    :cmd/doc "Audit extension commands."}]
    :cmd/extra-sections
    [{:title "INSTALLED EXTENSIONS"
      :body  "  foundation   Foundation v/ ...\n  bridge       Bridge verification."}]})
@@ -59,12 +59,12 @@
         (expect (str/includes? out "EXTENSION COMMANDS"))
         (expect (str/includes? out "list"))
         (expect (str/includes? out "scaffold"))
-        (expect (str/includes? out "repro"))
         (expect (str/includes? out "voice"))
+        (expect (str/includes? out "audit"))
         (expect (not (str/includes? out "---- extensions ----")))
         ;; Internal block must appear before the extension block.
         (let [a (.indexOf ^String out "list")
-              b (.indexOf ^String out "repro")]
+              b (.indexOf ^String out "voice")]
           (expect (and (pos? a) (pos? b) (< a b)))))))
 
   (it "renders :cmd/extra-sections after the subcommand block"
