@@ -195,6 +195,95 @@
       (call! "setModel" model-cfg)
       (call! "build"))))
 
+(defn- speech-node-tag [node] (when (vector? node) (first node)))
+
+(defn- speech-has-attrs? [node]
+  (and (vector? node) (map? (second node))))
+
+(defn- speech-node-attrs [node]
+  (if (speech-has-attrs? node) (second node) {}))
+
+(defn- speech-node-children [node]
+  (if (speech-has-attrs? node) (drop 2 node) (rest node)))
+
+(defn- clean-speech-text [s]
+  (-> (str s)
+    (str/replace #"(?m)^\s*(```|~~~).*$" "")
+    (str/replace #"(?m)^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$" "")
+    (str/replace #"(?m)^\s*[-*+•]\s+" "")
+    (str/replace #"(?m)^\s*\d+[.)]\s+" "")
+    (str/replace #"\s*\|\s*" ", ")
+    (str/replace #"[ \t]+" " ")
+    (str/replace #"\s+\n" "\n")
+    (str/replace #"\n{3,}" "\n\n")
+    str/trim))
+
+(defn- answer->speech-text [text]
+  (let [ir-answer? (and (vector? text) (= :ir (first text)))
+        md         (cond
+                     (nil? text) nil
+                     ir-answer? nil
+                     (and (map? text) (string? (:answer text))) (:answer text)
+                     (and (map? text) (string? (:answer/text text))) (:answer/text text)
+                     (string? text) text
+                     :else
+                     (throw (ex-info "voice/synthesize-file! accepts Markdown answers or canonical IR only"
+                              {:type :voice/invalid-text
+                               :got-type (some-> text class .getName)})))
+        ir         (cond
+                     ir-answer? (vis/->ast text)
+                     (str/blank? (str md)) nil
+                     :else (vis/markdown->ir md))]
+    (letfn [(children->text
+              ([children] (children->text children ""))
+              ([children sep]
+               (->> children
+                 (map node->text)
+                 (remove str/blank?)
+                 (str/join sep)
+                 clean-speech-text)))
+            (table->text [node]
+              (let [rows (mapv (fn [row]
+                                 {:header? (some #(= :th (speech-node-tag %)) (speech-node-children row))
+                                  :cells   (mapv #(children->text (speech-node-children %))
+                                             (speech-node-children row))})
+                           (speech-node-children node))
+                    header (when (:header? (first rows)) (:cells (first rows)))
+                    data-rows (if header (subvec rows 1) rows)]
+                (->> data-rows
+                  (map (fn [{:keys [cells]}]
+                         (if (and (seq header) (= (count header) (count cells)))
+                           (->> (map vector header cells)
+                             (map (fn [[h c]] (str h ": " c)))
+                             (str/join "; "))
+                           (str/join "; " cells))))
+                  (remove str/blank?)
+                  (str/join "\n")
+                  clean-speech-text)))
+            (node->text [node]
+              (cond
+                (string? node) node
+                (not (vector? node)) ""
+                :else
+                (let [tag      (speech-node-tag node)
+                      attrs    (speech-node-attrs node)
+                      children (speech-node-children node)]
+                  (case tag
+                    :ir    (children->text children "\n\n")
+                    (:p :h :quote :li :tr :th :td :strong :em :mark :sup :sub)
+                    (children->text children " ")
+                    (:ul :ol) (children->text children "\n")
+                    :table (table->text node)
+                    :code  ""
+                    :span  (children->text children "")
+                    :br    "\n"
+                    :c     (children->text children "")
+                    :kbd   (children->text children "")
+                    :a     (children->text children "")
+                    :img   (or (:alt attrs) "")
+                    (children->text children " ")))))]
+      (clean-speech-text (when ir (node->text ir))))))
+
 (defn synthesize-file!
   "Synthesizes text to a WAV file with local Piper/VITS TTS.
 
@@ -209,22 +298,8 @@
   (let [dir (or model-dir-option (model-dir))
         ;; Vis answers can reach this boundary as raw Markdown (CLI /
         ;; Telegram) or canonical IR (TUI, after response rendering). The
-        ;; TTS engine wants plain prose, so normalize either shape to text.
-        ir-answer? (and (vector? text) (= :ir (first text)))
-        md     (cond
-                 (nil? text)                                        nil
-                 ir-answer?                                         nil
-                 (and (map? text) (string? (:answer text)))         (:answer text)
-                 (and (map? text) (string? (:answer/text text)))    (:answer/text text)
-                 (string? text)                                     text
-                 :else
-                 (throw (ex-info "voice/synthesize-file! accepts Markdown answers or canonical IR only"
-                          {:type :voice/invalid-text
-                           :got-type (some-> text class .getName)})))
-        spoken (cond
-                 ir-answer? (vis/extract-text text)
-                 (str/blank? (str md)) ""
-                 :else (vis/extract-text (vis/markdown->ir md)))]
+        ;; TTS engine wants spoken prose, not Markdown syntax.
+        spoken (answer->speech-text text)]
     (ensure-model! dir)
     (when (str/blank? spoken)
       (throw (ex-info "TTS text is blank" {:type :voice/blank-tts-text})))
