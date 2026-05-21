@@ -330,10 +330,10 @@
           (expect (str/includes? out "Session not found")))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "exposes a flag-free reproduction CLI command"
+  (it "exposes a flag-free repro CLI command"
     (let [cmd  (transcript/cli-command)
-          help (vis/render-command cmd ["vis" "extensions" (:cmd/name cmd)])]
-      (expect (= "reproduction" (:cmd/name cmd)))
+          help (vis/render-command cmd ["vis" "ext" (:cmd/name cmd)])]
+      (expect (= "repro" (:cmd/name cmd)))
       (expect (= "vis ext repro <SESSION-ID>" (:cmd/usage cmd)))
       (expect (not (str/includes? (:cmd/usage cmd) "--")))
       (expect (not (str/includes? help "FLAGS")))

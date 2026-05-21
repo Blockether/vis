@@ -12,9 +12,9 @@
     ;; Channels rely on this contract to never lose / gain cells.
     (let [[l c r] (vh/slot-widths 80)]
       (expect (= 80 (+ l c r)))
-      (expect (= 16 l))
-      (expect (= 16 r))
-      (expect (= 48 c)))
+      (expect (= 24 l))
+      (expect (= 24 r))
+      (expect (= 32 c)))
     (let [[l c r] (vh/slot-widths 0)]
       (expect (zero? l))
       (expect (zero? c))

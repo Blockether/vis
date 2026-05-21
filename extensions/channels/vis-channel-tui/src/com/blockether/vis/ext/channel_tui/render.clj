@@ -1508,16 +1508,29 @@
           (str " — " (str/join ", " suffix-parts)))))))
 
 (defn- assistant-meta-line
-  [{:keys [iteration-count duration-ms tokens cost] :as message}]
-  (let [line (vis/format-meta-line
-               {:iteration-count iteration-count
-                :silent-count (silent-form-count message)
-                :duration-ms duration-ms
-                :tokens tokens
-                :cost cost}
-               {:suffix (when-let [fallback (fallback-summary message)]
-                          [fallback])})]
-    (when-not (str/blank? line) line)))
+  ;; The footer is a Settings-driven toggle. `:message-meta-mode` rides on
+  ;; the message map (injected by virtual.clj projection) so both the
+  ;; painter and `bubble-height*` see the same mode without threading
+  ;; settings through every call. Missing key → `:full` (back-compat for
+  ;; synthetic / pre-projection messages).
+  ;;   :full  -> model / iters / tokens / cost / duration (+ suffix)
+  ;;   :short -> cost / duration (+ suffix); drops model, iters, tokens
+  ;;   :off   -> nil → bubble drops footer-gap + footer rows entirely
+  [{:keys [iteration-count duration-ms tokens cost message-meta-mode] :as message}]
+  (let [mode (or message-meta-mode :full)]
+    (when-not (= mode :off)
+      (let [short? (= mode :short)
+            line   (vis/format-meta-line
+                     (cond-> {:iteration-count iteration-count
+                              :silent-count (silent-form-count message)
+                              :duration-ms duration-ms
+                              :tokens tokens
+                              :cost cost}
+                       short? (assoc :iteration-count nil :tokens nil))
+                     (cond-> {:suffix (when-let [fallback (fallback-summary message)]
+                                        [fallback])}
+                       short? (assoc :model false)))]
+        (when-not (str/blank? line) line)))))
 
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
@@ -3011,11 +3024,17 @@
 (defn- recap-entries
   [line-entry recaps fill-w]
   (when (seq recaps)
-    (vec
-      (mapcat (fn [recap]
-                (map #(line-entry (str iteration-hdr-marker %))
-                  (wrap-text (str "* Recap: " recap) fill-w)))
-        recaps))))
+    (let [pad-w (max 1 (dec fill-w))]
+      (vec
+        (mapcat (fn [recap]
+                  ;; Single leading space inside the header-bg zone gives
+                  ;; Recap rows the same left breathing room as thinking
+                  ;; content (`(str thinking-marker " " %)`), so the bubble
+                  ;; no longer paints Recap text flush against the marker
+                  ;; column. wrap-text width drops by 1 to compensate.
+                  (map #(line-entry (str iteration-hdr-marker " " %))
+                    (wrap-text (str "* Recap: " recap) pad-w)))
+          recaps)))))
 
 (defn- code-source-from-render-segments
   [segments fallback-code]
@@ -3029,15 +3048,18 @@
 
 (defn- render-segment-title-entries
   [line-entry segments fill-w]
-  (vec
-    (mapcat (fn [{:keys [kind value]}]
-              (when (= :title kind)
-                (let [title (if (str/blank? (str value))
-                              "Title changed."
-                              (str "Title changed to \"" value "\"."))]
-                  (map #(line-entry (str iteration-hdr-marker %))
-                    (wrap-text (str "* Recap: " title) fill-w)))))
-      segments)))
+  (let [pad-w (max 1 (dec fill-w))]
+    (vec
+      (mapcat (fn [{:keys [kind value]}]
+                (when (= :title kind)
+                  (let [title (if (str/blank? (str value))
+                                "Title changed."
+                                (str "Title changed to \"" value "\"."))]
+                    ;; Mirror recap-entries: 1-col left padding inside the
+                    ;; header-bg zone, wrap-text width compensated.
+                    (map #(line-entry (str iteration-hdr-marker " " %))
+                      (wrap-text (str "* Recap: " title) pad-w)))))
+        segments))))
 
 (defn- format-iteration-entry-entries
   [entry
@@ -3052,11 +3074,19 @@
         fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
         header      []
-        recap-lines (recap-entries line-entry
-                      (cond-> (vec (or recaps []))
-                        (seq provider-fallbacks) (into (map fallback-recap provider-fallbacks))
-                        (provider-error-recap error) (conj (provider-error-recap error)))
-                      fill-w)
+        ;; Margin-top above Recap fires ONLY when this iteration actually
+        ;; carries one (user directive). Without recap-lines the iteration
+        ;; starts flush; with recap-lines the bubble gets a neutral blank
+        ;; row between the "Vis" label (or prior iteration) and the Recap
+        ;; text, so Recap breathes the way thinking and code blocks do.
+        raw-recap-lines (recap-entries line-entry
+                          (cond-> (vec (or recaps []))
+                            (seq provider-fallbacks) (into (map fallback-recap provider-fallbacks))
+                            (provider-error-recap error) (conj (provider-error-recap error)))
+                          fill-w)
+        recap-lines (if (seq raw-recap-lines)
+                      (into [(line-entry "")] raw-recap-lines)
+                      raw-recap-lines)
         thinking-lines
         (fn [thinking-text-or-texts]
           ;; Per user direction: do NOT truncate reasoning while it's

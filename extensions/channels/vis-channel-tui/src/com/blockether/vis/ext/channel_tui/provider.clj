@@ -741,11 +741,11 @@
         selected (atom 0)
         scroll   (atom 0)]
     (loop []
-        (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-              cols    (.getColumns size)
-              rows    (.getRows size)
-              g       (.newTextGraphics screen)
-              total   (count @models)
+      (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols    (.getColumns size)
+            rows    (.getRows size)
+            g       (.newTextGraphics screen)
+            total   (count @models)
               ;; Do NOT clear the whole terminal here - the chat
               ;; behind the dialog should stay visible (other modals
               ;; in `dialogs.clj` already behave this way). The dialog
@@ -754,134 +754,134 @@
               ;; popup" look. Wiping `0 0 cols rows` to terminal-bg every
               ;; frame is what made the chat disappear behind the
               ;; provider dialogs.
-              title   (str (vis/display-label (:id provider)) " Models")
-              bounds  (dlg/draw-dialog-chrome! g cols rows title (card-height (max 1 total)))
-              {:keys [left inner-w]} bounds
-              {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds (card-height (max 1 total)))
-              visible-count (card-visible-count content-h)
-              scrollable? (> total visible-count)
-              card-inner-w (if scrollable? (max 1 (dec inner-w)) inner-w)
-              _       (swap! selected #(dlg/clamp % 0 (max 0 (dec total))))
-              _       (swap! scroll #(card-window-start @selected % content-h total))]
+            title   (str (vis/display-label (:id provider)) " Models")
+            bounds  (dlg/draw-dialog-chrome! g cols rows title (card-height (max 1 total)))
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds (card-height (max 1 total)))
+            visible-count (card-visible-count content-h)
+            scrollable? (> total visible-count)
+            card-inner-w (if scrollable? (max 1 (dec inner-w)) inner-w)
+            _       (swap! selected #(dlg/clamp % 0 (max 0 (dec total))))
+            _       (swap! scroll #(card-window-start @selected % content-h total))]
 
-          (p/set-bg! g t/dialog-bg)
-          (p/fill-rect! g (inc left) content-top inner-w content-h)
+        (p/set-bg! g t/dialog-bg)
+        (p/fill-rect! g (inc left) content-top inner-w content-h)
 
-          (if (zero? total)
-            (do
-              (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/draw-centered! g (inc left) (+ content-top (quot content-h 2)) inner-w
-                "No models. Press A to add."))
-            (doseq [idx (range @scroll (min total (+ @scroll visible-count)))]
-              (let [card-y (+ content-top (card-start-row (- idx @scroll)))
-                    model  (nth @models idx)
-                    previous-name (when (pos? idx)
-                                    (:name (nth @models (dec idx))))
-                    next-name     (when (< idx (dec total))
-                                    (:name (nth @models (inc idx))))]
-                (draw-model-card! g left card-y card-inner-w idx (= idx @selected)
-                  (zero? idx)
-                  (:id provider)
-                  model
-                  previous-name
-                  next-name))))
-          (draw-card-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+        (if (zero? total)
+          (do
+            (p/set-colors! g t/dialog-hint t/dialog-bg)
+            (p/draw-centered! g (inc left) (+ content-top (quot content-h 2)) inner-w
+              "No models. Press A to add."))
+          (doseq [idx (range @scroll (min total (+ @scroll visible-count)))]
+            (let [card-y (+ content-top (card-start-row (- idx @scroll)))
+                  model  (nth @models idx)
+                  previous-name (when (pos? idx)
+                                  (:name (nth @models (dec idx))))
+                  next-name     (when (< idx (dec total))
+                                  (:name (nth @models (inc idx))))]
+              (draw-model-card! g left card-y card-inner-w idx (= idx @selected)
+                (zero? idx)
+                (:id provider)
+                model
+                previous-name
+                next-name))))
+        (draw-card-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
 
-          (dlg/draw-hint-bar! g left hint-row inner-w
-            [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
-          (.setCursorPosition screen (p/cursor-pos 0 0))
-          (.refresh screen Screen$RefreshType/DELTA)
+        (dlg/draw-hint-bar! g left hint-row inner-w
+          [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
 
-          (let [key (dlg/read-modal-key! screen)]
-            (when key
-              (cond
-                (instance? MouseAction key)
-                (let [^MouseAction ma key
-                      action (.getActionType ma)
-                      pos    (.getPosition ma)
-                      mx     (.getColumn pos)
-                      my     (.getRow pos)
-                      hit-idx (when (and (>= mx (inc left))
-                                      (< mx (+ left inner-w))
-                                      (>= my content-top)
-                                      (< my (+ content-top content-h)))
-                                (+ @scroll (quot (- my content-top) (+ card-rows card-gap))))]
-                  (cond
-                    (= action MouseActionType/SCROLL_UP)
+        (let [key (dlg/read-modal-key! screen)]
+          (when key
+            (cond
+              (instance? MouseAction key)
+              (let [^MouseAction ma key
+                    action (.getActionType ma)
+                    pos    (.getPosition ma)
+                    mx     (.getColumn pos)
+                    my     (.getRow pos)
+                    hit-idx (when (and (>= mx (inc left))
+                                    (< mx (+ left inner-w))
+                                    (>= my content-top)
+                                    (< my (+ content-top content-h)))
+                              (+ @scroll (quot (- my content-top) (+ card-rows card-gap))))]
+                (cond
+                  (= action MouseActionType/SCROLL_UP)
+                  (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
+                    (recur))
+
+                  (= action MouseActionType/SCROLL_DOWN)
+                  (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
+                    (recur))
+
+                  (and (= action MouseActionType/CLICK_DOWN) hit-idx (< hit-idx total))
+                  (do (reset! selected hit-idx)
+                    (recur))
+
+                  :else (recur)))
+
+              :else
+              (let [ktype (.getKeyType key)]
+                (cond
+                  (= ktype KeyType/Escape)
+                  {:models (vec @models)}
+
+                  (= ktype KeyType/ArrowUp)
+                  (if (.isAltDown key)
+                    (do (when (pos? @selected)
+                          (swap! models swap-items @selected (dec @selected))
+                          (swap! selected dec))
+                      (recur))
                     (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
-                      (recur))
+                      (recur)))
 
-                    (= action MouseActionType/SCROLL_DOWN)
+                  (= ktype KeyType/ArrowDown)
+                  (if (.isAltDown key)
+                    (do (when (< @selected (dec total))
+                          (swap! models swap-items @selected (inc @selected))
+                          (swap! selected inc))
+                      (recur))
                     (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
-                      (recur))
+                      (recur)))
 
-                    (and (= action MouseActionType/CLICK_DOWN) hit-idx (< hit-idx total))
-                    (do (reset! selected hit-idx)
-                      (recur))
-
-                    :else (recur)))
-
-                :else
-                (let [ktype (.getKeyType key)]
-                  (cond
-                    (= ktype KeyType/Escape)
-                    {:models (vec @models)}
-
-                    (= ktype KeyType/ArrowUp)
-                    (if (.isAltDown key)
-                      (do (when (pos? @selected)
-                            (swap! models swap-items @selected (dec @selected))
-                            (swap! selected dec))
+                  (= ktype KeyType/Character)
+                  (let [c (Character/toLowerCase (.getCharacter key))]
+                    (cond
+                      (= c \a)
+                      (do
+                        (when-let [model-name (select-model! screen
+                                                provider
+                                                (->> (concat (map vis/model-name @models)
+                                                       (:default-models (vis/provider-template (:id provider)))
+                                                       (:default-models provider))
+                                                  (remove nil?)
+                                                  distinct
+                                                  vec))]
+                          (when-not (some #(= model-name (vis/model-name %)) @models)
+                            (swap! models conj {:name model-name})
+                            (reset! selected (dec (count @models)))))
                         (recur))
-                      (do (swap! selected #(dlg/clamp (dec %) 0 (max 0 (dec total))))
-                        (recur)))
 
-                    (= ktype KeyType/ArrowDown)
-                    (if (.isAltDown key)
-                      (do (when (< @selected (dec total))
-                            (swap! models swap-items @selected (inc @selected))
-                            (swap! selected inc))
+                      (= c \d)
+                      (do
+                        (when (and (pos? total)
+                                (dlg/confirm-dialog! screen "Remove Model"
+                                  [(str "Remove " (:name (nth @models @selected)) "?")]))
+                          (swap! models #(vec (concat (subvec % 0 @selected)
+                                                (subvec % (inc @selected)))))
+                          (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @models))))))
                         (recur))
-                      (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
-                        (recur)))
 
-                    (= ktype KeyType/Character)
-                    (let [c (Character/toLowerCase (.getCharacter key))]
-                      (cond
-                        (= c \a)
-                        (do
-                          (when-let [model-name (select-model! screen
-                                                  provider
-                                                  (->> (concat (map vis/model-name @models)
-                                                         (:default-models (vis/provider-template (:id provider)))
-                                                         (:default-models provider))
-                                                    (remove nil?)
-                                                    distinct
-                                                    vec))]
-                            (when-not (some #(= model-name (vis/model-name %)) @models)
-                              (swap! models conj {:name model-name})
-                              (reset! selected (dec (count @models)))))
-                          (recur))
+                      (= c \r)
+                      (do (when (pos? total)
+                            (swap! models move-model-to-front @selected)
+                            (reset! selected 0))
+                        (recur))
 
-                        (= c \d)
-                        (do
-                          (when (and (pos? total)
-                                  (dlg/confirm-dialog! screen "Remove Model"
-                                    [(str "Remove " (:name (nth @models @selected)) "?")]))
-                            (swap! models #(vec (concat (subvec % 0 @selected)
-                                                  (subvec % (inc @selected)))))
-                            (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @models))))))
-                          (recur))
+                      :else (recur)))
 
-                        (= c \r)
-                        (do (when (pos? total)
-                              (swap! models move-model-to-front @selected)
-                              (reset! selected 0))
-                          (recur))
-
-                        :else (recur)))
-
-                    :else (recur)))))))))) 
+                  :else (recur))))))))))
 
 (defn- ensure-base-url
   [provider]

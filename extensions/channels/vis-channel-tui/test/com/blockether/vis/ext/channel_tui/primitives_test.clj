@@ -4,7 +4,8 @@
    Every test here would FAIL on a `(count s)` / `(subs s 0 w)`
    implementation. They are the ratchet against re-introducing
    char-count math for terminal-rendered strings."
-  (:require [com.blockether.vis.ext.channel-tui.primitives :as p]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.primitives :as p]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 ;; Reference fixtures. Pick code points that exercise distinct
@@ -88,8 +89,8 @@
       (p/put-str! graphics 0 0 line)
       (let [painted (apply str @captured)]
         (expect (= "Searched — 0 hit(s), truncated-by end-of-results." painted))
-        (expect (not (clojure.string/includes? painted p/INLINE_CODE_ON)))
-        (expect (not (clojure.string/includes? painted p/INLINE_CODE_OFF)))))))
+        (expect (not (str/includes? painted p/INLINE_CODE_ON)))
+        (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
 (defdescribe col-prefix-end-test
   (describe "col-prefix-end returns the longest grapheme-safe prefix length"

@@ -2,6 +2,7 @@
   (:refer-clojure)
   (:require
    [clj-reload.core :as clj-reload]
+   [clojure.edn :as edn]
    [clojure.set :as set]
    [charred.api :as json]
    [clojure.spec.alpha :as s]
@@ -1067,6 +1068,89 @@
       :else
       default-error)))
 
+(defn- escaped-char?
+  [^String s idx]
+  (loop [i (dec idx)
+         n 0]
+    (if (and (not (neg? i)) (= \\ (nth s i)))
+      (recur (dec i) (inc n))
+      (odd? n))))
+
+(defn- skip-ws
+  [^String s idx]
+  (let [n (count s)]
+    (loop [i idx]
+      (if (and (< i n) (Character/isWhitespace ^char (nth s i)))
+        (recur (inc i))
+        i))))
+
+(defn- direct-answer-close-suffix?
+  [^String s quote-idx]
+  (let [n (count s)
+        i (skip-ws s (inc quote-idx))]
+    (when (and (< i n) (= \} (nth s i)))
+      (let [j (skip-ws s (inc i))]
+        (and (< j n) (= \) (nth s j)))))))
+
+(defn- direct-answer-close-index
+  [^String s body-start]
+  (let [n (count s)]
+    (loop [i body-start
+           close nil]
+      (if (>= i n)
+        close
+        (if (= \" (nth s i))
+          (recur (inc i)
+            (if (and (not (escaped-char? s i))
+                  (direct-answer-close-suffix? s i))
+              i
+              close))
+          (recur (inc i) close))))))
+
+(defn- decode-direct-answer-body
+  [body]
+  (try
+    (let [v (edn/read-string (str "\"" body "\""))]
+      (if (string? v) v body))
+    (catch Throwable _
+      body)))
+
+(defn- raw-response->direct-answer-source
+  [raw]
+  (when-not (str/blank? raw)
+    (let [m (re-matcher #"(?s)\(done\s*\{\s*:answer\s*\"" raw)]
+      (when (.find m)
+        (let [body-start (.end m)]
+          (when-let [close (direct-answer-close-index raw body-start)]
+            (let [body   (subs raw body-start close)
+                  answer (decode-direct-answer-body body)]
+              (str "(done {:answer " (pr-str answer) "})"))))))))
+
+(defn- direct-answer-block-recoverable?
+  [{:keys [source]}]
+  (and (str/includes? (or source "") "(done")
+    (str/includes? (or source "") ":answer")
+    (:parse-error (parse-top-level-forms source))))
+
+(defn- recover-direct-answer-blocks
+  "Recover a torn `(done {:answer ...})` block when Markdown fence extraction
+   closed early on a nested answer code fence. Uses raw provider text as
+   source of truth, rebuilds balanced Clojure with `pr-str`, and only swaps
+   blocks when the rebuilt form parses."
+  [ask-result]
+  (let [blocks (vec (:blocks ask-result))]
+    (if (and (= 1 (count blocks))
+          (direct-answer-block-recoverable? (first blocks)))
+      (if-let [source (raw-response->direct-answer-source (:raw ask-result))]
+        (if-not (:parse-error (parse-top-level-forms source))
+          (assoc ask-result
+            :blocks [(assoc (first blocks) :source source)]
+            :vis/recovered-direct-answer? true
+            :all-blocks (or (:all-blocks ask-result) blocks))
+          ask-result)
+        ask-result)
+      ask-result)))
+
 ;; `normalized-code-source` removed: `code-entries-preflight` now computes
 ;; the same join inline on the surviving block sources (was only ever called
 ;; from the splitter's old preflight path).
@@ -1849,7 +1933,8 @@
                                  streaming-fn         (assoc :on-chunk streaming-fn)
                                  effective-llm-headers (assoc :llm-headers effective-llm-headers)
                                  extra-body           (assoc :extra-body extra-body)))))
-          code-observation (ask-code-block-observation ask-result-raw)
+          ask-result (recover-direct-answer-blocks ask-result-raw)
+          code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop iteration
               (merge {:duration-ms provider-duration-ms
@@ -1867,7 +1952,6 @@
                          :raw-length (count (or (:raw ask-result-raw) ""))
                          :block-count (:block-count code-observation)
                          :code-observation code-observation}))
-          ask-result ask-result-raw
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
