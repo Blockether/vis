@@ -3460,6 +3460,17 @@
                                            tc (assoc :tokens (:tokens tc)
                                                 :cost-usd (:cost-usd tc)))))
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
+                        ;; CTX engine advance-iter: append the trailer pin for
+                        ;; this iter's forms (engine drops the (done …) form
+                        ;; itself) and bump the cursor's :iter/next-form. The
+                        ;; ctx-atom now carries the pin so the next iter's
+                        ;; render shows it.
+                        _ (when-let [ca (:ctx-atom environment)]
+                            (swap! ca
+                              (fn [c]
+                                (ctx-engine/advance-iter
+                                  (assoc c :session/scope cursor)
+                                  forms-vec))))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
@@ -3566,16 +3577,23 @@
                            :status :running})
         result (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
-        ;; Snapshot the CTX as it stands at end-of-turn. The renderer
-        ;; stamps the cursor in fresh each call; we drop the cursor
-        ;; before persisting because the next-turn loader will derive
-        ;; a new cursor from the loop counters (cursor is iter-local,
-        ;; not turn-local). Persists Nippy-encoded to
-        ;; session_turn_state.ctx in the same transaction that flips
-        ;; the turn status, so live CTX = ctx on the latest turn-state
-        ;; for the latest turn-soul of the session_state.
-        ctx-snapshot (some-> (:ctx-atom env) deref
-                       (dissoc :session/scope))
+        ;; Snapshot the CTX as it stands at end-of-turn. Run gc-pass first
+        ;; so terminal-status entries past their TTL drop out of the live
+        ;; tree before persistence; historical snapshots in earlier
+        ;; session_turn_state rows still carry them, so introspect-archived
+        ;; can reach them. The renderer stamps the cursor in fresh each
+        ;; call; we drop the cursor before persisting because the next-turn
+        ;; loader will derive a new cursor from the loop counters (cursor
+        ;; is iter-local, not turn-local). Persisted Nippy-encoded to
+        ;; session_turn_state.ctx in the same transaction that flips the
+        ;; turn status, so live CTX = ctx on the latest turn-state for the
+        ;; latest turn-soul of the session_state.
+        ctx-snapshot (when-let [ca (:ctx-atom env)]
+                       (let [stamped (assoc @ca :session/scope
+                                       (ctx-loop/cursor-snapshot env))
+                             gced    (ctx-engine/gc-pass stamped)]
+                         (reset! ca (dissoc gced :session/scope))
+                         (dissoc gced :session/scope)))
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
             {;; The persisted answer is the raw Markdown source the
              ;; model wrote in `(done {:answer ...})`. Channels parse
@@ -4265,6 +4283,16 @@
                                          :system-prompt system-prompt
                                          :workspace-id  (:id active-workspace)}
                                   root-provider (assoc :provider root-provider))))
+        ;; CTX engine wiring (see ctx-loop). The atom carries the model's
+        ;; specs/tasks/facts/trailer across iters within a turn; the
+        ;; warnings atom collects per-mutation soft warnings. Both seeded
+        ;; fresh here; later they are re-loaded from
+        ;; session_turn_state.ctx (Nippy BLOB) on session resume so the
+        ;; model picks up where the last (done …) left off. Defined
+        ;; BEFORE answer-fn because answer-fn closes over them when (done
+        ;; …) carries :trailer-drop / :trailer-summarize args.
+        ctx-atom                 (ctx-loop/make-ctx-atom session-id)
+        ctx-warnings-atom        (ctx-loop/make-warnings-atom)
         ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
@@ -4300,7 +4328,35 @@
                                                  (string? s)             {:answer s}
                                                  (nil? s)                {:answer ""}
                                                  :else                   {:answer (pr-str s)
-                                                                          :vis/coerced? true})]
+                                                                          :vis/coerced? true})
+                                         ;; CTX engine: when (done {:trailer-drop […]
+                                         ;; :trailer-summarize […]}) carries trailer
+                                         ;; directives, apply them to the live ctx-atom
+                                         ;; right here so the snapshot persisted at
+                                         ;; turn end already reflects the model's
+                                         ;; intent. Hard rejects (partial-overlap
+                                         ;; summaries) emit warnings into the
+                                         ;; warnings atom rather than refusing.
+                                         trailer-drop      (when (map? value) (:trailer-drop value))
+                                         trailer-summarize (when (map? value) (:trailer-summarize value))]
+                                     (when (or (seq trailer-drop) (seq trailer-summarize))
+                                       (let [scope  (ctx-loop/synthesize-scope
+                                                      {:current-turn-position-atom current-turn-position-atom
+                                                       :current-iteration-atom current-iteration-atom
+                                                       :current-form-idx-atom current-form-idx-atom})
+                                             cursor (ctx-loop/cursor-snapshot
+                                                      {:current-turn-position-atom current-turn-position-atom
+                                                       :current-iteration-atom current-iteration-atom
+                                                       :current-form-idx-atom current-form-idx-atom})
+                                             ctx    (assoc @ctx-atom :session/scope cursor)
+                                             {ctx' :ctx ws :warnings}
+                                             (ctx-engine/apply-done
+                                               ctx scope
+                                               {:trailer-drop trailer-drop
+                                                :trailer-summarize trailer-summarize})]
+                                         (reset! ctx-atom (dissoc ctx' :session/scope))
+                                         (when (seq ws)
+                                           (swap! ctx-warnings-atom into ws))))
                                      (reset! answer-atom
                                        {:value    value
                                         :position @current-form-idx-atom}))
@@ -4341,14 +4397,10 @@
                                                :id id})))
                                    (swap! satisfied-hints-atom conj id)
                                    :vis/silent)
-        ;; CTX engine wiring (see ctx-loop). The atom carries the model's
-        ;; specs/tasks/facts/trailer across iters within a turn; the warnings
-        ;; atom collects per-mutation soft warnings. Both seeded fresh here;
-        ;; later they're re-loaded from session_turn_state.ctx (Nippy BLOB)
-        ;; on session resume so the model picks up where the last (done …)
-        ;; left off.
-        ctx-atom                 (ctx-loop/make-ctx-atom session-id)
-        ctx-warnings-atom        (ctx-loop/make-warnings-atom)
+        ;; Build the ctx-loop env subset used by SCI bindings + helpers.
+        ;; (ctx-atom + ctx-warnings-atom defined above, before answer-fn,
+        ;; so the (done …) handler can close over them when the form
+        ;; carries :trailer-drop / :trailer-summarize args.)
         ctx-loop-env             {:ctx-atom                  ctx-atom
                                   :ctx-warnings-atom         ctx-warnings-atom
                                   :current-turn-position-atom current-turn-position-atom
