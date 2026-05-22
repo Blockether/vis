@@ -41,7 +41,24 @@
    scopes deterministically. Engine stamps it before render. User-supplied
    `::scope-form` values that resolve to the future relative to the cursor
    are soft-warned by the engine — not refused, since the model may legally
-   reference scopes later in the same fence."
+   reference scopes later in the same fence.
+
+   Mutator API (upsert-only; consumed by `ctx-engine/apply-mutator`):
+
+     Top-level (merge partials):
+       :spec-set! :task-set! :fact-set!
+
+     Per-requirement (on :session/specs/:K/:requirements):
+       :req-add!    — collision on :id is soft-rejected (no write)
+       :req-update! — :id immutable, other keys merged
+       :req-remove! — cascade-warns orphaned task proofs
+
+     Per-proof (on :session/tasks/:K/:specs/:spec-K):
+       :proof-add! :proof-remove!
+
+   See CTX_REDESIGN.md §Invariants for the full enforcement matrix and which
+   invariants are HARD (cycle, malformed scope, partial-overlap trailer) vs
+   SOFT (everything else, surfaced as `;; ⚠` annotations)."
   (:require [clojure.spec.alpha :as s]
             [clojure.spec.gen.alpha :as gen]))
 
