@@ -945,6 +945,7 @@
 (def ^:private code-status-marker p/MARKER_CODE_STATUS)
 (def ^:private duration-marker  p/MARKER_DURATION)
 (def ^:private iteration-hdr-marker  p/MARKER_ITERATION_HDR)
+(def ^:private recap-marker          p/MARKER_RECAP)
 (def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
 (def ^:private code-pad-marker   p/MARKER_CODE_PAD)
 (def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
@@ -1828,6 +1829,20 @@
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
                       (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
+
+              ;; ── Iteration recap - header-bg, BOLD + ITALIC ──
+              ;; Mirrors the iteration-header chrome (same bg colour so
+              ;; consecutive recap rows read as a single block) but
+              ;; styled bold-italic so the call-out is unmistakable
+              ;; even when it shares background with reasoning rows.
+                    (str/starts-with? line recap-marker)
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g [p/BOLD p/ITALIC]
+                        (p/paint-styled-line! g x y raw
+                          t/dialog-hint t/iteration-header-bg
+                          t/code-block-fg t/code-block-bg)))
 
               ;; ── Thinking - dimmed bg, italic ──
               ;; Inline span sentinels (**bold** etc.) embedded in
@@ -2959,7 +2974,7 @@
                   ;; content (`(str thinking-marker " " %)`), so the bubble
                   ;; no longer paints Recap text flush against the marker
                   ;; column. wrap-text width drops by 1 to compensate.
-                  (map #(line-entry (str iteration-hdr-marker " " %))
+                  (map #(line-entry (str recap-marker " " %))
                     (wrap-text (str "* Recap: " recap) pad-w)))
           recaps)))))
 
@@ -2984,7 +2999,7 @@
                                 (str "Title changed to \"" value "\"."))]
                     ;; Mirror recap-entries: 1-col left padding inside the
                     ;; header-bg zone, wrap-text width compensated.
-                    (map #(line-entry (str iteration-hdr-marker " " %))
+                    (map #(line-entry (str recap-marker " " %))
                       (wrap-text (str "* Recap: " title) pad-w)))))
         segments))))
 
@@ -3012,7 +3027,20 @@
                             (provider-error-recap error) (conj (provider-error-recap error)))
                           fill-w)
         recap-lines (if (seq raw-recap-lines)
-                      (into [(line-entry "")] raw-recap-lines)
+                      ;; Visual shape mirrors code/thinking zones:
+                      ;;   neutral blank   = outside top margin (separates
+                      ;;                     recap block from the "Vis"
+                      ;;                     label or prior content)
+                      ;;   recap-marker "" = inside top header-bg pad
+                      ;;   recap rows      = bold + italic text
+                      ;;   recap-marker "" = inside bottom header-bg pad
+                      ;; The neutral row above thinking comes from
+                      ;; `thinking-lines` itself, which separates this
+                      ;; recap block from the thinking that follows.
+                      (vec (concat [(line-entry "")
+                                    (line-entry (str recap-marker ""))]
+                             raw-recap-lines
+                             [(line-entry (str recap-marker ""))]))
                       raw-recap-lines)
         thinking-lines
         (fn [thinking-text-or-texts]

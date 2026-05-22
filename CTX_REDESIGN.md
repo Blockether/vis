@@ -25,8 +25,7 @@ two values.
 - **SCI symbols registered by extensions** (with a `:tag`): `v/cat`, `v/patch`,
   `git/diff`, etc.
 - **Engine primitives** (bare symbols, hidden, peer with `done`):
-  memo mutators (`spec-set!` / `spec-remove!` / `task-set!` / `task-remove!`
-  / `fact-set!` / `fact-remove!`),
+  memo mutators (`spec-set!` / `task-set!` / `fact-set!`; upsert-only, no remove),
   introspection (`introspect-iter` / `introspect-form` / `introspect-turn`
   / `introspect-iter-heads` / `introspect-turn-list` / `introspect-symbol-doc`
   / `introspect-symbol-source` / `introspect-symbol-meta` / `introspect-symbol-apropos`),
@@ -138,15 +137,13 @@ Six substantive subtrees.
 ## Operator API
 
 ```clojure
-;; ─── MEMO MUTATION ───
-(spec-set!     :K {:title :requirements :status})
-(spec-remove!  :K)
+;; ─── MEMO MUTATION (upsert-only — no remove) ───
+(spec-set! :K {:title :requirements :status})
+(task-set! :K {:title :specs :depends-on? :status})
+(fact-set! :K {:content :status?})           ; :status ∈ #{:active :superseded}; default :active
 
-(task-set!     :K {:title :specs :depends-on? :status})
-(task-remove!  :K)
-
-(fact-set!     :K {:content})
-(fact-remove!  :K)
+;; Abandon = flip :status to :cancelled (task / spec) or :superseded (fact).
+;; Engine stamps :done-born on terminal flip and archives from live CTX after TTL.
 
 ;; ─── SYMBOLS (native SCI; engine persists via existing restore-sandbox!) ───
 (defn foo [x] …)                 ; create / overwrite; survives turn boundary
@@ -218,6 +215,53 @@ Six substantive subtrees.
 
 Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engine errors.
 
+### Versioning + GC
+
+Every `(done …)` writes the full CTX blob to a turn-keyed history table:
+
+```sql
+session_state_history (session_id, turn_n, ctx_json, ts,
+                       PRIMARY KEY (session_id, turn_n))
+```
+
+Live CTX = projection of the latest snapshot **minus** archived entries.
+History = every snapshot, forever.
+
+Memo deletion is forbidden. `*-remove!` does not exist. To drop a thing the
+model flips its `:status`:
+
+- task / spec → `:cancelled`
+- fact         → `:superseded`
+
+Engine stamps `:done-born` on the terminal-status flip (mirrors the spec
+behaviour for `:done`). At turn boundary, engine GCs from live CTX:
+
+| entity | terminal status | TTL (turns past `:done-born.turn`) |
+|---|---|---|
+| task | `:done`        | 6 |
+| task | `:cancelled`   | 10 |
+| spec | `:done`        | 6 |
+| spec | `:cancelled`   | 10 |
+| fact | `:superseded`  | 6 |
+| fact | `:active`      | never (model owns lifecycle) |
+
+Archived entries leave `:session/specs` / `:session/tasks` / `:session/facts`
+in live CTX but persist in every snapshot they were present in. Model reaches
+them through:
+
+```clojure
+(introspect-spec     :K)             ; latest turn the entry existed
+(introspect-task     :K)
+(introspect-fact     :K)
+(introspect-archived :tasks)         ; vec of archived task summaries
+(introspect-archived :specs)
+(introspect-archived :facts)
+(introspect-ctx-at   "tN")           ; full CTX snapshot at end of turn N
+```
+
+Timeline replay is therefore deterministic: pick a turn, fetch its snapshot,
+you have the exact CTX the model saw closing that turn.
+
 ### Scope cursor + scope-form classification
 
 `:session/scope` is engine-rendered every iter, before the user message goes
@@ -249,7 +293,6 @@ render warnings are for.
 
 - `*-set!` new key → stamp `:born <current-form-scope>`; existing → merge partials.
 - `spec-set!` with `:status :done | :cancelled` → stamp `:done-born`.
-- `*-remove!` non-existent key → silent no-op.
 
 ### Soft validations (engine warns; never refuses)
 
@@ -303,7 +346,7 @@ From `vis-foundation-exa`: all `:observation`.
 | head pattern | tag |
 |---|---|
 | `(defn …)` `(def …)` | `:mutation` |
-| `(spec-set! …)` `(spec-remove! …)` `(task-set! …)` `(task-remove! …)` `(fact-set! …)` `(fact-remove! …)` | `:mutation` |
+| `(spec-set! …)` `(task-set! …)` `(fact-set! …)` | `:mutation` |
 | `(introspect-* …)` | `:observation` |
 | arithmetic, str ops, `get-in`, `filter`, plain expressions | `:observation` |
 | `(done …)` `(set-session-title! …)` `(satisfy-hint! …)` | excluded from trailer |
@@ -512,7 +555,7 @@ MODEL >
            :replace "(defn check [tok] (bcrypt/check tok stored-hash))"}])
 => {:applied 1 :path "src/auth.clj"}
 
-(fact-remove! :auth-literal-compare)   ; superseded by the patch
+(fact-set! :auth-literal-compare {:status :superseded})  ; superseded by the patch; engine stamps :done-born + GCs after TTL
 
 (done {:answer       "Zamieniono `check` na bcrypt verify."
        :trailer-drop ["t1/i1"]})        ; the v/cat result is now stale
@@ -703,7 +746,7 @@ Deterministic `;;` annotations next to entries:
 
 #### Memo verbs
 
-3. **`spec-set!` / `spec-remove!` / `task-set!` / `task-remove!` / `fact-set!` / `fact-remove!`** bound in SCI hidden-sym set. Validate shape via `ctx_spec.clj` specs (`s/explain-data`), stamp `:born`, auto-journal on task `:status` change, auto-stamp `:done-born` on spec terminal, soft-warn on missing required fields and dangling refs.
+3. **`spec-set!` / `task-set!` / `fact-set!`** bound in SCI hidden-sym set (upsert-only; no remove verbs). Validate shape via `ctx_spec.clj` specs (`s/explain-data`), stamp `:born`, auto-stamp `:done-born` on terminal `:status` flip, soft-warn on missing required fields, dangling refs, future-scope proofs.
 
 #### Introspection
 
