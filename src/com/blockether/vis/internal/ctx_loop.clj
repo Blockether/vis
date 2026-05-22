@@ -144,12 +144,25 @@
         (reset! a [])
         ws))))
 
+(defn stamp-cursor
+  "Return a ctx map with both `:session/turn` and `:session/scope` synced
+   from the loop's running counters. Render path + every engine derivation
+   call goes through this so the model never sees a stale top-level
+   `:session/turn` (e.g. after a resume that loaded turn N's snapshot but
+   the current loop is on turn N+1)."
+  [env ctx]
+  (let [cursor (cursor-snapshot env)]
+    (-> ctx
+      (assoc :session/turn  (:turn cursor))
+      (assoc :session/scope cursor))))
+
 (defn current-ctx
-  "Deref the CTX atom with the engine cursor stamped in. This is the
-   shape passed to the renderer + `derive-warnings`."
+  "Deref the CTX atom with both `:session/turn` and `:session/scope`
+   stamped from the loop counters. This is the shape passed to the
+   renderer + `derive-warnings`."
   [env]
   (when-let [a (:ctx-atom env)]
-    (assoc @a :session/scope (cursor-snapshot env))))
+    (stamp-cursor env @a)))
 
 ;; =============================================================================
 ;; Introspect verbs — model-facing SCI bindings over engine history helpers

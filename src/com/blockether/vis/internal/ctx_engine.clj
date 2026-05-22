@@ -62,9 +62,7 @@
    accompanying `ctx-engine-test` namespace drives the implementation order
    via REPL-replayable scenarios."
   (:require [clojure.set :as set]
-            [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.ctx-spec :as cs]
             [sci.core :as sci]))
 
 ;; =============================================================================
