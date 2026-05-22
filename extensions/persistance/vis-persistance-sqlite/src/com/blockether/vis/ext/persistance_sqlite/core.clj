@@ -1180,12 +1180,11 @@
    block; persisted into the named `eval_duration_ms` column. The LLM
    call wall time arrives as `:llm-full-duration-ms` and lands on
    `llm_full_duration_ms`."
-  [{:keys [result error duration-ms] :as opts}]
+  [{:keys [forms duration-ms] :as opts}]
   (let [code (require-iteration-code! opts)]
     (cond-> {:code (str code)}
-      (contains? opts :result)     (assoc :result (->blob (freeze-safe result)))
-      (some? error)                (assoc :error (->blob (freeze-safe error)))
-      (some? duration-ms)          (assoc :eval_duration_ms (long duration-ms)))))
+      (seq forms)              (assoc :forms (->blob (freeze-safe (vec forms))))
+      (some? duration-ms)      (assoc :eval_duration_ms (long duration-ms)))))
 
 (defn- routing-summary-columns
   [routing]
@@ -1297,7 +1296,7 @@
                             llm-model    (assoc-in [:actual :model] (str llm-model)))))
               raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the single-form code payload inline.
-          ;;    Hard cut: callers pass flat :code/:result/:error.
+          ;;    Hard cut: callers pass :code + :forms (Nippy vec of per-form envelopes).
           (let [iteration-cols (prepare-iteration-columns opts)]
             (execute! tx-info
               {:insert-into :session_turn_iteration
@@ -1377,7 +1376,7 @@
                                :session_turn_iteration_id iteration-id-s
                                :version                       (inc max-ver)
                                :expression                    code
-                               :result                        (->blob (freeze-safe value))
+                               :value                         (->blob (freeze-safe value))
                                :created_at                    now}]})))))
           ;; 4. Dependencies -> definition_dependency. Filter to edges
           ;; whose BOTH endpoints resolve to a soul in this
@@ -1560,15 +1559,14 @@
     iteration))
 
 (defn- row->iteration [row]
-  (let [iter-error (<-blob (:error row))]
+  (let [forms-vec (<-blob (:forms row))]
     (cond-> {:id          (->uuid (:id row))
              :type        :iteration
              :position    (:position row)
              :status      (->kw-back (:status row))
              :created-at  (->date (:created_at row))}
       (some? (:code row))                (assoc :code (:code row))
-      (some? (:result row))              (assoc :result (<-blob (:result row)))
-      (some? iter-error)                 (assoc :error iter-error)
+      (some? forms-vec)                  (assoc :forms forms-vec)
       (some? (:eval_duration_ms row))    (assoc :duration-ms (:eval_duration_ms row))
       (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
       (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
@@ -1636,11 +1634,11 @@
     (let [iteration-id-s (->ref iteration-id)]
       (mapv (fn [r]
               {:name    (:name r)
-               :value   (<-blob (:result r))
+               :value   (<-blob (:value r))
                :code    (:expr r)
                :version (:version r)})
         (query! db-info
-          {:select [:es.name [:est.result :result] [:est.expression :expr] :est.version]
+          {:select [:es.name [:est.value :value] [:est.expression :expr] :est.version]
            :from   [[:definition_state :est]]
            :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]]
            :where  [:= :est.session_turn_iteration_id iteration-id-s]
@@ -1657,7 +1655,7 @@
          (into {}
            (map (fn [r]
                   [(symbol (:name r))
-                   {:value      (<-blob (:result r))
+                   {:value      (<-blob (:value r))
                     :code       (:expr r)
                     :version    (:version r)
                     :session-turn-id   (->uuid (:session_turn_soul_id r))
@@ -1665,7 +1663,7 @@
            (latest-visible-definition-rows state-ids
              (query! db-info
                {:select [:es.name :es.session_state_id
-                         :est.result [:est.expression :expr] :est.version :est.created_at
+                         :est.value [:est.expression :expr] :est.version :est.created_at
                          :qst.session_turn_soul_id]
                 :from   [[:definition_soul :es]]
                 :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
@@ -1710,7 +1708,7 @@
 
 (defn- row->bindings-entry
   [r]
-  (let [value (<-blob (:result r))]
+  (let [value (<-blob (:value r))]
     (cond-> {:name        (symbol (:name r))
              :version     (:version r)
              :kind        (var-kind value (:expr r))
@@ -1736,7 +1734,7 @@
                       (latest-visible-definition-rows state-ids
                         (query! db-info
                           {:select [:es.name :es.session_state_id
-                                    :est.version :est.result [:est.expression :expr] :est.created_at
+                                    :est.version :est.value [:est.expression :expr] :est.created_at
                                     [:est.session_turn_iteration_id :session_turn_iteration_id]
                                     [:it.position :iteration_position]
                                     :qst.session_turn_soul_id]
@@ -1760,7 +1758,7 @@
           state-rank (zipmap state-ids (range))]
       (if (seq state-ids)
         (mapv (fn [r]
-                (let [value (<-blob (:result r))]
+                (let [value (<-blob (:value r))]
                   {:version    (:version r)
                    :value      value
                    :code       (:expr r)
@@ -1773,7 +1771,7 @@
                       (or (:version r) 0)
                       (or (:created_at r) 0)])
             (query! db-info
-              {:select [:est.version :est.result [:est.expression :expr] :est.created_at
+              {:select [:est.version :est.value [:est.expression :expr] :est.created_at
                         [:est.session_turn_iteration_id :session_turn_iteration_id]
                         [:it.position :iteration_position]
                         :es.session_state_id
@@ -1801,7 +1799,7 @@
        (if (seq state-ids)
          (let [direction (if (= :oldest-first order) :asc :desc)]
            (mapv (fn [r]
-                   (let [value (<-blob (:result r))]
+                   (let [value (<-blob (:value r))]
                      {:event       (if (zero? (:version r)) :defined :redefined)
                       :durability  :persisted
                       :symbol      (clojure.core/symbol (:name r))
@@ -1812,7 +1810,7 @@
                       :info  (row->var-info r)}))
              (query! db-info
                (cond-> {:select [:es.name :es.session_state_id
-                                 :est.version :est.result [:est.expression :expr] :est.created_at
+                                 :est.version :est.value [:est.expression :expr] :est.created_at
                                  [:est.session_turn_iteration_id :session_turn_iteration_id]
                                  [:it.position :iteration_position]
                                  :qst.session_turn_soul_id]
@@ -2142,7 +2140,7 @@
       :name        string
       :version     int                   ; latest version stored
       :expr        string                ; precise (def NAME ...) source
-      :result      <thawed value or {:vis/ref :expr}>
+      :value       <thawed value or {:vis/ref :expr}>
       :depends-on  [upstream-soul-id ...]
       :depended-by [downstream-soul-id ...]}
 
@@ -2153,7 +2151,7 @@
    reads MAX(version) per soul so the consumer always sees the freshest
    source + value, and untouched vars carry forward unchanged.
 
-   Caller evals entries in order. For each entry, if `:result` is
+   Caller evals entries in order. For each entry, if `:value` is
    `{:vis/ref :expr}`, re-eval `:expr` to reconstruct the value
    (functions / lazy seqs / runtime objects). Dependency order is
    guaranteed."
@@ -2165,7 +2163,7 @@
         (let [rows (vec (latest-visible-definition-rows state-ids
                           (query! db-info
                             {:select [:es.id :es.name :es.session_state_id
-                                      :est.version [:est.expression :expr] :est.result
+                                      :est.version [:est.expression :expr] :est.value
                                       :est.created_at]
                              :from   [[:definition_soul :es]]
                              :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]]
@@ -2224,7 +2222,7 @@
                      :name       (:name r)
                      :version    (:version r)
                      :expr       (:expr r)
-                     :result     (<-blob (:result r))
+                     :value      (<-blob (:value r))
                      :depends-on (vec (filter soul-ids (get-in adj [soul-id :depends-on])))
                      :depended-by (vec (filter soul-ids (get-in adj [soul-id :depended-by])))}))
             sorted))))))
