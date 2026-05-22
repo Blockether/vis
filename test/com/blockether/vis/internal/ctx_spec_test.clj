@@ -54,12 +54,21 @@
       (expect (not (s/valid? ::cs/scope-turn "t3/i2"))))))
 
 (defdescribe fact-test
-  (describe "::fact — {:content :born}; no labels or edge fields"
+  (describe "::fact — {:content :born :status? :done-born?}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/fact)))
 
-    (it "minimal valid"
+    (it "minimal valid — :status defaults to :active by engine convention"
       (expect (s/valid? ::cs/fact {:content "x" :born "t1/i1/f1"})))
+
+    (it "accepts :status :superseded with engine-stamped :done-born"
+      (expect (s/valid? ::cs/fact
+                {:content "x" :born "t1/i1/f1"
+                 :status :superseded :done-born "t4/i2/f1"})))
+
+    (it "rejects unknown :status value"
+      (expect (not (s/valid? ::cs/fact
+                     {:content "x" :born "t1/i1/f1" :status :archived}))))
 
     (it "rejects missing :content"
       (expect (not (s/valid? ::cs/fact {:born "t1/i1/f1"}))))
@@ -109,7 +118,17 @@
 
     (it "has no :journal field — status history lives in trailer"
       (expect (s/valid? ::cs/task
-                {:title "x" :specs {:s []} :status :done :born "t1/i1/f1"})))))
+                {:title "x" :specs {:s []} :status :done :born "t1/i1/f1"})))
+
+    (it "accepts engine-stamped :done-born when status is terminal"
+      (expect (s/valid? ::cs/task
+                {:title "x" :specs {:s []} :status :done :born "t1/i1/f1"
+                 :done-born "t3/i2/f1"})))
+
+    (it "accepts :cancelled status (model-driven abandon, not delete)"
+      (expect (s/valid? ::cs/task
+                {:title "x" :specs {:s []} :status :cancelled :born "t1/i1/f1"
+                 :done-born "t4/i1/f1"})))))
 
 (defdescribe spec-test
   (describe "::spec — {:title :requirements :status :born}"
