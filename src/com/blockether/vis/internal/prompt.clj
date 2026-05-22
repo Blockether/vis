@@ -102,26 +102,35 @@
       No assistant/tool messages persist between iters — CTX is the working memory.
 
       Subtrees:
+        :session/scope       engine-rendered; current cursor inside the turn
+                             shape: {:turn N :iter M :next-form K}
+                             :turn  = current turn (same as :session/turn)
+                             :iter  = current iter inside the turn
+                             :next-form = 1-based index your first form in this iter's fence will receive
+                             Use these when picking :proof scopes — avoid the future relative to this cursor.
         :session/workspace   engine-rendered; current VCS state. Keys are :git/* (VCS-discriminator
                              namespace). Future hg/jj support slots in as :hg/* :jj/* without colliding.
                              shape: {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
-        :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born}}
+        :session/symbols     engine-rendered; live SCI symbols {sym {:arglists? :doc? :born}}
+                             :doc is omitted when the underlying var has no docstring; engine never emits :doc nil
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
         :session/specs       formal requirements
-                             shape: {<kw> {:title :criteria :status :born :done-born?}}
-                             :criteria is [{:id :criterion :facts?}]
+                             shape: {<kw> {:title :requirements :status :born :done-born?}}
+                             :requirements is [{:id :title :facts? :validator-fn?}]
+                             :validator-fn is an optional SCI fn source string; engine evaluates it
+                             against the form result at :proof scope (bounded sandbox)
         :session/tasks       work items + proofs
-                             shape: {<kw> {:title :spec :depends-on? :satisfies?
-                                           :status :journal :born}}
-                             :spec refs one :session/specs key
+                             shape: {<kw> {:title :specs :depends-on? :status :born}}
+                             :specs is {spec-id [{:requirement :proof}]}
+                             :requirement refs one requirement id on that spec
+                             :proof is a form scope you observed/produced; engine warns on future/unknown scopes
                              :depends-on refs prerequisite :session/tasks keys
-                             :satisfies is [{:criterion :proof}]
-                             :criterion refs one criterion id on task's spec; :proof is form scope
                              :status ∈ #{:todo :doing :done :cancelled}
-                             :journal engine-appended on every :status change
+                             status history is reconstructable from :session/trailer mutation pins;
+                             no per-task journal is stored
         :session/facts       durable observations/decisions/rules/behavior
-                             shape: {<kw> {:content :born :scope? :source?}}
-                             facts connect via criteria :facts; no :tags, no :connections
+                             shape: {<kw> {:content :born}}
+                             facts connect via requirement :facts only
         :session/trailer     pinned iter envelopes; engine auto-pins per iter;
                              drop/summarize via done keys
 
@@ -129,11 +138,11 @@
       Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
       Memory:
-        (spec-set!     :K {:title :criteria :status})
+        (spec-set!     :K {:title :requirements :status})
         (spec-remove!  :K)
-        (task-set!     :K {:title :spec :depends-on? :status})
+        (task-set!     :K {:title :specs :depends-on? :status})
         (task-remove!  :K)
-        (fact-set!     :K {:content :scope?})
+        (fact-set!     :K {:content})
         (fact-remove!  :K)
 
       Symbols (native SCI; engine persists across turns):
@@ -158,16 +167,20 @@
           :trailer-drop      [\"tN/iN\" \"tA/iX->tB/iY\" …]   pin scope or summary range
           :trailer-summarize [{:scope-start \"tA/iX\" :scope-end \"tB/iY\" :summary \"…\"} …]
         (set-session-title!   \"title\")
-        (satisfy-hint!        :hint/id [<scope> …])     evidence scopes from this turn; soft-warns if missing
+        (satisfy-hint!        :hint/id [<scope> …])     proof scopes from this turn; soft-warns if missing
 
     ENGINE BEHAVIORS
       • Every *-set! call: new key → engine stamps :born; existing → merges partials.
-      • (task-set! :K {:status <new>}) → engine appends {:status :scope} to :journal.
       • *-remove! on non-existent key → silent no-op.
-      • Soft warnings (engine never refuses): missing :criteria on spec-set!,
-        missing :spec on task-set!, task :satisfies unknown criterion,
-        spec :done with unsatisfied criteria, missing :content on fact-set!, dangling refs.
-        Warnings appear as `;; ⚠ …` in next render.
+      • Hard rejects (rare; the rule is never refuse): malformed scope strings,
+        circular :depends-on edges, partial-overlap trailer summaries.
+      • Soft warnings (engine never refuses): missing :requirements on spec-set!,
+        missing :specs on task-set!, task proof refs unknown requirement,
+        proof scope from the future relative to :session/scope, proof scope unknown
+        (no executed form), proof scope errored (form threw, no result), proof fails
+        requirement :validator-fn, spec :done with unsatisfied requirements,
+        missing :content on fact-set!, dangling refs.
+        Warnings appear as `;; ⚠ …` in next render, anchored to the offending entry.
 
     TRAILER
       Engine auto-pins each iter as it executes. After eval, before next iter
@@ -195,7 +208,7 @@
       Read them before acting; satisfy by performing the requested action and
       then calling (satisfy-hint! :hint/id [<scope> …]) as its own top-level
       form. The vec of scopes points at this turn's iters that constitute
-      proof of satisfaction. This is separate from task proof slots.
+      proof of satisfaction. This is separate from task :specs proofs.
       Hints are transient — they do not survive the turn that satisfies them.
 
     DONE
@@ -206,10 +219,10 @@
       (done …) is a claim of completeness, not a sign-off after activity.
       Before calling done:
         1. Re-read the CURRENT-USER-MESSAGE.
-        2. Enumerate acceptance criteria — explicit or implied.
-        3. For each criterion, point to a task's :satisfies entry with :proof,
-           facts (:criteria[].facts), or trailer pins. Missing proof → another iter.
-        4. Emit done only when every criterion maps to observed data.
+        2. Enumerate acceptance requirements — explicit or implied.
+        3. For each requirement, point to a task :specs proof entry, facts
+           (:requirements[].facts on the spec), or trailer pins. Missing proof → another iter.
+        4. Emit done only when every requirement maps to observed data.
 
     REASONING
       Data first, effects last. Compose pure transformations, inspect shapes,

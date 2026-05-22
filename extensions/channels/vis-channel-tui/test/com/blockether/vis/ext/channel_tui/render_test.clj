@@ -502,6 +502,19 @@
       ;; per user directive — only tool channel-render output paints.
       (expect (not (str/includes? shown-body ":vis/silent"))))))
 
+(defdescribe repeated-error-collapse-test
+  (it "squashes repeated identical provider errors into one counted row"
+    (render/invalidate-cache!)
+    (let [err {:message "Stream ended before terminal marker."
+               :data {:type :svar.core/stream-truncated}}
+          body (strip-ansi
+                 (:text (render/progress->lines-data
+                          {:iterations (vec (repeat 11 {:error err}))} 80
+                          {:show-thinking true :show-iterations true}
+                          {:now-ms 1000 :turn-start-ms 0})))]
+      (expect (str/includes? body "ERROR x 11: Stream ended before terminal marker."))
+      (expect (= 1 (count (re-seq #"ERROR" body)))))))
+
 (defdescribe progress-streaming-perf-test
   (it "per-iteration cache keeps live-stream tick under 50 ms with 15 iterations"
     ;; Regression test for the bug where `progress->lines-data` keyed its
@@ -593,7 +606,21 @@
             body  (strip-ansi (str/join "\n" (map body-of lines)))]
         (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
         (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
-        (expect (neg? (.indexOf body "2")))))))
+        (expect (neg? (.indexOf body "2"))))))
+
+  (it "leaves exactly one thinking pad row before the first code form"
+    (let [lines (format-iteration-entry
+                  {:thinking "alpha"
+                   :error nil
+                   :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                  60 1 {:show-header? false :live-preview? true})
+          visible (mapv (comp strip-ansi body-of) lines)
+          alpha-idx (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
+          code-idx  (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))
+          between   (subvec (vec lines) (inc alpha-idx) code-idx)]
+      (expect (= (+ alpha-idx 2) code-idx))
+      (expect (= 1 (count between)))
+      (expect (every? visually-blank? between)))))
 
 (defdescribe paint-styled-line-stacking-test
   ;; The Polish bug report: `> **Lącznie:**` inside a quote rendered
@@ -1516,10 +1543,8 @@
       (expect (some #(str/includes? (:text %) "3 iters (2 silent)")
                 @puts))))
 
-  (it "draws configured turn separators above the next You prompt"
+  (it "ignores legacy turn separator flag on user prompts"
     (let [puts    (atom [])
-          fg      (atom nil)
-          bg      (atom nil)
           active  (atom #{})
           graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
                      (clearModifiers []
@@ -1535,21 +1560,19 @@
                        (if (empty? @active)
                          (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
                          (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                     (setForegroundColor [c] (reset! fg c) this)
-                     (setBackgroundColor [c] (reset! bg c) this)
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
                      (putString [_col row text]
-                       (swap! puts conj {:row row :text text :fg @fg :bg @bg :sgr @active})
+                       (swap! puts conj {:row row :text text :sgr @active})
                        this)
                      (fillRectangle [_pos _size _ch] this)
                      (setCharacter [_ _ _] this))
           height   (render/draw-chat-bubble! graphics
                      {:role :user :text "hello" :turn-separator? true}
                      4 2 30 {:viewport-h 40})]
-      (expect (= 6 height))
+      (expect (= 3 height))
+      (expect (not-any? #(str/includes? (or (:text %) "") "──") @puts))
       (expect (some #(and (= 4 (:row %))
-                       (str/includes? (:text %) "──"))
-                @puts))
-      (expect (some #(and (= 5 (:row %))
                        (= "You" (:text %))
                        (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                 @puts))))
@@ -1734,12 +1757,12 @@
           bubble-fill  (some (fn [fill]
                                (when (and (= left (:col fill))
                                        (= width (:w fill))
-                                       (> (:h fill) 1))
+                                       (pos? (:h fill)))
                                  fill))
                          @fills)
           bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)]
-      (expect (= 5 height))
-      (expect (= 3 (:h bubble-fill)))
+      (expect (= 3 height))
+      (expect (= 1 (:h bubble-fill)))
       (expect (= bubble-last-row (dec gap-row))))))
 
 (defdescribe bubble-row-clipping-test
