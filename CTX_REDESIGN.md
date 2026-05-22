@@ -138,12 +138,28 @@ Six substantive subtrees.
 
 ```clojure
 ;; ─── MEMO MUTATION (upsert-only — no remove) ───
-(spec-set! :K {:title :requirements :status})
-(task-set! :K {:title :specs :depends-on? :status})
+
+;; Top-level entity (partial merge; :requirements NOT here)
+(spec-set! :K {:title :status})
+(task-set! :K {:title :depends-on :status})
 (fact-set! :K {:content :status?})           ; :status ∈ #{:active :superseded}; default :active
+
+;; Per-requirement (on :session/specs/:K/:requirements)
+(req-add!    :spec-K {:id :title :facts? :validator-fn?})    ; collision warn on existing :id
+(req-update! :spec-K :req-id {:title? :facts? :validator-fn?})   ; :id immutable
+(req-remove! :spec-K :req-id)                ; cascade-warns orphaned task proofs
+
+;; Per-proof (on :session/tasks/:K/:specs/:spec-K)
+(proof-add!    :task-K :spec-K {:requirement :proof})
+(proof-remove! :task-K :spec-K :req-id)
 
 ;; Abandon = flip :status to :cancelled (task / spec) or :superseded (fact).
 ;; Engine stamps :done-born on terminal flip and archives from live CTX after TTL.
+
+;; Sugar: spec-set! :K {:requirements [...]} is legal — engine diffs old vs new
+;; and emits cascade warnings for any removed req that had proofs, same as
+;; an explicit (req-remove! …) sequence. Granular ops just spare the model
+;; from re-emitting the full vec on minor edits.
 
 ;; ─── SYMBOLS (native SCI; engine persists via existing restore-sandbox!) ───
 (defn foo [x] …)                 ; create / overwrite; survives turn boundary
@@ -214,6 +230,33 @@ Six substantive subtrees.
 ```
 
 Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engine errors.
+
+### Invariants (engine derives every render + every mutation)
+
+Pure-fn invariants computed from `(build-indexes ctx)`. Every violation
+emits one `;; ⚠ …` warning anchored at the offending entry on the next
+render. Only two are hard (write refused): malformed scope, depends-on cycle.
+
+| # | invariant | trigger | severity |
+|---|---|---|---|
+| 1 | requirement `:id` unique inside spec | `req-add!`, `spec-set!` :requirements | soft (collision warn, no write) |
+| 2 | requirement `:facts` refs exist in `:session/facts` | `req-add!`, `req-update!` | soft |
+| 3 | requirement `:validator-fn` parses in SCI | `req-add!`, `req-update!` | soft |
+| 4 | task `:specs` keys exist in `:session/specs` | `task-set!`, `proof-add!` | soft |
+| 5 | task `:depends-on` keys exist in `:session/tasks` | `task-set!` | soft |
+| 6 | task `:depends-on` graph is acyclic | `task-set!` `:depends-on` | **HARD reject** |
+| 7 | task proof `:requirement` exists on referenced spec | `proof-add!`, `task-set!` :specs, `req-remove!` cascade | soft |
+| 8 | task proof `:proof` scope-form classifies `:ok` | every render | soft (per `:future-*`/`:unknown`/`:errored` class) |
+| 9 | proof scope `:proof` validator-fn returns truthy | every render | soft |
+| 10 | spec `:status :done` ⇒ every requirement has ≥1 valid proof | `spec-set!` :status :done, every render | soft |
+| 11 | task `:status :done` ⇒ every `:depends-on` target is `:done`/`:cancelled` | `task-set!` :status :done | soft |
+| 12 | terminal-status entry has `:done-born` | engine-stamped | n/a (engine never fails to stamp) |
+| 13 | trailer summary ranges do not partially overlap | `(done …)` `:trailer-summarize` | **HARD reject** |
+| 14 | every `::scope-form` string matches regex | every write | **HARD reject** (malformed) |
+| 15 | fact `:active` unreferenced by any active requirement for > 12 turns | every render | soft (suggest supersede) |
+
+Engine NEVER refuses writes outside the three hard rules. Soft warnings are
+the entire enforcement channel: model reads `;; ⚠` annotations and decides.
 
 ### Versioning + GC
 

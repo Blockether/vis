@@ -1,0 +1,799 @@
+(ns com.blockether.vis.internal.ctx-engine
+  "Pure-fn engine over CTX. No IO. No SCI. No persistence. No randomness.
+
+   This namespace is the deterministic core of the new CTX subsystem. Every
+   public fn here takes data, returns data. Anything that talks to disk, the
+   SCI sandbox, or the provider lives elsewhere and calls into these fns.
+
+   Public surface (all pure):
+
+     (build-indexes ctx)
+       → {:req-index :proof-index :task-by-spec :fact-refs :dep-graph :rev-deps}
+
+     (classify-scope scope-form cursor form-results)
+       → one of :ok :unknown :errored :future-form :future-iter :future-turn :malformed
+
+     (derive-progression ctx indexes)
+       → {spec-id {:total :proven :ratio :state :missing}}
+
+     (derive-warnings ctx indexes)
+       → [{:level :anchor :code :message} …]   sorted, deduped
+
+     (derive-next-actions ctx indexes progression last-mutation-map)
+       → [{:type :target :priority :hint} …]   top-N ranked
+
+     (apply-mutator ctx form-scope mutator args)
+       → {:ctx :warnings :stamped?}            engine never throws on soft;
+                                               hard rejects return :ctx unchanged +
+                                               :warnings populated + :stamped? false
+
+     (advance-iter ctx form-results-vec)
+       → ctx with trailer pin appended and :session/scope advanced
+
+     (advance-turn ctx)
+       → ctx with bumped :session/turn, reset :session/scope, gc-pass run
+
+     (gc-pass ctx)
+       → ctx with terminal-status entries past TTL removed from live tree
+
+   Mutator keywords accepted by `apply-mutator`:
+     :spec-set! :task-set! :fact-set!
+     :req-add! :req-update! :req-remove!
+     :proof-add! :proof-remove!
+
+   Hard rejects (engine writes nothing, warnings carry the reason):
+     - malformed scope string anywhere
+     - depends-on cycle introduced by task-set!
+     - partial-overlap trailer-summarize at done-time
+
+   Everything else is a soft warning surfaced via `derive-warnings` and inlined
+   by the renderer as `;; ⚠ …` next to the offending entry. The engine NEVER
+   refuses a write outside the three hard rules above.
+
+   This file ships only declarations + helpers + the deterministic skeletons
+   needed to start scenario testing. Each fn is implemented incrementally; the
+   accompanying `ctx-engine-test` namespace drives the implementation order
+   via REPL-replayable scenarios."
+  (:require [clojure.set :as set]
+            [clojure.spec.alpha :as s]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.ctx-spec :as cs]))
+
+;; =============================================================================
+;; Scope parsing — deterministic, regex-driven
+;; =============================================================================
+
+(def ^:private scope-form-re #"^t([1-9][0-9]*)/i([1-9][0-9]*)/f([1-9][0-9]*)$")
+
+(defn parse-scope-form
+  "Parse a `tN/iM/fK` form-scope into `{:turn :iter :form}` or nil if malformed.
+   No exceptions — pure value-or-nil."
+  [s]
+  (when (string? s)
+    (when-let [[_ t i f] (re-matches scope-form-re s)]
+      {:turn (parse-long t) :iter (parse-long i) :form (parse-long f)})))
+
+(defn malformed-scope?
+  "True if `s` is a string but does not parse as `::cs/scope-form`."
+  [s]
+  (and (string? s) (nil? (parse-scope-form s))))
+
+(defn scope-compare
+  "Total order on form-scope strings by (turn, iter, form). Returns int.
+   Compares parsed segments; malformed scopes sort before all valid ones to
+   make their presence obvious in render."
+  [a b]
+  (let [pa (parse-scope-form a) pb (parse-scope-form b)]
+    (cond
+      (and (nil? pa) (nil? pb)) (compare (str a) (str b))
+      (nil? pa) -1
+      (nil? pb) 1
+      :else
+      (let [c1 (compare (:turn pa) (:turn pb))]
+        (if (zero? c1)
+          (let [c2 (compare (:iter pa) (:iter pb))]
+            (if (zero? c2)
+              (compare (:form pa) (:form pb))
+              c2))
+          c1)))))
+
+;; =============================================================================
+;; classify-scope — the central pure fn for proof scope orientation
+;; =============================================================================
+
+(defn classify-scope
+  "Classify a `::cs/scope-form` string relative to the engine cursor and the
+   set of executed forms. Pure, total, no IO.
+
+   Inputs:
+     scope        — the scope-form string the model wrote (e.g. on a proof)
+     cursor       — `{:turn N :iter M :next-form K}` from `:session/scope`
+     form-results — set or map keyed by scope-form strings of executed forms;
+                    map values may carry `:error` to detect errored forms
+
+   Output: one keyword. Engine never throws here.
+
+     :malformed    — does not match the regex; engine will hard-reject the write
+     :future-turn  — scope.turn > cursor.turn
+     :future-iter  — same turn, scope.iter > cursor.iter
+     :future-form  — same iter, scope.form >= cursor.next-form
+     :unknown      — past-or-current but not in form-results
+     :errored      — present in form-results with non-nil :error
+     :ok           — present, has a :result (or no :error map entry)"
+  [scope cursor form-results]
+  (let [p (parse-scope-form scope)]
+    (cond
+      (nil? p)
+      :malformed
+
+      (> (:turn p) (:turn cursor))
+      :future-turn
+
+      (and (= (:turn p) (:turn cursor))
+        (> (:iter p) (:iter cursor)))
+      :future-iter
+
+      (and (= (:turn p) (:turn cursor))
+        (= (:iter p) (:iter cursor))
+        (>= (:form p) (:next-form cursor)))
+      :future-form
+
+      :else
+      (let [entry (cond
+                    (map? form-results) (get form-results scope)
+                    (set? form-results) (when (contains? form-results scope) {})
+                    :else nil)]
+        (cond
+          (nil? entry)              :unknown
+          (some? (:error entry))    :errored
+          :else                     :ok)))))
+
+;; =============================================================================
+;; build-indexes — single source of derived state, used by every other pass
+;; =============================================================================
+
+(defn build-indexes
+  "Compute every reverse / projection index used by warnings / progression /
+   next-actions. Pure, idempotent, generator-property-testable.
+
+   Returned shape (every value bounded by ctx size — no unbounded recursion):
+
+     {:req-index    {requirement-id → {:spec spec-id :req requirement-map}}
+      :proof-index  {[spec-id requirement-id] → [{:task task-id :scope scope-form} …]}
+      :task-by-spec {spec-id → #{task-id …}}
+      :fact-refs    {fact-id → #{requirement-id …}}      ; which reqs cite this fact
+      :spec-by-task {task-id → #{spec-id …}}              ; mirror of :session.task/specs keys
+      :dep-graph    {task-id → #{task-id …}}              ; depends-on edges
+      :rev-deps     {task-id → #{task-id …}}              ; reverse depends-on
+      :spec-status  {spec-id → status-keyword}
+      :task-status  {task-id → status-keyword}
+      :fact-status  {fact-id → status-keyword}}            ; :active when omitted
+
+   Engine NEVER mutates ctx — indexes are throwaway computed fresh on demand.
+   Cost is O(|specs|+|tasks|+|facts|) plus the proof and depends-on traversals,
+   both bounded by the same totals. Cheap; rebuilt each render."
+  [ctx]
+  (let [specs (or (:session/specs ctx) {})
+        tasks (or (:session/tasks ctx) {})
+        facts (or (:session/facts ctx) {})
+
+        req-index
+        (into {}
+          (for [[spec-id spec] specs
+                req (or (:requirements spec) [])]
+            [(:id req) {:spec spec-id :req req}]))
+
+        proof-index
+        (reduce-kv
+          (fn [acc task-id task]
+            (reduce-kv
+              (fn [a spec-id proofs]
+                (reduce
+                  (fn [a' {:keys [requirement proof]}]
+                    (update a' [spec-id requirement] (fnil conj [])
+                      {:task task-id :scope proof}))
+                  a
+                  (or proofs [])))
+              acc
+              (or (:specs task) {})))
+          {}
+          tasks)
+
+        task-by-spec
+        (reduce-kv
+          (fn [acc task-id task]
+            (reduce (fn [a spec-id] (update a spec-id (fnil conj #{}) task-id))
+              acc
+              (keys (or (:specs task) {}))))
+          {}
+          tasks)
+
+        spec-by-task
+        (into {}
+          (for [[task-id task] tasks]
+            [task-id (set (keys (or (:specs task) {})))]))
+
+        fact-refs
+        (reduce-kv
+          (fn [acc _ {req :req}]
+            (reduce (fn [a fid] (update a fid (fnil conj #{}) (:id req)))
+              acc
+              (or (:facts req) [])))
+          {}
+          req-index)
+
+        dep-graph
+        (into {}
+          (for [[task-id task] tasks]
+            [task-id (set (or (:depends-on task) []))]))
+
+        rev-deps
+        (reduce-kv
+          (fn [acc task-id deps]
+            (reduce (fn [a d] (update a d (fnil conj #{}) task-id))
+              acc deps))
+          {}
+          dep-graph)
+
+        spec-status (into {} (map (fn [[k v]] [k (:status v)])) specs)
+        task-status (into {} (map (fn [[k v]] [k (:status v)])) tasks)
+        fact-status (into {} (map (fn [[k v]] [k (or (:status v) :active)])) facts)]
+    {:req-index    req-index
+     :proof-index  proof-index
+     :task-by-spec task-by-spec
+     :spec-by-task spec-by-task
+     :fact-refs    fact-refs
+     :dep-graph    dep-graph
+     :rev-deps     rev-deps
+     :spec-status  spec-status
+     :task-status  task-status
+     :fact-status  fact-status}))
+
+;; =============================================================================
+;; depends-on cycle detection — pure DFS, no recursion-on-recursion
+;; =============================================================================
+
+(defn depends-on-cycle?
+  "True iff dep-graph contains a directed cycle. Pure DFS with white/grey/black
+   coloring. Returns the cycle path as a vec when found (or nil)."
+  [dep-graph]
+  (let [color (atom (zipmap (keys dep-graph) (repeat :white)))]
+    (letfn [(visit [node path]
+              (cond
+                (= :grey (@color node))
+                (vec (drop-while #(not= % node) (conj path node)))
+
+                (= :black (@color node))
+                nil
+
+                :else
+                (do
+                  (swap! color assoc node :grey)
+                  (or (some (fn [n] (visit n (conj path node)))
+                        (sort (or (get dep-graph node) #{})))
+                    (do (swap! color assoc node :black) nil)))))]
+      (some #(visit % []) (sort (keys dep-graph))))))
+
+;; =============================================================================
+;; derive-progression — per-spec proof coverage, deterministic
+;; =============================================================================
+
+(defn- proof-valid?
+  "Stub: a proof is 'valid' for progression accounting iff the proof scope
+   exists in form-results and the referenced requirement is present on the
+   spec. Validator-fn evaluation lives in a separate pass (T2) because it
+   needs SCI and bounded eval — those are non-pure and handled outside this
+   namespace. Progression here counts presence only; T2 narrows it later."
+  [proof req-index form-results]
+  (and (parse-scope-form (:scope proof))
+    (contains? req-index (:requirement-id proof))
+    (or (nil? form-results)                 ;; no form-results known yet → optimistic
+      (contains? form-results (:scope proof)))))
+
+(defn derive-progression
+  "For each spec, count how many requirements have at least one proof entry
+   that points to an executed form. Returns:
+
+     {spec-id {:total N :proven N :ratio Double|nil :state kw :missing #{req-id}}}
+
+   :state ∈ #{:empty :open :partial :ready}
+   :empty when total = 0
+   :open when proven = 0 and total > 0
+   :partial when 0 < proven < total
+   :ready when proven = total > 0
+
+   `form-results` is optional. When nil, every proof scope is assumed
+   executed (used for tests that don't simulate form_results). When passed,
+   only proofs whose scope is in form-results count."
+  ([ctx indexes] (derive-progression ctx indexes nil))
+  ([ctx indexes form-results]
+   (let [{:keys [req-index proof-index]} indexes
+         specs (or (:session/specs ctx) {})]
+     (into {}
+       (for [[spec-id spec] specs
+             :let [reqs   (or (:requirements spec) [])
+                   total  (count reqs)
+                   proven (set
+                            (for [req reqs
+                                  :let [proofs (get proof-index [spec-id (:id req)])]
+                                  :when (some (fn [p]
+                                                (proof-valid?
+                                                  {:scope (:scope p)
+                                                   :requirement-id (:id req)}
+                                                  req-index form-results))
+                                          (or proofs []))]
+                              (:id req)))
+                   hit (count proven)]]
+         [spec-id
+          {:total   total
+           :proven  hit
+           :ratio   (when (pos? total) (double (/ hit total)))
+           :state   (cond
+                      (zero? total) :empty
+                      (= hit total) :ready
+                      (pos? hit)    :partial
+                      :else         :open)
+           :missing (set (remove proven (map :id reqs)))}])))))
+
+;; =============================================================================
+;; Status terminal predicates + done-born stamping
+;; =============================================================================
+
+(def ^:private spec-terminal? #{:done :cancelled})
+(def ^:private task-terminal? #{:done :cancelled})
+(def ^:private fact-terminal? #{:superseded})
+
+(defn- stamp-or-clear-done-born
+  "Pure helper: if status is terminal and :done-born absent, stamp it; if
+   status is non-terminal and :done-born present, clear it. Idempotent."
+  [entry form-scope terminal?]
+  (let [terminal-now? (terminal? (:status entry))
+        has-stamp?    (contains? entry :done-born)]
+    (cond
+      (and terminal-now? (not has-stamp?))         (assoc entry :done-born form-scope)
+      (and (not terminal-now?) has-stamp?)         (dissoc entry :done-born)
+      :else                                        entry)))
+
+;; =============================================================================
+;; apply-mutator — dispatch + per-mutator handlers
+;; =============================================================================
+
+(defn- warn
+  "Construct a single warning map. :code is a stable keyword; :anchor is the
+   tuple of keys (and indices) addressing the offending entry; :message is a
+   human-readable hint surfaced inline by the renderer."
+  [code anchor message]
+  {:code code :anchor anchor :message message})
+
+(defn- apply-spec-set! [ctx form-scope [spec-k partial-map]]
+  (let [path     [:session/specs spec-k]
+        existing (get-in ctx path)
+        merged   (cond-> (merge existing partial-map)
+                   (nil? existing) (assoc :born form-scope))
+        stamped  (stamp-or-clear-done-born merged form-scope spec-terminal?)]
+    {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true}))
+
+(defn- new-cycle?
+  "Quick check: would adding deps to task introduce a cycle?"
+  [ctx task-k deps]
+  (let [dg (-> (build-indexes ctx)
+             :dep-graph
+             (assoc task-k (set deps)))]
+    (some? (depends-on-cycle? dg))))
+
+(defn- apply-task-set! [ctx form-scope [task-k partial-map]]
+  (let [path     [:session/tasks task-k]
+        existing (get-in ctx path)
+        ;; Hard reject cycle BEFORE writing :depends-on
+        cycle-warn (when (and (contains? partial-map :depends-on)
+                           (new-cycle? ctx task-k (:depends-on partial-map)))
+                     (warn :depends-on-cycle [task-k]
+                       (str "task " task-k " :depends-on " (:depends-on partial-map)
+                         " would introduce a cycle; write refused")))]
+    (if cycle-warn
+      {:ctx ctx :warnings [cycle-warn] :stamped? false}
+      (let [merged  (cond-> (merge existing partial-map)
+                      (nil? existing) (assoc :born form-scope))
+            stamped (stamp-or-clear-done-born merged form-scope task-terminal?)]
+        {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true}))))
+
+(defn- apply-fact-set! [ctx form-scope [fact-k partial-map]]
+  (let [path     [:session/facts fact-k]
+        existing (get-in ctx path)
+        merged   (cond-> (merge existing partial-map)
+                   (nil? existing) (assoc :born form-scope))
+        stamped  (stamp-or-clear-done-born merged form-scope fact-terminal?)]
+    {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true}))
+
+(defn- apply-req-add! [ctx _form-scope [spec-k req]]
+  (let [path     [:session/specs spec-k :requirements]
+        existing (or (get-in ctx path) [])
+        rid      (:id req)
+        collide? (some #(= (:id %) rid) existing)]
+    (cond
+      (not (contains? ctx :session/specs))
+      {:ctx ctx
+       :warnings [(warn :req-add-no-spec [spec-k]
+                    (str "req-add! target spec " spec-k " does not exist"))]
+       :stamped? false}
+
+      (nil? (get-in ctx [:session/specs spec-k]))
+      {:ctx ctx
+       :warnings [(warn :req-add-no-spec [spec-k]
+                    (str "req-add! target spec " spec-k " does not exist"))]
+       :stamped? false}
+
+      collide?
+      {:ctx ctx
+       :warnings [(warn :req-add-collision [spec-k rid]
+                    (str "requirement " rid " already exists on spec " spec-k
+                      "; use req-update! to merge"))]
+       :stamped? false}
+
+      :else
+      {:ctx (update-in ctx path (fnil conj []) req) :warnings [] :stamped? true})))
+
+(defn- apply-req-update! [ctx _form-scope [spec-k rid partial-req]]
+  (let [path     [:session/specs spec-k :requirements]
+        existing (or (get-in ctx path) [])
+        idx      (first (keep-indexed (fn [i r] (when (= (:id r) rid) i)) existing))
+        id-warn  (when (contains? partial-req :id)
+                   (warn :req-update-id-immutable [spec-k rid]
+                     "req-update! cannot change :id; field ignored"))
+        clean    (dissoc partial-req :id)]
+    (cond
+      (nil? idx)
+      {:ctx ctx
+       :warnings [(warn :req-update-missing [spec-k rid]
+                    (str "requirement " rid " not found on spec " spec-k))]
+       :stamped? false}
+
+      :else
+      {:ctx (update-in ctx path
+              (fn [v] (vec (map-indexed (fn [i r] (if (= i idx) (merge r clean) r)) v))))
+       :warnings (vec (remove nil? [id-warn]))
+       :stamped? true})))
+
+(defn- orphan-warnings-for-removed-req [ctx spec-k rid]
+  (vec
+    (for [[task-id task] (or (:session/tasks ctx) {})
+          :let [proofs (get-in task [:specs spec-k])]
+          :when (some? proofs)
+          proof proofs
+          :when (= (:requirement proof) rid)]
+      (warn :req-removed-orphaned-proof
+        [task-id spec-k rid]
+        (str "task " task-id " proof for " rid "/" spec-k
+          " orphaned (req removed); scope " (:proof proof))))))
+
+(defn- apply-req-remove! [ctx _form-scope [spec-k rid]]
+  (let [path     [:session/specs spec-k :requirements]
+        existing (or (get-in ctx path) [])
+        new-vec  (vec (remove #(= (:id %) rid) existing))
+        warns    (orphan-warnings-for-removed-req ctx spec-k rid)]
+    {:ctx (assoc-in ctx path new-vec) :warnings warns :stamped? true}))
+
+(defn- apply-proof-add! [ctx _form-scope [task-k spec-k proof]]
+  (let [task-path  [:session/tasks task-k :specs spec-k]
+        existing   (or (get-in ctx task-path) [])
+        spec-known (some? (get-in ctx [:session/specs spec-k]))
+        req-known  (when spec-known
+                     (some #(= (:id %) (:requirement proof))
+                       (get-in ctx [:session/specs spec-k :requirements])))
+        warns      (cond-> []
+                     (not spec-known)
+                     (conj (warn :proof-unknown-spec [task-k spec-k]
+                             (str "proof-add! refs unknown spec " spec-k)))
+                     (and spec-known (not req-known))
+                     (conj (warn :proof-unknown-req [task-k spec-k (:requirement proof)]
+                             (str "proof-add! refs unknown req " (:requirement proof)
+                               " on spec " spec-k))))]
+    {:ctx (assoc-in ctx task-path (conj existing proof))
+     :warnings warns
+     :stamped? true}))
+
+(defn- apply-proof-remove! [ctx _form-scope [task-k spec-k rid]]
+  (let [path     [:session/tasks task-k :specs spec-k]
+        existing (or (get-in ctx path) [])
+        new-vec  (vec (remove #(= (:requirement %) rid) existing))]
+    {:ctx (assoc-in ctx path new-vec) :warnings [] :stamped? true}))
+
+(defn apply-mutator
+  "Apply a single mutator call to the CTX. Returns
+   `{:ctx new-ctx :warnings vec :stamped? bool}`.
+   On hard reject (cycle, malformed) :ctx is unchanged and :stamped? is false.
+   On soft warn (collision, dangling ref) :ctx may still update; :warnings
+   carry the diagnostic for the renderer."
+  [ctx form-scope mutator args]
+  (cond
+    (malformed-scope? form-scope)
+    {:ctx ctx
+     :warnings [(warn :malformed-scope [form-scope]
+                  (str "form-scope " form-scope " is malformed; write refused"))]
+     :stamped? false}
+
+    :else
+    (case mutator
+      :spec-set!     (apply-spec-set!     ctx form-scope args)
+      :task-set!     (apply-task-set!     ctx form-scope args)
+      :fact-set!     (apply-fact-set!     ctx form-scope args)
+      :req-add!      (apply-req-add!      ctx form-scope args)
+      :req-update!   (apply-req-update!   ctx form-scope args)
+      :req-remove!   (apply-req-remove!   ctx form-scope args)
+      :proof-add!    (apply-proof-add!    ctx form-scope args)
+      :proof-remove! (apply-proof-remove! ctx form-scope args)
+      ;; unknown mutator: soft warn, no write
+      {:ctx ctx
+       :warnings [(warn :unknown-mutator [mutator]
+                    (str "unknown mutator " mutator))]
+       :stamped? false})))
+
+;; =============================================================================
+;; derive-warnings — render-time invariant passes over indexes
+;; =============================================================================
+
+(defn- pass-req-facts-refs
+  "Invariant 2: requirement :facts entries must point to live facts."
+  [ctx _indexes]
+  (let [facts (or (:session/facts ctx) {})]
+    (vec
+      (for [[spec-id spec] (or (:session/specs ctx) {})
+            req (or (:requirements spec) [])
+            f   (or (:facts req) [])
+            :when (nil? (get facts f))]
+        (warn :req-fact-dangling [spec-id (:id req) f]
+          (str "req " (:id req) " on spec " spec-id
+            " refs nonexistent fact " f))))))
+
+(defn- pass-task-specs-refs
+  "Invariant 4: task :specs keys must point to live specs."
+  [ctx _indexes]
+  (let [specs (or (:session/specs ctx) {})]
+    (vec
+      (for [[task-id task] (or (:session/tasks ctx) {})
+            sk (keys (or (:specs task) {}))
+            :when (nil? (get specs sk))]
+        (warn :task-spec-dangling [task-id sk]
+          (str "task " task-id " :specs refs nonexistent spec " sk))))))
+
+(defn- pass-task-depends-on-refs
+  "Invariant 5: task :depends-on keys must point to live tasks."
+  [ctx _indexes]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (vec
+      (for [[task-id task] tasks
+            d (or (:depends-on task) [])
+            :when (nil? (get tasks d))]
+        (warn :task-dep-dangling [task-id d]
+          (str "task " task-id " :depends-on refs nonexistent task " d))))))
+
+(defn- pass-proof-req-refs
+  "Invariant 7: every task proof :requirement must exist on the referenced
+   spec. Tasks that hold proofs for requirements removed from the spec
+   surface here even when no req-remove! was emitted (e.g. after spec-set!
+   :requirements wholesale replace)."
+  [ctx _indexes]
+  (vec
+    (for [[task-id task] (or (:session/tasks ctx) {})
+          [sk proofs]    (or (:specs task) {})
+          proof          proofs
+          :let [req-ids (set (map :id (get-in ctx [:session/specs sk :requirements])))]
+          :when (and (some? (get-in ctx [:session/specs sk]))
+                  (not (contains? req-ids (:requirement proof))))]
+      (warn :proof-unknown-req [task-id sk (:requirement proof)]
+        (str "task " task-id " proof refs unknown req "
+          (:requirement proof) " on spec " sk)))))
+
+(defn- pass-spec-done-coverage
+  "Invariant 10: spec :status :done ⇒ every requirement has ≥1 proof. Uses
+   derive-progression for the count."
+  [ctx indexes]
+  (let [prog (derive-progression ctx indexes)]
+    (vec
+      (for [[spec-id spec] (or (:session/specs ctx) {})
+            :when (= :done (:status spec))
+            :let [p (get prog spec-id)]
+            :when (and p (not= (:state p) :ready))
+            rid (:missing p)]
+        (warn :spec-done-unproven [spec-id rid]
+          (str "spec " spec-id " :done but req " rid " has no valid proof"))))))
+
+(defn- pass-task-done-deps
+  "Invariant 11: task :status :done ⇒ every :depends-on target is terminal."
+  [ctx _indexes]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (vec
+      (for [[task-id task] tasks
+            :when (= :done (:status task))
+            d (or (:depends-on task) [])
+            :let [dep (get tasks d)]
+            :when (and (some? dep) (not (task-terminal? (:status dep))))]
+        (warn :task-done-pending-dep [task-id d]
+          (str "task " task-id " :done but dep " d " is " (:status dep)))))))
+
+(defn- pass-scope-classification
+  "Invariant 8: proof scopes classify :ok against the cursor + form-results.
+   form-results is optional — when nil the pass only flags :malformed /
+   :future-* classes (which don't need executed-form knowledge)."
+  ([ctx indexes] (pass-scope-classification ctx indexes nil))
+  ([ctx _indexes form-results]
+   (let [cursor (:session/scope ctx)]
+     (vec
+       (for [[task-id task] (or (:session/tasks ctx) {})
+             [sk proofs]    (or (:specs task) {})
+             proof          proofs
+             :let [klass (classify-scope (:proof proof) cursor form-results)]
+             :when (and (not= klass :ok)
+                     ;; without form-results we can't tell :unknown / :errored apart
+                     ;; from :ok; only complain about ones we can prove
+                     (or form-results (not (#{:unknown :errored} klass))))]
+         (warn :proof-scope-bad-class [task-id sk (:requirement proof) klass]
+           (str "task " task-id " proof " (:proof proof)
+             " classified " klass " relative to cursor")))))))
+
+(defn derive-warnings
+  "Run every invariant pass and return a sorted, deduped vec of warning maps.
+   `form-results` may be nil for off-line / write-time use; pass it from the
+   loop's per-iter capture for render-time precision."
+  ([ctx indexes] (derive-warnings ctx indexes nil))
+  ([ctx indexes form-results]
+   (->> (concat
+          (pass-req-facts-refs        ctx indexes)
+          (pass-task-specs-refs       ctx indexes)
+          (pass-task-depends-on-refs  ctx indexes)
+          (pass-proof-req-refs        ctx indexes)
+          (pass-spec-done-coverage    ctx indexes)
+          (pass-task-done-deps        ctx indexes)
+          (pass-scope-classification  ctx indexes form-results))
+     distinct
+     (sort-by (juxt :code (comp str :anchor)))
+     vec)))
+
+;; =============================================================================
+;; derive-next-actions — top-N ranked, deterministic priority
+;; =============================================================================
+
+(defn derive-next-actions
+  "Top-N ranked suggestions. Pure fn. Priority categories (lower = higher):
+     1 :fix-consistency  — spec :done with unproven; task :done with pending dep
+     2 :work-unblocked-todo  — task :todo with all deps terminal
+     3 :prove-requirement    — spec :partial / :open req without proof
+     4 :revisit-stale        — task :doing (stale heuristic deferred to loop)"
+  ([ctx indexes progression] (derive-next-actions ctx indexes progression {}))
+  ([ctx indexes progression _last-mutation-map]
+   (let [{:keys [task-status dep-graph]} indexes
+         specs (or (:session/specs ctx) {})
+         tasks (or (:session/tasks ctx) {})
+         consistency-actions
+         (concat
+           (for [[spec-id _] specs
+                 :let [p (get progression spec-id)]
+                 :when (and p (= (:state p) :partial) (= :done (get-in specs [spec-id :status])))]
+             {:type :review-spec :target spec-id :priority 1
+              :hint (str "spec " spec-id " :done but "
+                      (count (:missing p)) " req(s) unproven: "
+                      (vec (sort (:missing p))))})
+           (for [[task-id task] tasks
+                 :when (= :done (:status task))
+                 d (or (:depends-on task) [])
+                 :let [dep (get tasks d)]
+                 :when (and (some? dep) (not (task-terminal? (:status dep))))]
+             {:type :review-task :target task-id :priority 1
+              :hint (str "task " task-id " :done but dep " d " is " (:status dep))}))
+         todo-actions
+         (for [[task-id task] tasks
+               :when (= :todo (:status task))
+               :let [deps     (get dep-graph task-id #{})
+                     deps-ok? (every? #(let [s (get task-status %)]
+                                         (or (nil? s) (task-terminal? s)))
+                                deps)]
+               :when deps-ok?]
+           {:type :work-unblocked-todo :target task-id :priority 2
+            :hint (str "task " task-id " is :todo with all deps :done/:cancelled")})
+         prove-actions
+         (for [[spec-id _] specs
+               :let [p (get progression spec-id)]
+               :when (and p (#{:partial :open} (:state p)))
+               rid (sort (:missing p))]
+           {:type :prove-requirement :target [spec-id rid] :priority 3
+            :hint (str "spec " spec-id " req " rid " needs a task proof")})]
+     (->> (concat consistency-actions todo-actions prove-actions)
+       (sort-by (juxt :priority (comp str :target)))
+       (take 5)
+       vec))))
+
+;; =============================================================================
+;; advance-iter / advance-turn / gc-pass
+;; =============================================================================
+
+(defn advance-iter
+  "Append a trailer pin for the just-finished iter (if it had any non-done
+   form-results) and advance the cursor so the next iter starts at
+   :iter (current+1) :next-form 1. `form-results-vec` is the ordered vec of
+   `{:scope :tag :src :result :error}` envelopes captured during the iter.
+   Forms whose src begins with `(done` are excluded from the pin."
+  [ctx form-results-vec]
+  (let [cursor    (:session/scope ctx)
+        iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
+        keepable  (vec (remove #(str/starts-with? (str (:src %)) "(done")
+                         form-results-vec))
+        ctx'      (if (seq keepable)
+                    (update ctx :session/trailer (fnil conj [])
+                      {:scope iter-scope :forms keepable})
+                    ctx)]
+    (assoc ctx' :session/scope
+      (-> cursor (update :iter inc) (assoc :next-form 1)))))
+
+;; --- GC TTL constants ----------------------------------------------------
+
+(def ^:private TTL-TASK-DONE 6)
+(def ^:private TTL-TASK-CANCELLED 10)
+(def ^:private TTL-SPEC-DONE 6)
+(def ^:private TTL-SPEC-CANCELLED 10)
+(def ^:private TTL-FACT-SUPERSEDED 6)
+
+(defn- ttl-for [entity-type status]
+  (case [entity-type status]
+    [:task :done]       TTL-TASK-DONE
+    [:task :cancelled]  TTL-TASK-CANCELLED
+    [:spec :done]       TTL-SPEC-DONE
+    [:spec :cancelled]  TTL-SPEC-CANCELLED
+    [:fact :superseded] TTL-FACT-SUPERSEDED
+    nil))
+
+(defn- entry-due-for-archive?
+  [current-turn entity-type entry]
+  (when-let [ttl (ttl-for entity-type (:status entry))]
+    (when-let [{:keys [turn]} (parse-scope-form (:done-born entry))]
+      (>= (- current-turn turn) ttl))))
+
+(defn gc-pass
+  "Drop terminal-status entries past TTL from live CTX. Uses the current
+   :session/turn as the reference clock. Returns ctx with affected subtrees
+   pared down. Pure: archived entries vanish from ctx but the caller is
+   responsible for snapshotting before calling (so history is reachable)."
+  [ctx]
+  (let [t (:turn (:session/scope ctx))
+        gc (fn [subtree etype]
+             (into {}
+               (for [[k v] (or (get ctx subtree) {})
+                     :when (not (entry-due-for-archive? t etype v))]
+                 [k v])))]
+    (-> ctx
+      (assoc :session/specs (gc :session/specs :spec))
+      (assoc :session/tasks (gc :session/tasks :task))
+      (assoc :session/facts (gc :session/facts :fact)))))
+
+(defn advance-turn
+  "Bump :session/turn, reset :session/scope to {:turn next :iter 1 :next-form 1},
+   then run gc-pass. Caller (engine integration layer) is responsible for
+   snapshotting CTX to session_state_history BEFORE calling this."
+  [ctx]
+  (let [next-turn (inc (or (:session/turn ctx) 0))]
+    (-> ctx
+      (assoc :session/turn next-turn)
+      (assoc :session/scope {:turn next-turn :iter 1 :next-form 1})
+      gc-pass)))
+
+;; =============================================================================
+;; Empty-ctx constructor — used by tests + scenario replayer
+;; =============================================================================
+
+(defn empty-ctx
+  "A minimal CTX scaffold that satisfies `::cs/ctx` with all required keys
+   filled by empty / default values. Useful as the starting point for
+   scenario replays."
+  ([] (empty-ctx "test-session"))
+  ([session-id]
+   {:session/id        session-id
+    :session/turn      1
+    :session/scope     {:turn 1 :iter 1 :next-form 1}
+    :session/workspace {:git/branch "main" :git/trunk "main" :git/head "x"
+                        :git/dirty? false :git/stats {}}
+    :session/symbols   {}
+    :session/hints     {}
+    :session/specs     {}
+    :session/tasks     {}
+    :session/facts     {}
+    :session/trailer   []}))
+
