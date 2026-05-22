@@ -94,16 +94,38 @@
 ;; =============================================================================
 ;; Fact — observations, decisions, rules, behavior
 ;; =============================================================================
+;;
+;; Facts are not deleted. When a fact is superseded by newer knowledge the
+;; model flips :status to :superseded; engine stamps :done-born and GCs from
+;; live CTX after the superseded-TTL. :active facts live indefinitely.
+
+(s/def :session.fact/status    #{:active :superseded})
+(s/def :session.fact/done-born ::scope-form)
 
 (s/def ::fact
-  (s/keys :req-un [::content ::born]))
+  (s/keys :req-un [::content ::born]
+    :opt-un [:session.fact/status
+             :session.fact/done-born]))
+
+;; Soft rules:
+;;   - :status defaults to :active when omitted (engine assumes :active for legacy facts)
+;;   - :status :superseded MUST have :done-born (engine auto-stamps)
+;;   - facts referenced by NO active requirement :facts vec AND aged > 12 turns
+;;     emit a render hint suggesting supersede, but engine never auto-archives :active facts
 
 ;; =============================================================================
 ;; Task — work items
 ;; =============================================================================
+;;
+;; Model never deletes tasks. To abandon: flip :status to :cancelled. Engine
+;; stamps :done-born when status enters a terminal value (:done / :cancelled)
+;; and garbage-collects the entry from live CTX after a status-specific TTL
+;; (see versioning + GC section in CTX_REDESIGN.md). Snapshots in
+;; session_state_history make every archived entry replayable.
 
 (s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
 (s/def :session.task/status     #{:todo :doing :done :cancelled})
+(s/def :session.task/done-born  ::scope-form)
 
 (s/def :session.task.proof/requirement keyword?)
 (s/def :session.task.proof/proof       ::scope-form)
@@ -119,13 +141,16 @@
                    :session.task/specs
                    :session.task/status
                    ::born]
-    :opt-un [:session.task/depends-on]))
+    :opt-un [:session.task/depends-on
+             :session.task/done-born]))
 
 ;; Soft rules (engine-side validators; not enforced by spec):
 ;;   - :specs keys must point to existing keys in :session/specs
 ;;   - :depends-on entries must point to existing keys in :session/tasks
 ;;   - proof :requirement ids must exist on the referenced spec
 ;;   - when requirement has :validator-fn, proof scope result must satisfy it
+;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
+;;   - :status :done requires every :depends-on target to be :done or :cancelled
 ;;   - status transitions are reconstructable from :session/trailer mutation pins;
 ;;     no per-task journal is stored
 

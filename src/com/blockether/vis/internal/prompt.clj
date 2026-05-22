@@ -137,13 +137,15 @@
     ENGINE FUNCTIONS (bare symbols; never namespace-qualify)
       Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
-      Memory:
-        (spec-set!     :K {:title :requirements :status})
-        (spec-remove!  :K)
-        (task-set!     :K {:title :specs :depends-on? :status})
-        (task-remove!  :K)
-        (fact-set!     :K {:content})
-        (fact-remove!  :K)
+      Memory (upsert-only — never delete; abandon = flip :status):
+        (spec-set!  :K {:title :requirements :status})
+        (task-set!  :K {:title :specs :depends-on? :status})
+        (fact-set!  :K {:content :status?})
+        ;; status terminals trigger engine archive after TTL:
+        ;;   task / spec :status :done       → archived after 6 turns
+        ;;   task / spec :status :cancelled  → archived after 10 turns
+        ;;   fact        :status :superseded → archived after 6 turns
+        ;; Archived entries leave live CTX. Reach them via introspect-* below.
 
       Symbols (native SCI; engine persists across turns):
         (defn foo [x] …)                              create / overwrite
@@ -155,6 +157,13 @@
         (introspect-turn        \"t<N>\")                 turn TOC: user-msg + answer + iter-scopes
         (introspect-iter-heads  \"t<N>\")                 iter list with first-form head per iter
         (introspect-turn-list)                          all turns with head + status
+
+      Memo lookback (reach archived entries; per-turn CTX snapshots):
+        (introspect-spec     :K)                        full spec from latest turn it existed
+        (introspect-task     :K)                        full task from latest turn it existed
+        (introspect-fact     :K)                        full fact from latest turn it existed
+        (introspect-archived :tasks|:specs|:facts)      vec of archived entry summaries
+        (introspect-ctx-at   \"t<N>\")                    full CTX snapshot at end of turn N
 
       SCI symbol introspection:
         (introspect-symbol-doc      'sym)
@@ -171,7 +180,12 @@
 
     ENGINE BEHAVIORS
       • Every *-set! call: new key → engine stamps :born; existing → merges partials.
-      • *-remove! on non-existent key → silent no-op.
+      • Status terminal flip → engine stamps :done-born to current form scope.
+      • No *-remove!. Abandon = flip :status to :cancelled (task/spec) or :superseded (fact).
+      • Per-turn snapshots: every (done …) writes the full CTX to session_state_history[turn].
+        introspect-* verbs reach archived entries and any past turn snapshot.
+      • Engine GC at turn boundary: terminal-status entries older than their TTL leave live CTX.
+        Snapshots stay forever in history.
       • Hard rejects (rare; the rule is never refuse): malformed scope strings,
         circular :depends-on edges, partial-overlap trailer summaries.
       • Soft warnings (engine never refuses): missing :requirements on spec-set!,
@@ -179,7 +193,9 @@
         proof scope from the future relative to :session/scope, proof scope unknown
         (no executed form), proof scope errored (form threw, no result), proof fails
         requirement :validator-fn, spec :done with unsatisfied requirements,
-        missing :content on fact-set!, dangling refs.
+        task :done with non-done :depends-on, missing :content on fact-set!,
+        :active fact unreferenced and older than 12 turns (suggest supersede),
+        dangling refs.
         Warnings appear as `;; ⚠ …` in next render, anchored to the offending entry.
 
     TRAILER
