@@ -257,3 +257,85 @@
               keys (set (map :key arch))]
           (expect (contains? keys :s1))
           (expect (not (contains? keys :s2))))))))
+
+;; =============================================================================
+;; derive-warnings T2 pass — validator-fn integration
+;; =============================================================================
+
+(defdescribe derive-warnings-validator-pass-test
+  (describe "pass-validators integration in derive-warnings"
+    (let [ctx (-> (eng/empty-ctx "test")
+                (assoc :session/turn 2)
+                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
+                (assoc-in [:session/specs :rl]
+                  {:title "race-free"
+                   :requirements [{:id :ok-r
+                                   :title "always true"
+                                   :validator-fn "(fn [{:keys [result]}] (true? (:ok? result)))"}
+                                  {:id :fail-r
+                                   :title "asserts result==42"
+                                   :validator-fn "(fn [{:keys [result]}] (= 42 result))"}]
+                   :status :doing
+                   :born "t1/i1/f1"})
+                (assoc-in [:session/tasks :prove]
+                  {:title "prove"
+                   :specs {:rl [{:requirement :ok-r   :proof "t2/i1/f1"}
+                                {:requirement :fail-r :proof "t2/i1/f2"}]}
+                   :status :doing
+                   :born "t1/i1/f2"}))
+          ;; form-results: f1 satisfies ok-r validator; f2 returns 99 which
+          ;; fails the (= 42 result) check
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation
+                                    :src "(check)" :result {:ok? true}}
+                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation
+                                    :src "(compute)" :result 99}}
+          idx (eng/build-indexes ctx)
+          warnings (eng/derive-warnings ctx idx form-results)]
+
+      (it "emits :proof-validator-fail for the failing validator only"
+        (let [validator-warns (filter #(= :proof-validator-fail (:code %)) warnings)]
+          (expect (= 1 (count validator-warns)))
+          (expect (= [:prove :rl :fail-r :falsy]
+                    (:anchor (first validator-warns))))))
+
+      (it "passing validator (ok-r) emits NO warning"
+        (expect (not (some #(and (= :proof-validator-fail (:code %))
+                              (= :ok-r (nth (:anchor %) 2)))
+                       warnings))))
+
+      (it "skips validator pass when form-results is nil"
+        (let [warns-nil (eng/derive-warnings ctx idx nil)]
+          (expect (not (some #(= :proof-validator-fail (:code %)) warns-nil))))))))
+
+(defdescribe validator-pass-edge-cases-test
+  (describe "validator pass edge cases"
+    (let [ctx-base (-> (eng/empty-ctx "test")
+                     (assoc :session/turn 1)
+                     (assoc :session/scope {:turn 1 :iter 2 :next-form 1})
+                     (assoc-in [:session/tasks :t]
+                       {:title "x" :specs {:s [{:requirement :r :proof "t1/i1/f1"}]}
+                        :status :doing :born "t1/i1/f1"}))]
+
+      (it "compile-error in validator-fn surfaces as :proof-validator-fail with :compile-error reason"
+        (let [ctx (assoc-in ctx-base [:session/specs :s]
+                    {:title "x"
+                     :requirements [{:id :r :title "x"
+                                     :validator-fn "(fn ["}] ;; broken
+                     :status :doing :born "t1/i1/f1"})
+              form-results {"t1/i1/f1" {:scope "t1/i1/f1" :tag :observation
+                                        :src "x" :result 1}}
+              idx (eng/build-indexes ctx)
+              warns (eng/derive-warnings ctx idx form-results)
+              vw (first (filter #(= :proof-validator-fail (:code %)) warns))]
+          (expect (= :compile-error (nth (:anchor vw) 3)))))
+
+      (it "no warning when requirement has no :validator-fn"
+        (let [ctx (assoc-in ctx-base [:session/specs :s]
+                    {:title "x"
+                     :requirements [{:id :r :title "no validator"}]
+                     :status :doing :born "t1/i1/f1"})
+              form-results {"t1/i1/f1" {:scope "t1/i1/f1" :tag :observation
+                                        :src "x" :result 1}}
+              idx (eng/build-indexes ctx)
+              warns (eng/derive-warnings ctx idx form-results)]
+          (expect (not (some #(= :proof-validator-fail (:code %)) warns))))))))

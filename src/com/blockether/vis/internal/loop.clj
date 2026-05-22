@@ -3181,11 +3181,18 @@
                     ctx-rendered (when-let [a (:ctx-atom environment)]
                                    (let [c     (assoc @a :session/scope
                                                  (ctx-loop/cursor-snapshot environment))
+                                         ;; form-results map keyed by scope-form, sourced from
+                                         ;; every trailer pin captured this turn. Drives the
+                                         ;; scope-class T1 pass + the validator-fn T2 pass so
+                                         ;; proofs that point at executed forms get full
+                                         ;; semantic validation, not just shape checks.
+                                         fr    (ctx-loop/trailer->form-results
+                                                 (:session/trailer c))
                                          idx   (ctx-engine/build-indexes c)
-                                         prog  (ctx-engine/derive-progression c idx)
+                                         prog  (ctx-engine/derive-progression c idx fr)
                                          warns (vec (concat
                                                       (ctx-loop/drain-warnings! environment)
-                                                      (ctx-engine/derive-warnings c idx)))
+                                                      (ctx-engine/derive-warnings c idx fr)))
                                          acts  (ctx-engine/derive-next-actions c idx prog)]
                                      (ctx-renderer/render-ctx
                                        {:ctx c :warnings warns
@@ -4430,11 +4437,26 @@
                                   :current-iteration-atom    current-iteration-atom
                                   :current-form-idx-atom     current-form-idx-atom}
         ;; The current human turn text and engine context flow through ctx.
+        ;; Introspect verbs reach archived entries + any past turn snapshot
+        ;; via the soul/state chain. History loader is a thunk so the
+        ;; per-call DB read only happens when the model actually invokes
+        ;; one of the verbs.
+        introspect-history-loader (fn []
+                                    (try
+                                      (persistance/db-load-ctx-history db-info session-id)
+                                      (catch Throwable t
+                                        (tel/log! {:level :warn
+                                                   :id ::ctx-history-load-failed
+                                                   :data {:error (ex-message t)}}
+                                          "Failed to load CTX history for introspect-*; falling back to live ctx only")
+                                        [])))
         env-bindings             (merge
                                    {'done            answer-fn
                                     'set-session-title! session-title-fn
                                     'satisfy-hint!  satisfy-hint-fn}
-                                   (ctx-loop/build-sci-bindings ctx-loop-env))
+                                   (ctx-loop/build-sci-bindings ctx-loop-env)
+                                   (ctx-loop/build-introspect-bindings
+                                     ctx-loop-env introspect-history-loader))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))

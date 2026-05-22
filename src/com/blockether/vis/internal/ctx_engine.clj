@@ -537,6 +537,78 @@
        :stamped? false})))
 
 ;; =============================================================================
+;; Validator-fn eval — SCI-bridged, bounded
+;; =============================================================================
+;;
+;; Defined BEFORE derive-warnings because the T2 validator pass consumes it.
+;; We don't want a hard dep on the full Vis sandbox here. validator-fn source
+;; strings are tiny pure expressions: `(fn [{:keys [result error scope src]}]
+;; (…))`. A minimal SCI ctx with core arithmetic / set / coll predicates is
+;; enough. The compile result is cached by source hash; eval has a coarse
+;; timeout via future + future-cancel to guard against infinite loops.
+
+(def ^:private validator-cache
+  ;; {source-string → {:fn compiled-fn} or {:error msg}}
+  ;; Compile cache. Pure in spirit: same source → same compiled fn.
+  ;; Cached in an atom so the JIT cost is paid once per validator source.
+  (atom {}))
+
+(defn- compile-validator-fn*
+  "Compile `src` as a single SCI expression that should evaluate to a fn.
+   Returns `{:fn compiled-fn}` on success, `{:error msg}` on failure. The SCI
+   ctx is intentionally minimal — validator-fns are tiny predicates over the
+   form-result map; they don't need the full Vis sandbox."
+  [src]
+  (try
+    (let [v (sci/eval-string src)]
+      (if (fn? v)
+        {:fn v}
+        {:error (str "validator-fn source did not evaluate to a function (got "
+                  (pr-str (type v)) ")")}))
+    (catch Throwable t
+      {:error (str "validator-fn compile error: " (ex-message t))})))
+
+(defn compile-validator-fn
+  "Cached front for `compile-validator-fn*`. Returns the cached entry."
+  [src]
+  (or (get @validator-cache src)
+    (let [entry (compile-validator-fn* src)]
+      (swap! validator-cache assoc src entry)
+      entry)))
+
+(defn run-validator-fn
+  "Run a compiled validator with a 50ms timeout. Returns
+     {:ok? bool :reason :timed-out|:threw|:falsy|:ok :detail …}
+   When src failed to compile, returns {:ok? false :reason :compile-error :detail …}."
+  ([src form-result-map] (run-validator-fn src form-result-map 50))
+  ([src form-result-map timeout-ms]
+   (let [entry (compile-validator-fn src)]
+     (cond
+       (:error entry)
+       {:ok? false :reason :compile-error :detail (:error entry)}
+
+       :else
+       (let [fut (future
+                   (try
+                     (let [r ((:fn entry) form-result-map)]
+                       {:result r})
+                     (catch Throwable t {:threw (ex-message t)})))
+             res (deref fut timeout-ms ::timeout)]
+         (cond
+           (= res ::timeout)
+           (do (future-cancel fut)
+             {:ok? false :reason :timed-out})
+
+           (:threw res)
+           {:ok? false :reason :threw :detail (:threw res)}
+
+           (not (:result res))
+           {:ok? false :reason :falsy :detail (:result res)}
+
+           :else
+           {:ok? true :reason :ok :detail (:result res)}))))))
+
+;; =============================================================================
 ;; derive-warnings — render-time invariant passes over indexes
 ;; =============================================================================
 
@@ -639,6 +711,37 @@
            (str "task " task-id " proof " (:proof proof)
              " classified " klass " relative to cursor")))))))
 
+(defn- pass-validators
+  "Invariant 9: every task proof whose referenced requirement carries a
+   `:validator-fn` source string must pass that validator against the form
+   result at the proof scope. The engine evals the source in a bounded SCI
+   sandbox (50ms timeout). Skipped when `form-results` is nil (we cannot
+   judge without seeing the form's :result), or when the proof scope is
+   not classified `:ok` (the scope-class pass already complained)."
+  [ctx _indexes form-results]
+  (if-not (map? form-results)
+    []
+    (let [cursor (:session/scope ctx)]
+      (vec
+        (for [[task-id task] (or (:session/tasks ctx) {})
+              [sk proofs]    (or (:specs task) {})
+              proof          proofs
+              :let [spec (get-in ctx [:session/specs sk])
+                    req  (some #(when (= (:id %) (:requirement proof)) %)
+                           (:requirements spec))
+                    src  (:validator-fn req)
+                    klass (classify-scope (:proof proof) cursor form-results)]
+              :when (and req src (= klass :ok))
+              :let [envelope (get form-results (:proof proof))
+                    res (run-validator-fn src envelope)]
+              :when (not (:ok? res))]
+          (warn :proof-validator-fail
+            [task-id sk (:requirement proof) (:reason res)]
+            (str "proof " (:proof proof) " fails validator on req "
+              (:requirement proof) " / spec " sk
+              " (" (:reason res)
+              (when-let [d (:detail res)] (str ": " (pr-str d))) ")")))))))
+
 (defn derive-warnings
   "Run every invariant pass and return a sorted, deduped vec of warning maps.
    `form-results` may be nil for off-line / write-time use; pass it from the
@@ -652,7 +755,8 @@
           (pass-proof-req-refs        ctx indexes)
           (pass-spec-done-coverage    ctx indexes)
           (pass-task-done-deps        ctx indexes)
-          (pass-scope-classification  ctx indexes form-results))
+          (pass-scope-classification  ctx indexes form-results)
+          (pass-validators            ctx indexes form-results))
      distinct
      (sort-by (juxt :code (comp str :anchor)))
      vec)))
@@ -978,77 +1082,6 @@
                              " :trailer-summarize; drop ignored, summary applied")))]
     {:ctx (assoc ctx :session/trailer sorted)
      :warnings (vec (concat conflict-warns warnings))}))
-
-;; =============================================================================
-;; Validator-fn eval — SCI-bridged, bounded
-;; =============================================================================
-;;
-;; We don't want a hard dep on the full Vis sandbox here. validator-fn source
-;; strings are tiny pure expressions: `(fn [{:keys [result error scope src]}]
-;; (…))`. A minimal SCI ctx with core arithmetic / set / coll predicates is
-;; enough. The compile result is cached by source hash; eval has a coarse
-;; timeout via future + future-cancel to guard against infinite loops.
-
-(def ^:private validator-cache
-  ;; {source-string → {:fn compiled-fn} or {:error msg}}
-  ;; Compile cache. Pure in spirit: same source → same compiled fn.
-  ;; Cached in an atom so the JIT cost is paid once per validator source.
-  (atom {}))
-
-(defn- compile-validator-fn*
-  "Compile `src` as a single SCI expression that should evaluate to a fn.
-   Returns `{:fn compiled-fn}` on success, `{:error msg}` on failure. The SCI
-   ctx is intentionally minimal — validator-fns are tiny predicates over the
-   form-result map; they don't need the full Vis sandbox."
-  [src]
-  (try
-    (let [v (sci/eval-string src)]
-      (if (fn? v)
-        {:fn v}
-        {:error (str "validator-fn source did not evaluate to a function (got "
-                  (pr-str (type v)) ")")}))
-    (catch Throwable t
-      {:error (str "validator-fn compile error: " (ex-message t))})))
-
-(defn compile-validator-fn
-  "Cached front for `compile-validator-fn*`. Returns the cached entry."
-  [src]
-  (or (get @validator-cache src)
-    (let [entry (compile-validator-fn* src)]
-      (swap! validator-cache assoc src entry)
-      entry)))
-
-(defn run-validator-fn
-  "Run a compiled validator with a 50ms timeout. Returns
-     {:ok? bool :reason :timed-out|:threw|:falsy|:ok :detail …}
-   When src failed to compile, returns {:ok? false :reason :compile-error :detail …}."
-  ([src form-result-map] (run-validator-fn src form-result-map 50))
-  ([src form-result-map timeout-ms]
-   (let [entry (compile-validator-fn src)]
-     (cond
-       (:error entry)
-       {:ok? false :reason :compile-error :detail (:error entry)}
-
-       :else
-       (let [fut (future
-                   (try
-                     (let [r ((:fn entry) form-result-map)]
-                       {:result r})
-                     (catch Throwable t {:threw (ex-message t)})))
-             res (deref fut timeout-ms ::timeout)]
-         (cond
-           (= res ::timeout)
-           (do (future-cancel fut)
-             {:ok? false :reason :timed-out})
-
-           (:threw res)
-           {:ok? false :reason :threw :detail (:threw res)}
-
-           (not (:result res))
-           {:ok? false :reason :falsy :detail (:result res)}
-
-           :else
-           {:ok? true :reason :ok :detail (:result res)}))))))
 
 ;; =============================================================================
 ;; History introspection — pure fns over a {turn-n → ctx-snapshot} map
