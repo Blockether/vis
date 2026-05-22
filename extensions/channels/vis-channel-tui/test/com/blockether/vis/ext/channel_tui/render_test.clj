@@ -608,7 +608,7 @@
         (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
         (expect (neg? (.indexOf body "2"))))))
 
-  (it "leaves exactly one thinking pad row before the first code form"
+  (it "leaves a thinking-bg pad and a code-bg pad between thinking and code"
     (let [lines (format-iteration-entry
                   {:thinking "alpha"
                    :error nil
@@ -617,10 +617,16 @@
           visible (mapv (comp strip-ansi body-of) lines)
           alpha-idx (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
           code-idx  (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))
-          between   (subvec (vec lines) (inc alpha-idx) code-idx)]
-      (expect (= (+ alpha-idx 2) code-idx))
-      (expect (= 1 (count between)))
-      (expect (every? visually-blank? between)))))
+          between   (subvec (vec lines) (inc alpha-idx) code-idx)
+          marker-of (fn [e] (let [l (:line e)] (when (and (string? l) (pos? (count l))) (str (first l)))))]
+      ;; Exactly two blank rows between thinking and code: thinking
+      ;; bottom pad (gray stripe) directly followed by the code-block
+      ;; top pad (code-bg stripe). No neutral seam, no extra rows.
+      (expect (= (+ alpha-idx 3) code-idx))
+      (expect (= 2 (count between)))
+      (expect (every? visually-blank? between))
+      (expect (= p/MARKER_THINKING (marker-of (first between))))
+      (expect (= p/MARKER_CODE_OK_PAD (marker-of (second between)))))))
 
 (defdescribe paint-styled-line-stacking-test
   ;; The Polish bug report: `> **Lącznie:**` inside a quote rendered

@@ -2532,7 +2532,14 @@
      "  - Stale-read rule: after a write, an EARLIER (v/cat path) binding holds"
      "    pre-write content. Re-bind ONLY when you need that path's content for a"
      "    different purpose later in the turn. v/patch's :diff is the write"
-     "    evidence — never re-cat just to verify the patch landed."]))
+     "    evidence — never re-cat just to verify the patch landed."
+     "  - Path-target rule: before v/exists? / v/delete / v/delete-if-exists /"
+     "    v/move / v/copy on a path NOT returned by an observation tool in this"
+     "    turn, enumerate the candidate parent first (v/ls or v/rg :files-only?)."
+     "    Do not guess subdirectory structure from prose — a wrong assumption"
+     "    silently skips work (e.g. \"delete services_old/\" → you check"
+     "    src/services_old, find nothing, skip the cleanup; the actual"
+     "    services_old/ at repo root survives)."]))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests."
