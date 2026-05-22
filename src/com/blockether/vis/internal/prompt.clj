@@ -104,12 +104,17 @@
                              when detector emits them; everything optional;
                              {:vcs/kind :none} for non-VCS sessions)
       :session/symbols   := {sym ↦ {:arglists? :doc? :born}}
-      :session/hints     := pending one-shots (read first, satisfy via
-                            (satisfy-hint! :id [<scope>…]))
       :session/specs     := {K ↦ {:title :requirements [{:id :title :facts? :validator-fn?}]
                                   :status :born :done-born?}}
       :session/tasks     := {K ↦ {:title :specs {spec-K [{:requirement :proof}]}
-                                  :depends-on? :status∈#{:todo :doing :done :cancelled} :born}}
+                                  :depends-on? :status∈#{:todo :doing :done :cancelled} :born
+                                  ;; hook-emitted (:source :hook) tasks also carry:
+                                  :source? :hook-id? :importance? :validator-fn? :proof?}}
+                            Hook-tasks: foundation extensions emit them at
+                            iteration start. Read first; satisfy via
+                            `(task-set! :hook-id {:status :done :proof \"tN/iM/fK\"})`.
+                            Engine validates :proof with :validator-fn at
+                            end-of-iter; failure reverts to :todo + warns.
       :session/facts     := {K ↦ {:content :status∈#{:active :superseded} :born}}
       :session/trailer   := [{:scope :forms [{:scope :tag∈#{:observation :mutation}
                                               :src :result? :error?}]} …]
@@ -152,7 +157,6 @@
       CONTROL:
         (done                {:answer :trailer-drop? :trailer-summarize?})
         (set-session-title!  \"title\")
-        (satisfy-hint!       :hint/id [<scope>…])
 
     BEHAVIORS
       • *-set! on new key ⇒ :born stamped; existing ⇒ merges partials

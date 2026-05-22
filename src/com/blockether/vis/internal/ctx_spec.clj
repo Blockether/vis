@@ -17,8 +17,13 @@
      `:session/facts`     observations, decisions, rules, behavior
      `:session/workspace` engine-rendered git workspace state
      `:session/symbols`   engine-rendered live SCI symbol directory
-     `:session/hints`     engine-rendered one-shot instructions
      `:session/trailer`   pinned iter envelopes (verbatim or summarized)
+
+   Foundation extension `:turn.iteration/start` hooks emit hook-sourced
+   tasks (`:source :hook`, `:hook-id`, `:importance`, `:validator-fn`)
+   under `:session/tasks`; the model satisfies them via
+   `(task-set! id {:status :done :proof \"…\"})`. There is no separate
+   `:session/hints` subtree (collapsed into tasks in D12).
 
    Scope coordinates:
      `::scope-form`  e.g. \"t3/i2/f1\"
@@ -147,12 +152,36 @@
 
 (s/def :session.task.proof/requirement keyword?)
 (s/def :session.task.proof/proof       ::scope-form)
-(s/def :session.task/proof
+;; Entry inside a task's `:specs` proofs map (`:session.task/specs`).
+;; Renamed from `:session.task/proof` to `:session.task/proof-entry`
+;; in D12 so the task-level `:proof` field (hook-task done scope) can
+;; own the unqualified `:proof` key without collision.
+(s/def :session.task/proof-entry
   (s/keys :req-un [:session.task.proof/requirement
                    :session.task.proof/proof]))
 
 (s/def :session.task/specs
-  (s/map-of ::entry-key (s/coll-of :session.task/proof :kind vector?)))
+  (s/map-of ::entry-key (s/coll-of :session.task/proof-entry :kind vector?)))
+
+;; Hook-emitted task fields (D12: hints collapsed into tasks).
+;;
+;; `:source` discriminates ownership:
+;;   :user   — model-created via `(task-set! …)`
+;;   :hook   — foundation extension `:turn.iteration/start` hook emitted
+;;   :engine — reserved for engine-synthesised tasks
+;;
+;; Hook-tasks additionally carry `:hook-id` (the keyword the hook
+;; identified itself with, also used as the task key so dedup is
+;; trivial), `:importance` for renderer sort order, and `:validator-fn`
+;; — a SCI source string the engine runs against the form envelope at
+;; `:proof` when the model writes
+;; `(task-set! :hook-id {:status :done :proof \"tN/iM/fK\"})`. Pass
+;; sticks the :done; fail reverts to :todo and emits a warning.
+(s/def :session.task/source       #{:user :hook :engine})
+(s/def :session.task/hook-id      keyword?)
+(s/def :session.task/importance   #{:info :warn :critical})
+(s/def :session.task/validator-fn string?)
+(s/def :session.task/proof        ::scope-form)
 
 (s/def ::task
   (s/keys :req-un [::title
@@ -160,7 +189,12 @@
                    :session.task/status
                    ::born]
     :opt-un [:session.task/depends-on
-             :session.task/done-born]))
+             :session.task/done-born
+             :session.task/source
+             :session.task/hook-id
+             :session.task/importance
+             :session.task/validator-fn
+             :session.task/proof]))
 
 ;; Soft rules (engine-side validators; not enforced by spec):
 ;;   - :specs keys must point to existing keys in :session/specs
@@ -169,6 +203,12 @@
 ;;   - when requirement has :validator-fn, proof scope result must satisfy it
 ;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
 ;;   - :status :done requires every :depends-on target to be :done or :cancelled
+;;   - task-level :validator-fn (D12 hook-tasks): when the model writes
+;;       (task-set! id {:status :done :proof "tN/iM/fK"})
+;;     engine runs the validator-fn against the form envelope at :proof.
+;;     Pass → :done sticks. Fail → status reverts (or stays :todo) and the
+;;     engine emits `:task-done-validator-fail`. No :proof + :validator-fn
+;;     present → `:task-done-no-proof` warn + status reverted.
 ;;   - status transitions are reconstructable from :session/trailer mutation pins;
 ;;     no per-task journal is stored
 
@@ -326,23 +366,13 @@
              :session.symbol/doc]))
 
 ;; =============================================================================
-;; Hints — engine-rendered one-shot instructions
+;; Hints — RETIRED (D12)
 ;; =============================================================================
-
-(s/def :session.hint/body         string?)
-(s/def :session.hint/importance   #{:info :warn :critical})
-;; REQUIRED. SCI source string. Engine evaluates this against each proof
-;; scope passed to `(satisfy-hint! :id [<scopes>])` and only drops the
-;; hint when ALL scopes pass. Same compile cache + 50ms timeout as
-;; requirement validators. Mirrors `:session.req/validator-fn`. No
-;; legacy: hints without a validator cannot be created — the loop
-;; rejects foundation hooks that fail to ship one.
-(s/def :session.hint/validator-fn string?)
-
-(s/def ::hint
-  (s/keys :req-un [:session.hint/body
-                   :session.hint/validator-fn]
-    :opt-un [:session.hint/importance]))
+;; What used to be `:session/hints` is now expressed as tasks with
+;; `:source :hook`, `:hook-id`, `:importance`, and `:validator-fn`.
+;; Foundation extension hooks emit task shape directly; the model
+;; satisfies via `(task-set! :hook-id {:status :done :proof "…"})`.
+;; One concept, one mutator, one validator path.
 
 ;; =============================================================================
 ;; Scope cursor — engine-rendered current position inside the turn
@@ -378,7 +408,6 @@
 (s/def :session/turn      pos-int?)
 (s/def :session/workspace ::workspace)
 (s/def :session/symbols   (s/map-of symbol?      ::symbol-info))
-(s/def :session/hints     (s/map-of keyword?     ::hint))
 (s/def :session/specs     (s/map-of ::entry-key  ::spec))
 (s/def :session/tasks     (s/map-of ::entry-key  ::task))
 (s/def :session/facts     (s/map-of ::entry-key  ::fact))
@@ -390,7 +419,6 @@
                 :session/scope
                 :session/workspace
                 :session/symbols
-                :session/hints
                 :session/specs
                 :session/tasks
                 :session/facts
@@ -417,5 +445,4 @@
    :session/facts    :session/facts
    :session/workspace :session/workspace
    :session/symbols  :session/symbols
-   :session/hints    :session/hints
    :session/trailer  :session/trailer})

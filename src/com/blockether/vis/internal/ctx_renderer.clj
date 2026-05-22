@@ -30,7 +30,6 @@
 
       :session/workspace {…}
       :session/symbols   {…}
-      :session/hints     {…}
 
       :session/specs
       {:auth {…}}
@@ -215,8 +214,6 @@
         (zp (or (:session/workspace ctx) {})) nil)                "\n\n"
       (render-section :session/symbols
         (zp (or (:session/symbols ctx) {})) nil)                  "\n\n"
-      (render-section :session/hints
-        (zp (or (:session/hints ctx) {})) nil)                    "\n\n"
       (render-section :session/specs
         (zp (or (:session/specs ctx) {})) specs-tail)             "\n\n"
       (render-section :session/tasks

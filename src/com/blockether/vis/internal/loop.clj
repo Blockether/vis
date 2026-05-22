@@ -1385,12 +1385,14 @@
 
 (defn- iteration-start-hook-hit
   "Normalise the value returned by a `:turn.iteration/start` hook into a
-   ctx-shape `::cs/hint` map keyed by the hook id. Required keys: `:body`
-   (or legacy alias `:text`) AND `:validator-fn`. Optional: `:importance`.
+   hook-task shape (D12). Hooks emit `{:title :validator-fn :importance?}`
+   maps (legacy `:body` / `:text` aliases for `:title` accepted). The loop
+   wraps this into a full `::cs/task` map keyed by the hook id, suitable
+   for direct fold onto `:session/tasks`.
 
-   Returns `{:id <kw> :hint <hint-map>}` or nil. Hooks that omit
-   `:validator-fn` are rejected with a log warn — no legacy zero-arity
-   satisfy path; every hint MUST be validatable."
+   Returns `{:id <kw> :task <task-map>}` or nil. Hooks that omit either
+   `:title` (body) or `:validator-fn` are rejected with a log warn — no
+   legacy zero-arity satisfy path; every hook task MUST be validatable."
   [ext id hit]
   (cond
     (nil? hit) nil
@@ -1399,30 +1401,35 @@
     (do (tel/log! {:level :warn
                    :id ::iteration-start-hook-invalid-return
                    :data {:ext (:ext/name ext) :hook id :returned hit}}
-          "Extension :turn.iteration/start hook returned non-map value; expected nil or hint map")
+          "Extension :turn.iteration/start hook returned non-map value; expected nil or hook-task map")
       nil)
 
     :else
-    (let [body          (or (:body hit) (:text hit))
+    (let [title         (or (:title hit) (:body hit) (:text hit))
           validator-fn  (:validator-fn hit)]
       (cond
-        (or (not (string? body)) (str/blank? body))
+        (or (not (string? title)) (str/blank? title))
         (do (tel/log! {:level :warn
-                       :id ::iteration-start-hook-missing-body
+                       :id ::iteration-start-hook-missing-title
                        :data {:ext (:ext/name ext) :hook id :returned hit}}
-              "Hint hook returned map without non-blank :body / :text; dropping")
+              "Hook returned map without non-blank :title / :body / :text; dropping")
           nil)
 
         (or (not (string? validator-fn)) (str/blank? validator-fn))
         (do (tel/log! {:level :warn
                        :id ::iteration-start-hook-missing-validator
                        :data {:ext (:ext/name ext) :hook id}}
-              "Hint hook returned map without :validator-fn source string; dropping (no legacy zero-arity satisfy supported)")
+              "Hook returned map without :validator-fn source string; dropping (every hook task MUST be validatable)")
           nil)
 
         :else
         {:id id
-         :hint (cond-> {:body body :validator-fn validator-fn}
+         :task (cond-> {:title         title
+                        :specs         {}
+                        :status        :todo
+                        :source        :hook
+                        :hook-id       id
+                        :validator-fn  validator-fn}
                  (:importance hit) (assoc :importance (:importance hit)))}))))
 
 (defn- iteration-start-hook-error-hit
@@ -1436,13 +1443,14 @@
   nil)
 
 (defn- collect-iteration-start-hints
-  "Run active `:turn.iteration/start` hooks and return model-facing hints.
-   Hint suppression is no longer driven by a model-controlled
-   `satisfied-hints-atom`: the CTX engine's `apply-satisfies` is the
-   authority on whether a hint id should be dropped from
-   `:session/hints`, and foundation hooks re-evaluate their condition
-   every iter — so a satisfied hint naturally stops re-appearing the
-   next iter when the action succeeded."
+  "Run active `:turn.iteration/start` hooks and return model-facing
+   hook-task descriptors (D12). Each descriptor is
+   `{:id <kw> :task <task-map>}` ready for fold onto `:session/tasks`
+   via `apply-mutator :task-set!`. Hook re-emission is idempotent at the
+   engine layer: existing hook-tasks with the same id are noop'd. Hooks
+   re-evaluate their condition every iter so once the condition lifts
+   the hook stops emitting, and the existing terminal-status task drops
+   from live ctx after gc-pass TTL."
   [_environment active-extensions ctx]
   (vec
     (mapcat (fn [ext]
@@ -3175,20 +3183,23 @@
                                        :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
                                        :iter-count (:iter-count @usage-atom)
                                        :context-limit effective-context-limit})
-                    ;; Foundation hooks emit `{:id <kw> :hint <ctx-shape-hint>}`
-                    ;; already; no remap. Direct assoc on `:session/hints`.
-                    ;; Hooks that satisfied this iter (engine dropped them
-                    ;; via apply-satisfies) are gone from the map; if their
-                    ;; condition still holds the hook re-emits them here.
-                    _ (when-let [a (:ctx-atom environment)]
-                        (swap! a assoc :session/hints
-                          (persistent!
-                            (reduce (fn [acc {:keys [id hint]}]
-                                      (if (and id hint)
-                                        (assoc! acc id hint)
-                                        acc))
-                              (transient {})
-                              iteration-hints))))
+                    ;; D12: foundation hooks emit hook-task shapes
+                    ;; `{:id <kw> :task <task-map>}`. We route each through
+                    ;; the engine's `apply-mutator :task-set!` so the
+                    ;; standard write path (cycle-check, hook-repeat
+                    ;; dedup, :born stamping) applies. Hooks that
+                    ;; satisfied this iter (model wrote
+                    ;; `(task-set! id {:status :done :proof "…"})` and
+                    ;; engine validated) are already :done in ctx; the
+                    ;; hook-repeat dedup keeps them that way. Hooks
+                    ;; whose condition no longer holds simply don't fire
+                    ;; — the existing task carries on at whatever status
+                    ;; until gc-pass archives it past TTL.
+                    _ (when (and (:ctx-atom environment) (seq iteration-hints))
+                        (doseq [{:keys [id task]} iteration-hints
+                                :when (and id task)]
+                          (ctx-loop/apply-and-record!
+                            environment :task-set! [id task])))
                     iteration-context ""
                     ;; CTX engine render — the new bare-EDN `;; ctx` block
                     ;; the model reads/writes against. Built per iter from
@@ -3519,18 +3530,19 @@
                                 (ctx-engine/advance-iter
                                   (assoc c :session/scope cursor)
                                   forms-vec))))
-                        ;; Drain any (satisfy-hint! id [<scopes>]) requests
-                        ;; the model queued on `:engine/pending-satisfies`
-                        ;; during this iter, validate them against the
-                        ;; full form-results map (trailer pins from prior
-                        ;; iters + this iter's just-added pin), drop
-                        ;; satisfied hint ids from `:session/hints`, and
-                        ;; append per-hint warnings to `:engine/warnings`.
+                        ;; D12: validate every hook-task that landed at
+                        ;; `:status :done` this iter. The validator-fn on
+                        ;; the task is evaluated against the form
+                        ;; envelope at `:proof`; on failure the engine
+                        ;; reverts to :todo and emits a warning.
+                        ;; form-results is built from the FULL trailer
+                        ;; (prior iters + the iter just pinned), so
+                        ;; proofs may point at any captured form.
                         _ (when-let [ca (:ctx-atom environment)]
                             (let [trailer      (:session/trailer @ca)
                                   form-results (ctx-loop/trailer->form-results
                                                  (or trailer []))]
-                              (ctx-loop/drain-and-apply-satisfies!
+                              (ctx-loop/reconcile-done-hook-tasks!
                                 environment form-results)))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
@@ -4464,20 +4476,42 @@
         ;; via the soul/state chain. History loader is a thunk so the
         ;; per-call DB read only happens when the model actually invokes
         ;; one of the verbs.
-        introspect-history-loader (fn []
-                                    (try
-                                      (persistance/db-load-ctx-history db-info session-id)
-                                      (catch Throwable t
-                                        (tel/log! {:level :warn
-                                                   :id ::ctx-history-load-failed
-                                                   :data {:error (ex-message t)}}
-                                          "Failed to load CTX history for introspect-*; falling back to live ctx only")
-                                        [])))
+        ;;
+        ;; PER-ITER CACHE: the model may call multiple introspect-* verbs
+        ;; inside a single iter (e.g. `(introspect-spec :a)` AND
+        ;; `(introspect-task :b)`). Each call would otherwise hit
+        ;; `db-load-ctx-history` against SQLite. We cache the loaded
+        ;; history per `(turn, iter)` key derived from the loop's running
+        ;; counters; the entry invalidates automatically when the loop
+        ;; advances the iter (because the cache-key changes). Cache lives
+        ;; in this closure — dies with the env.
+        introspect-history-cache (atom {:key nil :value nil})
+        introspect-history-loader
+        (fn []
+          (let [t       (some-> current-turn-position-atom deref)
+                i-raw   (some-> current-iteration-atom deref)
+                i       (cond (map? i-raw)    (or (:position i-raw) 1)
+                          (number? i-raw) i-raw
+                          :else           1)
+                k       [t i]
+                cached  @introspect-history-cache]
+            (if (= k (:key cached))
+              (:value cached)
+              (let [v (try
+                        (persistance/db-load-ctx-history db-info session-id)
+                        (catch Throwable th
+                          (tel/log! {:level :warn
+                                     :id ::ctx-history-load-failed
+                                     :data {:error (ex-message th)}}
+                            "Failed to load CTX history for introspect-*; falling back to live ctx only")
+                          []))]
+                (reset! introspect-history-cache {:key k :value v})
+                v))))
         env-bindings             (merge
                                    {'done            answer-fn
                                     'set-session-title! session-title-fn}
-                                   ;; build-sci-bindings contributes
-                                   ;; satisfy-hint! + every mutator.
+                                   ;; build-sci-bindings contributes every
+                                   ;; engine mutator (spec/task/fact/req/proof).
                                    (ctx-loop/build-sci-bindings ctx-loop-env)
                                    (ctx-loop/build-introspect-bindings
                                      ctx-loop-env introspect-history-loader))

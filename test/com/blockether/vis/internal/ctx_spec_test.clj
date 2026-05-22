@@ -12,7 +12,7 @@
      ::scope-form ::scope-iter ::scope-turn
      ::fact ::task ::spec
      ::trailer-form ::trailer-pin ::trailer-summary ::trailer-entry
-     ::workspace ::symbol-info ::hint
+     ::workspace ::symbol-info
      :session/scope (cursor) ::ctx (top-level)"
   (:require
    [clojure.spec.alpha :as s]
@@ -274,25 +274,53 @@
     (it "accepts non-blank :doc string"
       (expect (s/valid? ::cs/symbol-info {:doc "what it does" :born "t1/i1/f1"})))))
 
-(defdescribe hint-test
-  (describe "::hint — {:body :validator-fn :importance?}"
-    (it "round-trips for 25 samples"
-      (expect (round-trip-valid? ::cs/hint)))
+(defdescribe hook-task-test
+  (describe "::task with :source :hook + :validator-fn + :proof (D12)"
+    (it "accepts a hook-task with :validator-fn (no :proof yet, :status :todo)"
+      (expect (s/valid? ::cs/task
+                {:title "set session title"
+                 :specs {}
+                 :status :todo
+                 :source :hook
+                 :hook-id :vis.foundation/session-title
+                 :importance :critical
+                 :validator-fn
+                 "(fn [{:keys [src]}] (clojure.string/includes? src \"set-session-title!\"))"
+                 :born "t1/i1/f1"})))
+
+    (it "accepts hook-task at :status :done with :proof scope"
+      (expect (s/valid? ::cs/task
+                {:title "set session title"
+                 :specs {}
+                 :status :done
+                 :source :hook
+                 :hook-id :vis.foundation/session-title
+                 :validator-fn "(fn [_] true)"
+                 :proof "t3/i1/f1"
+                 :done-born "t3/i2/f1"
+                 :born "t1/i1/f1"})))
+
+    (it "rejects bad :source value"
+      (expect (not (s/valid? ::cs/task
+                     {:title "x" :specs {} :status :todo
+                      :source :alien
+                      :born "t1/i1/f1"}))))
 
     (it "rejects bad :importance value"
-      (expect (not (s/valid? ::cs/hint
-                     {:body "do X"
-                      :validator-fn "(fn [_] true)"
-                      :importance :ultra}))))
+      (expect (not (s/valid? ::cs/task
+                     {:title "x" :specs {} :status :todo
+                      :importance :ultra :born "t1/i1/f1"}))))
 
-    (it "requires :validator-fn (no legacy zero-arity satisfy)"
-      (expect (not (s/valid? ::cs/hint {:body "do X"}))))
+    (it "rejects malformed :proof scope"
+      (expect (not (s/valid? ::cs/task
+                     {:title "x" :specs {} :status :done
+                      :source :hook :validator-fn "(fn [_] true)"
+                      :proof "not-a-scope"
+                      :done-born "t1/i2/f1" :born "t1/i1/f1"}))))
 
-    (it "accepts hint with body + validator-fn"
-      (expect (s/valid? ::cs/hint
-                {:body "set session title"
-                 :validator-fn
-                 "(fn [{:keys [src]}] (clojure.string/includes? src \"set-session-title!\"))"})))))
+    (it "pure user task with no hook fields still valid (backwards compat)"
+      (expect (s/valid? ::cs/task
+                {:title "x" :specs {} :status :todo :born "t1/i1/f1"})))))
 
 (defdescribe scope-cursor-test
   (describe ":session/scope — engine-rendered cursor {:turn :iter :next-form}"
@@ -320,15 +348,13 @@
 
 (defdescribe ctx-test
   (describe "::ctx — top-level"
-    (it "minimal valid ctx"
+    (it "minimal valid ctx (D12: no :session/hints)"
       (expect (s/valid? ::cs/ctx
                 {:session/id        "01HXYZ"
                  :session/turn      1
                  :session/scope     {:turn 1 :iter 1 :next-form 1}
-                 :session/workspace {:git/branch "main" :git/trunk "main"
-                                     :git/head "x" :git/dirty? false :git/stats {}}
+                 :session/workspace {:vcs/kind :none}
                  :session/symbols   {}
-                 :session/hints     {}
                  :session/specs     {}
                  :session/tasks     {}
                  :session/facts     {}
@@ -337,9 +363,8 @@
     (it "rejects missing :session/scope cursor (required for proof orientation)"
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 1
-                      :session/workspace {:git/branch "main" :git/trunk "main"
-                                          :git/head "x" :git/dirty? false :git/stats {}}
-                      :session/symbols {} :session/hints {}
+                      :session/workspace {:vcs/kind :none}
+                      :session/symbols {}
                       :session/specs {} :session/tasks {} :session/facts {}
                       :session/trailer []}))))
 
@@ -347,18 +372,16 @@
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 1
                       :session/scope {:turn 1 :iter 1 :next-form 1}
-                      :session/workspace {:git/branch "main" :git/trunk "main"
-                                          :git/head "x" :git/dirty? false :git/stats {}}
-                      :session/symbols {} :session/hints {}
+                      :session/workspace {:vcs/kind :none}
+                      :session/symbols {}
                       :session/specs {} :session/tasks {}}))))
 
     (it "rejects :session/turn 0 (must be pos-int)"
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 0
                       :session/scope {:turn 1 :iter 1 :next-form 1}
-                      :session/workspace {:git/branch "main" :git/trunk "main"
-                                          :git/head "x" :git/dirty? false :git/stats {}}
-                      :session/symbols {} :session/hints {}
+                      :session/workspace {:vcs/kind :none}
+                      :session/symbols {}
                       :session/specs {} :session/tasks {} :session/facts {}
                       :session/trailer []}))))
 
@@ -375,7 +398,6 @@
                                :born "t5/i1/f1"}
                   'emit-event {:arglists '(([{:keys [level msg]}]))
                                :born "t4/i1/f1"}}
-                 :session/hints     {}
                  :session/specs
                  {:auth {:title "switch auth to bcrypt"
                          :requirements [{:id :bcrypt-check

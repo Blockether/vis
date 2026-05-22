@@ -341,8 +341,14 @@
           (expect (not (some #(= :proof-validator-fail (:code %)) warns))))))))
 
 ;; =============================================================================
-;; apply-satisfies — hint validator-fn pass (D11)
+;; reconcile-done-hook-tasks — task-level validator-fn pass (D12)
 ;; =============================================================================
+;; D12 replaced the hint+satisfy-hint! surface with hook-sourced tasks.
+;; The engine validates a hook-task's :status :done transition by running
+;; its :validator-fn against the form envelope at :proof. On failure the
+;; task is reverted to :todo (with :done-born + :proof dropped) and a
+;; warning emitted; no validator-fn pass at write time so the task-set!
+;; mutator stays pure and form-results-independent.
 
 (def ^:private TITLE_VALIDATOR
   "(fn [{:keys [src error]}]
@@ -350,124 +356,198 @@
        (clojure.string/includes? src \"set-session-title!\")
        (nil? error)))")
 
-(defn- with-title-hint [ctx]
-  (assoc-in ctx [:session/hints :vis.foundation/session-title]
-    {:body "set session title"
-     :importance :critical
-     :validator-fn TITLE_VALIDATOR}))
+(defn- mk-hook-task
+  "Build a hook-sourced task that just landed at :status :done with the
+   given :proof scope. Engine-stamped :done-born matches :proof."
+  [proof]
+  {:title         "set the session title"
+   :specs         {}
+   :status        :done
+   :source        :hook
+   :hook-id       :vis.foundation/session-title
+   :importance    :critical
+   :validator-fn  TITLE_VALIDATOR
+   :proof         proof
+   :done-born     "t1/i2/f1"
+   :born          "t1/i1/f1"})
 
-(defn- mk-hint-ctx []
+(defn- mk-hook-ctx
+  [task-overrides]
   (-> (eng/empty-ctx "test")
     (assoc :session/turn 1)
     (assoc :session/scope {:turn 1 :iter 2 :next-form 1})
-    with-title-hint))
+    (assoc-in [:session/tasks :vis.foundation/session-title]
+      (merge (mk-hook-task "t1/i1/f3") task-overrides))))
 
-(defdescribe apply-satisfies-passing-test
-  (describe "apply-satisfies — proof scope passes validator"
-    (let [ctx (mk-hint-ctx)
+(defdescribe reconcile-passing-test
+  (describe "reconcile-done-hook-tasks — proof scope passes validator"
+    (let [ctx (mk-hook-ctx nil)
           fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :mutation
                            :src "(set-session-title! \"Auth refactor\")"
                            :result :vis/silent}}
-          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f3"]}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+          {ctx' :ctx warns :warnings}
+          (eng/reconcile-done-hook-tasks ctx fr)]
 
-      (it "drops the hint id from :session/hints"
-        (expect (nil? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+      (it "keeps :status :done"
+        (expect (= :done (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
 
-      (it "emits no warnings"
+      (it ":proof and :done-born preserved"
+        (expect (= "t1/i1/f3" (get-in ctx' [:session/tasks :vis.foundation/session-title :proof])))
+        (expect (some? (get-in ctx' [:session/tasks :vis.foundation/session-title :done-born]))))
+
+      (it "no warnings"
         (expect (empty? warns))))))
 
-(defdescribe apply-satisfies-failing-test
-  (describe "apply-satisfies — proof scope fails validator (wrong src)"
-    (let [ctx (mk-hint-ctx)
+(defdescribe reconcile-failing-validator-test
+  (describe "reconcile-done-hook-tasks — proof scope fails validator (wrong src)"
+    (let [ctx (mk-hook-ctx nil)
           fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :observation
                            :src "(v/ls \".\")" :result []}}
-          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f3"]}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+          {ctx' :ctx warns :warnings}
+          (eng/reconcile-done-hook-tasks ctx fr)]
 
-      (it "keeps the hint id (model has not actually called the action)"
-        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+      (it "reverts :status to :todo"
+        (expect (= :todo (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
 
-      (it "emits :hint-validator-fail warning"
-        (expect (some #(= :hint-validator-fail (:code %)) warns))))))
+      (it "drops :proof and :done-born"
+        (expect (nil? (get-in ctx' [:session/tasks :vis.foundation/session-title :proof])))
+        (expect (nil? (get-in ctx' [:session/tasks :vis.foundation/session-title :done-born]))))
 
-(defdescribe apply-satisfies-no-proof-test
-  (describe "apply-satisfies — 0-arity satisfy when validator-fn present"
-    (let [ctx (mk-hint-ctx)
-          pending [{:id :vis.foundation/session-title :scopes []}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+      (it "emits :task-done-validator-fail warning"
+        (expect (some #(= :task-done-validator-fail (:code %)) warns))))))
 
-      (it "keeps the hint id"
-        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+(defdescribe reconcile-no-proof-test
+  (describe "reconcile-done-hook-tasks — :done without :proof"
+    (let [ctx (mk-hook-ctx {:proof nil})
+          {ctx' :ctx warns :warnings} (eng/reconcile-done-hook-tasks ctx {})]
 
-      (it "emits :hint-no-proof warning"
-        (expect (some #(= :hint-no-proof (:code %)) warns))))))
+      (it "reverts to :todo"
+        (expect (= :todo (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
 
-(defdescribe apply-satisfies-malformed-scope-test
-  (describe "apply-satisfies — malformed proof scope distinguished from unknown"
-    (let [ctx (mk-hint-ctx)
-          pending [{:id :vis.foundation/session-title :scopes ["not-a-scope"]}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+      (it "emits :task-done-no-proof warning"
+        (expect (some #(= :task-done-no-proof (:code %)) warns))))))
 
-      (it "keeps the hint id"
-        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+(defdescribe reconcile-malformed-proof-test
+  (describe "reconcile-done-hook-tasks — malformed :proof string"
+    (let [ctx (mk-hook-ctx {:proof "not-a-scope"})
+          {ctx' :ctx warns :warnings} (eng/reconcile-done-hook-tasks ctx {})]
 
-      (it "emits :hint-proof-malformed (NOT :hint-proof-unknown)"
-        (expect (some #(= :hint-proof-malformed (:code %)) warns))
-        (expect (not (some #(= :hint-proof-unknown (:code %)) warns)))))))
+      (it "reverts to :todo"
+        (expect (= :todo (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
 
-(defdescribe apply-satisfies-future-scope-test
-  (describe "apply-satisfies — proof scope pointing to a future iter"
-    (let [ctx (mk-hint-ctx) ;; cursor t1/i2
-          ;; t1/i5/f1 is :future-iter relative to cursor at t1/i2.
-          pending [{:id :vis.foundation/session-title :scopes ["t1/i5/f1"]}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+      (it "emits :task-done-proof-malformed (NOT :task-done-proof-unknown)"
+        (expect (some #(= :task-done-proof-malformed (:code %)) warns))
+        (expect (not (some #(= :task-done-proof-unknown (:code %)) warns)))))))
 
-      (it "keeps the hint id"
-        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+(defdescribe reconcile-future-proof-test
+  (describe "reconcile-done-hook-tasks — :proof scope pointing to a future iter"
+    (let [ctx (mk-hook-ctx {:proof "t1/i5/f1"}) ;; future-iter vs cursor t1/i2
+          {ctx' :ctx warns :warnings} (eng/reconcile-done-hook-tasks ctx {})]
 
-      (it "emits :hint-proof-future warning"
-        (expect (some #(= :hint-proof-future (:code %)) warns))))))
+      (it "reverts to :todo"
+        (expect (= :todo (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
 
-(defdescribe apply-satisfies-unknown-hint-test
-  (describe "apply-satisfies — satisfy for an id no longer in :session/hints"
-    (let [ctx (mk-hint-ctx) ;; no :unknown/hint present
-          pending [{:id :unknown/hint :scopes ["t1/i1/f1"]}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+      (it "emits :task-done-proof-future warning"
+        (expect (some #(= :task-done-proof-future (:code %)) warns))))))
 
-      (it "idempotent no-op: live hint untouched"
-        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+(defdescribe reconcile-unknown-proof-test
+  (describe "reconcile-done-hook-tasks — :proof scope not in form-results"
+    (let [ctx (mk-hook-ctx {:proof "t1/i1/f9"})
+          {ctx' :ctx warns :warnings} (eng/reconcile-done-hook-tasks ctx {})]
 
-      (it "no warnings (model satisfied a stale hint that was already gone)"
+      (it "reverts to :todo"
+        (expect (= :todo (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
+
+      (it "emits :task-done-proof-unknown warning"
+        (expect (some #(= :task-done-proof-unknown (:code %)) warns))))))
+
+(defdescribe reconcile-errored-proof-test
+  (describe "reconcile-done-hook-tasks — :proof scope form errored"
+    (let [ctx (mk-hook-ctx nil)
+          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :mutation
+                           :src "(set-session-title! \"x\")"
+                           :error {:message "boom"}}}
+          {ctx' :ctx warns :warnings} (eng/reconcile-done-hook-tasks ctx fr)]
+
+      (it "reverts to :todo"
+        (expect (= :todo (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
+
+      (it "emits :task-done-proof-errored warning"
+        (expect (some #(= :task-done-proof-errored (:code %)) warns))))))
+
+(defdescribe reconcile-skips-non-hook-tasks-test
+  (describe "reconcile-done-hook-tasks — pure-user tasks are untouched"
+    (let [ctx (-> (eng/empty-ctx "test")
+                (assoc :session/turn 1)
+                (assoc :session/scope {:turn 1 :iter 2 :next-form 1})
+                (assoc-in [:session/tasks :user-task]
+                  {:title "manual" :specs {} :status :done
+                   :source :user
+                   ;; No :validator-fn, no :proof — reconcile must not touch
+                   :born "t1/i1/f1"}))
+          {ctx' :ctx warns :warnings} (eng/reconcile-done-hook-tasks ctx {})]
+
+      (it ":done sticks on user task"
+        (expect (= :done (get-in ctx' [:session/tasks :user-task :status]))))
+
+      (it "no warnings"
         (expect (empty? warns))))))
 
-(defdescribe apply-satisfies-multi-scope-test
-  (describe "apply-satisfies — all-or-nothing across multiple proof scopes"
-    (let [ctx (mk-hint-ctx)
-          fr  {"t1/i1/f1" {:src "(set-session-title! \"A\")" :result :vis/silent}
-               "t1/i1/f2" {:src "(v/ls)" :result []}}
-          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f1" "t1/i1/f2"]}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+(defdescribe reconcile-skips-todo-tasks-test
+  (describe "reconcile-done-hook-tasks — hook tasks at :todo are skipped"
+    (let [ctx (mk-hook-ctx {:status :todo :proof nil :done-born nil})
+          {ctx' :ctx warns :warnings} (eng/reconcile-done-hook-tasks ctx {})]
 
-      (it "ANY scope failing keeps hint alive"
-        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+      (it ":status unchanged"
+        (expect (= :todo (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
 
-      (it "warning anchors the FAILING scope, not the passing one"
-        (let [w (first (filter #(= :hint-validator-fail (:code %)) warns))]
-          (expect (= "t1/i1/f2" (nth (:anchor w) 1))))))))
+      (it "no warnings"
+        (expect (empty? warns))))))
 
-(defdescribe apply-satisfies-monotonic-drop-test
-  (describe "apply-satisfies — multiple requests for same id, ANY pass drops it"
-    (let [ctx (mk-hint-ctx)
-          fr  {"t1/i1/f1" {:src "(v/ls)" :result []}
-               "t1/i1/f2" {:src "(set-session-title! \"x\")" :result :vis/silent}}
-          ;; first request fails; second passes; hint should drop
-          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f1"]}
-                   {:id :vis.foundation/session-title :scopes ["t1/i1/f2"]}]
-          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+;; =============================================================================
+;; apply-task-set! — hook-task idempotent repeat (D12)
+;; =============================================================================
 
-      (it "drops the hint id (second request succeeded)"
-        (expect (nil? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+(defdescribe hook-task-repeat-noop-test
+  (describe "apply-mutator :task-set! — hook re-emission is a silent no-op"
+    (let [ctx0 (-> (eng/empty-ctx "test")
+                 (assoc :session/turn 1)
+                 (assoc :session/scope {:turn 1 :iter 1 :next-form 1}))
+          payload {:title "set title" :specs {} :status :todo
+                   :source :hook :hook-id :vis.foundation/session-title
+                   :validator-fn "(fn [_] true)"}
+          ;; First fire: create
+          r1 (eng/apply-mutator ctx0 "t1/i1/f1" :task-set!
+               [:vis.foundation/session-title payload])
+          ;; Second fire: noop dedup (even with different :title in the partial)
+          r2 (eng/apply-mutator (:ctx r1) "t1/i1/f2" :task-set!
+               [:vis.foundation/session-title (assoc payload :title "DIFFERENT")])]
 
-      (it "suppresses warnings from the failed attempt once the hint is satisfied"
-        (expect (empty? (filter #(= :hint-validator-fail (:code %)) warns)))))))
+      (it "first fire stamps the task"
+        (expect (= "set title" (get-in (:ctx r1) [:session/tasks :vis.foundation/session-title :title])))
+        (expect (true? (:stamped? r1))))
+
+      (it "second fire is a silent no-op (no overwrite, no warning)"
+        (expect (= "set title" (get-in (:ctx r2) [:session/tasks :vis.foundation/session-title :title])))
+        (expect (false? (:stamped? r2)))
+        (expect (empty? (:warnings r2)))))))
+
+(defdescribe hook-task-doesnt-block-user-edit-test
+  (describe "apply-mutator :task-set! — user-source partial against a hook task overwrites"
+    (let [ctx0 (-> (eng/empty-ctx "test")
+                 (assoc :session/turn 1)
+                 (assoc :session/scope {:turn 1 :iter 1 :next-form 1}))
+          ;; Hook plants the task.
+          r1 (eng/apply-mutator ctx0 "t1/i1/f1" :task-set!
+               [:vis.foundation/session-title
+                {:title "hook-title" :specs {} :status :todo
+                 :source :hook :hook-id :vis.foundation/session-title
+                 :validator-fn "(fn [_] true)"}])
+          ;; Model writes :status :done with :proof — NOT a hook re-emission
+          ;; (no :source :hook on the partial), so the write goes through.
+          r2 (eng/apply-mutator (:ctx r1) "t1/i2/f1" :task-set!
+               [:vis.foundation/session-title {:status :done :proof "t1/i1/f3"}])]
+
+      (it "model write lands"
+        (expect (= :done (get-in (:ctx r2) [:session/tasks :vis.foundation/session-title :status])))
+        (expect (= "t1/i1/f3" (get-in (:ctx r2) [:session/tasks :vis.foundation/session-title :proof])))))))

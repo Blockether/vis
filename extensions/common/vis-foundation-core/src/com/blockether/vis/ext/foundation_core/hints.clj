@@ -1,32 +1,24 @@
 (ns com.blockether.vis.ext.foundation-core.hints
-  "Foundation-shipped :turn.iteration/start hints.
+  "Foundation-shipped :turn.iteration/start hook tasks (D12).
 
-   Two soft hints remain:
+   What used to be `:session/hints` is now hook-sourced tasks under
+   `:session/tasks`. Two hooks remain:
      - `title-hint`            — set/refresh the session title via
                                   `(set-session-title! \"...\")`
-     - `context-pressure-hint` — warn when prompt size crosses ~50% of window
+     - `context-pressure-hint` — warn when prompt size crosses ~50%
+                                  of window
 
-   Each hint hook now returns a CTX-SHAPE map directly (so the loop can
-   `assoc` it onto `:session/hints` without remapping):
+   Each hook returns a TASK-SHAPE map (the loop wraps it as a full
+   `::cs/task` keyed by the hook id):
 
-     {:body         \"<message body>\"
+     {:title        \"<imperative title>\"
       :importance   :info | :warn | :critical
-      :validator-fn \"(fn [{:keys [src result]}] …)\"}
+      :validator-fn \"(fn [{:keys [src result error]}] …)\"}
 
-   `:validator-fn` is REQUIRED — no legacy zero-arity satisfy. The engine
-   evaluates this SCI source against each proof scope the model attaches
-   to `(satisfy-hint! :id [<scopes>])`; only when ALL scopes pass does
-   the hint id drop from `:session/hints`. Hooks that omit `:validator-fn`
-   are rejected by the loop with a log warn.
-
-   Previously this namespace also shipped two evidence-related hints
-   (`blind-answer-guard-check` and `action-request-needs-evidence-check`)
-   that used verb-regex heuristics to fire on investigation/action
-   requests with no observed tool work. A later cut retired the legacy
-   structural floor inside `(done …)` along with these heuristics:
-   single-form iterations either throw (and `(done …)` never runs) or
-   succeed (and the answer is observed in the same eval frame), so
-   the regex pre-filter no longer earned its complexity."
+   `:validator-fn` is REQUIRED. The engine evaluates this SCI source
+   against the form envelope at `:proof` when the model writes
+   `(task-set! id {:status :done :proof \"tN/iM/fK\"})`. Pass → :done
+   sticks. Fail → task reverts to :todo + warning."
   (:require
    [clojure.string :as str]))
 
@@ -129,14 +121,12 @@
       blank?
       {:importance   :critical
        :validator-fn TITLE_VALIDATOR_FN_SRC
-       :body (str "The session title is currently empty. "
-               "Set it via bare `(set-session-title! \"...\")` (3-7-word noun phrase, "
-               "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
-               "the session is discoverable in the sidebar. "
-               "Emit that call as its own top-level form before your first real probe. "
-               "Do not namespace-qualify it; it is engine-owned, not a foundation `v/` tool. "
-               "Then `(satisfy-hint! :vis.foundation/session-title [<scope-of-that-call>])`. "
-               "Keep host bookkeeping as direct sibling forms so traces stay clean.")}
+       :title (str "Set the session title via bare `(set-session-title! \"...\")` "
+                "(3-7-word noun phrase, e.g. \"Refactor auth flow\" or "
+                "\"Triage 148 path failures\"). The title is currently empty. "
+                "Emit the call as its own top-level form before your first real probe; "
+                "do not namespace-qualify it (engine-owned, not a `v/` tool). "
+                "Then `(task-set! :vis.foundation/session-title {:status :done :proof \"<scope>\"})`.")}
 
       ;; Periodic refresh stays :info — the existing title already labels
       ;; the session; this branch only hints when focus may have
@@ -144,11 +134,11 @@
       (and title-refresh? (turn-cadence-tick? turn-position))
       {:importance   :info
        :validator-fn TITLE_VALIDATOR_FN_SRC
-       :body (str "Current session title is \"" session-title "\". "
-               "You are " turn-position " turn(s) into this session. "
-               "If the focus has shifted, refresh it via bare "
-               "`(set-session-title! \"...\")`; do not namespace-qualify it. "
-               "Then `(satisfy-hint! :vis.foundation/session-title [<scope-of-that-call>])`.")})))
+       :title (str "Refresh title if focus has shifted. "
+                "Current session title is \"" session-title "\". "
+                "You are " turn-position " turn(s) into this session. "
+                "Call bare `(set-session-title! \"...\")` (do not namespace-qualify it), "
+                "then `(task-set! :vis.foundation/session-title {:status :done :proof \"<scope>\"})`.")})))
 
 (defn context-pressure-hint
   "Return a `:high`-importance hint when the most recent provider
@@ -213,15 +203,15 @@
                              " billed."))]
         {:importance   :warn
          :validator-fn CONTEXT_PRESSURE_VALIDATOR_FN_SRC
-         :body (str "Context pressure: next request is ~" used " / " limit
-                 " input tokens (~" pct "%) of this model's effective window."
-                 cumul-clause
-                 " Converge now — finalise the answer via `(done {:answer \"…\"})`, "
-                 "or drop/summarise older trailer iters via `(done {:answer … "
-                 ":trailer-summarize [{:scope-start <…> :scope-end <…> :summary …}]})`. "
-                 "Then `(satisfy-hint! :vis.foundation/context-pressure [<scope-of-that-call>])`. "
-                 "Avoid dumping more file contents, diffs, or repeated diagnostics. "
-                 "Models in this family degrade on long tails beyond ~50% of the window.")}))))
+         :title (str "Converge now: next request is ~" used " / " limit
+                  " input tokens (~" pct "%) of this model's effective window."
+                  cumul-clause
+                  " Finalise via `(done {:answer \"…\"})`, or drop/summarise older "
+                  "trailer iters via `(done {:answer … :trailer-summarize [{:scope-start <…> "
+                  ":scope-end <…> :summary …}]})`. Then `(task-set! "
+                  ":vis.foundation/context-pressure {:status :done :proof \"<scope>\"})`. "
+                  "Avoid dumping more file contents, diffs, or repeated diagnostics. "
+                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks (`:ext/hooks`) — :turn.iteration/start emits MODEL-FACING

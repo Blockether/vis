@@ -178,9 +178,9 @@
           configured-hint (hint-fn {:environment {:workspace/root configured-root}})]
       (expect (= :warn (:importance unconfigured-hint)))
       (expect (string? (:validator-fn unconfigured-hint)))
-      (expect (str/includes? (:body unconfigured-hint) "(br/init)"))
+      (expect (str/includes? (:title unconfigured-hint) "(br/init)"))
       (expect (= :info (:importance configured-hint)))
       (expect (string? (:validator-fn configured-hint)))
-      (expect (str/includes? (:body configured-hint) "(br/next)"))
-      (expect (not (str/includes? (:body configured-hint) "(br/run-evidence)")))
-      (expect (not (str/includes? (:body configured-hint) "bb bridge"))))))
+      (expect (str/includes? (:title configured-hint) "(br/next)"))
+      (expect (not (str/includes? (:title configured-hint) "(br/run-evidence)")))
+      (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))
