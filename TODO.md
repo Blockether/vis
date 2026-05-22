@@ -384,3 +384,153 @@ Sugeruje sklejenie.
 6. Cross off.
 
 Nigdy nie robimy więcej niż 1 TODO na raz bez explicit zgody.
+
+---
+
+# Roadmap — post-T9 (po wszystkich sweepach)
+
+T1-T9 + v/cat/rg/ls/patch/write/move sweep + CORE_SYSTEM_PROMPT
+cavemanize zrobione. Co dalej:
+
+### [ ] T10 — `editing-prompt` cavemanize
+
+**Status:** queued.
+
+CORE_SYSTEM_PROMPT zaorane z 2890→1394 tok (50% cut). Drugi największy
+blok system promptu to `available-editing-prompt` (~2113 tok / 211 lines).
+Możliwy cut 30-40% (~700 tok savings).
+
+**Strategie**:
+- Skróć READ section — w/cat arities w table format zamiast prose
+- Drop redundant idiom examples (kept 4 dla v/rg; może wystarczą 2)
+- EDIT section: result-shape doc skompresować do schemy
+- RULES sekcja — Stale-read + Path-target zostają (świeże), reszta caveman
+
+**Open questions**
+- Czy zachować przykłady idiomów (\"bulk rename\", \"counts only\", \"regex
+word boundary\")? Model używa ich faktycznie (probe potwierdził), więc ryzyko
+regresji jest realne.
+- Tableizować arities/keys czy zostawić text? Lambda-style mapped to GLM
+lepiej w CORE; testować w editing-prompt.
+
+---
+
+### [ ] T11 — Re-probe E2E A/B/C ze skróconym CORE
+
+**Status:** queued. Ważne BO empirycznie potwierdzić że 50% cut CORE
+nie zepsuł jakości.
+
+**Plan**:
+- 3 runy każdej task per model (Claude + GLM-5.1)
+- Porównać iter mean, success rate, failures vs pre-cavemanize baseline
+- Hipoteza: krótszy CORE = mniej szumu = same-or-better iter
+- Risk: jakaś kluczowa instrukcja wypadła i model gubi się gdzieś
+
+**Action items**
+- Reset corpora dla A/B/C
+- 3 runy każde × 2 model × 3 task = 18 runów (~30-60 min)
+- Compare table: pre vs post
+
+---
+
+### [ ] T12 — Provider-specific prompt tweaks
+
+**Status:** queued.
+
+**Insight z E2E-A/B/C**: GLM-5.1 ~50% slower iter niż Claude. Wybór tooli
+identyczny, ale GLM robi więcej v/cat sanity checks + drobne bugi
+(api.js naming, services_old path).
+
+**Pomysły**:
+- Per-provider `:ext/prompt` override gdy model jest w `:zai`/`glm-*`?
+  Bardziej explicit przykłady, mocniejszy nudge na `:nth :all`, regex
+  syntax cheatsheet inline.
+- Albo na początku prompt: `;; HINT: this provider responds better to
+  explicit examples; prefer copy-paste idioms over invention.`
+- Może NIE — może zmiana w GLM samym (kolejna wersja) lepsza ścieżka
+  niż patch promptu.
+
+**Open questions**
+- Per-provider system prompt = każdy provider extension dorzuca własny
+  prompt-tail. Architektonicznie ok, ale Vis dziś tego nie wspiera.
+- Czy lepsze: jeden uniwersalny prompt + model-specific RUNTIME HINTS
+  podawane przez ctx?
+
+---
+
+### [ ] T13 — Iteration-budget hints w trailerze
+
+**Status:** queued, low-medium priority.
+
+Gdy task=\"jeden patch\" a iter już 5+ to suggesion że model się zapętlił.
+Dodać do CTX engine soft-warning: jeśli iter > 1.5× expected,
+dorzuć hint:
+
+```
+:session/hints {:engine/iter-budget-warn
+  {:body \"Iter N for a simple task; consider (done …) with current
+results or restate plan.\"}}
+```
+
+**Open questions**
+- Co to \"simple task\"? Heuristyka: zero v/patch failures + ≤2 different
+files touched + iter > 4 = warn.
+- Wsadzić w engine czy w extension hook?
+
+---
+
+### [ ] T14 — Auto-summarize stale trailer pins
+
+**Status:** queued, medium priority.
+
+Observation pin staje się stale gdy ten sam path jest później mutowany.
+Dziś model musi manually robić `:trailer-summarize` na done. Engine
+mógłby auto-replace observation pin's :forms na \":summary\" przed
+renderem CTX, oszczędzając tokeny per iter.
+
+**Risks**
+- Jeśli model PLANUJE zostawić verbatim observation w kontekście, auto-
+summarize może mu utrudniać. Może być opt-out per-pin.
+- Engine już ma stale-read heuristic comment w prompt; może wystarczy
+bardziej forced rendering bez kodu.
+
+---
+
+### [ ] T15 — Więcej probe scenariuszy
+
+**Status:** loose ideas — kolejne 10 scenariuszy żeby pokryć kolejne
+class of bugs.
+
+Kategorie do pokrycia:
+- **Long-task probe (20+ iter)**: czy Vis loopuje? Czy CTX management
+  działa pod presją? Czy `:trailer-summarize` faktycznie używany?
+- **Multi-language refactor**: Python + JS + Go w jednym tasku — czy
+  model gubi się na cross-language naming conventions (jak GLM-5.1 w
+  E2E-A)?
+- **Failure recovery probe**: seed conflicting state (np. plik usunięty
+  między iterami), czy model recoveruje czy crashuje?
+- **Cross-tool dependency probe**: zadanie wymagające `v/move` → `v/patch`
+  → `v/move` w stale path. Czy Path-target rule trzyma?
+- **Error injection**: symulować provider failure mid-iter (np. timeout
+  na 2-iter). Czy retry działa?
+- **Big repo navigation**: 10000+ plików — czy v/ls / v/rg czyste limity?
+- **Whitespace-heavy fuzzy patches**: file ma tabs vs spaces drift, czy
+  `:relative-indent` pass strzela bez fałszywych pozytywów?
+- **Multi-edit batching limit**: ile edits jednocześnie w v/patch zanim
+  model się gubi w planowaniu?
+- **Documentation generation**: realistic README rewrite
+- **Mixed observation+mutation**: rg → cat → patch → rg → patch — czy
+  Stale-read rule trzyma?
+
+Wybierać 2-3 per round, robić probe (~10 min każda), bookmark findings.
+
+---
+
+## Dropped / rejected
+
+- ~~Tool-level metrics dashboard (`vis tools stats`)~~ — niski priorytet.
+  User: \"nie wiem czy to istotne\". Probe-driven już wystarcza dla
+  identyfikacji wąskich gardeł.
+- ~~Multi-agent coordination~~ — out of scope. Lock file or detect
+  parallel session can wait; today's pattern (push frequently, pull
+  --rebase) działa wystarczająco.
