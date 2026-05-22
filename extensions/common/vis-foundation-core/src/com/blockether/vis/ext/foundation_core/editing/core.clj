@@ -64,7 +64,7 @@
 ;;   `max-cat-window-bytes`  - hard ceiling on a single window's bytes.
 ;;                             Doubles as the persistence-blob ceiling:
 ;;                             each call writes one Nippy blob to
-;;                             `definition_state.result`, bounded by this.
+;;                             `definition_state.value`, bounded by this.
 ;;                             Not user-tunable; it is the storage contract.
 ;;   `max-line-length`       - per-line character cap (industry parity
 ;;                             with Claude Code / Roo Code). Minified
