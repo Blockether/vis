@@ -799,7 +799,7 @@ Deterministic `;;` annotations next to entries:
 
 #### Schema migrations (edit V1 inline per AGENTS.md)
 
-1. **`session_turn_state.ctx BLOB`** — currently MISSING. Per-turn CTX snapshot, Nippy-encoded (same convention as `definition_state.result`). Live CTX = `ctx` on the latest turn-state for the latest turn-soul. History walks the soul chain.
+1. **`session_turn_state.ctx BLOB`** — currently MISSING. Per-turn CTX snapshot, Nippy-encoded (same convention as `definition_state.value`). Live CTX = `ctx` on the latest turn-state for the latest turn-soul. History walks the soul chain.
 2. **`session_turn_iteration.forms BLOB`** — currently MISSING. Nippy vec of per-form envelopes `[{:scope :tag :src :result :error} …]`. The model emits N forms per fence; each form gets its own scope + result + error. **The legacy `result BLOB` / `error BLOB` columns on this table have been dropped** — `forms` is the only place per-form payload lives. `(introspect-form "tN/iN/fK")` decodes the matching entry.
 
 #### Memo verbs
@@ -808,7 +808,7 @@ Deterministic `;;` annotations next to entries:
 
 #### Introspection
 
-4. **`introspect-iter` / `introspect-form` / `introspect-turn` / `introspect-iter-heads` / `introspect-turn-list`** SELECT against `session_turn_soul` (position + user_request) + `session_turn_state` (status + answer_markdown) + `session_turn_iteration` (position + code + form_results JSON). Composite-key lookup is by (turn position, iter position, form position).
+4. **`introspect-iter` / `introspect-form` / `introspect-turn` / `introspect-iter-heads` / `introspect-turn-list`** SELECT against `session_turn_soul` (position + user_request) + `session_turn_state` (status + answer_markdown) + `session_turn_iteration` (position + code + forms Nippy BLOB). Composite-key lookup is by (turn position, iter position, form position). `forms` decodes to the per-form envelope vec; `introspect-form` indexes into it by form position.
 5. **`introspect-symbol-doc` / `introspect-symbol-source` / `introspect-symbol-meta` / `introspect-symbol-apropos`** query SCI introspection via `(meta #'sym)` and `(ns-publics 'sandbox)`. Probed in Q9 — meta survives `restore-sandbox!` for any def/defn.
 
 #### Trailer
