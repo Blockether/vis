@@ -1130,3 +1130,83 @@
     (map? history)        (get history turn-n)
     (sequential? history) (some (fn [[t ctx]] (when (= t turn-n) ctx)) history)
     :else                 nil))
+
+;; =============================================================================
+;; Form tag classification — derive :tag from the form source string
+;; =============================================================================
+
+(def ^:private mutation-heads
+  "Whitelist of bare-symbol heads that classify a form as a :mutation. Anything
+   else defaults to :observation. Engine-owned forms (spec-set!, task-set!,
+   …), def/defn, and the small set of model-driven control flips
+   (set-session-title!, satisfy-hint!) are mutations. Tool extension ops
+   declare their own tag through `register-op!` and are looked up there;
+   this set is only the fallback when an op tag is not registered."
+  '#{def defn defmacro defmulti defmethod
+     ;; Memory mutators
+     spec-set! task-set! fact-set!
+     req-add! req-update! req-remove!
+     proof-add! proof-remove!
+     ;; Control / lifecycle
+     done set-session-title! satisfy-hint!
+     ;; Common sandbox mutators (alias-prefixed forms route through the
+     ;; extension registry; bare names here cover unprefixed cases)
+     reset! swap! alter-var-root})
+
+(defn classify-form-tag
+  "Classify a form-source string as :observation or :mutation. Engine
+   default: if the first top-level symbol head is in `mutation-heads`,
+   tag is :mutation; everything else is :observation. The integration
+   layer may override by consulting an op registry (`register-op!`)
+   before falling back to this classifier."
+  [src]
+  (let [s (some-> src str str/triml)
+        head (when (and s (str/starts-with? s "("))
+               (let [tail (subs s 1)
+                     space-or-paren (loop [i 0]
+                                      (cond
+                                        (>= i (count tail)) i
+                                        (Character/isWhitespace ^char (.charAt ^String tail i)) i
+                                        (= \( (.charAt ^String tail i))    i
+                                        (= \) (.charAt ^String tail i))    i
+                                        :else (recur (inc i))))]
+                 (subs tail 0 space-or-paren)))
+        sym (when (and head (seq head)) (symbol head))]
+    (if (and sym (contains? mutation-heads sym))
+      :mutation
+      :observation)))
+
+;; =============================================================================
+;; blocks→forms — project per-form data captured by the loop's eval pipeline
+;; into the canonical engine envelope shape
+;; =============================================================================
+
+(defn block->envelope
+  "Project one loop-side block `{:code :result :error}` plus its 1-based
+   position and the engine cursor into the per-form envelope shape:
+
+     {:scope :tag :src :result :error}
+
+   `:src` carries the form's source text; `:tag` is derived from the
+   source via `classify-form-tag`. `:result` is included only when the
+   block has one (engine convention: drop on default/nil). `:error` is
+   included only when the block errored."
+  [block position cursor]
+  (let [src (or (:code block) (:src block) "")
+        scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)]
+    (cond-> {:scope scope
+             :tag   (classify-form-tag src)
+             :src   src}
+      (contains? block :result) (assoc :result (:result block))
+      (some? (:error block))    (assoc :error  (:error block)))))
+
+(defn blocks->forms
+  "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
+   is `{:turn :iter}` of THIS iter; each block gets a 1-based form
+   position by its index in the vec."
+  [blocks {:keys [turn iter]}]
+  (vec
+    (map-indexed
+      (fn [idx block]
+        (block->envelope block (inc idx) {:turn turn :iter iter}))
+      (or blocks []))))

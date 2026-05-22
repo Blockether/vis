@@ -48,51 +48,51 @@
     ;; block (idx 1), thinking trace, system prompt, and a full LLM
     ;; message envelope. The persistance layer derives :llm_system_prompt
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
-    (vis/db-store-iteration! s {:session-turn-id q1
-                                :code          "(+ 1 1)"
-                                :forms         [{:scope "t1/i1/f1" :tag :observation
-                                                 :src "(+ 1 1)" :result 2}]
-                                :answer        "42"
-                                :thinking      "Reasoning about arithmetic"
-                                :vars          [{:name "x" :value 42 :code "(def x 42)"}]
-                                :duration-ms 12
-                                :llm-provider :blockether
-                                :llm-model    "gpt-4o"
-                                :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
-                                               {:role "user"
-                                                :content ";; -- CURRENT-USER-MESSAGE --\nUSER_TURN_TEXT_FIXTURE\n"}
-                                               {:role "assistant"
-                                                :content "ASSISTANT_REPLAY_FIXTURE"}
-                                               {:role "user"
-                                                :content (str ";; ctx =\n"
-                                                           (pr-str {:session {:id "session-fixture"
-                                                                              :turn-id "turn-fixture"
-                                                                              :iteration {:position 1}
-                                                                              :hints [{:id :vis.foundation/session-title
-                                                                                       :text "observe before answer"
-                                                                                       :importance :high
-                                                                                       :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]}}))}]
-                                :llm-raw-response "```clojure\n(+ 1 1)\n```"
-                                :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
-                                :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
-                                :cache-created-tokens 700
-                                :cost-usd 0.0042})
+    (h/store-iteration! s {:session-turn-id q1
+                           :code          "(+ 1 1)"
+                           :forms         [{:scope "t1/i1/f1" :tag :observation
+                                            :src "(+ 1 1)" :result 2}]
+                           :answer        "42"
+                           :thinking      "Reasoning about arithmetic"
+                           :vars          [{:name "x" :value 42 :code "(def x 42)"}]
+                           :duration-ms 12
+                           :llm-provider :blockether
+                           :llm-model    "gpt-4o"
+                           :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
+                                          {:role "user"
+                                           :content ";; -- CURRENT-USER-MESSAGE --\nUSER_TURN_TEXT_FIXTURE\n"}
+                                          {:role "assistant"
+                                           :content "ASSISTANT_REPLAY_FIXTURE"}
+                                          {:role "user"
+                                           :content (str ";; ctx =\n"
+                                                      (pr-str {:session {:id "session-fixture"
+                                                                         :turn-id "turn-fixture"
+                                                                         :iteration {:position 1}
+                                                                         :hints [{:id :vis.foundation/session-title
+                                                                                  :text "observe before answer"
+                                                                                  :importance :high
+                                                                                  :satisfy-with '(satisfy-hint! :vis.foundation/session-title)}]}}))}]
+                           :llm-raw-response "```clojure\n(+ 1 1)\n```"
+                           :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
+                           :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
+                           :cache-created-tokens 700
+                           :cost-usd 0.0042})
     (vis/db-update-session-turn! s q1 {:status :done :answer-markdown "42"})
     ;; Turn 2: failure iteration. No vars, no answer.
     (let [q2 (vis/db-store-session-turn! s {:parent-session-id cid
                                             :user-request "Second turn that fails"
                                             :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id q2
-                                  :code "Let"
-                                  :forms [{:scope "t2/i1/f1" :tag :observation
-                                           :src "Let"
-                                           :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}}]
-                                  :duration-ms 1
-                                  :llm-provider :blockether
-                                  :llm-model    "gpt-4o"
-                                  :tokens   {:input 80 :output 10 :reasoning 0 :cached 20}
-                                  :cache-created-tokens 300
-                                  :cost-usd 0.0021})
+      (h/store-iteration! s {:session-turn-id q2
+                             :code "Let"
+                             :forms [{:scope "t2/i1/f1" :tag :observation
+                                      :src "Let"
+                                      :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}}]
+                             :duration-ms 1
+                             :llm-provider :blockether
+                             :llm-model    "gpt-4o"
+                             :tokens   {:input 80 :output 10 :reasoning 0 :cached 20}
+                             :cache-created-tokens 300
+                             :cost-usd 0.0021})
       (vis/db-update-session-turn! s q2 {:status :error}))
     cid))
 
@@ -249,11 +249,11 @@
               q   (vis/db-store-session-turn! s {:parent-session-id cid
                                                  :user-request "empty turn"
                                                  :status :running})
-              _   (vis/db-store-iteration! s {:session-turn-id q :code ""
-                                              :llm-returned-empty-code? true
-                                              :duration-ms 1
-                                              :tokens {:input 10 :output 0}
-                                              :cost-usd 0.0001})
+              _   (h/store-iteration! s {:session-turn-id q :code ""
+                                         :llm-returned-empty-code? true
+                                         :duration-ms 1
+                                         :tokens {:input 10 :output 0}
+                                         :cost-usd 0.0001})
               _   (vis/db-update-session-turn! s q {:status :done})
               iter (-> (transcript/transcript s cid)
                      :turns first :iterations first)]
@@ -270,12 +270,12 @@
                                                   :status :running})
               code "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi")]
-          (vis/db-store-iteration! s {:session-turn-id turn
-                                      :code code
-                                      :result {:vis/ref :expr}
-                                      :vars [{:name "out" :value value :code code}]
-                                      :answer "done"
-                                      :duration-ms 10})
+          (h/store-iteration! s {:session-turn-id turn
+                                 :code code
+                                 :result {:vis/ref :expr}
+                                 :vars [{:name "out" :value value :code code}]
+                                 :answer "done"
+                                 :duration-ms 10})
           (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
           (let [data      (transcript/transcript s cid)
                 call      (first (:calls data))
@@ -303,12 +303,12 @@
                                                    :status :running})
               code  "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi")]
-          (vis/db-store-iteration! s {:session-turn-id turn
-                                      :code code
-                                      :result value
-                                      :vars [{:name "out" :value value :code code}]
-                                      :answer "done"
-                                      :duration-ms 10})
+          (h/store-iteration! s {:session-turn-id turn
+                                 :code code
+                                 :result value
+                                 :vars [{:name "out" :value value :code code}]
+                                 :answer "done"
+                                 :duration-ms 10})
           (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
           (let [data  (transcript/transcript s cid)
                 calls (:calls data)]
@@ -407,9 +407,10 @@
               qid  (vis/db-store-session-turn! s {:parent-session-id cid
                                                   :user-request "huge"
                                                   :status :running})]
-          (vis/db-store-iteration! s {:session-turn-id qid
-                                      :code huge
-                                      :result :ok})
+          (h/store-iteration! s {:session-turn-id qid
+                                 :code huge
+                                 :forms [{:scope "t1/i1/f1" :tag :observation
+                                          :src huge :result :ok}]})
           (vis/db-update-session-turn! s qid {:status :done})
           (let [out (transcript/transcript-md s cid)]
             (expect (string? out))
@@ -426,15 +427,15 @@
           (let [fence (str "(def x 1)\n"
                         "(set-session-title! \"Mixed\")\n"
                         "(done [:ir [:p \"Done\"]])")]
-            (vis/db-store-iteration! s {:session-turn-id qid
-                                        :code fence
-                                        :forms [{:scope "t1/i1/f1" :tag :mutation
-                                                 :src "(def x 1)" :result 1}
-                                                {:scope "t1/i1/f2" :tag :mutation
-                                                 :src "(set-session-title! \"Mixed\")" :result :ok}
-                                                {:scope "t1/i1/f3" :tag :mutation
-                                                 :src "(done [:ir [:p \"Done\"]])" :result :vis/answer}]
-                                        :answer "Done"}))
+            (h/store-iteration! s {:session-turn-id qid
+                                   :code fence
+                                   :forms [{:scope "t1/i1/f1" :tag :mutation
+                                            :src "(def x 1)" :result 1}
+                                           {:scope "t1/i1/f2" :tag :mutation
+                                            :src "(set-session-title! \"Mixed\")" :result :ok}
+                                           {:scope "t1/i1/f3" :tag :mutation
+                                            :src "(done [:ir [:p \"Done\"]])" :result :vis/answer}]
+                                   :answer "Done"}))
           (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "(def x 1)"))

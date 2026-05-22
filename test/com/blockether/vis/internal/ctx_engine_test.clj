@@ -252,3 +252,61 @@
         (expect (every? #(map? (:req-index %)) idxs))
         (expect (every? #(map? (:proof-index %)) idxs))
         (expect (every? #(map? (:dep-graph %)) idxs))))))
+
+;; =============================================================================
+;; Form tag classification + blocks→forms projection
+;; =============================================================================
+
+(defdescribe classify-form-tag-test
+  (describe "classify-form-tag"
+    (it ":mutation for engine-owned mutators"
+      (expect (= :mutation (eng/classify-form-tag "(spec-set! :K {:title \"x\"})")))
+      (expect (= :mutation (eng/classify-form-tag "(task-set! :A {})")))
+      (expect (= :mutation (eng/classify-form-tag "(fact-set! :F {:content \"y\"})")))
+      (expect (= :mutation (eng/classify-form-tag "(req-add! :S {})")))
+      (expect (= :mutation (eng/classify-form-tag "(proof-add! :T :S {:requirement :r1 :proof \"t1/i1/f1\"})"))))
+
+    (it ":mutation for def / defn / defmacro"
+      (expect (= :mutation (eng/classify-form-tag "(def x 42)")))
+      (expect (= :mutation (eng/classify-form-tag "(defn f [a] a)"))))
+
+    (it ":mutation for control verbs"
+      (expect (= :mutation (eng/classify-form-tag "(done {:answer \"hi\"})")))
+      (expect (= :mutation (eng/classify-form-tag "(set-session-title! \"x\")")))
+      (expect (= :mutation (eng/classify-form-tag "(satisfy-hint! :h)"))))
+
+    (it ":observation for everything else"
+      (expect (= :observation (eng/classify-form-tag "(+ 1 2)")))
+      (expect (= :observation (eng/classify-form-tag "(v/cat \"src/x.clj\")")))
+      (expect (= :observation (eng/classify-form-tag "(introspect-form \"t1/i1/f1\")")))
+      (expect (= :observation (eng/classify-form-tag "42")))
+      (expect (= :observation (eng/classify-form-tag ":kw")))
+      (expect (= :observation (eng/classify-form-tag ""))))))
+
+(defdescribe blocks->forms-test
+  (describe "blocks->forms"
+    (let [cursor {:turn 5 :iter 2}
+          blocks [{:code "(spec-set! :K {:title \"x\"})" :result :ok}
+                  {:code "(v/cat \"a.clj\")"          :result "(ns a) ..."}
+                  {:code "(/ 1 0)" :error {:message "Divide by zero"}}]
+          forms (eng/blocks->forms blocks cursor)]
+
+      (it "preserves block order (1-based scope :form)"
+        (expect (= ["t5/i2/f1" "t5/i2/f2" "t5/i2/f3"] (mapv :scope forms))))
+
+      (it "classifies tags from source"
+        (expect (= [:mutation :observation :observation] (mapv :tag forms))))
+
+      (it "carries :result when present"
+        (expect (= :ok (:result (first forms))))
+        (expect (= "(ns a) ..." (:result (second forms)))))
+
+      (it "carries :error when present, omits :result on error"
+        (expect (= {:message "Divide by zero"} (:error (nth forms 2))))
+        (expect (not (contains? (nth forms 2) :result))))
+
+      (it "every envelope has :src from block :code"
+        (expect (= "(spec-set! :K {:title \"x\"})" (:src (first forms)))))
+
+      (it "empty input returns empty vec"
+        (expect (= [] (eng/blocks->forms [] cursor)))))))
