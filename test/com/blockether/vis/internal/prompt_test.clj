@@ -21,10 +21,14 @@
 
 (defdescribe prompt-core-test
   (it "documents engine-owned forms as bare, not extension tools"
+    ;; CORE_SYSTEM_PROMPT was cavemaned + symbolised (50% token cut). The
+    ;; old wording \"Engine-owned control forms are bare symbols\" was
+    ;; replaced by the terser \"ENGINE FNS (bare symbols — never namespace-
+    ;; qualify)\" section header. Pin the new shape.
     (let [text (prompt/build-system-prompt {})]
-      (expect (str/includes? text "Engine-owned control forms are bare symbols"))
-      (expect (str/includes? text "(set-session-title! ...)"))
-      (expect (str/includes? text "Never namespace-qualify")))))
+      (expect (str/includes? text "bare symbols"))
+      (expect (str/includes? text "never namespace-qualify"))
+      (expect (str/includes? text "(set-session-title!")))))
 
 (defdescribe extension-activation-test
   (it "assembles from precomputed active extensions without activating again"
