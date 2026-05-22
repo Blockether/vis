@@ -13,6 +13,7 @@
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx :as vctx]
+   [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
@@ -3422,14 +3423,26 @@
                         _ (when-let [lru-atom (:def-resolve-lru-atom environment)]
                             (when-let [iteration-lru (not-empty (:lru block))]
                               (swap! lru-atom merge iteration-lru)))
-                        store-block (or block {:code "" :error {:message "empty iteration"}})
+                        ;; Multi-form capture: every executed top-level form
+                        ;; in this iter's fence becomes one envelope on the
+                        ;; new :forms column. `:code` is the whole fence body
+                        ;; concatenated for forensics. There is NO legacy
+                        ;; single-form result/error column anymore.
+                        cursor      {:turn (or (some-> (:current-turn-position-atom environment) deref) 1)
+                                     :iter (or iteration 1)}
+                        forms-vec   (if (seq blocks)
+                                      (ctx-engine/blocks->forms blocks cursor)
+                                      [(ctx-engine/block->envelope
+                                         {:code "" :error {:message "empty iteration"}}
+                                         1 cursor)])
+                        fence-code  (str/join "\n" (keep :code blocks))
+                        first-block (or (first blocks) {})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        (let [tc (iteration-token-cost (:api-usage iteration-result))]
                                          (cond-> {:session-turn-id session-turn-id
-                                                  :code (:code store-block)
-                                                  :result (:result store-block)
-                                                  :error (:error store-block)
-                                                  :duration-ms (long (or (envelope-duration-ms (:envelope store-block)) 0))
+                                                  :code (or fence-code "")
+                                                  :forms forms-vec
+                                                  :duration-ms (long (or (envelope-duration-ms (:envelope first-block)) 0))
                                                   :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
                                                   :vars vars-snapshot
                                                   :dependencies deps-snapshot
