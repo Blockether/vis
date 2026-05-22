@@ -94,10 +94,25 @@
      :cost-usd 0.0}
     iterations))
 
+(defn- form-envelope->block
+  "Project one per-form envelope from `:forms` into the transcript's
+   `:blocks` shape. Each envelope carries `:scope :tag :src :result :error`
+   so the block surfaces all of them, plus a 0-based `:position` derived
+   from the form's index in the iter's `:forms` vec."
+  [position envelope]
+  (cond-> {:position position
+           :code (or (:src envelope) "")}
+    (:scope envelope)              (assoc :scope (:scope envelope))
+    (:tag envelope)                (assoc :tag (:tag envelope))
+    (contains? envelope :result)   (assoc :result (:result envelope))
+    (contains? envelope :error)    (assoc :error (:error envelope))))
+
 (defn- enrich-iteration
   "Attach `:blocks` and `:vars` to one iteration row.
 
-     `:blocks` - every executed form (Nippy-encoded inline log).
+     `:blocks` - one entry per top-level form the iter executed, derived
+                from the iter's `:forms` envelope vec (the new canonical
+                shape on `session_turn_iteration.forms`).
      `:vars`   - every `(def ...)` this iteration produced; reads from
                 the separate `definition_soul` / `definition_state`
                 facade. Each entry is `{:name :code :value :version}`.
@@ -105,13 +120,8 @@
    Both reads degrade silently to `[]` so the renderer never
    throws on a partial DB."
   [db-info iter]
-  (let [block (cond-> {:position 0
-                       :code (or (:code iter) "")}
-                (contains? iter :result) (assoc :result (:result iter))
-                (contains? iter :error) (assoc :error (:error iter))
-                (contains? iter :duration-ms)
-                (assoc :duration-ms (:duration-ms iter)))
-        blocks [block]
+  (let [forms  (or (:forms iter) [])
+        blocks (vec (map-indexed form-envelope->block forms))
         vars   (try (vec (vis/db-list-iteration-vars db-info (:id iter)))
                  (catch Throwable _ []))]
     (-> iter

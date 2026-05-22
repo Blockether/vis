@@ -816,10 +816,10 @@
                      :success? boolean ...}."
   [sci-ctx db-info session-id]
   (let [entries (persistance/db-restore-blocks db-info session-id)]
-    (mapv (fn [{:keys [name expr result]}]
+    (mapv (fn [{:keys [name expr value]}]
             (let [sym (symbol name)]
               (try
-                (if (and (map? result) (= :expr (:vis/ref result)))
+                (if (and (map? value) (= :expr (:vis/ref value)))
                   (cond
                     (or (nil? expr) (= expr ";; SYSTEM var"))
                     {:name name :restored-via :skip :success? true}
@@ -836,7 +836,7 @@
                      :reason :unsafe-restore
                      :guidance "Recreate intentionally to persist a restorable value."})
                   ;; Data value -> bind directly
-                  (do (sci-update-binding! sci-ctx sym result)
+                  (do (sci-update-binding! sci-ctx sym value)
                     {:name name :restored-via :data :success? true}))
                 (catch Throwable e
                   (tel/log! {:level :warn :id ::restore-failed
