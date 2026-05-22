@@ -329,6 +329,7 @@
 ;; --- Restore ---
 (defdelegate db-restore-blocks  [db-info session-id])
 (defdelegate db-load-latest-ctx [db-info session-id])
+(defdelegate db-load-ctx-history [db-info session-id])
 
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])

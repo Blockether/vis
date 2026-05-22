@@ -148,3 +148,93 @@
         (expect (= 1 (get-in prog [:rl :total])))
         (expect (= 1 (get-in prog [:rl :proven])))
         (expect (= :ready (get-in prog [:rl :state])))))))
+
+;; =============================================================================
+;; Introspect verb bindings
+;; =============================================================================
+
+(defdescribe introspect-bindings-test
+  (describe "build-introspect-bindings"
+    (let [env (mk-env)
+          {sp 'spec-set! tk 'task-set!} (cl/build-sci-bindings env)
+          _   (sp :auth {:title "switch to bcrypt" :status :draft})
+          _   (tk :swap {:title "CAS rewrite" :specs {:auth []} :status :doing})
+          ;; History loader returns a vec of [turn ctx] pairs as if loaded
+          ;; from persistance. We fake one prior turn snapshot.
+          prior-ctx (-> (eng/empty-ctx "test-session")
+                      (assoc :session/turn 1)
+                      (assoc-in [:session/facts :rl-bug]
+                        {:content "old race fact" :born "t1/i1/f1"}))
+          history-loader (constantly [[1 prior-ctx]])
+          {ispec 'introspect-spec
+           itask 'introspect-task
+           ifact 'introspect-fact
+           iarch 'introspect-archived
+           ictx  'introspect-ctx-at}
+          (cl/build-introspect-bindings env history-loader)]
+
+      (it "introspect-spec finds spec in LIVE ctx (this iter)"
+        (let [r (ispec :auth)]
+          (expect (= "switch to bcrypt" (:title r)))))
+
+      (it "introspect-task finds task in LIVE ctx"
+        (let [r (itask :swap)]
+          (expect (= "CAS rewrite" (:title r)))))
+
+      (it "introspect-fact finds fact from PRIOR turn (history)"
+        (let [r (ifact :rl-bug)]
+          (expect (= "old race fact" (:content r)))))
+
+      (it "introspect-archived enumerates entries missing from latest"
+        ;; the LIVE ctx (treated as latest turn 2 from env atoms) has no
+        ;; :rl-bug; turn 1 had it → archived
+        (let [arch (iarch :facts)]
+          (expect (some #(= :rl-bug (:key %)) arch))))
+
+      (it "introspect-ctx-at \"t1\" returns the turn 1 snapshot"
+        (let [snap (ictx "t1")]
+          (expect (= "old race fact"
+                    (get-in snap [:session/facts :rl-bug :content])))))
+
+      (it "introspect-ctx-at \"t99\" → nil for unknown turn"
+        (expect (nil? (ictx "t99"))))
+
+      (it "introspect-ctx-at malformed string → nil"
+        (expect (nil? (ictx "bogus"))))
+
+      (it "introspect-ctx-at accepts integer too"
+        (expect (= "old race fact"
+                  (get-in (ictx 1) [:session/facts :rl-bug :content])))))))
+
+;; =============================================================================
+;; trailer→form-results projection
+;; =============================================================================
+
+(defdescribe trailer-form-results-test
+  (describe "trailer->form-results"
+    (let [trailer [{:scope "t1/i1"
+                    :forms [{:scope "t1/i1/f1" :tag :observation :src "(read)"
+                             :result "ok"}
+                            {:scope "t1/i1/f2" :tag :mutation :src "(write!)"
+                             :result :ok}]}
+                   {:scope "t1/i2"
+                    :forms [{:scope "t1/i2/f1" :tag :observation :src "(/ 1 0)"
+                             :error {:message "boom"}}]}
+                   ;; summary entries get skipped (no :forms)
+                   {:scope-start "t0/i1" :scope-end "t0/i5"
+                    :summary "older summarized" :born "t1/i1/f1"}]
+          fr (cl/trailer->form-results trailer)]
+
+      (it "keys by scope-form string"
+        (expect (contains? fr "t1/i1/f1"))
+        (expect (contains? fr "t1/i1/f2"))
+        (expect (contains? fr "t1/i2/f1")))
+
+      (it "skips summary entries"
+        (expect (= 3 (count fr))))
+
+      (it "preserves :result for ok forms"
+        (expect (= "ok" (:result (get fr "t1/i1/f1")))))
+
+      (it "preserves :error for errored forms"
+        (expect (= "boom" (:message (:error (get fr "t1/i2/f1")))))))))
