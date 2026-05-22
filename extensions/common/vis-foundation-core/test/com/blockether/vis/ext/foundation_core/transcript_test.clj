@@ -50,7 +50,8 @@
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
     (vis/db-store-iteration! s {:session-turn-id q1
                                 :code          "(+ 1 1)"
-                                :result        2
+                                :forms         [{:scope "t1/i1/f1" :tag :observation
+                                                 :src "(+ 1 1)" :result 2}]
                                 :answer        "42"
                                 :thinking      "Reasoning about arithmetic"
                                 :vars          [{:name "x" :value 42 :code "(def x 42)"}]
@@ -83,7 +84,9 @@
                                             :status :running})]
       (vis/db-store-iteration! s {:session-turn-id q2
                                   :code "Let"
-                                  :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}
+                                  :forms [{:scope "t2/i1/f1" :tag :observation
+                                           :src "Let"
+                                           :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}}]
                                   :duration-ms 1
                                   :llm-provider :blockether
                                   :llm-model    "gpt-4o"
@@ -420,12 +423,18 @@
               qid (vis/db-store-session-turn! s {:parent-session-id cid
                                                  :user-request "mixed"
                                                  :status :running})]
-          (vis/db-store-iteration! s {:session-turn-id qid
-                                      :code (str "(def x 1)\n"
-                                              "(set-session-title! \"Mixed\")\n"
-                                              "(done [:ir [:p \"Done\"]])")
-                                      :result :vis/answer
-                                      :answer "Done"})
+          (let [fence (str "(def x 1)\n"
+                        "(set-session-title! \"Mixed\")\n"
+                        "(done [:ir [:p \"Done\"]])")]
+            (vis/db-store-iteration! s {:session-turn-id qid
+                                        :code fence
+                                        :forms [{:scope "t1/i1/f1" :tag :mutation
+                                                 :src "(def x 1)" :result 1}
+                                                {:scope "t1/i1/f2" :tag :mutation
+                                                 :src "(set-session-title! \"Mixed\")" :result :ok}
+                                                {:scope "t1/i1/f3" :tag :mutation
+                                                 :src "(done [:ir [:p \"Done\"]])" :result :vis/answer}]
+                                        :answer "Done"}))
           (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "(def x 1)"))

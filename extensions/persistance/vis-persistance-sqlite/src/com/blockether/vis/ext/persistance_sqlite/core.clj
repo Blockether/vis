@@ -1172,18 +1172,34 @@
               :keys (keys opts)})))
   (:code opts))
 
+(defn- legacy-flat->forms
+  "Wrap a legacy flat `:result` / `:error` iteration payload into a single
+   per-form envelope so the new `:forms` column always stores the canonical
+   shape. Callers that already pass `:forms` win; legacy callers get a
+   one-element vec with `:scope` left nil (engine cursor info wasn't
+   captured pre-new-CTX) but `:src`/`:result`/`:error` filled in."
+  [{:keys [code result error] :as opts}]
+  (when (or (contains? opts :result) (some? error))
+    [(cond-> {:tag :observation :src (str code)}
+       (contains? opts :result) (assoc :result result)
+       (some? error)            (assoc :error error))]))
+
 (defn- prepare-iteration-columns
-  "Prepare the hard-cut single-form session_turn_iteration payload.
-   Result and error stay Nippy BLOBs.
+  "Prepare the session_turn_iteration payload. The canonical per-form vec
+   lives Nippy-encoded in `:forms`; legacy flat `:result` / `:error`
+   callers are wrapped into a one-element vec so the column stays uniform.
 
    `:duration-ms` is the SCI sandbox eval wall time for this iteration's
    block; persisted into the named `eval_duration_ms` column. The LLM
    call wall time arrives as `:llm-full-duration-ms` and lands on
    `llm_full_duration_ms`."
   [{:keys [forms duration-ms] :as opts}]
-  (let [code (require-iteration-code! opts)]
+  (let [code       (require-iteration-code! opts)
+        forms-vec  (cond
+                     (seq forms) (vec forms)
+                     :else       (legacy-flat->forms opts))]
     (cond-> {:code (str code)}
-      (seq forms)              (assoc :forms (->blob (freeze-safe (vec forms))))
+      (seq forms-vec)          (assoc :forms (->blob (freeze-safe forms-vec)))
       (some? duration-ms)      (assoc :eval_duration_ms (long duration-ms)))))
 
 (defn- routing-summary-columns
@@ -1559,7 +1575,10 @@
     iteration))
 
 (defn- row->iteration [row]
-  (let [forms-vec (<-blob (:forms row))]
+  (let [forms-vec    (<-blob (:forms row))
+        first-form   (first forms-vec)
+        legacy-result? (and first-form (contains? first-form :result))
+        legacy-error?  (and first-form (some? (:error first-form)))]
     (cond-> {:id          (->uuid (:id row))
              :type        :iteration
              :position    (:position row)
@@ -1567,6 +1586,12 @@
              :created-at  (->date (:created_at row))}
       (some? (:code row))                (assoc :code (:code row))
       (some? forms-vec)                  (assoc :forms forms-vec)
+      ;; Legacy convenience: surface the FIRST form's :result / :error at the
+      ;; iteration top level so single-form callers (transcripts, tests, TUI
+      ;; summary) keep working unchanged. The canonical per-form payload lives
+      ;; under :forms; this is only a derived projection.
+      legacy-result?                     (assoc :result (:result first-form))
+      legacy-error?                      (assoc :error (:error first-form))
       (some? (:eval_duration_ms row))    (assoc :duration-ms (:eval_duration_ms row))
       (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
       (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))

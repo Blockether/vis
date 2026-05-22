@@ -1073,7 +1073,7 @@
                                           :vars [{:name "x" :value 9 :code "(def x 9)"}]})
           reg (vis/db-latest-var-registry s cid)
           hx  (vis/db-var-history s cid 'x)
-          restored-by-name (into {} (map (juxt :name :result)) (vis/db-restore-blocks s cid))]
+          restored-by-name (into {} (map (juxt :name :value)) (vis/db-restore-blocks s cid))]
       (expect (= 9 (:value (get reg 'x))))
       (expect (= 2 (:value (get reg 'y))))
       (expect (= [1 9] (mapv :value hx)))
@@ -1410,9 +1410,9 @@
       (expect (= 3 (count restored)))
       (expect (= #{"x" "y" "z"} (set (map :name restored))))
       ;; All have data values
-      (expect (= 42 (:result (first (filter #(= "x" (:name %)) restored)))))
-      (expect (= "hello" (:result (first (filter #(= "y" (:name %)) restored)))))
-      (expect (= [1 2 3] (:result (first (filter #(= "z" (:name %)) restored)))))
+      (expect (= 42 (:value (first (filter #(= "x" (:name %)) restored)))))
+      (expect (= "hello" (:value (first (filter #(= "y" (:name %)) restored)))))
+      (expect (= [1 2 3] (:value (first (filter #(= "z" (:name %)) restored)))))
       ;; No dependencies
       (expect (every? #(empty? (:depends-on %)) restored))))
 
@@ -1426,7 +1426,7 @@
           restored (vis/db-restore-blocks s cid)
           entry    (first restored)]
       (expect (= "double-it" (:name entry)))
-      (expect (= {:vis/ref :expr} (:result entry)))
+      (expect (= {:vis/ref :expr} (:value entry)))
       (expect (= "(defn double-it \"double the input\" [x] (* x 2))" (:expr entry)))))
 
   (it "linear dependency chain A -> B -> C restored in correct order"
@@ -1463,9 +1463,9 @@
         (expect (< (.indexOf names "base-rate") (.indexOf names "calc-interest")))
         (expect (< (.indexOf names "calc-interest") (.indexOf names "monthly-payment")))
         ;; base-rate has data, the fns have :vis/ref :expr
-        (expect (= 0.05 (:result (first restored))))
-        (expect (= {:vis/ref :expr} (:result (second restored))))
-        (expect (= {:vis/ref :expr} (:result (nth restored 2))))
+        (expect (= 0.05 (:value (first restored))))
+        (expect (= {:vis/ref :expr} (:value (second restored))))
+        (expect (= {:vis/ref :expr} (:value (nth restored 2))))
         ;; Dependency metadata is correct
         (let [calc (first (filter #(= "calc-interest" (:name %)) restored))]
           (expect (= [(soul-by "base-rate")] (:depends-on calc)))
@@ -1508,8 +1508,8 @@
         (expect (< (idx "tax-fn") (idx "total-fn")))
         (expect (< (idx "fee-fn") (idx "total-fn")))
         ;; config is data, rest are fn refs
-        (expect (= {:rate 0.1} (:result (nth restored (idx "config")))))
-        (expect (= {:vis/ref :expr} (:result (nth restored (idx "total-fn")))))
+        (expect (= {:rate 0.1} (:value (nth restored (idx "config")))))
+        (expect (= {:vis/ref :expr} (:value (nth restored (idx "total-fn")))))
         ;; total-fn depends on both tax-fn and fee-fn
         (let [total (nth restored (idx "total-fn"))]
           (expect (= 2 (count (:depends-on total))))
@@ -1575,15 +1575,15 @@
         ;; All 6 vars present (3 system + 3 user)
         (expect (= 6 (count restored)))
         ;; System vars have data values, latest versions
-        (expect (= "analyze data" (:result (by-name "TURN_USER_REQUEST"))))
-        (expect (= "step 3" (:result (by-name "user-thinking-state"))))
-        (expect (= "[1 3]" (:result (by-name "SESSION_PREVIOUS_ANSWER"))))
+        (expect (= "analyze data" (:value (by-name "TURN_USER_REQUEST"))))
+        (expect (= "step 3" (:value (by-name "user-thinking-state"))))
+        (expect (= "[1 3]" (:value (by-name "SESSION_PREVIOUS_ANSWER"))))
         ;; dataset is data
-        (expect (= [{:x 1 :y 2} {:x 3 :y 4}] (:result (by-name "dataset"))))
+        (expect (= [{:x 1 :y 2} {:x 3 :y 4}] (:value (by-name "dataset"))))
         ;; summarize is fn ref
-        (expect (= {:vis/ref :expr} (:result (by-name "summarize"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "summarize"))))
         ;; result is data (was computed)
-        (expect (= [1 3] (:result (by-name "result"))))
+        (expect (= [1 3] (:value (by-name "result"))))
         ;; Topological order: dataset before summarize, both before result
         (expect (< (idx "dataset") (idx "summarize")))
         (expect (< (idx "dataset") (idx "result")))
@@ -1629,11 +1629,11 @@
         (expect (< (idx "make-adder") (idx "add-10")))
         (expect (< (idx "add-10") (idx "result")))
         ;; make-adder is a fn -> ref
-        (expect (= {:vis/ref :expr} (:result (by-name "make-adder"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "make-adder"))))
         ;; add-10 is ALSO a fn (returned by make-adder) -> ref
-        (expect (= {:vis/ref :expr} (:result (by-name "add-10"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "add-10"))))
         ;; result is data (15)
-        (expect (= 15 (:result (by-name "result")))))))
+        (expect (= 15 (:value (by-name "result")))))))
 
   (it "closure chain: factory -> instance -> bound literal via eval"
     ;; (def config {:multiplier 3})
@@ -1677,10 +1677,10 @@
         (expect (< (idx "make-scaler") (idx "scale")))
         (expect (< (idx "scale") (idx "scaled-data")))
         ;; config = data, make-scaler = fn ref, scale = fn ref, scaled-data = data
-        (expect (= {:multiplier 3} (:result (by-name "config"))))
-        (expect (= {:vis/ref :expr} (:result (by-name "make-scaler"))))
-        (expect (= {:vis/ref :expr} (:result (by-name "scale"))))
-        (expect (= [3 6 9 12 15] (:result (by-name "scaled-data")))))))
+        (expect (= {:multiplier 3} (:value (by-name "config"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "make-scaler"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "scale"))))
+        (expect (= [3 6 9 12 15] (:value (by-name "scaled-data")))))))
 
   (it "multi-version var with dependency: changing upstream propagates ref"
     ;; Iter 1: (def base 10)
@@ -1719,13 +1719,13 @@
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
         (expect (= 3 (count restored)))
         ;; base LATEST is 20 (version 1), not 10
-        (expect (= 20 (:result (by-name "base"))))
+        (expect (= 20 (:value (by-name "base"))))
         (expect (= 1 (:version (by-name "base"))))
         ;; compute is fn ref, needs re-eval with new base
-        (expect (= {:vis/ref :expr} (:result (by-name "compute"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "compute"))))
         (expect (= "(defn compute [x] (+ x base))" (:expr (by-name "compute"))))
         ;; answer is data
-        (expect (= 25 (:result (by-name "answer"))))
+        (expect (= 25 (:value (by-name "answer"))))
         ;; Order: base before compute before answer
         (expect (< (idx "base") (idx "compute")))
         (expect (< (idx "compute") (idx "answer"))))))
@@ -1791,11 +1791,11 @@
             idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
         (expect (= 3 (count restored)))
         ;; raw-data from turn 1 is still data
-        (expect (= [10 20 30] (:result (by-name "raw-data"))))
+        (expect (= [10 20 30] (:value (by-name "raw-data"))))
         ;; avg-fn is fn ref
-        (expect (= {:vis/ref :expr} (:result (by-name "avg-fn"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "avg-fn"))))
         ;; average is computed data
-        (expect (= 20 (:result (by-name "average"))))
+        (expect (= 20 (:value (by-name "average"))))
         ;; Order: raw-data before avg-fn before average
         (expect (< (idx "raw-data") (idx "avg-fn")))
         (expect (< (idx "avg-fn") (idx "average")))))))
@@ -2382,14 +2382,14 @@
             by-name (into {} (map (juxt :name identity)) restored)]
         (expect (= 4 (count restored)))
         ;; Latest values for redefined leaves.
-        (expect (= 100 (:result (by-name "a"))))
-        (expect (= 5   (:result (by-name "b"))))
+        (expect (= 100 (:value (by-name "a"))))
+        (expect (= 5   (:value (by-name "b"))))
         ;; c's STORED value is still 12 (frozen at the iter-2 eval moment).
         ;; The dependency edges flag c as derived from a + b, so a model /
         ;; renderer can detect 'c may be stale because its upstream changed'
         ;; without us silently recomputing on the model's behalf.
-        (expect (= 12 (:result (by-name "c"))))
-        (expect (= {:vis/ref :expr} (:result (by-name "use-c"))))
+        (expect (= 12 (:value (by-name "c"))))
+        (expect (= {:vis/ref :expr} (:value (by-name "use-c"))))
 
         ;; Dependency edges still intact post-redefinition.
         (let [soul-id (into {} (map (juxt :name :soul-id)) restored)
@@ -2475,11 +2475,11 @@
         (let [by-name (into {} (map (juxt :name identity)) restored)]
           ;; Values vs refs: data leaves carry their value; fns carry
           ;; the {:vis/ref :expr} sentinel and the caller re-evals :expr.
-          (expect (= 10 (:result (by-name "base"))))
-          (expect (= 2  (:result (by-name "factor"))))
-          (expect (= 20 (:result (by-name "scale"))))
-          (expect (= {:vis/ref :expr} (:result (by-name "apply-scale"))))
-          (expect (= {:vis/ref :expr} (:result (by-name "pipeline"))))
+          (expect (= 10 (:value (by-name "base"))))
+          (expect (= 2  (:value (by-name "factor"))))
+          (expect (= 20 (:value (by-name "scale"))))
+          (expect (= {:vis/ref :expr} (:value (by-name "apply-scale"))))
+          (expect (= {:vis/ref :expr} (:value (by-name "pipeline"))))
 
           ;; THE BIG PROOF: rebuild a FRESH SCI context by re-evaling
           ;; each entry's :expr in restored order, then call the top-of-
