@@ -70,80 +70,86 @@
     (it "rejects bad :born scope"
       (expect (not (s/valid? ::cs/fact {:content "x" :born "bad-scope"}))))
 
-    (it "rejects retired :tags"
-      (expect (not (s/valid? ::cs/fact
-                     {:content "x" :born "t1/i1/f1" :tags #{:a}}))))
-
-    (it "rejects retired :connections"
-      (expect (not (s/valid? ::cs/fact
-                     {:content "x" :born "t1/i1/f1" :connections [:a]}))))
-
     (it "allows unknown keys (open schema)"
       (expect (s/valid? ::cs/fact
                 {:content "x" :born "t1/i1/f1" :random-field 42})))))
 
 (defdescribe task-test
-  (describe "::task — {:title :serves-spec :status :born + optional fields}"
+  (describe "::task — {:title :spec :status :born + optional :depends-on}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/task)))
 
     (it "minimal valid"
       (expect (s/valid? ::cs/task
-                {:title "x" :serves-spec :the-spec :status :todo :born "t1/i1/f1"})))
+                {:title "x" :spec :the-spec :status :todo :born "t1/i1/f1"})))
 
-    (it "rejects missing :serves-spec (required ref)"
+    (it "allows :depends-on vec"
+      (expect (s/valid? ::cs/task
+                {:title "x" :spec :s :depends-on [:a]
+                 :status :todo :born "t1/i1/f1"})))
+
+    (it "allows :satisfies criterion proof entries"
+      (expect (s/valid? ::cs/task
+                {:title "x" :spec :s :status :done :born "t1/i1/f1"
+                 :satisfies [{:criterion :c1 :proof "t1/i2/f3"}]})))
+
+    (it "rejects missing :spec (required ref)"
       (expect (not (s/valid? ::cs/task
                      {:title "x" :status :todo :born "t1/i1/f1"}))))
 
     (it "rejects :blocked status (dropped from enum)"
       (expect (not (s/valid? ::cs/task
-                     {:title "x" :serves-spec :s :status :blocked :born "t1/i1/f1"}))))
+                     {:title "x" :spec :s :status :blocked :born "t1/i1/f1"}))))
 
-    (it "rejects :evidence with iter-scope (must be form-scope)"
-      (expect (not (s/valid? ::cs/task
-                     {:title "x" :serves-spec :s :status :done :born "t1/i1/f1"
-                      :evidence ["t3/i2"]}))))
+    (it "allows unknown keys (open schema)"
+      (expect (s/valid? ::cs/task
+                {:title "x" :spec :s :status :done :born "t1/i1/f1"
+                 :extra "ok"})))
 
     (it "rejects :journal entry missing :scope"
       (expect (not (s/valid? ::cs/task
-                     {:title "x" :serves-spec :s :status :done :born "t1/i1/f1"
-                      :journal [{:status :doing}]}))))
-
-    (it "rejects retired task link fields"
-      (expect (not (s/valid? ::cs/task
-                     {:title "x" :serves-spec :s :status :todo :born "t1/i1/f1"
-                      :spec :s :depends-on [] :facts []}))))))
+                     {:title "x" :spec :s :status :done :born "t1/i1/f1"
+                      :journal [{:status :doing}]}))))))
 
 (defdescribe spec-test
-  (describe "::spec — {:title :acceptance :status :born + optional refs}"
+  (describe "::spec — {:title :criteria :status :born}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/spec)))
 
     (it "minimal valid"
       (expect (s/valid? ::cs/spec
-                {:title "x" :acceptance ["criterion"]
-                 :status :draft :born "t1/i1/f1"})))
+                {:title "x"
+                 :criteria [{:id :c1
+                             :criterion "criterion"}]
+                 :status :draft
+                 :born "t1/i1/f1"})))
 
-    (it "rejects empty :acceptance"
+    (it "allows criterion facts"
+      (expect (s/valid? ::cs/spec
+                {:title "x"
+                 :criteria [{:id :c1
+                             :criterion "criterion"
+                             :facts [:f1]}]
+                 :status :doing
+                 :born "t1/i1/f1"})))
+
+    (it "rejects empty :criteria"
       (expect (not (s/valid? ::cs/spec
-                     {:title "x" :acceptance []
+                     {:title "x" :criteria []
                       :status :draft :born "t1/i1/f1"}))))
 
     (it "rejects bad :status value"
       (expect (not (s/valid? ::cs/spec
-                     {:title "x" :acceptance ["c"]
+                     {:title "x"
+                      :criteria [{:id :c1 :criterion "c"}]
                       :status :wip :born "t1/i1/f1"}))))
 
-    (it "rejects :acceptance with non-strings"
-      (expect (not (s/valid? ::cs/spec
-                     {:title "x" :acceptance [:keyword]
-                      :status :draft :born "t1/i1/f1"}))))
-
-    (it "rejects retired spec link fields"
-      (expect (not (s/valid? ::cs/spec
-                     {:title "x" :acceptance ["c"]
-                      :status :draft :born "t1/i1/f1"
-                      :facts [] :tasks []}))))))
+    (it "allows unknown keys (open schema)"
+      (expect (s/valid? ::cs/spec
+                {:title "x"
+                 :criteria [{:id :c1 :criterion "c"}]
+                 :status :draft :born "t1/i1/f1"
+                 :extra "ok"})))))
 
 (defdescribe trailer-test
   (describe "::trailer-form, ::trailer-pin, ::trailer-summary, ::trailer-entry"
@@ -277,16 +283,17 @@
                  :session/hints     {}
                  :session/specs
                  {:auth {:title "switch auth to bcrypt"
-                         :acceptance ["check/1 uses bcrypt"]
-                         :grounding-facts [:auth-fact]
-                         :serving-tasks [:add-dep]
+                         :criteria [{:id :bcrypt-check
+                                     :criterion "check/1 uses bcrypt"
+                                     :facts [:auth-fact]}]
                          :status :doing
                          :born "t5/i1/f1"}}
                  :session/tasks
                  {:add-dep {:title "add bcrypt"
-                            :serves-spec :auth :blocked-by-tasks []
+                            :spec :auth :depends-on []
                             :status :done
-                            :evidence ["t5/i2/f1"]
+                            :satisfies [{:criterion :bcrypt-check
+                                         :proof "t5/i2/f1"}]
                             :journal [{:status :doing :scope "t5/i1/f2"}
                                       {:status :done :scope "t5/i2/f2"}]
                             :born "t5/i1/f2"}}
