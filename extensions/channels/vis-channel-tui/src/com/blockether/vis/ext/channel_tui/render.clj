@@ -3251,27 +3251,20 @@
                      [(line-entry (str iteration-pad-marker ""))])))))
         body (or grouped [])
         trailing-errors (error-lines)
-        blank-entry? (fn [{:keys [line]}]
-                       (let [line (or line "")
-                             body (if (pos? (count line)) (subs line 1) line)]
-                         (str/blank? body)))
-        trim-leading-blanks (fn [entries]
-                              (vec (drop-while blank-entry? entries)))
-        raw-thinking-body (or (thinking-lines thinking) [])
-        direct-thinking-code? (and (seq raw-thinking-body) (seq body) (empty? trailing-errors))
-        ;; When reasoning is immediately followed by code, replace the
-        ;; thinking-marker bottom pad with a neutral terminal-bg blank
-        ;; so the boundary reads as a clean separator instead of more
-        ;; italic thinking stripe. Trim the body's leading iter-pad
-        ;; blanks so the gap stays exactly one row.
-        thinking-body (if (and direct-thinking-code?
-                            (let [last-line (or (:line (peek raw-thinking-body)) "")
-                                  body-of (if (pos? (count last-line)) (subs last-line 1) last-line)]
-                              (and (pos? (count last-line)) (str/blank? body-of))))
-                        (conj (pop raw-thinking-body) (line-entry ""))
-                        raw-thinking-body)
-        body (if direct-thinking-code?
-               (trim-leading-blanks body)
+        thinking-body (or (thinking-lines thinking) [])
+        direct-thinking-code? (and (seq thinking-body) (seq body) (empty? trailing-errors))
+        outer-iter-pad-top? (let [line (or (:line (first body)) "")
+                                  body-text (if (pos? (count line)) (subs line 1) line)]
+                              (and (pos? (count line))
+                                (.startsWith ^String line ^String iteration-pad-marker)
+                                (str/blank? body-text)))
+        ;; When reasoning is immediately followed by code, drop ONLY
+        ;; the outer iter-pad blank that wraps the form vector. The
+        ;; thinking trailing pad keeps its gray stripe and the code
+        ;; block keeps its own code-bg top pad, so the boundary paints
+        ;; as thinking-bg blank + code-bg blank with no neutral seam.
+        body (if (and direct-thinking-code? outer-iter-pad-top?)
+               (vec (rest body))
                body)]
     ;; Layout: header (with optional ITERATION-N label) + recap lines
     ;; (which already include provider-fallback notices and any
