@@ -249,6 +249,87 @@
   [message _messages _settings _idx]
   (dissoc message :turn-separator?))
 
+;;; ── Cross-turn error squash ────────────────────────────────────────
+;;
+;; When a provider keeps emitting the same transport-level
+;; failure (e.g. `:svar.core/stream-truncated`), every turn lands
+;; an assistant message whose ONLY content is that error — the
+;; user sees N identical "ERROR — Stream ended before terminal
+;; marker." bubbles back-to-back. The per-iteration collapser in
+;; `render/collapse-repeated-error-runs` cannot reach across
+;; bubbles, so the spam survives.
+;;
+;; We fix it here: before layout estimates / projects anything,
+;; walk the messages vec once and merge runs of consecutive
+;; assistant messages that are made up entirely of identical
+;; error iterations into one bubble. The merged bubble's trace
+;; iterations are concatenated, so the existing per-iteration
+;; collapser turns them into a single `ERROR x N` row when the
+;; bubble renders.
+
+(defn- error-only-iteration?
+  "True when an iteration carries an `:error` map and nothing else
+   the user would call content: no executable forms, no streamed
+   reasoning text. These are the failure-only iterations that
+   transport-level provider errors (`:svar.core/stream-truncated`,
+   404s mid-stream) produce."
+  [iter]
+  (and (map? (:error iter))
+    (empty? (:forms iter))
+    (str/blank? (str (:thinking iter)))))
+
+(defn- error-only-assistant?
+  [message]
+  (and (= :assistant (:role message))
+    (not= :cancelled (:status message))
+    (let [iters (:traces message)]
+      (and (sequential? iters) (seq iters)
+        (every? error-only-iteration? iters)))))
+
+(defn- message-error-signature
+  [message]
+  (when (error-only-assistant? message)
+    (some-> message :traces first render/error-signature)))
+
+(defn- squash-cross-message-errors
+  "Collapse maximal runs of consecutive assistant messages whose
+   only visible content is the same provider-error iteration into
+   a single message. The merged message keeps the FIRST message's
+   metadata (ids, timestamps) and concatenates the runs'
+   iteration vectors so `format-answer-with-thinking` →
+   `collapse-repeated-error-runs` will render one
+   `ERROR x N` row at draw time.
+
+   Non-error messages, cancellation notices, and runs with mixed
+   signatures pass through untouched."
+  [messages]
+  (let [v (vec messages)
+        n (long (count v))]
+    (loop [acc (transient [])
+           i   (long 0)]
+      (if (>= i n)
+        (persistent! acc)
+        (let [head (nth v i)
+              sig  (message-error-signature head)]
+          (if (nil? sig)
+            (recur (conj! acc head) (unchecked-inc i))
+            (let [run-end
+                  (long
+                    (loop [j (unchecked-inc i)]
+                      (if (and (< j n)
+                            (= sig (message-error-signature (nth v j))))
+                        (recur (unchecked-inc j))
+                        j)))]
+              (if (= run-end (unchecked-inc i))
+                (recur (conj! acc head) (unchecked-inc i))
+                (let [merged-iters
+                      (vec (mapcat :traces (subvec v i run-end)))
+                      merged (-> head
+                               (assoc :traces merged-iters)
+                               (assoc ::squashed-run-count
+                                 (unchecked-subtract run-end i)))]
+                  (recur (conj! acc merged) run-end))))))))))
+
 ;;; ── Per-message projection ─────────────────────────────────────────────────
 
 (defn- turn-identity
@@ -435,6 +516,12 @@
   (let [bubble-w          (long bubble-w)
         inner-h           (long inner-h)
         detail-expansions detail-expansions
+        ;; Pre-pass: squash maximal runs of consecutive assistant
+        ;; messages that are made up entirely of the same provider
+        ;; error. The downstream iteration collapser then renders the
+        ;; merged bubble as one `ERROR x N` row instead of N separate
+        ;; identical bubbles.
+        messages          (squash-cross-message-errors messages)
         n                 (long (count messages))
         ;; Pass 1 ── sticky-real height if we've measured this
         ;; message before, otherwise the cheap estimate. Identity-
