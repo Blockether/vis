@@ -103,9 +103,9 @@
           cid (h/store-session! s {:channel :cli})
           tid (vis/db-store-session-turn! s {:parent-session-id cid
                                              :user-request "block scoped"})
-          iid (vis/db-store-iteration! s {:session-turn-id tid
-                                          :status :done
-                                          :idx 0 :code "(+ 1 2)"})]
+          iid (h/store-iteration! s {:session-turn-id tid
+                                     :status :done
+                                     :idx 0 :code "(+ 1 2)"})]
       (persistance/db-create-extension-aggregate! s
         {:extension-id 'test.ext.alpha
          :aggregate-key :tool/trace
@@ -411,8 +411,8 @@
                     (.countDown started)
                     (.await done 1 TimeUnit/SECONDS)
                     (try
-                      (vis/db-store-iteration! s {:session-turn-id tid
-                                                  :code "(+ 1 2)" :result 3})
+                      (h/store-iteration! s {:session-turn-id tid
+                                             :code "(+ 1 2)" :result 3})
                       nil
                       (catch Throwable t t)))
           logs    (do
@@ -699,10 +699,10 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 10})
+      (h/store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 10})
       (vis/db-update-session-turn! s qid {:status :error})
       (vis/db-retry-session-turn! s qid {:status :running :model "better"})
-      (vis/db-store-iteration! s {:session-turn-id qid :code "2" :result 2 :duration-ms 5})
+      (h/store-iteration! s {:session-turn-id qid :code "2" :result 2 :duration-ms 5})
       (expect (= 2 (raw-count s :session_turn_iteration)))
       (expect (= 1 (count (vis/db-list-session-turn-iterations s qid)))))))
 
@@ -715,29 +715,29 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(+ 1 1)" :result 2
-                                  :duration-ms 5
-                                  :thinking "Computing"})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(+ 1 1)" :result 2
+                             :duration-ms 5
+                             :thinking "Computing"})
       (expect (= 1 (raw-count s :session_turn_iteration)))
       ;; No more kind='call' rows - the call log lives inline in the
       ;; iteration flat columns.
       (expect (= 0 (raw-count s :definition_soul)))
       (let [iteration (first (vis/db-list-session-turn-iterations s qid))
-            blocks    [(select-keys iteration [:code :result :error :duration-ms])]]
+            blocks    (:forms iteration)]
         (expect (= "Computing" (:thinking iteration)))
         (expect (= 1 (:position iteration)))
         (expect (= 1 (count blocks)))
-        (expect (= "(+ 1 1)" (:code (first blocks))))
+        (expect (= "(+ 1 1)" (:src (first blocks))))
         (expect (= 2 (:result (first blocks)))))))
 
   (it "uses flat code/result columns for the inline log"
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(+ 1 1)" :result 2
-                                  :duration-ms 5})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(+ 1 1)" :result 2
+                             :duration-ms 5})
       (expect (contains? (table-columns s "session_turn_iteration") "code"))
       (expect (not (contains? (table-columns s "session_turn_iteration") "blocks")))
       (expect (some? (:code (first (raw-query s {:select [:code]
@@ -747,8 +747,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
-      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
+      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
+      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
       (expect (= [1 2] (mapv :position (vis/db-list-session-turn-iterations s qid))))
       (let [turn-state-id (:id (first (raw-query s {:select [:id]
                                                     :from :session_turn_state
@@ -777,11 +777,11 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(defn f [x] x)" :result (fn [x] x)
-                                  :duration-ms 5})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(defn f [x] x)" :result (fn [x] x)
+                             :duration-ms 5})
       (let [iteration (first (vis/db-list-session-turn-iterations s qid))
-            {:keys [result]} iteration]
+            result (:result (first (:forms iteration)))]
         (expect (= {:vis/ref :expr} result)))))
 
   (it "errors carry the message in the BLOB"
@@ -791,12 +791,12 @@
       ;; :error is the structured :error map
       ;; ({:message :trace? :hint? :block?}). Single error field, no
       ;; fallback string.
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(/ 1 0)"
-                                  :error {:message "Divide by zero"}
-                                  :duration-ms 5})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(/ 1 0)"
+                             :error {:message "Divide by zero"}
+                             :duration-ms 5})
       (let [iteration (first (vis/db-list-session-turn-iterations s qid))
-            exec      iteration]
+            exec      (first (:forms iteration))]
         (expect (= {:message "Divide by zero"} (:error exec)))
         ;; :result intentionally omitted on error - cond-> drops nil.
         (expect (not (contains? exec :result))))))
@@ -805,11 +805,11 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(+ 1 1)"
-                                  :comment ";; double-check arithmetic"
-                                  :result 2
-                                  :duration-ms 5})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(+ 1 1)"
+                             :comment ";; double-check arithmetic"
+                             :result 2
+                             :duration-ms 5})
       (let [iteration (first (vis/db-list-session-turn-iterations s qid))
             exec      iteration]
         (expect (= "(+ 1 1)" (:code exec))))))
@@ -826,9 +826,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 1})
-      (vis/db-store-iteration! s {:session-turn-id qid :code "2" :result 2 :duration-ms 1})
-      (vis/db-store-iteration! s {:session-turn-id qid :code "3" :result 3 :duration-ms 1})
+      (h/store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 1})
+      (h/store-iteration! s {:session-turn-id qid :code "2" :result 2 :duration-ms 1})
+      (h/store-iteration! s {:session-turn-id qid :code "3" :result 3 :duration-ms 1})
       (let [iterations (vis/db-list-session-turn-iterations s qid)
             positions  (sort (mapv :position iterations))]
         (expect (= 3 (count iterations)))
@@ -846,12 +846,12 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(+ 1 1)" :result 2
-                                  :duration-ms 5
-                                  :tokens   {:input 1200 :output 150 :reasoning 80 :cached 600}
-                                  :cache-created-tokens 7000
-                                  :cost-usd 0.0123})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(+ 1 1)" :result 2
+                             :duration-ms 5
+                             :tokens   {:input 1200 :output 150 :reasoning 80 :cached 600}
+                             :cache-created-tokens 7000
+                             :cost-usd 0.0123})
       (let [iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= 1200 (:input-tokens iter)))
         (expect (= 150  (:output-tokens iter)))
@@ -881,15 +881,15 @@
                   :reason :rate-limit-budget-exhausted
                   :elapsed-ms 30000
                   :at-ms 2}]
-          iid (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code ""
-                                          :duration-ms 5
-                                          :llm-provider :p2
-                                          :llm-model "m2"
-                                          :llm-routing {:selected {:provider :p1 :model "m1"}
-                                                        :actual {:provider :p2 :model "m2"}
-                                                        :fallback? true
-                                                        :trace trace}})]
+          iid (h/store-iteration! s {:session-turn-id qid
+                                     :code ""
+                                     :duration-ms 5
+                                     :llm-provider :p2
+                                     :llm-model "m2"
+                                     :llm-routing {:selected {:provider :p1 :model "m1"}
+                                                   :actual {:provider :p2 :model "m2"}
+                                                   :fallback? true
+                                                   :trace trace}})]
       (expect (= 2 (raw-count s :llm_routing_event)))
       (let [raw-row (first (raw-query s {:select [:llm_selected_provider :llm_actual_provider :llm_fallback]
                                          :from :session_turn_iteration
@@ -914,9 +914,9 @@
       ;; distinguish "no usage reported" from "zero tokens" can
       ;; check raw LLM usage columns via a custom query; the
       ;; default API path is always numeric.
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(+ 1 1)" :result 2
-                                  :duration-ms 5})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(+ 1 1)" :result 2
+                             :duration-ms 5})
       (let [iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= 0   (:input-tokens iter)))
         (expect (= 0   (:output-tokens iter)))
@@ -929,11 +929,11 @@
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           raw "```clojure\n(+ 1 1)\n```"]
-      (vis/db-store-iteration! s {:session-turn-id qid
-                                  :code "(+ 1 1)" :result 2
-                                  :duration-ms 5
-                                  :llm-raw-response raw
-                                  :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]})
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(+ 1 1)" :result 2
+                             :duration-ms 5
+                             :llm-raw-response raw
+                             :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]})
       (let [iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= raw (:llm-raw-response iter)))
         (expect (= raw (:llm-raw-response-preview iter)))
@@ -955,9 +955,9 @@
       ;; negative value gets a SQLite constraint exception (wrapped
       ;; through next.jdbc). lazytest has no `thrown?` macro; use a
       ;; plain try/catch and assert the throw landed.
-      (let [thrown? (try (vis/db-store-iteration! s {:session-turn-id qid
-                                                     :code "x" :result 1
-                                                     :tokens   {:input -5 :output 10}})
+      (let [thrown? (try (h/store-iteration! s {:session-turn-id qid
+                                                :code "x" :result 1
+                                                :tokens   {:input -5 :output 10}})
                       false
                       (catch Throwable _ true))]
         (expect (true? thrown?))))))
@@ -971,8 +971,8 @@
     (let [s    (h/store)
           cid  (h/store-session! s {:channel :tui})
           qid  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid  (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                           :vars [{:name "x" :value 42 :code "(def x 42)"}]})
+          iid  (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                      :vars [{:name "x" :value 42 :code "(def x 42)"}]})
           vars (vis/db-list-iteration-vars s iid)]
       (expect (= 1 (raw-count s :definition_soul)))
       (expect (= 1 (count vars)))
@@ -984,8 +984,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
-      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                  :vars [{:name "x" :value 42 :code "(def x 42)"}]})
+      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                             :vars [{:name "x" :value 42 :code "(def x 42)"}]})
       (expect (contains? (table-columns s "definition_state") "expression"))
       (expect (not (contains? (table-columns s "definition_state") "expr")))
       (expect (= "(def x 42)" (:expression (first (raw-query s {:select [:expression]
@@ -995,10 +995,10 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 1}]})
-          i2  (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 99}]})]
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 1}]})
+          i2  (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 99}]})]
       (expect (= 1 (raw-count s :definition_soul)))
       (expect (= 99 (:value (first (vis/db-list-iteration-vars s i2)))))
       (expect (= 1 (:version (first (vis/db-list-iteration-vars s i2)))))))
@@ -1007,11 +1007,11 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           q1  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t1" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 1}]})
+          _   (h/store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 1}]})
           q2  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "t2" :status :done})
-          i2  (vis/db-store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 100}]})]
+          i2  (h/store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 100}]})]
       (expect (= 1 (raw-count s :definition_soul)))
       (expect (= 100 (:value (first (vis/db-list-iteration-vars s i2)))))))
 
@@ -1019,8 +1019,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))
       (expect (= "(defn f [x] x)" (:code v)))))
@@ -1030,18 +1030,18 @@
           cid  (h/store-session! s {:channel :tui})
           qid  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
           data {:users [{:name "Alice"} {:name "Bob"}] :tags #{:a :b} :n 42}
-          iid  (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                           :vars [{:name "db" :value data}]})]
+          iid  (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                      :vars [{:name "db" :value data}]})]
       (expect (= data (:value (first (vis/db-list-iteration-vars s iid)))))))
 
   (it "latest var registry"
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 1} {:name "y" :value "hi"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 99}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 1} {:name "y" :value "hi"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 99}]})
           reg (vis/db-latest-var-registry s cid)]
       (expect (= 99 (:value (get reg 'x))))
       (expect (= 1 (:version (get reg 'x))))
@@ -1052,9 +1052,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 1}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 50}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 99}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 1}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 50}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 99}]})
           h   (vis/db-var-history s cid 'x)]
       (expect (= 3 (count h)))
       (expect (= [1 50 99] (mapv :value h)))
@@ -1064,13 +1064,13 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           q1  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "parent" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 1 :code "(def x 1)"}
-                                                 {:name "y" :value 2 :code "(def y 2)"}]})
+          _   (h/store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 1 :code "(def x 1)"}
+                                            {:name "y" :value 2 :code "(def y 2)"}]})
           _   (h/fork-session! s cid {:title "branch"})
           q2  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "branch" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 9 :code "(def x 9)"}]})
+          _   (h/store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 9 :code "(def x 9)"}]})
           reg (vis/db-latest-var-registry s cid)
           hx  (vis/db-var-history s cid 'x)
           restored-by-name (into {} (map (juxt :name :value)) (vis/db-restore-blocks s cid))]
@@ -1083,14 +1083,14 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code "(def x 1)" :result 1
-                                          :duration-ms 0
-                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code "(defn f [x] x)" :result (fn [x] x)
-                                          :duration-ms 0
-                                          :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
+          _   (h/store-iteration! s {:session-turn-id qid
+                                     :code "(def x 1)" :result 1
+                                     :duration-ms 0
+                                     :vars [{:name "x" :value 1 :code "(def x 1)"}]})
+          _   (h/store-iteration! s {:session-turn-id qid
+                                     :code "(defn f [x] x)" :result (fn [x] x)
+                                     :duration-ms 0
+                                     :vars [{:name "f" :value (fn [x] x) :code "(defn f [x] x)"}]})
           idx (vis/db-var-history-index s cid {:limit 10})]
       (expect (= '[f x] (mapv :name idx)))
       (expect (= [:fn :data] (mapv :kind idx)))
@@ -1102,8 +1102,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 1 :code "(def x 1)"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 2 :code "(def x 2)"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 1 :code "(def x 1)"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0 :vars [{:name "x" :value 2 :code "(def x 2)"}]})
           tl  (vis/db-var-history-timeline s cid {:limit 10})]
       (expect (= [:redefined :defined] (mapv :event tl)))
       (expect (= [:persisted :persisted] (mapv :durability tl)))
@@ -1119,8 +1119,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "1" :result 1
-                                          :duration-ms 0 :vars [{:name "x" :value 1}]})]
+          _   (h/store-iteration! s {:session-turn-id qid :code "1" :result 1
+                                     :duration-ms 0 :vars [{:name "x" :value 1}]})]
       (vis/db-delete-session-tree! s cid)
       (expect (= 0 (raw-count s :session_soul)))
       (expect (= 0 (raw-count s :session_state)))
@@ -1139,8 +1139,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "What?" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :answer "A Lisp" :duration-ms 100})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :answer "JVM Lisp" :duration-ms 50})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :answer "A Lisp" :duration-ms 100})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :answer "JVM Lisp" :duration-ms 50})
           h   (vis/db-turn-history s cid)]
       (expect (= 1 (count h)))
       (expect (= "What?" (:user-request (first h))))
@@ -1178,7 +1178,7 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0})]
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0})]
       (let [qstate (first (raw-query s {:select [:id] :from :session_turn_state}))
             iteration (first (raw-query s {:select [:session_turn_state_id] :from :session_turn_iteration}))]
         (expect (= (:id qstate) (:session_turn_state_id iteration))))))
@@ -1189,9 +1189,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code ""
-                                          :duration-ms 0
-                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
+          _   (h/store-iteration! s {:session-turn-id qid :code ""
+                                     :duration-ms 0
+                                     :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [state (first (raw-query s {:select [:id] :from :session_state}))
             esoul (first (raw-query s {:select [:session_state_id] :from :definition_soul}))]
         (expect (= (:id state) (:session_state_id esoul))))))
@@ -1200,9 +1200,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code ""
-                                          :duration-ms 0
-                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
+          _   (h/store-iteration! s {:session-turn-id qid :code ""
+                                     :duration-ms 0
+                                     :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [esoul  (first (raw-query s {:select [:id] :from :definition_soul}))
             estate (first (raw-query s {:select [:definition_soul_id] :from :definition_state}))]
         (expect (= (:id esoul) (:definition_soul_id estate))))))
@@ -1211,9 +1211,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code ""
-                                          :duration-ms 0
-                                          :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
+          _   (h/store-iteration! s {:session-turn-id qid :code ""
+                                     :duration-ms 0
+                                     :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [iteration (first (raw-query s {:select [:id] :from :session_turn_iteration}))
             estate (first (raw-query s {:select [[:session_turn_iteration_id :iteration_id]] :from :definition_state}))]
         (expect (= (:id iteration) (:iteration_id estate))))))
@@ -1244,10 +1244,10 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code "(+ 1 1)" :result 2
-                                          :duration-ms 0
-                                          :vars [{:name "x" :value 42 :code "(def x 42)"}]})]
+          _   (h/store-iteration! s {:session-turn-id qid
+                                     :code "(+ 1 1)" :result 2
+                                     :duration-ms 0
+                                     :vars [{:name "x" :value 42 :code "(def x 42)"}]})]
       (let [souls (raw-query s {:select [:name] :from :definition_soul})]
         ;; Per-form calls do not land in definition_soul. Only the var
         ;; soul lands there; the block log lives in the iteration flat columns
@@ -1256,9 +1256,9 @@
         (let [{:keys [name]} (first souls)]
           (expect (= "x" name)))
         (let [iteration (first (vis/db-list-session-turn-iterations s qid))
-              exec      iteration]
-          (expect (= "(+ 1 1)" (:code exec)))
-          (expect (= 2 (:result exec))))))))
+              form      (first (:forms iteration))]
+          (expect (= "(+ 1 1)" (:code iteration)))
+          (expect (= 2 (:result form))))))))
 
 ;; =============================================================================
 ;; System var versioning across iterations within a turn
@@ -1274,17 +1274,17 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Explain monads" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :result 2
-                                          :duration-ms 100
-                                          :vars [{:name "analysis-state" :value "First I need to understand what a monad is" :code "(def analysis-state ...)"}
-                                                 {:name "TURN_USER_REQUEST" :value "Explain monads" :code ";; SYSTEM var"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "(str \"A monad is\")" :result "A monad is"
-                                          :duration-ms 200
-                                          :vars [{:name "analysis-state" :value "Now I can explain: a monad wraps computation" :code "(def analysis-state ...)"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code ""
-                                          :duration-ms 50
-                                          :vars [{:name "analysis-state" :value "Final check: the explanation covers functor, applicative, monad" :code "(def analysis-state ...)"}
-                                                 {:name "SESSION_PREVIOUS_ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
+          _   (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :result 2
+                                     :duration-ms 100
+                                     :vars [{:name "analysis-state" :value "First I need to understand what a monad is" :code "(def analysis-state ...)"}
+                                            {:name "TURN_USER_REQUEST" :value "Explain monads" :code ";; SYSTEM var"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "(str \"A monad is\")" :result "A monad is"
+                                     :duration-ms 200
+                                     :vars [{:name "analysis-state" :value "Now I can explain: a monad wraps computation" :code "(def analysis-state ...)"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code ""
+                                     :duration-ms 50
+                                     :vars [{:name "analysis-state" :value "Final check: the explanation covers functor, applicative, monad" :code "(def analysis-state ...)"}
+                                            {:name "SESSION_PREVIOUS_ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
       ;; Only 1 definition_soul for analysis-state (reused across iterations)
       (expect (= 1 (raw-count s :definition_soul [:= :name "analysis-state"])))
       ;; 3 versions of analysis-state
@@ -1307,14 +1307,14 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "test" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "TURN_USER_REQUEST" :value "test" :code ";; SYSTEM"}
-                                                 {:name "user-thinking-state" :value "step 1" :code ";; SYSTEM"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "user-thinking-state" :value "step 2" :code ";; SYSTEM"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "user-thinking-state" :value "step 3" :code ";; SYSTEM"}
-                                                 {:name "SESSION_PREVIOUS_ANSWER" :value "42" :code ";; SYSTEM"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "TURN_USER_REQUEST" :value "test" :code ";; SYSTEM"}
+                                            {:name "user-thinking-state" :value "step 1" :code ";; SYSTEM"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "user-thinking-state" :value "step 2" :code ";; SYSTEM"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "user-thinking-state" :value "step 3" :code ";; SYSTEM"}
+                                            {:name "SESSION_PREVIOUS_ANSWER" :value "42" :code ";; SYSTEM"}]})
           reg (vis/db-latest-var-registry s cid)]
       (expect (= "test" (:value (get reg 'TURN_USER_REQUEST))))
       (expect (= 0 (:version (get reg 'TURN_USER_REQUEST))))
@@ -1327,18 +1327,18 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "compute" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code "(def data [1 2 3])" :result [1 2 3]
-                                          :duration-ms 10
-                                          :vars [{:name "data" :value [1 2 3] :code "(def data [1 2 3])"}
-                                                 {:name "TURN_USER_REQUEST" :value "compute" :code ";; SYSTEM"}
-                                                 {:name "user-thinking-state" :value "I need to sum the data" :code ";; SYSTEM"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code "(def result (reduce + data))" :result 6
-                                          :duration-ms 5
-                                          :vars [{:name "result" :value 6 :code "(def result (reduce + data))"}
-                                                 {:name "user-thinking-state" :value "Sum is 6, done" :code ";; SYSTEM"}
-                                                 {:name "SESSION_PREVIOUS_ANSWER" :value "6" :code ";; SYSTEM"}]})
+          _   (h/store-iteration! s {:session-turn-id qid
+                                     :code "(def data [1 2 3])" :result [1 2 3]
+                                     :duration-ms 10
+                                     :vars [{:name "data" :value [1 2 3] :code "(def data [1 2 3])"}
+                                            {:name "TURN_USER_REQUEST" :value "compute" :code ";; SYSTEM"}
+                                            {:name "user-thinking-state" :value "I need to sum the data" :code ";; SYSTEM"}]})
+          _   (h/store-iteration! s {:session-turn-id qid
+                                     :code "(def result (reduce + data))" :result 6
+                                     :duration-ms 5
+                                     :vars [{:name "result" :value 6 :code "(def result (reduce + data))"}
+                                            {:name "user-thinking-state" :value "Sum is 6, done" :code ";; SYSTEM"}
+                                            {:name "SESSION_PREVIOUS_ANSWER" :value "6" :code ";; SYSTEM"}]})
           reg (vis/db-latest-var-registry s cid)]
       ;; 5 distinct var souls
       (expect (= 5 (count reg)))
@@ -1358,16 +1358,16 @@
           cid (h/store-session! s {:channel :tui})
           ;; Turn 1
           q1  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "What is 2+2?" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
-                                          :vars [{:name "TURN_USER_REQUEST" :value "What is 2+2?" :code ";; SYSTEM"}
-                                                 {:name "user-thinking-state" :value "Simple math" :code ";; SYSTEM"}
-                                                 {:name "SESSION_PREVIOUS_ANSWER" :value "4" :code ";; SYSTEM"}]})
+          _   (h/store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
+                                     :vars [{:name "TURN_USER_REQUEST" :value "What is 2+2?" :code ";; SYSTEM"}
+                                            {:name "user-thinking-state" :value "Simple math" :code ";; SYSTEM"}
+                                            {:name "SESSION_PREVIOUS_ANSWER" :value "4" :code ";; SYSTEM"}]})
           ;; Turn 2
           q2  (vis/db-store-session-turn! s {:parent-session-id cid :user-request "And 3+3?" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
-                                          :vars [{:name "TURN_USER_REQUEST" :value "And 3+3?" :code ";; SYSTEM"}
-                                                 {:name "user-thinking-state" :value "Another simple one" :code ";; SYSTEM"}
-                                                 {:name "SESSION_PREVIOUS_ANSWER" :value "6" :code ";; SYSTEM"}]})
+          _   (h/store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
+                                     :vars [{:name "TURN_USER_REQUEST" :value "And 3+3?" :code ";; SYSTEM"}
+                                            {:name "user-thinking-state" :value "Another simple one" :code ";; SYSTEM"}
+                                            {:name "SESSION_PREVIOUS_ANSWER" :value "6" :code ";; SYSTEM"}]})
           reg (vis/db-latest-var-registry s cid)]
       ;; Each system var should have version 1 (v0 from turn 1, v1 from turn 2)
       (expect (= "And 3+3?" (:value (get reg 'TURN_USER_REQUEST))))
@@ -1402,10 +1402,10 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "x" :value 42 :code "(def x 42)"}
-                                                 {:name "y" :value "hello" :code "(def y \"hello\")"}
-                                                 {:name "z" :value [1 2 3] :code "(def z [1 2 3])"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "x" :value 42 :code "(def x 42)"}
+                                            {:name "y" :value "hello" :code "(def y \"hello\")"}
+                                            {:name "z" :value [1 2 3] :code "(def z [1 2 3])"}]})
           restored (vis/db-restore-blocks s cid)]
       (expect (= 3 (count restored)))
       (expect (= #{"x" "y" "z"} (set (map :name restored))))
@@ -1420,9 +1420,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "double-it" :value (fn [x] (* x 2))
-                                                  :code "(defn double-it \"double the input\" [x] (* x 2))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "double-it" :value (fn [x] (* x 2))
+                                             :code "(defn double-it \"double the input\" [x] (* x 2))"}]})
           restored (vis/db-restore-blocks s cid)
           entry    (first restored)]
       (expect (= "double-it" (:name entry)))
@@ -1434,16 +1434,16 @@
           cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           ;; Iteration 1: define base-rate
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "base-rate" :value 0.05 :code "(def base-rate 0.05)"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "base-rate" :value 0.05 :code "(def base-rate 0.05)"}]})
           ;; Iteration 2: define calc-interest (depends on base-rate)
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "calc-interest" :value (fn [p] p)
-                                                     :code "(defn calc-interest [principal] (* principal base-rate))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "calc-interest" :value (fn [p] p)
+                                                :code "(defn calc-interest [principal] (* principal base-rate))"}]})
           ;; Iteration 3: define monthly-payment (depends on calc-interest)
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "monthly-payment" :value (fn [p] p)
-                                                     :code "(defn monthly-payment [principal] (/ (calc-interest principal) 12))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "monthly-payment" :value (fn [p] p)
+                                                :code "(defn monthly-payment [principal] (/ (calc-interest principal) 12))"}]})
           ;; Now wire the dependencies
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
@@ -1475,11 +1475,11 @@
     (let [s      (h/store)
           cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "config" :value {:rate 0.1} :code "(def config {:rate 0.1})"}
-                                                    {:name "tax-fn" :value (fn [x] x) :code "(defn tax-fn [amount] (* amount (:rate config)))"}
-                                                    {:name "fee-fn" :value (fn [x] x) :code "(defn fee-fn [amount] (+ 10 (* amount (:rate config))))"}
-                                                    {:name "total-fn" :value (fn [x] x) :code "(defn total-fn [amount] (+ (tax-fn amount) (fee-fn amount)))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "config" :value {:rate 0.1} :code "(def config {:rate 0.1})"}
+                                               {:name "tax-fn" :value (fn [x] x) :code "(defn tax-fn [amount] (* amount (:rate config)))"}
+                                               {:name "fee-fn" :value (fn [x] x) :code "(defn fee-fn [amount] (+ 10 (* amount (:rate config))))"}
+                                               {:name "total-fn" :value (fn [x] x) :code "(defn total-fn [amount] (+ (tax-fn amount) (fee-fn amount)))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -1520,9 +1520,9 @@
           cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           var-names ["level-0" "level-1" "level-2" "level-3" "level-4"]
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars (mapv (fn [n] {:name n :value (fn [x] x)
-                                                                  :code (str "(defn " n " [x] x)")}) var-names)})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars (mapv (fn [n] {:name n :value (fn [x] x)
+                                                             :code (str "(defn " n " [x] x)")}) var-names)})
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -1541,20 +1541,20 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "analyze data" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "TURN_USER_REQUEST" :value "analyze data" :code ";; SYSTEM"}
-                                                 {:name "user-thinking-state" :value "step 1" :code ";; SYSTEM"}
-                                                 {:name "dataset" :value [{:x 1 :y 2} {:x 3 :y 4}]
-                                                  :code "(def dataset [{:x 1 :y 2} {:x 3 :y 4}])"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "user-thinking-state" :value "step 2" :code ";; SYSTEM"}
-                                                 {:name "summarize" :value (fn [ds] ds)
-                                                  :code "(defn summarize [ds] (map :x ds))"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "user-thinking-state" :value "step 3" :code ";; SYSTEM"}
-                                                 {:name "SESSION_PREVIOUS_ANSWER" :value "[1 3]" :code ";; SYSTEM"}
-                                                 {:name "result" :value [1 3]
-                                                  :code "(def result (summarize dataset))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "TURN_USER_REQUEST" :value "analyze data" :code ";; SYSTEM"}
+                                            {:name "user-thinking-state" :value "step 1" :code ";; SYSTEM"}
+                                            {:name "dataset" :value [{:x 1 :y 2} {:x 3 :y 4}]
+                                             :code "(def dataset [{:x 1 :y 2} {:x 3 :y 4}])"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "user-thinking-state" :value "step 2" :code ";; SYSTEM"}
+                                            {:name "summarize" :value (fn [ds] ds)
+                                             :code "(defn summarize [ds] (map :x ds))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "user-thinking-state" :value "step 3" :code ";; SYSTEM"}
+                                            {:name "SESSION_PREVIOUS_ANSWER" :value "[1 3]" :code ";; SYSTEM"}
+                                            {:name "result" :value [1 3]
+                                             :code "(def result (summarize dataset))"}]})
           ;; Wire: dataset -> summarize (it reads dataset), dataset + summarize -> result
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
@@ -1601,15 +1601,15 @@
     (let [s      (h/store)
           cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
-                                                     :code "(defn make-adder [n] (fn [x] (+ x n)))"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "add-10" :value (fn [x] (+ x 10))
-                                                     :code "(def add-10 (make-adder 10))"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "result" :value 15
-                                                     :code "(def result (add-10 5))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
+                                                :code "(defn make-adder [n] (fn [x] (+ x n)))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "add-10" :value (fn [x] (+ x 10))
+                                                :code "(def add-10 (make-adder 10))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "result" :value 15
+                                                :code "(def result (add-10 5))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -1643,18 +1643,18 @@
     (let [s      (h/store)
           cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "config" :value {:multiplier 3}
-                                                     :code "(def config {:multiplier 3})"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "make-scaler" :value (fn [] (fn [x] (* x 3)))
-                                                     :code "(defn make-scaler [] (let [m (:multiplier config)] (fn [x] (* x m))))"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "scale" :value (fn [x] (* x 3))
-                                                     :code "(def scale (make-scaler))"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "scaled-data" :value [3 6 9 12 15]
-                                                     :code "(def scaled-data (mapv scale [1 2 3 4 5]))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "config" :value {:multiplier 3}
+                                                :code "(def config {:multiplier 3})"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "make-scaler" :value (fn [] (fn [x] (* x 3)))
+                                                :code "(defn make-scaler [] (let [m (:multiplier config)] (fn [x] (* x m))))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "scale" :value (fn [x] (* x 3))
+                                                :code "(def scale (make-scaler))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "scaled-data" :value [3 6 9 12 15]
+                                                :code "(def scaled-data (mapv scale [1 2 3 4 5]))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -1691,16 +1691,16 @@
     (let [s      (h/store)
           cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "base" :value 10 :code "(def base 10)"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "compute" :value (fn [x] (+ x 10))
-                                                     :code "(defn compute [x] (+ x base))"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "base" :value 20 :code "(def base 20)"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars [{:name "answer" :value 25
-                                                     :code "(def answer (compute 5))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "base" :value 10 :code "(def base 10)"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "compute" :value (fn [x] (+ x 10))
+                                                :code "(defn compute [x] (+ x base))"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "base" :value 20 :code "(def base 20)"}]})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars [{:name "answer" :value 25
+                                                :code "(def answer (compute 5))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -1735,11 +1735,11 @@
           cid    (h/store-session! s {:channel :tui})
           qid    (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           fn-names ["fn-a" "fn-b" "fn-c" "fn-d" "fn-e"]
-          _      (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                             :vars (into [{:name "shared-cfg" :value {:k 1}
-                                                           :code "(def shared-cfg {:k 1})"}]
-                                                     (mapv (fn [n] {:name n :value (fn [x] x)
-                                                                    :code (str "(defn " n " [x] (+ x (:k shared-cfg)))")}) fn-names))})
+          _      (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                        :vars (into [{:name "shared-cfg" :value {:k 1}
+                                                      :code "(def shared-cfg {:k 1})"}]
+                                                (mapv (fn [n] {:name n :value (fn [x] x)
+                                                               :code (str "(defn " n " [x] (+ x (:k shared-cfg)))")}) fn-names))})
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -1762,17 +1762,17 @@
           cid    (h/store-session! s {:channel :tui})
           ;; Turn 1: define data
           q1     (vis/db-store-session-turn! s {:parent-session-id cid :user-request "load data" :status :done})
-          _      (vis/db-store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
-                                             :vars [{:name "raw-data" :value [10 20 30]
-                                                     :code "(def raw-data [10 20 30])"}]})
+          _      (h/store-iteration! s {:session-turn-id q1 :code "" :duration-ms 0
+                                        :vars [{:name "raw-data" :value [10 20 30]
+                                                :code "(def raw-data [10 20 30])"}]})
           ;; Turn 2: define fn + compute result using data from turn 1
           q2     (vis/db-store-session-turn! s {:parent-session-id cid :user-request "process it" :status :done})
-          _      (vis/db-store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
-                                             :vars [{:name "avg-fn" :value (fn [xs] (/ (reduce + xs) (count xs)))
-                                                     :code "(defn avg-fn [xs] (/ (reduce + xs) (count xs)))"}]})
-          _      (vis/db-store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
-                                             :vars [{:name "average" :value 20
-                                                     :code "(def average (avg-fn raw-data))"}]})
+          _      (h/store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
+                                        :vars [{:name "avg-fn" :value (fn [xs] (/ (reduce + xs) (count xs)))
+                                                :code "(defn avg-fn [xs] (/ (reduce + xs) (count xs)))"}]})
+          _      (h/store-iteration! s {:session-turn-id q2 :code "" :duration-ms 0
+                                        :vars [{:name "average" :value 20
+                                                :code "(def average (avg-fn raw-data))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -1809,8 +1809,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "nums" :value (range) :code "(def nums (range))"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "nums" :value (range) :code "(def nums (range))"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
       ;; Must not hang!
       (expect (= {:vis/ref :expr} (:value v)))
@@ -1820,8 +1820,8 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "ones" :value (repeat 1) :code "(def ones (repeat 1))"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "ones" :value (repeat 1) :code "(def ones (repeat 1))"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))))
 
@@ -1829,9 +1829,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "nats" :value (iterate inc 0)
-                                                  :code "(def nats (iterate inc 0))"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "nats" :value (iterate inc 0)
+                                             :code "(def nats (iterate inc 0))"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))))
 
@@ -1839,9 +1839,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "small" :value (map inc [1 2 3])
-                                                  :code "(def small (map inc [1 2 3]))"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "small" :value (map inc [1 2 3])
+                                             :code "(def small (map inc [1 2 3]))"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
       ;; Even small lazy seqs are refs - they're computations, not data
       (expect (= {:vis/ref :expr} (:value v)))))
@@ -1850,9 +1850,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "v" :value [1 2 3 4 5]
-                                                  :code "(def v [1 2 3 4 5])"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "v" :value [1 2 3 4 5]
+                                             :code "(def v [1 2 3 4 5])"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= [1 2 3 4 5] (:value v)))))
 
@@ -1860,9 +1860,9 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "l" :value '(1 2 3)
-                                                  :code "(def l '(1 2 3))"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "l" :value '(1 2 3)
+                                             :code "(def l '(1 2 3))"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= '(1 2 3) (:value v)))))
 
@@ -1870,11 +1870,11 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          iid (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "mixed" :value {:data [1 2 3]
-                                                                        :lazy (map inc [10 20])
-                                                                        :infinite (range)}
-                                                  :code "(def mixed {...})"}]})
+          iid (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "mixed" :value {:data [1 2 3]
+                                                                   :lazy (map inc [10 20])
+                                                                   :infinite (range)}
+                                             :code "(def mixed {...})"}]})
           m   (:value (first (vis/db-list-iteration-vars s iid)))]
       (expect (map? m))
       (expect (= [1 2 3] (:data m)))
@@ -1886,17 +1886,17 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          _   (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code "(range)" :result (range)
-                                          :duration-ms 5})
-          _   (vis/db-store-iteration! s {:session-turn-id qid
-                                          :code "(vec (range 5))" :result [0 1 2 3 4]
-                                          :duration-ms 5})
+          _   (h/store-iteration! s {:session-turn-id qid
+                                     :code "(range)" :result (range)
+                                     :duration-ms 5})
+          _   (h/store-iteration! s {:session-turn-id qid
+                                     :code "(vec (range 5))" :result [0 1 2 3 4]
+                                     :duration-ms 5})
           execs (vis/db-list-session-turn-iterations s qid)]
-      ;; (range) -> ref
-      (expect (= {:vis/ref :expr} (:result (first execs))))
+      ;; (range) -> ref (first form of first iter)
+      (expect (= {:vis/ref :expr} (-> execs first :forms first :result)))
       ;; (vec (range 5)) -> realized vector, stored as data
-      (expect (= [0 1 2 3 4] (:result (second execs)))))))
+      (expect (= [0 1 2 3 4] (-> execs second :forms first :result))))))
 ;; =============================================================================
 ;; Integration: store -> wipe sandbox -> restore -> use
 ;; =============================================================================
@@ -1910,8 +1910,8 @@
           {:keys [sci-ctx]} (env/create-sci-context nil)
           _   (sci/eval-string+ sci-ctx "(def data \"test fixture\" [10 20 30])" {:ns (sci/find-ns sci-ctx 'sandbox)})
           ;; Store it
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "data" :value [10 20 30] :code "(def data [10 20 30])"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "data" :value [10 20 30] :code "(def data [10 20 30])"}]})
           ;; Wipe: fresh sandbox (simulates disconnect)
           {:keys [sci-ctx]} (env/create-sci-context nil)]
       ;; Verify var is gone
@@ -1930,9 +1930,9 @@
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           ;; Store a fn (result will be {:vis/ref :expr})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "double-it" :value (fn [x] (* x 2))
-                                                  :code "(defn double-it \"double the input\" [x] (* x 2))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "double-it" :value (fn [x] (* x 2))
+                                             :code "(defn double-it \"double the input\" [x] (* x 2))"}]})
           ;; Fresh sandbox
           {:keys [sci-ctx]} (env/create-sci-context nil)]
       ;; Restore
@@ -1948,14 +1948,14 @@
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
           ;; Store chain: rate -> calc -> answer
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "rate" :value 0.1 :code "(def rate \"interest rate\" 0.1)"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "calc" :value (fn [x] (* x 0.1))
-                                                  :code "(defn calc \"compute interest\" [amount] (* amount rate))"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "answer" :value 100.0
-                                                  :code "(def answer \"final amount\" (calc 1000))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "rate" :value 0.1 :code "(def rate \"interest rate\" 0.1)"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "calc" :value (fn [x] (* x 0.1))
+                                             :code "(defn calc \"compute interest\" [amount] (* amount rate))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "answer" :value 100.0
+                                             :code "(def answer \"final amount\" (calc 1000))"}]})
           ;; Wire dependencies
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
@@ -1988,12 +1988,12 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
-                                                  :code "(defn make-adder \"adder factory\" [n] (fn [x] (+ x n)))"}]})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "add-5" :value (fn [x] (+ x 5))
-                                                  :code "(def add-5 \"adder for 5\" (make-adder 5))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
+                                             :code "(defn make-adder \"adder factory\" [n] (fn [x] (+ x n)))"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "add-5" :value (fn [x] (+ x 5))
+                                             :code "(def add-5 \"adder for 5\" (make-adder 5))"}]})
           ;; Wire: make-adder -> add-5
           state-id (first (map :id (raw-query s {:select [:id] :from :session_state})))
           souls    (raw-query s {:select [:id :name] :from :definition_soul})
@@ -2017,10 +2017,10 @@
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
           qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :done})
-          _   (vis/db-store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
-                                          :vars [{:name "TURN_USER_REQUEST" :value "What is 2+2?" :code ";; SYSTEM var"}
-                                                 {:name "user-thinking-state" :value "Simple math" :code ";; SYSTEM var"}
-                                                 {:name "SESSION_PREVIOUS_ANSWER" :value "4" :code ";; SYSTEM var"}]})
+          _   (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0
+                                     :vars [{:name "TURN_USER_REQUEST" :value "What is 2+2?" :code ";; SYSTEM var"}
+                                            {:name "user-thinking-state" :value "Simple math" :code ";; SYSTEM var"}
+                                            {:name "SESSION_PREVIOUS_ANSWER" :value "4" :code ";; SYSTEM var"}]})
           {:keys [sci-ctx]} (env/create-sci-context nil)]
       (let [results (env/restore-sandbox! sci-ctx s cid)
             by-name (into {} (map (fn [r] [(:name r) r])) results)]
@@ -2091,12 +2091,12 @@
                           [(symbol (format "v%02d" i)) i])
                     (range 82))
           _       (doseq [[sym value] entries]
-                    (vis/db-store-iteration! s {:session-turn-id qid
-                                                :code ""
-                                                :duration-ms 0
-                                                :vars [{:name (name sym)
-                                                        :value value
-                                                        :code (str "(def " (name sym) " " value ")")}]})
+                    (h/store-iteration! s {:session-turn-id qid
+                                           :code ""
+                                           :duration-ms 0
+                                           :vars [{:name (name sym)
+                                                   :value value
+                                                   :code (str "(def " (name sym) " " value ")")}]})
                     (Thread/sleep 1))
           sci-ctx (make-sci-ctx entries)
           rlm-env {:db-info         s
@@ -2118,12 +2118,12 @@
                             [(symbol (format "v%02d" i)) i])
                       (range 81)))
           _       (doseq [[sym value] (map #(take 2 %) entries)]
-                    (vis/db-store-iteration! s {:session-turn-id qid
-                                                :code ""
-                                                :duration-ms 0
-                                                :vars [{:name (name sym)
-                                                        :value value
-                                                        :code (str "(def " (name sym) " " value ")")}]})
+                    (h/store-iteration! s {:session-turn-id qid
+                                           :code ""
+                                           :duration-ms 0
+                                           :vars [{:name (name sym)
+                                                   :value value
+                                                   :code (str "(def " (name sym) " " value ")")}]})
                     (Thread/sleep 1))
           sci-ctx (make-sci-ctx entries)
           rlm-env {:db-info         s
