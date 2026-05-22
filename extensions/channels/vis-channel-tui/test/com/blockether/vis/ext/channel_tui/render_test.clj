@@ -618,13 +618,15 @@
           alpha-idx (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
           code-idx  (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))
           between   (subvec (vec lines) (inc alpha-idx) code-idx)
-          marker-of (fn [e] (let [l (:line e)] (when (and (string? l) (pos? (count l))) (str (first l)))))]
+          marker-of (fn [ln] (when (and (string? ln) (pos? (count ln))) (str (first ln))))
+          line-blank? (fn [ln] (let [body (if (pos? (count ln)) (subs ln 1) ln)]
+                                 (str/blank? (strip-ansi body))))]
       ;; Exactly two blank rows between thinking and code: thinking
       ;; bottom pad (gray stripe) directly followed by the code-block
       ;; top pad (code-bg stripe). No neutral seam, no extra rows.
       (expect (= (+ alpha-idx 3) code-idx))
       (expect (= 2 (count between)))
-      (expect (every? visually-blank? between))
+      (expect (every? line-blank? between))
       (expect (= p/MARKER_THINKING (marker-of (first between))))
       (expect (= p/MARKER_CODE_OK_PAD (marker-of (second between)))))))
 
