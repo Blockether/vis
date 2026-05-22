@@ -269,20 +269,65 @@
       (expect (not (string/includes? editing/editing-prompt "write-lines")))
       (expect (not (string/includes? editing/editing-prompt "update-file"))))))
 
-(defdescribe vis-ls-structured-shape-test
-  (it "represents the workspace root as dot plus absolute path"
+(defdescribe vis-ls-flat-shape-test
+  ;; v/ls now returns a FLAT entry list (no nested :children). The shape
+  ;; mirrors what other harnesses surface so the model can `(filter ...)`
+  ;; directly on (:entries r) instead of a tree-seq walk.
+  (it "returns a flat entry list with workspace-relative paths"
     (let [list-files (private-fn "list-files")
           ls-tool    (private-fn "ls-tool")
-          out        (list-files ".")
-          result     (:result (ls-tool "."))]
+          out        (list-files "." {:depth 1})
+          result     (:result (ls-tool "." {:depth 1}))]
       (expect (= "." (:path out)))
       (expect (= (str (.toAbsolutePath (fs/path (fs/cwd))))
                 (:absolute-path out)))
-      ;; Tool result is the plain tree map plus `:vis.op` / `:entry-count`.
       (expect (= :v/ls (:vis.op result)))
       (expect (= (:absolute-path out) (:absolute-path result)))
-      (expect (= :dir (:type out)))
-      (expect (= (count (:children out)) (:entry-count result))))))
+      (expect (vector? (:entries out)))
+      (expect (every? #(= #{:path :type :size} (set (keys %))) (:entries out)))
+      (expect (every? #{:dir :file} (map :type (:entries out))))
+      ;; Counts add up.
+      (expect (= (count (:entries out))
+                (+ (:file-count out) (:dir-count out))))))
+
+  (it "recurses up to :depth (default 10) and reports entry counts"
+    (let [list-files (private-fn "list-files")
+          ;; target/probe/rg-corpus is a small known fixture
+          path "target/probe/rg-corpus"
+          out (list-files path)]
+      (expect (pos? (:entry-count out)))
+      (expect (pos? (:file-count out)))
+      (expect (pos? (:dir-count out)))
+      (expect (false? (:truncated? out)))
+      (expect (= 10 (:depth out)))))
+
+  (it ":files-only? excludes directory entries; :dirs-only? excludes files"
+    (let [list-files (private-fn "list-files")
+          path "target/probe/rg-corpus"
+          files-only (list-files path {:files-only? true})
+          dirs-only  (list-files path {:dirs-only?  true})]
+      (expect (every? #(= :file (:type %)) (:entries files-only)))
+      (expect (every? #(= :dir  (:type %)) (:entries dirs-only)))
+      (expect (zero? (:dir-count files-only)))
+      (expect (zero? (:file-count dirs-only)))))
+
+  (it ":limit caps entries and surfaces :truncated? true"
+    (let [list-files (private-fn "list-files")
+          path "target/probe/rg-corpus"
+          out (list-files path {:limit 2})]
+      (expect (= 2 (count (:entries out))))
+      (expect (true? (:truncated? out)))))
+
+  (it ":files-only? and :dirs-only? are mutually exclusive"
+    (let [list-files (private-fn "list-files")]
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(list-files "." {:files-only? true :dirs-only? true})))))
+
+  (it ":depth 0 emits no entries (root not included)"
+    (let [list-files (private-fn "list-files")
+          out (list-files "target/probe/rg-corpus" {:depth 0})]
+      (expect (= 0 (count (:entries out))))
+      (expect (= 0 (:entry-count out))))))
 
 (defn- numbered-tuples
   "[[start str0] [start+1 str1] …] helper for assembling expected
