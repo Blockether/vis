@@ -1,52 +1,45 @@
 (ns com.blockether.vis.internal.ctx-loop
-  "Loop integration layer for the new CTX engine.
+  "Loop integration layer for the CTX engine.
 
    The pure engine (`ctx-engine`) takes data, returns data. Real-world wiring
    needs side effects: a mutable CTX atom that lives across iters within a
    turn, a scope cursor derived from the loop's running counters, and SCI
    symbol bindings the model can call directly from inside a fence.
 
-   This namespace is the thin adapter that ties the engine to the loop. It
-   owns three things:
+   This namespace is the thin adapter that ties the engine to the loop.
 
-     1. **A `:ctx-atom`** on the env map, initialised to `(eng/empty-ctx …)`.
-        Mutators in the SCI sandbox swap! this atom. Read at render time;
-        Nippy-snapshotted to `session_turn_state.ctx` at `(done …)` time.
+   **One atom**: `:ctx-atom` on the env map carries the entire engine state
+   for a session. Mutators swap! it. Transient mutator output lives on
+   ephemeral `:engine/*` keys on the ctx itself —
+     - `:engine/warnings`          — collected per-iter, drained at render
+     - `:engine/pending-satisfies` — queued by `(satisfy-hint! …)` during
+                                     an iter, drained at end-of-iter
+   Both are stripped via `eng/strip-ephemeral` before Nippy-snapshotting.
 
-     2. **A `:ctx-warnings-atom`** that collects per-mutation warnings during
-        an iter. The renderer drains it (or merges with derive-warnings) when
-        producing the next user message.
+   **`build-sci-bindings`** — `{'symbol sci-fn}` ready to merge into the
+   loop's `env-bindings`. Each mutator:
+     - synthesises the current form scope from the loop counters
+     - calls `eng/apply-mutator`
+     - swap!s the ctx atom with new ctx + accumulated warnings
+     - returns `:vis/silent` so the form result isn't echoed
 
-     3. **`build-sci-bindings`** — a map of `{'symbol sci-fn}` ready to be
-        merged into the loop's `env-bindings`. Each mutator:
-        - Synthesises the current form scope from the loop atoms
-        - Calls `eng/apply-mutator`
-        - Resets the ctx atom on success
-        - Appends warnings to the warnings atom
-        - Returns `:vis/silent` so the form result isn't echoed
-
-   The integration is intentionally narrow: we don't touch eval loop,
-   trailer pinning, persistence, or rendering here. Those layers consume
-   the atoms via their own wiring."
-  (:require [com.blockether.vis.internal.ctx-engine :as eng]))
+   The integration is intentionally narrow: this namespace owns the
+   single mutable atom + SCI bindings. Eval loop, trailer pinning,
+   persistence, and rendering live elsewhere."
+  (:require [clojure.set :as set]
+            [com.blockether.vis.internal.ctx-engine :as eng]))
 
 ;; =============================================================================
-;; Atoms and constructors
+;; Atom and constructor — ONE atom carries the entire engine state
 ;; =============================================================================
 
 (defn make-ctx-atom
-  "Initialize the CTX atom for a session. Uses the canonical empty scaffold."
+  "Initialize the CTX atom for a session. Uses the canonical empty scaffold.
+   The scaffold already carries empty `:engine/warnings` and
+   `:engine/pending-satisfies` vecs so every swap! path can `update` them
+   without nil-puncturing."
   ([] (atom (eng/empty-ctx)))
   ([session-id] (atom (eng/empty-ctx session-id))))
-
-(defn make-warnings-atom
-  "Per-iter mutator-time warning sink. Each entry is a `derive-warnings`
-   shape: `{:code :anchor :message}`. The loop drains this between iters
-   when emitting the user message; the engine's `derive-warnings` is the
-   render-time companion (covers state invariants), this atom covers
-   per-call mutation warnings (collision rejects, hard-rejects, etc)."
-  []
-  (atom []))
 
 ;; =============================================================================
 ;; Scope synthesis
@@ -97,26 +90,53 @@
 ;; =============================================================================
 
 (defn- apply-and-record!
-  "Call the engine mutator, swap! the ctx atom on success, accumulate
-   warnings. Returns `:vis/silent` so the form result is hidden from the
-   model's eval echo (the mutation effect is visible on next render)."
-  [{:keys [ctx-atom ctx-warnings-atom] :as env} mutator args]
-  (let [scope  (synthesize-scope env)
-        ;; Engine sees a ctx with the cursor stamped in so `classify-scope`
-        ;; and validator hooks have current coordinates. We don't persist
-        ;; the cursor back into the atom directly — the renderer stamps
-        ;; it fresh on each render.
-        ctx    (assoc @ctx-atom :session/scope (cursor-snapshot env))
-        {:keys [ctx warnings stamped?]} (eng/apply-mutator ctx scope mutator args)]
-    (when stamped? (reset! ctx-atom ctx))
-    (when (seq warnings)
-      (swap! ctx-warnings-atom into warnings))
+  "Call the engine mutator and swap! the result onto ctx-atom in one shot.
+   Engine warnings land on `:engine/warnings` directly. Returns
+   `:vis/silent` so the form result is hidden from the model's eval echo
+   (the mutation effect is visible on next render)."
+  [{:keys [ctx-atom] :as env} mutator args]
+  (let [scope (synthesize-scope env)]
+    (swap! ctx-atom
+      (fn [c]
+        (let [c+cursor (assoc c :session/scope (cursor-snapshot env))
+              {:keys [ctx warnings stamped?]} (eng/apply-mutator c+cursor scope mutator args)
+              base (if stamped? ctx c)]
+          (cond-> base
+            (seq warnings) (update :engine/warnings (fnil into []) warnings)))))
     :vis/silent))
 
+(defn- queue-satisfy!
+  "Push a `(satisfy-hint! id scopes?)` request onto
+   `:engine/pending-satisfies`. The actual validator-fn pass runs at
+   end-of-iter via `drain-and-apply-satisfies!`. Bad-shape calls land as
+   warnings instead of throwing. Returns `:vis/silent`."
+  [{:keys [ctx-atom]} id scopes]
+  (swap! ctx-atom
+    (fn [c]
+      (cond
+        (not (keyword? id))
+        (update c :engine/warnings (fnil conj [])
+          {:code :hint-bad-id :anchor [id]
+           :message (str "satisfy-hint! requires a keyword hint id; got "
+                      (pr-str id))})
+
+        (and (some? scopes) (not (sequential? scopes)))
+        (update c :engine/warnings (fnil conj [])
+          {:code :hint-bad-scopes :anchor [id]
+           :message (str "satisfy-hint! " id
+                      " scopes must be a vector of scope strings; got "
+                      (pr-str scopes))})
+
+        :else
+        (update c :engine/pending-satisfies (fnil conj [])
+          {:id id :scopes (vec (or scopes []))}))))
+  :vis/silent)
+
 (defn build-sci-bindings
-  "Return `{'symbol bare-fn}` for every engine mutator. Caller (loop env
-   builder) merges this into the SCI env so the model can write
-   `(spec-set! :K {…})` directly from a fence.
+  "Return `{'symbol bare-fn}` for every engine mutator + `satisfy-hint!`.
+   The model writes `(spec-set! :K {…})` or `(satisfy-hint! :h ['tN/iM/fK'])`
+   directly inside a fence; we route the call through `apply-and-record!`
+   or `queue-satisfy!` against the single ctx-atom.
 
    All mutators return `:vis/silent` — engine mutations are 'effect-only',
    visible on next render but quiet in the form echo."
@@ -128,21 +148,61 @@
    'req-update!   (fn req-update!   [spec-k rid partial]   (apply-and-record! env :req-update!   [spec-k rid partial]))
    'req-remove!   (fn req-remove!   [spec-k rid]           (apply-and-record! env :req-remove!   [spec-k rid]))
    'proof-add!    (fn proof-add!    [task-k spec-k proof]  (apply-and-record! env :proof-add!    [task-k spec-k proof]))
-   'proof-remove! (fn proof-remove! [task-k spec-k rid]    (apply-and-record! env :proof-remove! [task-k spec-k rid]))})
+   'proof-remove! (fn proof-remove! [task-k spec-k rid]    (apply-and-record! env :proof-remove! [task-k spec-k rid]))
+   'satisfy-hint! (fn satisfy-hint!
+                    ([id]        (queue-satisfy! env id nil))
+                    ([id scopes] (queue-satisfy! env id scopes)))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
 ;; =============================================================================
 
 (defn drain-warnings!
-  "Atomically read and clear the warnings atom. Called by the renderer
-   between iters."
-  [env]
-  (let [a (:ctx-warnings-atom env)]
-    (when a
-      (let [ws @a]
-        (reset! a [])
-        ws))))
+  "Atomically read and clear `:engine/warnings` on ctx-atom. Called by the
+   renderer between iters."
+  [{:keys [ctx-atom]}]
+  (when ctx-atom
+    (let [ws (atom nil)]
+      (swap! ctx-atom
+        (fn [c]
+          (reset! ws (or (:engine/warnings c) []))
+          (assoc c :engine/warnings [])))
+      @ws)))
+
+(defn drain-and-apply-satisfies!
+  "Drain pending `(satisfy-hint! …)` requests and apply them against the
+   live ctx via `eng/apply-satisfies`. Single atomic swap! on ctx-atom:
+     - stamps `:session/scope` from the loop's cursor atoms so engine
+       `classify-scope` interprets proof scopes against current coordinates
+     - reads `:engine/pending-satisfies`
+     - runs engine
+     - writes engine result + appends warnings to `:engine/warnings`
+     - clears `:engine/pending-satisfies`
+
+   `form-results-map` should include EVERY scope the model may reference,
+   including the just-finished iter's envelopes. The loop builds this by
+   merging the trailer (prior iters) with the current iter's per-form
+   envelope vec just before calling drain.
+
+   Returns the dropped hint id set (mainly for tests / debug)."
+  [{:keys [ctx-atom] :as env} form-results-map]
+  (when ctx-atom
+    (let [dropped (atom #{})
+          cursor  (cursor-snapshot env)]
+      (swap! ctx-atom
+        (fn [c]
+          (let [c+cur   (assoc c :session/scope cursor)
+                pending (or (:engine/pending-satisfies c+cur) [])]
+            (if (empty? pending)
+              (assoc c+cur :engine/pending-satisfies [])
+              (let [{:keys [ctx warnings]} (eng/apply-satisfies c+cur pending form-results-map)
+                    before (set (keys (or (:session/hints c+cur) {})))
+                    after  (set (keys (or (:session/hints ctx) {})))]
+                (reset! dropped (set/difference before after))
+                (-> ctx
+                  (assoc :engine/pending-satisfies [])
+                  (update :engine/warnings (fnil into []) warnings)))))))
+      @dropped)))
 
 (defn stamp-cursor
   "Return a ctx map with both `:session/turn` and `:session/scope` synced

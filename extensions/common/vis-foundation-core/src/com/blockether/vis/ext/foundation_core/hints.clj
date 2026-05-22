@@ -2,9 +2,22 @@
   "Foundation-shipped :turn.iteration/start hints.
 
    Two soft hints remain:
-     - `title-hint`           — set/refresh the session title via
+     - `title-hint`            — set/refresh the session title via
                                   `(set-session-title! \"...\")`
      - `context-pressure-hint` — warn when prompt size crosses ~50% of window
+
+   Each hint hook now returns a CTX-SHAPE map directly (so the loop can
+   `assoc` it onto `:session/hints` without remapping):
+
+     {:body         \"<message body>\"
+      :importance   :info | :warn | :critical
+      :validator-fn \"(fn [{:keys [src result]}] …)\"}
+
+   `:validator-fn` is REQUIRED — no legacy zero-arity satisfy. The engine
+   evaluates this SCI source against each proof scope the model attaches
+   to `(satisfy-hint! :id [<scopes>])`; only when ALL scopes pass does
+   the hint id drop from `:session/hints`. Hooks that omit `:validator-fn`
+   are rejected by the loop with a log warn.
 
    Previously this namespace also shipped two evidence-related hints
    (`blind-answer-guard-check` and `action-request-needs-evidence-check`)
@@ -16,6 +29,38 @@
    the regex pre-filter no longer earned its complexity."
   (:require
    [clojure.string :as str]))
+
+;; =============================================================================
+;; Shared validator-fn source strings
+;; =============================================================================
+;;
+;; SCI source strings the engine compiles + runs against a form envelope
+;; `{:scope :tag :src :result :error}` when the model attaches a proof
+;; scope to (satisfy-hint! :id [<scope>]). Defined as top-level
+;; constants so the same SCI compile cache entry is reused across iters.
+
+(def ^:const TITLE_VALIDATOR_FN_SRC
+  "Validator for `:vis.foundation/session-title`. Proof scope must be a
+   form whose source calls `(set-session-title! \"…\")`. Source-string
+   match is sufficient — the host fn already has its own argument
+   validation; we just confirm the model actually invoked it."
+  "(fn [{:keys [src error]}]
+     (and (string? src)
+       (clojure.string/includes? src \"set-session-title!\")
+       (nil? error)))")
+
+(def ^:const CONTEXT_PRESSURE_VALIDATOR_FN_SRC
+  "Validator for `:vis.foundation/context-pressure`. The model satisfies
+   this hint by either calling `(done …)` (turn converges) or by
+   invoking a trailer-summarising form (drops bulky prior iters
+   from the trailer). Either action visibly reduces the next request's
+   token footprint."
+  "(fn [{:keys [src error]}]
+     (and (string? src)
+       (nil? error)
+       (or (clojure.string/starts-with? src \"(done\")
+           (clojure.string/includes? src \":trailer-summarize\")
+           (clojure.string/includes? src \":trailer-drop\"))))")
 
 (def ^:const TITLE_REFRESH_TURN_PERIOD
   "Turn cadence at which `title-hint` re-asks the model to refresh
@@ -82,24 +127,28 @@
       ;; makes the model actually call `(set-session-title! ...)`
       ;; instead of skipping the hint as low-priority advisory noise.
       blank?
-      {:importance :high
-       :text (str "The session title is currently empty. "
+      {:importance   :critical
+       :validator-fn TITLE_VALIDATOR_FN_SRC
+       :body (str "The session title is currently empty. "
                "Set it via bare `(set-session-title! \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
                "the session is discoverable in the sidebar. "
                "Emit that call as its own top-level form before your first real probe. "
                "Do not namespace-qualify it; it is engine-owned, not a foundation `v/` tool. "
+               "Then `(satisfy-hint! :vis.foundation/session-title [<scope-of-that-call>])`. "
                "Keep host bookkeeping as direct sibling forms so traces stay clean.")}
 
-      ;; Periodic refresh stays :low — the existing title already labels
+      ;; Periodic refresh stays :info — the existing title already labels
       ;; the session; this branch only hints when focus may have
       ;; shifted, and is fine to skip.
       (and title-refresh? (turn-cadence-tick? turn-position))
-      {:importance :low
-       :text (str "Current session title is \"" session-title "\". "
+      {:importance   :info
+       :validator-fn TITLE_VALIDATOR_FN_SRC
+       :body (str "Current session title is \"" session-title "\". "
                "You are " turn-position " turn(s) into this session. "
                "If the focus has shifted, refresh it via bare "
-               "`(set-session-title! \"...\")`; do not namespace-qualify it.")})))
+               "`(set-session-title! \"...\")`; do not namespace-qualify it. "
+               "Then `(satisfy-hint! :vis.foundation/session-title [<scope-of-that-call>])`.")})))
 
 (defn context-pressure-hint
   "Return a `:high`-importance hint when the most recent provider
@@ -162,12 +211,16 @@
                              (when (pos? cum-rs)
                                (str ", ~" cum-rs " reasoning tokens"))
                              " billed."))]
-        {:importance :high
-         :text (str "Context pressure: next request is ~" used " / " limit
+        {:importance   :warn
+         :validator-fn CONTEXT_PRESSURE_VALIDATOR_FN_SRC
+         :body (str "Context pressure: next request is ~" used " / " limit
                  " input tokens (~" pct "%) of this model's effective window."
                  cumul-clause
-                 " Converge now - finalise the answer via `(done ...)`, "
-                 "avoid dumping more file contents, diffs, or repeated diagnostics. "
+                 " Converge now — finalise the answer via `(done {:answer \"…\"})`, "
+                 "or drop/summarise older trailer iters via `(done {:answer … "
+                 ":trailer-summarize [{:scope-start <…> :scope-end <…> :summary …}]})`. "
+                 "Then `(satisfy-hint! :vis.foundation/context-pressure [<scope-of-that-call>])`. "
+                 "Avoid dumping more file contents, diffs, or repeated diagnostics. "
                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 
 ;; ----------------------------------------------------------------------------

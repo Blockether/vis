@@ -262,11 +262,32 @@
     :summary ::trailer-summary))
 
 ;; =============================================================================
-;; Workspace — engine-rendered. Keys are :git/* (VCS-discriminator
-;; namespace). Future hg/jj/etc support will slot in as :hg/branch
-;; :hg/head etc without colliding.
+;; Workspace — engine-rendered. VCS-agnostic by design: the
+;; `:vcs/kind` discriminator tells consumers which namespaced subset of
+;; keys (`:git/*`, `:hg/*`, `:jj/*`, etc.) the workspace map carries.
+;; Every VCS-specific key is OPTIONAL at the spec level; the detector
+;; for whatever VCS is in use stamps the right ones. An empty `{}` is
+;; a valid workspace (used by `empty-ctx` and any non-VCS session like
+;; a scratch REPL).
+;;
+;; Why no `:req`: hardcoding `:git/branch` forced Mercurial / Jujutsu /
+;; non-VCS workspaces to either fake git keys or fail spec. Permissive
+;; shape lets the detector own the contract; consumers (renderer,
+;; prompt) read defensively.
 ;; =============================================================================
 
+(s/def :vcs/kind #{:git :hg :jj :fossil :none})
+
+;; Generic VCS keys — shared semantics across VCS kinds, unprefixed for
+;; the common case. Detectors may also emit kind-specific aliases.
+(s/def :vcs/branch  string?)
+(s/def :vcs/trunk   string?)
+(s/def :vcs/head    string?)
+(s/def :vcs/dirty?  boolean?)
+
+;; Legacy `:git/*` aliases (deprecated; detectors should prefer
+;; `:vcs/*`). Kept as opt-spec so existing renderer paths and
+;; serialised snapshots keep validating during the transition.
 (s/def :git/branch  string?)
 (s/def :git/trunk   string?)
 (s/def :git/head    string?)
@@ -281,8 +302,13 @@
 (s/def :git/stats
   (s/map-of string? :git/file-stats))
 
+(s/def :vcs/stats
+  (s/map-of string? :git/file-stats))
+
 (s/def ::workspace
-  (s/keys :req [:git/branch :git/trunk :git/head :git/dirty? :git/stats]))
+  (s/keys :opt [:vcs/kind
+                :vcs/branch :vcs/trunk :vcs/head :vcs/dirty? :vcs/stats
+                :git/branch :git/trunk :git/head :git/dirty? :git/stats]))
 
 ;; =============================================================================
 ;; Symbol directory — engine-rendered from SCI introspection + engine-side :born index
@@ -305,12 +331,18 @@
 
 (s/def :session.hint/body         string?)
 (s/def :session.hint/importance   #{:info :warn :critical})
-(s/def :session.hint/satisfy-with string?)
+;; REQUIRED. SCI source string. Engine evaluates this against each proof
+;; scope passed to `(satisfy-hint! :id [<scopes>])` and only drops the
+;; hint when ALL scopes pass. Same compile cache + 50ms timeout as
+;; requirement validators. Mirrors `:session.req/validator-fn`. No
+;; legacy: hints without a validator cannot be created — the loop
+;; rejects foundation hooks that fail to ship one.
+(s/def :session.hint/validator-fn string?)
 
 (s/def ::hint
-  (s/keys :req-un [:session.hint/body]
-    :opt-un [:session.hint/importance
-             :session.hint/satisfy-with]))
+  (s/keys :req-un [:session.hint/body
+                   :session.hint/validator-fn]
+    :opt-un [:session.hint/importance]))
 
 ;; =============================================================================
 ;; Scope cursor — engine-rendered current position inside the turn
