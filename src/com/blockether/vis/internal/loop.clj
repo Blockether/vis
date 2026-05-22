@@ -15,6 +15,7 @@
    [com.blockether.vis.internal.ctx :as vctx]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+   [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
@@ -3170,6 +3171,28 @@
                                         {:environment   environment
                                          :trailer-iters trailer-iters
                                          :ctx           current-ctx-map})
+                    ;; CTX engine render — the new bare-EDN `;; ctx` block
+                    ;; the model reads/writes against. Built per iter from
+                    ;; the live ctx-atom plus engine-derived warnings /
+                    ;; progression / next-actions. Drained mutation-time
+                    ;; warnings (from collisions / cycle rejects fired this
+                    ;; iter) are merged with render-time invariants so the
+                    ;; model sees the full set in one pass.
+                    ctx-rendered (when-let [a (:ctx-atom environment)]
+                                   (let [c     (assoc @a :session/scope
+                                                 (ctx-loop/cursor-snapshot environment))
+                                         idx   (ctx-engine/build-indexes c)
+                                         prog  (ctx-engine/derive-progression c idx)
+                                         warns (vec (concat
+                                                      (ctx-loop/drain-warnings! environment)
+                                                      (ctx-engine/derive-warnings c idx)))
+                                         acts  (ctx-engine/derive-next-actions c idx prog)]
+                                     (ctx-renderer/render-ctx
+                                       {:ctx c :warnings warns
+                                        :progression prog :next-actions acts})))
+                    iteration-context (->> [iteration-context ctx-rendered]
+                                        (remove str/blank?)
+                                        (str/join "\n\n"))
                       ;; Single canonical preserved-thinking replay path —
                       ;; svar's per-provider wire serializer turns the
                       ;; canonical assistant messages into native
