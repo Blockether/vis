@@ -13,6 +13,7 @@
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx :as vctx]
+   [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
@@ -3552,6 +3553,16 @@
                            :status :running})
         result (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
+        ;; Snapshot the CTX as it stands at end-of-turn. The renderer
+        ;; stamps the cursor in fresh each call; we drop the cursor
+        ;; before persisting because the next-turn loader will derive
+        ;; a new cursor from the loop counters (cursor is iter-local,
+        ;; not turn-local). Persists Nippy-encoded to
+        ;; session_turn_state.ctx in the same transaction that flips
+        ;; the turn status, so live CTX = ctx on the latest turn-state
+        ;; for the latest turn-soul of the session_state.
+        ctx-snapshot (some-> (:ctx-atom env) deref
+                       (dissoc :session/scope))
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
             {;; The persisted answer is the raw Markdown source the
              ;; model wrote in `(done {:answer ...})`. Channels parse
@@ -3565,7 +3576,8 @@
              :status          (or (:status result) :success)
              :tokens          (:tokens result)
              :cost            (:cost result)
-             :prior-outcome   prior-outcome})]
+             :prior-outcome   prior-outcome
+             :ctx             ctx-snapshot})]
     (assoc result :session-turn-id session-turn-id :prior-outcome prior-outcome)))
 
 (defn custom-bindings
@@ -4316,10 +4328,25 @@
                                                :id id})))
                                    (swap! satisfied-hints-atom conj id)
                                    :vis/silent)
+        ;; CTX engine wiring (see ctx-loop). The atom carries the model's
+        ;; specs/tasks/facts/trailer across iters within a turn; the warnings
+        ;; atom collects per-mutation soft warnings. Both seeded fresh here;
+        ;; later they're re-loaded from session_turn_state.ctx (Nippy BLOB)
+        ;; on session resume so the model picks up where the last (done …)
+        ;; left off.
+        ctx-atom                 (ctx-loop/make-ctx-atom session-id)
+        ctx-warnings-atom        (ctx-loop/make-warnings-atom)
+        ctx-loop-env             {:ctx-atom                  ctx-atom
+                                  :ctx-warnings-atom         ctx-warnings-atom
+                                  :current-turn-position-atom current-turn-position-atom
+                                  :current-iteration-atom    current-iteration-atom
+                                  :current-form-idx-atom     current-form-idx-atom}
         ;; The current human turn text and engine context flow through ctx.
-        env-bindings             {'done            answer-fn
-                                  'set-session-title! session-title-fn
-                                  'satisfy-hint!  satisfy-hint-fn}
+        env-bindings             (merge
+                                   {'done            answer-fn
+                                    'set-session-title! session-title-fn
+                                    'satisfy-hint!  satisfy-hint-fn}
+                                   (ctx-loop/build-sci-bindings ctx-loop-env))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
@@ -4338,6 +4365,12 @@
                 :workspace/kind   (:kind active-workspace)
                 :workspace/branch (:branch active-workspace)))
         env (assoc env
+              ;; CTX engine atoms — visible to the rest of the loop so the
+              ;; renderer / per-iter capture / done snapshot can read and
+              ;; mutate them. Mutator-time writes happen via SCI bindings
+              ;; built above; render-time reads via ctx-loop/current-ctx.
+              :ctx-atom                          ctx-atom
+              :ctx-warnings-atom                 ctx-warnings-atom
               :state-atom                        state-atom
               :sci-ctx                           sci-ctx
               :sandbox-ns                        sandbox-ns
@@ -4369,7 +4402,18 @@
           (tel/log! {:level :warn :id ::restore-sandbox-failed
                      :data {:error (ex-message t)
                             :session-id session-id}
-                     :msg "Failed to restore sandbox from DB - starting empty"}))))
+                     :msg "Failed to restore sandbox from DB - starting empty"})))
+      ;; Restore the CTX engine state alongside the SCI sandbox. The latest
+      ;; session_turn_state.ctx (Nippy BLOB) carries specs/tasks/facts/trailer
+      ;; from the last (done …). Cursor is iter-local so we don't restore it;
+      ;; the renderer stamps a fresh one from the loop counters.
+      (try
+        (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
+          (reset! ctx-atom (assoc persisted-ctx :session/id session-id)))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::restore-ctx-failed
+                     :data {:error (ex-message t) :session-id session-id}
+                     :msg "Failed to restore CTX engine state from DB - starting empty"}))))
     ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
     ;; classpath, then install extensions in dependency order. The
     ;; same loader populates channel/command/provider/persistance
