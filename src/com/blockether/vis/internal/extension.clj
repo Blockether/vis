@@ -135,9 +135,10 @@
 ;; ---------------------------------------------------------------------------
 ;; Sink-entry shape (one entry per tool-symbol call in a top-level form)
 ;;
-;; Only the channel sink remains. The model-facing surface is the REPL-style
-;; per-iteration trailer (`internal.ctx/render-iteration-trailer`) built from
-;; the actual SCI form values, not a per-tool string render.
+;; Only the channel sink remains. The model-facing surface is the bare-EDN
+;; CTX block (`ctx-renderer/render-ctx`) built from the live ctx-atom plus
+;; engine-derived warnings / progression / next-actions, not a per-tool
+;; string render.
 ;; ---------------------------------------------------------------------------
 
 (s/def :ext.sink/position  (s/and integer? (complement neg?)))
@@ -192,8 +193,9 @@
 ;; guard turns the write into a no-op. Tools that need observation must
 ;; complete inline.
 ;;
-;; The MODEL never reads this sink. The trailer renders the real per-form
-;; SCI values (`internal.ctx`). This sink exists solely so runtime channels
+;; The MODEL never reads this sink. The new CTX engine's per-iter trailer
+;; pins (`:session/trailer` in the rendered ctx block) carry the real per-
+;; form envelopes. This sink exists solely so runtime channels
 ;; (TUI, Telegram, …) can paint each tool call's IR.
 ;; ============================================================================
 
