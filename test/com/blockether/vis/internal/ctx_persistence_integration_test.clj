@@ -37,8 +37,8 @@
 
 (defn- mk-env
   "Loop env subset that ctx-loop bindings + helpers actually touch.
-   Single ctx-atom; `:engine/warnings` + `:engine/pending-satisfies`
-   live on the ctx itself, no side atoms."
+   Single ctx-atom; `:engine/warnings` lives on the ctx itself, no
+   side atoms."
   [db-info session-id turn-pos]
   {:db-info                    db-info
    :session-id                 session-id

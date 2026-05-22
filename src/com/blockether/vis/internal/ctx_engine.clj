@@ -6,8 +6,9 @@
    The pure subset:
      parse-scope-form, scope-compare, classify-scope, build-indexes,
      depends-on-cycle?, derive-progression, derive-warnings,
-     derive-next-actions, apply-mutator, apply-done, apply-satisfies,
-     advance-iter, advance-turn, gc-pass, introspect-*.
+     derive-next-actions, apply-mutator, apply-done,
+     reconcile-done-hook-tasks, advance-iter, advance-turn, gc-pass,
+     introspect-*.
 
    The impure subset (clearly fenced; uses SCI + a cache atom):
      compile-validator-fn, run-validator-fn.
@@ -37,8 +38,9 @@
      (advance-iter ctx form-results-vec)
        → ctx with trailer pin appended and :session/scope advanced
 
-     (apply-satisfies ctx pending-vec form-results-map)
-       → {:ctx :warnings} with satisfied hint ids dropped from :session/hints
+     (reconcile-done-hook-tasks ctx form-results-map)
+       → {:ctx :warnings} with hook-tasks whose :status :done failed
+         validation reverted to :todo
 
      (advance-turn ctx)
        → ctx with bumped :session/turn, reset :session/scope, gc-pass run
@@ -391,16 +393,35 @@
     (some? (depends-on-cycle? dg))))
 
 (defn- apply-task-set! [ctx form-scope [task-k partial-map]]
-  (let [path     [:session/tasks task-k]
-        existing (get-in ctx path)
-        ;; Hard reject cycle BEFORE writing :depends-on
-        cycle-warn (when (and (contains? partial-map :depends-on)
-                           (new-cycle? ctx task-k (:depends-on partial-map)))
-                     (warn :depends-on-cycle [task-k]
-                       (str "task " task-k " :depends-on " (:depends-on partial-map)
-                         " would introduce a cycle; write refused")))]
-    (if cycle-warn
-      {:ctx ctx :warnings [cycle-warn] :stamped? false}
+  (let [path        [:session/tasks task-k]
+        existing    (get-in ctx path)
+        ;; Hook-task idempotent re-emission (D12). Foundation extension
+        ;; `:turn.iteration/start` hooks fire every iter; engine treats
+        ;; repeat `(task-set! :hook-id {:source :hook …})` against an
+        ;; existing hook-task as a silent no-op regardless of the
+        ;; existing task's :status (:todo, :doing, :done, :cancelled).
+        ;; Resurrection happens NATURALLY: gc-pass archives terminal
+        ;; entries past TTL; once archived the entry is gone from live
+        ;; ctx and the next hook fire creates a fresh task.
+        hook-repeat? (and (= :hook (:source partial-map))
+                       (= :hook (:source existing))
+                       (or (= (:hook-id partial-map) (:hook-id existing))
+                         (and (nil? (:hook-id partial-map))
+                           (= task-k (:hook-id existing)))))]
+    (cond
+      ;; Hard reject cycle BEFORE writing :depends-on
+      (and (contains? partial-map :depends-on)
+        (new-cycle? ctx task-k (:depends-on partial-map)))
+      {:ctx ctx
+       :warnings [(warn :depends-on-cycle [task-k]
+                    (str "task " task-k " :depends-on " (:depends-on partial-map)
+                      " would introduce a cycle; write refused"))]
+       :stamped? false}
+
+      hook-repeat?
+      {:ctx ctx :warnings [] :stamped? false}
+
+      :else
       (let [merged  (cond-> (merge existing partial-map)
                       (nil? existing) (assoc :born form-scope))
             stamped (stamp-or-clear-done-born merged form-scope task-terminal?)]
@@ -897,30 +918,31 @@
    filled by empty / default values. Useful as the starting point for
    scenario replays.
 
-   Includes engine-ephemeral keys (`:engine/warnings`,
-   `:engine/pending-satisfies`) so the rest of the system can swap! them
-   without nil-puncturing. They are stripped at persistence boundaries
-   via `strip-ephemeral`."
+   Includes the engine-ephemeral key `:engine/warnings` so the rest of
+   the system can swap! it without nil-puncturing. Stripped at
+   persistence boundaries via `strip-ephemeral`.
+
+   D12: no `:session/hints` — hook-emitted soft work items live as
+   hook-sourced tasks under `:session/tasks` (`:source :hook`,
+   `:hook-id`, `:importance`, `:validator-fn`, `:proof`)."
   ([] (empty-ctx "test-session"))
   ([session-id]
-   {:session/id               session-id
-    :session/turn             1
-    :session/scope            {:turn 1 :iter 1 :next-form 1}
+   {:session/id        session-id
+    :session/turn      1
+    :session/scope     {:turn 1 :iter 1 :next-form 1}
     ;; VCS-agnostic empty workspace. Detectors (foundation hook /
     ;; workspace module) stamp real `:vcs/kind` + branch/head/stats
     ;; once the session resolves to a real git/hg/jj repo. Until then
     ;; the engine treats absence as `:vcs/kind :none` — no branch name
     ;; baked in, no "main" sentinel that would lie about non-git
     ;; workspaces.
-    :session/workspace        {:vcs/kind :none}
-    :session/symbols          {}
-    :session/hints            {}
-    :session/specs            {}
-    :session/tasks            {}
-    :session/facts            {}
-    :session/trailer          []
-    :engine/warnings          []
-    :engine/pending-satisfies []}))
+    :session/workspace {:vcs/kind :none}
+    :session/symbols   {}
+    :session/specs     {}
+    :session/tasks     {}
+    :session/facts     {}
+    :session/trailer   []
+    :engine/warnings   []}))
 
 (defn strip-ephemeral
   "Remove every `:engine/*` key from a ctx. Call before Nippy-snapshotting
@@ -1079,165 +1101,114 @@
          trailer)))
 
 ;; =============================================================================
-;; apply-satisfies — drain pending (satisfy-hint! …) calls
+;; reconcile-done-hook-tasks — validate hook-task :done transitions
 ;; =============================================================================
 ;;
-;; Hint satisfaction is deferred to end-of-iter (after every form has
-;; produced an envelope) so the validator-fn can see the proof scope's
-;; :src / :result. The loop collects each (satisfy-hint! id [scopes]) into
-;; a pending vec during the iter; here the engine drains it and decides
-;; per hint whether to drop the id from `:session/hints` or keep it +
-;; warn. Pure-fn shape: takes ctx + pending vec + form-results map, returns
-;; `{:ctx ctx' :warnings […]}`. Caller (ctx-loop) is responsible for
-;; building `form-results-map` from the full trailer (prior iters) plus
-;; the just-finished iter's envelopes.
+;; Hook-sourced tasks (D12) carry a task-level `:validator-fn` source
+;; string plus a `:proof` scope-form the model writes when flipping the
+;; task to `:status :done`. The validator must see the form envelope at
+;; that proof scope, which is only fully available after the iter's
+;; trailer pin lands. Hence this pass runs end-of-iter.
+;;
+;; Behaviour for every task with :source :hook, :status :done, and
+;; :validator-fn present:
+;;
+;;   - :proof missing or not a string             → revert to :todo, warn
+;;                                                  `:task-done-no-proof`
+;;   - :proof malformed (not tN/iM/fK)            → revert + warn
+;;                                                  `:task-done-proof-malformed`
+;;   - :proof classifies :future-* / :errored     → revert + warn
+;;                                                  `:task-done-proof-future` /
+;;                                                  `:task-done-proof-errored`
+;;   - :proof scope unknown in form-results       → revert + warn
+;;                                                  `:task-done-proof-unknown`
+;;   - validator-fn returns falsy / throws / etc. → revert + warn
+;;                                                  `:task-done-validator-fail`
+;;   - validator-fn passes                        → :done sticks (already validated
+;;                                                  on a previous iter? —
+;;                                                  idempotent, just re-verifies)
+;;
+;; Tasks without :source :hook are NOT touched by this pass. Tasks with
+;; :source :hook but NO :validator-fn (legacy / user-created hook tasks)
+;; are NOT touched either — only the contract of
+;; \"hook ships validator-fn\" is enforced. Pure: takes ctx + form-results
+;; map, returns `{:ctx ctx' :warnings […]}`.
 
-(defn apply-satisfies
-  "Process a batch of pending `(satisfy-hint! id scopes)` requests against
-   the live `:session/hints` map and the available `form-results-map`.
+(defn- revert-done-hook-task
+  "Flip a hook-task back to :todo, drop the un-validated :proof and the
+   engine-stamped :done-born. Returns the partially-rebuilt task map."
+  [task]
+  (-> task
+    (assoc :status :todo)
+    (dissoc :done-born :proof)))
 
-   `pending` is a vec of `{:id <kw> :scopes <vec-of-scope-strings>}`.
-   `form-results-map` is `{scope-string envelope}` for every form whose
-   result the engine has captured.
+(defn reconcile-done-hook-tasks
+  "Validate every hook-task that landed at `:status :done` this turn.
+   On any failure (missing/bad proof, validator fail), engine reverts
+   the task to `:todo`, drops `:proof` + `:done-born`, and emits a
+   warning. Pure. Called end-of-iter by the loop after advance-iter."
+  [ctx form-results-map]
+  (let [cursor (:session/scope ctx)
+        tasks  (or (:session/tasks ctx) {})
+        per-task
+        (for [[tk task] tasks
+              :when (and (= :hook (:source task))
+                      (= :done (:status task))
+                      (string? (:validator-fn task)))]
+          (let [proof (:proof task)
+                outcome
+                (cond
+                  (or (nil? proof) (not (string? proof)))
+                  {:revert? true
+                   :warn (warn :task-done-no-proof [tk]
+                           (str "task " tk " :status :done lacks :proof scope; reverting to :todo"))}
 
-   Rules:
-     1. Unknown hint id → silent no-op (idempotent; either the model
-        satisfied a stale hint or a foundation hook unregistered it).
-     2. Hint has no `:validator-fn` → drop id from `:session/hints`.
-        Legacy behaviour. Foundation hooks SHOULD ship a validator-fn,
-        but engine does not refuse hooks that don't.
-     3. Hint has `:validator-fn`:
-          a. `(empty? scopes)` → keep, warn `:hint-no-proof`.
-          b. For each scope: classify against cursor + run validator-fn
-             against the form envelope.
-             - scope missing from form-results-map → keep, warn
-               `:hint-proof-unknown`.
-             - validator returns truthy → that scope passes.
-             - validator falsy / threw / timeout / compile-error →
-               keep, warn `:hint-validator-fail`.
-          c. ALL scopes pass → drop hint id.
-          d. ANY scope fails OR is unknown → keep hint id (warnings
-             accumulated per failure).
+                  (malformed-scope? proof)
+                  {:revert? true
+                   :warn (warn :task-done-proof-malformed [tk proof]
+                           (str "task " tk " :proof " proof
+                             " is not a valid tN/iM/fK form-scope; reverting to :todo"))}
 
-   The keep/drop decision is monotonic within a single drain call:
-   if a hint id appears multiple times in `pending` and any single
-   request passes its validator(s), the hint is dropped.
+                  :else
+                  (let [klass (classify-scope proof cursor form-results-map)]
+                    (cond
+                      (#{:future-form :future-iter :future-turn} klass)
+                      {:revert? true
+                       :warn (warn :task-done-proof-future [tk proof klass]
+                               (str "task " tk " :proof " proof
+                                 " is " (name klass) " relative to cursor; reverting to :todo"))}
 
-   Returns `{:ctx ctx' :warnings [warn-map …]}`. Engine never throws here;
-   validator-fn errors are converted to warnings."
-  [ctx pending form-results-map]
-  (let [hints  (or (:session/hints ctx) {})
-        cursor (:session/scope ctx)
-        ;; Group satisfy calls by hint id, preserving order of arrival
-        ;; within each id so warning anchors are stable.
-        by-id  (reduce
-                 (fn [acc {:keys [id scopes]}]
-                   (update acc id (fnil conj []) (vec scopes)))
-                 {}
-                 pending)
-        check-scope
-        (fn [hid scope]
-            ;; Returns {:ok? bool :warn warn-map?}. Distinguishes
-            ;; malformed scope strings, future-* / unknown / errored
-            ;; classifications, missing envelopes, and validator-fn
-            ;; failures so the model gets actionable feedback instead
-            ;; of a generic "validation failed".
-          (cond
-            (not (string? scope))
-            {:ok? false
-             :warn (warn :hint-proof-malformed [hid scope]
-                     (str "satisfy-hint! " hid
-                       " proof scope is not a string: " (pr-str scope)))}
+                      (= klass :errored)
+                      {:revert? true
+                       :warn (warn :task-done-proof-errored [tk proof]
+                               (str "task " tk " :proof " proof
+                                 " form errored; reverting to :todo"))}
 
-            (malformed-scope? scope)
-            {:ok? false
-             :warn (warn :hint-proof-malformed [hid scope]
-                     (str "satisfy-hint! " hid
-                       " proof scope " scope
-                       " is not a valid tN/iM/fK form-scope"))}
+                      (or (= klass :unknown) (nil? (get form-results-map proof)))
+                      {:revert? true
+                       :warn (warn :task-done-proof-unknown [tk proof]
+                               (str "task " tk " :proof " proof
+                                 " has no captured form result; reverting to :todo"))}
 
-            :else
-            (let [klass (classify-scope scope cursor form-results-map)]
-              (cond
-                (#{:future-form :future-iter :future-turn} klass)
-                {:ok? false
-                 :warn (warn :hint-proof-future [hid scope klass]
-                         (str "satisfy-hint! " hid
-                           " proof scope " scope
-                           " is " (name klass) " relative to cursor"))}
-
-                (= klass :errored)
-                {:ok? false
-                 :warn (warn :hint-proof-errored [hid scope]
-                         (str "satisfy-hint! " hid
-                           " proof scope " scope
-                           " form errored; cannot validate"))}
-
-                (or (= klass :unknown) (nil? (get form-results-map scope)))
-                {:ok? false
-                 :warn (warn :hint-proof-unknown [hid scope]
-                         (str "satisfy-hint! " hid
-                           " proof scope " scope
-                           " has no captured form result"))}
-
-                :else
-                (let [envelope (get form-results-map scope)
-                      res (run-validator-fn (:validator-fn (get hints hid)) envelope)]
-                  (if (:ok? res)
-                    {:ok? true}
-                    {:ok? false
-                     :warn (warn :hint-validator-fail
-                             [hid scope (:reason res)]
-                             (str "satisfy-hint! " hid
-                               " failed validator at " scope
-                               " (" (name (:reason res))
-                               (when-let [d (:detail res)]
-                                 (str ": " (pr-str d)))
-                               ")"))}))))))
-        eval-one
-        (fn [hid scope-batch]
-            ;; Returns {:drop? bool :warnings [..]}. No legacy: hints
-            ;; without validator-fn cannot exist (spec rejects), so we
-            ;; never enter a "just drop" branch.
-          (let [hint (get hints hid)]
-            (cond
-              (nil? hint)
-              {:drop? false :warnings []}
-
-              (empty? scope-batch)
-              {:drop? false
-               :warnings [(warn :hint-no-proof [hid]
-                            (str "satisfy-hint! " hid
-                              " needs proof scope(s); none provided"))]}
-
-              :else
-              (let [results (mapv #(check-scope hid %) scope-batch)
-                    passed? (every? :ok? results)]
-                {:drop? passed?
-                 :warnings (vec (keep :warn results))}))))
-        ;; Each id may have multiple requests; if ANY single request
-        ;; produced :drop? true the hint goes. Otherwise we keep all
-        ;; accumulated warnings from each attempt.
-        per-id  (into {}
-                  (for [[hid batches] by-id]
-                    [hid (reduce
-                           (fn [acc batch]
-                             (let [{:keys [drop? warnings]} (eval-one hid batch)]
-                               (-> acc
-                                 (update :drop? #(or % drop?))
-                                 (update :warnings into warnings))))
-                           {:drop? false :warnings []}
-                           batches)]))
-        ids-to-drop (set (for [[hid {:keys [drop?]}] per-id :when drop?] hid))
-        ;; When a hint is ultimately dropped, suppress the warnings the
-        ;; failed attempts accumulated for that id — the model resolved it.
-        warnings (vec (mapcat (fn [[hid {:keys [warnings]}]]
-                                (when-not (contains? ids-to-drop hid)
-                                  warnings))
-                        per-id))
-        ctx' (update ctx :session/hints
-               (fn [m] (into {} (remove (fn [[k _]] (contains? ids-to-drop k)) m))))]
-    {:ctx ctx' :warnings warnings}))
+                      :else
+                      (let [envelope (get form-results-map proof)
+                            res (run-validator-fn (:validator-fn task) envelope)]
+                        (if (:ok? res)
+                          {:revert? false}
+                          {:revert? true
+                           :warn (warn :task-done-validator-fail
+                                   [tk proof (:reason res)]
+                                   (str "task " tk " :status :done at " proof
+                                     " failed validator (" (name (:reason res))
+                                     (when-let [d (:detail res)] (str ": " (pr-str d)))
+                                     "); reverting to :todo"))})))))]
+            [tk outcome]))
+        reverts (filter (fn [[_ {:keys [revert?]}]] revert?) per-task)
+        ctx'    (reduce (fn [c [tk _]]
+                          (update-in c [:session/tasks tk] revert-done-hook-task))
+                  ctx reverts)
+        warns   (vec (keep (fn [[_ {:keys [warn]}]] warn) reverts))]
+    {:ctx ctx' :warnings warns}))
 
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer. Returns
