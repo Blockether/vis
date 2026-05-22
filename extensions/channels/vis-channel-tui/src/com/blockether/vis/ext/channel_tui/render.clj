@@ -1690,8 +1690,8 @@
     ;; hugs the first character and reads as a single-row strip).
     ;; User bubbles also keep one breathing row BELOW the typed text.
     ;; Mirror this in `bubble-height*` so the math stays in sync.
-    (let [top-pad    0
-          bottom-pad 0
+    (let [top-pad    (if user? 1 0)
+          bottom-pad (if user? 1 0)
           btop       (+ start-row top-sep-h 1 top-pad)]
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg - the only fills come from
@@ -2340,8 +2340,8 @@
         raw-lines  (or prewrapped-lines
                      (wrap-text text content-w))
         lines      (clipped-lines raw-lines content-w)
-        top-pad    0
-        bottom-pad 0
+        top-pad    (if (= role :user) 1 0)
+        bottom-pad (if (= role :user) 1 0)
         cancelled? (= :cancelled status)
         meta-str   (when (and (not= role :user) (not cancelled?))
                      (assistant-meta-line message))
@@ -3257,8 +3257,19 @@
                          (str/blank? body)))
         trim-leading-blanks (fn [entries]
                               (vec (drop-while blank-entry? entries)))
-        thinking-body (or (thinking-lines thinking) [])
-        direct-thinking-code? (and (seq thinking-body) (seq body) (empty? trailing-errors))
+        raw-thinking-body (or (thinking-lines thinking) [])
+        direct-thinking-code? (and (seq raw-thinking-body) (seq body) (empty? trailing-errors))
+        ;; When reasoning is immediately followed by code, replace the
+        ;; thinking-marker bottom pad with a neutral terminal-bg blank
+        ;; so the boundary reads as a clean separator instead of more
+        ;; italic thinking stripe. Trim the body's leading iter-pad
+        ;; blanks so the gap stays exactly one row.
+        thinking-body (if (and direct-thinking-code?
+                            (let [last-line (or (:line (peek raw-thinking-body)) "")
+                                  body-of (if (pos? (count last-line)) (subs last-line 1) last-line)]
+                              (and (pos? (count last-line)) (str/blank? body-of))))
+                        (conj (pop raw-thinking-body) (line-entry ""))
+                        raw-thinking-body)
         body (if direct-thinking-code?
                (trim-leading-blanks body)
                body)]

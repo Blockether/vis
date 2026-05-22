@@ -1570,7 +1570,7 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :user :text "hello" :turn-separator? true}
                      4 2 30 {:viewport-h 40})]
-      (expect (= 3 height))
+      (expect (= 5 height))
       (expect (not-any? #(str/includes? (or (:text %) "") "──") @puts))
       (expect (some #(and (= 4 (:row %))
                        (= "You" (:text %))
@@ -1761,8 +1761,8 @@
                                  fill))
                          @fills)
           bubble-last-row (+ (:row bubble-fill) (:h bubble-fill) -1)]
-      (expect (= 3 height))
-      (expect (= 1 (:h bubble-fill)))
+      (expect (= 5 height))
+      (expect (= 3 (:h bubble-fill)))
       (expect (= bubble-last-row (dec gap-row))))))
 
 (defdescribe bubble-row-clipping-test
