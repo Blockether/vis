@@ -3075,19 +3075,14 @@
                       ;; Recap chrome paints on terminal-bg: there is
                       ;; no header-bg fill any more, so the call-out is
                       ;; carried purely by the bold + italic recap rows
-                      ;; plus visible breathing space around them.
-                      ;;   neutral  = outside top margin
-                      ;;   neutral  = inside top margin (extra row
-                      ;;              demanded by the recap UX so the
-                      ;;              block does not glue to the
-                      ;;              "Vis" label or the prior content)
+                      ;; plus a single blank row above and below.
+                      ;;   neutral    = top margin
                       ;;   recap-rows = bold + italic text
-                      ;;   neutral  = bottom margin
+                      ;;   neutral    = bottom margin
                       ;; The neutral row above thinking comes from
                       ;; `thinking-lines` itself, which separates this
                       ;; recap block from the thinking that follows.
-                      (vec (concat [(line-entry "")
-                                    (line-entry "")]
+                      (vec (concat [(line-entry "")]
                              raw-recap-lines
                              [(line-entry "")]))
                       raw-recap-lines)
