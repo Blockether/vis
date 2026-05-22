@@ -1,8 +1,11 @@
-# Handoff — CTX engine merged + legacy dropped + DB cleared
+## Handoff — CTX engine D11 + D12 landed; redesign closed
 
-Status na **`c2646cc1`** (origin/main, pushed):
+Status on **`ae9d4212`** (origin/main, pushed):
 
 ```
+ae9d4212  Phase D12: collapse :session/hints into hook-sourced tasks
+bc6008c3  Phase D11: hint validator-fn + single ctx-atom + VCS-agnostic workspace
+7525fdba  HANDOFF.md: session handoff summary after vctx removal + DB clear
 c2646cc1  D10 docs + drop legacy vctx context system
 3689b147  PROBES.md (parallel work from the other agent, untouched)
 6bc6e240  Phase D9: :session/turn sync + end-to-end persist+restart integration test
@@ -10,150 +13,127 @@ c2646cc1  D10 docs + drop legacy vctx context system
 ae6e5ac3  Phase D5: render path — CTX block in every iter's user message
 308127fe  Phase D4: trailer auto-pin + (done) trailer ops + gc on turn end
 f507c2d0  Phase D3: multi-form capture in iteration loop + drop legacy shim
-d1cbd0eb  Phase D2: wire ctx engine into loop.clj + persist on (done)
-2acbdfe5  Phase D1: ctx-loop adapter — SCI bindings for engine mutators
 ```
 
-`./verify.sh` → ALL 7 STEPS PASS. 1456 tests green. `cljfmt` clean.
+`./verify.sh` → **all 7 steps PASS**, 1454 tests green, cljfmt clean, no flakes.
+`~/.vis/vis.mdb` is **not present** — next `bin/vis` invocation creates
+a fresh V1 DB. Dev nREPL JVM is **not running** (the listener on :49943
+belongs to a different project at `/Users/fierycod/svar`).
 
-## Co siedzi w main teraz
+---
 
-### New engine surface
+## What D11 + D12 closed (since the previous handoff)
 
-```
-src/com/blockether/vis/internal/
-  ctx_spec.clj       schema (8 invariants, scope cursor, no :journal)
-  ctx_engine.clj     pure-fn core: parse-scope, classify-scope, build-indexes,
-                     8 mutators, 7 derive-warnings passes, derive-progression,
-                     derive-next-actions, apply-done, advance-iter, advance-turn,
-                     gc-pass, compile/run-validator-fn, history introspect
-  ctx_loop.clj       integration adapter: make-ctx-atom, make-warnings-atom,
-                     synthesize-scope, cursor-snapshot, stamp-cursor,
-                     build-sci-bindings (8 mutators),
-                     build-introspect-bindings (5 verbs),
-                     trailer->form-results, drain-warnings!
-  ctx_renderer.clj   ONE printer (safe-zprint-str), section-tail annotations,
-                     ;; ⚠ warnings inline, ;; progression :K N/M :state inline,
-                     trailer + next-actions bounded
+### D11 — hint validator-fn + single atom + VCS-agnostic workspace (`bc6008c3`)
 
-test/com/blockether/vis/internal/
-  ctx_spec_test.clj                     property + negative
-  ctx_engine_test.clj                   72 unit tests
-  ctx_engine_scenario_test.clj          rate-limiter 7-turn + cascade + collision + cycle + GC
-  ctx_engine_done_test.clj              done handler + validator-fn passes
-  ctx_renderer_test.clj                 structural + truncation
-  ctx_loop_test.clj                     SCI bindings + introspect + form-results
-  ctx_persistence_integration_test.clj  REAL SQLite + Nippy round-trip + restart
-```
+- Spec: hints carried a REQUIRED `:validator-fn`. Engine ran it via
+  `apply-satisfies` at end-of-iter against a `:engine/pending-satisfies`
+  queue.
+- Atom consolidation: dropped `ctx-warnings-atom` +
+  `pending-satisfies-atom`; their state moved to `:engine/warnings` +
+  `:engine/pending-satisfies` ephemeral keys on the single ctx-atom.
+  Stripped via `eng/strip-ephemeral` before Nippy persistence.
+- Workspace: `::workspace` became VCS-agnostic. `:vcs/kind` enum
+  (`#{:git :hg :jj :fossil :none}`) + canonical `:vcs/*` keys +
+  legacy `:git/*` aliases all opt; `{:vcs/kind :none}` for non-VCS
+  sessions; empty `{}` valid.
+- Engine: proof scope sanity distinguished `:malformed` / `:future-*` /
+  `:errored` / `:unknown` separately.
+- 7 new engine tests + drain tests + foundation hook tests.
 
-### Loop wireup
+### D12 — collapse `:session/hints` into hook-sourced tasks (`ae9d4212`)
 
-`src/com/blockether/vis/internal/loop.clj`:
-- `vctx` require + uses **GONE**
-- `(env/bind-and-bump! 'ctx (vctx/build …))` **GONE**
-- `(vctx/render-iteration-trailer …)` **GONE**
-- New: `ctx-atom` + `ctx-warnings-atom` created at env-build, persist
-  through every iter. Loaded from `session_turn_state.ctx` on resume.
-- New: env-bindings merge 8 mutators + 5 introspect verbs from ctx-loop.
-- New: per-iter render produces `;; ctx\n<EDN>` block with inline
-  warnings + progression + next-actions, appended to user message.
-- New: per-iter `advance-iter` auto-pins trailer with form envelopes,
-  bumps cursor.
-- New: `(done {:trailer-drop […] :trailer-summarize […]})` calls
-  `apply-done` on ctx-atom before snapshot.
-- New: run-turn! end → `gc-pass` → Nippy → `session_turn_state.ctx`.
+- **`:session/hints` retired wholesale.** Hook-emitted soft work items
+  now live as tasks under `:session/tasks` with `:source :hook`,
+  `:hook-id`, `:importance`, `:validator-fn`, `:proof`. Model satisfies
+  via the standard `(task-set! :id {:status :done :proof "tN/iM/fK"})`.
+- **`apply-satisfies` deleted.** Replaced by
+  `reconcile-done-hook-tasks` — pure end-of-iter pass that validates
+  every `:source :hook + :status :done + :validator-fn` task against
+  `form-results[:proof]`. Failure reverts to `:todo`, drops
+  `:done-born` and `:proof`, emits a `:task-done-*` warning.
+- **`satisfy-hint!` SCI binding gone.** No legacy alias; the model uses
+  `task-set!` exclusively.
+- **Hook re-emission dedup:** `apply-task-set!` treats
+  `{:source :hook}` writes against an existing hook-task (matching
+  `:hook-id`) as a silent no-op regardless of status. Resurrection of
+  archived hook-tasks happens via `gc-pass` TTL.
+- **`:session.task/proof` keyword renamed → `:session.task/proof-entry`**
+  to free the unqualified `:proof` key for the hook-task done scope
+  field. `:session.task/specs` map shape unchanged.
+- **Renderer:** dropped `:session/hints` section.
+- **Prompt:** dropped `(satisfy-hint! …)` CONTROL line; task shape doc
+  now documents the optional hook fields and the satisfaction path.
+- **Foundation hooks** (`title-hint`, `context-pressure-hint`,
+  `bridge-hint`) return hook-task shape `{:title :validator-fn
+  :importance}`. Body text directs the model to `task-set! :status
+  :done :proof`.
+- **introspect-history-loader cached per `(turn, iter)`** — multiple
+  `introspect-*` calls inside one iter hit SQLite once.
+- 10 new engine reconcile tests + ctx-loop reconcile wrapper tests +
+  spec hook-task tests + migrated foundation tests.
 
-### Schema
+---
 
-`extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`:
-- `session_turn_state.ctx BLOB` — per-turn Nippy CTX snapshot
-- `session_turn_iteration.code TEXT NOT NULL` (whole fence body, verbatim)
-- `session_turn_iteration.forms BLOB` — Nippy vec of per-form envelopes
-  `[{:scope :tag :src :result :error} …]`
-- `definition_state.value BLOB` (renamed from `result`)
-- **No** legacy `result` / `error` columns anywhere on iteration row
-- All V1 inline edits per AGENTS.md
+## Source-of-truth pointers (post-D12)
 
-### Deleted
+| Concern | File |
+|---|---|
+| Spec (data shape) | `src/com/blockether/vis/internal/ctx_spec.clj` |
+| Pure engine | `src/com/blockether/vis/internal/ctx_engine.clj` |
+| Loop adapter (one atom + SCI bindings) | `src/com/blockether/vis/internal/ctx_loop.clj` |
+| Renderer (one EDN string producer) | `src/com/blockether/vis/internal/ctx_renderer.clj` |
+| Wire loop | `src/com/blockether/vis/internal/loop.clj` |
+| System prompt | `src/com/blockether/vis/internal/prompt.clj` |
+| Foundation hook tasks | `extensions/common/vis-foundation-core/src/com/blockether/vis/ext/foundation_core/hints.clj` |
+| Bridge hook task | `extensions/common/vis-foundation-bridge/src/com/blockether/vis/ext/foundation_bridge/core.clj` |
+| Design doc | `CTX_REDESIGN.md` (banner at the top + the D12 closed-surface section at the end are canonical) |
 
-```
-src/com/blockether/vis/internal/ctx.clj                   gone (was vctx)
-test/com/blockether/vis/internal/ctx_test.clj             gone
-```
+The architecture invariant remains: **engine is pure-fn, ctx-loop is the
+only side-effect layer touching the single ctx-atom + DB, ctx-renderer is
+the only string producer for model-facing text.** Anything new should fit
+one of those three buckets.
 
-## Filesystem state
+---
 
-- `~/.vis/vis.mdb` — **cleared**. Legacy data backed up to
-  `~/.vis/vis.mdb.legacy.20260522-180513/` in case you want to inspect
-  the old sessions.
-- Next `bin/vis` invocation creates a fresh `~/.vis/vis.mdb/` with V1
-  applied from scratch.
-- Dev nREPL JVM (pid 65802) was KILLED to release the DB lock. Restart
-  with `bin/dev` or `clojure -M:dev` if you want REPL access again.
-
-## Docs added
-
-`CTX_REDESIGN.md` gains two new sections:
-
-### `## Lifecycle expectations` — what model sees + what engine enforces
-- Trailer between iters (within turn)
-- Trailer between turns
-- Summarization (model-owned, engine-validated, lossy on purpose)
-- Validation tiers T0–T7 (with hard vs soft severity)
-- Tasks (descriptive not directive)
-- Form-results propagation
-- What model can NEVER do
-- Persistence guarantees table
-- Out-of-scope items
-
-### `## Hints` — current shape + proposed validator-fn extension
-- Documents the known title-hint bug Karol called out
-- Proposes lifting requirement-validator pattern up to hints
-- Satisfaction flow with validator
-- Hint authoring contract for foundation hooks
-- Implementation order (tracked as D11)
-
-## Open work — D11+ (not done in this session)
+## What's NOT done yet (open work — D13+)
 
 | # | Item | Notes |
 |---|---|---|
-| D11 | Hint validator-fn rollout | Add `:session.hint/validator-fn` spec; extend `satisfy-hint!` to eval; migrate foundation `title-hint` + `context-pressure-hint` to ship validator. Documented in CTX_REDESIGN §Hints. |
-| D12 | Real LLM end-to-end | Fresh DB exists; pick a small prompt, run `bin/vis --provider <X> "…"`, observe model interacting with new `;; ctx` block, mutators, validators. |
-| D13 | Probes for new engine | PROBES.md has a methodology — run a fresh sweep (cavemanize, token budget) now that vctx is gone and `;; ctx` is the only model-facing trailer. Token budget should drop noticeably. |
+| D13 | Real-model end-to-end smoke | Fresh DB exists; pick a small prompt, run `bin/vis --provider <X> "…"`, observe the model reading `;; ctx`, writing hook-task `(task-set! :status :done :proof "…")`, and reconcile-done-hook-tasks flipping back on bad proof. |
+| D14 | Probes sweep for the new engine | PROBES.md has the methodology — re-run cavemanize + token budget probes now that `:session/hints` is gone and hook-tasks are part of `:session/tasks`. Token budget should drop another notch. |
+| D15 | Renderer ranking of hook-tasks | Tasks section renders all tasks flat today. Hook-tasks should sort visually by `:importance` desc, then `:source :hook` cue (`;; via hook` annotation), then user tasks. Not blocking; cosmetic. |
+| D16 | Workspace detector → `:vcs/*` canonical | `src/com/blockether/vis/internal/workspace.clj` still stamps `:git/*` keys. Permissive spec accepts it, but canonical shape is `:vcs/*`. Migrate detector or add a translation pass when the workspace lands on `:session/workspace`. |
 | - | TODO.md items T10-T15 | Already queued in TODO.md; not engine work. |
+
+---
 
 ## How to verify yourself
 
 ```bash
 cd ~/vis
 ./verify.sh                  # all 7 steps PASS
-clojure -M:test              # 1456 tests, 0 failures
-bin/vis sessions list        # no legacy sessions (fresh DB)
+clojure -M:test              # 1454 tests, 0 failures
+bin/vis sessions list        # empty (fresh DB)
 bin/vis help                 # smoke
 ```
 
-## Cleaning your shell session
+---
 
-You said you'd clean the session and resume — I'll have lost context
-on internal atom names / local lets / specific commit refs. To pick
-up:
+## Picking up cleanly
 
-1. `git log --oneline -15` — last 15 commits, you'll see the Phase D
-   chain.
-2. `cat CTX_REDESIGN.md | tail -300` — the new lifecycle + hints
-   sections I added.
+If you've lost local context:
+
+1. `git log --oneline -10` — last 10 commits, you'll see D11 + D12.
+2. `cat CTX_REDESIGN.md | tail -180` — the new D12 "Hooks → tasks" closed-surface section.
 3. `cat HANDOFF.md` (this file).
 4. `./verify.sh` — sanity.
-5. Read the four new srcs: `ctx_spec.clj`, `ctx_engine.clj`,
-   `ctx_loop.clj`, `ctx_renderer.clj`. They are self-contained;
-   docstrings explain the surface.
-6. Loop wireup is in `src/com/blockether/vis/internal/loop.clj` —
-   grep for `ctx-loop` / `ctx-engine` / `ctx-renderer` / `ctx-atom`
-   / `apply-done` / `advance-iter` to find the integration points.
+5. Read the four engine sources in this order:
+   `ctx_spec.clj` → `ctx_engine.clj` → `ctx_loop.clj` → `ctx_renderer.clj`.
+   Each is self-contained; docstrings explain the surface.
+6. `loop.clj` integration spots — grep for `ctx-loop` / `ctx-engine` /
+   `ctx-renderer` / `ctx-atom` / `apply-and-record!` /
+   `reconcile-done-hook-tasks!` / `advance-iter`. Five integration
+   points total; each carries a comment explaining why.
 
-The architecture invariant: engine is pure-fn, ctx-loop is the only
-side-effect layer touching atoms + DB, ctx-renderer is the only string
-producer for model-facing text. Anything new should fit one of those
-three buckets.
-
-Engine ready. DB clean. Lecimy.
+Engine ready. DB clean. Hints gone. Lecimy.

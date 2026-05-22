@@ -1324,17 +1324,17 @@
 (def ^:private mutation-heads
   "Whitelist of bare-symbol heads that classify a form as a :mutation. Anything
    else defaults to :observation. Engine-owned forms (spec-set!, task-set!,
-   …), def/defn, and the small set of model-driven control flips
-   (set-session-title!, satisfy-hint!) are mutations. Tool extension ops
-   declare their own tag through `register-op!` and are looked up there;
-   this set is only the fallback when an op tag is not registered."
+   …), def/defn, and the model-driven control flip (set-session-title!)
+   are mutations. Tool extension ops declare their own tag through
+   `register-op!` and are looked up there; this set is only the fallback
+   when an op tag is not registered."
   '#{def defn defmacro defmulti defmethod
      ;; Memory mutators
      spec-set! task-set! fact-set!
      req-add! req-update! req-remove!
      proof-add! proof-remove!
      ;; Control / lifecycle
-     done set-session-title! satisfy-hint!
+     done set-session-title!
      ;; Common sandbox mutators (alias-prefixed forms route through the
      ;; extension registry; bare names here cover unprefixed cases)
      reset! swap! alter-var-root})
