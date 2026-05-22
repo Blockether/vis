@@ -426,8 +426,15 @@
 
 (defn- quote->lines [children width opts]
   (let [inner (blocks->lines children (max 1 (- width 2)) opts)
-        bar   {:text "│ " :style #{:quote} :node nil}]
-    (mapv (fn [l] (update l :runs #(into [bar] %))) inner)))
+        ;; Strip per-paragraph outer-margin blanks the child block
+        ;; renderers append. A blockquote should paint as ONE solid
+        ;; bar block without empty `| ` rows between or below its
+        ;; paragraphs; the outer-margin row appended AFTER the whole
+        ;; quote block by `node->lines` handles the breathing space
+        ;; from following content.
+        compact (filterv #(not= :outer-margin (:block-tag %)) inner)
+        bar     {:text "│ " :style #{:quote} :node nil}]
+    (mapv (fn [l] (update l :runs #(into [bar] %))) compact)))
 
 (defn- inline-text
   "Visible one-line text for inline children. Used by table cells,
@@ -580,11 +587,12 @@
         (assoc (empty-line) :block-tag :outer-margin))
 
       :quote
-      ;; Blockquotes are already visually boxed by their quote marker. Do not
-      ;; append an outer-margin blank here: the sentinel painter renders that
-      ;; blank with quote styling, which shows up as an extra empty `|` row
-      ;; under a one-line quote.
-      (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
+      ;; `quote->lines` strips per-paragraph outer-margin blanks so
+      ;; the bar reads as one solid block. We DO append an outer-margin
+      ;; AFTER the whole block here so follow-up content breathes the
+      ;; same way it does after `:p` / `:ul` / `:table` blocks.
+      (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
+        (assoc (empty-line) :block-tag :outer-margin))
 
       :table
       (conj (vec (table->lines node width opts))

@@ -1,9 +1,27 @@
 (ns com.blockether.vis.internal.ctx-renderer
   "Pure-fn renderer: turn `{:ctx :warnings :progression :next-actions}` into
-   the bare-EDN text that goes under the `;; ctx` marker in every user
-   message. No IO. Deterministic. Bounded.
+   the bare-EDN text block embedded under `;; ctx` in every user message.
 
-   Output shape (high-level):
+   Design rules:
+
+   1. **ONE printer.** Every Clojure VALUE the renderer emits goes through
+      `zp` — a single locked entry into `safe-zprint-str` with a sealed
+      `ZP_OPTS` config (no commas, sorted keys, width 80). No `pr-str`, no
+      `pprint`, no ad-hoc string concat for value bodies.
+
+   2. **Top-level structure is hand-assembled.** The renderer interleaves
+      `:session/X` headers with their zp'd values and per-section annotation
+      tails. That structural layer is the only thing the renderer itself
+      writes; it never tries to inject text inside a zp'd value.
+
+   3. **Annotations live in section tails.** Warnings and progression hints
+      anchored to a top-level subtree (`:session/specs`, `:session/tasks`,
+      `:session/facts`) follow that section's value as `;; ⚠ …` / `;;
+      progression …` lines, indented to the section body's column. Model
+      reads the data first, then the issues immediately below — clear
+      locality without polluting the EDN.
+
+   Output skeleton:
 
      ;; ctx
      {:session/id        \"01HXYZ\"
@@ -15,24 +33,19 @@
       :session/hints     {…}
 
       :session/specs
-      {:spec-1
-       {:title \"…\" :status :doing :requirements […] :born \"t2/i1/f1\"}
-       ;; ⚠ req :r1 facts ref nonexistent :missing
-       ;; progression :spec-1 2/3 :partial; missing [:r2]
-
-       :spec-2 {…}}
+      {:auth {…}}
+      ;; ⚠ spec :auth req :r1 refs nonexistent fact :foo
+      ;; progression :auth 2/3 :partial; missing [:r2]
 
       :session/tasks {…}
-      :session/facts {…}
-      :session/trailer […]            ; capped + truncation hint when long
-      :session/next-actions […]}      ; top-5 cap
+      ;; ⚠ task :t1 :done but dep :t2 is :doing
 
-   Warnings whose `:anchor` first element matches a top-level entry key
-   surface inline directly after that entry's value. Progression is rendered
-   per spec entry. The renderer never re-derives anything — it just inlines."
+      :session/facts   {…}
+      :session/trailer […]
+      :session/next-actions […]}"
   (:require
-   [clojure.pprint :as pp]
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [com.blockether.vis.internal.format :as fmt]))
 
 ;; =============================================================================
 ;; Knobs
@@ -40,35 +53,36 @@
 
 (def ^:private TRAILER_BUDGET 16)
 (def ^:private NEXT_ACTIONS_BUDGET 5)
-(def ^:private VALUE_WIDTH 80)
+(def ^:private WIDTH 80)
 
 ;; =============================================================================
-;; Low-level printing helpers
+;; The single value printer
 ;; =============================================================================
 
-(defn- pr-edn
-  "pr-str a value to a single line, with `*print-namespace-maps*` off so
-   `:git/branch` shows as `:git/branch`, not `:my/branch`-style shorthand."
+(def ^:private ZP_OPTS
+  "Sealed zprint config — every value the renderer emits flows through this.
+   No commas (bare EDN), deterministic key order (sort?), preserve namespace
+   keywords (no shortening)."
+  {:width WIDTH
+   :map   {:comma? false :sort? true}
+   :style :community})
+
+(defn- zp
+  "Render any Clojure value to a multi-line bare-EDN string. Trim trailing
+   newline. This is the renderer's ONLY printer surface — see ns docstring."
   [v]
-  (binding [*print-namespace-maps* false]
-    (pr-str v)))
+  (str/trim-newline (fmt/safe-zprint-str v ZP_OPTS)))
 
-(defn- pp-str
-  "Pretty-print a value to a (possibly multi-line) string. Trailing newline
-   trimmed. `width` controls the right margin."
-  ([v] (pp-str v VALUE_WIDTH))
-  ([v width]
-   (binding [pp/*print-right-margin* width
-             *print-namespace-maps* false
-             *print-length* nil
-             *print-level* nil]
-     (str/trim-newline (with-out-str (pp/pprint v))))))
+;; =============================================================================
+;; Indent helpers (no value-string surgery — only structural padding)
+;; =============================================================================
 
 (defn- pad [n] (apply str (repeat n \space)))
 
 (defn- indent-rest
-  "Indent every line of `s` after the first by `n` spaces. First line stays
-   as-is. Used to make continuation lines align under the caller's column."
+  "Take a (possibly multi-line) string `s` and prefix every line AFTER the
+   first with `n` spaces. The first line is returned untouched so the caller
+   can position it under its key."
   [s n]
   (let [lines (str/split-lines s)]
     (if (= 1 (count lines))
@@ -77,123 +91,141 @@
         (str/join "\n" (map #(str (pad n) %) (rest lines)))))))
 
 ;; =============================================================================
-;; Annotation lines
+;; Annotation lines (the only renderer output that isn't EDN data)
 ;; =============================================================================
 
 (defn- warning-line [indent w]
   (str (pad indent) ";; ⚠ " (:message w)))
 
 (defn- progression-line [indent spec-id p]
-  (let [m (some-> p :missing seq sort vec)
-        body (str (:proven p) "/" (:total p) " " (:state p))]
-    (str (pad indent) ";; progression " (pr-edn spec-id) " " body
-      (when m (str "; missing " m)))))
-
-(defn- group-anchors-by-top-id [warnings]
-  (group-by #(first (:anchor %)) warnings))
+  (let [missing (some-> p :missing seq sort vec)]
+    (str (pad indent) ";; progression " (zp spec-id) " "
+      (:proven p) "/" (:total p) " " (zp (:state p))
+      (when missing (str "; missing " (zp missing))))))
 
 ;; =============================================================================
-;; Annotated subtree render — used for :session/specs / :session/tasks /
-;; :session/facts, where each entry can be followed by `;; ⚠` and
-;; `;; progression` lines.
+;; Routing warnings to their owning section
 ;; =============================================================================
 
-(defn- render-entry
-  "Render one `<key> <value>` block plus its anchored warnings and (for specs)
-   the progression line. `indent` is the column of the key."
-  [k v indent anchors-by-id progression]
-  (let [key-text (pr-edn k)
-        ;; Print the value with a width that leaves room for the key prefix.
-        val-text (pp-str v (max 20 (- VALUE_WIDTH (count key-text) 1)))
-        inner (+ indent 1 (count key-text) 1)
-        body (indent-rest val-text inner)
-        warns (get anchors-by-id k [])
-        prog (when (and progression (contains? progression k))
-               (get progression k))
-        ann-lines (concat
-                    (map #(warning-line indent %) warns)
-                    (when prog [(progression-line indent k prog)]))]
-    (str (pad indent) key-text " " body
-      (when (seq ann-lines) (str "\n" (str/join "\n" ann-lines))))))
+(defn- anchors-by-subtree
+  "Group warnings by which top-level CTX subtree they anchor to. The :anchor
+   first element is the routing key:
+     - if it's a key in :session/specs → goes to :session/specs section
+     - in :session/tasks → :session/tasks section
+     - in :session/facts → :session/facts section
+     - otherwise → :other (rendered after :session/next-actions)
+   Returns {subtree-key [warnings…]}."
+  [ctx warnings]
+  (let [spec-keys (set (keys (or (:session/specs ctx) {})))
+        task-keys (set (keys (or (:session/tasks ctx) {})))
+        fact-keys (set (keys (or (:session/facts ctx) {})))]
+    (reduce
+      (fn [acc w]
+        (let [a (first (:anchor w))
+              bucket (cond
+                       (contains? spec-keys a) :session/specs
+                       (contains? task-keys a) :session/tasks
+                       (contains? fact-keys a) :session/facts
+                       :else :other)]
+          (update acc bucket (fnil conj []) w)))
+      {} warnings)))
 
-(defn- render-annotated-map
-  "Render `entries` (a map) with annotation lines between entries.
-   `base-indent` is the column where each key starts.
-   Returns a string starting with `{` and ending with `}`."
-  [entries base-indent anchors-by-id progression]
-  (if (empty? entries)
-    "{}"
-    (let [sorted (sort-by (comp pr-edn key) entries)
-          blocks (for [[k v] sorted]
-                   (render-entry k v (inc base-indent) anchors-by-id progression))]
-      (str "{" (str/join "\n\n" (map (fn [b] (subs b (inc base-indent))) blocks)) "}"))))
+(defn- section-annotations
+  "Build the annotation block (a string of newline-joined ;; lines) for one
+   subtree section. Returns nil when there is nothing to say."
+  [warnings progression-entries indent]
+  (let [lines (concat
+                (map #(warning-line indent %) warnings)
+                (map (fn [[k p]] (progression-line indent k p)) progression-entries))]
+    (when (seq lines) (str/join "\n" lines))))
 
 ;; =============================================================================
-;; Trailer + next-actions bounded rendering
+;; Section + bounded subtrees
 ;; =============================================================================
 
-(defn- render-trailer [trailer indent]
+(defn- render-section
+  "One top-level `:session/X` key plus its value, with an optional annotation
+   tail underneath. `value-text` is already zp'd (or hand-built for trailer /
+   next-actions). Output column rules:
+
+     :session/X
+     <value-text indented by 1 space>
+     ;; ⚠ …   (also indented by 1 space)
+  "
+  [k value-text annotation-block]
+  (let [body (str " " (zp k) "\n " (indent-rest value-text 1))]
+    (if annotation-block
+      (str body "\n " annotation-block)
+      body)))
+
+(defn- render-trailer-value
+  "Trailer is a vec, possibly large. Cap to TRAILER_BUDGET and append a
+   `;; ⚠` truncation hint when over budget. Returns a multi-line string."
+  [trailer]
   (let [n (count trailer)
         capped (vec (take TRAILER_BUDGET trailer))
-        body (if (empty? capped) "[]" (pp-str capped))]
-    (cond-> body
-      (> n TRAILER_BUDGET)
-      (str "\n" (pad indent)
-        ";; ⚠ trailer truncated: showing " TRAILER_BUDGET " of " n
-        " entries; consider :trailer-summarize at next done"))))
+        body (if (empty? capped) "[]" (zp capped))
+        suffix (when (> n TRAILER_BUDGET)
+                 (str "\n;; ⚠ trailer truncated: " TRAILER_BUDGET " of " n
+                   " entries; consider :trailer-summarize at next done"))]
+    (cond-> body suffix (str suffix))))
 
-(defn- render-next-actions [actions indent]
+(defn- render-next-actions-value
+  "Next-actions vec capped to NEXT_ACTIONS_BUDGET with an overflow hint."
+  [actions]
   (let [n (count actions)
         capped (vec (take NEXT_ACTIONS_BUDGET actions))
-        body (if (empty? capped) "[]" (pp-str capped))]
-    (cond-> body
-      (> n NEXT_ACTIONS_BUDGET)
-      (str "\n" (pad indent)
-        ";; " (- n NEXT_ACTIONS_BUDGET) " more action(s) suppressed"))))
+        body (if (empty? capped) "[]" (zp capped))
+        suffix (when (> n NEXT_ACTIONS_BUDGET)
+                 (str "\n;; " (- n NEXT_ACTIONS_BUDGET)
+                   " more action(s) suppressed"))]
+    (cond-> body suffix (str suffix))))
 
 ;; =============================================================================
 ;; Top-level
 ;; =============================================================================
 
 (defn render-ctx
-  "Render the engine view (ctx + derived warnings/progression/next-actions)
-   as the bare-EDN text block embedded under `;; ctx` in the user message.
+  "Render the engine view as the bare-EDN text block embedded under `;; ctx`
+   in the user message.
 
-   Inputs:
-     :ctx           the full session map (validated against ::cs/ctx upstream)
+   Input map keys:
+     :ctx           full ::cs/ctx (validated upstream)
      :warnings      vec of {:code :anchor :message} from derive-warnings
-     :progression   {spec-id {:total :proven :ratio :state :missing}} from derive-progression
+     :progression   {spec-id {:total :proven :ratio :state :missing}}
      :next-actions  vec from derive-next-actions
 
-   Output: a string that starts with `;; ctx\\n{` and ends with `}`."
+   Output: a string starting with `;; ctx\\n{` and ending with `}`."
   [{:keys [ctx warnings progression next-actions]}]
-  (let [anchors (group-anchors-by-top-id (or warnings []))
-        section
-        (fn [k v]
-          (str " " (pr-edn k) "\n " (indent-rest v 1)))
-        annotated-section
-        (fn [k entries anchors* progression*]
-          (str " " (pr-edn k) "\n "
-            (indent-rest (render-annotated-map entries 1 anchors* progression*) 1)))]
+  (let [by-sub        (anchors-by-subtree ctx (or warnings []))
+        prog-entries  (vec (or progression {}))
+        specs-tail    (section-annotations
+                        (get by-sub :session/specs [])
+                        prog-entries 1)
+        tasks-tail    (section-annotations (get by-sub :session/tasks []) [] 1)
+        facts-tail    (section-annotations (get by-sub :session/facts []) [] 1)
+        other-tail    (section-annotations (get by-sub :other []) [] 1)]
     (str
       ";; ctx\n"
-      "{:session/id        " (pr-edn (:session/id ctx)) "\n"
-      " :session/turn      " (:session/turn ctx) "\n"
-      " :session/scope     " (pr-edn (:session/scope ctx)) "\n"
+      "{" (zp :session/id)    "        " (zp (:session/id ctx))    "\n"
+      " " (zp :session/turn)  "      "   (zp (:session/turn ctx))  "\n"
+      " " (zp :session/scope) "     "    (zp (:session/scope ctx)) "\n"
       "\n"
-      (section :session/workspace (pp-str (or (:session/workspace ctx) {}))) "\n"
-      "\n"
-      (section :session/symbols   (pp-str (or (:session/symbols ctx) {})))   "\n"
-      "\n"
-      (section :session/hints     (pp-str (or (:session/hints ctx) {})))     "\n"
-      "\n"
-      (annotated-section :session/specs (or (:session/specs ctx) {}) anchors progression) "\n"
-      "\n"
-      (annotated-section :session/tasks (or (:session/tasks ctx) {}) anchors nil) "\n"
-      "\n"
-      (annotated-section :session/facts (or (:session/facts ctx) {}) anchors nil) "\n"
-      "\n"
-      (section :session/trailer (render-trailer (or (:session/trailer ctx) []) 1)) "\n"
-      "\n"
-      (section :session/next-actions (render-next-actions (or next-actions []) 1))
+      (render-section :session/workspace
+        (zp (or (:session/workspace ctx) {})) nil)                "\n\n"
+      (render-section :session/symbols
+        (zp (or (:session/symbols ctx) {})) nil)                  "\n\n"
+      (render-section :session/hints
+        (zp (or (:session/hints ctx) {})) nil)                    "\n\n"
+      (render-section :session/specs
+        (zp (or (:session/specs ctx) {})) specs-tail)             "\n\n"
+      (render-section :session/tasks
+        (zp (or (:session/tasks ctx) {})) tasks-tail)             "\n\n"
+      (render-section :session/facts
+        (zp (or (:session/facts ctx) {})) facts-tail)             "\n\n"
+      (render-section :session/trailer
+        (render-trailer-value (or (:session/trailer ctx) [])) nil) "\n\n"
+      (render-section :session/next-actions
+        (render-next-actions-value (or next-actions []))
+        other-tail)
       "}")))
