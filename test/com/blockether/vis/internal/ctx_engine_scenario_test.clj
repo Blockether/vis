@@ -31,11 +31,12 @@
         (let [scope  (str "t" turn "/i1/f" (inc idx))
               cursor (:session/scope ctx)
               ctx'   (assoc ctx :session/scope (assoc cursor :next-form (inc idx)))
-              {:keys [ctx warnings stamped?]} (eng/apply-mutator ctx' scope mutator args)
-              ctx''  (assoc ctx :session/scope
+              {new-ctx :ctx mut-ws :warnings stamped? :stamped?}
+              (eng/apply-mutator ctx' scope mutator args)
+              ctx''  (assoc new-ctx :session/scope
                        (assoc cursor :next-form (+ idx 2)))]
           {:ctx ctx''
-           :warnings (into warnings (or warnings []))
+           :warnings (into warnings (or mut-ws []))
            :last-stamped? stamped?}))
       {:ctx start :warnings []}
       (map-indexed vector ops))))
@@ -67,8 +68,6 @@
 ;; =============================================================================
 
 (defn- warning-codes [ws] (set (map :code ws)))
-
-(defn- last-turn [result] (last (:turns result)))
 
 (defn- turn-at [result n]
   (first (filter #(= n (:turn %)) (:turns result))))
