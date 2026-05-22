@@ -540,7 +540,11 @@ CREATE TABLE definition_state (
   -- enforce the restoration contract but breaks every direct-write
   -- test fixture that skips the source-tracking step.
   expression                      TEXT CHECK (expression IS NULL OR trim(expression) <> ''),
-  result                          BLOB,
+
+  -- The var's Nippy-encoded value at this version. Lazy-seq / runtime-object
+  -- values land as `{:vis/ref :expr}` and the caller re-evals `expression`
+  -- to reconstitute them on restore.
+  value                           BLOB,
   created_at                      INTEGER NOT NULL,
 
   UNIQUE (definition_soul_id, version)
