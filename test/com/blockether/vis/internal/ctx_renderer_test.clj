@@ -9,7 +9,8 @@
 
 (def ^:private base-ctx
   (-> (eng/empty-ctx "test")
-    (assoc :session/scope {:turn 2 :iter 1 :next-form 1})
+    ;; cursor sits past the proof-form so :future-form does not fire in tests
+    (assoc :session/scope {:turn 2 :iter 1 :next-form 5})
     (assoc :session/turn 2)
     (assoc-in [:session/facts :f1]
       {:content "auth uses literal compare" :born "t1/i1/f1"})
@@ -65,8 +66,12 @@
                     (idx-of ":session/trailer")
                     (idx-of ":session/next-actions")))))
 
-      (it "renders the scope cursor as a literal map"
-        (expect (str/includes? out "{:turn 2, :iter 1, :next-form 1}")))
+      (it "renders the scope cursor as a sorted bare-EDN map (no commas)"
+        (expect (str/includes? out ":turn 2"))
+        (expect (str/includes? out ":iter 1"))
+        (expect (str/includes? out ":next-form 5"))
+        ;; bare-EDN: no commas anywhere in the scope cursor block
+        (expect (not (re-find #"\{:iter 1, " out))))
 
       (it "renders facts with their :content"
         (expect (str/includes? out "auth uses literal compare")))
