@@ -2445,9 +2445,13 @@
                       (= idx0 arrow-idx0) (conj arrow-line)))
             (range total)))))))
 
-(defn- error-signature
+(defn error-signature
   "Stable comparison key for two trace `:error` maps. Returns nil for
-   non-error iterations (so they never collapse)."
+   non-error iterations (so they never collapse).
+
+   Public so the virtual-layout pre-pass can squash runs of
+   error-only assistant messages across turns using the same key
+   the iteration-level collapser uses."
   [entry]
   (when-let [err (:error entry)]
     [(:type err) (:message err) (get-in err [:data :raw-data])]))

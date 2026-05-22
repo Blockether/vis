@@ -492,6 +492,34 @@
       (expect (not-any? #(contains? (:projected %) :turn-separator?) (:visible marked-layout)))
       (expect (= (:total-h unmarked-layout) (:total-h marked-layout))))))
 
+(defdescribe cross-message-error-squash-test
+  (it "squashes a run of error-only assistant turns into one bubble with ERROR x N"
+    (let [err {:type :svar.core/stream-truncated
+               :message "Stream ended before terminal marker."}
+          mk  (fn [i] {:role :assistant
+                       :session-turn-id (str "t" i)
+                       :client-turn-id  (str "c" i)
+                       :traces [{:error err}]
+                       :ir [:ir {} [:p {} ""]]})
+          cancel {:role :assistant
+                  :session-turn-id "tc"
+                  :client-turn-id  "cc"
+                  :status :cancelled
+                  :ir [:ir {} [:p {} "Cancelled by user."]]}
+          msgs (-> (mapv mk (range 9)) (conj cancel) (into (mapv mk (range 9 11))))
+          layout (virtual/layout msgs bubble-w settings nil 200 {})
+          bodies (mapv (comp :text :projected) (:visible layout))
+          error-bubbles (filterv #(str/includes? (or % "") "ERROR") bodies)
+          error-occurrences (count (mapcat #(re-seq #"ERROR" %) error-bubbles))]
+      ;; 11 identical error turns split by one cancellation → two
+      ;; merged error bubbles + cancellation between them.
+      (expect (= 2 (count error-bubbles)))
+      (expect (= 2 error-occurrences))
+      (expect (some #(str/includes? % "ERROR x 9: Stream ended before terminal marker.")
+                error-bubbles))
+      (expect (some #(str/includes? % "ERROR x 2: Stream ended before terminal marker.")
+                error-bubbles)))))
+
 (defdescribe project-message-test
   (describe "user messages strip timestamps and render markdown"
     (it "keeps :timestamp when :show-timestamps true"
