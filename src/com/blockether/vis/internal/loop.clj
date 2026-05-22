@@ -3179,8 +3179,7 @@
                     ;; iter) are merged with render-time invariants so the
                     ;; model sees the full set in one pass.
                     ctx-rendered (when-let [a (:ctx-atom environment)]
-                                   (let [c     (assoc @a :session/scope
-                                                 (ctx-loop/cursor-snapshot environment))
+                                   (let [c     (ctx-loop/stamp-cursor environment @a)
                                          ;; form-results map keyed by scope-form, sourced from
                                          ;; every trailer pin captured this turn. Drives the
                                          ;; scope-class T1 pass + the validator-fn T2 pass so
@@ -3619,8 +3618,7 @@
         ;; turn status, so live CTX = ctx on the latest turn-state for the
         ;; latest turn-soul of the session_state.
         ctx-snapshot (when-let [ca (:ctx-atom env)]
-                       (let [stamped (assoc @ca :session/scope
-                                       (ctx-loop/cursor-snapshot env))
+                       (let [stamped (ctx-loop/stamp-cursor env @ca)
                              gced    (ctx-engine/gc-pass stamped)]
                          (reset! ca (dissoc gced :session/scope))
                          (dissoc gced :session/scope)))
