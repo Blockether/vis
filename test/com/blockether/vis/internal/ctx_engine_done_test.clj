@@ -551,3 +551,73 @@
       (it "model write lands"
         (expect (= :done (get-in (:ctx r2) [:session/tasks :vis.foundation/session-title :status])))
         (expect (= "t1/i1/f3" (get-in (:ctx r2) [:session/tasks :vis.foundation/session-title :proof])))))))
+
+;; =============================================================================
+;; reconcile FSM safety — :validated? flag prevents retro-revert (D12 fix)
+;; =============================================================================
+
+(defdescribe reconcile-validated-flag-test
+  (describe "first reconcile stamps :validated? true on successful tasks"
+    (let [ctx (mk-hook-ctx nil)
+          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :mutation
+                           :src "(set-session-title! \"X\")"
+                           :result :vis/silent}}
+          {ctx' :ctx} (eng/reconcile-done-hook-tasks ctx fr)]
+
+      (it ":validated? true stamped on the task"
+        (expect (true? (get-in ctx' [:session/tasks :vis.foundation/session-title :validated?]))))
+
+      (it ":status :done preserved"
+        (expect (= :done (get-in ctx' [:session/tasks :vis.foundation/session-title :status])))))))
+
+(defdescribe reconcile-skips-validated-test
+  (describe "second reconcile pass skips already-validated tasks even when proof scope vanishes"
+    (let [ctx-validated (-> (mk-hook-ctx nil)
+                          (assoc-in [:session/tasks :vis.foundation/session-title :validated?] true))
+          ;; Empty form-results — simulating model writing
+          ;; (done {:trailer-drop [...]}) that nuked the proof envelope.
+          {ctx' :ctx warnings :warnings} (eng/reconcile-done-hook-tasks ctx-validated {})]
+
+      (it ":status :done preserved (no retro-revert)"
+        (expect (= :done (get-in ctx' [:session/tasks :vis.foundation/session-title :status]))))
+
+      (it ":proof + :done-born + :validated? all preserved"
+        (expect (= "t1/i1/f3" (get-in ctx' [:session/tasks :vis.foundation/session-title :proof])))
+        (expect (some? (get-in ctx' [:session/tasks :vis.foundation/session-title :done-born])))
+        (expect (true? (get-in ctx' [:session/tasks :vis.foundation/session-title :validated?]))))
+
+      (it "no warnings (the task was never even examined)"
+        (expect (empty? warnings))))))
+
+(defdescribe apply-task-set-clears-validated-on-transition-test
+  (describe "apply-mutator :task-set! — non-:done status clears :validated?"
+    (let [ctx0 (-> (eng/empty-ctx "test")
+                 (assoc :session/turn 1)
+                 (assoc :session/scope {:turn 1 :iter 2 :next-form 1})
+                 (assoc-in [:session/tasks :vis.foundation/session-title]
+                   {:title "x" :specs {} :status :done :source :hook
+                    :hook-id :vis.foundation/session-title
+                    :validator-fn "(fn [_] true)"
+                    :proof "t1/i1/f1" :done-born "t1/i1/f2"
+                    :validated? true :born "t1/i1/f1"}))
+          ;; Model writes a non-:done partial.
+          r (eng/apply-mutator ctx0 "t1/i2/f1" :task-set!
+              [:vis.foundation/session-title {:status :doing}])]
+
+      (it ":validated? cleared on the transition to :doing"
+        (expect (nil? (get-in (:ctx r) [:session/tasks :vis.foundation/session-title :validated?])))))))
+
+(defdescribe apply-task-set-preserves-validated-on-noop-test
+  (describe "apply-mutator :task-set! — same :done write keeps :validated?"
+    (let [ctx0 (-> (eng/empty-ctx "test")
+                 (assoc :session/turn 1)
+                 (assoc :session/scope {:turn 1 :iter 2 :next-form 1})
+                 (assoc-in [:session/tasks :user-task]
+                   {:title "x" :specs {} :status :done :source :user
+                    :validated? true :done-born "t1/i1/f1" :born "t1/i1/f1"}))
+          ;; A no-op-ish write (no status change).
+          r (eng/apply-mutator ctx0 "t1/i2/f1" :task-set!
+              [:user-task {:title "x updated"}])]
+
+      (it ":validated? preserved when :status not changing"
+        (expect (true? (get-in (:ctx r) [:session/tasks :user-task :validated?])))))))
