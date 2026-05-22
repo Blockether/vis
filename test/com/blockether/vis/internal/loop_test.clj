@@ -288,16 +288,16 @@
     (expect (= "generic" (empty-code-error-with-observation "generic" {})))))
 
 (defdescribe iteration-start-hook-test
-  (it "collects active :turn.iteration/start hook hints in ctx-shape; ignores other phases"
+  (it "collects active :turn.iteration/start hooks as hook-task descriptors (D12)"
     (let [seen (atom nil)
           validator "(fn [_] true)"
-          ext {:ext/name "test.hints"
+          ext {:ext/name "test.hooks"
                :ext/hooks [{:id :test/title
                             :doc "title"
                             :phase :turn.iteration/start
                             :fn (fn [ctx]
                                   (reset! seen ctx)
-                                  {:body "set title"
+                                  {:title "set title"
                                    :importance :warn
                                    :validator-fn validator})}
                            {:id :test/answer
@@ -307,68 +307,38 @@
                            {:id :test/no-validator
                             :doc "missing validator-fn—rejected"
                             :phase :turn.iteration/start
-                            :fn (fn [_] {:body "hint without validator"})}
-                           {:id :test/no-body
-                            :doc "missing body—rejected"
+                            :fn (fn [_] {:title "hook without validator"})}
+                           {:id :test/no-title
+                            :doc "missing title—rejected"
                             :phase :turn.iteration/start
                             :fn (fn [_] {:importance :warn :validator-fn validator})}]}
           ctx {:session-title nil
                :title-refresh? true
                :turn-position 1}
-          hints (collect-iteration-start-hints {} [ext] ctx)]
+          hits (collect-iteration-start-hints {} [ext] ctx)]
       (expect (= [{:id :test/title
-                   :hint {:body "set title"
+                   :task {:title "set title"
+                          :specs {}
+                          :status :todo
+                          :source :hook
+                          :hook-id :test/title
                           :importance :warn
                           :validator-fn validator}}]
-                hints))
+                hits))
       (expect (= ctx @seen))))
 
-  (it "accepts legacy `:text` alias for `:body` so older hooks still load"
+  (it "accepts legacy `:body` / `:text` aliases for `:title` so older hooks still load"
     (let [validator "(fn [_] true)"
-          ext {:ext/name "test.legacy-text"
-               :ext/hooks [{:id :test/legacy
+          ext {:ext/name "test.legacy-aliases"
+               :ext/hooks [{:id :test/from-body
                             :phase :turn.iteration/start
-                            :fn (fn [_]
-                                  {:text "old shape"
-                                   :validator-fn validator})}]}]
-      (expect (= [{:id :test/legacy
-                   :hint {:body "old shape" :validator-fn validator}}]
-                (collect-iteration-start-hints {} [ext] {})))))
-
-  (it "satisfy-hint! queues a request on `:engine/pending-satisfies` and returns :vis/silent"
-    (let [env (lp/create-environment ::router {:db :memory})]
-      (try
-        (let [r (sci/eval-string+ (:sci-ctx env)
-                  "(satisfy-hint! :test/title)"
-                  {:ns (:sandbox-ns env)})]
-          (expect (= :vis/silent (:val r)))
-          (expect (= [{:id :test/title :scopes []}]
-                    (-> env :ctx-atom deref :engine/pending-satisfies))))
-        (finally
-          (lp/dispose-environment! env)))))
-
-  (it "satisfy-hint! with a scope vec carries scopes through to the queue"
-    (let [env (lp/create-environment ::router {:db :memory})]
-      (try
-        (sci/eval-string+ (:sci-ctx env)
-          "(satisfy-hint! :test/title [\"t1/i1/f3\"])"
-          {:ns (:sandbox-ns env)})
-        (expect (= [{:id :test/title :scopes ["t1/i1/f3"]}]
-                  (-> env :ctx-atom deref :engine/pending-satisfies)))
-        (finally
-          (lp/dispose-environment! env)))))
-
-  (it "satisfy-hint! with non-keyword id records a warning instead of throwing"
-    (let [env (lp/create-environment ::router {:db :memory})]
-      (try
-        (let [r (sci/eval-string+ (:sci-ctx env)
-                  "(satisfy-hint! \"bad\")"
-                  {:ns (:sandbox-ns env)})]
-          (expect (= :vis/silent (:val r)))
-          (expect (some #(= :hint-bad-id (:code %))
-                    (-> env :ctx-atom deref :engine/warnings))))
-        (finally
-          (lp/dispose-environment! env)))))
+                            :fn (fn [_] {:body "via body" :validator-fn validator})}
+                           {:id :test/from-text
+                            :phase :turn.iteration/start
+                            :fn (fn [_] {:text "via text" :validator-fn validator})}]}]
+      (expect (= #{"via body" "via text"}
+                (set (map #(get-in % [:task :title])
+                       (collect-iteration-start-hints {} [ext] {})))))))
 
   (it "set-session-title! is a bare engine symbol, not a v/ tool"
     (let [env (lp/create-environment ::router {:db :memory})]

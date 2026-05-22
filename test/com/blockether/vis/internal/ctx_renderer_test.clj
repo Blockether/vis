@@ -52,19 +52,21 @@
           (expect (str/starts-with? body "{"))
           (expect (str/ends-with? body "}"))))
 
-      (it "contains every required top-level key in order"
+      (it "contains every required top-level key in order (D12: no :session/hints)"
         (let [idx-of (fn [s] (str/index-of out s))]
           (expect (< (idx-of ":session/id")
                     (idx-of ":session/turn")
                     (idx-of ":session/scope")
                     (idx-of ":session/workspace")
                     (idx-of ":session/symbols")
-                    (idx-of ":session/hints")
                     (idx-of ":session/specs")
                     (idx-of ":session/tasks")
                     (idx-of ":session/facts")
                     (idx-of ":session/trailer")
                     (idx-of ":session/next-actions")))))
+
+      (it "does NOT render a :session/hints section"
+        (expect (nil? (str/index-of out ":session/hints"))))
 
       (it "renders the scope cursor as a sorted bare-EDN map (no commas)"
         (expect (str/includes? out ":turn 2"))

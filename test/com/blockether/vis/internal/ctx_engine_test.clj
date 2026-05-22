@@ -110,7 +110,6 @@
    {:git/branch "main" :git/trunk "main" :git/head "x"
     :git/dirty? false :git/stats {}}
    :session/symbols {}
-   :session/hints   {}
    :session/specs
    {:rl {:title "rate-limit"
          :requirements [{:id :r1 :title "x" :facts [:f1]}

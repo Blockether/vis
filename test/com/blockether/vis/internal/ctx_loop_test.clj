@@ -47,11 +47,10 @@
   (describe "SCI bindings build"
     (let [env (mk-env)
           bindings (cl/build-sci-bindings env)]
-      (it "exposes every engine mutator + satisfy-hint!"
+      (it "exposes every engine mutator (D12: no satisfy-hint!)"
         (expect (= #{'spec-set! 'task-set! 'fact-set!
                      'req-add! 'req-update! 'req-remove!
-                     'proof-add! 'proof-remove!
-                     'satisfy-hint!}
+                     'proof-add! 'proof-remove!}
                   (set (keys bindings)))))
 
       (it "each binding is a callable function"
@@ -248,7 +247,9 @@
         (expect (= "boom" (:message (:error (get fr "t1/i2/f1")))))))))
 
 ;; =============================================================================
-;; satisfy-hint! queue + drain-and-apply-satisfies! (D11 wiring)
+
+;; =============================================================================
+;; reconcile-done-hook-tasks! end-to-end via ctx-loop wiring (D12)
 ;; =============================================================================
 
 (def ^:private TITLE_VALIDATOR
@@ -257,75 +258,61 @@
        (clojure.string/includes? src \"set-session-title!\")
        (nil? error)))")
 
-(defdescribe satisfy-hint-queue-test
-  (describe "satisfy-hint! queues onto :engine/pending-satisfies"
+(defn- plant-done-hook-task!
+  "Plant a hook-sourced task that the model just flipped to :done with a
+   given :proof scope, mimicking the state after the loop has captured
+   the proof form's envelope."
+  [env proof]
+  (swap! (:ctx-atom env) assoc-in
+    [:session/tasks :vis.foundation/session-title]
+    {:title         "set the session title"
+     :specs         {}
+     :status        :done
+     :source        :hook
+     :hook-id       :vis.foundation/session-title
+     :importance    :critical
+     :validator-fn  TITLE_VALIDATOR
+     :proof         proof
+     :done-born     proof
+     :born          "t1/i1/f1"}))
+
+(defdescribe reconcile-passing-via-loop-test
+  (describe "reconcile-done-hook-tasks! — passing validator keeps :done"
     (let [env (mk-env)
-          {sat 'satisfy-hint!} (cl/build-sci-bindings env)]
-      (it "0-arity queues with empty scopes"
-        (sat :vis.foundation/session-title)
-        (expect (= [{:id :vis.foundation/session-title :scopes []}]
-                  (-> env :ctx-atom deref :engine/pending-satisfies))))
+          _ (plant-done-hook-task! env "t1/i1/f3")
+          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :mutation
+                           :src "(set-session-title! \"X\")"
+                           :result :vis/silent}}
+          _ (cl/reconcile-done-hook-tasks! env fr)]
 
-      (it "1-arity (scopes vec) carries scopes through"
-        (sat :other ["t1/i1/f3" "t1/i1/f5"])
-        (expect (= [{:id :vis.foundation/session-title :scopes []}
-                    {:id :other :scopes ["t1/i1/f3" "t1/i1/f5"]}]
-                  (-> env :ctx-atom deref :engine/pending-satisfies))))
+      (it "task stays :done"
+        (expect (= :done
+                  (get-in @(:ctx-atom env)
+                    [:session/tasks :vis.foundation/session-title :status]))))
 
-      (it "non-keyword id lands as :hint-bad-id warning, not in queue"
-        (sat "string-id")
-        (let [w (-> env :ctx-atom deref :engine/warnings)]
-          (expect (some #(= :hint-bad-id (:code %)) w)))))))
+      (it "no warnings appended to :engine/warnings"
+        (expect (empty? (-> env :ctx-atom deref :engine/warnings)))))))
 
-(defdescribe drain-and-apply-satisfies-test
-  (describe "drain-and-apply-satisfies! end-to-end"
+(defdescribe reconcile-failing-via-loop-test
+  (describe "reconcile-done-hook-tasks! — failing validator reverts + warns"
     (let [env (mk-env)
-          {sat 'satisfy-hint!} (cl/build-sci-bindings env)
-          ;; Plant a hint with validator-fn so apply-satisfies has work.
-          _ (swap! (:ctx-atom env) assoc-in
-              [:session/hints :vis.foundation/session-title]
-              {:body "set it" :importance :critical
-               :validator-fn TITLE_VALIDATOR})
-          ;; Model satisfies it with a real proof scope.
-          _ (sat :vis.foundation/session-title ["t1/i1/f1"])
-          ;; Form-results map (would normally be built from trailer).
-          fr {"t1/i1/f1" {:scope "t1/i1/f1" :tag :mutation
-                          :src "(set-session-title! \"x\")"
-                          :result :vis/silent}}
-          dropped (cl/drain-and-apply-satisfies! env fr)]
+          _ (plant-done-hook-task! env "t1/i1/f3")
+          ;; Proof form does NOT call set-session-title!
+          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :observation
+                           :src "(v/ls)" :result []}}
+          _ (cl/reconcile-done-hook-tasks! env fr)]
 
-      (it "returns the dropped hint id set"
-        (expect (= #{:vis.foundation/session-title} dropped)))
+      (it "task reverted to :todo"
+        (expect (= :todo
+                  (get-in @(:ctx-atom env)
+                    [:session/tasks :vis.foundation/session-title :status]))))
 
-      (it "removes the hint id from :session/hints"
-        (expect (nil? (get-in @(:ctx-atom env) [:session/hints :vis.foundation/session-title]))))
+      (it ":proof and :done-born dropped"
+        (expect (nil? (get-in @(:ctx-atom env)
+                        [:session/tasks :vis.foundation/session-title :proof])))
+        (expect (nil? (get-in @(:ctx-atom env)
+                        [:session/tasks :vis.foundation/session-title :done-born]))))
 
-      (it "clears :engine/pending-satisfies after drain"
-        (expect (empty? (-> env :ctx-atom deref :engine/pending-satisfies))))
-
-      (it "second drain is a no-op (queue is empty)"
-        (expect (= #{} (cl/drain-and-apply-satisfies! env fr)))))))
-
-(defdescribe drain-failing-validator-test
-  (describe "drain-and-apply-satisfies! keeps hint + emits warning on failed validator"
-    (let [env (mk-env)
-          {sat 'satisfy-hint!} (cl/build-sci-bindings env)
-          _ (swap! (:ctx-atom env) assoc-in
-              [:session/hints :vis.foundation/session-title]
-              {:body "set it" :importance :critical
-               :validator-fn TITLE_VALIDATOR})
-          _ (sat :vis.foundation/session-title ["t1/i1/f1"])
-          ;; The proof form does NOT call set-session-title!.
-          fr {"t1/i1/f1" {:scope "t1/i1/f1" :tag :observation
-                          :src "(v/ls \".\")" :result []}}
-          dropped (cl/drain-and-apply-satisfies! env fr)]
-
-      (it "no hint dropped"
-        (expect (= #{} dropped)))
-
-      (it "hint id still present"
-        (expect (some? (get-in @(:ctx-atom env) [:session/hints :vis.foundation/session-title]))))
-
-      (it ":hint-validator-fail warning appended to :engine/warnings"
-        (expect (some #(= :hint-validator-fail (:code %))
+      (it ":task-done-validator-fail warning on :engine/warnings"
+        (expect (some #(= :task-done-validator-fail (:code %))
                   (-> env :ctx-atom deref :engine/warnings)))))))
