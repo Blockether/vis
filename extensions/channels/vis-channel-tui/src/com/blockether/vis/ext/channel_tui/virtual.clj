@@ -268,15 +268,28 @@
 ;; bubble renders.
 
 (defn- error-only-iteration?
-  "True when an iteration carries an `:error` map and nothing else
-   the user would call content: no executable forms, no streamed
-   reasoning text. These are the failure-only iterations that
-   transport-level provider errors (`:svar.core/stream-truncated`,
-   404s mid-stream) produce."
+  "True when an iteration's only content is a transport-level provider
+   error. Two flavours land here:
+
+   1. iter-level `:error` map with no forms / thinking. Live
+      progress emits this shape when the loop never even reached the
+      first form.
+   2. form-error-only iteration: a single zero-code placeholder form
+      whose `:result-kind` is `:error` carrying the truncation /
+      transport error map. Persisted DB rows for
+      `:svar.core/stream-truncated` end up in this shape."
   [iter]
-  (and (map? (:error iter))
-    (empty? (:forms iter))
-    (str/blank? (str (:thinking iter)))))
+  (or (and (map? (:error iter))
+        (empty? (:forms iter))
+        (str/blank? (str (:thinking iter))))
+    (and (not (map? (:error iter)))
+      (str/blank? (str (:thinking iter)))
+      (let [forms (:forms iter)]
+        (and (= 1 (count forms))
+          (let [f (first forms)]
+            (and (str/blank? (str (:code f)))
+              (map? (:error f))
+              (= :error (:result-kind f)))))))))
 
 (defn- error-only-assistant?
   [message]
@@ -289,6 +302,8 @@
 (defn- message-error-signature
   [message]
   (when (error-only-assistant? message)
+    ;; `render/error-signature` already handles both the iter-level
+    ;; and form-error-only shapes, so one call covers both routes.
     (some-> message :traces first render/error-signature)))
 
 (defn- squash-cross-message-errors
