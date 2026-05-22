@@ -422,10 +422,18 @@
       {:ctx ctx :warnings [] :stamped? false}
 
       :else
-      (let [merged  (cond-> (merge existing partial-map)
-                      (nil? existing) (assoc :born form-scope))
-            stamped (stamp-or-clear-done-born merged form-scope task-terminal?)]
-        {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true}))))
+      (let [merged   (cond-> (merge existing partial-map)
+                       (nil? existing) (assoc :born form-scope))
+            stamped  (stamp-or-clear-done-born merged form-scope task-terminal?)
+            ;; FSM rule: any non-:done status transition clears the
+            ;; `:validated?` flag so a later return to :done forces a
+            ;; fresh validator pass. Engine never sets `:validated?`
+            ;; here — only `reconcile-done-hook-tasks` does.
+            cleared  (if (and (contains? partial-map :status)
+                           (not= :done (:status stamped)))
+                       (dissoc stamped :validated?)
+                       stamped)]
+        {:ctx (assoc-in ctx path cleared) :warnings [] :stamped? true}))))
 
 (defn- apply-fact-set! [ctx form-scope [fact-k partial-map]]
   (let [path     [:session/facts fact-k]
@@ -1146,7 +1154,14 @@
   "Validate every hook-task that landed at `:status :done` this turn.
    On any failure (missing/bad proof, validator fail), engine reverts
    the task to `:todo`, drops `:proof` + `:done-born`, and emits a
-   warning. Pure. Called end-of-iter by the loop after advance-iter."
+   warning. Pure. Called end-of-iter by the loop after advance-iter.
+
+   FSM safety: tasks already carrying `:validated? true` (i.e. a prior
+   reconcile passed) are SKIPPED. Without this guard a later
+   `(done {:trailer-drop […]})` that wipes the proof envelope would
+   retro-actively revert the satisfaction. `:validated?` is cleared by
+   `apply-task-set!` on any non-:done transition so re-entry to :done
+   triggers a fresh validation pass."
   [ctx form-results-map]
   (let [cursor (:session/scope ctx)
         tasks  (or (:session/tasks ctx) {})
@@ -1154,7 +1169,8 @@
         (for [[tk task] tasks
               :when (and (= :hook (:source task))
                       (= :done (:status task))
-                      (string? (:validator-fn task)))]
+                      (string? (:validator-fn task))
+                      (not (:validated? task)))]
           (let [proof (:proof task)
                 outcome
                 (cond
@@ -1203,11 +1219,18 @@
                                      (when-let [d (:detail res)] (str ": " (pr-str d)))
                                      "); reverting to :todo"))})))))]
             [tk outcome]))
-        reverts (filter (fn [[_ {:keys [revert?]}]] revert?) per-task)
-        ctx'    (reduce (fn [c [tk _]]
-                          (update-in c [:session/tasks tk] revert-done-hook-task))
-                  ctx reverts)
-        warns   (vec (keep (fn [[_ {:keys [warn]}]] warn) reverts))]
+        reverts  (filter (fn [[_ {:keys [revert?]}]] revert?) per-task)
+        passes   (filter (fn [[_ {:keys [revert?]}]] (not revert?)) per-task)
+        ctx'     (-> ctx
+                   (as-> c
+                     (reduce (fn [acc [tk _]]
+                               (update-in acc [:session/tasks tk] revert-done-hook-task))
+                       c reverts))
+                   (as-> c
+                     (reduce (fn [acc [tk _]]
+                               (assoc-in acc [:session/tasks tk :validated?] true))
+                       c passes)))
+        warns    (vec (keep (fn [[_ {:keys [warn]}]] warn) reverts))]
     {:ctx ctx' :warnings warns}))
 
 (defn apply-done
