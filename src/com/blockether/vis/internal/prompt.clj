@@ -263,9 +263,18 @@
       :answer is Markdown.
 
     DEF HEADS
-      Use def and defn. Other forms (defrecord, deftype, defprotocol, gen-class,
-      extend-type, extend-protocol, definterface, reify) are not available in
-      the sandbox.
+      Use def and defn only. Other def-shaped forms (defrecord, deftype,
+      defprotocol, gen-class, extend-type, extend-protocol, definterface,
+      reify) are not available in the sandbox.
+
+    SANDBOX LIMITS
+      No shell, no process spawn, no arbitrary JVM interop escape hatch.
+      ProcessBuilder, Runtime/getRuntime, Runtime/exec, clojure.java.shell,
+      clojure.java.process, babashka.process, sh — none are bound. Do not
+      try them; the resolution will fail and the iter is wasted. If a task
+      requires shell side-effects, name what you would run and ask the
+      user — do not probe for an unbound entry point. Filesystem and VCS
+      go through extension tools (foundation `v/`, `git/`).
     "))
 
 (defn build-system-prompt

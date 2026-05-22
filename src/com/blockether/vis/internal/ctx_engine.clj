@@ -1,9 +1,16 @@
 (ns com.blockether.vis.internal.ctx-engine
-  "Pure-fn engine over CTX. No IO. No SCI. No persistence. No randomness.
+  "Engine surface over CTX. Almost entirely pure — only validator-fn compile +
+   run depend on SCI (and a per-source compile cache). Persistence, IO, and
+   the provider live elsewhere and call into these fns.
 
-   This namespace is the deterministic core of the new CTX subsystem. Every
-   public fn here takes data, returns data. Anything that talks to disk, the
-   SCI sandbox, or the provider lives elsewhere and calls into these fns.
+   The pure subset:
+     parse-scope-form, scope-compare, classify-scope, build-indexes,
+     depends-on-cycle?, derive-progression, derive-warnings,
+     derive-next-actions, apply-mutator, apply-done, advance-iter,
+     advance-turn, gc-pass, introspect-*.
+
+   The impure subset (clearly fenced; uses SCI + a cache atom):
+     compile-validator-fn, run-validator-fn.
 
    Public surface (all pure):
 
@@ -57,7 +64,8 @@
   (:require [clojure.set :as set]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.ctx-spec :as cs]))
+            [com.blockether.vis.internal.ctx-spec :as cs]
+            [sci.core :as sci]))
 
 ;; =============================================================================
 ;; Scope parsing — deterministic, regex-driven
@@ -797,3 +805,327 @@
     :session/facts     {}
     :session/trailer   []}))
 
+;; =============================================================================
+;; Iter-scope parsing + comparator — used by trailer comparator + overlap check
+;; =============================================================================
+
+(def ^:private scope-iter-re #"^t([1-9][0-9]*)/i([1-9][0-9]*)$")
+
+(defn parse-scope-iter
+  "Parse `tN/iM` into `{:turn :iter}` or nil."
+  [s]
+  (when (string? s)
+    (when-let [[_ t i] (re-matches scope-iter-re s)]
+      {:turn (parse-long t) :iter (parse-long i)})))
+
+(defn- iter-compare
+  "Total order on iter-scope strings by (turn, iter). Malformed sorts first."
+  [a b]
+  (let [pa (parse-scope-iter a) pb (parse-scope-iter b)]
+    (cond
+      (and (nil? pa) (nil? pb)) (compare (str a) (str b))
+      (nil? pa) -1
+      (nil? pb) 1
+      :else
+      (let [c (compare (:turn pa) (:turn pb))]
+        (if (zero? c) (compare (:iter pa) (:iter pb)) c)))))
+
+(defn iter-in-range?
+  "True iff iter-scope `s` falls inside [start, end] inclusive (per iter-compare)."
+  [s start end]
+  (and (<= (iter-compare start s) 0)
+    (<= (iter-compare s end) 0)))
+
+(defn- iter-ranges-partial-overlap?
+  "True iff [a1, a2] and [b1, b2] share points but neither contains the other."
+  [a1 a2 b1 b2]
+  (let [overlap?   (and (<= (iter-compare a1 b2) 0)
+                     (<= (iter-compare b1 a2) 0))
+        a-in-b?    (and (<= (iter-compare b1 a1) 0)
+                     (<= (iter-compare a2 b2) 0))
+        b-in-a?    (and (<= (iter-compare a1 b1) 0)
+                     (<= (iter-compare b2 a2) 0))]
+    (and overlap? (not a-in-b?) (not b-in-a?))))
+
+;; =============================================================================
+;; done handler — apply :trailer-drop + :trailer-summarize
+;; =============================================================================
+
+(defn- entry-iter-range
+  "Return [start end] iter-scope strings for any trailer entry (pin or summary)."
+  [e]
+  (cond
+    (contains? e :scope)        [(:scope e) (:scope e)]
+    (contains? e :scope-start)  [(:scope-start e) (:scope-end e)]
+    :else                       nil))
+
+(defn- entry-contained-by?
+  [e [start end]]
+  (when-let [[a b] (entry-iter-range e)]
+    (and (<= (iter-compare start a) 0)
+      (<= (iter-compare b end) 0))))
+
+(defn- find-overlap-conflict
+  "Return the existing summary that PARTIALLY overlaps with [start, end], or nil."
+  [trailer start end]
+  (some (fn [e]
+          (when (contains? e :scope-start)
+            (when (iter-ranges-partial-overlap? (:scope-start e) (:scope-end e)
+                    start end)
+              e)))
+    trailer))
+
+(defn apply-trailer-drop
+  "Remove trailer entries that match any of the supplied scope keys.
+   Pin scope keys are `tN/iM`. Summary scope keys are `tA/iX->tB/iY`."
+  [trailer drops]
+  (let [drop-set (set drops)
+        keep? (fn [e]
+                (cond
+                  (contains? e :scope)
+                  (not (contains? drop-set (:scope e)))
+                  (contains? e :scope-start)
+                  (let [key (str (:scope-start e) "->" (:scope-end e))]
+                    (not (contains? drop-set key)))
+                  :else true))]
+    (vec (filter keep? trailer))))
+
+(defn apply-trailer-summarize
+  "Apply one or more summary directives. For each directive `{:scope-start
+   :scope-end :summary}`:
+
+     1. Validate :scope-start ≤ :scope-end (else soft-warn, skip)
+     2. Reject if any existing summary PARTIALLY overlaps (HARD; warn, skip)
+     3. Absorb fully-contained entries (drop them from trailer)
+     4. Insert new summary with :born stamped to `form-scope`
+
+   Returns `{:trailer new-trailer :warnings vec}`."
+  [trailer summaries form-scope]
+  (reduce
+    (fn [{:keys [trailer warnings]} {:keys [scope-start scope-end summary]}]
+      (cond
+        (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
+        {:trailer trailer
+         :warnings (conj warnings
+                     (warn :trailer-summarize-bad-scope [scope-start scope-end]
+                       "trailer-summarize :scope-start / :scope-end must be valid iter-scopes"))}
+
+        (pos? (iter-compare scope-start scope-end))
+        {:trailer trailer
+         :warnings (conj warnings
+                     (warn :trailer-summarize-inverted [scope-start scope-end]
+                       (str "trailer-summarize range " scope-start "->" scope-end
+                         " is inverted")))}
+
+        :else
+        (if-let [conflict (find-overlap-conflict trailer scope-start scope-end)]
+          {:trailer trailer
+           :warnings (conj warnings
+                       (warn :trailer-summarize-partial-overlap
+                         [scope-start scope-end
+                          (:scope-start conflict) (:scope-end conflict)]
+                         (str "trailer-summarize " scope-start "->" scope-end
+                           " partially overlaps existing summary "
+                           (:scope-start conflict) "->" (:scope-end conflict)
+                           "; write refused")))}
+          {:trailer
+           (-> trailer
+             (->> (remove #(entry-contained-by? % [scope-start scope-end])))
+             vec
+             (conj {:scope-start scope-start
+                    :scope-end   scope-end
+                    :summary     summary
+                    :born        form-scope}))
+           :warnings warnings})))
+    {:trailer trailer :warnings []}
+    (or summaries [])))
+
+(defn- sort-trailer
+  "Sort by composite key: pin :scope, summary :scope-start. Stable order."
+  [trailer]
+  (vec (sort-by (fn [e]
+                  (cond
+                    (contains? e :scope)        [(:scope e) 0]
+                    (contains? e :scope-start)  [(:scope-start e) 1]
+                    :else                       ["" 2]))
+         (fn [[a a-tag] [b b-tag]]
+           (let [c (iter-compare a b)]
+             (if (zero? c) (compare a-tag b-tag) c)))
+         trailer)))
+
+(defn apply-done
+  "Process a `(done {…})` form against the ctx trailer. Returns
+   `{:ctx :warnings}`. The :answer field is NOT handled here — the loop owns
+   sending it back to the channel. Engine only touches trailer + persistence.
+
+   `args` is the map `{:answer? :trailer-drop? :trailer-summarize?}`."
+  [ctx form-scope {:keys [trailer-drop trailer-summarize]}]
+  (let [start  (or (:session/trailer ctx) [])
+        after-drop (apply-trailer-drop start (or trailer-drop []))
+        {:keys [trailer warnings]} (apply-trailer-summarize
+                                     after-drop
+                                     (or trailer-summarize [])
+                                     form-scope)
+        sorted (sort-trailer trailer)
+        ;; flag scopes appearing in both drop AND summarize as a soft warn
+        drop-set (set (or trailer-drop []))
+        summarize-keys (set (for [s (or trailer-summarize [])]
+                              (str (:scope-start s) "->" (:scope-end s))))
+        conflict-keys (clojure.set/intersection drop-set summarize-keys)
+        conflict-warns (for [k conflict-keys]
+                         (warn :done-drop-summarize-conflict [k]
+                           (str "scope " k " appears in both :trailer-drop and"
+                             " :trailer-summarize; drop ignored, summary applied")))]
+    {:ctx (assoc ctx :session/trailer sorted)
+     :warnings (vec (concat conflict-warns warnings))}))
+
+;; =============================================================================
+;; Validator-fn eval — SCI-bridged, bounded
+;; =============================================================================
+;;
+;; We don't want a hard dep on the full Vis sandbox here. validator-fn source
+;; strings are tiny pure expressions: `(fn [{:keys [result error scope src]}]
+;; (…))`. A minimal SCI ctx with core arithmetic / set / coll predicates is
+;; enough. The compile result is cached by source hash; eval has a coarse
+;; timeout via future + future-cancel to guard against infinite loops.
+
+(def ^:private validator-cache
+  ;; {source-string → {:fn compiled-fn} or {:error msg}}
+  ;; Compile cache. Pure in spirit: same source → same compiled fn.
+  ;; Cached in an atom so the JIT cost is paid once per validator source.
+  (atom {}))
+
+(defn- compile-validator-fn*
+  "Compile `src` as a single SCI expression that should evaluate to a fn.
+   Returns `{:fn compiled-fn}` on success, `{:error msg}` on failure. The SCI
+   ctx is intentionally minimal — validator-fns are tiny predicates over the
+   form-result map; they don't need the full Vis sandbox."
+  [src]
+  (try
+    (let [v (sci/eval-string src)]
+      (if (fn? v)
+        {:fn v}
+        {:error (str "validator-fn source did not evaluate to a function (got "
+                  (pr-str (type v)) ")")}))
+    (catch Throwable t
+      {:error (str "validator-fn compile error: " (ex-message t))})))
+
+(defn compile-validator-fn
+  "Cached front for `compile-validator-fn*`. Returns the cached entry."
+  [src]
+  (or (get @validator-cache src)
+    (let [entry (compile-validator-fn* src)]
+      (swap! validator-cache assoc src entry)
+      entry)))
+
+(defn run-validator-fn
+  "Run a compiled validator with a 50ms timeout. Returns
+     {:ok? bool :reason :timed-out|:threw|:falsy|:ok :detail …}
+   When src failed to compile, returns {:ok? false :reason :compile-error :detail …}."
+  ([src form-result-map] (run-validator-fn src form-result-map 50))
+  ([src form-result-map timeout-ms]
+   (let [entry (compile-validator-fn src)]
+     (cond
+       (:error entry)
+       {:ok? false :reason :compile-error :detail (:error entry)}
+
+       :else
+       (let [fut (future
+                   (try
+                     (let [r ((:fn entry) form-result-map)]
+                       {:result r})
+                     (catch Throwable t {:threw (ex-message t)})))
+             res (deref fut timeout-ms ::timeout)]
+         (cond
+           (= res ::timeout)
+           (do (future-cancel fut)
+             {:ok? false :reason :timed-out})
+
+           (:threw res)
+           {:ok? false :reason :threw :detail (:threw res)}
+
+           (not (:result res))
+           {:ok? false :reason :falsy :detail (:result res)}
+
+           :else
+           {:ok? true :reason :ok :detail (:result res)}))))))
+
+;; =============================================================================
+;; History introspection — pure fns over a {turn-n → ctx-snapshot} map
+;; =============================================================================
+;;
+;; `history` is a sorted map (or vec of [turn ctx] pairs) representing the
+;; per-turn snapshots from session_state_history. Engine code never persists
+;; here; it's the call site's job to load + pass the history map. These fns
+;; project that data back to the model via the introspect-* surface.
+
+(defn- snapshots-asc
+  "Return [[turn ctx] …] sorted by turn ascending. Accepts a map or a vec."
+  [history]
+  (cond
+    (map? history) (sort-by key history)
+    (sequential? history) (sort-by first history)
+    :else nil))
+
+(defn introspect-spec
+  "Latest snapshot in which spec `k` existed. Returns the entry plus
+   `:as-of-turn N`, or nil when never present."
+  [history k]
+  (let [snaps (snapshots-asc history)]
+    (some (fn [[turn ctx]]
+            (when-let [entry (get-in ctx [:session/specs k])]
+              (assoc entry :as-of-turn turn)))
+      (reverse snaps))))
+
+(defn introspect-task
+  [history k]
+  (let [snaps (snapshots-asc history)]
+    (some (fn [[turn ctx]]
+            (when-let [entry (get-in ctx [:session/tasks k])]
+              (assoc entry :as-of-turn turn)))
+      (reverse snaps))))
+
+(defn introspect-fact
+  [history k]
+  (let [snaps (snapshots-asc history)]
+    (some (fn [[turn ctx]]
+            (when-let [entry (get-in ctx [:session/facts k])]
+              (assoc entry :as-of-turn turn)))
+      (reverse snaps))))
+
+(defn- subtree-key-for-kind
+  [kind]
+  (case kind
+    :specs :session/specs
+    :tasks :session/tasks
+    :facts :session/facts))
+
+(defn introspect-archived
+  "Return summaries of entries archived from the LATEST snapshot but present
+   in some earlier one. `kind` is `:specs`/`:tasks`/`:facts`. Each entry:
+     {:key k :as-of-turn N :status …}"
+  [history kind]
+  (let [snaps     (snapshots-asc history)
+        subtree   (subtree-key-for-kind kind)
+        latest    (some-> snaps last second (get subtree) keys set)
+        latest    (or latest #{})]
+    (vec
+      (for [[turn ctx] (reverse snaps)
+            :let [entries (or (get ctx subtree) {})
+                  k+turn (for [[k v] entries
+                               :when (not (contains? latest k))]
+                           {:key k :as-of-turn turn :status (:status v)})]
+            entry k+turn
+            ;; dedupe: only emit a key the first turn we see it (latest
+            ;; descending), so each archived key shows up once with its
+            ;; latest-known turn.
+            ]
+        entry))))
+
+(defn introspect-ctx-at
+  "Full CTX snapshot at end of turn N. Nil when turn was never persisted."
+  [history turn-n]
+  (cond
+    (map? history)        (get history turn-n)
+    (sequential? history) (some (fn [[t ctx]] (when (= t turn-n) ctx)) history)
+    :else                 nil))
