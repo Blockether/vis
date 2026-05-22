@@ -7,11 +7,18 @@
    [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- mk-env []
+  ;; Single ctx-atom carries everything; `:engine/warnings` and
+  ;; `:engine/pending-satisfies` live as ephemeral keys on the ctx
+  ;; itself (seeded by `eng/empty-ctx`).
   {:ctx-atom (cl/make-ctx-atom "test-session")
-   :ctx-warnings-atom (cl/make-warnings-atom)
    :current-turn-position-atom (atom 2)
    :current-iteration-atom (atom 3)
    :current-form-idx-atom (atom 4)})
+
+(defn- warnings-of
+  "Helper: read accumulated `:engine/warnings` from the ctx atom on env."
+  [env]
+  (-> env :ctx-atom deref :engine/warnings (or [])))
 
 (defdescribe synthesize-scope-test
   (describe "synthesize-scope"
@@ -40,10 +47,11 @@
   (describe "SCI bindings build"
     (let [env (mk-env)
           bindings (cl/build-sci-bindings env)]
-      (it "exposes every engine mutator"
+      (it "exposes every engine mutator + satisfy-hint!"
         (expect (= #{'spec-set! 'task-set! 'fact-set!
                      'req-add! 'req-update! 'req-remove!
-                     'proof-add! 'proof-remove!}
+                     'proof-add! 'proof-remove!
+                     'satisfy-hint!}
                   (set (keys bindings)))))
 
       (it "each binding is a callable function"
@@ -75,8 +83,8 @@
       (it "collision rejected; spec keeps original :r1 only"
         (expect (= 1 (count (get-in @(:ctx-atom env) [:session/specs :s :requirements])))))
 
-      (it "warning captured in the warnings atom"
-        (let [ws @(:ctx-warnings-atom env)]
+      (it "warning captured on `:engine/warnings`"
+        (let [ws (warnings-of env)]
           (expect (some #(= :req-add-collision (:code %)) ws)))))))
 
 (defdescribe cycle-hard-reject-test
@@ -92,7 +100,7 @@
 
       (it ":depends-on-cycle warning captured"
         (expect (some #(= :depends-on-cycle (:code %))
-                  @(:ctx-warnings-atom env)))))))
+                  (warnings-of env)))))))
 
 (defdescribe drain-warnings-test
   (describe "drain-warnings! returns + clears"
@@ -238,3 +246,86 @@
 
       (it "preserves :error for errored forms"
         (expect (= "boom" (:message (:error (get fr "t1/i2/f1")))))))))
+
+;; =============================================================================
+;; satisfy-hint! queue + drain-and-apply-satisfies! (D11 wiring)
+;; =============================================================================
+
+(def ^:private TITLE_VALIDATOR
+  "(fn [{:keys [src error]}]
+     (and (string? src)
+       (clojure.string/includes? src \"set-session-title!\")
+       (nil? error)))")
+
+(defdescribe satisfy-hint-queue-test
+  (describe "satisfy-hint! queues onto :engine/pending-satisfies"
+    (let [env (mk-env)
+          {sat 'satisfy-hint!} (cl/build-sci-bindings env)]
+      (it "0-arity queues with empty scopes"
+        (sat :vis.foundation/session-title)
+        (expect (= [{:id :vis.foundation/session-title :scopes []}]
+                  (-> env :ctx-atom deref :engine/pending-satisfies))))
+
+      (it "1-arity (scopes vec) carries scopes through"
+        (sat :other ["t1/i1/f3" "t1/i1/f5"])
+        (expect (= [{:id :vis.foundation/session-title :scopes []}
+                    {:id :other :scopes ["t1/i1/f3" "t1/i1/f5"]}]
+                  (-> env :ctx-atom deref :engine/pending-satisfies))))
+
+      (it "non-keyword id lands as :hint-bad-id warning, not in queue"
+        (sat "string-id")
+        (let [w (-> env :ctx-atom deref :engine/warnings)]
+          (expect (some #(= :hint-bad-id (:code %)) w)))))))
+
+(defdescribe drain-and-apply-satisfies-test
+  (describe "drain-and-apply-satisfies! end-to-end"
+    (let [env (mk-env)
+          {sat 'satisfy-hint!} (cl/build-sci-bindings env)
+          ;; Plant a hint with validator-fn so apply-satisfies has work.
+          _ (swap! (:ctx-atom env) assoc-in
+              [:session/hints :vis.foundation/session-title]
+              {:body "set it" :importance :critical
+               :validator-fn TITLE_VALIDATOR})
+          ;; Model satisfies it with a real proof scope.
+          _ (sat :vis.foundation/session-title ["t1/i1/f1"])
+          ;; Form-results map (would normally be built from trailer).
+          fr {"t1/i1/f1" {:scope "t1/i1/f1" :tag :mutation
+                          :src "(set-session-title! \"x\")"
+                          :result :vis/silent}}
+          dropped (cl/drain-and-apply-satisfies! env fr)]
+
+      (it "returns the dropped hint id set"
+        (expect (= #{:vis.foundation/session-title} dropped)))
+
+      (it "removes the hint id from :session/hints"
+        (expect (nil? (get-in @(:ctx-atom env) [:session/hints :vis.foundation/session-title]))))
+
+      (it "clears :engine/pending-satisfies after drain"
+        (expect (empty? (-> env :ctx-atom deref :engine/pending-satisfies))))
+
+      (it "second drain is a no-op (queue is empty)"
+        (expect (= #{} (cl/drain-and-apply-satisfies! env fr)))))))
+
+(defdescribe drain-failing-validator-test
+  (describe "drain-and-apply-satisfies! keeps hint + emits warning on failed validator"
+    (let [env (mk-env)
+          {sat 'satisfy-hint!} (cl/build-sci-bindings env)
+          _ (swap! (:ctx-atom env) assoc-in
+              [:session/hints :vis.foundation/session-title]
+              {:body "set it" :importance :critical
+               :validator-fn TITLE_VALIDATOR})
+          _ (sat :vis.foundation/session-title ["t1/i1/f1"])
+          ;; The proof form does NOT call set-session-title!.
+          fr {"t1/i1/f1" {:scope "t1/i1/f1" :tag :observation
+                          :src "(v/ls \".\")" :result []}}
+          dropped (cl/drain-and-apply-satisfies! env fr)]
+
+      (it "no hint dropped"
+        (expect (= #{} dropped)))
+
+      (it "hint id still present"
+        (expect (some? (get-in @(:ctx-atom env) [:session/hints :vis.foundation/session-title]))))
+
+      (it ":hint-validator-fail warning appended to :engine/warnings"
+        (expect (some #(= :hint-validator-fail (:code %))
+                  (-> env :ctx-atom deref :engine/warnings)))))))

@@ -1384,28 +1384,46 @@
          (answer-validation-extensions environment active-extensions))))))
 
 (defn- iteration-start-hook-hit
+  "Normalise the value returned by a `:turn.iteration/start` hook into a
+   ctx-shape `::cs/hint` map keyed by the hook id. Required keys: `:body`
+   (or legacy alias `:text`) AND `:validator-fn`. Optional: `:importance`.
+
+   Returns `{:id <kw> :hint <hint-map>}` or nil. Hooks that omit
+   `:validator-fn` are rejected with a log warn — no legacy zero-arity
+   satisfy path; every hint MUST be validatable."
   [ext id hit]
-  (let [text (when (map? hit) (:text hit))]
-    (cond
-      (nil? hit) nil
+  (cond
+    (nil? hit) nil
 
-      (and (map? hit)
-        (string? text)
-        (not (str/blank? text)))
-      (cond-> {:id id
-               :text text
-               :satisfy-with (list 'satisfy-hint! id)}
-        (:importance hit) (assoc :importance (:importance hit)))
-
-      :else
-      (do
-        (tel/log! {:level :warn
+    (not (map? hit))
+    (do (tel/log! {:level :warn
                    :id ::iteration-start-hook-invalid-return
-                   :data {:ext (:ext/name ext)
-                          :hook id
-                          :returned hit}}
-          "Extension :turn.iteration/start hook returned invalid value; expected nil or {:text ...}")
-        nil))))
+                   :data {:ext (:ext/name ext) :hook id :returned hit}}
+          "Extension :turn.iteration/start hook returned non-map value; expected nil or hint map")
+      nil)
+
+    :else
+    (let [body          (or (:body hit) (:text hit))
+          validator-fn  (:validator-fn hit)]
+      (cond
+        (or (not (string? body)) (str/blank? body))
+        (do (tel/log! {:level :warn
+                       :id ::iteration-start-hook-missing-body
+                       :data {:ext (:ext/name ext) :hook id :returned hit}}
+              "Hint hook returned map without non-blank :body / :text; dropping")
+          nil)
+
+        (or (not (string? validator-fn)) (str/blank? validator-fn))
+        (do (tel/log! {:level :warn
+                       :id ::iteration-start-hook-missing-validator
+                       :data {:ext (:ext/name ext) :hook id}}
+              "Hint hook returned map without :validator-fn source string; dropping (no legacy zero-arity satisfy supported)")
+          nil)
+
+        :else
+        {:id id
+         :hint (cond-> {:body body :validator-fn validator-fn}
+                 (:importance hit) (assoc :importance (:importance hit)))}))))
 
 (defn- iteration-start-hook-error-hit
   [ext id t]
@@ -1418,22 +1436,26 @@
   nil)
 
 (defn- collect-iteration-start-hints
-  "Run active `:turn.iteration/start` hooks and return model-facing hints."
-  [environment active-extensions ctx]
-  (let [satisfied (or (some-> environment :satisfied-hints-atom deref) #{})]
-    (vec
-      (remove (fn [hint] (contains? satisfied (:id hint)))
-        (mapcat (fn [ext]
-                  (keep (fn [{:keys [id phase] hook-fn :fn}]
-                          (when (= :turn.iteration/start phase)
-                            (binding [extension/*current-extension* ext
-                                      extension/*current-symbol* nil]
-                              (try
-                                (iteration-start-hook-hit ext id (hook-fn ctx))
-                                (catch Throwable t
-                                  (iteration-start-hook-error-hit ext id t))))))
-                    (or (:ext/hooks ext) [])))
-          (answer-validation-extensions environment active-extensions))))))
+  "Run active `:turn.iteration/start` hooks and return model-facing hints.
+   Hint suppression is no longer driven by a model-controlled
+   `satisfied-hints-atom`: the CTX engine's `apply-satisfies` is the
+   authority on whether a hint id should be dropped from
+   `:session/hints`, and foundation hooks re-evaluate their condition
+   every iter — so a satisfied hint naturally stops re-appearing the
+   next iter when the action succeeded."
+  [_environment active-extensions ctx]
+  (vec
+    (mapcat (fn [ext]
+              (keep (fn [{:keys [id phase] hook-fn :fn}]
+                      (when (= :turn.iteration/start phase)
+                        (binding [extension/*current-extension* ext
+                                  extension/*current-symbol* nil]
+                          (try
+                            (iteration-start-hook-hit ext id (hook-fn ctx))
+                            (catch Throwable t
+                              (iteration-start-hook-error-hit ext id t))))))
+                (or (:ext/hooks ext) [])))
+      active-extensions)))
 
 (defn- session-turn-position
   [environment session-turn-id]
@@ -3153,20 +3175,20 @@
                                        :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
                                        :iter-count (:iter-count @usage-atom)
                                        :context-limit effective-context-limit})
-                    ;; Fold the iteration-hints from foundation hooks into the
-                    ;; live ctx-atom's :session/hints so the new ctx renderer
-                    ;; surfaces them inline. Hint id → {:body :importance
-                    ;; :satisfy-with}. The legacy vctx/build + vctx/render-
-                    ;; iteration-trailer path is gone.
+                    ;; Foundation hooks emit `{:id <kw> :hint <ctx-shape-hint>}`
+                    ;; already; no remap. Direct assoc on `:session/hints`.
+                    ;; Hooks that satisfied this iter (engine dropped them
+                    ;; via apply-satisfies) are gone from the map; if their
+                    ;; condition still holds the hook re-emits them here.
                     _ (when-let [a (:ctx-atom environment)]
                         (swap! a assoc :session/hints
-                          (into {}
-                            (for [h iteration-hints
-                                  :when (:id h)]
-                              [(:id h)
-                               (cond-> {:body (str (:text h ""))}
-                                 (:importance h)   (assoc :importance (:importance h))
-                                 (:satisfy-with h) (assoc :satisfy-with (pr-str (:satisfy-with h))))]))))
+                          (persistent!
+                            (reduce (fn [acc {:keys [id hint]}]
+                                      (if (and id hint)
+                                        (assoc! acc id hint)
+                                        acc))
+                              (transient {})
+                              iteration-hints))))
                     iteration-context ""
                     ;; CTX engine render — the new bare-EDN `;; ctx` block
                     ;; the model reads/writes against. Built per iter from
@@ -3497,6 +3519,19 @@
                                 (ctx-engine/advance-iter
                                   (assoc c :session/scope cursor)
                                   forms-vec))))
+                        ;; Drain any (satisfy-hint! id [<scopes>]) requests
+                        ;; the model queued on `:engine/pending-satisfies`
+                        ;; during this iter, validate them against the
+                        ;; full form-results map (trailer pins from prior
+                        ;; iters + this iter's just-added pin), drop
+                        ;; satisfied hint ids from `:session/hints`, and
+                        ;; append per-hint warnings to `:engine/warnings`.
+                        _ (when-let [ca (:ctx-atom environment)]
+                            (let [trailer      (:session/trailer @ca)
+                                  form-results (ctx-loop/trailer->form-results
+                                                 (or trailer []))]
+                              (ctx-loop/drain-and-apply-satisfies!
+                                environment form-results)))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
@@ -3616,9 +3651,17 @@
         ;; latest turn-soul of the session_state.
         ctx-snapshot (when-let [ca (:ctx-atom env)]
                        (let [stamped (ctx-loop/stamp-cursor env @ca)
-                             gced    (ctx-engine/gc-pass stamped)]
-                         (reset! ca (dissoc gced :session/scope))
-                         (dissoc gced :session/scope)))
+                             gced    (ctx-engine/gc-pass stamped)
+                             ;; Strip cursor + every `:engine/*` ephemeral
+                             ;; key (warnings, pending-satisfies) before
+                             ;; persisting. The next resume rebuilds the
+                             ;; cursor from loop counters and starts each
+                             ;; turn with empty ephemerals via empty-ctx.
+                             clean   (-> gced
+                                       (dissoc :session/scope)
+                                       ctx-engine/strip-ephemeral)]
+                         (reset! ca clean)
+                         clean))
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
             {;; The persisted answer is the raw Markdown source the
              ;; model wrote in `(done {:answer ...})`. Channels parse
@@ -4308,16 +4351,15 @@
                                          :system-prompt system-prompt
                                          :workspace-id  (:id active-workspace)}
                                   root-provider (assoc :provider root-provider))))
-        ;; CTX engine wiring (see ctx-loop). The atom carries the model's
-        ;; specs/tasks/facts/trailer across iters within a turn; the
-        ;; warnings atom collects per-mutation soft warnings. Both seeded
-        ;; fresh here; later they are re-loaded from
-        ;; session_turn_state.ctx (Nippy BLOB) on session resume so the
-        ;; model picks up where the last (done …) left off. Defined
-        ;; BEFORE answer-fn because answer-fn closes over them when (done
-        ;; …) carries :trailer-drop / :trailer-summarize args.
+        ;; CTX engine wiring (see ctx-loop). ONE atom carries the entire
+        ;; engine state for the session: specs/tasks/facts/trailer +
+        ;; ephemeral `:engine/warnings` + `:engine/pending-satisfies`.
+        ;; Seeded fresh; reloaded from session_turn_state.ctx (Nippy BLOB)
+        ;; on session resume so the model picks up where the last
+        ;; (done …) left off. Defined BEFORE answer-fn because answer-fn
+        ;; closes over it when (done …) carries :trailer-drop /
+        ;; :trailer-summarize args.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
-        ctx-warnings-atom        (ctx-loop/make-warnings-atom)
         ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
@@ -4365,27 +4407,26 @@
                                          trailer-drop      (when (map? value) (:trailer-drop value))
                                          trailer-summarize (when (map? value) (:trailer-summarize value))]
                                      (when (or (seq trailer-drop) (seq trailer-summarize))
-                                       (let [scope  (ctx-loop/synthesize-scope
-                                                      {:current-turn-position-atom current-turn-position-atom
-                                                       :current-iteration-atom current-iteration-atom
-                                                       :current-form-idx-atom current-form-idx-atom})
-                                             cursor (ctx-loop/cursor-snapshot
-                                                      {:current-turn-position-atom current-turn-position-atom
-                                                       :current-iteration-atom current-iteration-atom
-                                                       :current-form-idx-atom current-form-idx-atom})
-                                             ctx    (assoc @ctx-atom :session/scope cursor)
-                                             {ctx' :ctx ws :warnings}
-                                             (ctx-engine/apply-done
-                                               ctx scope
-                                               {:trailer-drop trailer-drop
-                                                :trailer-summarize trailer-summarize})]
-                                         (reset! ctx-atom (dissoc ctx' :session/scope))
-                                         (when (seq ws)
-                                           (swap! ctx-warnings-atom into ws))))
+                                       (let [cur-env {:current-turn-position-atom current-turn-position-atom
+                                                      :current-iteration-atom current-iteration-atom
+                                                      :current-form-idx-atom current-form-idx-atom}
+                                             scope  (ctx-loop/synthesize-scope cur-env)
+                                             cursor (ctx-loop/cursor-snapshot cur-env)]
+                                         (swap! ctx-atom
+                                           (fn [c]
+                                             (let [c+cur (assoc c :session/scope cursor)
+                                                   {ctx' :ctx ws :warnings}
+                                                   (ctx-engine/apply-done
+                                                     c+cur scope
+                                                     {:trailer-drop trailer-drop
+                                                      :trailer-summarize trailer-summarize})]
+                                               (cond-> (dissoc ctx' :session/scope)
+                                                 (seq ws)
+                                                 (update :engine/warnings (fnil into []) ws)))))))
                                      (reset! answer-atom
                                        {:value    value
-                                        :position @current-form-idx-atom}))
-                                   :vis/answer)
+                                        :position @current-form-idx-atom})
+                                     :vis/answer))
         ;; SCI binding for the session title:
         ;;   `(set-session-title! \"...\")` - writes the title through
         ;;                              to DB, syncs the in-memory
@@ -4410,27 +4451,14 @@
                                   db-info session-id
                                   session-title-atom s)
                                 :vis/silent))
-        satisfied-hints-atom     (atom #{})
-        ;; `(satisfy-hint! :hint/id)` is silent model-visible bookkeeping.
-        ;; It removes the hint id from `(get-in ctx [:session :hints])` on the next iteration;
-        ;; it does not unregister the extension hook that may emit the hint
-        ;; again if its runtime condition becomes true.
-        satisfy-hint-fn          (fn satisfy-hint! [id]
-                                   (when-not (keyword? id)
-                                     (throw (ex-info "satisfy-hint! requires a keyword hint id"
-                                              {:type :vis/invalid-hint-id
-                                               :id id})))
-                                   (swap! satisfied-hints-atom conj id)
-                                   :vis/silent)
         ;; Build the ctx-loop env subset used by SCI bindings + helpers.
-        ;; (ctx-atom + ctx-warnings-atom defined above, before answer-fn,
-        ;; so the (done …) handler can close over them when the form
-        ;; carries :trailer-drop / :trailer-summarize args.)
-        ctx-loop-env             {:ctx-atom                  ctx-atom
-                                  :ctx-warnings-atom         ctx-warnings-atom
+        ;; Just the cursor counters + the single ctx-atom — satisfy-hint!,
+        ;; warnings, and pending satisfies all live as ephemeral keys on
+        ;; the ctx itself, no side atoms.
+        ctx-loop-env             {:ctx-atom                   ctx-atom
                                   :current-turn-position-atom current-turn-position-atom
-                                  :current-iteration-atom    current-iteration-atom
-                                  :current-form-idx-atom     current-form-idx-atom}
+                                  :current-iteration-atom     current-iteration-atom
+                                  :current-form-idx-atom      current-form-idx-atom}
         ;; The current human turn text and engine context flow through ctx.
         ;; Introspect verbs reach archived entries + any past turn snapshot
         ;; via the soul/state chain. History loader is a thunk so the
@@ -4447,8 +4475,9 @@
                                         [])))
         env-bindings             (merge
                                    {'done            answer-fn
-                                    'set-session-title! session-title-fn
-                                    'satisfy-hint!  satisfy-hint-fn}
+                                    'set-session-title! session-title-fn}
+                                   ;; build-sci-bindings contributes
+                                   ;; satisfy-hint! + every mutator.
                                    (ctx-loop/build-sci-bindings ctx-loop-env)
                                    (ctx-loop/build-introspect-bindings
                                      ctx-loop-env introspect-history-loader))
@@ -4475,7 +4504,6 @@
               ;; mutate them. Mutator-time writes happen via SCI bindings
               ;; built above; render-time reads via ctx-loop/current-ctx.
               :ctx-atom                          ctx-atom
-              :ctx-warnings-atom                 ctx-warnings-atom
               :state-atom                        state-atom
               :sci-ctx                           sci-ctx
               :sandbox-ns                        sandbox-ns
@@ -4495,7 +4523,6 @@
               :current-turn-position-atom        current-turn-position-atom
               :current-user-request-atom         current-user-request-atom
               :session-title-atom           session-title-atom
-              :satisfied-hints-atom              satisfied-hints-atom
               :extensions                        (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
@@ -4514,7 +4541,14 @@
       ;; the renderer stamps a fresh one from the loop counters.
       (try
         (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
-          (reset! ctx-atom (assoc persisted-ctx :session/id session-id)))
+          ;; Persisted snapshot has no `:engine/*` ephemeral keys (stripped
+          ;; before Nippy). Re-seed them empty so swap! callers don't need
+          ;; nil-guards.
+          (reset! ctx-atom
+            (-> persisted-ctx
+              (assoc :session/id session-id
+                :engine/warnings          []
+                :engine/pending-satisfies []))))
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-ctx-failed
                      :data {:error (ex-message t) :session-id session-id}

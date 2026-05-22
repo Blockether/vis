@@ -289,23 +289,42 @@
      :next-step (action->extension-op (:next-action status-result))
      :suggestions (vec actions)}))
 
+(def ^:const BRIDGE_INIT_VALIDATOR_FN_SRC
+  "Validator: model satisfies bridge-not-configured by invoking the
+   workspace's init action (whose source contains `br/init`)."
+  "(fn [{:keys [src error]}]
+     (and (string? src) (nil? error)
+       (clojure.string/includes? src \"br/init\")))")
+
+(def ^:const BRIDGE_NEXT_VALIDATOR_FN_SRC
+  "Validator: model satisfies bridge-has-issues by invoking `br/next`
+   (or `br/check` to refresh status)."
+  "(fn [{:keys [src error]}]
+     (and (string? src) (nil? error)
+       (or (clojure.string/includes? src \"br/next\")
+           (clojure.string/includes? src \"br/check\"))))")
+
 (defn- bridge-hint
   [{:keys [environment]}]
   (let [env (or environment {})
         discovery (profile-discovery (workspace-root env) {})]
     (if-not (:configured? discovery)
-      {:importance :high
-       :text (str "Bridge is not configured for this workspace. "
+      {:importance   :warn
+       :validator-fn BRIDGE_INIT_VALIDATOR_FN_SRC
+       :body (str "Bridge is not configured for this workspace. "
                "Initialize it via bare " (render-tool-call (:op (unconfigured-next-step)))
-               " before asking for Bridge status or evidence work.")}
+               " before asking for Bridge status or evidence work. "
+               "Then `(satisfy-hint! :vis.foundation/bridge [<scope-of-init-call>])`.")}
       (let [status-result (:result (bridge-check env {}))]
         (when (and status-result
                 (pos? (long (or (:issue-count status-result) 0))))
-          {:importance :low
-           :text (str "Bridge reports open verification work in this workspace. "
+          {:importance   :info
+           :validator-fn BRIDGE_NEXT_VALIDATOR_FN_SRC
+           :body (str "Bridge reports open verification work in this workspace. "
                    "Inspect the next suggested Bridge action via bare "
                    (render-tool-call (tool-call "br/next" []))
-                   ". Do not execute evidence work from this hint unless verification is already in scope for the current task.")})))))
+                   ". Do not execute evidence work from this hint unless verification is already in scope for the current task. "
+                   "Then `(satisfy-hint! :vis.foundation/bridge [<scope-of-br/next-or-br/check>])`.")})))))
 
 (defn init
   "Initialize Bridge in the current workspace. Optional opts: {:root path}. Returns existing configuration when Bridge is already set up."

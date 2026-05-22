@@ -218,21 +218,37 @@
       (expect (not (s/valid? ::cs/trailer-entry {:scope "t3/i2"}))))))
 
 (defdescribe workspace-test
-  (describe "::workspace — {:git/branch :git/trunk :git/head :git/dirty? :git/stats}"
+  (describe "::workspace — VCS-agnostic permissive shape"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/workspace)))
 
-    (it "minimal valid"
+    (it "accepts empty map (no VCS detected yet)"
+      (expect (s/valid? ::cs/workspace {})))
+
+    (it "accepts {:vcs/kind :none} for non-VCS sessions"
+      (expect (s/valid? ::cs/workspace {:vcs/kind :none})))
+
+    (it "accepts canonical :vcs/* keys"
+      (expect (s/valid? ::cs/workspace
+                {:vcs/kind :git :vcs/branch "master" :vcs/trunk "master"
+                 :vcs/head "abc" :vcs/dirty? true :vcs/stats {}})))
+
+    (it "accepts legacy :git/* keys (transition shim)"
       (expect (s/valid? ::cs/workspace
                 {:git/branch "main" :git/trunk "main" :git/head "abc"
                  :git/dirty? false :git/stats {}})))
 
-    (it "rejects old flat keys"
-      (expect (not (s/valid? ::cs/workspace
-                     {:branch "main" :trunk "main" :head "x"
-                      :dirty? false :stats {}}))))
+    (it "accepts hg branch shape"
+      (expect (s/valid? ::cs/workspace
+                {:vcs/kind :hg :vcs/branch "default" :vcs/head "rev"})))
 
-    (it "rejects negative :added in stats"
+    (it "rejects bad :vcs/kind value"
+      (expect (not (s/valid? ::cs/workspace {:vcs/kind :svn}))))
+
+    (it "rejects non-string :vcs/branch"
+      (expect (not (s/valid? ::cs/workspace {:vcs/branch 42}))))
+
+    (it "rejects negative :added in :git/stats"
       (expect (not (s/valid? ::cs/workspace
                      {:git/branch "x" :git/trunk "y" :git/head "z"
                       :git/dirty? false
@@ -259,12 +275,24 @@
       (expect (s/valid? ::cs/symbol-info {:doc "what it does" :born "t1/i1/f1"})))))
 
 (defdescribe hint-test
-  (describe "::hint — {:body :importance? :satisfy-with?}"
+  (describe "::hint — {:body :validator-fn :importance?}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/hint)))
 
     (it "rejects bad :importance value"
-      (expect (not (s/valid? ::cs/hint {:body "do X" :importance :ultra}))))))
+      (expect (not (s/valid? ::cs/hint
+                     {:body "do X"
+                      :validator-fn "(fn [_] true)"
+                      :importance :ultra}))))
+
+    (it "requires :validator-fn (no legacy zero-arity satisfy)"
+      (expect (not (s/valid? ::cs/hint {:body "do X"}))))
+
+    (it "accepts hint with body + validator-fn"
+      (expect (s/valid? ::cs/hint
+                {:body "set session title"
+                 :validator-fn
+                 "(fn [{:keys [src]}] (clojure.string/includes? src \"set-session-title!\"))"})))))
 
 (defdescribe scope-cursor-test
   (describe ":session/scope — engine-rendered cursor {:turn :iter :next-form}"
