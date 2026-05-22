@@ -25,12 +25,15 @@
      `::scope-turn`  e.g. \"t3\"
 
    Edge inventory across subtrees (validated as soft warnings, not by spec):
-     spec  → facts  via `:session.spec/grounding-facts` (vec of `::entry-key`)
-     spec  → tasks  via `:session.spec/serving-tasks`   (vec of `::entry-key`)
-     task  → spec   via `:session.task/serves-spec`     (single `::entry-key`)
-     task  → tasks  via `:session.task/blocked-by-tasks` (vec of `::entry-key`)
+     spec criterion → facts  via `:session.criterion/facts` (vec of `::entry-key`)
+     task           → spec   via `:session.task/spec` (single `::entry-key`)
+     task           → tasks  via `:session.task/depends-on` (vec of `::entry-key`)
+     task           → spec criteria via `:session.task/satisfies`
+     task criterion → scope  via `:session.task.satisfies/proof`
 
-   Facts are leaves: no tags, no generic connections. Tasks do not own facts."
+   Proof lives on tasks. Specs define criteria; tasks fill proofs for criteria
+   they satisfy. Facts are connected through criteria, not generic
+   fact-to-anything edges."
   (:require [clojure.spec.alpha :as s]
             [clojure.spec.gen.alpha :as gen]))
 
@@ -85,19 +88,23 @@
 ;; =============================================================================
 
 (s/def ::fact
-  (s/and
-    (s/keys :req-un [::content ::born])
-    #(not (contains? % :tags))
-    #(not (contains? % :connections))))
+  (s/keys :req-un [::content ::born]))
 
 ;; =============================================================================
 ;; Task — work items
 ;; =============================================================================
 
-(s/def :session.task/serves-spec      ::entry-key)
-(s/def :session.task/blocked-by-tasks (s/coll-of ::entry-key :kind vector?))
-(s/def :session.task/status           #{:todo :doing :done :cancelled})
-(s/def :session.task/evidence    (s/coll-of ::scope-form :kind vector?))
+(s/def :session.task/spec       ::entry-key)
+(s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
+(s/def :session.task/status     #{:todo :doing :done :cancelled})
+
+(s/def :session.task.satisfies/criterion keyword?)
+(s/def :session.task.satisfies/proof     ::scope-form)
+(s/def :session.task/satisfies-entry
+  (s/keys :req-un [:session.task.satisfies/criterion
+                   :session.task.satisfies/proof]))
+(s/def :session.task/satisfies
+  (s/coll-of :session.task/satisfies-entry :kind vector?))
 
 (s/def :session.task.journal-entry/scope  ::scope-form)
 (s/def :session.task.journal-entry/status :session.task/status)
@@ -110,35 +117,36 @@
   (s/coll-of :session.task/journal-entry :kind vector?))
 
 (s/def ::task
-  (s/and
-    (s/keys :req-un [::title
-                     :session.task/serves-spec
-                     :session.task/status
-                     ::born]
-      :opt-un [:session.task/blocked-by-tasks
-               :session.task/evidence
-               :session.task/journal])
-    #(not (contains? % :spec))
-    #(not (contains? % :depends-on))
-    #(not (contains? % :facts))))
+  (s/keys :req-un [::title
+                   :session.task/spec
+                   :session.task/status
+                   ::born]
+    :opt-un [:session.task/depends-on
+             :session.task/satisfies
+             :session.task/journal]))
 
 ;; Soft rules (engine-side validators; not enforced by spec):
-;;   - :status :done MUST have non-empty :evidence
-;;   - :serves-spec must point to an existing key in :session/specs
-;;   - :blocked-by-tasks entries must point to existing keys in :session/tasks
+;;   - :spec must point to an existing key in :session/specs
+;;   - :depends-on entries must point to existing keys in :session/tasks
+;;   - :satisfies criterion ids must exist on this task's spec
+;;   - :status :done should have non-empty :satisfies unless task is only a prereq
 
 ;; =============================================================================
 ;; Spec — formal requirements
 ;; =============================================================================
 
-(s/def :session.spec/acceptance
-  (s/coll-of string? :kind vector? :min-count 1))
-
-(s/def :session.spec/grounding-facts
+(s/def :session.criterion/id        keyword?)
+(s/def :session.criterion/criterion string?)
+(s/def :session.criterion/facts
   (s/coll-of ::entry-key :kind vector?))
 
-(s/def :session.spec/serving-tasks
-  (s/coll-of ::entry-key :kind vector?))
+(s/def :session.spec/criterion
+  (s/keys :req-un [:session.criterion/id
+                   :session.criterion/criterion]
+    :opt-un [:session.criterion/facts]))
+
+(s/def :session.spec/criteria
+  (s/coll-of :session.spec/criterion :kind vector? :min-count 1))
 
 (s/def :session.spec/status
   #{:draft :doing :done :cancelled})
@@ -146,21 +154,16 @@
 (s/def :session.spec/done-born ::scope-form)
 
 (s/def ::spec
-  (s/and
-    (s/keys :req-un [::title
-                     :session.spec/acceptance
-                     :session.spec/status
-                     ::born]
-      :opt-un [:session.spec/grounding-facts
-               :session.spec/serving-tasks
-               :session.spec/done-born])
-    #(not (contains? % :facts))
-    #(not (contains? % :tasks))))
+  (s/keys :req-un [::title
+                   :session.spec/criteria
+                   :session.spec/status
+                   ::born]
+    :opt-un [:session.spec/done-born]))
 
 ;; Soft rules:
 ;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
-;;   - :grounding-facts entries must point to existing keys in :session/facts
-;;   - :serving-tasks entries must point to existing keys in :session/tasks
+;;   - criterion :facts entries must point to existing keys in :session/facts
+;;   - :status :done requires every criterion to be satisfied by at least one task
 
 ;; =============================================================================
 ;; Trailer entries — verbatim pin OR summary
