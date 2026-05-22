@@ -138,14 +138,27 @@
       Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
       Memory (upsert-only — never delete; abandon = flip :status):
-        (spec-set!  :K {:title :requirements :status})
-        (task-set!  :K {:title :specs :depends-on? :status})
-        (fact-set!  :K {:content :status?})
-        ;; status terminals trigger engine archive after TTL:
-        ;;   task / spec :status :done       → archived after 6 turns
-        ;;   task / spec :status :cancelled  → archived after 10 turns
-        ;;   fact        :status :superseded → archived after 6 turns
-        ;; Archived entries leave live CTX. Reach them via introspect-* below.
+
+        Top-level entity mutators (merge partials):
+          (spec-set! :K {:title :status})              ; :requirements NOT here — use granular ops
+          (task-set! :K {:title :depends-on :status})
+          (fact-set! :K {:content :status})            ; :status ∈ #{:active :superseded}
+
+        Per-requirement mutators (operate on a spec's :requirements vec):
+          (req-add!    :spec-K {:id :title :facts? :validator-fn?})  ; collision on :id → warn, no write
+          (req-update! :spec-K :req-id {:title? :facts? :validator-fn?})  ; :id immutable
+          (req-remove! :spec-K :req-id)                ; cascade-warns task proofs that referenced :req-id
+
+        Per-proof mutators (operate on a task's :specs map):
+          (proof-add!    :task-K :spec-K {:requirement :proof})
+          (proof-remove! :task-K :spec-K :req-id)
+
+        Lifecycle:
+          task / spec :status :done       → engine stamps :done-born; archived from live CTX after 6 turns
+          task / spec :status :cancelled  → engine stamps :done-born; archived after 10 turns
+          fact        :status :superseded → engine stamps :done-born; archived after 6 turns
+          :active facts live forever; engine only suggests supersede when unreferenced > 12 turns.
+        Archived entries leave live CTX. Reach them via introspect-* below.
 
       Symbols (native SCI; engine persists across turns):
         (defn foo [x] …)                              create / overwrite
