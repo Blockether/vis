@@ -2936,8 +2936,10 @@
         ;; crossed the 50% threshold even though each individual
         ;; request stayed at ~10K tokens. The model received fake
         ;; \"Context pressure: ~115K / 200K (58%)\" warnings and started
-        ;; emitting `(satisfy-hint! :vis.foundation/context-pressure)`
-        ;; defensively while still operating on a tiny window.
+        ;; defensively flipping the context-pressure hook-task to
+        ;; :done (pre-D12 it was a defensive
+        ;; `(satisfy-hint! :vis.foundation/context-pressure)`) while
+        ;; still operating on a tiny window.
         ;;
         ;; `:last-iter-input` carries the most recent SINGLE-CALL
         ;; `prompt_tokens`, which is the right proxy for \"what the next
@@ -4464,9 +4466,10 @@
                                   session-title-atom s)
                                 :vis/silent))
         ;; Build the ctx-loop env subset used by SCI bindings + helpers.
-        ;; Just the cursor counters + the single ctx-atom — satisfy-hint!,
-        ;; warnings, and pending satisfies all live as ephemeral keys on
-        ;; the ctx itself, no side atoms.
+        ;; Just the cursor counters + the single ctx-atom. Warnings
+        ;; live as `:engine/warnings` on the ctx itself, no side atoms.
+        ;; (D12 retired `:engine/pending-satisfies` along with
+        ;; satisfy-hint!; hook-task satisfaction is plain `task-set!`.)
         ctx-loop-env             {:ctx-atom                   ctx-atom
                                   :current-turn-position-atom current-turn-position-atom
                                   :current-iteration-atom     current-iteration-atom

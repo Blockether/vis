@@ -269,10 +269,12 @@
       (expect (= :mutation (eng/classify-form-tag "(def x 42)")))
       (expect (= :mutation (eng/classify-form-tag "(defn f [a] a)"))))
 
-    (it ":mutation for control verbs"
+    (it ":mutation for control verbs (D12: satisfy-hint! retired)"
       (expect (= :mutation (eng/classify-form-tag "(done {:answer \"hi\"})")))
       (expect (= :mutation (eng/classify-form-tag "(set-session-title! \"x\")")))
-      (expect (= :mutation (eng/classify-form-tag "(satisfy-hint! :h)"))))
+      ;; satisfy-hint! is no longer a primitive; hook-task satisfaction
+      ;; goes through task-set!, which is already in mutation-heads.
+      (expect (= :observation (eng/classify-form-tag "(satisfy-hint! :h)"))))
 
     (it ":observation for everything else"
       (expect (= :observation (eng/classify-form-tag "(+ 1 2)")))
