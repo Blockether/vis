@@ -339,3 +339,135 @@
               idx (eng/build-indexes ctx)
               warns (eng/derive-warnings ctx idx form-results)]
           (expect (not (some #(= :proof-validator-fail (:code %)) warns))))))))
+
+;; =============================================================================
+;; apply-satisfies — hint validator-fn pass (D11)
+;; =============================================================================
+
+(def ^:private TITLE_VALIDATOR
+  "(fn [{:keys [src error]}]
+     (and (string? src)
+       (clojure.string/includes? src \"set-session-title!\")
+       (nil? error)))")
+
+(defn- with-title-hint [ctx]
+  (assoc-in ctx [:session/hints :vis.foundation/session-title]
+    {:body "set session title"
+     :importance :critical
+     :validator-fn TITLE_VALIDATOR}))
+
+(defn- mk-hint-ctx []
+  (-> (eng/empty-ctx "test")
+    (assoc :session/turn 1)
+    (assoc :session/scope {:turn 1 :iter 2 :next-form 1})
+    with-title-hint))
+
+(defdescribe apply-satisfies-passing-test
+  (describe "apply-satisfies — proof scope passes validator"
+    (let [ctx (mk-hint-ctx)
+          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :mutation
+                           :src "(set-session-title! \"Auth refactor\")"
+                           :result :vis/silent}}
+          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f3"]}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+
+      (it "drops the hint id from :session/hints"
+        (expect (nil? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "emits no warnings"
+        (expect (empty? warns))))))
+
+(defdescribe apply-satisfies-failing-test
+  (describe "apply-satisfies — proof scope fails validator (wrong src)"
+    (let [ctx (mk-hint-ctx)
+          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :observation
+                           :src "(v/ls \".\")" :result []}}
+          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f3"]}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+
+      (it "keeps the hint id (model has not actually called the action)"
+        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "emits :hint-validator-fail warning"
+        (expect (some #(= :hint-validator-fail (:code %)) warns))))))
+
+(defdescribe apply-satisfies-no-proof-test
+  (describe "apply-satisfies — 0-arity satisfy when validator-fn present"
+    (let [ctx (mk-hint-ctx)
+          pending [{:id :vis.foundation/session-title :scopes []}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+
+      (it "keeps the hint id"
+        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "emits :hint-no-proof warning"
+        (expect (some #(= :hint-no-proof (:code %)) warns))))))
+
+(defdescribe apply-satisfies-malformed-scope-test
+  (describe "apply-satisfies — malformed proof scope distinguished from unknown"
+    (let [ctx (mk-hint-ctx)
+          pending [{:id :vis.foundation/session-title :scopes ["not-a-scope"]}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+
+      (it "keeps the hint id"
+        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "emits :hint-proof-malformed (NOT :hint-proof-unknown)"
+        (expect (some #(= :hint-proof-malformed (:code %)) warns))
+        (expect (not (some #(= :hint-proof-unknown (:code %)) warns)))))))
+
+(defdescribe apply-satisfies-future-scope-test
+  (describe "apply-satisfies — proof scope pointing to a future iter"
+    (let [ctx (mk-hint-ctx) ;; cursor t1/i2
+          ;; t1/i5/f1 is :future-iter relative to cursor at t1/i2.
+          pending [{:id :vis.foundation/session-title :scopes ["t1/i5/f1"]}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+
+      (it "keeps the hint id"
+        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "emits :hint-proof-future warning"
+        (expect (some #(= :hint-proof-future (:code %)) warns))))))
+
+(defdescribe apply-satisfies-unknown-hint-test
+  (describe "apply-satisfies — satisfy for an id no longer in :session/hints"
+    (let [ctx (mk-hint-ctx) ;; no :unknown/hint present
+          pending [{:id :unknown/hint :scopes ["t1/i1/f1"]}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending {})]
+
+      (it "idempotent no-op: live hint untouched"
+        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "no warnings (model satisfied a stale hint that was already gone)"
+        (expect (empty? warns))))))
+
+(defdescribe apply-satisfies-multi-scope-test
+  (describe "apply-satisfies — all-or-nothing across multiple proof scopes"
+    (let [ctx (mk-hint-ctx)
+          fr  {"t1/i1/f1" {:src "(set-session-title! \"A\")" :result :vis/silent}
+               "t1/i1/f2" {:src "(v/ls)" :result []}}
+          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f1" "t1/i1/f2"]}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+
+      (it "ANY scope failing keeps hint alive"
+        (expect (some? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "warning anchors the FAILING scope, not the passing one"
+        (let [w (first (filter #(= :hint-validator-fail (:code %)) warns))]
+          (expect (= "t1/i1/f2" (nth (:anchor w) 1))))))))
+
+(defdescribe apply-satisfies-monotonic-drop-test
+  (describe "apply-satisfies — multiple requests for same id, ANY pass drops it"
+    (let [ctx (mk-hint-ctx)
+          fr  {"t1/i1/f1" {:src "(v/ls)" :result []}
+               "t1/i1/f2" {:src "(set-session-title! \"x\")" :result :vis/silent}}
+          ;; first request fails; second passes; hint should drop
+          pending [{:id :vis.foundation/session-title :scopes ["t1/i1/f1"]}
+                   {:id :vis.foundation/session-title :scopes ["t1/i1/f2"]}]
+          {ctx' :ctx warns :warnings} (eng/apply-satisfies ctx pending fr)]
+
+      (it "drops the hint id (second request succeeded)"
+        (expect (nil? (get-in ctx' [:session/hints :vis.foundation/session-title]))))
+
+      (it "suppresses warnings from the failed attempt once the hint is satisfied"
+        (expect (empty? (filter #(= :hint-validator-fail (:code %)) warns)))))))

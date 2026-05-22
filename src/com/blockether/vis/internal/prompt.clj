@@ -98,8 +98,11 @@
 
     SUBTREES (shapes)
       :session/scope     := {:turn :iter :next-form}
-      :session/workspace := {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
-                            (VCS-discriminator ns — :hg/* :jj/* slot in later w/o collision)
+      :session/workspace := {:vcs/kind :vcs/branch :vcs/trunk :vcs/head
+                             :vcs/dirty? :vcs/stats}
+                            (or kind-namespaced aliases :git/* :hg/* :jj/*
+                             when detector emits them; everything optional;
+                             {:vcs/kind :none} for non-VCS sessions)
       :session/symbols   := {sym ↦ {:arglists? :doc? :born}}
       :session/hints     := pending one-shots (read first, satisfy via
                             (satisfy-hint! :id [<scope>…]))

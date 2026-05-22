@@ -6,8 +6,8 @@
    The pure subset:
      parse-scope-form, scope-compare, classify-scope, build-indexes,
      depends-on-cycle?, derive-progression, derive-warnings,
-     derive-next-actions, apply-mutator, apply-done, advance-iter,
-     advance-turn, gc-pass, introspect-*.
+     derive-next-actions, apply-mutator, apply-done, apply-satisfies,
+     advance-iter, advance-turn, gc-pass, introspect-*.
 
    The impure subset (clearly fenced; uses SCI + a cache atom):
      compile-validator-fn, run-validator-fn.
@@ -36,6 +36,9 @@
 
      (advance-iter ctx form-results-vec)
        → ctx with trailer pin appended and :session/scope advanced
+
+     (apply-satisfies ctx pending-vec form-results-map)
+       → {:ctx :warnings} with satisfied hint ids dropped from :session/hints
 
      (advance-turn ctx)
        → ctx with bumped :session/turn, reset :session/scope, gc-pass run
@@ -892,20 +895,40 @@
 (defn empty-ctx
   "A minimal CTX scaffold that satisfies `::cs/ctx` with all required keys
    filled by empty / default values. Useful as the starting point for
-   scenario replays."
+   scenario replays.
+
+   Includes engine-ephemeral keys (`:engine/warnings`,
+   `:engine/pending-satisfies`) so the rest of the system can swap! them
+   without nil-puncturing. They are stripped at persistence boundaries
+   via `strip-ephemeral`."
   ([] (empty-ctx "test-session"))
   ([session-id]
-   {:session/id        session-id
-    :session/turn      1
-    :session/scope     {:turn 1 :iter 1 :next-form 1}
-    :session/workspace {:git/branch "main" :git/trunk "main" :git/head "x"
-                        :git/dirty? false :git/stats {}}
-    :session/symbols   {}
-    :session/hints     {}
-    :session/specs     {}
-    :session/tasks     {}
-    :session/facts     {}
-    :session/trailer   []}))
+   {:session/id               session-id
+    :session/turn             1
+    :session/scope            {:turn 1 :iter 1 :next-form 1}
+    ;; VCS-agnostic empty workspace. Detectors (foundation hook /
+    ;; workspace module) stamp real `:vcs/kind` + branch/head/stats
+    ;; once the session resolves to a real git/hg/jj repo. Until then
+    ;; the engine treats absence as `:vcs/kind :none` — no branch name
+    ;; baked in, no "main" sentinel that would lie about non-git
+    ;; workspaces.
+    :session/workspace        {:vcs/kind :none}
+    :session/symbols          {}
+    :session/hints            {}
+    :session/specs            {}
+    :session/tasks            {}
+    :session/facts            {}
+    :session/trailer          []
+    :engine/warnings          []
+    :engine/pending-satisfies []}))
+
+(defn strip-ephemeral
+  "Remove every `:engine/*` key from a ctx. Call before Nippy-snapshotting
+   to persistence so transient mutator state (warnings, pending satisfy
+   requests) does not leak into the durable record."
+  [ctx]
+  (when ctx
+    (into {} (remove (fn [[k _]] (and (keyword? k) (= "engine" (namespace k)))) ctx))))
 
 ;; =============================================================================
 ;; Iter-scope parsing + comparator — used by trailer comparator + overlap check
@@ -1054,6 +1077,167 @@
            (let [c (iter-compare a b)]
              (if (zero? c) (compare a-tag b-tag) c)))
          trailer)))
+
+;; =============================================================================
+;; apply-satisfies — drain pending (satisfy-hint! …) calls
+;; =============================================================================
+;;
+;; Hint satisfaction is deferred to end-of-iter (after every form has
+;; produced an envelope) so the validator-fn can see the proof scope's
+;; :src / :result. The loop collects each (satisfy-hint! id [scopes]) into
+;; a pending vec during the iter; here the engine drains it and decides
+;; per hint whether to drop the id from `:session/hints` or keep it +
+;; warn. Pure-fn shape: takes ctx + pending vec + form-results map, returns
+;; `{:ctx ctx' :warnings […]}`. Caller (ctx-loop) is responsible for
+;; building `form-results-map` from the full trailer (prior iters) plus
+;; the just-finished iter's envelopes.
+
+(defn apply-satisfies
+  "Process a batch of pending `(satisfy-hint! id scopes)` requests against
+   the live `:session/hints` map and the available `form-results-map`.
+
+   `pending` is a vec of `{:id <kw> :scopes <vec-of-scope-strings>}`.
+   `form-results-map` is `{scope-string envelope}` for every form whose
+   result the engine has captured.
+
+   Rules:
+     1. Unknown hint id → silent no-op (idempotent; either the model
+        satisfied a stale hint or a foundation hook unregistered it).
+     2. Hint has no `:validator-fn` → drop id from `:session/hints`.
+        Legacy behaviour. Foundation hooks SHOULD ship a validator-fn,
+        but engine does not refuse hooks that don't.
+     3. Hint has `:validator-fn`:
+          a. `(empty? scopes)` → keep, warn `:hint-no-proof`.
+          b. For each scope: classify against cursor + run validator-fn
+             against the form envelope.
+             - scope missing from form-results-map → keep, warn
+               `:hint-proof-unknown`.
+             - validator returns truthy → that scope passes.
+             - validator falsy / threw / timeout / compile-error →
+               keep, warn `:hint-validator-fail`.
+          c. ALL scopes pass → drop hint id.
+          d. ANY scope fails OR is unknown → keep hint id (warnings
+             accumulated per failure).
+
+   The keep/drop decision is monotonic within a single drain call:
+   if a hint id appears multiple times in `pending` and any single
+   request passes its validator(s), the hint is dropped.
+
+   Returns `{:ctx ctx' :warnings [warn-map …]}`. Engine never throws here;
+   validator-fn errors are converted to warnings."
+  [ctx pending form-results-map]
+  (let [hints  (or (:session/hints ctx) {})
+        cursor (:session/scope ctx)
+        ;; Group satisfy calls by hint id, preserving order of arrival
+        ;; within each id so warning anchors are stable.
+        by-id  (reduce
+                 (fn [acc {:keys [id scopes]}]
+                   (update acc id (fnil conj []) (vec scopes)))
+                 {}
+                 pending)
+        check-scope
+        (fn [hid scope]
+            ;; Returns {:ok? bool :warn warn-map?}. Distinguishes
+            ;; malformed scope strings, future-* / unknown / errored
+            ;; classifications, missing envelopes, and validator-fn
+            ;; failures so the model gets actionable feedback instead
+            ;; of a generic "validation failed".
+          (cond
+            (not (string? scope))
+            {:ok? false
+             :warn (warn :hint-proof-malformed [hid scope]
+                     (str "satisfy-hint! " hid
+                       " proof scope is not a string: " (pr-str scope)))}
+
+            (malformed-scope? scope)
+            {:ok? false
+             :warn (warn :hint-proof-malformed [hid scope]
+                     (str "satisfy-hint! " hid
+                       " proof scope " scope
+                       " is not a valid tN/iM/fK form-scope"))}
+
+            :else
+            (let [klass (classify-scope scope cursor form-results-map)]
+              (cond
+                (#{:future-form :future-iter :future-turn} klass)
+                {:ok? false
+                 :warn (warn :hint-proof-future [hid scope klass]
+                         (str "satisfy-hint! " hid
+                           " proof scope " scope
+                           " is " (name klass) " relative to cursor"))}
+
+                (= klass :errored)
+                {:ok? false
+                 :warn (warn :hint-proof-errored [hid scope]
+                         (str "satisfy-hint! " hid
+                           " proof scope " scope
+                           " form errored; cannot validate"))}
+
+                (or (= klass :unknown) (nil? (get form-results-map scope)))
+                {:ok? false
+                 :warn (warn :hint-proof-unknown [hid scope]
+                         (str "satisfy-hint! " hid
+                           " proof scope " scope
+                           " has no captured form result"))}
+
+                :else
+                (let [envelope (get form-results-map scope)
+                      res (run-validator-fn (:validator-fn (get hints hid)) envelope)]
+                  (if (:ok? res)
+                    {:ok? true}
+                    {:ok? false
+                     :warn (warn :hint-validator-fail
+                             [hid scope (:reason res)]
+                             (str "satisfy-hint! " hid
+                               " failed validator at " scope
+                               " (" (name (:reason res))
+                               (when-let [d (:detail res)]
+                                 (str ": " (pr-str d)))
+                               ")"))}))))))
+        eval-one
+        (fn [hid scope-batch]
+            ;; Returns {:drop? bool :warnings [..]}. No legacy: hints
+            ;; without validator-fn cannot exist (spec rejects), so we
+            ;; never enter a "just drop" branch.
+          (let [hint (get hints hid)]
+            (cond
+              (nil? hint)
+              {:drop? false :warnings []}
+
+              (empty? scope-batch)
+              {:drop? false
+               :warnings [(warn :hint-no-proof [hid]
+                            (str "satisfy-hint! " hid
+                              " needs proof scope(s); none provided"))]}
+
+              :else
+              (let [results (mapv #(check-scope hid %) scope-batch)
+                    passed? (every? :ok? results)]
+                {:drop? passed?
+                 :warnings (vec (keep :warn results))}))))
+        ;; Each id may have multiple requests; if ANY single request
+        ;; produced :drop? true the hint goes. Otherwise we keep all
+        ;; accumulated warnings from each attempt.
+        per-id  (into {}
+                  (for [[hid batches] by-id]
+                    [hid (reduce
+                           (fn [acc batch]
+                             (let [{:keys [drop? warnings]} (eval-one hid batch)]
+                               (-> acc
+                                 (update :drop? #(or % drop?))
+                                 (update :warnings into warnings))))
+                           {:drop? false :warnings []}
+                           batches)]))
+        ids-to-drop (set (for [[hid {:keys [drop?]}] per-id :when drop?] hid))
+        ;; When a hint is ultimately dropped, suppress the warnings the
+        ;; failed attempts accumulated for that id — the model resolved it.
+        warnings (vec (mapcat (fn [[hid {:keys [warnings]}]]
+                                (when-not (contains? ids-to-drop hid)
+                                  warnings))
+                        per-id))
+        ctx' (update ctx :session/hints
+               (fn [m] (into {} (remove (fn [[k _]] (contains? ids-to-drop k)) m))))]
+    {:ctx ctx' :warnings warnings}))
 
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer. Returns

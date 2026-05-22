@@ -36,12 +36,13 @@
     snap))
 
 (defn- mk-env
-  "Loop env subset that ctx-loop bindings + helpers actually touch."
+  "Loop env subset that ctx-loop bindings + helpers actually touch.
+   Single ctx-atom; `:engine/warnings` + `:engine/pending-satisfies`
+   live on the ctx itself, no side atoms."
   [db-info session-id turn-pos]
   {:db-info                    db-info
    :session-id                 session-id
    :ctx-atom                   (ctx-loop/make-ctx-atom session-id)
-   :ctx-warnings-atom          (ctx-loop/make-warnings-atom)
    :current-turn-position-atom (atom turn-pos)
    :current-iteration-atom     (atom 1)
    :current-form-idx-atom      (atom 0)})

@@ -288,62 +288,85 @@
     (expect (= "generic" (empty-code-error-with-observation "generic" {})))))
 
 (defdescribe iteration-start-hook-test
-  (it "collects active :turn.iteration/start hook hints and ignores other phases"
+  (it "collects active :turn.iteration/start hook hints in ctx-shape; ignores other phases"
     (let [seen (atom nil)
+          validator "(fn [_] true)"
           ext {:ext/name "test.hints"
                :ext/hooks [{:id :test/title
                             :doc "title"
                             :phase :turn.iteration/start
                             :fn (fn [ctx]
                                   (reset! seen ctx)
-                                  {:text "set title" :importance :high})}
+                                  {:body "set title"
+                                   :importance :warn
+                                   :validator-fn validator})}
                            {:id :test/answer
                             :doc "answer"
                             :phase :turn.answer/validate
                             :fn (fn [_] {:reject true})}
-                           {:id :test/bad
-                            :doc "bad"
+                           {:id :test/no-validator
+                            :doc "missing validator-fn—rejected"
                             :phase :turn.iteration/start
-                            :fn (fn [_] {:importance :high})}]}
+                            :fn (fn [_] {:body "hint without validator"})}
+                           {:id :test/no-body
+                            :doc "missing body—rejected"
+                            :phase :turn.iteration/start
+                            :fn (fn [_] {:importance :warn :validator-fn validator})}]}
           ctx {:session-title nil
                :title-refresh? true
                :turn-position 1}
           hints (collect-iteration-start-hints {} [ext] ctx)]
       (expect (= [{:id :test/title
-                   :text "set title"
-                   :satisfy-with '(satisfy-hint! :test/title)
-                   :importance :high}]
+                   :hint {:body "set title"
+                          :importance :warn
+                          :validator-fn validator}}]
                 hints))
       (expect (= ctx @seen))))
 
-  (it "filters satisfied hint ids from the next ctx hint set"
-    (let [ext {:ext/name "test.hints"
-               :ext/hooks [{:id :test/title
-                            :doc "title"
+  (it "accepts legacy `:text` alias for `:body` so older hooks still load"
+    (let [validator "(fn [_] true)"
+          ext {:ext/name "test.legacy-text"
+               :ext/hooks [{:id :test/legacy
                             :phase :turn.iteration/start
-                            :fn (fn [_] {:text "set title"})}]}
-          env {:satisfied-hints-atom (atom #{:test/title})}]
-      (expect (= [] (collect-iteration-start-hints env [ext] {})))))
+                            :fn (fn [_]
+                                  {:text "old shape"
+                                   :validator-fn validator})}]}]
+      (expect (= [{:id :test/legacy
+                   :hint {:body "old shape" :validator-fn validator}}]
+                (collect-iteration-start-hints {} [ext] {})))))
 
-  (it "satisfy-hint! records keyword ids and returns :vis/silent"
+  (it "satisfy-hint! queues a request on `:engine/pending-satisfies` and returns :vis/silent"
     (let [env (lp/create-environment ::router {:db :memory})]
       (try
         (let [r (sci/eval-string+ (:sci-ctx env)
                   "(satisfy-hint! :test/title)"
                   {:ns (:sandbox-ns env)})]
           (expect (= :vis/silent (:val r)))
-          (expect (= #{:test/title} @(:satisfied-hints-atom env))))
+          (expect (= [{:id :test/title :scopes []}]
+                    (-> env :ctx-atom deref :engine/pending-satisfies))))
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "satisfy-hint! rejects non-keyword ids"
+  (it "satisfy-hint! with a scope vec carries scopes through to the queue"
     (let [env (lp/create-environment ::router {:db :memory})]
       (try
-        (try
-          (sci/eval-string+ (:sci-ctx env) "(satisfy-hint! \"bad\")" {:ns (:sandbox-ns env)})
-          (expect false)
-          (catch Throwable e
-            (expect (str/includes? (ex-message e) "satisfy-hint! requires a keyword hint id"))))
+        (sci/eval-string+ (:sci-ctx env)
+          "(satisfy-hint! :test/title [\"t1/i1/f3\"])"
+          {:ns (:sandbox-ns env)})
+        (expect (= [{:id :test/title :scopes ["t1/i1/f3"]}]
+                  (-> env :ctx-atom deref :engine/pending-satisfies)))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "satisfy-hint! with non-keyword id records a warning instead of throwing"
+    (let [env (lp/create-environment ::router {:db :memory})]
+      (try
+        (let [r (sci/eval-string+ (:sci-ctx env)
+                  "(satisfy-hint! \"bad\")"
+                  {:ns (:sandbox-ns env)})]
+          (expect (= :vis/silent (:val r)))
+          (expect (some #(= :hint-bad-id (:code %))
+                    (-> env :ctx-atom deref :engine/warnings))))
         (finally
           (lp/dispose-environment! env)))))
 
