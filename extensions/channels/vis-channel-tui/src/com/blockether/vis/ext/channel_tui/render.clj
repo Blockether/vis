@@ -3292,9 +3292,17 @@
                                          (when badge-entry [badge-entry])
                                          detail-entries))))
                 code-block    (vec (concat
+                                     ;; Title-recap call-out sits on its own row
+                                     ;; with one neutral blank UNDERNEATH so it
+                                     ;; never glues to the code rows below. The
+                                     ;; visible margin ABOVE is supplied by the
+                                     ;; row that already precedes form-lines:
+                                     ;; - thinking-pad row (gray stripe) when
+                                     ;;   reasoning is the row before, or
+                                     ;; - the outer iter-pad blank wrap when
+                                     ;;   no reasoning preceded this iter.
                                      title-lines
-                                     (when (and (seq title-lines) (not (str/blank? code-text)))
-                                       [(line-entry (str iteration-pad-marker ""))])
+                                     (when (seq title-lines) [(line-entry "")])
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
                                      (when (seq comment-lines)
                                        (concat [(line-entry (str thinking-marker ""))]
