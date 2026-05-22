@@ -302,7 +302,7 @@
         (is (some #(= :theme-name (:key %)) (settings-rows :channels)))
         (is (= [:vis-dark :vis-light]
               (:choices (first (filter #(= :theme-name (:key %)) (settings-rows :channels))))))
-        (is (some #(= :differentiate-turns (:key %)) (settings-rows :channels)))
+        (is (not-any? #(= :differentiate-turns (:key %)) (settings-rows :channels)))
         (is (some #(= :mouse-selection-copy (:key %)) (settings-rows :channels)))
         (is (not-any? #(= :show-thinking (:key %)) (settings-rows :channels)))
         (is (some #(= :reasoning-level (:key %)) (settings-rows :providers)))

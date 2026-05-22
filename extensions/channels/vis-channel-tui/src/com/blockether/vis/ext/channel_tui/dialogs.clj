@@ -1114,10 +1114,6 @@
     :type :toggle
     :label "Show per-message timestamps"
     :description "Date+time next to every 'You' / 'Vis' label"}
-   {:key :differentiate-turns
-    :type :toggle
-    :label "Visually differentiate turns"
-    :description "Draw a separator between a Vis answer and the next You prompt"}
    {:key :mouse-selection-copy
     :type :toggle
     :label "Mouse selection auto-copy"

@@ -13,7 +13,7 @@
      ::fact ::task ::spec
      ::trailer-form ::trailer-pin ::trailer-summary ::trailer-entry
      ::workspace ::symbol-info ::hint
-     ::ctx (top-level)"
+     :session/scope (cursor) ::ctx (top-level)"
   (:require
    [clojure.spec.alpha :as s]
    [clojure.spec.gen.alpha :as gen]
@@ -54,7 +54,7 @@
       (expect (not (s/valid? ::cs/scope-turn "t3/i2"))))))
 
 (defdescribe fact-test
-  (describe "::fact — {:content :born}; no tags or connections"
+  (describe "::fact — {:content :born}; no labels or edge fields"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/fact)))
 
@@ -75,79 +75,80 @@
                 {:content "x" :born "t1/i1/f1" :random-field 42})))))
 
 (defdescribe task-test
-  (describe "::task — {:title :spec :status :born + optional :depends-on}"
+  (describe "::task — {:title :specs :status :born + optional :depends-on}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/task)))
 
     (it "minimal valid"
       (expect (s/valid? ::cs/task
-                {:title "x" :spec :the-spec :status :todo :born "t1/i1/f1"})))
+                {:title "x" :specs {:the-spec []} :status :todo :born "t1/i1/f1"})))
 
     (it "allows :depends-on vec"
       (expect (s/valid? ::cs/task
-                {:title "x" :spec :s :depends-on [:a]
+                {:title "x" :specs {:s []} :depends-on [:a]
                  :status :todo :born "t1/i1/f1"})))
 
-    (it "allows :satisfies criterion proof entries"
+    (it "allows :specs proof entries"
       (expect (s/valid? ::cs/task
-                {:title "x" :spec :s :status :done :born "t1/i1/f1"
-                 :satisfies [{:criterion :c1 :proof "t1/i2/f3"}]})))
+                {:title "x" :specs {:s [{:requirement :r1
+                                         :proof "t1/i2/f3"}]}
+                 :status :done :born "t1/i1/f1"})))
 
-    (it "rejects missing :spec (required ref)"
+    (it "rejects missing :specs (required proofs map)"
       (expect (not (s/valid? ::cs/task
                      {:title "x" :status :todo :born "t1/i1/f1"}))))
 
     (it "rejects :blocked status (dropped from enum)"
       (expect (not (s/valid? ::cs/task
-                     {:title "x" :spec :s :status :blocked :born "t1/i1/f1"}))))
+                     {:title "x" :specs {:s []} :status :blocked :born "t1/i1/f1"}))))
 
     (it "allows unknown keys (open schema)"
       (expect (s/valid? ::cs/task
-                {:title "x" :spec :s :status :done :born "t1/i1/f1"
+                {:title "x" :specs {:s []} :status :done :born "t1/i1/f1"
                  :extra "ok"})))
 
-    (it "rejects :journal entry missing :scope"
-      (expect (not (s/valid? ::cs/task
-                     {:title "x" :spec :s :status :done :born "t1/i1/f1"
-                      :journal [{:status :doing}]}))))))
+    (it "has no :journal field — status history lives in trailer"
+      (expect (s/valid? ::cs/task
+                {:title "x" :specs {:s []} :status :done :born "t1/i1/f1"})))))
 
 (defdescribe spec-test
-  (describe "::spec — {:title :criteria :status :born}"
+  (describe "::spec — {:title :requirements :status :born}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/spec)))
 
     (it "minimal valid"
       (expect (s/valid? ::cs/spec
                 {:title "x"
-                 :criteria [{:id :c1
-                             :criterion "criterion"}]
+                 :requirements [{:id :r1
+                                 :title "requirement"}]
                  :status :draft
                  :born "t1/i1/f1"})))
 
-    (it "allows criterion facts"
+    (it "allows requirement facts and validator-fn"
       (expect (s/valid? ::cs/spec
                 {:title "x"
-                 :criteria [{:id :c1
-                             :criterion "criterion"
-                             :facts [:f1]}]
+                 :requirements [{:id :r1
+                                 :title "requirement"
+                                 :facts [:f1]
+                                 :validator-fn "(fn [{:keys [result]}] (:ok? result))"}]
                  :status :doing
                  :born "t1/i1/f1"})))
 
-    (it "rejects empty :criteria"
+    (it "rejects empty :requirements"
       (expect (not (s/valid? ::cs/spec
-                     {:title "x" :criteria []
+                     {:title "x" :requirements []
                       :status :draft :born "t1/i1/f1"}))))
 
     (it "rejects bad :status value"
       (expect (not (s/valid? ::cs/spec
                      {:title "x"
-                      :criteria [{:id :c1 :criterion "c"}]
+                      :requirements [{:id :r1 :title "r"}]
                       :status :wip :born "t1/i1/f1"}))))
 
     (it "allows unknown keys (open schema)"
       (expect (s/valid? ::cs/spec
                 {:title "x"
-                 :criteria [{:id :c1 :criterion "c"}]
+                 :requirements [{:id :r1 :title "r"}]
                  :status :draft :born "t1/i1/f1"
                  :extra "ok"})))))
 
@@ -229,8 +230,14 @@
     (it "rejects missing :born"
       (expect (not (s/valid? ::cs/symbol-info {:arglists '(([x]))}))))
 
-    (it "allows nil :doc"
-      (expect (s/valid? ::cs/symbol-info {:doc nil :born "t1/i1/f1"})))))
+    (it "omits :doc when no docstring (engine never emits :doc nil)"
+      (expect (s/valid? ::cs/symbol-info {:born "t1/i1/f1"})))
+
+    (it "rejects :doc nil — :doc is a non-nil string or omitted entirely"
+      (expect (not (s/valid? ::cs/symbol-info {:doc nil :born "t1/i1/f1"}))))
+
+    (it "accepts non-blank :doc string"
+      (expect (s/valid? ::cs/symbol-info {:doc "what it does" :born "t1/i1/f1"})))))
 
 (defdescribe hint-test
   (describe "::hint — {:body :importance? :satisfy-with?}"
@@ -240,12 +247,37 @@
     (it "rejects bad :importance value"
       (expect (not (s/valid? ::cs/hint {:body "do X" :importance :ultra}))))))
 
+(defdescribe scope-cursor-test
+  (describe ":session/scope — engine-rendered cursor {:turn :iter :next-form}"
+    (it "round-trips for 25 samples"
+      (expect (round-trip-valid? :session/scope)))
+
+    (it "minimal valid"
+      (expect (s/valid? :session/scope {:turn 1 :iter 1 :next-form 1})))
+
+    (it "rejects :turn 0 (must be pos-int)"
+      (expect (not (s/valid? :session/scope {:turn 0 :iter 1 :next-form 1}))))
+
+    (it "rejects :iter 0"
+      (expect (not (s/valid? :session/scope {:turn 1 :iter 0 :next-form 1}))))
+
+    (it "rejects :next-form 0 (must be 1-based)"
+      (expect (not (s/valid? :session/scope {:turn 1 :iter 1 :next-form 0}))))
+
+    (it "rejects missing :next-form"
+      (expect (not (s/valid? :session/scope {:turn 1 :iter 1}))))
+
+    (it "allows unknown keys (open schema)"
+      (expect (s/valid? :session/scope
+                {:turn 1 :iter 1 :next-form 1 :extra "ok"})))))
+
 (defdescribe ctx-test
   (describe "::ctx — top-level"
     (it "minimal valid ctx"
       (expect (s/valid? ::cs/ctx
                 {:session/id        "01HXYZ"
                  :session/turn      1
+                 :session/scope     {:turn 1 :iter 1 :next-form 1}
                  :session/workspace {:git/branch "main" :git/trunk "main"
                                      :git/head "x" :git/dirty? false :git/stats {}}
                  :session/symbols   {}
@@ -255,9 +287,19 @@
                  :session/facts     {}
                  :session/trailer   []})))
 
+    (it "rejects missing :session/scope cursor (required for proof orientation)"
+      (expect (not (s/valid? ::cs/ctx
+                     {:session/id "x" :session/turn 1
+                      :session/workspace {:git/branch "main" :git/trunk "main"
+                                          :git/head "x" :git/dirty? false :git/stats {}}
+                      :session/symbols {} :session/hints {}
+                      :session/specs {} :session/tasks {} :session/facts {}
+                      :session/trailer []}))))
+
     (it "rejects missing required top-level key"
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 1
+                      :session/scope {:turn 1 :iter 1 :next-form 1}
                       :session/workspace {:git/branch "main" :git/trunk "main"
                                           :git/head "x" :git/dirty? false :git/stats {}}
                       :session/symbols {} :session/hints {}
@@ -266,6 +308,7 @@
     (it "rejects :session/turn 0 (must be pos-int)"
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 0
+                      :session/scope {:turn 1 :iter 1 :next-form 1}
                       :session/workspace {:git/branch "main" :git/trunk "main"
                                           :git/head "x" :git/dirty? false :git/stats {}}
                       :session/symbols {} :session/hints {}
@@ -276,26 +319,30 @@
       (expect (s/valid? ::cs/ctx
                 {:session/id        "01HXYZ"
                  :session/turn      7
+                 :session/scope     {:turn 7 :iter 3 :next-form 1}
                  :session/workspace {:git/branch "feat/x" :git/trunk "main"
                                      :git/head "abc1234" :git/dirty? true
                                      :git/stats {"src/a.clj" {:added 5 :removed 2}}}
-                 :session/symbols   {}
+                 :session/symbols
+                 {'auth-check {:arglists '(([tok])) :doc "literal-compare check"
+                               :born "t5/i1/f1"}
+                  'emit-event {:arglists '(([{:keys [level msg]}]))
+                               :born "t4/i1/f1"}}
                  :session/hints     {}
                  :session/specs
                  {:auth {:title "switch auth to bcrypt"
-                         :criteria [{:id :bcrypt-check
-                                     :criterion "check/1 uses bcrypt"
-                                     :facts [:auth-fact]}]
+                         :requirements [{:id :bcrypt-check
+                                         :title "check/1 uses bcrypt"
+                                         :facts [:auth-fact]
+                                         :validator-fn "(fn [{:keys [result]}] (:ok? result))"}]
                          :status :doing
                          :born "t5/i1/f1"}}
                  :session/tasks
                  {:add-dep {:title "add bcrypt"
-                            :spec :auth :depends-on []
+                            :specs {:auth [{:requirement :bcrypt-check
+                                            :proof "t5/i2/f1"}]}
+                            :depends-on []
                             :status :done
-                            :satisfies [{:criterion :bcrypt-check
-                                         :proof "t5/i2/f1"}]
-                            :journal [{:status :doing :scope "t5/i1/f2"}
-                                      {:status :done :scope "t5/i2/f2"}]
                             :born "t5/i1/f2"}}
                  :session/facts
                  {:auth-fact {:content "auth.clj uses literal compare" :born "t3/i2/f1"}}

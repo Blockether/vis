@@ -257,8 +257,7 @@
                 (get-in @state/app-db [:settings :openai-codex-verbosity])))
       (expect (= :vis-light
                 (get-in @state/app-db [:settings :theme-name])))
-      (expect (true?
-                (get-in @state/app-db [:settings :differentiate-turns])))
+      (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
       (expect (true?
                 (get-in @state/app-db [:settings :mouse-selection-copy])))
       (expect (false?

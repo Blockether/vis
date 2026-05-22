@@ -479,28 +479,18 @@
         (expect (zero? (virtual/height-cache-size)))))))
 
 (defdescribe turn-separator-test
-  (it "marks a You bubble after a Vis bubble and reserves a separator row"
+  (it "ignores legacy turn-separator settings and reserves no blank row"
     (let [msgs [(user-msg "first")
                 (plain-assistant-msg "answer")
                 (user-msg "next")]
-          {:keys [visible total-h]} (virtual/layout msgs bubble-w
-                                      (assoc settings :differentiate-turns true)
-                                      nil 100 {})
-          projected (mapv :projected visible)
-          marked    (nth projected 2)
-          unmarked-total (:total-h (virtual/layout msgs bubble-w
-                                     (assoc settings :differentiate-turns false)
-                                     nil 100 {}))]
-      (expect (true? (:turn-separator? marked)))
-      (expect (nil? (:turn-separator? (first projected))))
-      (expect (= 1 (- total-h unmarked-total)))))
-
-  (it "does not mark turn separators when disabled"
-    (let [msgs [(plain-assistant-msg "answer") (user-msg "next")]
-          {:keys [visible]} (virtual/layout msgs bubble-w
-                              (assoc settings :differentiate-turns false)
-                              nil 100 {})]
-      (expect (not-any? #(contains? (:projected %) :turn-separator?) visible)))))
+          marked-layout   (virtual/layout msgs bubble-w
+                            (assoc settings :differentiate-turns true)
+                            nil 100 {})
+          unmarked-layout (virtual/layout msgs bubble-w
+                            (assoc settings :differentiate-turns false)
+                            nil 100 {})]
+      (expect (not-any? #(contains? (:projected %) :turn-separator?) (:visible marked-layout)))
+      (expect (= (:total-h unmarked-layout) (:total-h marked-layout))))))
 
 (defdescribe project-message-test
   (describe "user messages strip timestamps and render markdown"

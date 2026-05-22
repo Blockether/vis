@@ -85,29 +85,29 @@ Three model-managed memo subtrees + engine views + trailer:
  :session/turn    N
 
  ;; ── ENGINE-RENDERED VIEWS ──
+ :session/scope      {:turn N :iter M :next-form K}    ; current cursor; engine-stamped each iter
  :session/workspace  {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
- :session/symbols    {sym {:arglists :doc :born}}
+ :session/symbols    {sym {:arglists? :doc? :born}}   ; :doc omitted when no docstring; never :doc nil
  :session/hints      {hint-id {:body :importance :satisfy-with}}
 
  ;; ── MODEL-MANAGED MEMOS ──
  :session/specs
-   {<kw> {:title       string                        ; required
-          :criteria    [{:id keyword
-                         :criterion string
-                         :facts [<kw-ref>]}]        ; optional refs to :session/facts
-          :status      :draft | :doing | :done | :cancelled
-          :born        "tN/iN/fK"                    ; required, engine-stamped
-          :done-born   "tN/iN/fK"}}                  ; engine-stamps on terminal status
+   {<kw> {:title        string                       ; required
+          :requirements [{:id keyword
+                          :title string
+                          :facts [<kw-ref>]           ; optional refs to :session/facts
+                          :validator-fn string}]      ; optional SCI fn source (bounded sandbox)
+          :status       :draft | :doing | :done | :cancelled
+          :born         "tN/iN/fK"                  ; required, engine-stamped
+          :done-born    "tN/iN/fK"}}                ; engine-stamps on terminal status
 
  :session/tasks
    {<kw> {:title       string                        ; required
-          :spec        <kw-ref>                      ; required, ONE spec served
+          :specs       {<spec-kw> [{:requirement keyword
+                                    :proof "tN/iN/fK"}]} ; proofs grouped by spec
           :depends-on  [<kw-ref>]                    ; optional, prerequisite tasks
-          :satisfies   [{:criterion keyword
-                         :proof "tN/iN/fK"}]     ; criteria this task proves
           :status      :todo | :doing | :done | :cancelled
-          :journal     [{:status :scope}]            ; engine-appended on status change
-          :born        "tN/iN/fK"}}                  ; required, engine-stamped
+          :born        "tN/iN/fK"}}                ; required, engine-stamped; status history lives in trailer
 
  :session/facts
    {<kw> {:content     string                        ; required
@@ -139,10 +139,10 @@ Six substantive subtrees.
 
 ```clojure
 ;; ─── MEMO MUTATION ───
-(spec-set!     :K {:title :criteria :status})
+(spec-set!     :K {:title :requirements :status})
 (spec-remove!  :K)
 
-(task-set!     :K {:title :spec :depends-on? :status})
+(task-set!     :K {:title :specs :depends-on? :status})
 (task-remove!  :K)
 
 (fact-set!     :K {:content})
@@ -218,10 +218,36 @@ Six substantive subtrees.
 
 Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engine errors.
 
+### Scope cursor + scope-form classification
+
+`:session/scope` is engine-rendered every iter, before the user message goes
+out. Shape: `{:turn N :iter M :next-form K}`. `:turn` matches `:session/turn`;
+`:iter` is the current iter inside the turn; `:next-form` is the 1-based index
+the model's first form in this iter's fence will receive. Subsequent forms in
+the same fence increment from there.
+
+Every `::scope-form` value the model passes (most importantly `:proof` on a
+task, but also any manually authored `:born` or trailer scope) is classified
+relative to the cursor by a pure fn:
+
+| class | condition | reaction |
+|---|---|---|
+| `:malformed` | fails `^t[1-9]\d*/i[1-9]\d*/f[1-9]\d*$` | HARD reject — value not written; warn anchored to the call |
+| `:future-turn` | `scope.turn > cursor.turn` | soft warn `;; ⚠ proof tX/iY/fZ is from a future turn` |
+| `:future-iter` | `scope.turn = cursor.turn` and `scope.iter > cursor.iter` | soft warn `;; ⚠ proof tX/iY/fZ is from a future iter` |
+| `:future-form` | same iter as cursor and `scope.form ≥ cursor.next-form` | soft warn — model referenced a form not yet executed in this fence |
+| `:unknown` | format ok and not future, but engine never executed this scope | soft warn `;; ⚠ proof tX/iY/fZ refers to no executed form` |
+| `:errored` | scope refers to a form whose eval threw (no `:result`) | soft warn `;; ⚠ proof tX/iY/fZ references an errored form` |
+| `:ok` | scope is past-or-current and points at a form with `:result` | silent |
+
+The only hard reject is `:malformed`. Everything else writes through to CTX
+and surfaces as a `;; ⚠` next to the offending entry on the next render. The
+engine never refuses content based on cross-tree consistency — that is what
+render warnings are for.
+
 ### Memo mutation
 
 - `*-set!` new key → stamp `:born <current-form-scope>`; existing → merge partials.
-- `task-set!` with `:status` change → append `{:status :scope}` to `:journal`.
 - `spec-set!` with `:status :done | :cancelled` → stamp `:done-born`.
 - `*-remove!` non-existent key → silent no-op.
 
@@ -229,12 +255,13 @@ Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engin
 
 | call | required field | hint |
 |---|---|---|
-| `spec-set!` | `:criteria` | non-empty vec of criteria |
-| `task-set!` | `:spec` | refs an existing key in `:session/specs` |
-| `task-set!` with `:status :done` | `:satisfies` | criteria this task satisfies, with proof scopes |
+| `spec-set!` | `:requirements` | non-empty vec of requirements |
+| `task-set!` | `:specs` | map from spec key to proof entries |
+| `task-set!` with `:status :done` | `:specs` proofs | requirement proofs grouped by spec |
 | `fact-set!` | `:content` | non-empty string |
-| `satisfy-hint!` | evidence vec | non-empty vec of scopes |
-| any ref (`:criteria[].facts`, `:spec`, `:depends-on`, `:satisfies[].criterion`) | target key/id must exist | soft warn on dangling |
+| `satisfy-hint!` | proof scopes vec | non-empty vec of scopes |
+| any ref (`:requirements[].facts`, `:specs` keys, `:depends-on`, proof `:requirement`) | target key/id must exist | soft warn on dangling |
+| any `::scope-form` arg (`:proof`, manual `:born`, trailer scopes) | classify vs `:session/scope`: `:ok` `:unknown` `:errored` `:future-form` `:future-iter` `:future-turn`; only `:ok` is silent |
 
 Warnings appear as `;; ⚠ …` annotations in the next CTX render.
 
@@ -245,7 +272,6 @@ Spec schemas are open: they define what must/should be present. They do not reje
 | trigger | field |
 |---|---|
 | any `*-set!` on a new key | `:born` |
-| `task-set!` that changes `:status` | append to `:journal` |
 | `spec-set!` `:status :done`/`:cancelled` | `:done-born` |
 | `done {:trailer-summarize …}` creates summary entry | `:born` on the summary |
 
@@ -298,6 +324,7 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Engine emits spa
 ;; ctx
 {:session/id   "01HXYZ"
  :session/turn 7
+ :session/scope {:turn 7 :iter 3 :next-form 1}
 
  :session/workspace
    {:git/branch "feat/ctx-redesign" :git/trunk "main" :git/head "abc1234" :git/dirty? true
@@ -306,37 +333,35 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Engine emits spa
 
  :session/symbols
    {auth-check {:arglists ([tok]) :doc "literal-compare check" :born "t5/i1/f1"}
-    emit-event {:arglists ([{:keys [level msg]}]) :born "t4/i1/f1"}}
+    emit-event {:arglists ([{:keys [level msg]}]) :born "t4/i1/f1"}} ; no :doc key — never :doc nil
 
  :session/hints {}
 
  :session/specs
    {:auth-bcrypt
-     {:title       "switch auth/check to bcrypt"
-      :criteria    [{:id :bcrypt-check
-                     :criterion "check/1 calls bcrypt/check"
-                     :facts [:auth-literal-compare :no-bcrypt-dep]}
-                    {:id :wrong-password
-                     :criterion "wrong password path is covered"}]
-      :status      :doing
-      :born        "t5/i1/f1"}}
+     {:title        "switch auth/check to bcrypt"
+      :requirements [{:id :bcrypt-check
+                      :title "check/1 calls bcrypt/check"
+                      :facts [:auth-literal-compare :no-bcrypt-dep]
+                      :validator-fn "(fn [{:keys [result]}] (:ok? result))"}
+                     {:id :wrong-password
+                      :title "wrong password path is covered"}]
+      :status       :doing
+      :born         "t5/i1/f1"}}
 
  :session/tasks
    {:add-bcrypt-dep
      {:title       "add bcrypt to deps.edn"
-      :spec        :auth-bcrypt
+      :specs       {:auth-bcrypt [{:requirement :bcrypt-check
+                                   :proof "t5/i2/f1"}]}
       :depends-on  []
       :status      :done
-      :satisfies   [{:criterion :bcrypt-check :proof "t5/i2/f1"}]
-      :journal     [{:status :doing :scope "t5/i1/f2"}
-                    {:status :done  :scope "t5/i2/f2"}]
       :born        "t5/i1/f2"}
     :replace-check
      {:title       "replace literal compare with bcrypt/check"
-      :spec        :auth-bcrypt
+      :specs       {:auth-bcrypt []}
       :depends-on  [:add-bcrypt-dep]
       :status      :doing
-      :journal     [{:status :doing :scope "t6/i1/f1"}]
       :born        "t5/i1/f3"}}
 
  :session/facts
@@ -536,25 +561,26 @@ USER > Działaj — spec + plan.
 ```clojure
 MODEL >
 (spec-set! :logging-edn
-           {:title       "src/logging.clj emits structured EDN events"
-            :criteria    [{:id :emit-event-shape
-                           :criterion "emit-event takes a map and prints (pr-str …)"
-                           :facts [:logging-current :no-event-fn]}
-                          {:id :log-delegates
-                           :criterion "log/2 delegates to emit-event"}
-                          {:id :no-format
-                           :criterion "no str/format remains in src/logging.clj"}]
-            :status      :draft})
+           {:title        "src/logging.clj emits structured EDN events"
+            :requirements [{:id :emit-event-shape
+                            :title "emit-event takes a map and prints (pr-str …)"
+                            :facts [:logging-current :no-event-fn]
+                            :validator-fn "(fn [{:keys [result]}] (map? result))"}
+                           {:id :log-delegates
+                            :title "log/2 delegates to emit-event"}
+                           {:id :no-format
+                            :title "no str/format remains in src/logging.clj"}]
+            :status       :draft})
 
 (task-set! :introduce-emit-event
            {:title       "introduce emit-event fn"
-            :spec        :logging-edn
+            :specs       {:logging-edn []}
             :depends-on  []
             :status      :todo})
 
 (task-set! :rewire-log
            {:title       "rewire log/2 through emit-event"
-            :spec        :logging-edn
+            :specs       {:logging-edn []}
             :depends-on  [:introduce-emit-event]
             :status      :todo})
 
@@ -571,7 +597,7 @@ USER > Zaczynaj.
 ```clojure
 MODEL >
 (task-set! :introduce-emit-event {:status :doing})
-;; engine appends {:status :doing :scope "t3/i1/f1"} to :journal
+;; status transition is captured in :session/trailer mutation pin for this iter
 
 (defn emit-event [{:keys [level msg] :as ev}]
   (println (pr-str ev)))
@@ -584,10 +610,10 @@ MODEL >
 
 (task-set! :introduce-emit-event
            {:status :done
-            :satisfies [{:criterion :emit-event-shape
-                         :proof "t3/i1/f3"}]})
+            :specs {:logging-edn [{:requirement :emit-event-shape
+                                   :proof "t3/i1/f3"}]}})
 
-(done {:answer       "Task `:introduce-emit-event` done. Criterion proof filled on task."
+(done {:answer       "Task `:introduce-emit-event` done. Requirement proof filled on task."
        :trailer-drop ["t1/i1"]})            ; the original v/cat now stale
 => :done
 ```
@@ -601,12 +627,10 @@ MODEL >
 :session/tasks
   {:introduce-emit-event
      {:title       "introduce emit-event fn"
-      :spec        :logging-edn
+      :specs       {:logging-edn [{:requirement :emit-event-shape
+                                   :proof "t3/i1/f3"}]}
       :depends-on  []
       :status      :done
-      :satisfies   [{:criterion :emit-event-shape :proof "t3/i1/f3"}]
-      :journal     [{:status :doing :scope "t3/i1/f1"}
-                    {:status :done  :scope "t3/i1/f4"}]
       :born        "t2/i1/f3"}
    :rewire-log {…}}              ; unchanged; still :todo
 ```
@@ -642,9 +666,10 @@ Deterministic `;;` annotations next to entries:
 | trailer entry is summary shape | `;; summarized in t<N>` (from `:born`) |
 | `:result` value in pinned form exceeds threshold (4kB) | `;; ⚠ result is <size>; consider summarizing` |
 | `:session/trailer` count exceeds threshold | `;; :session/trailer (32 entries; 5 summaries)` |
-| missing required field on memo | `;; ⚠ spec :K missing :criteria` |
-| done spec with unsatisfied criterion | `;; ⚠ spec :K done but criterion :C has no satisfying task` |
-| dangling cross-subtree ref | `;; ⚠ task :K :spec refs nonexistent spec :foo` |
+| missing required field on memo | `;; ⚠ spec :K missing :requirements` |
+| done spec with unsatisfied requirement | `;; ⚠ spec :K done but req :R has no valid task proof` |
+| dangling cross-subtree ref | `;; ⚠ task :K :specs refs nonexistent spec :foo` |
+| proof scope classified non-`:ok` | `;; ⚠ task :K proof tN/iM/fK is :future-iter relative to :session/scope` |
 
 ---
 
@@ -719,7 +744,7 @@ Deterministic `;;` annotations next to entries:
 
 ### Prompt changes
 
-`CORE_SYSTEM_PROMPT` now uses the task-satisfies-criteria layout: specs have `:criteria`; tasks have `:spec`, `:depends-on`, and `:satisfies [{:criterion :proof}]`. No task `:evidence`, no spec proof slots, no `:session/plan`, no fact tags or generic connections.
+`CORE_SYSTEM_PROMPT` now uses the requirements/proofs layout: specs have `:requirements [{:id :title :facts? :validator-fn?}]`; tasks have `:specs {spec-id [{:requirement :proof}]}` plus `:depends-on`. Proofs live on tasks. Specs contain requirements only. Facts link through requirement `:facts` only. `:session/scope {:turn :iter :next-form}` is added so the model can pick proof scopes deterministically. Task `:journal` is dropped — status history is reconstructable from `:session/trailer` mutation pins. `:doc` on symbols is omitted (never `:doc nil`).
 
 ### Code rename (legacy → form)
 
@@ -737,11 +762,13 @@ Done in commit `776ca1ce`. Scope URL format reshape (`turn/<prefix>/iteration/N/
  :session/symbols    {sym {:arglists :doc :born}}
  :session/hints      {hint-id {:body :importance :satisfy-with}}
 
+ :session/scope     {:turn :iter :next-form}
+
  :session/specs
-   {keyword {:title :criteria :status :born :done-born?}}
+   {keyword {:title :requirements :status :born :done-born?}}
 
  :session/tasks
-   {keyword {:title :spec :depends-on :satisfies :status :journal :born}}
+   {keyword {:title :specs :depends-on :status :born}}
 
  :session/facts
    {keyword {:content :born}}

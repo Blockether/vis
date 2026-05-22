@@ -125,7 +125,7 @@
   (hash
     (select-keys settings
       [:show-thinking :show-iterations :show-silent :show-iteration-headers
-       :differentiate-turns :preview/default-lines
+       :preview/default-lines
        :message-meta
        :progress/live-iteration-limit])))
 
@@ -241,24 +241,13 @@
       :else
       (long (+ chrome-rows (div-ceil (char-count text) content-w))))))
 
-(defn- turn-separator?
-  [messages settings ^long idx]
-  (and (true? (get settings :differentiate-turns true))
-    (pos? idx)
-    (= :user (:role (nth messages idx)))
-    (= :assistant (:role (nth messages (dec idx))))))
-
 (defn- estimated-height-with-turn-separator
-  [messages settings bubble-w idx message]
-  (let [bubble-w (long bubble-w)
-        sep-h    (if (turn-separator? messages settings (long idx)) 1 0)]
-    (+ sep-h (estimated-height message bubble-w))))
+  [_messages _settings bubble-w _idx message]
+  (estimated-height message (long bubble-w)))
 
 (defn- with-turn-separator
-  [message messages settings ^long idx]
-  (if (turn-separator? messages settings idx)
-    (assoc message :turn-separator? true)
-    (dissoc message :turn-separator?)))
+  [message _messages _settings _idx]
+  (dissoc message :turn-separator?))
 
 ;;; ── Per-message projection ─────────────────────────────────────────────────
 

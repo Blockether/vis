@@ -1559,7 +1559,7 @@
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
   [^TextGraphics g
-   {:keys [role text timestamp status turn-separator?] :as message}
+   {:keys [role text timestamp status] :as message}
    start-row left max-w
    & [{:keys [viewport-top viewport-h]
        :or   {viewport-top 0 viewport-h 0}}]]
@@ -1571,11 +1571,10 @@
         ;; meta line, dim the role label too. Skips markdown so a
         ;; bare text like \"Cancelled by user.\" reads naturally.
         cancelled? (= :cancelled status)
-        ;; Optional visual turn divider between a completed Vis answer and
-        ;; the next You prompt. `virtual/with-turn-separator` marks only
-        ;; user bubbles after assistant bubbles, so this stays outside
-        ;; assistant reasoning/answer zones.
-        top-sep-h (if turn-separator? 1 0)
+        ;; Legacy turn separators are disabled. Keep top-sep-h in
+        ;; layout math so old callers stay shape-compatible without
+        ;; reserving any spacer row.
+        top-sep-h 0
         label     (cond
                     queued? "Queued"
                     user?   "You"
@@ -1691,8 +1690,8 @@
     ;; hugs the first character and reads as a single-row strip).
     ;; User bubbles also keep one breathing row BELOW the typed text.
     ;; Mirror this in `bubble-height*` so the math stays in sync.
-    (let [top-pad    (if user? 1 0)
-          bottom-pad (if user? 1 0)
+    (let [top-pad    0
+          bottom-pad 0
           btop       (+ start-row top-sep-h 1 top-pad)]
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg - the only fills come from
@@ -1716,8 +1715,8 @@
       ;; (`cancelled-fg`) + dimmed role label + plain status footer
       ;; carry the "aborted" signal on bare terminal-bg.
       ;;
-      ;; User messages: fill the breathing row above content, the
-      ;; content rows, AND one breathing row below the content.
+      ;; User messages: fill content rows only; the single message gap
+      ;; remains outside the fill.
       (when (and user? (not queued?))
         (p/set-bg! g bg-color)
         (p/fill-rect! g bx (- btop top-pad) bubble-w (+ (max 1 bubble-h) top-pad bottom-pad)))
@@ -2327,9 +2326,9 @@
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
-  [{:keys [text role prewrapped-lines status turn-separator?] :as message} max-w]
+  [{:keys [text role prewrapped-lines status] :as message} max-w]
   (let [bubble-w   max-w
-        top-sep-h  (if turn-separator? 1 0)
+        top-sep-h  0
         h-pad      2
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
         ;; Same contract: virtual.clj projection populates
@@ -2341,8 +2340,8 @@
         raw-lines  (or prewrapped-lines
                      (wrap-text text content-w))
         lines      (clipped-lines raw-lines content-w)
-        top-pad    (if (= role :user) 1 0)
-        bottom-pad (if (= role :user) 1 0)
+        top-pad    0
+        bottom-pad 0
         cancelled? (= :cancelled status)
         meta-str   (when (and (not= role :user) (not cancelled?))
                      (assistant-meta-line message))
@@ -3077,6 +3076,9 @@
                   hdr-pad           (max 0 (- fill-w (count hdr-label) 1))
                   hdr-line          (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
                   err-message       (or (:message error) (str (:type error)) "unknown error")
+                  err-headline      (if (> repeat-count 1)
+                                      (str "ERROR x " repeat-count ": " err-message)
+                                      (vis/format-error err-message))
                   raw               (some-> (get-in error [:data :raw-data]) str str/trim)
                   recv              (get-in error [:data :received-type])
                   body              (some-> (:body data) str str/trim)
@@ -3095,7 +3097,7 @@
                                                                                (str (subs body 0 1200) "...")
                                                                                body)))))))
                   err-message-rows  (mapv #(line-entry (str err-result-marker %))
-                                      (wrap-text (vis/format-error err-message) fill-w))
+                                      (wrap-text err-headline fill-w))
                   raw-rows          (when (and raw (not (str/blank? raw)))
                                       (let [hdr        (str "provider returned"
                                                          (when recv (str " (" recv ")"))
@@ -3248,13 +3250,26 @@
                      code+result-lines
                      [(line-entry (str iteration-pad-marker ""))])))))
         body (or grouped [])
-        trailing-errors (error-lines)]
+        trailing-errors (error-lines)
+        blank-entry? (fn [{:keys [line]}]
+                       (let [line (or line "")
+                             body (if (pos? (count line)) (subs line 1) line)]
+                         (str/blank? body)))
+        trim-leading-blanks (fn [entries]
+                              (vec (drop-while blank-entry? entries)))
+        thinking-body (or (thinking-lines thinking) [])
+        direct-thinking-code? (and (seq thinking-body) (seq body) (empty? trailing-errors))
+        body (if direct-thinking-code?
+               (trim-leading-blanks body)
+               body)]
     ;; Layout: header (with optional ITERATION-N label) + recap lines
     ;; (which already include provider-fallback notices and any
     ;; provider-error recap) + collected thinking lines + any error
     ;; rows + body (per-form code/result pairs). Resume / live share
-    ;; the same flat layout.
-    (into (vec (concat header recap-lines (thinking-lines thinking) trailing-errors))
+    ;; the same flat layout. When reasoning is immediately followed by
+    ;; code, keep thinking bottom padding but trim duplicated code-side
+    ;; pad rows so TUI shows exactly one blank row on the boundary.
+    (into (vec (concat header recap-lines thinking-body trailing-errors))
       body)))
 
 (defn format-iteration-entry
