@@ -138,7 +138,8 @@
 ;; stamps :done-born when status enters a terminal value (:done / :cancelled)
 ;; and garbage-collects the entry from live CTX after a status-specific TTL
 ;; (see versioning + GC section in CTX_REDESIGN.md). Snapshots in
-;; session_state_history make every archived entry replayable.
+;; per-turn ctx snapshots on session_turn_state make every archived
+;; entry replayable through the soul/state chain.
 
 (s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
 (s/def :session.task/status     #{:todo :doing :done :cancelled})

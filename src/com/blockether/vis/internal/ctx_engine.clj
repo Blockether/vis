@@ -775,7 +775,7 @@
 (defn advance-turn
   "Bump :session/turn, reset :session/scope to {:turn next :iter 1 :next-form 1},
    then run gc-pass. Caller (engine integration layer) is responsible for
-   snapshotting CTX to session_state_history BEFORE calling this."
+   Nippy-snapshotting CTX to session_turn_state.ctx BEFORE calling this."
   [ctx]
   (let [next-turn (inc (or (:session/turn ctx) 0))]
     (-> ctx
@@ -1055,7 +1055,8 @@
 ;; =============================================================================
 ;;
 ;; `history` is a sorted map (or vec of [turn ctx] pairs) representing the
-;; per-turn snapshots from session_state_history. Engine code never persists
+;; per-turn snapshots loaded from session_turn_state.ctx by the
+;; integration layer (Nippy-decoded). Engine code never persists
 ;; here; it's the call site's job to load + pass the history map. These fns
 ;; project that data back to the model via the introspect-* surface.
 

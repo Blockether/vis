@@ -226,7 +226,8 @@ Six substantive subtrees.
    ↓
 3. Sort trailer by composite key (pins by :scope, summaries by :scope-start).
    ↓
-4. Persist whole CTX blob to session_state.ctx.
+4. Nippy-encode CTX, write to session_turn_state.ctx in the same
+     transaction that flips the turn-state status to 'done'.
 ```
 
 Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engine errors.
@@ -260,15 +261,29 @@ the entire enforcement channel: model reads `;; ⚠` annotations and decides.
 
 ### Versioning + GC
 
-Every `(done …)` writes the full CTX blob to a turn-keyed history table:
+CTX snapshots live INLINE on the existing soul/state chain. **NO new
+history table.** Two columns added to existing tables (V1 inline edits;
+Nippy BLOB, same convention as `session_turn_iteration.result`):
 
-```sql
-session_state_history (session_id, turn_n, ctx_json, ts,
-                       PRIMARY KEY (session_id, turn_n))
+```
+session_turn_state         + ctx    BLOB    -- Nippy CTX as of end of this turn version
+session_turn_iteration     + forms  BLOB    -- Nippy vec of per-form envelopes
+                                            --   {:scope :tag :src :result :error}
+                                            -- Replaces the legacy single-form result/error
+                                            -- columns which have been dropped.
 ```
 
-Live CTX = projection of the latest snapshot **minus** archived entries.
-History = every snapshot, forever.
+Live CTX = `ctx` on the latest `session_turn_state` for the latest
+`session_turn_soul` (join by max(position) for the soul, max(version) for
+the state).
+
+History = `SELECT ctx FROM session_turn_state JOIN session_turn_soul
+WHERE session_state_id = ? ORDER BY position`. Per-turn snapshots come for
+free from the soul/state chain.
+
+Forks copy the parent's latest ctx into the new state's turn-1 row,
+so branched timelines keep their pre-fork history intact via
+`parent_state_id`.
 
 Memo deletion is forbidden. `*-remove!` does not exist. To drop a thing the
 model flips its `:status`:
@@ -784,8 +799,8 @@ Deterministic `;;` annotations next to entries:
 
 #### Schema migrations (edit V1 inline per AGENTS.md)
 
-1. **`session_state.ctx TEXT NOT NULL DEFAULT '{}'`** — currently MISSING. New column for the CTX blob.
-2. **`session_turn_iteration.form_results TEXT`** — currently MISSING. JSON vec of per-form envelopes `[{:source :result :error} …]`. Required because the runtime captures per-form results that today have nowhere to persist. Without this, `(introspect-form "tN/iN/fK")` cannot return `:result` / `:error`.
+1. **`session_turn_state.ctx BLOB`** — currently MISSING. Per-turn CTX snapshot, Nippy-encoded (same convention as `definition_state.result`). Live CTX = `ctx` on the latest turn-state for the latest turn-soul. History walks the soul chain.
+2. **`session_turn_iteration.forms BLOB`** — currently MISSING. Nippy vec of per-form envelopes `[{:scope :tag :src :result :error} …]`. The model emits N forms per fence; each form gets its own scope + result + error. **The legacy `result BLOB` / `error BLOB` columns on this table have been dropped** — `forms` is the only place per-form payload lives. `(introspect-form "tN/iN/fK")` decodes the matching entry.
 
 #### Memo verbs
 

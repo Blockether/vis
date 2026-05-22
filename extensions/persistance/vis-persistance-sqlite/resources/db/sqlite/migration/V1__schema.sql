@@ -233,6 +233,18 @@ CREATE TABLE session_turn_state (
   prior_outcome                TEXT
                                CHECK (prior_outcome IS NULL OR
                                       prior_outcome IN ('complete', 'cancelled', 'error')),
+
+  -- Nippy-encoded CTX snapshot as of the END of this turn version.
+  -- Live CTX = ctx on the latest turn-state for the latest turn-soul
+  -- of a session_state. History = walk the soul chain and decode each
+  -- row's ctx in turn-position order. No parallel history table;
+  -- per-turn snapshots come for free.
+  -- NULL while the turn is still running; written by the engine's
+  -- (done ...) handler in the same transaction that flips status.
+  -- Forks: copy parent's latest ctx into the new state's turn-1 row
+  -- so branched timelines keep their pre-fork history.
+  ctx                          BLOB,
+
   created_at                   INTEGER NOT NULL,
 
   UNIQUE (session_turn_soul_id, version)
@@ -321,11 +333,25 @@ CREATE TABLE session_turn_iteration (
                                   ),
 
 
-  -- Single-form iteration payload. `result` and `error` are Nippy-encoded
-  -- Clojure values.
+  -- The verbatim fence body the model emitted this iter (the entire
+  -- ```clojure ... ``` block as one string). Forensics + transcript replay.
+  -- All per-form structure (scope, source, result, error, tag) lives in
+  -- `forms` below — there are NO `result` / `error` columns on this row.
+  -- The model emits N top-level forms per fence; the per-form envelope
+  -- in `forms` is the canonical shape.
   code                            TEXT NOT NULL,
-  result                          BLOB,
-  error                           BLOB,
+
+  -- Nippy-encoded vec of per-form envelopes captured during the iter:
+  --   [{:scope "tN/iM/fK"
+  --     :tag   :observation | :mutation
+  --     :src   <source string of one top-level form>
+  --     :result <any>                       -- present when the form returned
+  --     :error  {:message :data?}}          -- present when the form threw
+  --    ...]
+  -- `introspect-form` decodes this vec; validator-fn evaluation reads
+  -- `:result` from the matching entry. NULL or empty vec on iters that
+  -- contained only `(done ...)`.
+  forms                           BLOB,
   -- SCI sandbox eval wall time for this iteration's block. The LLM
   -- call time lives on llm_full_duration_ms; the turn total wall time
   -- lives on session_turn_state.duration_ms. Per-iteration wall time
