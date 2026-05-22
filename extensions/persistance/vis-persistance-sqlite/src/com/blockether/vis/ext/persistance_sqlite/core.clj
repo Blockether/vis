@@ -999,6 +999,54 @@
         rows))))
 
 ;; =============================================================================
+;; SCI var serialization helpers
+;;
+;; These live above any code that calls them (db-update-session-turn! snapshots
+;; CTX through `freeze-safe`; the iteration writer does the same for per-form
+;; results). Keep this block here — do not push it back down past consumers, or
+;; you'll be tempted to `(declare freeze-safe)` again.
+;; =============================================================================
+
+(defn- runtime-object?
+  "True when `v` is a runtime-only object (function, SCI var, SCI internal)
+   that cannot be meaningfully serialized as data. These get a :vis/ref marker
+   so the system knows to re-eval from the `expression` column to reconstruct them."
+  [v]
+  (or (fn? v)
+    (instance? clojure.lang.Var v)
+    (instance? java.util.concurrent.Future v)
+    (and (some? v) (str/starts-with? (.getName (class v)) "sci."))))
+
+(defn- freeze-safe
+  "Prepare `v` for nippy serialization.
+
+   Rules:
+   - Realized collections (vectors, sets, maps, lists) -> walk recursively, freeze.
+   - Lazy seqs -> `{:vis/ref :expr}`. A lazy seq IS a computation. Its durable
+     form is the source code that produces it, not a materialized snapshot.
+     Re-eval from :expr to reconstruct.
+   - Functions, SCI vars -> `{:vis/ref :expr}`. Same reason.
+   - Plain scalars (strings, numbers, keywords, etc.) -> pass through."
+  ([v] (freeze-safe v 8))
+  ([v depth]
+   (cond
+     (nil? v)                         nil
+     (zero? depth)                    {:vis/ref :depth-exceeded}
+     (runtime-object? v)              {:vis/ref :expr}
+     (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
+     (map? v)                         (persistent!
+                                        (reduce-kv
+                                          (fn [m k val]
+                                            (assoc! m k (freeze-safe val (dec depth))))
+                                          (transient {})
+                                          v))
+     (vector? v)                      (mapv #(freeze-safe % (dec depth)) v)
+     (set? v)                         (into #{} (map #(freeze-safe % (dec depth))) v)
+     (list? v)                        (doall (map #(freeze-safe % (dec depth)) v))
+     (seq? v)                         {:vis/ref :expr}
+     :else                            v)))
+
+;; =============================================================================
 ;; Turn - session_turn_soul + session_turn_state
 ;; =============================================================================
 
@@ -1087,7 +1135,7 @@
    it without scanning every iteration. The column is bounded by a
    CHECK constraint at the schema level."
   [db-info session-turn-id {:keys [answer-markdown iteration-count duration-ms
-                                   status tokens cost prior-outcome]}]
+                                   status tokens cost prior-outcome ctx]}]
   (when (and (ds db-info) session-turn-id)
     (sqlite-write-tx! db-info
       (fn [tx-info]
@@ -1107,7 +1155,12 @@
                          (:model cost)    (assoc :llm_root_model (str (:model cost)))
                          (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
                          (some? answer-markdown) (assoc :answer_markdown answer-markdown)
-                         prior-outcome    (assoc :prior_outcome (name prior-outcome)))
+                         prior-outcome    (assoc :prior_outcome (name prior-outcome))
+                         ;; Nippy-encode the CTX snapshot as of end-of-turn.
+                         ;; Live CTX = this row's ctx on the latest turn-state
+                         ;; for the latest turn-soul; history = walking the
+                         ;; soul chain.
+                         (some? ctx)      (assoc :ctx (->blob (freeze-safe ctx))))
                :where  [:= :id (:id state)]})
             ;; Index the raw Markdown answer for FT5 search. `vis/search-text`
             ;; lifts the string through `markdown->ir` and walks the AST so
@@ -1116,49 +1169,6 @@
               (reindex-search! tx-info "session_turn_state" (:id state) "answer_text" answer-markdown))))))))
 
 ;; Extra workflow persistence removed.
-
-;; =============================================================================
-;; SCI var serialization helpers
-;; =============================================================================
-
-(defn- runtime-object?
-  "True when `v` is a runtime-only object (function, SCI var, SCI internal)
-   that cannot be meaningfully serialized as data. These get a :vis/ref marker
-   so the system knows to re-eval from the `expression` column to reconstruct them."
-  [v]
-  (or (fn? v)
-    (instance? clojure.lang.Var v)
-    (instance? java.util.concurrent.Future v)
-    (and (some? v) (str/starts-with? (.getName (class v)) "sci."))))
-
-(defn- freeze-safe
-  "Prepare `v` for nippy serialization.
-
-   Rules:
-   - Realized collections (vectors, sets, maps, lists) -> walk recursively, freeze.
-   - Lazy seqs -> `{:vis/ref :expr}`. A lazy seq IS a computation. Its durable
-     form is the source code that produces it, not a materialized snapshot.
-     Re-eval from :expr to reconstruct.
-   - Functions, SCI vars -> `{:vis/ref :expr}`. Same reason.
-   - Plain scalars (strings, numbers, keywords, etc.) -> pass through."
-  ([v] (freeze-safe v 8))
-  ([v depth]
-   (cond
-     (nil? v)                         nil
-     (zero? depth)                    {:vis/ref :depth-exceeded}
-     (runtime-object? v)              {:vis/ref :expr}
-     (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
-     (map? v)                         (persistent!
-                                        (reduce-kv
-                                          (fn [m k val]
-                                            (assoc! m k (freeze-safe val (dec depth))))
-                                          (transient {})
-                                          v))
-     (vector? v)                      (mapv #(freeze-safe % (dec depth)) v)
-     (set? v)                         (into #{} (map #(freeze-safe % (dec depth))) v)
-     (list? v)                        (doall (map #(freeze-safe % (dec depth)) v))
-     (seq? v)                         {:vis/ref :expr}
-     :else                            v)))
 
 ;; =============================================================================
 ;; Iteration - session_turn_iteration table
@@ -2155,6 +2165,32 @@
 ;; =============================================================================
 ;; Restore - read all vars in topological order for sandbox reconstruction
 ;; =============================================================================
+
+(defn db-load-latest-ctx
+  "Load the CTX snapshot (Nippy BLOB) from the latest session_turn_state
+   that has a non-NULL ctx column, scoped to this session_state. Returns
+   the decoded CTX map or nil when the session has no persisted CTX yet.
+
+   This is the resume path: on a new turn, the loop reads this back into
+   the ctx-atom so the model picks up where (done …) left off. The cursor
+   is intentionally NOT restored — it's iter-local and gets stamped fresh
+   by the renderer."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (let [state-ids (session-state-chain db-info session-id)]
+      (when (seq state-ids)
+        (when-let [row (first (query! db-info
+                                {:select [:qts.ctx]
+                                 :from   [[:session_turn_state :qts]]
+                                 :join   [[:session_turn_soul :qs]
+                                          [:= :qs.id :qts.session_turn_soul_id]]
+                                 :where  [:and
+                                          [:in :qs.session_state_id state-ids]
+                                          [:<> :qts.ctx nil]]
+                                 :order-by [[:qs.position :desc]
+                                            [:qts.version :desc]]
+                                 :limit  1}))]
+          (<-blob (:ctx row)))))))
 
 (defn db-restore-blocks
   "Returns all var definition_souls with their LATEST definition_state
