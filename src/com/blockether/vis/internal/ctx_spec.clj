@@ -11,8 +11,9 @@
    Top-level entry point: `::ctx`.
 
    Subtrees:
-     `:session/specs`     formal requirements with acceptance criteria
-     `:session/tasks`     work items; each task serves exactly one spec
+     `:session/scope`     engine-rendered cursor {:turn :iter :next-form}
+     `:session/specs`     formal requirements with validator-backed requirements
+     `:session/tasks`     work items; each task carries proofs grouped by spec
      `:session/facts`     observations, decisions, rules, behavior
      `:session/workspace` engine-rendered git workspace state
      `:session/symbols`   engine-rendered live SCI symbol directory
@@ -25,15 +26,22 @@
      `::scope-turn`  e.g. \"t3\"
 
    Edge inventory across subtrees (validated as soft warnings, not by spec):
-     spec criterion → facts  via `:session.criterion/facts` (vec of `::entry-key`)
-     task           → spec   via `:session.task/spec` (single `::entry-key`)
-     task           → tasks  via `:session.task/depends-on` (vec of `::entry-key`)
-     task           → spec criteria via `:session.task/satisfies`
-     task criterion → scope  via `:session.task.satisfies/proof`
+     spec requirement → facts via `:session.requirement/facts` (vec of `::entry-key`)
+     requirement      → validator source via `:session.requirement/validator-fn`
+     task             → specs via `:session.task/specs` map keys
+     task             → tasks via `:session.task/depends-on` (vec of `::entry-key`)
+     task proof       → requirement via `:session.task.proof/requirement`
+     task proof       → scope via `:session.task.proof/proof`
 
-   Proof lives on tasks. Specs define criteria; tasks fill proofs for criteria
-   they satisfy. Facts are connected through criteria, not generic
-   fact-to-anything edges."
+   Proofs live on tasks, grouped by spec. Specs define requirements and
+   optional validators. Facts are connected through requirements, not generic
+   fact-to-anything edges.
+
+   Scope cursor (`:session/scope`) is required so the model can pick proof
+   scopes deterministically. Engine stamps it before render. User-supplied
+   `::scope-form` values that resolve to the future relative to the cursor
+   are soft-warned by the engine — not refused, since the model may legally
+   reference scopes later in the same fence."
   (:require [clojure.spec.alpha :as s]
             [clojure.spec.gen.alpha :as gen]))
 
@@ -94,59 +102,51 @@
 ;; Task — work items
 ;; =============================================================================
 
-(s/def :session.task/spec       ::entry-key)
 (s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
 (s/def :session.task/status     #{:todo :doing :done :cancelled})
 
-(s/def :session.task.satisfies/criterion keyword?)
-(s/def :session.task.satisfies/proof     ::scope-form)
-(s/def :session.task/satisfies-entry
-  (s/keys :req-un [:session.task.satisfies/criterion
-                   :session.task.satisfies/proof]))
-(s/def :session.task/satisfies
-  (s/coll-of :session.task/satisfies-entry :kind vector?))
+(s/def :session.task.proof/requirement keyword?)
+(s/def :session.task.proof/proof       ::scope-form)
+(s/def :session.task/proof
+  (s/keys :req-un [:session.task.proof/requirement
+                   :session.task.proof/proof]))
 
-(s/def :session.task.journal-entry/scope  ::scope-form)
-(s/def :session.task.journal-entry/status :session.task/status)
-
-(s/def :session.task/journal-entry
-  (s/keys :req-un [:session.task.journal-entry/status
-                   :session.task.journal-entry/scope]))
-
-(s/def :session.task/journal
-  (s/coll-of :session.task/journal-entry :kind vector?))
+(s/def :session.task/specs
+  (s/map-of ::entry-key (s/coll-of :session.task/proof :kind vector?)))
 
 (s/def ::task
   (s/keys :req-un [::title
-                   :session.task/spec
+                   :session.task/specs
                    :session.task/status
                    ::born]
-    :opt-un [:session.task/depends-on
-             :session.task/satisfies
-             :session.task/journal]))
+    :opt-un [:session.task/depends-on]))
 
 ;; Soft rules (engine-side validators; not enforced by spec):
-;;   - :spec must point to an existing key in :session/specs
+;;   - :specs keys must point to existing keys in :session/specs
 ;;   - :depends-on entries must point to existing keys in :session/tasks
-;;   - :satisfies criterion ids must exist on this task's spec
-;;   - :status :done should have non-empty :satisfies unless task is only a prereq
+;;   - proof :requirement ids must exist on the referenced spec
+;;   - when requirement has :validator-fn, proof scope result must satisfy it
+;;   - status transitions are reconstructable from :session/trailer mutation pins;
+;;     no per-task journal is stored
 
 ;; =============================================================================
 ;; Spec — formal requirements
 ;; =============================================================================
 
-(s/def :session.criterion/id        keyword?)
-(s/def :session.criterion/criterion string?)
-(s/def :session.criterion/facts
+(s/def :session.requirement/id           keyword?)
+(s/def :session.requirement/title        string?)
+(s/def :session.requirement/validator-fn string?)
+(s/def :session.requirement/facts
   (s/coll-of ::entry-key :kind vector?))
 
-(s/def :session.spec/criterion
-  (s/keys :req-un [:session.criterion/id
-                   :session.criterion/criterion]
-    :opt-un [:session.criterion/facts]))
+(s/def :session.spec/requirement
+  (s/keys :req-un [:session.requirement/id
+                   :session.requirement/title]
+    :opt-un [:session.requirement/facts
+             :session.requirement/validator-fn]))
 
-(s/def :session.spec/criteria
-  (s/coll-of :session.spec/criterion :kind vector? :min-count 1))
+(s/def :session.spec/requirements
+  (s/coll-of :session.spec/requirement :kind vector? :min-count 1))
 
 (s/def :session.spec/status
   #{:draft :doing :done :cancelled})
@@ -155,15 +155,17 @@
 
 (s/def ::spec
   (s/keys :req-un [::title
-                   :session.spec/criteria
+                   :session.spec/requirements
                    :session.spec/status
                    ::born]
     :opt-un [:session.spec/done-born]))
 
 ;; Soft rules:
 ;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
-;;   - criterion :facts entries must point to existing keys in :session/facts
-;;   - :status :done requires every criterion to be satisfied by at least one task
+;;   - requirement :facts entries must point to existing keys in :session/facts
+;;   - :status :done requires every requirement to have at least one valid task proof
+;;   - :validator-fn is an SCI fn source string evaluated by the engine in a
+;;     bounded sandbox; parse / runtime failures surface as render warnings
 
 ;; =============================================================================
 ;; Trailer entries — verbatim pin OR summary
@@ -242,9 +244,11 @@
 ;; =============================================================================
 ;; Symbol directory — engine-rendered from SCI introspection + engine-side :born index
 ;; =============================================================================
+;; `:doc` is OMITTED when the underlying var has no docstring. Engine never
+;; emits `:doc nil` — model treats absence as "no docstring" without ambiguity.
 
 (s/def :session.symbol/arglists  (s/coll-of seq?))
-(s/def :session.symbol/doc       (s/nilable string?))
+(s/def :session.symbol/doc       string?)
 (s/def :session.symbol/born      ::scope-form)
 
 (s/def ::symbol-info
@@ -266,6 +270,32 @@
              :session.hint/satisfy-with]))
 
 ;; =============================================================================
+;; Scope cursor — engine-rendered current position inside the turn
+;; =============================================================================
+;;
+;; `:session/scope` tells the model where it is RIGHT NOW. Engine-stamped per
+;; iter, before render. Without it the model cannot honestly pick a `:proof`
+;; scope: `:session/turn` lives at top level but iter and form counters do not.
+;;
+;; `:next-form` is 1-based — the index that the model's first form in this
+;; iter's fence WILL receive. Subsequent forms in the same fence increment
+;; from there.
+;;
+;; Soft rule: any user-provided `::scope-form` (e.g. task proof :proof) is
+;; classified by the engine relative to this cursor:
+;;   :ok | :unknown | :errored | :future-form | :future-iter | :future-turn
+;; Future-scope refs and unknown scopes warn but never refuse.
+
+(s/def :session.scope/turn      pos-int?)
+(s/def :session.scope/iter      pos-int?)
+(s/def :session.scope/next-form pos-int?)
+
+(s/def :session/scope
+  (s/keys :req-un [:session.scope/turn
+                   :session.scope/iter
+                   :session.scope/next-form]))
+
+;; =============================================================================
 ;; Top-level CTX
 ;; =============================================================================
 
@@ -282,6 +312,7 @@
 (s/def ::ctx
   (s/keys :req [:session/id
                 :session/turn
+                :session/scope
                 :session/workspace
                 :session/symbols
                 :session/hints
