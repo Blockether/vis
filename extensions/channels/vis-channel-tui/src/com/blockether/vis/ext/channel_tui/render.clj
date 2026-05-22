@@ -1830,18 +1830,20 @@
                       (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
 
-              ;; ── Iteration recap - header-bg, BOLD + ITALIC ──
-              ;; Mirrors the iteration-header chrome (same bg colour so
-              ;; consecutive recap rows read as a single block) but
-              ;; styled bold-italic so the call-out is unmistakable
-              ;; even when it shares background with reasoning rows.
+              ;; ── Iteration recap - terminal-bg, BOLD + ITALIC ──
+              ;; No bubble-wide fill: recap text breathes on the bare
+              ;; transcript background so it cannot be mistaken for the
+              ;; iteration-header chrome. The bold + italic styling
+              ;; (plus the leading `* Recap:` bullet) is what calls the
+              ;; row out; surrounding pad rows render as truly empty
+              ;; terminal-bg rows so the block has visible top + bottom
+              ;; breathing room.
                     (str/starts-with? line recap-marker)
                     (let [raw (subs line 1)]
-                      (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                      (p/set-colors! g t/dialog-hint t/terminal-bg)
                       (p/styled g [p/BOLD p/ITALIC]
                         (p/paint-styled-line! g x y raw
-                          t/dialog-hint t/iteration-header-bg
+                          t/dialog-hint t/terminal-bg
                           t/code-block-fg t/code-block-bg)))
 
               ;; ── Thinking - dimmed bg, italic ──
@@ -2445,15 +2447,43 @@
                       (= idx0 arrow-idx0) (conj arrow-line)))
             (range total)))))))
 
+(defn- form-error-only-iteration?
+  "True when an iteration carries no iter-level `:error` but its forms
+   reduce to a single zero-code form that errored. Provider transport
+   failures (`:svar.core/stream-truncated`, 5xx mid-stream) land in
+   this shape: a placeholder form with `:code \"\"` and the error map
+   attached — no real reasoning, no real code execution."
+  [entry]
+  (let [forms (:forms entry)]
+    (and (not (map? (:error entry)))
+      (str/blank? (str (:thinking entry)))
+      (= 1 (count forms))
+      (let [f (first forms)]
+        (and (str/blank? (str (:code f)))
+          (map? (:error f))
+          (= :error (:result-kind f)))))))
+
+(defn- form-error-only-error
+  "Pull the placeholder form's `:error` map out of a form-error-only
+   iteration. Returns nil when the iteration is not in that shape."
+  [entry]
+  (when (form-error-only-iteration? entry)
+    (-> entry :forms first :error)))
+
 (defn error-signature
   "Stable comparison key for two trace `:error` maps. Returns nil for
    non-error iterations (so they never collapse).
+
+   Iter-level `:error` is the canonical surface; iterations whose
+   only content is a zero-code form carrying the transport error
+   (the provider-truncated-stream shape) hash with the same key so
+   they collapse alongside true iter-level errors.
 
    Public so the virtual-layout pre-pass can squash runs of
    error-only assistant messages across turns using the same key
    the iteration-level collapser uses."
   [entry]
-  (when-let [err (:error entry)]
+  (when-let [err (or (:error entry) (form-error-only-error entry))]
     [(:type err) (:message err) (get-in err [:data :raw-data])]))
 
 (def ^:private auto-collapse-line-threshold 12)
@@ -2902,7 +2932,13 @@
 
    Returns a vec of `[orig-idx entry]` pairs (mirroring the input order
    of `map-indexed`) so callers can keep using `(inc orig-idx)` as the
-   visible iteration number while skipping the duplicates."
+   visible iteration number while skipping the duplicates.
+
+   Form-error-only iterations (zero-code placeholder form carrying the
+   transport error) are lifted to iter-level `:error` on the merged
+   entry and have their forms dropped so the `error-lines` painter
+   produces a single `ERROR x N` row instead of N separate form
+   error rows."
   [iterations]
   (loop [acc [] i 0 remaining (vec iterations)]
     (if (empty? remaining)
@@ -2911,8 +2947,13 @@
             sig  (error-signature head)
             run  (if (nil? sig)
                    1
-                   (count (take-while #(= sig (error-signature %)) remaining)))]
-        (recur (conj acc [i (assoc head :repeat-count run)])
+                   (count (take-while #(= sig (error-signature %)) remaining)))
+            entry (cond-> head
+                    (form-error-only-iteration? head)
+                    (-> (assoc :error (form-error-only-error head))
+                      (assoc :forms []))
+                    true (assoc :repeat-count run))]
+        (recur (conj acc [i entry])
           (+ i run)
           (subvec remaining run))))))
 
@@ -3031,20 +3072,24 @@
                             (provider-error-recap error) (conj (provider-error-recap error)))
                           fill-w)
         recap-lines (if (seq raw-recap-lines)
-                      ;; Visual shape mirrors code/thinking zones:
-                      ;;   neutral blank   = outside top margin (separates
-                      ;;                     recap block from the "Vis"
-                      ;;                     label or prior content)
-                      ;;   recap-marker "" = inside top header-bg pad
-                      ;;   recap rows      = bold + italic text
-                      ;;   recap-marker "" = inside bottom header-bg pad
+                      ;; Recap chrome paints on terminal-bg: there is
+                      ;; no header-bg fill any more, so the call-out is
+                      ;; carried purely by the bold + italic recap rows
+                      ;; plus visible breathing space around them.
+                      ;;   neutral  = outside top margin
+                      ;;   neutral  = inside top margin (extra row
+                      ;;              demanded by the recap UX so the
+                      ;;              block does not glue to the
+                      ;;              "Vis" label or the prior content)
+                      ;;   recap-rows = bold + italic text
+                      ;;   neutral  = bottom margin
                       ;; The neutral row above thinking comes from
                       ;; `thinking-lines` itself, which separates this
                       ;; recap block from the thinking that follows.
                       (vec (concat [(line-entry "")
-                                    (line-entry (str recap-marker ""))]
+                                    (line-entry "")]
                              raw-recap-lines
-                             [(line-entry (str recap-marker ""))]))
+                             [(line-entry "")]))
                       raw-recap-lines)
         thinking-lines
         (fn [thinking-text-or-texts]
