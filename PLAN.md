@@ -11,11 +11,40 @@ remain valid — this doc is what they point at.
 Shape disagreements between this doc and live code are bugs;
 this doc wins. Shape disagreements between this doc and
 `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`
-are bugs; the schema wins. CTX_REDESIGN.md owns the per-turn CTX
-shape; this doc only specifies the `:session/workspace` subtree
-that the workspace foundation extension renders into CTX.
+are bugs; the schema wins. CTX_REDESIGN.md is partially superseded —
+this doc owns the `:session/workspace` subtree shape (canonical key
+set, sourcing rules) since CTX_REDESIGN.md still documents the
+legacy `:git/*` shape. Engine source of truth: `ctx_spec.clj`.
 
 No V2 / V3 migration files. AGENTS.md is law: inline V1 edits.
+
+## Live-state verification (2026-05-22, vis @ ec2d2987)
+
+All claims below were cross-validated against a freshly restarted
+nREPL (`bin/dev`), live schema, and source-code reads. Findings
+below drive the kill-list in §3a.
+
+| claim | verified by | result |
+|---|---|---|
+| `(ctx-engine/empty-ctx)` workspace shape | nREPL eval | `{:session/workspace {:vcs/kind :none}}` — VCS-agnostic, NO branch/head pre-stamped |
+| `ctx_spec.clj` workspace shape | source read | canonical `:vcs/{kind,branch,trunk,head,dirty?,stats}`; `:git/*` aliases marked deprecated |
+| `s/valid? :session/workspace` open-schema behaviour | nREPL eval (6 inputs) | accepts `{}`, `#:git{}`, `#:vcs{}`, mixed, **even `{:foobar 1}`** — only `:vcs/kind` enum is strict (rejects `:svn`) |
+| `prompt.clj` advertises to model | source read | `:vcs/*` (matches spec) |
+| `workspace/status` returns | source read | `:git/branch :git/head :git/dirty?` (LEGACY) |
+| consumers of `workspace/status` outside `core.clj` re-export | ripgrep | **zero** — dead API for production paths, safe to rewrite/kill |
+| `workspace/trunk-info` on vis repo | nREPL eval | `:branch "main"` (lucky; HEAD is on main) |
+| `workspace/trunk-info` on `/tmp/vis-trunk-test` (HEAD=feature, base=master, no origin) | nREPL eval | returns `:branch "feature"` — **BUG B1**, should return `"master"` |
+| `detect-trunk-branch` proposed logic (origin/HEAD → main → master → current) | nREPL prototype | `main` on vis, `master` on test repo with master base — confirmed |
+| `git symbolic-ref --short refs/remotes/origin/HEAD` on vis | shell | returns `origin/main` (must strip `origin/` prefix) |
+| `:session/workspace` stamping path in production | ripgrep `assoc.*:session/workspace` | **nothing stamps it**; only `empty-ctx` initial value survives the whole session. `ctx_engine.clj:934` TODO comment confirms |
+| `apply-to-trunk!` (file-copy) call sites | ripgrep | `core.clj:90` re-export + TUI `screen.clj:2429` palette only — safe to kill after TUI rewrite |
+| `spawn-branch!` dirty/ignored copy | source read | does NOT mirror dirty/ignored; only `git worktree add ... HEAD` — §4.4 rewrites |
+| slash registry on engine side | ripgrep | does NOT exist |
+| **TUI hardcoded slash tree** | source read (`dialogs.clj`, `screen.clj`) | `palette-commands` vec + `slash-only-commands` vec + `:tui.slot/commands` channel-contribution slot |
+| **Telegram hardcoded slash tree** | source read (`bot.clj:992-1024`) | `parse-command` + `handle-command!` with hardcoded case for `/start /help /status /model /models /reasoning /verbosity /voice /cancel /restart /export` — EXACTLY the parallel-words anti-pattern the new registry kills |
+| Voice extension's TUI command surface | source read (`foundation_voice/core.clj:716`, `input.clj:149`) | registers `{:tui.slot/commands [...]}` with `:id :voice/toggle-recording :palette? false :run-fn ...` — TUI-only; Telegram's `/voice` is hardcoded SEPARATELY in `bot.clj:1015` |
+| `register-cmd!` (CLI subcommand tree) | source read | exists in `registry.clj`; orthogonal — for `vis x y z` process subcommands, NOT for in-session `/cmd` intents. Stays. |
+| `:tui.slot/header-row` consumers | ripgrep | `header.clj:219` only — real UI slot, NOT slash. Stays as channel-specific surface. |
 
 ---
 
@@ -146,7 +175,64 @@ Call-site audit:
 
 ---
 
-## 3. Slash registry — fourth global registry
+## 3a. Kill-list (legacy code removed in this redesign)
+
+This redesign is a HARD CUTOVER. No transition window, no deprecation
+period. Everything in this list is deleted in the same PR that lands
+the new surface; tests on the new path go in first.
+
+| # | what dies | where | replacement |
+|---|---|---|---|
+| K1 | `:git/branch :git/trunk :git/head :git/dirty? :git/stats :git/file-stats` spec defs | `ctx_spec.clj:331-346` | canonical `:vcs/*` only. `:vcs/stats` keeps the file-stats map shape under a `:vcs/file-stats` name (key rename in same PR). |
+| K2 | `:git/*` opt keys in `::workspace` spec | `ctx_spec.clj:351` | drop from opt-key vec; only `:vcs/*` remain |
+| K3 | `workspace/status` `:git/*` output | `workspace.clj:286-288` | rewrite to emit `:vcs/branch :vcs/head :vcs/dirty?`. Or kill entirely once stamping path (§6.3) covers the same data — verified zero consumers outside `core.clj:86` re-export. |
+| K4 | `workspace/apply-to-trunk!` (file-copy) | `workspace.clj:367+` | replaced by `workspace/ff-apply!` (§4.5) |
+| K5 | `workspace-apply-to-trunk!` re-export | `core.clj:90` | `workspace-ff-apply!` re-export |
+| K6 | TUI `palette-commands` entries: `:workspace :apply-workspace-to-trunk :discard-workspace-{soft,hard}` | `dialogs.clj:2131-2134` + `screen.clj` dispatch | engine slash registry; palette pulls live from `(vis/registered-slashes)` (§9.3) |
+| K7 | TUI `slash-only-commands` hardcoded vec | `screen.clj:311-315` | engine slash registry feeds `menu-commands` directly |
+| K8 | TUI `:tui.slot/commands` channel-contribution slot | `screen.clj:296` consumer + `extension.clj:704` doc + voice registration in `foundation_voice/core.clj:716` | engine slash registry. After voice migrates, NO consumer remains — retire the slot. (`:tui.slot/header-row` stays; that's a genuinely UI-only surface.) |
+| K9 | Telegram `parse-command` + `handle-command!` hardcoded slash tree | `bot.clj:992-1024` | engine `slash/dispatch` called from `handle-user-text!` before `vis/send!` (§10). Each `/start /help /status /model /models /reasoning /verbosity /voice /cancel /restart /export` migrates to one `register-slash!` call. |
+| K10 | Voice extension's TUI-only `voice-input-tui-commands` + `:tui.slot/commands` | `foundation_voice/core.clj:716-718`, `input.clj:149-155` | `(vis/register-slash! {:slash/name "voice" :slash/requires #{:channel} :slash/availability-fn (fn [{:keys [channel/id]}] (#{:tui :telegram} id))})` — ONE registration, both channels. Same for any future channel (web). |
+| K11 | CTX_REDESIGN.md workspace section using `:git/*` | doc | rewrite to canonical `:vcs/*` shape; point at PLAN.md §8 for sourcing rules |
+| K12 | `HANDOFF.md` and `TODO.md` stale workspace plan items | docs | audit + cross-link to PLAN.md after step 12 |
+
+### K-list philosophy
+
+- No `:git/*` keys in CTX. Period. A git-detected workspace still
+  emits `:vcs/kind :git`; consumers branch on that. `:git/*` was a
+  transition fiction; the spec already calls it deprecated; the
+  cutover removes it.
+- No channel-private slash trees. ONE engine registry, every channel
+  reads from it. Voice extension stops registering twice. Telegram
+  stops parsing slashes itself. TUI stops hardcoding the palette.
+- `workspace/apply-to-trunk!` was always wrong (file-copy ignores
+  commit history). New `ff-apply!` is git-native FF. We do not keep
+  the old call site behind a flag; we delete it.
+- `:tui.slot/commands` survived only because slash was TUI-centric.
+  After cutover, slot has zero consumers → retired. Other slots
+  (`:tui.slot/header-row`) stay because they describe real TUI UI,
+  not slash semantics.
+
+## 3. Slash registry — fourth global registry (cross-channel, not TUI-only)
+
+**Cross-channel surface.** Slash commands are an engine-level concept,
+rendered by every channel that has a user-input surface — TUI today,
+Telegram today, Web soon (no `web` channel yet — confirmed by
+`extensions/channels/` ls), Discord / Slack / API later. There is
+exactly one registry; channels read from it. There are NO
+channel-private slash trees, NO duplicate registrations.
+
+**Cross-channel implication.** Telegram's `setMyCommands` API is fed
+from the SAME registry (see §10 step 2). The Web channel, when it
+lands, will pull its `/`-menu from the SAME registry. A user typing
+`/workspace apply` in any channel hits the exact same handler with
+the same ctx contract.
+
+**Telegram already-existing CLI subcommands.** `vis channels telegram
+approve` (and the like) are CLI subcommands registered through the
+ORTHOGONAL `register-cmd!` API. Those are launch-time admin ops, NOT
+in-session slash intents — they keep their own surface. See §13 row
+`telegram bot.clj` for the audit.
 
 Lives in `src/com/blockether/vis/internal/registry.clj`, peer with
 `channel-registry`, `provider-registry`, `command-registry`.
@@ -704,33 +790,86 @@ decide whether to register `merge/*` ops.
 
 ---
 
-## 8. CTX shape — `:session/workspace`
+## 8. CTX shape — `:session/workspace` (VCS-agnostic, canonical)
 
-CTX_REDESIGN.md owns CTX overall. This is the workspace subtree it
-expects. Cross-validate with `CTX_REDESIGN.md` "Workspace" sub-section
-(currently shape `{:git/branch :git/trunk :git/head :git/dirty? :git/stats}`):
+Live engine (`ctx_spec.clj`, `ctx_engine/empty-ctx`, `prompt.clj`)
+already settled on the `:vcs/*` namespace as canonical, with kind-
+specific aliases (`:git/*`, `:hg/*`, `:jj/*`) optional and additive.
+Workspace identity + session linkage keys live in their own
+namespaces (`:workspace/*`, `:session/*`). CTX_REDESIGN.md still
+documents `:git/*`; that doc is now stale on this point and must be
+updated in the same PR that lands §6 (foundation-workspace).
 
 ```clojure
 :session/workspace
-  {:workspace/id      "01HXYZ..."
-   :workspace/kind    :branch                            ; or :trunk
-   :workspace/label   "frontend"                         ; nil unless set
-   :session/id        "01ABCD..."                        ; soul id
-   :session/state-id  "01EFGH..."                        ; state id
-   :session/title     "Auth bcrypt refactor"             ; nil -> render "Untitled"
-   :session/fork-of   {:soul "..." :parent-state "..."}  ; nil for root
-   :git/branch        "vis/abc12345"
-   :git/trunk         "main"
-   :git/head          "def567..."
-   :git/dirty?        true
-   :git/commits-ahead [{:sha "abc..." :message "introduce emit-event"}
-                       {:sha "def..." :message "rewire log/2"}]
-   :git/ff-possible?  true                               ; or false or :unknown
-   :git/stats         {"src/auth.clj" {:added 5 :removed 2} ...}}
+  ;; VCS-agnostic block.  :vcs/kind is the discriminator the model
+  ;; reads first; everything else is OPTIONAL at the spec level.
+  ;; Empty / non-VCS sessions render {:vcs/kind :none}.
+  {;; --- identity (always present once workspace pin exists) ---
+   :workspace/id        "01HXYZ..."
+   :workspace/kind      :branch | :trunk                  ; Vis kind, NOT git
+   :workspace/label     "frontend"                        ; nil unless set
+
+   ;; --- session linkage ---
+   :session/id          "01ABCD..."                       ; soul id
+   :session/state-id    "01EFGH..."                       ; state id (fork-aware)
+   :session/title       "Auth bcrypt refactor"            ; nil -> rendered "Untitled"
+   :session/fork-of     {:soul "..." :parent-state "..."} ; nil for root state
+
+   ;; --- VCS surface (canonical :vcs/* keys) ---
+   :vcs/kind            :git                               ; #{:git :hg :jj :fossil :none}
+   :vcs/branch          "vis/abc12345"
+   :vcs/trunk           "main"                             ; resolved per §2
+   :vcs/head            "def567..."                        ; HEAD sha (or rev id for hg/jj)
+   :vcs/dirty?          true
+   :vcs/stats           {"src/auth.clj" {:added 5 :removed 2}}  ; vs trunk
+
+   ;; --- workspace-derived VCS state (canonical :vcs/* keys) ---
+   :vcs/commits-ahead   [{:sha "abc..." :message "introduce emit-event"}
+                         {:sha "def..." :message "rewire log/2"}]
+   :vcs/ff-possible?    true | false | :unknown
+
+   ;; --- git-specific extras (additive aliases; only when :vcs/kind = :git) ---
+   :git/branch          "vis/abc12345"   ;; same as :vcs/branch; emitted as convenience
+   :git/trunk           "main"           ;; same as :vcs/trunk
+   :git/head            "def567..."
+   :git/dirty?          true
+   :git/stats           {…}}
 ```
 
-CTX_REDESIGN.md must be updated to mirror these additional keys.
-That update is a doc-only patch in the same PR — see §10 step 9.
+### Stamping rules — who fills this map
+
+`empty-ctx` returns `{:vcs/kind :none}`. The workspace foundation
+extension (§6) stamps the rest at the start of every turn, via the
+engine's pre-turn CTX hook surface. The stamping function:
+
+1. Looks up `(workspace/for-session db-info session-state-id)`.
+2. Looks up `(session-state-by-id db-info session-state-id)`.
+3. If no workspace pin yet → emits `{:vcs/kind :none}` (engine
+   default; matches `empty-ctx`).
+4. If workspace pinned → emits the full identity + session-linkage +
+   `:vcs/*` keys above, plus `:git/*` mirrors when `:vcs/kind = :git`.
+5. `:vcs/commits-ahead` and `:vcs/ff-possible?` are cached at
+   stamp time (per-turn) and NOT recomputed for every render of the
+   same turn.
+
+The legacy `workspace/status` fn (returns `:git/*` keys directly)
+stays as a low-level helper but its callers are updated to consume
+`:vcs/*` from the stamped block, not call `status` directly.
+
+Deprecation: `:git/*` aliases ship for one release cycle alongside
+`:vcs/*`. After all consumers migrate (audited list lives in §13),
+remove the legacy keys from the stamped block — `ctx_spec.clj`
+already marks them transitional.
+
+### Hg / jj / fossil readiness
+
+A non-git VCS detector emits `{:vcs/kind :hg :vcs/branch "default"
+:vcs/head "<rev>" :vcs/dirty? false :vcs/stats {…}}` plus optional
+`:hg/*` aliases. No git-specific assumption in CTX. The slash
+foundation extension is git-only initially; a future hg/jj extension
+registers its own `/hg ...` or extends `/workspace ...` semantics.
+Either way, the CTX shape supports it from day one.
 
 ---
 
@@ -851,39 +990,87 @@ The next turn's CTX render includes this iteration in the trailer.
 ## 12. Implementation sequence
 
 Each step is one commit, green under `./verify.sh --quick`. Full
-`./verify.sh` before steps 3, 6, 9, 12.
+`./verify.sh` before steps 3, 6, 9, 12. Hard-cutover policy: every
+step's commit deletes the legacy entries from §3a's K-list that
+belong to that step. No transitional flags.
 
 1. **Schema inline V1**: add `label`, `last_focused_at_ms` to `workspace`;
    add `repo_focus` table; add `session_state.merge_resolve_parent_id`.
 2. **Persistance fns**: extend `row->workspace`; add `db-workspace-update-label!`,
    `db-workspace-touch-focus!`, `db-repo-focus-get`, `db-repo-focus-set!`.
-3. **`workspace.clj` core refactor**: `detect-trunk-branch`, `with-repo-lock`,
-   `mirror-tree!`, `spawn-branch!` rewrite, `commit!`, `ff-apply!`,
-   `set-label!`, `focus!`, `workspace-with-session`,
-   `list-active-with-sessions`, `last-focused`, `display-label`,
-   `start-merge-resolve!` skeleton (NO sub-session yet).
-4. **Remove `apply-to-trunk!`**: scan call sites; replace with `ff-apply!`
-   or remove. TUI palette commands using it are deleted in step 7.
+3. **`workspace.clj` core refactor + KILL legacy**:
+   - new fns: `detect-trunk-branch`, `with-repo-lock`, `mirror-tree!`,
+     `spawn-branch!` rewrite, `commit!`, `ff-apply!`, `set-label!`,
+     `focus!`, `workspace-with-session`, `list-active-with-sessions`,
+     `last-focused`, `display-label`, `start-merge-resolve!` skeleton.
+   - KILL `apply-to-trunk!` body (K4).
+   - KILL `workspace-apply-to-trunk!` re-export in `core.clj` (K5).
+   - REWRITE `workspace/status` to emit `:vcs/*` keys instead of
+     `:git/*` (K3); or kill `status` entirely if §6.3 stamping covers
+     every consumer — verified zero callers outside `core.clj:86`.
+4. **`ctx_spec.clj` KILL `:git/*` aliases**:
+   - delete `:git/branch :git/trunk :git/head :git/dirty?` specs (K1).
+   - rename `:git/file-stats` → `:vcs/file-stats`; update `:vcs/stats`
+     to reference the new name (K1).
+   - delete `:git/*` opt-keys from `::workspace` (K2).
+   - update `prompt.clj` to advertise only `:vcs/*` (already does;
+     verify no `:git/*` leaks).
 5. **Slash registry**: extend `internal/registry.clj` with `slash-registry`
    atom + register/deregister/lookup; add `internal/slash.clj` with
-   parser + dispatch; export from `core.clj`.
-6. **`vis-foundation-workspace` extension**: new package, registers
-   slash tree, CTX renderer, read-only SCI ops. Handlers wrap core.
-7. **Engine loop integration**: slash dispatch at turn start; synthetic
-   iteration persistence; channel result publication.
-8. **TUI channel rewrite**: drop palette entries; pull from
-   `registered-slashes`; rewrite strip to use `list-active-with-sessions`
-   + `display-label`; rewrite switch-session dialog; tab restoration
-   via `last-focused` + hydrated list; on switch, call `focus!`.
-9. **Telegram channel slash dispatch**: parse incoming text through
-   slash dispatch; render envelopes with inline keyboards;
-   `setMyCommands` for discoverability.
-10. **Merge-resolve sub-session**: real implementation. Spawn sub-session,
-    register `merge/*` ops gated on `merge_resolve_parent_id`, sub-session
-    prompt, completion event flow.
-11. **CTX_REDESIGN.md doc patch**: mirror new `:session/workspace` shape.
-12. **Cleanup**: remove every "PLAN.md decision N" comment whose
-    referent has changed (audit list in §13).
+   parser + dispatch; export from `core.clj`. Spec for `::slash`
+   (§3). No slash handlers yet — just the surface.
+6. **`vis-foundation-workspace` extension + foundation-voice migration**:
+   - new `extensions/common/vis-foundation-workspace/` package; registers
+     workspace slash tree, CTX stamping fn, read-only SCI ops.
+   - MIGRATE `vis-foundation-voice` from `:tui.slot/commands` to
+     `(vis/register-slash! …)` with `requires #{:channel}` and
+     `availability-fn` accepting `:tui` AND `:telegram` (K10).
+   - DELETE `voice-input-tui-commands` + `:ext/channel-contributions`
+     map entry from `foundation_voice/core.clj`.
+7. **Engine loop integration**: slash dispatch at turn start in
+   `loop.clj`; synthetic iteration persistence; channel result
+   publication. CTX `:session/workspace` stamping wired through
+   foundation-workspace pre-turn hook.
+8. **TUI channel rewrite + KILL TUI slash legacy**:
+   - DELETE `:workspace :apply-workspace-to-trunk
+     :discard-workspace-{soft,hard}` from `dialogs.clj`
+     `palette-commands` (K6).
+   - DELETE `slash-only-commands` vec from `screen.clj` (K7).
+   - REPLACE `menu-commands` body with `(concat palette-commands
+     (vis/registered-slashes))` (K6+K7+K8).
+   - DELETE `extension-commands` fn + `:tui.slot/commands` consumer
+     (K8). Header-row slot stays.
+   - REWRITE strip to consume `list-active-with-sessions` +
+     `display-label`.
+   - REWRITE switch-session dialog with hydrated workspace+session
+     rows.
+   - Tab restoration via `last-focused` + per-repo focus.
+   - On switch, call `workspace/focus!`.
+9. **Telegram channel rewrite + KILL Telegram slash legacy**:
+   - DELETE `parse-command` + `handle-command!` from `bot.clj`
+     (K9). The 11 hardcoded commands migrate one-by-one to
+     `register-slash!` calls (each lands in the appropriate
+     foundation extension or stays inside `vis-channel-telegram`
+     for telegram-specific ones).
+   - `handle-user-text!` calls `(slash/dispatch ctx text)` before
+     `vis/send!`; on `:handled? true`, render envelope as reply
+     (with inline keyboard for `:slash/actions`).
+   - Bot's `setMyCommands` fed from `(vis/registered-slashes)`
+     filtered by availability + `:channel/id :telegram`.
+10. **Merge-resolve sub-session**: real implementation. Spawn
+    sub-session, register `merge/*` ops gated on
+    `session_state.merge_resolve_parent_id`, sub-session prompt,
+    completion event flow.
+11. **Docs sync + KILL stale docs**:
+    - REWRITE CTX_REDESIGN.md workspace section to `:vcs/*` shape
+      (K11). Point at PLAN.md §8 for sourcing rules.
+    - Audit `HANDOFF.md`, `TODO.md`, `TASKS.md`, `CHANGELOG.md` for
+      `:git/branch` / `:git/trunk` / `apply-to-trunk!` mentions
+      tied to the redesigned surface; remove or rewrite (K12).
+12. **Cleanup pass**: remove every `PLAN.md decision N` comment
+    whose referent has changed (audit list in §13). Verify ripgrep
+    for `:git/branch :git/trunk apply-to-trunk slash-only-commands
+    tui.slot/commands` returns ZERO hits in `src/` and `extensions/`.
 
 ---
 
@@ -932,6 +1119,24 @@ removes or updates.
   SQLite + local worktrees.
 
 ---
+
+## 14a. Bug list (live verification 2026-05-22)
+
+All discovered by nREPL eval / source reads. Each is fixed by the
+implementation sequence step listed in `fix-in` column.
+
+| # | symptom | root cause | fix-in |
+|---|---|---|---|
+| B1 | `workspace/trunk-info` returns current branch instead of repo's default branch | `trunk-info` calls `current-branch` not `detect-trunk-branch` | §12 step 3 |
+| B2 | `workspace/status` emits `:git/*` keys; CTX expects `:vcs/*` canonical | legacy; predates `:vcs/*` migration in `ctx_spec.clj` | §12 step 3 (rewrite) or K3 (kill) |
+| B3 | `:session/workspace` block is NEVER stamped by anything; empty-ctx default `{:vcs/kind :none}` survives the whole session | no extension owns the stamping hook; CTX engine TODO comment in `ctx_engine.clj:934` flags this | §12 step 6 |
+| B4 | `apply-to-trunk!` is file-copy, ignores commit history of the workspace branch | original implementation predates the FF design | K4 + §12 step 3 |
+| B5 | `spawn-branch!` does NOT mirror dirty / untracked / ignored files from trunk; user runs `npm install` again after `/workspace new` | original `git worktree add` only checks out `HEAD` | §12 step 3 |
+| B6 | No engine slash registry; TUI hardcodes workspace ops in `palette-commands` + `slash-only-commands`; Telegram parses slashes in its own `handle-command!` | feature never built | K6+K7+K8+K9 + §12 steps 5 + 7 + 9 |
+| B7 | CTX_REDESIGN.md documents legacy `:git/*` shape; conflicts with `ctx_spec.clj` canonical `:vcs/*` | doc drift | K11 + §12 step 11 |
+| B8 | `command_suggest.clj` only handles per-channel palette entries; cannot render arbitrary registry entries | TUI-specific design predating engine registry | K7+K8 + §12 step 8 |
+| B9 | Voice extension registers TUI-only slash; Telegram has parallel hardcoded `/voice`; web (when it lands) will need a third registration | per-channel slot pattern (`:tui.slot/commands`) instead of engine-level surface | K10 + §12 step 6 (foundation-voice migration block in same PR) |
+| B10 | `s/valid? :session/workspace` accepts `{:foobar 1}` — schema is open by design but lacks any closed-schema variant for engine-stamped CTX block | tradeoff baked in (extensions add keys freely); not a real bug, but worth noting in renderer guarantees | informational; §6.3 stamping fn produces a known closed shape, schema validation stays loose |
 
 ## 15. Open items (must be resolved during implementation, not before)
 
