@@ -91,26 +91,27 @@ Three model-managed memo subtrees + engine views + trailer:
 
  ;; ── MODEL-MANAGED MEMOS ──
  :session/specs
-   {<kw> {:title           string                    ; required
-          :acceptance      [string]                  ; required, non-empty vec
-          :grounding-facts [<kw-ref>]                ; refs to :session/facts
-          :serving-tasks   [<kw-ref>]                ; refs to :session/tasks
-          :status          :draft | :doing | :done | :cancelled
-          :born            "tN/iN/fK"                ; required, engine-stamped
-          :done-born       "tN/iN/fK"}}              ; engine-stamps on terminal status
+   {<kw> {:title       string                        ; required
+          :criteria    [{:id keyword
+                         :criterion string
+                         :facts [<kw-ref>]}]        ; optional refs to :session/facts
+          :status      :draft | :doing | :done | :cancelled
+          :born        "tN/iN/fK"                    ; required, engine-stamped
+          :done-born   "tN/iN/fK"}}                  ; engine-stamps on terminal status
 
  :session/tasks
-   {<kw> {:title            string                   ; required
-          :serves-spec      <kw-ref>                 ; required, ONE :session/specs key
-          :blocked-by-tasks [<kw-ref>]               ; optional, prerequisite :session/tasks keys
-          :status           :todo | :doing | :done | :cancelled
-          :evidence         [<scope-string>]         ; required on :done
-          :journal          [{:status :scope}]       ; engine-appended on every :status change
-          :born             "tN/iN/fK"}}             ; required, engine-stamped
+   {<kw> {:title       string                        ; required
+          :spec        <kw-ref>                      ; required, ONE spec served
+          :depends-on  [<kw-ref>]                    ; optional, prerequisite tasks
+          :satisfies   [{:criterion keyword
+                         :proof "tN/iN/fK"}]     ; criteria this task proves
+          :status      :todo | :doing | :done | :cancelled
+          :journal     [{:status :scope}]            ; engine-appended on status change
+          :born        "tN/iN/fK"}}                  ; required, engine-stamped
 
  :session/facts
-   {<kw> {:content          string                   ; required
-          :born             "tN/iN/fK"}}             ; required, engine-stamped
+   {<kw> {:content     string                        ; required
+          :born        "tN/iN/fK"}}                  ; required, engine-stamped
 
  ;; ── TRAILER ──
  :session/trailer
@@ -138,10 +139,10 @@ Six substantive subtrees.
 
 ```clojure
 ;; ─── MEMO MUTATION ───
-(spec-set!     :K {:title :acceptance :grounding-facts? :serving-tasks? :status})
+(spec-set!     :K {:title :criteria :status})
 (spec-remove!  :K)
 
-(task-set!     :K {:title :serves-spec :blocked-by-tasks? :status :evidence?})
+(task-set!     :K {:title :spec :depends-on? :status})
 (task-remove!  :K)
 
 (fact-set!     :K {:content})
@@ -228,14 +229,16 @@ Conflict (same scope in both `:trailer-drop` and `:trailer-summarize`) → engin
 
 | call | required field | hint |
 |---|---|---|
-| `spec-set!` | `:acceptance` | non-empty vec of strings |
-| `task-set!` | `:serves-spec` | refs an existing key in `:session/specs` |
-| `task-set!` with `:status :done` | `:evidence` | non-empty vec of scopes |
+| `spec-set!` | `:criteria` | non-empty vec of criteria |
+| `task-set!` | `:spec` | refs an existing key in `:session/specs` |
+| `task-set!` with `:status :done` | `:satisfies` | criteria this task satisfies, with proof scopes |
 | `fact-set!` | `:content` | non-empty string |
 | `satisfy-hint!` | evidence vec | non-empty vec of scopes |
-| any ref (`:grounding-facts`, `:serving-tasks`, `:serves-spec`, `:blocked-by-tasks`) | target key must exist | soft warn on dangling |
+| any ref (`:criteria[].facts`, `:spec`, `:depends-on`, `:satisfies[].criterion`) | target key/id must exist | soft warn on dangling |
 
 Warnings appear as `;; ⚠ …` annotations in the next CTX render.
+
+Spec schemas are open: they define what must/should be present. They do not reject extra keys. Retirement of old keys is prompt/design guidance plus soft warnings, not `s/and #(not …)` shape logic.
 
 ### Auto-stamped fields
 
@@ -310,28 +313,28 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Engine emits spa
  :session/specs
    {:auth-bcrypt
      {:title       "switch auth/check to bcrypt"
-      :acceptance  ["check/1 calls bcrypt/check"
-                    "stored-hash plumbed"
-                    "tests cover wrong-password path"]
-      :grounding-facts [:auth-literal-compare :no-bcrypt-dep]
-      :serving-tasks   [:add-bcrypt-dep :replace-check]
+      :criteria    [{:id :bcrypt-check
+                     :criterion "check/1 calls bcrypt/check"
+                     :facts [:auth-literal-compare :no-bcrypt-dep]}
+                    {:id :wrong-password
+                     :criterion "wrong password path is covered"}]
       :status      :doing
       :born        "t5/i1/f1"}}
 
  :session/tasks
    {:add-bcrypt-dep
      {:title       "add bcrypt to deps.edn"
-      :serves-spec      :auth-bcrypt
-      :blocked-by-tasks []
+      :spec        :auth-bcrypt
+      :depends-on  []
       :status      :done
-      :evidence    ["t5/i2/f1"]
+      :satisfies   [{:criterion :bcrypt-check :proof "t5/i2/f1"}]
       :journal     [{:status :doing :scope "t5/i1/f2"}
                     {:status :done  :scope "t5/i2/f2"}]
       :born        "t5/i1/f2"}
     :replace-check
      {:title       "replace literal compare with bcrypt/check"
-      :serves-spec      :auth-bcrypt
-      :blocked-by-tasks [:add-bcrypt-dep]
+      :spec        :auth-bcrypt
+      :depends-on  [:add-bcrypt-dep]
       :status      :doing
       :journal     [{:status :doing :scope "t6/i1/f1"}]
       :born        "t5/i1/f3"}}
@@ -534,26 +537,28 @@ USER > Działaj — spec + plan.
 MODEL >
 (spec-set! :logging-edn
            {:title       "src/logging.clj emits structured EDN events"
-            :acceptance  ["emit-event takes a map and prints (pr-str …)"
-                          "log/2 delegates to emit-event"
-                          "no str/format remains in src/logging.clj"]
-            :grounding-facts [:logging-current :no-event-fn]
-            :serving-tasks   []
+            :criteria    [{:id :emit-event-shape
+                           :criterion "emit-event takes a map and prints (pr-str …)"
+                           :facts [:logging-current :no-event-fn]}
+                          {:id :log-delegates
+                           :criterion "log/2 delegates to emit-event"}
+                          {:id :no-format
+                           :criterion "no str/format remains in src/logging.clj"}]
             :status      :draft})
 
 (task-set! :introduce-emit-event
            {:title       "introduce emit-event fn"
-            :serves-spec      :logging-edn
-            :blocked-by-tasks []
+            :spec        :logging-edn
+            :depends-on  []
             :status      :todo})
 
 (task-set! :rewire-log
            {:title       "rewire log/2 through emit-event"
-            :serves-spec      :logging-edn
-            :blocked-by-tasks [:introduce-emit-event]
+            :spec        :logging-edn
+            :depends-on  [:introduce-emit-event]
             :status      :todo})
 
-(spec-set! :logging-edn {:serving-tasks [:introduce-emit-event :rewire-log]})
+;; Proof slots already name task ownership; no duplicate task list needed.
 
 (done {:answer "Spec `:logging-edn` + 2 taski."})
 => :done
@@ -578,9 +583,11 @@ MODEL >
 => {:applied 1}
 
 (task-set! :introduce-emit-event
-           {:status :done :evidence ["t3/i1/f2" "t3/i1/f3"]})
+           {:status :done
+            :satisfies [{:criterion :emit-event-shape
+                         :proof "t3/i1/f3"}]})
 
-(done {:answer       "Task `:introduce-emit-event` done. Evidence pinned."
+(done {:answer       "Task `:introduce-emit-event` done. Criterion proof filled on task."
        :trailer-drop ["t1/i1"]})            ; the original v/cat now stale
 => :done
 ```
@@ -594,10 +601,10 @@ MODEL >
 :session/tasks
   {:introduce-emit-event
      {:title       "introduce emit-event fn"
-      :serves-spec      :logging-edn
-      :blocked-by-tasks []
+      :spec        :logging-edn
+      :depends-on  []
       :status      :done
-      :evidence    ["t3/i1/f2" "t3/i1/f3"]
+      :satisfies   [{:criterion :emit-event-shape :proof "t3/i1/f3"}]
       :journal     [{:status :doing :scope "t3/i1/f1"}
                     {:status :done  :scope "t3/i1/f4"}]
       :born        "t2/i1/f3"}
@@ -635,8 +642,9 @@ Deterministic `;;` annotations next to entries:
 | trailer entry is summary shape | `;; summarized in t<N>` (from `:born`) |
 | `:result` value in pinned form exceeds threshold (4kB) | `;; ⚠ result is <size>; consider summarizing` |
 | `:session/trailer` count exceeds threshold | `;; :session/trailer (32 entries; 5 summaries)` |
-| missing required field on memo | `;; ⚠ task :K missing :evidence (status :done)` |
-| dangling cross-subtree ref | `;; ⚠ task :K :serves-spec refs nonexistent spec :foo` |
+| missing required field on memo | `;; ⚠ spec :K missing :criteria` |
+| done spec with unsatisfied criterion | `;; ⚠ spec :K done but criterion :C has no satisfying task` |
+| dangling cross-subtree ref | `;; ⚠ task :K :spec refs nonexistent spec :foo` |
 
 ---
 
@@ -711,7 +719,7 @@ Deterministic `;;` annotations next to entries:
 
 ### Prompt changes
 
-`CORE_SYSTEM_PROMPT` now uses the spec-centric three-subtree layout: explicit `:grounding-facts`, `:serving-tasks`, `:serves-spec`, and `:blocked-by-tasks`; no fact tags or generic connections.
+`CORE_SYSTEM_PROMPT` now uses the task-satisfies-criteria layout: specs have `:criteria`; tasks have `:spec`, `:depends-on`, and `:satisfies [{:criterion :proof}]`. No task `:evidence`, no spec proof slots, no `:session/plan`, no fact tags or generic connections.
 
 ### Code rename (legacy → form)
 
@@ -730,10 +738,10 @@ Done in commit `776ca1ce`. Scope URL format reshape (`turn/<prefix>/iteration/N/
  :session/hints      {hint-id {:body :importance :satisfy-with}}
 
  :session/specs
-   {keyword {:title :acceptance :grounding-facts :serving-tasks :status :born :done-born?}}
+   {keyword {:title :criteria :status :born :done-born?}}
 
  :session/tasks
-   {keyword {:title :serves-spec :blocked-by-tasks :status :evidence :journal :born}}
+   {keyword {:title :spec :depends-on :satisfies :status :journal :born}}
 
  :session/facts
    {keyword {:content :born}}

@@ -108,20 +108,20 @@
         :session/symbols     engine-rendered; live SCI symbols {sym {:arglists :doc :born}}
         :session/hints       engine-rendered; pending one-shot instructions you must satisfy
         :session/specs       formal requirements
-                             shape: {<kw> {:title :acceptance :grounding-facts?
-                                           :serving-tasks? :status :born :done-born?}}
-                             :grounding-facts refs :session/facts; :serving-tasks refs :session/tasks
-        :session/tasks       work items
-                             shape: {<kw> {:title :serves-spec :blocked-by-tasks?
-                                           :status :evidence? :journal :born}}
-                             :serves-spec refs one :session/specs key
-                             :blocked-by-tasks refs prerequisite :session/tasks keys
+                             shape: {<kw> {:title :criteria :status :born :done-born?}}
+                             :criteria is [{:id :criterion :facts?}]
+        :session/tasks       work items + proofs
+                             shape: {<kw> {:title :spec :depends-on? :satisfies?
+                                           :status :journal :born}}
+                             :spec refs one :session/specs key
+                             :depends-on refs prerequisite :session/tasks keys
+                             :satisfies is [{:criterion :proof}]
+                             :criterion refs one criterion id on task's spec; :proof is form scope
                              :status ∈ #{:todo :doing :done :cancelled}
-                             :evidence REQUIRED on :done
                              :journal engine-appended on every :status change
         :session/facts       durable observations/decisions/rules/behavior
                              shape: {<kw> {:content :born :scope? :source?}}
-                             facts are leaves: no :tags, no :connections
+                             facts connect via criteria :facts; no :tags, no :connections
         :session/trailer     pinned iter envelopes; engine auto-pins per iter;
                              drop/summarize via done keys
 
@@ -129,9 +129,9 @@
       Engine-owned control forms are bare symbols. Never namespace-qualify them: (set-session-title! ...).
 
       Memory:
-        (spec-set!     :K {:title :acceptance :grounding-facts? :serving-tasks? :status})
+        (spec-set!     :K {:title :criteria :status})
         (spec-remove!  :K)
-        (task-set!     :K {:title :serves-spec :blocked-by-tasks? :status :evidence?})
+        (task-set!     :K {:title :spec :depends-on? :status})
         (task-remove!  :K)
         (fact-set!     :K {:content :scope?})
         (fact-remove!  :K)
@@ -164,9 +164,9 @@
       • Every *-set! call: new key → engine stamps :born; existing → merges partials.
       • (task-set! :K {:status <new>}) → engine appends {:status :scope} to :journal.
       • *-remove! on non-existent key → silent no-op.
-      • Soft warnings (engine never refuses): missing :acceptance on spec-set!,
-        missing :serves-spec on task-set!, missing :evidence on :done task,
-        missing :content on fact-set!, dangling refs.
+      • Soft warnings (engine never refuses): missing :criteria on spec-set!,
+        missing :spec on task-set!, task :satisfies unknown criterion,
+        spec :done with unsatisfied criteria, missing :content on fact-set!, dangling refs.
         Warnings appear as `;; ⚠ …` in next render.
 
     TRAILER
@@ -195,7 +195,7 @@
       Read them before acting; satisfy by performing the requested action and
       then calling (satisfy-hint! :hint/id [<scope> …]) as its own top-level
       form. The vec of scopes points at this turn's iters that constitute
-      proof of satisfaction — same evidence pattern as task-set! :evidence.
+      proof of satisfaction. This is separate from task proof slots.
       Hints are transient — they do not survive the turn that satisfies them.
 
     DONE
@@ -207,8 +207,8 @@
       Before calling done:
         1. Re-read the CURRENT-USER-MESSAGE.
         2. Enumerate acceptance criteria — explicit or implied.
-        3. For each criterion, point to evidence: a task's :evidence scope, a fact's :content,
-           a trailer pin's :result. No evidence → another iter.
+        3. For each criterion, point to a task's :satisfies entry with :proof,
+           facts (:criteria[].facts), or trailer pins. Missing proof → another iter.
         4. Emit done only when every criterion maps to observed data.
 
     REASONING
