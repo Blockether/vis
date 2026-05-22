@@ -882,3 +882,367 @@ Done in commit `776ca1ce`. Scope URL format reshape (`turn/<prefix>/iteration/N/
 Three model-managed memo subtrees + 3 engine views + 1 trailer = 7 substantive subtrees. Six memo verbs + trailer/done/control + symbols (native SCI) + introspection (9 ops).
 
 Cross-turn raw history reachable via `introspect-*`. Never preloaded.
+
+---
+
+## Lifecycle expectations — what model sees + what engine enforces
+
+This section locks in the BEHAVIOR the new engine must exhibit so we can
+test against it deterministically. Anything below contradicts the schema
+or invariants tables above → schema/invariants win.
+
+### Trailer between iters (within one turn)
+
+```
+T<N>.i1 fence executes
+  → eval-loop captures blocks: [{:code :result :error} …]
+  → ctx-engine/blocks->forms → envelope vec:
+      [{:scope "tN/i1/f1" :tag :mutation     :src "…" :result …}
+       {:scope "tN/i1/f2" :tag :observation  :src "…" :result …}
+       …]
+  → ctx-engine/advance-iter:
+      - excludes any form whose :src begins with "(done"
+      - if remaining vec non-empty:
+          appends {:scope "tN/i1" :forms <remaining>} to :session/trailer
+      - bumps :session/scope :iter +1, :next-form := 1
+
+T<N>.i2 starts:
+  → user message rendered with the pin from i1 visible inside
+    :session/trailer. Model can:
+      - point a task :proof at any scope inside (proof-add!).
+      - call (introspect-form "tN/i1/fK") to refetch full envelope
+        (engine resolves through forms BLOB on session_turn_iteration).
+      - decide it's stale and emit (done {:trailer-drop ["tN/i1"]}).
+```
+
+**Invariants the engine guarantees**:
+- A pin's `:scope` is iter-scope (`tN/iM`). A pin's inner forms have
+  form-scope (`tN/iM/fK`). Engine NEVER mixes those.
+- Pins arrive in **chronological order** (sorted by iter scope) at
+  every render. The done-time sort comparator is stable.
+- A pin captures the iter's `:forms` exactly as the eval loop saw
+  them. Mutator forms (`(spec-set! …)`, etc.) and observation forms
+  (`(v/cat …)`, etc.) coexist in one pin under one iter scope.
+- A pin's `:src` is the source string of one top-level form, not the
+  whole fence body. Whole fence stays on `session_turn_iteration.code`.
+
+### Trailer between turns
+
+CTX (including `:session/trailer`) is Nippy-snapshotted to
+`session_turn_state.ctx` at `(done …)` time. The next turn loads
+that snapshot via `db-load-latest-ctx` and resumes with the same
+trailer.
+
+So pins from `t5/i1` … `t5/i3` are still visible in `t6.i1`'s render
+until the model drops/summarizes them. Engine does NOT auto-prune
+pins; only `(done {:trailer-drop […] :trailer-summarize […]})` and
+`gc-pass` at turn boundary touch the trailer.
+
+### Summarization — model-owned, engine-validated
+
+The model owns trailer compaction. Engine refuses bad shapes only:
+hard rejects on partial-overlap summary ranges, inverted ranges, and
+bad scope strings; otherwise everything passes.
+
+`(done {:trailer-summarize [{:scope-start "tA/iX" :scope-end "tB/iY"
+                              :summary "free-form string"}]})`
+
+For each summary directive:
+1. **Validate** `:scope-start` ≤ `:scope-end` (iter-compare). Inverted
+   range → soft warn, directive skipped.
+2. **Validate** no existing summary partially overlaps. Partial overlap
+   = ranges share points but neither is contained in the other. Partial
+   overlap → HARD reject, directive skipped, warning emitted.
+3. **Absorb** every trailer entry whose iter-range is fully contained
+   in `[scope-start, scope-end]` — both pins AND existing summaries
+   that are wholly inside. They are dropped from the trailer.
+4. **Insert** a new entry `{:scope-start :scope-end :summary :born}`
+   where `:born` is stamped by the engine to the form scope of the
+   `(done …)` call.
+5. **Sort** trailer by composite key after all directives applied.
+
+Summarization is **lossy on purpose**. Once a range is summarized, the
+per-form envelopes inside that range are gone from the live trailer.
+The HISTORICAL session_turn_state snapshots still carry them (one
+snapshot per turn), so `introspect-iter` / `introspect-form` can still
+recover them from the past turn's `session_turn_iteration.forms` BLOB.
+
+Rule of thumb model is expected to follow:
+- Drop verbatim pins of observations that have been since mutated
+  (e.g. read a file, then patched it → original read is stale).
+- Summarize long exploratory ranges when their outcome converged
+  ("explored 3 schemes, picked bcrypt; verified t14/i6 green").
+- Never summarize across `(done …)` boundaries — summaries are
+  per-turn semantics; cross-turn aggregation is the soul/state chain's
+  job.
+
+### Validation tiers — engine-enforced
+
+| tier | what | when | severity |
+|---|---|---|---|
+| T0 | shape (clojure.spec) | every `*-set!`/`req-*`/`proof-*` | soft warn (open schema) |
+| T1 | ref existence (facts, specs, tasks, requirements) | every render | soft warn |
+| T2 | validator-fn SCI eval against proof scope :result | every render | soft warn (5 reason codes) |
+| T3 | lifecycle (spec :done ⇒ all reqs proven; task :done ⇒ deps terminal) | every render | soft warn |
+| T4 | scope class (cursor + form-results) | every render | soft warn (6 future-* classes) |
+| T5 | id collision (`req-add!` on existing id) | mutation time | soft reject (no write) |
+| T6 | depends-on cycle (DFS over dep-graph) | task-set! :depends-on | **HARD reject** |
+| T7 | trailer partial-overlap | done summarize | **HARD reject** |
+
+Soft = engine writes but emits `;; ⚠` annotation in next render.
+Hard = engine refuses the write; ctx-atom unchanged; warning still
+surfaced.
+
+### Tasks — what the model is expected to do
+
+The CTX engine is **descriptive, not directive**. It records the
+model's plan + execution. Engine never demands tasks — it only
+provides:
+- a shape (`:session/tasks`) for the model to drop work items into
+- a `:session/next-actions` derived ranking that suggests what's
+  unblocked / what needs proof / what's stale
+
+The model uses tasks for:
+- planning a multi-iter goal: spec → 3 requirements → 3 tasks
+- tracking progress: `(task-set! :K {:status :doing})` per iter
+- proving completion: `(proof-add! :K :spec-K {:requirement :R :proof "tN/iM/fK"})`
+- abandoning work: `(task-set! :K {:status :cancelled})`
+
+Tasks WITHOUT proofs ARE legal — they exist as planning markers.
+Engine only complains when:
+- a task `:status :done` has no proofs for the requirements it claims
+- a task's `:depends-on` graph is broken (dangling or cyclic)
+
+The model is NEVER forced to use tasks. Single-form Q&A turns work
+without any spec/task — the CTX subtrees are simply empty.
+
+### Form-results — propagation to next iter
+
+```
+iter K executes:
+  blocks (eval result) → form-results envelope
+  → session_turn_iteration.forms BLOB (Nippy) — persisted
+  → ctx-engine/advance-iter — also pinned into :session/trailer
+
+iter K+1 render:
+  ctx-loop/trailer->form-results — flatten all trailer pins'
+    :forms into a {scope → envelope} map.
+  → pass to derive-warnings (T2 + T4) and derive-progression so:
+      - validator-fn eval can read `:result` per proof scope
+      - classify-scope can distinguish :ok / :unknown / :errored
+      - progression counts proofs whose scope appears in form-results
+```
+
+A task proof whose scope is NOT in the current trailer's form-results
+classifies `:unknown` and warns. This drives the "proofs must reference
+live executed forms" invariant without engine policing.
+
+### What model can NEVER do
+
+These are NOT enforced by spec but the engine MUST reject / warn:
+- Mutate via `(swap! some-atom …)` to bypass mutators — engine doesn't
+  control this; we trust the sandbox to expose only the engine bindings
+  for CTX mutations.
+- Reference scopes from the FUTURE (`scope.turn > cursor.turn`, etc.).
+  Engine soft-warns; the write proceeds.
+- Carry `:done-born` manually on a `(spec-set! …)`. Engine ignores
+  caller-supplied `:done-born` and stamps its own when status flips
+  terminal.
+- Lie about `:born`. Engine stamps `:born` on entity creation; the
+  open-schema allows the model to override but T0 soft-warns.
+
+### Persistence guarantees
+
+| thing | persisted where | recovered on restart |
+|---|---|---|
+| live CTX (specs/tasks/facts/trailer/scope) | `session_turn_state.ctx` BLOB | yes, via `db-load-latest-ctx` |
+| per-turn history (every snapshot ever) | same column, every soul/state row | yes, via `db-load-ctx-history` |
+| per-iter form envelopes | `session_turn_iteration.forms` BLOB | yes, indexed by scope |
+| SCI sandbox vars (`(def …)` / `(defn …)`) | `definition_state.value` BLOB | yes, via `restore-sandbox!` |
+| trailer (within latest CTX) | same blob as live CTX | yes |
+| validator-fn compiled fn | NOT persisted — recompiled from `:validator-fn` source on demand | recompiled (cached) |
+| warnings | NOT persisted — derived fresh every render | derived |
+| progression | NOT persisted — derived fresh | derived |
+| next-actions | NOT persisted — derived fresh | derived |
+
+The single source of truth is `session_turn_state.ctx`. Everything
+else is either historical (other turn-state rows), derived (warnings /
+progression / next-actions), or unrelated (sandbox vars in
+`definition_state`).
+
+### Out of scope for this engine
+
+These are intentionally NOT part of the CTX engine:
+- multi-agent coordination
+- cross-session sharing (specs from session A flowing to session B)
+- automatic task generation / planning from user request
+- automatic summarization (model owns it; engine doesn't decide
+  what to summarize)
+- proof scope synthesis (model must pick form scopes; engine
+  classifies what it gets)
+
+These remain channel / extension responsibilities or future work.
+
+---
+
+## Hints — current shape + proposed validator-fn extension
+
+### Current behaviour (and a known bug)
+
+`:session/hints` is an engine-rendered map of pending one-shot instructions
+the model must satisfy. Today each hint carries:
+
+```clojure
+:session/hints
+{:vis.foundation/session-title
+   {:body "session has no title — set one with (set-session-title! \"…\")"
+    :importance :high
+    :satisfy-with "(satisfy-hint! :vis.foundation/session-title)"}}
+```
+
+Model is supposed to:
+1. **Perform** the requested action (e.g. `(set-session-title! "Auth bcrypt refactor")`).
+2. **Acknowledge** via `(satisfy-hint! :vis.foundation/session-title [<scope> …])`.
+
+The engine then drops the hint id from `:session/hints` on the next render.
+
+**The bug Karol called out**: title hints sometimes fail to satisfy.
+Diagnosed cause:
+
+- The `:satisfy-with` field today is a STRING that LOOKS like a canonical
+  form but isn't enforced. Some hooks emit a 0-arity satisfy template
+  (`"(satisfy-hint! :hint/id)"`) while others expect proof scopes. The
+  model sometimes calls `(satisfy-hint! :session-title)` (zero arity)
+  when the registered hook requires `[<scope>]`, and the engine
+  cheerfully removes the hint id even though no proof was attached.
+- There is no validator. The engine never checks that the model actually
+  did the requested action. If the model calls `(satisfy-hint! …)` without
+  ever calling `(set-session-title! …)`, the hint silently disappears.
+
+Net effect: hints behave like soft polite reminders, not invariants. Title
+goes missing for whole sessions and the model never re-prompts itself.
+
+### Proposed extension: hints get the same validator-fn machinery as requirements
+
+Lift the requirement-validator pattern up to hints:
+
+```clojure
+:session/hints
+{:vis.foundation/session-title
+   {:body          "session has no title — set one with (set-session-title! \"…\")"
+    :importance    :high
+    :satisfy-with  "(satisfy-hint! :vis.foundation/session-title [<scope of (set-session-title! …)>])"
+    :validator-fn  "(fn [{:keys [src]}] (clojure.string/includes? src \"set-session-title!\"))"}}
+```
+
+Schema addition (in `ctx-spec.clj`):
+
+```clojure
+(s/def :session.hint/validator-fn string?)
+
+(s/def ::hint
+  (s/keys :req-un [:session.hint/body]
+    :opt-un [:session.hint/importance
+             :session.hint/satisfy-with
+             :session.hint/validator-fn]))
+```
+
+### Satisfaction flow with validator
+
+```
+Model emits two forms in one iter:
+  (set-session-title! "Auth bcrypt refactor")    ;; tN/i1/f3
+  (satisfy-hint! :vis.foundation/session-title
+                 ["tN/i1/f3"])                   ;; tN/i1/f4
+
+Engine handles (satisfy-hint! id scopes):
+  1. Look up hint. If absent → silent no-op (model satisfied a hint
+     that was already gone — fine).
+  2. If hint has no :validator-fn → drop the hint id (legacy behaviour).
+  3. If hint has :validator-fn:
+       - For each scope in `scopes`, look up form-results map.
+       - Call run-validator-fn against the form envelope.
+       - If ALL scopes pass → drop the hint id from :session/hints.
+       - If ANY scope fails (falsy / threw / timeout / compile-error)
+         OR no scopes provided when validator-fn is present →
+           keep the hint id alive, emit:
+           `;; ⚠ satisfy-hint! :id failed validator: <reason>`
+```
+
+The validator receives the canonical form-result envelope
+`{:scope :tag :src :result :error}`. Most hint validators will check
+`:src` (was the right call made?) or `:result` (did the call return
+the expected sentinel like `:vis/silent`?).
+
+### Hint authoring contract (foundation extensions + future hooks)
+
+Hint hooks defined under foundation core (e.g. `title-hint`,
+`context-pressure-hint`) MUST now:
+
+1. Provide a `:satisfy-with` string that names the **exact form shape**
+   the model should emit, including required scope args.
+2. Provide a `:validator-fn` source string that confirms the satisfying
+   form actually fired. Examples:
+     ```clojure
+     ;; title hint validator: any form whose src contains set-session-title!
+     "(fn [{:keys [src]}]
+        (and (string? src)
+             (clojure.string/includes? src \"set-session-title!\")))"
+
+     ;; context-pressure validator: model called a summarizer
+     "(fn [{:keys [src]}]
+        (and (string? src)
+             (re-find #\":trailer-summarize\" src)))"
+     ```
+3. Optional: bump `:importance` to `:critical` when the hint MUST be
+   satisfied this turn (engine then surfaces `;; ⚠ critical hint not
+   satisfied` if it persists past `(done …)`).
+
+Hint authoring becomes a small contract: emit body, satisfy-with,
+validator-fn. The engine handles the rest.
+
+### Soft rules around hints
+
+| condition | hint emitted by engine |
+|---|---|
+| hint with `:validator-fn` but model satisfies it with 0 scopes | `;; ⚠ satisfy-hint! :id needs proof scope(s); none provided` |
+| hint with `:importance :critical` still in :session/hints at done | `;; ⚠ critical hint :id unsatisfied at done; turn continues anyway` |
+| hint validator-fn errors out (compile / runtime) | `;; ⚠ hint :id validator failed: <reason>` |
+| `(satisfy-hint! :id …)` for an id that does not exist in :session/hints | silent no-op (idempotent) |
+
+These align with the soft-warning convention everywhere else: engine
+never refuses, but pollutes the next render with `;; ⚠` until the
+model fixes it.
+
+### Why this fixes the title bug
+
+After this change:
+- Foundation `title-hint` registers `:validator-fn` checking
+  `set-session-title!` was actually called.
+- Model calling `(satisfy-hint! :session-title)` without first calling
+  `(set-session-title! "…")` will FAIL the validator (no scope, no
+  source) and the hint persists. Next iter's `;; ⚠` makes it
+  impossible to ignore.
+- Model calling `(set-session-title! "x")` then
+  `(satisfy-hint! :session-title ["tN/iM/fK"])` validates cleanly and
+  the hint disappears.
+
+Same machinery, same SCI eval cache, same 50ms timeout. Hints become
+first-class engine objects with the same enforcement surface as
+requirements.
+
+### Implementation order (when we get to it)
+
+1. Add `:session.hint/validator-fn` to ctx-spec.
+2. Extend the `satisfy-hint!` SCI binding in ctx-loop to:
+   - Accept the proof scope vec as a second arg.
+   - Look up the hint's `:validator-fn` from `(get-in ctx [:session/hints id])`.
+   - Run each scope's envelope through `run-validator-fn`.
+   - Drop the hint id only when all scopes pass.
+3. Migrate the two existing foundation hooks (title, context-pressure)
+   to ship `:validator-fn` and the right `:satisfy-with` shape.
+4. Add tests under `ctx_engine_done_test.clj`: satisfy with no scopes
+   when validator expected → keep, warn; satisfy with passing scope →
+   drop; satisfy with failing scope → keep, warn.
+
+Out of scope for this commit. Tracked for D10.
