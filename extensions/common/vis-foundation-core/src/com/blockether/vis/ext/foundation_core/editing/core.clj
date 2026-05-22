@@ -53,7 +53,8 @@
 ;; =============================================================================
 
 (def ^:private default-grep-limit 250)
-(def ^:private default-list-depth 5)
+(def ^:private default-list-depth 10)
+(def ^:private default-list-limit 500)
 (def ^:private render-preview-chars 3000)
 
 ;; v/cat pagination contract:
@@ -153,7 +154,14 @@
   (extension/register-op! op {:tag tag}))
 
 (defn- tool-success
-  [{:keys [op path kind result info]}]
+  "Build a successful tool envelope. The caller passes `:metadata` (per-op
+   diagnostics like `:next-offset`, `:truncated?`, `:mode`, `:hit-count`,
+   etc.) and this fn merges it onto the standard `:target` / timing fields
+   that every envelope carries. Earlier this fn took the local key `:info`
+   and merged it into `:metadata`, which was confusing — the caller side
+   used `:info`, the envelope side called the same data `:metadata`. One
+   name end-to-end."
+  [{:keys [op path kind result metadata]}]
   (let [t (now-ms)]
     (extension/success
       {:result   result
@@ -162,7 +170,7 @@
                          :started-at-ms  t
                          :finished-at-ms t
                          :duration-ms    0}
-                   info)})))
+                   metadata)})))
 
 (defn- tool-failure-on-error
   [op kind _render-fn]
@@ -386,14 +394,6 @@
 ;; ls
 ;; =============================================================================
 
-(defn- file->entry [^File f]
-  {:name (.getName f)
-   :path (rel-path f)
-   :absolute-path (.getAbsolutePath f)
-   :type (if (.isDirectory f) :dir :file)
-   :size (if (.isDirectory f) nil (.length f))
-   :hidden? (.isHidden f)})
-
 (defn- visible-children [^File f {:keys [hidden? respect-gitignore? ignore-node root]}]
   (when (.isDirectory f)
     (let [kids (->> (.listFiles f)
@@ -404,19 +404,74 @@
                              (ignored? ignore-node c root)))))]
       (sort-by (juxt #(if (.isDirectory %) 0 1) #(.getName %)) kids))))
 
-(defn- file->tree [^File f opts depth]
-  (let [base (file->entry f)]
-    (if (and (pos? depth) (.isDirectory f))
-      (assoc base :children
-        (mapv #(file->tree % opts (dec depth))
-          (visible-children f opts)))
-      base)))
+;; Flat-listing helper. The earlier nested `:children` shape made the
+;; model walk the tree client-side (`tree-seq map? :children`) for the
+;; most common questions (find a file, count files, filter by ext). Flat
+;; output sidesteps that — every entry is a top-level row the model can
+;; filter directly.
+(defn- flat-entry
+  "Project a `File` into the flat-list row shape used by v/ls.
+   `:path` is workspace-relative; trailing `/` on dir paths is left to
+   the renderer so the data shape stays uniform."
+  [^File f]
+  {:path (rel-path f)
+   :type (if (.isDirectory f) :dir :file)
+   :size (if (.isDirectory f) nil (.length f))})
+
+(defn- collect-flat-entries
+  "BFS-like (actually pre-order DFS) walk under `root` up to `max-depth`.
+   Returns `{:entries [...] :truncated? B}`. Respects `:hidden?` /
+   `:respect-gitignore?` like before. `:files-only?` and `:dirs-only?`
+   are post-filters applied per entry (root is never emitted). Stops at
+   `max-limit` entries and marks `:truncated? true`."
+  [^File root opts* max-depth max-limit files-only? dirs-only?]
+  (let [acc        (volatile! (transient []))
+        truncated? (volatile! false)
+        keep?      (fn [^File f]
+                     (cond files-only? (.isFile f)
+                       dirs-only?  (.isDirectory f)
+                       :else       true))
+        walk (fn walk [^File f cur-depth]
+               (when-not @truncated?
+                 (when (and (not= f root) (keep? f))
+                   (vswap! acc conj! (flat-entry f))
+                   (when (>= (count @acc) max-limit)
+                     (vreset! truncated? true)))
+                 ;; Descend strictly by depth budget. `:depth 0` means
+                 ;; \"no descent at all\" — root's children aren't visited.
+                 ;; `:depth 1` visits root's immediate children only.
+                 (when (and (.isDirectory f)
+                         (< cur-depth max-depth)
+                         (not @truncated?))
+                   (doseq [^File child (visible-children f opts*)
+                           :while (not @truncated?)]
+                     (walk child (inc cur-depth))))))]
+    (walk root 0)
+    {:entries (persistent! @acc)
+     :truncated? @truncated?}))
 
 (defn- list-files
   ([path] (list-files path nil))
   ([path opts]
-   (let [{:keys [depth hidden? respect-gitignore?]
-          :or {depth default-list-depth hidden? false respect-gitignore? true}} (or opts {})
+   (let [{:keys [depth limit hidden? respect-gitignore? files-only? dirs-only?]
+          :or {depth default-list-depth
+               limit default-list-limit
+               hidden? false
+               respect-gitignore? true
+               files-only? false
+               dirs-only?  false}} (or opts {})
+         _ (when (and files-only? dirs-only?)
+             (throw (ex-info "v/ls :files-only? and :dirs-only? are mutually exclusive"
+                      {:type :ext.foundation.editing/invalid-ls-opts
+                       :opts opts})))
+         _ (when-not (and (integer? depth) (not (neg? depth)))
+             (throw (ex-info "v/ls :depth must be a non-negative integer"
+                      {:type :ext.foundation.editing/invalid-ls-opts
+                       :depth depth})))
+         _ (when-not (and (integer? limit) (pos? limit))
+             (throw (ex-info "v/ls :limit must be a positive integer"
+                      {:type :ext.foundation.editing/invalid-ls-opts
+                       :limit limit})))
          f (safe-path path)
          _ (when-not (.exists f)
              (throw (ex-info (str "Path not found: " (.getPath f))
@@ -424,8 +479,21 @@
          opts* {:hidden? hidden?
                 :respect-gitignore? respect-gitignore?
                 :ignore-node (when respect-gitignore? (load-ignore-node f))
-                :root f}]
-     (file->tree f opts* depth))))
+                :root f}
+         {:keys [entries truncated?]}
+         (collect-flat-entries f opts* depth limit files-only? dirs-only?)
+         file-count (count (filter #(= :file (:type %)) entries))
+         dir-count  (count (filter #(= :dir  (:type %)) entries))]
+     {:path          (rel-path f)
+      :absolute-path (.getAbsolutePath f)
+      :root-type     (if (.isDirectory f) :dir :file)
+      :entries       entries
+      :entry-count   (count entries)
+      :file-count    file-count
+      :dir-count     dir-count
+      :truncated?    truncated?
+      :depth         depth
+      :limit         limit})))
 
 ;; =============================================================================
 ;; rg
@@ -1513,7 +1581,7 @@
         :path path
         :kind :file
         :result (assoc out :vis.op :v/cat)
-        :info {:next-offset (:next-offset out) :truncated? (:truncated? out)}
+        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path arg]
    (when-not (= arg :tail)
@@ -1526,7 +1594,7 @@
         :path path
         :kind :file
         :result (assoc out :vis.op :v/cat)
-        :info {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
+        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path arg n]
    (when-not (= arg :tail)
@@ -1539,7 +1607,7 @@
         :path path
         :kind :file
         :result (assoc out :vis.op :v/cat)
-        :info {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
+        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path range-kw start end]
    ;; (v/cat path :range start end) — INCLUSIVE start..end (both 1-based).
@@ -1560,38 +1628,59 @@
         :path path
         :kind :file
         :result (assoc out :vis.op :v/cat)
-        :info {:next-offset (:next-offset out) :truncated? (:truncated? out)
-               :range [start end]}
+        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
+                   :range [start end]}
         :presentation {:kind :source :path (:path out) :line-key :lines}}))))
 
 (defn- ls-tool
-  "List a directory as a plain Clojure map tree:
-     {:vis.op :v/ls :path P :absolute-path AP :type :dir|:file
-      :entry-count N :children [{:name :path :type :size :children} ...]}
-   `:children` is a recursive vector bounded by `:depth` (default 5).
-   `(v/ls path)` reads with defaults; `(v/ls path opts)` accepts
-   `{:depth N :hidden? B :respect-gitignore? B}`. Children are fully
-   materialised; slice via `(map :name (:children r))` or
-   `(filter #(= :dir (:type %)) (:children r))`. No handles; the whole
-   tree is a plain map."
+  "List a directory as a FLAT recursive entry list. Returns a plain map:
+     {:vis.op :v/ls
+      :path          P            — workspace-relative root path
+      :absolute-path AP
+      :root-type     :dir|:file
+      :entries       [{:path :type :size} ...]  — entries under root
+      :entry-count N :file-count F :dir-count D
+      :truncated?    B            — true when the :limit clamped the walk
+      :depth N :limit N}
+
+   Default behaviour: recursive walk up to `:depth 10` and 500 entries.
+   Paths are workspace-relative (same shape as v/cat / v/patch :path);
+   `:type :dir` carries no trailing slash on the path — the discriminator
+   IS the `:type` field. Sort order: depth-first pre-order; within each
+   directory, sub-directories first, then files, both alphabetical.
+
+   Filter directly on `:entries`:
+     (filter #(str/ends-with? (:path %) \".py\") (:entries r))
+     (filter #(= :file (:type %)) (:entries r))
+   no `tree-seq` walk needed.
+
+   `(v/ls path)` reads with defaults; `(v/ls path opts)` accepts:
+     {:depth N            — max recursion depth (default 10)
+      :limit N            — stop after N entries (default 500;
+                            sets :truncated? true)
+      :files-only? B      — emit only file entries (no directories)
+      :dirs-only?  B      — emit only directory entries
+      :hidden? B          — include dotfiles / dotdirs (default false)
+      :respect-gitignore? B  default true}"
   ([path]
    (ls-tool path nil))
   ([path opts]
-   (let [tree (list-files path opts)
-         entry-count (count (or (:children tree) []))
-         result (-> tree
-                  (assoc :vis.op :v/ls)
-                  (assoc :entry-count entry-count))]
+   (let [listing (list-files path opts)
+         result  (assoc listing :vis.op :v/ls)]
      (tool-success
        {:op :v/ls
         :path path
         :kind :dir
         :result result
-        :info {:depth (:depth opts)
-               :hidden? (:hidden? opts)
-               :respect-gitignore? (get opts :respect-gitignore? true)
-               :entry-count entry-count}
-        :presentation {:kind :tree}}))))
+        :metadata  {:depth (:depth listing)
+                    :limit (:limit listing)
+                    :entry-count (:entry-count listing)
+                    :file-count  (:file-count listing)
+                    :dir-count   (:dir-count listing)
+                    :truncated?  (:truncated? listing)
+                    :hidden? (:hidden? opts)
+                    :respect-gitignore? (get opts :respect-gitignore? true)}
+        :presentation {:kind :flat-list}}))))
 
 (defn- rg-tool
   "File-content search. Three output modes — default is content (hits with
@@ -1664,20 +1753,20 @@
                 ".")
         :kind :dir
         :result result
-        :info (cond-> {:spec spec
-                       :query-op (:op coerced)
-                       :paths paths
-                       :include include
-                       :exclude exclude
-                       :mode mode
-                       :truncated-by (:truncated-by out)}
-                (= mode :content)
-                (assoc :hit-count (:hit-count result))
-                (= mode :files-only)
-                (assoc :file-count (:file-count result))
-                (= mode :counts)
-                (assoc :file-count (:file-count result)
-                  :total-matches (:total-matches result)))
+        :metadata (cond-> {:spec spec
+                           :query-op (:op coerced)
+                           :paths paths
+                           :include include
+                           :exclude exclude
+                           :mode mode
+                           :truncated-by (:truncated-by out)}
+                    (= mode :content)
+                    (assoc :hit-count (:hit-count result))
+                    (= mode :files-only)
+                    (assoc :file-count (:file-count result))
+                    (= mode :counts)
+                    (assoc :file-count (:file-count result)
+                      :total-matches (:total-matches result)))
         :presentation (case mode
                         :content    {:kind :search-hits :row-keys [:path :line :text]}
                         :files-only {:kind :search-files}
@@ -1850,9 +1939,9 @@
            :path (or (:path (first plans)) ".")
            :kind :file
            :result summaries
-           :info  {:mode          :exact-replace
-                   :file-count    (count summaries)
-                   :changed-count (count (filter :changed? summaries))}}))
+           :metadata  {:mode          :exact-replace
+                       :file-count    (count summaries)
+                       :changed-count (count (filter :changed? summaries))}}))
       ;; Failure: full structured `:error` map with `:reason`, per-edit
       ;; `:failures`, `:checks`, and the optional `:loop-hint` so the
       ;; model can read them as plain map keys (no try/catch needed).
@@ -1898,10 +1987,10 @@
            :path (:path plan)
            :kind :file
            :result [summary]
-           :info  {:mode :write
-                   :file-count 1
-                   :changed-count (if (:changed? summary) 1 0)
-                   :op (:op plan)}}))
+           :metadata  {:mode :write
+                       :file-count 1
+                       :changed-count (if (:changed? summary) 1 0)
+                       :op (:op plan)}}))
       (let [first-failure (first (:failures result))]
         (extension/failure
           {:result   nil
@@ -1933,8 +2022,8 @@
        :path path
        :kind :dir
        :result out
-       :info {:created? (not before)
-              :already-existed? before}})))
+       :metadata {:created? (not before)
+                  :already-existed? before}})))
 
 (defn- copy-tool
   "Copy path. Tool result."
@@ -1947,9 +2036,9 @@
         :path dest
         :kind :path
         :result out
-        :info {:src (path->target src :path)
-               :dest (path->target dest :path)
-               :opts opts}}))))
+        :metadata {:src (path->target src :path)
+                   :dest (path->target dest :path)
+                   :opts opts}}))))
 
 (defn- move-tool
   "Move/rename path. Tool result."
@@ -1962,9 +2051,9 @@
         :path dest
         :kind :path
         :result out
-        :info {:src (path->target src :path)
-               :dest (path->target dest :path)
-               :opts opts}}))))
+        :metadata {:src (path->target src :path)
+                   :dest (path->target dest :path)
+                   :opts opts}}))))
 
 (defn- delete-tool
   "Delete path. Tool result."
@@ -1975,7 +2064,7 @@
      :path path
      :kind :path
      :result nil
-     :info {:deleted? true}}))
+     :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
   "Delete path if present. Tool result."
@@ -1986,7 +2075,7 @@
        :path path
        :kind :path
        :result deleted?
-       :info {:deleted? deleted?}})))
+       :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
   "Existence check. Returns boolean."
@@ -1997,7 +2086,7 @@
        :path path
        :kind :path
        :result exists?
-       :info {:exists? exists?}})))
+       :metadata {:exists? exists?}})))
 
 ;; =============================================================================
 ;; Structured renderers
@@ -2013,27 +2102,16 @@
 (defn- ir-root [& blocks]
   (into [:ir {}] (filter some? blocks)))
 
-(defn- tree-entry-line
-  [depth {:keys [name path type size] :as entry}]
-  (let [indent (apply str (repeat depth "  "))
-        label  (or name path (pr-str (dissoc entry :children)))]
-    (str indent "- " label
-      (when type (str " (" (clojure.core/name type) ")"))
-      (when size (str " " size "B")))))
-
-(defn- tree-lines
-  ([entry] (tree-lines 0 entry))
-  ([depth entry]
-   (cond
-     (map? entry)
-     (cons (tree-entry-line depth entry)
-       (mapcat #(tree-lines (inc depth) %) (:children entry)))
-
-     (sequential? entry)
-     (mapcat #(tree-lines depth %) entry)
-
-     :else
-     [(str (apply str (repeat depth "  ")) "- " (pr-str entry))])))
+(defn- flat-entry-line
+  "Render one flat v/ls row as `path/[trailing-slash-for-dirs] (Nb)`.
+   Trailing slash is RENDERER convention (Roo / cline style) so directory
+   rows read as filesystem paths; the underlying data shape carries
+   `:type :dir` for programmatic discrimination instead."
+  [{:keys [path type size]}]
+  (let [dir? (= :dir type)]
+    (str path
+      (when dir? "/")
+      (when (and (not dir?) (some? size)) (str "  (" size "B)")))))
 
 (defn- numbered-line-block
   "Format a vec of `[line-number, text]` tuples as `<ln>: <text>` lines."
@@ -2074,13 +2152,24 @@
       (ir-code-block "text" (bounded-render-text body)))))
 
 (defn- channel-render-ls
-  "Channel preview: pretty tree from the plain map."
-  [tree]
+  "Channel preview: flat path list. Directory rows get a trailing `/`,
+   file rows get a `(NB)` size suffix. `:truncated?` surfaces an inline
+   note. Pure projection of `(:entries r)`."
+  [{:keys [path entries entry-count file-count dir-count truncated?
+           depth limit]}]
   (ir-root
-    (ir-p "Directory tree of " (ir-code (:path tree)) " — "
-      (or (:entry-count tree) (count (:children tree))) " top-level entries.")
-    (ir-code-block "text"
-      (bounded-render-text (str/join "\n" (tree-lines tree))))))
+    (ir-p "Listing of " (ir-code path) " — "
+      entry-count " entr" (if (= 1 entry-count) "y" "ies")
+      " (" (or file-count 0) " file(s), " (or dir-count 0) " dir(s))"
+      (when (and depth (not= depth 10)) (str " depth=" depth))
+      (when truncated?
+        (str ", truncated at :limit " limit
+          " — narrow scope or bump :limit"))
+      ".")
+    (when (seq entries)
+      (ir-code-block "text"
+        (bounded-render-text
+          (str/join "\n" (map flat-entry-line entries)))))))
 
 (defn- render-rg-hit-block
   "Render one content-mode hit with optional :before / :after context.
@@ -2327,10 +2416,15 @@
      "  :expected-mtime / :expected-size to fail closed if the file was"
      "  rewritten between read and patch."
      ""
-     "  (v/ls path)             — directory tree. opts: {:depth :hidden? :respect-gitignore?}."
-     "  result: {:vis.op :v/ls :path :type :entry-count :children [...]} where"
-     "  each child is {:name :path :type :size :children}. Walk with"
-     "  `(tree-seq map? :children r)`; filter with `(filter #(= :dir (:type %)) ...)`."
+     "  (v/ls path)             — FLAT recursive entry list. Default :depth 10,"
+     "  :limit 500. opts: {:depth N :limit N :files-only? B :dirs-only? B"
+     "  :hidden? B :respect-gitignore? B}. result: {:vis.op :v/ls :path"
+     "  :entries [{:path :type :size}...] :entry-count :file-count :dir-count"
+     "  :truncated?}. Paths are workspace-relative — feed them straight to"
+     "  v/cat / v/patch. Filter directly on :entries:"
+     "    (filter #(str/ends-with? (:path %) \".py\") (:entries r))"
+     "    (filter #(= :file (:type %)) (:entries r))"
+     "  No tree-seq walk required."
      ""
      "  (v/rg {:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]})"
      "  (v/rg {:all [\"defn\" \"foo\"] :paths [\"src\"]})"
