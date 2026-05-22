@@ -460,11 +460,12 @@ identyczny, ale GLM robi więcej v/cat sanity checks + drobne bugi
 
 ### [ ] T13 — Iteration-budget hints w trailerze
 
-**Status:** queued, low-medium priority.
+**Status:** queued, low-medium priority. Mid-turn hint: SAFE per
+opencode community guidance (hint = nudge in CTX, NOT a reasoning-chain
+edit).
 
 Gdy task=\"jeden patch\" a iter już 5+ to suggesion że model się zapętlił.
-Dodać do CTX engine soft-warning: jeśli iter > 1.5× expected,
-dorzuć hint:
+Dodać do CTX engine soft-warning:
 
 ```
 :session/hints {:engine/iter-budget-warn
@@ -477,22 +478,38 @@ results or restate plan.\"}}
 files touched + iter > 4 = warn.
 - Wsadzić w engine czy w extension hook?
 
+**Note**: hint pojawia się w CTX (osobne pole), nie w trailer pinach.
+Nie konfliktuje z preserved-thinking bo `reasoning_content` blocks
+pozostają untouched.
+
 ---
 
 ### [ ] T14 — Auto-summarize stale trailer pins
 
-**Status:** queued, medium priority.
+**Status:** queued, medium priority. **SAFE per ZAI / opencode community**
+(confirmed cross-validation):
 
-Observation pin staje się stale gdy ten sam path jest później mutowany.
-Dziś model musi manually robić `:trailer-summarize` na done. Engine
-mógłby auto-replace observation pin's :forms na \":summary\" przed
-renderem CTX, oszczędzając tokeny per iter.
+- Mid-turn (`ctx_engine.clj:867`): `:session/trailer` accumulates verbatim,
+  zero pruning. Reasoning chain intact.
+- At `(done …)` (`ctx_engine.clj:961`): applies `:trailer-drop` +
+  `:trailer-summarize`. This is exactly the \"prune/compress only after a
+  stage work, or everything, is done\" pattern that opencode community
+  recommends for GLM.
+- ZAI docs (preserved-thinking): unmodified `reasoning_content` MUST flow
+  back; we already do this regardless of trailer summarization.
 
-**Risks**
-- Jeśli model PLANUJE zostawić verbatim observation w kontekście, auto-
-summarize może mu utrudniać. Może być opt-out per-pin.
-- Engine już ma stale-read heuristic comment w prompt; może wystarczy
-bardziej forced rendering bez kodu.
+Proposal: at done-time, engine auto-detects observation pins on paths
+later mutated within this turn and replaces their `:forms` with
+`:summary` automatically. Model can still override with explicit
+`:trailer-drop` / `:trailer-summarize`.
+
+**Risks** (reduced after cross-validation):
+- Heuristic may misfire on intentional state-snapshots (model relies on
+  pre-mutation observation). Opt-out: model pre-pins the obs in
+  `:trailer-drop` cleanly.
+- For GLM/coding plan: harmless since this only fires at done; the
+  inter-turn cache hit depends on `reasoning_content` order, not
+  trailer shape.
 
 ---
 
