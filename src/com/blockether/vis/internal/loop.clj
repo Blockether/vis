@@ -591,6 +591,15 @@
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [thrown       (atom nil)
         tool-counts  (atom {})
+        ;; Per-top-level-form cursor pointer. Multi-form fences need the
+        ;; outer loop's :current-form-idx-atom (used by `(done …)` to
+        ;; stamp answer-atom :position, by cursor-snapshot to compute
+        ;; :next-form for proof classification, etc.) to ADVANCE as
+        ;; each top-level form runs. Without this update the atom
+        ;; stayed at whatever the outer executed-mapv set (0 for a
+        ;; single-fence iter), so cursor :next-form was always 1 and
+        ;; the engine classified every past form-scope as :future-form.
+        form-idx-atom (some-> env :current-form-idx-atom)
         ;; Per-top-level-form channel sink. `invoke-symbol-wrapper` writes
         ;; ONE entry per tool-symbol call; `*sink-position*` stamps each
         ;; entry with a stable position. Both rebind cleanly when the form
@@ -623,7 +632,7 @@
         {parsed-forms :forms parse-error :parse-error repaired-source :repaired-source}
         (parse-top-level-forms code)
         eval-one-form
-        (fn [form source]
+        (fn [idx form source]
           (if-let [hint (pre-eval-lint-hint form)]
             ;; Pre-eval lint short-circuit: forms guaranteed to crash
             ;; (bare list literal head is a number/string, JS/Python paren
@@ -632,6 +641,7 @@
             {:source source
              :error {:message hint :data {:phase :vis/lint}}}
             (try
+              (when form-idx-atom (reset! form-idx-atom idx))
               {:source source :result (sci/eval-form sci-ctx form)}
               (catch Throwable e
                 (let [err-map (try (extension/ex->op-error e {:form-source source})
@@ -660,6 +670,7 @@
           ;; reflect the repaired version and we still mark :repaired-source
           ;; on the outcome so the trailer can disclose the auto-fix.
           (loop [todo parsed-forms
+                 idx  0
                  acc  []
                  last-result nil]
             (if (empty? todo)
@@ -673,11 +684,11 @@
                  :repaired-source repaired-source
                  :repaired? (boolean repaired-source)})
               (let [{:keys [source form]} (first todo)
-                    entry (eval-one-form form source)]
+                    entry (eval-one-form idx form source)]
                 (if-let [err (:error entry)]
                   {:result nil :forms (conj acc entry) :error err
                    :repaired-source repaired-source}
-                  (recur (rest todo) (conj acc entry) (:result entry)))))))
+                  (recur (rest todo) (inc idx) (conj acc entry) (:result entry)))))))
         exec-future (cancellation/worker-future "vis-sci-eval"
                       (fn []
                         (try
@@ -3186,22 +3197,24 @@
                                        :iter-count (:iter-count @usage-atom)
                                        :context-limit effective-context-limit})
                     ;; D12: foundation hooks emit hook-task shapes
-                    ;; `{:id <kw> :task <task-map>}`. We route each through
-                    ;; the engine's `apply-mutator :task-set!` so the
-                    ;; standard write path (cycle-check, hook-repeat
-                    ;; dedup, :born stamping) applies. Hooks that
-                    ;; satisfied this iter (model wrote
-                    ;; `(task-set! id {:status :done :proof "…"})` and
-                    ;; engine validated) are already :done in ctx; the
-                    ;; hook-repeat dedup keeps them that way. Hooks
-                    ;; whose condition no longer holds simply don't fire
-                    ;; — the existing task carries on at whatever status
-                    ;; until gc-pass archives it past TTL.
-                    _ (when (and (:ctx-atom environment) (seq iteration-hints))
-                        (doseq [{:keys [id task]} iteration-hints
-                                :when (and id task)]
-                          (ctx-loop/apply-and-record!
-                            environment :task-set! [id task])))
+                    ;; `{:id <kw> :task <task-map>}`. Route each through
+                    ;; `apply-mutator :task-set!` so the standard write
+                    ;; path (cycle-check, hook-repeat dedup, :born
+                    ;; stamping) applies. Hooks already satisfied this
+                    ;; turn keep :done via the hook-repeat dedup.
+                    fold-start-ms (System/currentTimeMillis)
+                    folded-hits (when (:ctx-atom environment)
+                                  (filterv (fn [{:keys [id task]}] (and id task))
+                                    iteration-hints))
+                    _ (doseq [{:keys [id task]} (or folded-hits [])]
+                        (ctx-loop/apply-and-record! environment :task-set! [id task]))
+                    fold-duration-ms (- (System/currentTimeMillis) fold-start-ms)
+                    _ (when (seq folded-hits)
+                        (tel/log! {:level :info :id ::hook-task-fold
+                                   :data {:iteration iteration
+                                          :emitted-ids (mapv :id folded-hits)
+                                          :duration-ms fold-duration-ms}}
+                          "Folded foundation hook-tasks into :session/tasks"))
                     iteration-context ""
                     ;; CTX engine render — the new bare-EDN `;; ctx` block
                     ;; the model reads/writes against. Built per iter from
@@ -3489,10 +3502,48 @@
                         ;; new :forms column. `:code` is the whole fence body
                         ;; concatenated for forensics. There is NO legacy
                         ;; single-form result/error column anymore.
+                        ;; Cursor for trailer pin + per-form envelope keying.
+                        ;; `iteration` here is the 0-based loop counter; the
+                        ;; loop normalises it to 1-based via
+                        ;; `(reset! current-iteration-atom (inc iteration))`
+                        ;; at the top of each iter. The renderer +
+                        ;; cursor-snapshot consume that atom, so they see
+                        ;; 1-based iters. Trailer pin + form envelopes
+                        ;; MUST agree with the renderer (model writes
+                        ;; proof scopes `tN/iM/fK` against the rendered
+                        ;; cursor), so we read the same 1-based source
+                        ;; here. Using raw `iteration` (0) at this point
+                        ;; caused a turn-1 off-by-one: trailer pinned
+                        ;; `t1/i0/fK` while the rendered ctx showed the
+                        ;; model `t1/i1` — hook-task validators couldn't
+                        ;; find their proof scope in the form-results
+                        ;; map and reverted satisfied tasks.
                         cursor      {:turn (or (some-> (:current-turn-position-atom environment) deref) 1)
-                                     :iter (or iteration 1)}
-                        forms-vec   (if (seq blocks)
-                                      (ctx-engine/blocks->forms blocks cursor)
+                                     :iter (or (some-> (:current-iteration-atom environment) deref)
+                                             (inc (long (or iteration 0))))}
+                        ;; Expand multi-form blocks into per-form mini-blocks
+                        ;; before projecting into engine envelopes. The eval
+                        ;; pipeline returns ONE outer block per iter; that
+                        ;; outer block carries a `:forms` vec with
+                        ;; per-top-level-form `{:source :result :error}`
+                        ;; entries (D3 \"multi-form capture\"). Without this
+                        ;; expansion `blocks->forms` would treat the whole
+                        ;; fence as a single envelope at f1, dropping every
+                        ;; form after the first from the trailer pin and
+                        ;; from the form-results map the model references
+                        ;; on proof scopes.
+                        expanded-blocks
+                        (mapcat (fn [b]
+                                  (if-let [fs (seq (:forms b))]
+                                    (map (fn [f]
+                                           {:code   (or (:source f) (:src f) (:code f) "")
+                                            :result (:result f)
+                                            :error  (:error f)})
+                                      fs)
+                                    [b]))
+                          blocks)
+                        forms-vec   (if (seq expanded-blocks)
+                                      (ctx-engine/blocks->forms expanded-blocks cursor)
                                       [(ctx-engine/block->envelope
                                          {:code "" :error {:message "empty iteration"}}
                                          1 cursor)])
@@ -3521,31 +3572,56 @@
                                            tc (assoc :tokens (:tokens tc)
                                                 :cost-usd (:cost-usd tc)))))
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
-                        ;; CTX engine advance-iter: append the trailer pin for
-                        ;; this iter's forms (engine drops the (done …) form
-                        ;; itself) and bump the cursor's :iter/next-form. The
-                        ;; ctx-atom now carries the pin so the next iter's
-                        ;; render shows it.
-                        _ (when-let [ca (:ctx-atom environment)]
-                            (swap! ca
+                        ;; =====================================================
+                        ;; CTX engine end-of-iter pipeline (D11/D12).
+                        ;; Flat: advance-iter, then reconcile, with phase
+                        ;; timing + state logged to telemere so the run is
+                        ;; replayable from ~/.vis/vis.log alone.
+                        ;; =====================================================
+                        ctx-atom-ref (:ctx-atom environment)
+                        advance-iter-start-ms (System/currentTimeMillis)
+                        _ (when ctx-atom-ref
+                            (swap! ctx-atom-ref
                               (fn [c]
                                 (ctx-engine/advance-iter
                                   (assoc c :session/scope cursor)
                                   forms-vec))))
-                        ;; D12: validate every hook-task that landed at
-                        ;; `:status :done` this iter. The validator-fn on
-                        ;; the task is evaluated against the form
-                        ;; envelope at `:proof`; on failure the engine
-                        ;; reverts to :todo and emits a warning.
-                        ;; form-results is built from the FULL trailer
-                        ;; (prior iters + the iter just pinned), so
-                        ;; proofs may point at any captured form.
-                        _ (when-let [ca (:ctx-atom environment)]
-                            (let [trailer      (:session/trailer @ca)
-                                  form-results (ctx-loop/trailer->form-results
-                                                 (or trailer []))]
-                              (ctx-loop/reconcile-done-hook-tasks!
-                                environment form-results)))
+                        advance-iter-duration-ms (- (System/currentTimeMillis) advance-iter-start-ms)
+                        trailer-after-pin (when ctx-atom-ref (:session/trailer @ctx-atom-ref))
+                        form-results-map  (when ctx-atom-ref (ctx-loop/trailer->form-results (or trailer-after-pin [])))
+                        hook-tasks-pre    (when ctx-atom-ref
+                                            (into {}
+                                              (for [[k v] (:session/tasks @ctx-atom-ref)
+                                                    :when (= :hook (:source v))]
+                                                [k (select-keys v [:status :proof :done-born])])))
+                        _ (when ctx-atom-ref
+                            (tel/log! {:level :info :id ::iter-end-pre-reconcile
+                                       :data {:iteration iteration
+                                              :cursor cursor
+                                              :pinned-forms (count forms-vec)
+                                              :trailer-entries (count (or trailer-after-pin []))
+                                              :form-result-scopes (vec (sort (keys (or form-results-map {}))))
+                                              :hook-tasks-pre hook-tasks-pre
+                                              :advance-iter-ms advance-iter-duration-ms}}
+                              "CTX iter-end: trailer pinned; about to reconcile hook-tasks"))
+                        reconcile-start-ms (System/currentTimeMillis)
+                        _ (when ctx-atom-ref
+                            (ctx-loop/reconcile-done-hook-tasks! environment (or form-results-map {})))
+                        reconcile-duration-ms (- (System/currentTimeMillis) reconcile-start-ms)
+                        hook-tasks-post   (when ctx-atom-ref
+                                            (into {}
+                                              (for [[k v] (:session/tasks @ctx-atom-ref)
+                                                    :when (= :hook (:source v))]
+                                                [k (select-keys v [:status :proof :done-born])])))
+                        warnings-post     (when ctx-atom-ref (:engine/warnings @ctx-atom-ref))
+                        _ (when ctx-atom-ref
+                            (tel/log! {:level :info :id ::iter-end-post-reconcile
+                                       :data {:iteration iteration
+                                              :hook-tasks-post hook-tasks-post
+                                              :hook-tasks-changed? (not= hook-tasks-pre hook-tasks-post)
+                                              :warnings warnings-post
+                                              :reconcile-ms reconcile-duration-ms}}
+                              "CTX iter-end: reconcile complete"))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond

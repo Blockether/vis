@@ -26,7 +26,8 @@
    Hook-emitted soft work items now live as hook-sourced tasks; the model
    satisfies them via `(task-set! id {:status :done :proof \"…\"})` and the
    engine reconciles at end-of-iter via `eng/reconcile-done-hook-tasks`."
-  (:require [com.blockether.vis.internal.ctx-engine :as eng]))
+  (:require [com.blockether.vis.internal.ctx-engine :as eng]
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Atom and constructor — ONE atom carries the entire engine state
@@ -150,17 +151,31 @@
    so the validator sees the full form-results map.
 
    `form-results-map` is `{scope-string envelope}` for every scope in the
-   trailer including the iter that just landed."
+   trailer including the iter that just landed.
+
+   No-op when ctx-atom is missing (defensive guard for tests that wire a
+   partial env)."
   [{:keys [ctx-atom] :as env} form-results-map]
-  (when ctx-atom
-    (let [cursor (cursor-snapshot env)]
+  (if-not ctx-atom
+    (do (tel/log! {:level :warn :id ::reconcile-no-ctx-atom}
+          "reconcile-done-hook-tasks! called without :ctx-atom on env")
+      nil)
+    (let [start-ms (System/currentTimeMillis)
+          cursor   (cursor-snapshot env)
+          warns-acc (atom [])]
       (swap! ctx-atom
         (fn [c]
           (let [c+cur (assoc c :session/scope cursor)
-                {:keys [ctx warnings]} (eng/reconcile-done-hook-tasks
-                                         c+cur form-results-map)]
+                {:keys [ctx warnings]} (eng/reconcile-done-hook-tasks c+cur form-results-map)]
+            (reset! warns-acc (vec warnings))
             (cond-> ctx
-              (seq warnings) (update :engine/warnings (fnil into []) warnings))))))))
+              (seq warnings) (update :engine/warnings (fnil into []) warnings)))))
+      (tel/log! {:level :info :id ::reconcile-done-hook-tasks
+                 :data {:cursor cursor
+                        :form-result-scopes (vec (sort (keys (or form-results-map {}))))
+                        :warnings @warns-acc
+                        :duration-ms (- (System/currentTimeMillis) start-ms)}}
+        "reconcile-done-hook-tasks completed"))))
 
 (defn stamp-cursor
   "Return a ctx map with both `:session/turn` and `:session/scope` synced
