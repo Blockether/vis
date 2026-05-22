@@ -12,7 +12,6 @@
    [com.blockether.svar.internal.util :as util]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
-   [com.blockether.vis.internal.ctx :as vctx]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
@@ -2882,14 +2881,14 @@
         ;; and the per-iteration ext hint collector - activation-fn never
         ;; re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
-        extensions-snapshot (prompt/extensions-snapshot active-exts)
+        _extensions-snapshot (prompt/extensions-snapshot active-exts)
         _             (sync-active-extension-symbols! environment active-exts)
         session-snapshot (fn []
                            {:id           (:session-id environment)
                             :title        (some-> (:session-title-atom environment) deref str str/trim not-empty)
                             :turn-id      session-turn-id
                             :user-request user-request})
-        session-base (session-snapshot)
+        _session-base (session-snapshot)
         turn-position (session-turn-position environment session-turn-id)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
@@ -3001,15 +3000,12 @@
           (let [cache-created (long (or (get-in token-cost [:tokens :cache-created]) 0))]
             (when (pos? cache-created) cache-created)))]
     ;; -----------------------------------------------------------------
-    ;; Turn-start SYSTEM-var bindings.
+    ;; Turn-start state.
     ;;
-    ;; `ctx` is the single model-visible engine context value; rebuilt fresh
-    ;; per iteration.
-    (env/bind-and-bump! environment 'ctx
-      (vctx/build {:environment environment
-                   :session session-base
-                   :extension-ctx (extension/ctx-contributions environment active-exts)
-                   :extensions extensions-snapshot}))
+    ;; The legacy `ctx` SCI symbol (vctx/build) is gone. Engine state is
+    ;; now rendered into every user message as bare-EDN under `;; ctx`,
+    ;; not bound as a SCI value. See ctx_loop/build-sci-bindings for
+    ;; the model-facing mutator + introspect surface.
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-session-turn-id-atom environment)] (reset! a session-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
@@ -3125,12 +3121,12 @@
                                               (:input-limit pre-resolved-model)
                                               (:context pre-resolved-model)
                                               200000)
-                    llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
-                                                              (some-> (:name pre-resolved-model) str))
-                                                  :routing  (cond-> {:fallback? false}
-                                                              (seq routing) (assoc :request routing))}
-                                           (:error llm-provider)
-                                           (assoc :error (:error llm-provider)))
+                    _llm-provider-context (cond-> {:selected (llm-id (:provider pre-resolved-model)
+                                                               (some-> (:name pre-resolved-model) str))
+                                                   :routing  (cond-> {:fallback? false}
+                                                               (seq routing) (assoc :request routing))}
+                                            (:error llm-provider)
+                                            (assoc :error (:error llm-provider)))
                     iteration-position (inc (long iteration))
                     current-session (session-snapshot)
                     iteration-hints (collect-iteration-start-hints environment active-exts
@@ -3157,20 +3153,21 @@
                                        :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
                                        :iter-count (:iter-count @usage-atom)
                                        :context-limit effective-context-limit})
-                    current-ctx-map (vctx/build
-                                      {:environment environment
-                                       :session current-session
-                                       :iteration   {:id       (some-> (:current-iteration-id-atom environment) deref)
-                                                     :position iteration-position}
-                                       :hints       iteration-hints
-                                       :llm-provider llm-provider-context
-                                       :extension-ctx (extension/ctx-contributions environment active-exts)
-                                       :extensions  extensions-snapshot})
-                    _ (env/bind-and-bump! environment 'ctx current-ctx-map)
-                    iteration-context (vctx/render-iteration-trailer
-                                        {:environment   environment
-                                         :trailer-iters trailer-iters
-                                         :ctx           current-ctx-map})
+                    ;; Fold the iteration-hints from foundation hooks into the
+                    ;; live ctx-atom's :session/hints so the new ctx renderer
+                    ;; surfaces them inline. Hint id → {:body :importance
+                    ;; :satisfy-with}. The legacy vctx/build + vctx/render-
+                    ;; iteration-trailer path is gone.
+                    _ (when-let [a (:ctx-atom environment)]
+                        (swap! a assoc :session/hints
+                          (into {}
+                            (for [h iteration-hints
+                                  :when (:id h)]
+                              [(:id h)
+                               (cond-> {:body (str (:text h ""))}
+                                 (:importance h)   (assoc :importance (:importance h))
+                                 (:satisfy-with h) (assoc :satisfy-with (pr-str (:satisfy-with h))))]))))
+                    iteration-context ""
                     ;; CTX engine render — the new bare-EDN `;; ctx` block
                     ;; the model reads/writes against. Built per iter from
                     ;; the live ctx-atom plus engine-derived warnings /
