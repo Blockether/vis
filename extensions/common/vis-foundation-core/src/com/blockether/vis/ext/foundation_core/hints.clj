@@ -177,9 +177,11 @@
      (turn-spend vs per-call cap). Session 3102ad16 (2026-05-20)
      triggered the hint on iteration 13 at ~115K cumulative even
      though each provider request still fit inside ~10K tokens; the
-     model started defensively `(satisfy-hint! :vis.foundation/
-     context-pressure)` and looping. Comparing the SAME-SHAPED number
-     (per-call request size vs per-call cap) keeps the hint honest.
+     model started defensively flipping the hook-task
+     `:vis.foundation/context-pressure` to :done (pre-D12 the same
+     pattern surfaced as defensive `(satisfy-hint! …)` calls) and
+     looping. Comparing the SAME-SHAPED number (per-call request size
+     vs per-call cap) keeps the hint honest.
 
    Returns nil when either input is missing or non-positive - the
    hint is purely advisory and must never fail the iteration."

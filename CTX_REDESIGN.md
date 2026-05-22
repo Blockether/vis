@@ -1,11 +1,22 @@
 # CTX redesign
 
-Status: design — not yet implemented in Vis engine. The data shape lives
-in `src/com/blockether/vis/internal/ctx_spec.clj` as the canonical
-`clojure.spec.alpha` definitions. This doc carries the RATIONALE: why
-each subtree exists, how the engine behaves, examples, open questions.
-Shape disagreements between this doc and `ctx_spec.clj` are bugs;
-ctx_spec.clj wins.
+Status: implemented through Phase D12 (commits up to `ae9d4212`).
+The data shape lives in `src/com/blockether/vis/internal/ctx_spec.clj`
+as the canonical `clojure.spec.alpha` definitions. This doc carries the
+RATIONALE: why each subtree exists, how the engine behaves, examples,
+open questions. **Shape disagreements between this doc and
+`ctx_spec.clj` are bugs; `ctx_spec.clj` wins.**
+
+> **⚠ Reading note** — sections below labelled with earlier shapes
+> (`:session/hints`, `satisfy-hint!`, the wire-shape sample at line 78,
+> the operator API table, the rendered-CTX example at line 420, the
+> Lifecycle expectations subsections that mention hint behaviour) were
+> written before Phase D12 collapsed hints into hook-sourced tasks.
+> The CANONICAL surface is the **Final minimum-viable shape** section
+> below + the **Hooks → tasks (D12) — closed surface** section at the
+> end of this doc. When in doubt, those two sections and `ctx_spec.clj`
+> are the source of truth; older paragraphs survive for historical
+> rationale only.
 
 ---
 
@@ -859,17 +870,26 @@ Done in commit `776ca1ce`. Scope URL format reshape (`turn/<prefix>/iteration/N/
 {:session/id     "01HXYZ"
  :session/turn   N
 
- :session/workspace  {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
+ ;; VCS-agnostic permissive workspace map. Detectors stamp the relevant
+ ;; namespaced keys (`:vcs/*` canonical, `:git/*` / `:hg/*` / `:jj/*`
+ ;; aliases when emitted). Non-VCS sessions render as `{:vcs/kind :none}`.
+ :session/workspace  {:vcs/kind :vcs/branch :vcs/trunk :vcs/head
+                      :vcs/dirty? :vcs/stats}
  :session/symbols    {sym {:arglists :doc :born}}
- :session/hints      {hint-id {:body :importance :satisfy-with}}
 
  :session/scope     {:turn :iter :next-form}
 
  :session/specs
    {keyword {:title :requirements :status :born :done-born?}}
 
+ ;; D12: hook-emitted soft work items live HERE under :session/tasks.
+ ;; A hook task carries :source :hook + :hook-id + :importance +
+ ;; :validator-fn and (post-satisfaction) :proof + :done-born. Model
+ ;; satisfies via (task-set! id {:status :done :proof "tN/iM/fK"}).
  :session/tasks
-   {keyword {:title :specs :depends-on :status :born}}
+   {keyword {:title :specs :depends-on :status :born
+             :source? :hook-id? :importance?
+             :validator-fn? :proof? :done-born?}}
 
  :session/facts
    {keyword {:content :born}}
@@ -879,7 +899,11 @@ Done in commit `776ca1ce`. Scope URL format reshape (`turn/<prefix>/iteration/N/
     {:scope-start :scope-end :summary :born}]}                            ; range summary
 ```
 
-Three model-managed memo subtrees + 3 engine views + 1 trailer = 7 substantive subtrees. Six memo verbs + trailer/done/control + symbols (native SCI) + introspection (9 ops).
+Three model-managed memo subtrees + 2 engine views + 1 trailer = 6 substantive subtrees. Seven memo verbs (`spec-set!` `task-set!` `fact-set!` `req-add!` `req-update!` `req-remove!` `proof-add!` `proof-remove!`) + trailer/done/control + symbols (native SCI) + introspection (5 ops: spec/task/fact/archived/ctx-at).
+
+D12 retired `:session/hints` + `satisfy-hint!`: hook-emitted soft work
+items are tasks with `:source :hook`; the standard `task-set!` mutator
+is their satisfaction path.
 
 Cross-turn raw history reachable via `introspect-*`. Never preloaded.
 
@@ -1085,164 +1109,147 @@ These remain channel / extension responsibilities or future work.
 
 ---
 
-## Hints — current shape + proposed validator-fn extension
+## Hooks → tasks (D12) — closed surface
 
-### Current behaviour (and a known bug)
+`:session/hints` is **retired**. What used to be one-shot hints emitted
+by foundation extensions are now hook-sourced tasks under
+`:session/tasks`. One concept, one mutator, one validator surface.
 
-`:session/hints` is an engine-rendered map of pending one-shot instructions
-the model must satisfy. Today each hint carries:
+### Shape
+
+A foundation extension hook (phase `:turn.iteration/start`) returns a
+hook-task descriptor:
 
 ```clojure
-:session/hints
+{:title         "<imperative title — what the model must do>"
+ :importance    :info | :warn | :critical
+ :validator-fn  "(fn [{:keys [src result error]}] …)"}
+```
+
+The loop normalises this into a full `::cs/task` keyed by the hook id:
+
+```clojure
+:session/tasks
 {:vis.foundation/session-title
-   {:body "session has no title — set one with (set-session-title! \"…\")"
-    :importance :high
-    :satisfy-with "(satisfy-hint! :vis.foundation/session-title)"}}
+   {:title         "set the session title via (set-session-title! \"…\")"
+    :specs         {}
+    :status        :todo
+    :source        :hook
+    :hook-id       :vis.foundation/session-title
+    :importance    :critical
+    :validator-fn  "(fn [{:keys [src]}]
+                      (and (string? src)
+                        (clojure.string/includes? src \"set-session-title!\")))"
+    :born          "t1/i1/f1"}}
 ```
 
-Model is supposed to:
-1. **Perform** the requested action (e.g. `(set-session-title! "Auth bcrypt refactor")`).
-2. **Acknowledge** via `(satisfy-hint! :vis.foundation/session-title [<scope> …])`.
+`:validator-fn` is **REQUIRED**. Hooks that omit it are rejected by the
+loop with a log warn — every hook task must be validatable.
 
-The engine then drops the hint id from `:session/hints` on the next render.
-
-**The bug Karol called out**: title hints sometimes fail to satisfy.
-Diagnosed cause:
-
-- The `:satisfy-with` field today is a STRING that LOOKS like a canonical
-  form but isn't enforced. Some hooks emit a 0-arity satisfy template
-  (`"(satisfy-hint! :hint/id)"`) while others expect proof scopes. The
-  model sometimes calls `(satisfy-hint! :session-title)` (zero arity)
-  when the registered hook requires `[<scope>]`, and the engine
-  cheerfully removes the hint id even though no proof was attached.
-- There is no validator. The engine never checks that the model actually
-  did the requested action. If the model calls `(satisfy-hint! …)` without
-  ever calling `(set-session-title! …)`, the hint silently disappears.
-
-Net effect: hints behave like soft polite reminders, not invariants. Title
-goes missing for whole sessions and the model never re-prompts itself.
-
-### Proposed extension: hints get the same validator-fn machinery as requirements
-
-Lift the requirement-validator pattern up to hints:
-
-```clojure
-:session/hints
-{:vis.foundation/session-title
-   {:body          "session has no title — set one with (set-session-title! \"…\")"
-    :importance    :high
-    :satisfy-with  "(satisfy-hint! :vis.foundation/session-title [<scope of (set-session-title! …)>])"
-    :validator-fn  "(fn [{:keys [src]}] (clojure.string/includes? src \"set-session-title!\"))"}}
-```
-
-Schema addition (in `ctx-spec.clj`):
-
-```clojure
-(s/def :session.hint/validator-fn string?)
-
-(s/def ::hint
-  (s/keys :req-un [:session.hint/body]
-    :opt-un [:session.hint/importance
-             :session.hint/satisfy-with
-             :session.hint/validator-fn]))
-```
-
-### Satisfaction flow with validator
+### Satisfaction flow
 
 ```
 Model emits two forms in one iter:
-  (set-session-title! "Auth bcrypt refactor")    ;; tN/i1/f3
-  (satisfy-hint! :vis.foundation/session-title
-                 ["tN/i1/f3"])                   ;; tN/i1/f4
+  (set-session-title! "Auth bcrypt refactor")             ;; tN/i1/f3
+  (task-set! :vis.foundation/session-title
+             {:status :done :proof "tN/i1/f3"})            ;; tN/i1/f4
 
-Engine handles (satisfy-hint! id scopes):
-  1. Look up hint. If absent → silent no-op (model satisfied a hint
-     that was already gone — fine).
-  2. If hint has no :validator-fn → drop the hint id (legacy behaviour).
-  3. If hint has :validator-fn:
-       - For each scope in `scopes`, look up form-results map.
-       - Call run-validator-fn against the form envelope.
-       - If ALL scopes pass → drop the hint id from :session/hints.
-       - If ANY scope fails (falsy / threw / timeout / compile-error)
-         OR no scopes provided when validator-fn is present →
-           keep the hint id alive, emit:
-           `;; ⚠ satisfy-hint! :id failed validator: <reason>`
+End-of-iter, after advance-iter pins the trailer, the engine runs
+`reconcile-done-hook-tasks` over every task with :source :hook,
+:status :done, :validator-fn present. For each:
+
+  1. :proof missing / not a string  →  revert to :todo + warn
+                                       :task-done-no-proof
+  2. :proof malformed (not tN/iM/fK) →  revert + warn
+                                       :task-done-proof-malformed
+  3. :proof classifies :future-* / :errored / :unknown →
+                                       revert + warn
+                                       :task-done-proof-future /
+                                       :task-done-proof-errored /
+                                       :task-done-proof-unknown
+  4. validator-fn falsy / threw / timeout / compile-error →
+                                       revert + warn
+                                       :task-done-validator-fail
+  5. validator-fn ok → :done sticks
 ```
 
-The validator receives the canonical form-result envelope
-`{:scope :tag :src :result :error}`. Most hint validators will check
-`:src` (was the right call made?) or `:result` (did the call return
-the expected sentinel like `:vis/silent`?).
+A revert drops `:done-born` and `:proof` so the task is back to a clean
+`:todo` for re-attempt. The next iter's render surfaces the warning
+inline next to the task.
 
-### Hint authoring contract (foundation extensions + future hooks)
+### Hook re-emission idempotency
 
-Hint hooks defined under foundation core (e.g. `title-hint`,
-`context-pressure-hint`) MUST now:
+Foundation hooks fire every iter. `apply-mutator :task-set!` treats a
+`{:source :hook}` write against an existing hook-task with matching
+`:hook-id` as a **silent no-op** regardless of the existing task's
+status (`:todo`, `:doing`, `:done`, `:cancelled`). Effect: hooks are
+stateless; engine handles dedup. Resurrection happens naturally via
+`gc-pass`: terminal-status tasks past TTL drop from live ctx, so the
+next hook fire creates a fresh task.
 
-1. Provide a `:satisfy-with` string that names the **exact form shape**
-   the model should emit, including required scope args.
-2. Provide a `:validator-fn` source string that confirms the satisfying
-   form actually fired. Examples:
-     ```clojure
-     ;; title hint validator: any form whose src contains set-session-title!
-     "(fn [{:keys [src]}]
-        (and (string? src)
-             (clojure.string/includes? src \"set-session-title!\")))"
+This means a hook that stops emitting (e.g. title got set so
+`title-hint` returns nil) leaves any prior task at whatever status the
+model last set. Live ctx is the source of truth; hook re-emission is
+the resurrection trigger.
 
-     ;; context-pressure validator: model called a summarizer
-     "(fn [{:keys [src]}]
-        (and (string? src)
-             (re-find #\":trailer-summarize\" src)))"
-     ```
-3. Optional: bump `:importance` to `:critical` when the hint MUST be
-   satisfied this turn (engine then surfaces `;; ⚠ critical hint not
-   satisfied` if it persists past `(done …)`).
+### Soft warnings around hook tasks
 
-Hint authoring becomes a small contract: emit body, satisfy-with,
-validator-fn. The engine handles the rest.
-
-### Soft rules around hints
-
-| condition | hint emitted by engine |
+| condition | warning |
 |---|---|
-| hint with `:validator-fn` but model satisfies it with 0 scopes | `;; ⚠ satisfy-hint! :id needs proof scope(s); none provided` |
-| hint with `:importance :critical` still in :session/hints at done | `;; ⚠ critical hint :id unsatisfied at done; turn continues anyway` |
-| hint validator-fn errors out (compile / runtime) | `;; ⚠ hint :id validator failed: <reason>` |
-| `(satisfy-hint! :id …)` for an id that does not exist in :session/hints | silent no-op (idempotent) |
+| hook returns map missing `:title` / `:validator-fn` | rejected by loop with `iteration-start-hook-missing-*` log warn |
+| hook task `:status :done` with no `:proof` | `:task-done-no-proof`, reverted to :todo |
+| hook task `:status :done` with malformed proof scope | `:task-done-proof-malformed`, reverted |
+| hook task `:status :done` with future / errored / unknown proof | `:task-done-proof-{future,errored,unknown}`, reverted |
+| validator-fn fails | `:task-done-validator-fail`, reverted |
 
-These align with the soft-warning convention everywhere else: engine
-never refuses, but pollutes the next render with `;; ⚠` until the
-model fixes it.
+Every warning anchors on the task id so the renderer inlines it as
+`;; ⚠ …` next to the task. The engine never refuses a write outside
+the existing hard rules (malformed scope, cycle, partial-overlap).
 
-### Why this fixes the title bug
+### Why this is better than the legacy `:session/hints` surface
 
-After this change:
-- Foundation `title-hint` registers `:validator-fn` checking
-  `set-session-title!` was actually called.
-- Model calling `(satisfy-hint! :session-title)` without first calling
-  `(set-session-title! "…")` will FAIL the validator (no scope, no
-  source) and the hint persists. Next iter's `;; ⚠` makes it
-  impossible to ignore.
-- Model calling `(set-session-title! "x")` then
-  `(satisfy-hint! :session-title ["tN/iM/fK"])` validates cleanly and
-  the hint disappears.
+- **One concept**: model only learns tasks. No parallel hints + their
+  own mutator + their own validator path.
+- **One mutator**: `task-set!` is the single satisfaction path. No
+  `satisfy-hint!` to dispatch.
+- **One validator pass**: `reconcile-done-hook-tasks` mirrors the
+  existing requirement validator pass. Same SCI compile cache, same
+  50ms timeout, same warning shape.
+- **One render section**: tasks. Hooks appear next to user tasks,
+  ranked visually by `:importance` desc + `:source :hook` cue.
+- **Lifecycle clarity**: hook tasks have explicit
+  `:status #{:todo :doing :done :cancelled}` like everything else. No
+  "ephemeral disappears on next render" ambiguity — the task is in
+  ctx until gc-pass archives it.
+- **Free entity-pinning**: a hook task that's "about" some user task
+  expresses the relationship via the existing `:depends-on` field or
+  by sharing a `:specs` entry. No new `:hint/about` machinery.
 
-Same machinery, same SCI eval cache, same 50ms timeout. Hints become
-first-class engine objects with the same enforcement surface as
-requirements.
+### Implementation reference
 
-### Implementation order (when we get to it)
+Phase D12 (commits `bc6008c3` → `ae9d4212`). Wire:
 
-1. Add `:session.hint/validator-fn` to ctx-spec.
-2. Extend the `satisfy-hint!` SCI binding in ctx-loop to:
-   - Accept the proof scope vec as a second arg.
-   - Look up the hint's `:validator-fn` from `(get-in ctx [:session/hints id])`.
-   - Run each scope's envelope through `run-validator-fn`.
-   - Drop the hint id only when all scopes pass.
-3. Migrate the two existing foundation hooks (title, context-pressure)
-   to ship `:validator-fn` and the right `:satisfy-with` shape.
-4. Add tests under `ctx_engine_done_test.clj`: satisfy with no scopes
-   when validator expected → keep, warn; satisfy with passing scope →
-   drop; satisfy with failing scope → keep, warn.
-
-Out of scope for this commit. Tracked for D10.
+- `ctx-spec`: drop `::hint`, `:session/hints`. Extend `::task` with
+  opt-un `:source` / `:hook-id` / `:importance` / `:validator-fn` /
+  `:proof`. Rename existing `:session.task/proof` (proofs-map entry)
+  to `:session.task/proof-entry` to free the `:proof` key for the
+  hook-task field.
+- `ctx-engine`: add `reconcile-done-hook-tasks`. Extend `apply-task-set!`
+  with hook-repeat dedup. Drop `apply-satisfies` + every
+  `:hint-*` warning code.
+- `ctx-loop`: drop `:engine/pending-satisfies`, `queue-satisfy!`,
+  `drain-and-apply-satisfies!`, `satisfy-hint!` SCI binding. Add
+  `reconcile-done-hook-tasks!` side-effecting wrapper. Make
+  `apply-and-record!` public so the loop's hook fold can use it.
+- `loop.clj`: `iteration-start-hook-hit` returns `{:id :task}` (was
+  `{:id :hint}`). Per-iter fold routes hits through
+  `apply-and-record! :task-set!`. End-of-iter drain calls
+  `reconcile-done-hook-tasks!`. `introspect-history-loader` cached
+  per `(turn, iter)` so multiple `introspect-*` calls hit the DB
+  once.
+- `ctx-renderer`: drop `:session/hints` section.
+- `prompt.clj`: drop `(satisfy-hint! …)` CONTROL line. Document task
+  shape's opt fields and the satisfy path.
+- Foundation `vis-foundation-core/hints.clj` +
+  `vis-foundation-bridge/core.clj`: return hook-task shape directly
+  with `:title` + `:validator-fn` + spec-compliant `:importance`.
