@@ -150,3 +150,65 @@
   [env]
   (when-let [a (:ctx-atom env)]
     (assoc @a :session/scope (cursor-snapshot env))))
+
+;; =============================================================================
+;; Introspect verbs — model-facing SCI bindings over engine history helpers
+;; =============================================================================
+
+(defn- with-live-history
+  "Build the {turn → ctx} history map used by engine introspect helpers.
+   Combines:
+     - the LIVE ctx-atom value (assigned to the env's :session/turn so the
+       current in-progress turn is reachable via `introspect-ctx-at` and the
+       per-key introspect verbs)
+     - the persisted snapshots loaded via the provided `history-loader`
+   The live value lands LAST (highest turn) so per-key lookups walking
+   reverse find it first."
+  [env history-loader]
+  (let [live  (some-> (:ctx-atom env) deref)
+        live-turn (or (:turn (cursor-snapshot env)) (:session/turn live) 1)
+        loaded (history-loader)
+        history (into {} loaded)]
+    (cond-> history
+      live (assoc live-turn live))))
+
+(defn build-introspect-bindings
+  "Return `{'symbol bare-fn}` for the introspect-* verbs the model calls.
+   `history-loader` is a 0-arity thunk that returns the persisted history
+   vec (pairs of `[turn-n ctx]`). The loop passes a thunk that calls
+   `persistance/db-load-ctx-history` against the env's db + session.
+
+   The live ctx-atom is folded in on every call so introspection on the
+   IN-PROGRESS turn also works (otherwise the model could not query its
+   own just-defined specs from the next iter)."
+  [env history-loader]
+  (let [history #(with-live-history env history-loader)]
+    {'introspect-spec     (fn introspect-spec     [k]   (eng/introspect-spec (history) k))
+     'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
+     'introspect-fact     (fn introspect-fact     [k]   (eng/introspect-fact (history) k))
+     'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
+     'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
+                            (let [t (cond
+                                      (string? turn-key)
+                                      (when-let [[_ n] (re-matches #"^t([1-9][0-9]*)$" turn-key)]
+                                        (parse-long n))
+                                      (number? turn-key) (long turn-key)
+                                      :else nil)]
+                              (when t (eng/introspect-ctx-at (history) t))))}))
+
+;; =============================================================================
+;; Trailer → form-results map for engine renderer
+;; =============================================================================
+
+(defn trailer->form-results
+  "Flatten every trailer pin's :forms vec into a `{scope envelope}` map.
+   Used at render time so engine's `classify-scope` and validator-fn pass
+   can look up per-form `:result` / `:error` for any scope the model
+   references on a task proof or in (satisfy-hint! …)."
+  [trailer]
+  (into {}
+    (for [entry trailer
+          :when (some? (:forms entry))
+          form  (:forms entry)
+          :when (and (some? form) (some? (:scope form)))]
+      [(:scope form) form])))

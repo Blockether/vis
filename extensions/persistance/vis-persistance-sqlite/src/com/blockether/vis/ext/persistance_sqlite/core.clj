@@ -2281,3 +2281,34 @@
 ;; `registrar` ns; tests that only need the fns can require this ns
 ;; directly without registering the extension.
 ;; =============================================================================
+
+(defn db-load-ctx-history
+  "Return a sorted-by-turn vec of `[turn-n ctx-map]` pairs for the session.
+   Each ctx-map is the Nippy-decoded `:session/turn_state.ctx` for the
+   latest version of that turn. Used by introspect-* verbs to reach
+   archived entries and replay any past turn snapshot through the engine's
+   pure-fn introspect-spec / -task / -fact / -archived / -ctx-at helpers.
+
+   The session_state chain is honoured (forks see ancestor snapshots
+   ordered by parent_state -> child_state and then by turn position)."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (let [state-ids (session-state-chain db-info session-id)]
+      (when (seq state-ids)
+        (vec
+          (for [row (query! db-info
+                      {:select [:qs.position [:qts.ctx :ctx]]
+                       :from   [[:session_turn_state :qts]]
+                       :join   [[:session_turn_soul :qs]
+                                [:= :qs.id :qts.session_turn_soul_id]]
+                       :where  [:and
+                                [:in :qs.session_state_id state-ids]
+                                [:<> :qts.ctx nil]
+                                [:= :qts.version
+                                 {:select [[[:max :version]]]
+                                  :from   [[:session_turn_state :qts2]]
+                                  :where  [:= :qts2.session_turn_soul_id :qts.session_turn_soul_id]}]]
+                       :order-by [[:qs.position :asc]]})
+                :let [decoded (<-blob (:ctx row))]
+                :when (some? decoded)]
+            [(long (:position row)) decoded]))))))
