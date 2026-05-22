@@ -48,6 +48,92 @@ below drive the kill-list in §3a.
 
 ---
 
+## 0b. Cross-channel surface guarantee (HARD CONTRACT)
+
+This section is the load-bearing invariant for the whole redesign.
+**Read it first** if you are picking this PR up from another agent.
+Violating it sends the design back to the parallel-words anti-pattern
+we just killed.
+
+### Locked definitions
+
+- **Engine-owned (in `src/com/blockether/vis/internal/`)**: slash registry,
+  slash parser, slash dispatch, handler invocation, synthetic iteration
+  persistence, result envelope shape.
+- **Channel-owned (in `extensions/channels/vis-channel-{tui,telegram,web,…}/`)**:
+  detect text-from-user, route through `slash/dispatch`, render the
+  resulting envelope (modal / reply+inline-kbd / web component / stdout),
+  expose autocomplete hints from `(vis/registered-slashes)` filtered by
+  availability.
+- **Extension-owned (in `extensions/common/vis-foundation-*/`)**: register
+  slash entries via `register-slash!`, provide pure handlers, optionally
+  return channel-agnostic `:slash/actions` in the envelope.
+
+### Forbidden patterns (lint + review must reject)
+
+1. Channel parsing `/cmd` text outside `slash/dispatch`.
+2. Channel-private slash command tables (no Telegram `case` ladder, no
+   TUI `palette-commands` workspace entries, no per-channel duplication
+   of the same `/cmd`).
+3. Engine knowing about specific slash commands (no `workspace-slash?`
+   helper, no hardcoded `"workspace"` switch). Engine sees opaque
+   `["workspace" "apply"]` paths; extension owns the semantics.
+4. Extension calling `register-slash!` multiple times for the same path
+   to register "per channel". One call → every channel via
+   `:slash/availability-fn`.
+5. Channels mutating `slash-registry` directly. Read-only access via
+   `(vis/registered-slashes)`.
+6. Telegram `setMyCommands` fed from a hardcoded vec. It must derive
+   live from `(vis/registered-slashes)` filtered by
+   `(:telegram (:slash/availability-fn entry))`.
+7. New channel introduction touching `register-slash!` call sites. A
+   new channel = one new entry in the boundary table below + render
+   envelope code. Zero existing extension files modified.
+
+### Cross-channel input boundary table (after redesign)
+
+The **exactly one** place each channel calls `slash/dispatch`. If you
+add a channel, add a row here, write the boundary code, ship.
+
+| channel | input boundary location | call shape |
+|---|---|---|
+| TUI | `screen.clj` `:send` key handler (around current line 2642) | replace `slash-command-for-input` exact-match path with `(slash/dispatch ctx text)`; on `:handled? true` render envelope, else `submit-input!` to LLM |
+| Telegram | `bot.clj` `handle-user-text!` entry (around current line 1247) | replace `(handle-command! …)` early-return with `(slash/dispatch ctx text)`; on `:handled? true` render envelope reply (with inline keyboard for `:slash/actions`), else proceed to `vis/send!` |
+| Web (future) | future POST `/sessions/:id/messages` handler | call `slash/dispatch` before persisting user message; render envelope to HTTP response (JSON for SPA, server-rendered for SSR) |
+| CLI/SDK (future) | future `vis/send!` opt `:slash-handle? true` | dispatch invoked inside `send!` when opt set; envelope returned alongside result |
+| Discord / Slack / IRC / mail (future) | their message handler | one `slash/dispatch` call at message receipt; render envelope to channel-native format |
+
+### Registration sites (after redesign)
+
+Every `register-slash!` call lives in **exactly one** of:
+
+- `vis-foundation-workspace` — `/workspace *` tree
+- `vis-foundation-voice` — `/voice` (one entry, multi-channel availability)
+- `vis-foundation-core` — if any core slashes emerge (e.g. `/help`, `/status`)
+- `vis-channel-telegram` — channel-specific slashes (e.g. `/restart` for the bot
+  process itself) registered with `:slash/availability-fn (= :telegram (:channel/id %))`
+- 3rd-party extension `vis-foundation-{x}` — owns its own tree (`/x *`)
+
+NO call to `register-slash!` from inside `src/com/blockether/vis/internal/`.
+The engine REGISTRY exists in internal; the REGISTRATIONS live in extensions.
+
+### Smoke check before merging the cutover
+
+1. `rg -n "parse-command|handle-command!" extensions/channels/` returns ZERO hits.
+2. `rg -n "slash-only-commands|:workspace .*palette|:apply-workspace-to-trunk" extensions/channels/vis-channel-tui/` returns ZERO hits.
+3. `rg -n ":tui.slot/commands" .` returns ZERO hits (slot retired).
+4. `rg -n ":git/branch|:git/trunk|:git/head|:git/dirty|:git/stats" src/com/blockether/vis/` returns ZERO hits.
+5. `rg -n "apply-to-trunk!" .` returns ZERO hits.
+6. `rg -n "bot-menu-commands-before-voice|bot-menu-commands-after-voice" .` returns ZERO hits.
+7. Telegram bot start logs the slashes it pushed to `setMyCommands`, derived from `(vis/registered-slashes)`.
+8. TUI palette overlay shows all `/workspace *` and `/voice` entries without any of those being in `palette-commands` source.
+9. Send `/workspace list` from Telegram, get the same envelope a TUI `/workspace list` returns (modulo channel rendering).
+
+If any of these fail, the cross-channel discipline isn't there yet.
+Keep working.
+
+---
+
 ## 0. Vocabulary
 
 | term | meaning | user-facing? |

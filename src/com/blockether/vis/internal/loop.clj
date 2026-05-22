@@ -2788,10 +2788,16 @@
   "Maximum live user-defined symbols targeted by RLM hot memory."
   100)
 
-(def ^:const HOT_SYMBOL_COMPACTION_TARGET
+(def ^:const HOT_SYMBOL_ARCHIVE_TARGET
   "Low-water mark after a final successful answer. Archiving down to 80
    leaves headroom for the next turn instead of immediately bumping into
-   the hard cap again."
+   the hard cap again.
+
+   NB: this is SCI sandbox symbol ARCHIVAL (live-var eviction); the
+   on-disk row remains the source of truth for sandbox restore. It is
+   NOT related to CTX trailer compaction — CTX trailer is only ever
+   touched via model-owned `:trailer-drop` / `:trailer-summarize` in
+   `(done …)`. Engine has no auto-compaction."
   80)
 
 (defn auto-archive-candidates
@@ -2831,12 +2837,12 @@
       (let [var-registry (persistance/db-latest-var-registry db-info session-id)
             sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
             candidates   (auto-archive-candidates sandbox-map initial-ns-keys
-                           var-registry HOT_SYMBOL_COMPACTION_TARGET)]
+                           var-registry HOT_SYMBOL_ARCHIVE_TARGET)]
         (when (seq candidates)
           (tel/log! {:level :info :id ::auto-archive
                      :data {:archived (mapv str candidates)
                             :count (count candidates)
-                            :target HOT_SYMBOL_COMPACTION_TARGET}
+                            :target HOT_SYMBOL_ARCHIVE_TARGET}
                      :msg (str "Auto-archive: evicting " (count candidates)
                             " hot symbols after final answer")})
           (archive-vars! sci-ctx candidates)))
@@ -3056,9 +3062,11 @@
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
     (env/reset-eval-bindings! environment)
-    ;; Hot symbol compaction is archive-based and runs only after a
-    ;; final successful answer. Failed/cancelled turns keep their live
-    ;; scratch symbols for recovery.
+    ;; Hot symbol archival runs only after a final successful answer.
+    ;; Failed/cancelled turns keep their live scratch symbols for
+    ;; recovery. This is SCI namespace pruning — unrelated to CTX
+    ;; trailer state (which only summarises, never compacts).
+
     ;; Cross-turn carry: seed `trailer-iters` with persisted iterations
     ;; of the current session (across every prior turn) so a
     ;; follow-up turn opens with prior context. Rendering trims by token

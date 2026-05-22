@@ -182,6 +182,14 @@
 (s/def :session.task/importance   #{:info :warn :critical})
 (s/def :session.task/validator-fn string?)
 (s/def :session.task/proof        ::scope-form)
+;; Engine-stamped `:validated? true` once `reconcile-done-hook-tasks`
+;; runs the task's `:validator-fn` against the form envelope at `:proof`
+;; and the validator returns truthy. Subsequent reconcile passes skip
+;; already-validated `:done` tasks so an unrelated `(done {:trailer-drop
+;; […]})` that wipes the proof envelope cannot retro-actively revert a
+;; legitimately satisfied hook-task. Cleared when `:status` transitions
+;; away from `:done` (any non-:done write).
+(s/def :session.task/validated?   boolean?)
 
 (s/def ::task
   (s/keys :req-un [::title
@@ -194,7 +202,8 @@
              :session.task/hook-id
              :session.task/importance
              :session.task/validator-fn
-             :session.task/proof]))
+             :session.task/proof
+             :session.task/validated?]))
 
 ;; Soft rules (engine-side validators; not enforced by spec):
 ;;   - :specs keys must point to existing keys in :session/specs
