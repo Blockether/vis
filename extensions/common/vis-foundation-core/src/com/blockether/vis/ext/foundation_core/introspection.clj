@@ -52,24 +52,21 @@
 ;; Helpers - derive ids, deref atoms, normalize sym args.
 ;; ---------------------------------------------------------------------------
 
-(defn- safe-deref [a]
-  (when a (try (deref a) (catch Throwable _ nil))))
-
 (defn- current-session-id [env]
   (:session-id env))
 
 (defn- current-session-turn-id
   "UUID of the in-flight turn, or nil when no turn is running yet.
 
-   Internally this is the `session_turn_soul` id - hence the
-   `:current-session-turn-id-atom` env key and this helper's `session-turn-id`
-   suffix. The product concept is *turn*; everywhere this id is
-   surfaced to the model (e.g. inspect current-turn results, the
-   `:in-flight-turn-id` slot) it's labelled `turn`. Mirrors the
-   SCI-visible `TURN_ID` SYSTEM var so meta-fns can filter
-   it without round-tripping through SCI."
+   Internally this is the `session_turn_soul` id — stored as the
+   `:session-turn-id` field on the single `:turn-state-atom` (see
+   `ctx-loop/make-turn-state-atom`). The product concept is *turn*;
+   everywhere this id is surfaced to the model (e.g. inspect
+   current-turn results, the `:in-flight-turn-id` slot) it's labelled
+   `turn`. Mirrors the SCI-visible `TURN_ID` SYSTEM var so meta-fns
+   can filter it without round-tripping through SCI."
   [env]
-  (some-> (:current-session-turn-id-atom env) deref))
+  (some-> (:turn-state-atom env) deref :session-turn-id))
 
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
@@ -96,7 +93,10 @@
    model emits `:answer` -- there is no model-visible budget, so the
    pointer carries only `:current`."
   [env]
-  (let [current-position (or (safe-deref (:current-iteration-atom env)) 1)]
+  (let [iter-raw (some-> (:turn-state-atom env) deref :iteration)
+        current-position (cond (map? iter-raw)    (or (:position iter-raw) 1)
+                           (number? iter-raw) iter-raw
+                           :else              1)]
     {:current (long current-position)}))
 
 (defn- attempts-from-iterations

@@ -7,13 +7,11 @@
    [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- mk-env []
-  ;; Single ctx-atom carries everything; `:engine/warnings` and
-  ;; `:engine/pending-satisfies` live as ephemeral keys on the ctx
-  ;; itself (seeded by `eng/empty-ctx`).
+  ;; Single ctx-atom carries engine state; single turn-state-atom
+  ;; carries cursor + DB-id fields. Seed turn-state to a non-trivial
+  ;; coordinate so synthesize-scope tests get a stable t2/i3/f5 cursor.
   {:ctx-atom (cl/make-ctx-atom "test-session")
-   :current-turn-position-atom (atom 2)
-   :current-iteration-atom (atom 3)
-   :current-form-idx-atom (atom 4)})
+   :turn-state-atom (atom {:turn-position 2 :iteration 3 :form-idx 4})})
 
 (defn- warnings-of
   "Helper: read accumulated `:engine/warnings` from the ctx atom on env."
@@ -25,9 +23,11 @@
     (it "builds tN/iM/fK from the loop counters (form is 1-based)"
       (expect (= "t2/i3/f5" (cl/synthesize-scope (mk-env)))))
 
-    (it "supports :current-iteration-atom holding a map (positional shape)"
+    (it ":iteration field accepts a {:position N} map (positional shape)"
       (let [env (assoc (mk-env)
-                  :current-iteration-atom (atom {:position 7 :other :stuff}))]
+                  :turn-state-atom (atom {:turn-position 2
+                                          :iteration     {:position 7 :other :stuff}
+                                          :form-idx      4}))]
         (expect (= "t2/i7/f5" (cl/synthesize-scope env)))))
 
     (it "defaults to t1/i1/f1 when atoms unset"
