@@ -79,15 +79,12 @@
 (defn- pad [n] (apply str (repeat n \space)))
 
 (defn- indent-rest
-  "Take a (possibly multi-line) string `s` and prefix every line AFTER the
-   first with `n` spaces. The first line is returned untouched so the caller
-   can position it under its key."
+  "Prefix every line AFTER the first with `n` spaces. First line stays
+   verbatim so the caller can position it under its key. Single-line
+   input is a no-op; built off a single `str/replace` so the regex
+   matches newlines and inserts indentation in one pass."
   [s n]
-  (let [lines (str/split-lines s)]
-    (if (= 1 (count lines))
-      s
-      (str (first lines) "\n"
-        (str/join "\n" (map #(str (pad n) %) (rest lines)))))))
+  (str/replace s #"\n" (str "\n" (pad n))))
 
 ;; =============================================================================
 ;; Annotation lines (the only renderer output that isn't EDN data)
@@ -157,6 +154,55 @@
       (str body "\n " annotation-block)
       body)))
 
+(def ^:private IMPORTANCE_RANK
+  {:critical 0 :warn 1 :info 2 nil 3})
+
+(def ^:private TASK_STATUS_RANK
+  {:todo 0 :doing 1 :blocked 2 :done 3 :cancelled 4})
+
+(defn- task-sort-key
+  "Comparator key for a [task-id task] pair. Order:
+     1. hook-source tasks first (so the model sees pending hook work
+        before its own task list)
+     2. within source, by :importance (critical < warn < info < none)
+     3. within importance, by :status (todo < doing < blocked < done <
+        cancelled) so live work is on top
+     4. tiebreak by string-comparable task id for determinism."
+  [[task-id task]]
+  [(if (= :hook (:source task)) 0 1)
+   (get IMPORTANCE_RANK (:importance task) 3)
+   (get TASK_STATUS_RANK (:status task) 5)
+   (str task-id)])
+
+(defn- rank-tasks
+  "Return an `array-map` of `:session/tasks` entries ranked for render.
+   `array-map` preserves insertion order through zprint so the model
+   reads hook-tasks first. Returns `{}` unchanged when the input is
+   nil/empty."
+  [tasks]
+  (if (empty? tasks)
+    {}
+    (into (array-map) (sort-by task-sort-key tasks))))
+
+(defn- hook-task-annotation-lines
+  "One `;; via hook` annotation line per unresolved hook-task. Lets the
+   model spot pending engine-driven work that's mixed into the same
+   :session/tasks map. Resolved (:status :done :validated? true) hooks
+   are silent."
+  [tasks indent]
+  (let [unresolved (->> tasks
+                     (filter (fn [[_ t]] (and (= :hook (:source t))
+                                           (not (and (= :done (:status t))
+                                                  (:validated? t))))))
+                     (sort-by task-sort-key))]
+    (mapv
+      (fn [[k t]]
+        (str (pad indent) ";; via hook " (:importance t) " "
+          (zp k) "  status=" (:status t)
+          (when (= :done (:status t))
+            (str " :validated? " (boolean (:validated? t))))))
+      unresolved)))
+
 (defn- render-trailer-value
   "Trailer is a vec, possibly large. Cap to TRAILER_BUDGET and append a
    `;; ⚠` truncation hint when over budget. Returns a multi-line string."
@@ -201,7 +247,14 @@
         specs-tail    (section-annotations
                         (get by-sub :session/specs [])
                         prog-entries 1)
-        tasks-tail    (section-annotations (get by-sub :session/tasks []) [] 1)
+        ranked-tasks  (rank-tasks (or (:session/tasks ctx) {}))
+        hook-lines    (hook-task-annotation-lines (or (:session/tasks ctx) {}) 1)
+        tasks-tail-w  (section-annotations (get by-sub :session/tasks []) [] 1)
+        tasks-tail    (cond
+                        (and tasks-tail-w (seq hook-lines))
+                        (str tasks-tail-w "\n" (str/join "\n" hook-lines))
+                        (seq hook-lines) (str/join "\n" hook-lines)
+                        :else tasks-tail-w)
         facts-tail    (section-annotations (get by-sub :session/facts []) [] 1)
         other-tail    (section-annotations (get by-sub :other []) [] 1)]
     (str
@@ -217,7 +270,7 @@
       (render-section :session/specs
         (zp (or (:session/specs ctx) {})) specs-tail)             "\n\n"
       (render-section :session/tasks
-        (zp (or (:session/tasks ctx) {})) tasks-tail)             "\n\n"
+        (zp ranked-tasks) tasks-tail)                             "\n\n"
       (render-section :session/facts
         (zp (or (:session/facts ctx) {})) facts-tail)             "\n\n"
       (render-section :session/trailer
