@@ -2582,32 +2582,66 @@
                          (recur))
 
                        :toggle-voice-recording
-                       ;; PLAN.md §12 step 8 (K10 cont.): voice toggle
-                       ;; now flows through the engine slash registry as
-                       ;; `/voice`. The submitted user message goes through
-                       ;; `run-turn!` -> `slash/dispatch` -> the voice
-                       ;; extension's run-fn which lazily triggers
-                       ;; `input/toggle-recording!`. Transcript shows one
-                       ;; synthetic :user-slash iter per toggle.
-                       (do (when-not (:loading? @state/app-db)
-                             ;; Direct voice toggle: bypass the slash text
-                             ;; queue so `/voice` never appears in the input
-                             ;; buffer / transcript. The /voice slash spec
-                             ;; still exists for typed invocation; this is
-                             ;; the keybind fast-path (no synthetic user
-                             ;; message, no :send-message round trip).
-                             (when-let [toggle (try (requiring-resolve
-                                                      'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
-                                                 (catch Throwable t
-                                                   (tel/log! {:level :error
-                                                              :id ::voice-toggle-resolve-failed
-                                                              :data {:ex t}})
-                                                   nil))]
-                               (try (toggle {:app-db state/app-db})
+                       ;; Voice toggle: Ctrl+B starts a microphone
+                       ;; recording, second Ctrl+B stops + transcribes +
+                       ;; appends the text to the active input box (see
+                       ;; foundation-voice/input/toggle-recording!).
+                       ;;
+                       ;; Why the `:loading?` gate is GONE
+                       ;; ─────────────────────────────────────────
+                       ;; Earlier this clause sat behind
+                       ;; `(when-not (:loading? @state/app-db) …)`. While
+                       ;; the assistant was streaming, Ctrl+B then
+                       ;; produced ZERO feedback — no recorder, no
+                       ;; status badge, no notification — and the user
+                       ;; concluded the binding was broken (see
+                       ;; conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
+                       ;; / \"Ctrl+B not adding text\"). Recording the
+                       ;; NEXT message while the current turn streams
+                       ;; is a normal user workflow; the transcription
+                       ;; just appends to the editor, it does not
+                       ;; interrupt the in-flight turn. Drop the gate.
+                       ;;
+                       ;; Why catches now `notify!` instead of `tel/log!`
+                       ;; only
+                       ;; ─────────────────────────────────────────
+                       ;; A silent log line buried under ~/.vis/vis.log
+                       ;; is invisible from the TUI. Mic permission
+                       ;; denied / no audio device / ASR native lib
+                       ;; missing all surfaced as nothing at all. Each
+                       ;; throw now also pushes a user-visible
+                       ;; notification through `vis/notify!` so the
+                       ;; failure mode is observable from the same
+                       ;; surface that took the keystroke.
+                       (do
+                         (let [toggle
+                               (try (requiring-resolve
+                                      'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
                                  (catch Throwable t
                                    (tel/log! {:level :error
-                                              :id ::voice-toggle-failed
-                                              :data {:ex t}})))))
+                                              :id ::voice-toggle-resolve-failed
+                                              :data {:ex t}})
+                                   (vis/notify!
+                                     (str "Voice toggle unavailable: "
+                                       (or (ex-message t) (str t)))
+                                     :level :error :ttl-ms status-error-ttl-ms)
+                                   nil))]
+                           (cond
+                             (nil? toggle)
+                             (vis/notify!
+                               "Voice extension not loaded (foundation-voice)."
+                               :level :warn :ttl-ms status-error-ttl-ms)
+
+                             :else
+                             (try (toggle {:app-db state/app-db})
+                               (catch Throwable t
+                                 (tel/log! {:level :error
+                                            :id ::voice-toggle-failed
+                                            :data {:ex t}})
+                                 (vis/notify!
+                                   (str "Voice toggle failed: "
+                                     (or (ex-message t) (str t)))
+                                   :level :error :ttl-ms status-error-ttl-ms)))))
                          (recur))
 
                        :show-sessions
