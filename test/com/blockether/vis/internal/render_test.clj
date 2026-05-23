@@ -74,6 +74,26 @@
         (expect (= 1 (count out)))
         (expect (true? (-> out first :hidden?))))))
 
+  (it "hides top-level keyword-lookup and accessor calls (e.g. `(:size ir-file)`, `(get-in m [...])`, `(first xs)`)"
+    ;; The model often does `(def x (tool/call))` followed by
+    ;; `(:size x)` or `(get-in x [:k])` or `(first (:items x))` to
+    ;; project a sub-value. The bound value is already on the DEF
+    ;; SINK + the channel preview of the underlying tool call; the
+    ;; projection row only repeats `<runtime ref>` next to a code
+    ;; line nobody reads. Hide them.
+    (doseq [src ["(:size ir-file)"
+                 "(:k m :default)"
+                 "(get m :k)"
+                 "(get-in m [:a :b])"
+                 "(select-keys r [:a :b])"
+                 "(first xs)"
+                 "(count xs)"
+                 "(name :foo)"
+                 "(str x)"]]
+      (let [out (render/parse-block-display src)]
+        (expect (= 1 (count out)))
+        (expect (true? (-> out first :hidden?))))))
+
   (it "hides bare-symbol top-level forms (e.g. `st` following `(def st (git/status))`)"
     ;; The model often writes `(def NAME (tool/call ...)) NAME` so the
     ;; trailer shows the value. The channel preview of the tool call
@@ -137,15 +157,14 @@
       (expect (= 1 (count out)))
       (expect (true? (-> out first :hidden?)))))
 
-  (it "marks `(def r (v/ls …))` as hidden so the channel can collapse the raw source row"
+  (it "marks `(def r (v/ls …))` + `(select-keys r […])` BOTH hidden so the channel preview speaks alone"
     ;; Real-world fence the model emits when it wants to bind a tool
-    ;; result and then project it. Pi-style render: the def wrapping
-    ;; collapses, only the derived form (`select-keys`) stays
-    ;; visible. The tool's channel preview lives in `:channel`
-    ;; sink entries on the chunk, separate from this source
-    ;; classification.
+    ;; result and then project a sub-value. The def wrapping AND the
+    ;; accessor row are both bookkeeping; the value rides on the DEF
+    ;; SINK + the channel preview of the underlying tool call. The
+    ;; renderer coalesces consecutive hidden code segments into one
+    ;; entry, so the result is a single suppressed source row.
     (let [out (render/parse-block-display
                 "(def r (v/ls \".\"))\n(select-keys r [:entry-count :file-count])")]
-      (expect (= 2 (count out)))
-      (expect (true?  (-> out first  :hidden?)))
-      (expect (nil?   (-> out second :hidden?))))))
+      (expect (= 1 (count out)))
+      (expect (true? (-> out first :hidden?))))))

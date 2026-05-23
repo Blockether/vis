@@ -1243,6 +1243,31 @@
         (symbol? (first init))
         (some? (namespace (first init)))))))
 
+(defn- keyword-lookup-form?
+  "True when `form` is a top-level keyword-as-fn call:
+     `(:size ir-file)`, `(:k m default)`, `(:foo bar)`.
+   Model writes these to project a sub-value from a bound var; the
+   value is in the DEF SINK / trailer, the bare source row is just
+   noise next to the channel preview of the call that produced the
+   var."
+  [form]
+  (and (seq? form) (keyword? (first form))))
+
+(defn- accessor-form?
+  "True when `form` is a top-level value-projection call: keyword
+   lookups (covered by `keyword-lookup-form?`) and the canonical
+   accessor symbols (`get`, `get-in`, `select-keys`, `keys`, `vals`,
+   `nth`, `first`, `second`, `last`, `count`, `peek`, `pop`, `name`,
+   `str`). They consume a bound var, return a sub-value, write
+   nothing. Same hide-by-default policy as bare-symbol lookups."
+  [form]
+  (and (seq? form)
+    (symbol? (first form))
+    (nil? (namespace (first form)))
+    (contains? #{'get 'get-in 'select-keys 'keys 'vals 'nth
+                 'first 'second 'last 'count 'peek 'pop 'name 'str}
+      (first form))))
+
 (defn- hidden-code-form?
   "Composite predicate: form should render with `:hidden? true` so the
    channel collapses the raw source row. Covers:
@@ -1253,15 +1278,22 @@
        already shows the bound name + value to the model, so the
        raw `(def …)` line is redundant chrome.
      - bare top-level SYMBOL lookups (e.g. `st` following
-       `(def st (git/status))`). The value either rides on the
-       channel render of the preceding tool call or in the DEF
-       SINK; the loose `st` row carries no extra information for
-       the user and pushes recap / preview rows off-screen."
+       `(def st (git/status))`). Value rides on DEF SINK + channel
+       preview.
+     - top-level KEYWORD-AS-FN lookups (`(:size ir-file)`,
+       `(:foo bar)`). Same intent as a bare-symbol lookup: project
+       a sub-value out of a bound var; the source row carries no
+       extra information past what the DEF SINK already shows.
+     - canonical accessor calls (`(get-in m […])`, `(select-keys m
+       […])`, `(first xs)`, …). The bound result rides on the
+       trailer; the source row is duplicate chrome."
   [form]
   (or (def-tool-call-form? form)
     (qualified-tool-call-form? form)
     (def-shaped-form? form)
-    (symbol? form)))
+    (symbol? form)
+    (keyword-lookup-form? form)
+    (accessor-form? form)))
 
 (defn- form-bounds-by-meta
   "Build a parallel vector of {:start :end} byte offsets for each form by
