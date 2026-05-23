@@ -727,6 +727,41 @@
 (s/def :ext/channel-contributions
   (s/map-of channel-slot? (s/coll-of ::channel-contribution :kind vector?)))
 
+;; ----------------------------------------------------------------------------
+;; Slash commands (PLAN.md §3)
+;;
+;; Declarative cross-channel slash surface, mirroring `:ext/hooks` /
+;; `:ext/channel-contributions`. NO global atom, NO `register-slash!`.
+;; Every extension carries its slash specs on `:ext/slash-commands`;
+;; the engine derives the active slash set by walking
+;; `(active-extensions)` at lookup time (see `internal/slash.clj`).
+;;
+;; Coordinates: `:slash/parent` is the lineage vec (top-level commands
+;; like `/workspace` have `:parent []`; `/workspace apply` has
+;; `:parent ["workspace"]`, etc.). The canonical full path of a slash
+;; is `(conj parent name)`. `register-extension!` refuses two
+;; extensions declaring the same `[parent name]`.
+;; ----------------------------------------------------------------------------
+(s/def :slash/name            non-blank-string?)
+(s/def :slash/parent          (s/coll-of non-blank-string? :kind vector?))
+(s/def :slash/doc             non-blank-string?)
+(s/def :slash/usage           non-blank-string?)
+(s/def :slash/run-fn          ifn?)
+(s/def :slash/requires        (s/coll-of #{:session :workspace :channel} :kind set?))
+(s/def :slash/availability-fn ifn?)
+(s/def :slash/subcommands     (s/coll-of non-blank-string? :kind vector?))
+(s/def ::slash
+  (s/keys :req [:slash/name]
+    :opt [:slash/parent :slash/doc :slash/usage :slash/run-fn
+          :slash/requires :slash/availability-fn :slash/subcommands]))
+(s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
+
+(defn slash-path
+  "Canonical full path vec of a slash spec: parent ++ [name]. Used as the
+   lookup key in `internal/slash.clj`."
+  [slash-spec]
+  (conj (vec (:slash/parent slash-spec)) (:slash/name slash-spec)))
+
 ;; Optional extension-owned environment/config declarations. These name
 ;; OS-style environment variables that can also be overridden from
 ;; Vis config/TUI under `:environment`. The host never mutates the
@@ -944,6 +979,7 @@
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
             :ext/channel-contributions
+            :ext/slash-commands
             :ext/doctor-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
@@ -1803,6 +1839,7 @@
       (not (:ext/providers spec))                      (assoc :ext/providers [])
       (not (:ext/persistance spec))                    (assoc :ext/persistance [])
       (not (:ext/channel-contributions spec))          (assoc :ext/channel-contributions {})
+      (not (:ext/slash-commands spec))                 (assoc :ext/slash-commands [])
       (not (:ext/doctor-fn spec))                      (assoc :ext/doctor-fn (constantly [])))
     (validate!)))
 
@@ -2048,6 +2085,28 @@
   [ext]
   (let [ext    (extension ext)
         ns-sym (:ext/name ext)]
+    ;; PLAN.md §3: slash paths must be unique across the union of
+    ;; `:ext/slash-commands` from every active extension. Reject
+    ;; registration when this extension declares a `[parent name]`
+    ;; that any OTHER currently-registered extension already owns.
+    ;; The same ns re-registering itself (hot reload) is allowed:
+    ;; its prior entry is excluded from the conflict scan.
+    (when-let [new-paths (seq (map slash-path (:ext/slash-commands ext)))]
+      (let [own-paths (set new-paths)
+            collisions (for [[other-ns other-ext] @extension-registry
+                             :when (not= other-ns ns-sym)
+                             other-slash (:ext/slash-commands other-ext)
+                             :let  [p (slash-path other-slash)]
+                             :when (contains? own-paths p)]
+                         {:path p :other-ext other-ns})]
+        (when (seq collisions)
+          (throw (ex-info (str "Slash path collision while registering '" ns-sym "': "
+                            (str/join ", "
+                              (for [{:keys [path other-ext]} collisions]
+                                (str (pr-str path) " already owned by " other-ext))))
+                   {:type        :extension/slash-path-collision
+                    :ext         ns-sym
+                    :collisions  (vec collisions)})))))
     (when-not (contains? @extension-registry ns-sym)
       (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
