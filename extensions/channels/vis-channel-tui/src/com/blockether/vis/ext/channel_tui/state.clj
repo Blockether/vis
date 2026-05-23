@@ -254,20 +254,43 @@
       :else
       (conj messages response))))
 
+(def ^:private throttled-streaming-phases
+  "Per-token streaming phases that share the live-progress redraw budget.
+   `:reasoning` chunks fire on every reasoning SSE delta; `:content`
+   chunks fire on every answer-markdown SSE delta. Lifecycle phases
+   (`:iteration-final`, `:form-start`, `:form-result`,
+   `:provider-fallback`, …) bypass the throttle entirely so block
+   boundaries appear without delay."
+  #{:reasoning :content})
+
 (defn- make-progress-render-updater
   ([dispatch-fn]
    (make-progress-render-updater dispatch-fn #(System/currentTimeMillis)))
   ([dispatch-fn now-ms-fn]
-   (let [last-render-ms (atom nil)]
+   ;; Per-phase clocks: `:reasoning` and `:content` stream
+   ;; independently and a fast content stream MUST NOT starve
+   ;; reasoning frames (and vice versa). Before this split, both
+   ;; phases (plus every lifecycle chunk) shared one clock; a fast
+   ;; per-token content stream kept resetting the clock so the
+   ;; reasoning bubble froze at the very first frame ("I" / "The").
+   ;; Lifecycle chunks dispatch immediately and never touch the
+   ;; throttle clocks.
+   (let [last-by-phase (atom {})]
      (fn [timeline chunk]
        (let [now-ms (long (or (now-ms-fn) 0))
-             reasoning? (= :reasoning (:phase chunk))
-             due? (or (nil? @last-render-ms)
-                    (>= (- now-ms (long @last-render-ms))
+             phase  (:phase chunk)
+             throttled? (contains? throttled-streaming-phases phase)
+             last-ms (when throttled? (get @last-by-phase phase))
+             due? (or (nil? last-ms)
+                    (>= (- now-ms (long last-ms))
                       live-progress-render-interval-ms))]
-         (when (or (not reasoning?) due?)
-           (reset! last-render-ms now-ms)
-           (dispatch-fn [:set-progress-iterations timeline])))))))
+         (cond
+           (not throttled?)
+           (dispatch-fn [:set-progress-iterations timeline])
+
+           due?
+           (do (swap! last-by-phase assoc phase now-ms)
+             (dispatch-fn [:set-progress-iterations timeline]))))))))
 
 (def ^:private reasoning-level-order
   [:quick :balanced :deep])

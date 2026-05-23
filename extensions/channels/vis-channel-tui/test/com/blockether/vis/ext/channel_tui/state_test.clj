@@ -514,7 +514,55 @@
       (expect (= [[:set-progress-iterations [:t0]]
                   [:set-progress-iterations [:t80]]
                   [:set-progress-iterations [:done]]]
-                @events)))))
+                @events))))
+
+  (it "content stream CANNOT starve reasoning frames — each phase keeps its own throttle clock"
+    ;; Regression: before the per-phase clocks, every `:content`
+    ;; chunk (which streams per-token alongside `:reasoning`)
+    ;; reset the shared throttle, so after the first reasoning
+    ;; frame landed the bubble froze on "I" / "The" until the
+    ;; terminal `:iteration-final` chunk.
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events (atom [])
+          now-ms (atom 0)
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms))]
+      ;; First reasoning frame lands.
+      (update! [:r 0] {:phase :reasoning})
+      ;; Content begins streaming per-token, every 10ms.
+      (doseq [t (range 10 80 10)]
+        (reset! now-ms t)
+        (update! [:c (long t)] {:phase :content}))
+      ;; 80ms after the first reasoning frame, a new reasoning
+      ;; chunk MUST dispatch — content traffic must not have
+      ;; reset the reasoning throttle clock.
+      (reset! now-ms 80)
+      (update! [:r 80] {:phase :reasoning})
+      (let [reasoning-events (filterv #(= :r (first (second %))) @events)]
+        (expect (= [[:set-progress-iterations [:r 0]]
+                    [:set-progress-iterations [:r 80]]]
+                  reasoning-events)))))
+
+  (it "content stream is throttled on its own clock and never blocks reasoning"
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events (atom [])
+          now-ms (atom 0)
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms))]
+      ;; Hammer both streams in lockstep for 200ms.
+      (doseq [t (range 0 201 10)]
+        (reset! now-ms t)
+        (update! [:r (long t)] {:phase :reasoning})
+        (update! [:c (long t)] {:phase :content}))
+      (let [tag-counts (reduce (fn [m [_ tag]]
+                                 (update m (first tag) (fnil inc 0)))
+                         {}
+                         @events)]
+        ;; 200ms / 80ms cadence → frames at t ∈ {0, 80, 160}.
+        (expect (= 3 (get tag-counts :r)))
+        (expect (= 3 (get tag-counts :c)))))))
 
 (defdescribe send-message-test
   (it "refuses copied assistant transcript dumps before provider dispatch"
