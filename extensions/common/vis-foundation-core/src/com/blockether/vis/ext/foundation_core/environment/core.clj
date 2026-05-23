@@ -243,7 +243,7 @@
 (defn- ir-p [& children] (into [:p {}] children))
 
 (defn- badge-channel
-  "pi-badge preview: `[:strong BADGE]  <inline summary>` followed by
+  "Badge preview: `[:strong BADGE]  <inline summary>` followed by
    an optional `[:ul]` of lines. Replaces the legacy `lines-channel`
    helper that prefixed every preview with `[:c \"v/foo\"]`."
   [badge lines]

@@ -119,7 +119,7 @@
      :tool   —  the form *touched* the tool surface (either its
                 top-level value is a tool envelope, OR it carries
                 `:channel` sink entries from inner tool calls like
-                `(def r (v/ls …))`). Without this, a pi-style tool
+                `(def r (v/ls …))`). Without this, a tool
                 preview computed by `format-form-result` would be
                 suppressed by the renderer's `(= :tool result-kind)`
                 gate when the FENCE's last value is plain data
@@ -208,7 +208,7 @@
 
 (def ^:private structural-form-prefixes
   "Top-level call prefixes whose RAW source row is engine-only chrome:
-   the channel renders a pi-style recap line for these instead of
+   the channel renders a recap line for these instead of
    showing the literal `(mutator …)` text. Keep in sync with
    `render/top-level-form-kind` non-`:code` cases."
   ["(set-session-title!"

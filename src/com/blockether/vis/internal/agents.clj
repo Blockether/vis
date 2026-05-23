@@ -158,7 +158,7 @@
    Always a map. `:found?` discriminates present vs absent.
 
      present:  `{:found? true :source :repo|:repo:claude-md-fallback
-                 :path \"\u2026\" :bytes N :content \"\u2026\"}`
+                 :path \"…\" :bytes N :content \"…\"}`
      absent:   `{:found? false}`
 
    No truncation: `:content` is the full file verbatim. Caller-side

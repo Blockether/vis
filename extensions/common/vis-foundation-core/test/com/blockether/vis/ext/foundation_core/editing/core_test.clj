@@ -770,7 +770,7 @@
         (expect (= 1 (count form-sources)))
         (expect (string/includes? body "1: only-line")))))
 
-  (it "v/cat channel renderer wraps a pi-style CAT badge around the header"
+  (it "v/cat channel renderer wraps a CAT badge around the header"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
                 [[1898 "x"]] 1928 false)
@@ -1119,7 +1119,7 @@
         (patch [{:path p :search "def foo():\n    return 1" :replace "def foo():\n    return 9"}])
         (expect (string/includes? (slurp p) "return 9")))
       ;; unicode pass: smart quote in file, ASCII apostrophe in SEARCH.
-      (let [p (write-temp! "bbfs/patch-unicode.txt" "it\u2019s late\nover\n")]
+      (let [p (write-temp! "bbfs/patch-unicode.txt" "it’s late\nover\n")]
         (patch [{:path p :search "it's late\nover" :replace "it's done\nover"}])
         (expect (string/includes? (slurp p) "it's done")))))
 
@@ -1389,6 +1389,86 @@
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "channel-render-bash"))))
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "journal-render-bash"))))))
 
+(defdescribe delete-tool-shape-test
+  ;; Regression: `delete-tool` used to set `:result nil`. The channel
+  ;; preview then painted `DELETE nil` and `(def r (v/delete p))`
+  ;; consumers couldn't read `(:path r)` (same parity bug `v/exists?`
+  ;; already fixed). All `v/*` tools now return a map shape.
+  (it "v/delete returns {:vis.op :v/delete :path P :deleted? true} (no bare nil)"
+    (let [delete-tool (private-fn "delete-tool")
+          p           (write-temp! "delete-shape/x.txt" "goodbye\n")
+          envelope    (delete-tool p)]
+      (expect (true? (:success? envelope)))
+      (expect (= :v/delete (:symbol envelope)))
+      (let [r (:result envelope)]
+        (expect (map? r))
+        (expect (= :v/delete (:vis.op r)))
+        (expect (= p (:path r)))
+        (expect (true? (:deleted? r))))))
+
+  (it "v/delete-if-exists returns the same map shape with :deleted? reflecting the actual outcome"
+    (let [delete-if (private-fn "delete-if-exists-tool")
+          p         (write-temp! "delete-shape/here.txt" "x\n")
+          present   (:result (delete-if p))
+          absent    (:result (delete-if p))]
+      ;; First call deletes the file; the result map carries :deleted? true.
+      (expect (map? present))
+      (expect (= p (:path present)))
+      (expect (true? (:deleted? present)))
+      ;; Second call hits an already-absent path; the map stays the same shape.
+      (expect (map? absent))
+      (expect (= p (:path absent)))
+      (expect (false? (:deleted? absent))))))
+
+(defdescribe mutation-tool-renderer-shapes-test
+  ;; Every mutation channel renderer destructures the canonical
+  ;; `v/*` map shape directly. No nil tolerance, no string fallback,
+  ;; no bare-boolean compatibility — if a tool changes its shape it
+  ;; surfaces here, not at paint time.
+  (it "MKDIR renderer reads :path off the result map"
+    (let [ir ((private-fn "channel-render-create-dirs")
+              {:vis.op :v/create-dirs :path "target/x" :created? true})]
+      (expect (string/includes? (pr-str ir) "target/x"))
+      (expect (string/includes? (pr-str ir) "MKDIR"))))
+
+  (it "COPY renderer reads :src/:dest off the result map"
+    (let [ir ((private-fn "channel-render-copy")
+              {:vis.op :v/copy :src "a.txt" :dest "b.txt" :path "b.txt"})
+          s  (pr-str ir)]
+      (expect (string/includes? s "COPY"))
+      (expect (string/includes? s "a.txt"))
+      (expect (string/includes? s "b.txt"))))
+
+  (it "MOVE renderer reads :src/:dest off the result map"
+    (let [ir ((private-fn "channel-render-move")
+              {:vis.op :v/move :src "a.txt" :dest "b.txt" :path "b.txt"})
+          s  (pr-str ir)]
+      (expect (string/includes? s "MOVE"))
+      (expect (string/includes? s "a.txt"))
+      (expect (string/includes? s "b.txt"))))
+
+  (it "DELETE renderer reads :path off the result map (NO nil token in output)"
+    (let [ir ((private-fn "channel-render-delete")
+              {:vis.op :v/delete :path "src/foo.txt" :deleted? true})
+          s  (pr-str ir)]
+      (expect (string/includes? s "src/foo.txt"))
+      (expect (string/includes? s "DELETE"))
+      (expect (not (string/includes? s "nil")))))
+
+  (it "DELETE-IF-EXISTS renderer flips badge between DELETE / ABSENT on :deleted?"
+    (let [render (private-fn "channel-render-delete-if-exists")
+          gone   (render {:vis.op :v/delete-if-exists :path "a.txt" :deleted? true})
+          absent (render {:vis.op :v/delete-if-exists :path "a.txt" :deleted? false})]
+      (expect (string/includes? (pr-str gone)   "DELETE"))
+      (expect (string/includes? (pr-str absent) "ABSENT"))))
+
+  (it "EXISTS? renderer flips badge between EXISTS / MISSING on :exists?"
+    (let [render  (private-fn "channel-render-exists?")
+          present (render {:vis.op :v/exists? :path "a.txt" :exists? true})
+          absent  (render {:vis.op :v/exists? :path "a.txt" :exists? false})]
+      (expect (string/includes? (pr-str present) "EXISTS"))
+      (expect (string/includes? (pr-str absent)  "MISSING")))))
+
 (defdescribe patch-summary-shape-test
   ;; The summary IS what the model reads back as the v/patch result
   ;; AND what the channel renderer projects. Every key counts; redundant
@@ -1445,7 +1525,7 @@
     (let [patch (private-fn "patch-safe")
           summary (private-fn "patch-result-file-summary")
           p (write-temp! "summary/mixed.txt"
-              "def alpha():   \n    return 1\nit\u2019s late\nfor now\n")
+              "def alpha():   \n    return 1\nit’s late\nfor now\n")
           r (patch [{:path p :search "def alpha():\n    return 1" :replace "def alpha():\n    return 2"}
                     {:path p :search "it's late\nfor now" :replace "it's done\nfor real"}])
           s (summary (first (:plans r)))]
@@ -1465,7 +1545,7 @@
       (expect (not (contains? first-file :indent-delta))))))
 
 (defdescribe editing-renderer-guidance-test
-  (it "patch renderer wraps a pi-style PATCH badge around the header and lists paths"
+  (it "patch renderer wraps a PATCH badge around the header and lists paths"
     (let [render-patch (private-fn "channel-render-patch")
           rendered (render-patch [{:path "target/editing-test/out.txt"}])
           text-leaves (filter string? (tree-seq sequential? seq rendered))

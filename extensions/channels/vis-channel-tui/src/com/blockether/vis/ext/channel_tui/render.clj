@@ -1846,7 +1846,7 @@
                       (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
 
-              ;; ── Iteration recap — pi-style triple-zone paint ──
+              ;; ── Iteration recap — triple-zone paint ──
               ;;
               ;; Each recap line carries `:meta {:recap-kind :task |
               ;; :spec | :fact | :title | :recap}` so we can paint a
@@ -3091,7 +3091,7 @@
    `:meta {:kind :recap :recap-kind <kind>}`. The paint dispatch in
    `paint-iteration!` reads `:recap-kind` to pick the gutter + badge
    color so each engine event (`TITLE`/`TASK`/`SPEC`/`FACT`/`RECAP`)
-   gets its own pi-style accent without touching the marker scheme."
+   gets its own accent without touching the marker scheme."
   [body pad-w]
   (let [kind (recap-kind-of body)]
     (mapv (fn [line]
@@ -3106,7 +3106,7 @@
       (vec
         (mapcat (fn [recap]
                   ;; Generic `:recaps` strings get a leading `RECAP`
-                  ;; badge so they share the pi-style vocabulary with
+                  ;; badge so they share the vocabulary with
                   ;; the engine-mutation recap rows produced by
                   ;; `render-segment-title-entries`. The painter
                   ;; reads the kind off `:meta` (see
@@ -3120,7 +3120,7 @@
    `parse-block-display` tags bookkeeping forms
    (`(def r (v/ls …))`, bare `(v/cat …)` tool calls, etc.) with
    `:hidden? true` so the channel can collapse the raw source row
-   and let the tool's pi-style result pane speak for itself.
+   and let the tool's result pane speak for itself.
 
    Three shapes:
 
@@ -3382,7 +3382,7 @@
                                                   (str/split-lines trimmed))]
                                   (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
                 title-lines   (render-segment-title-entries line-entry render-segments fill-w)
-                ;; Pi-style hiding: parse-block-display marks bookkeeping
+                ;; Hide-by-tag: parse-block-display marks bookkeeping
                 ;; forms (`(def NAME (v/cat …))`, bare `(v/cat …)` tool
                 ;; calls) with `:hidden? true`. The result pane below
                 ;; already shows the OBSERVATION/MUTATION badge + tool
@@ -3451,7 +3451,7 @@
                 hide-code-chrome? (and (str/blank? code-text) (not is-error?))
                 code-block    (cond
                                 hide-code-chrome?
-                                ;; Pi-style: when raw code is hidden (def-wrapped
+                                ;; When raw code is hidden (def-wrapped
                                 ;; tool call or any successful tool form), drop
                                 ;; the code chrome entirely so the result pane
                                 ;; below speaks for itself. Title recap rows
@@ -3485,7 +3485,17 @@
                                        (when (seq inline-error-message-lines) inline-error-message-lines)
                                        (when status-line [status-line])
                                        [(line-entry (str c-pad ""))])))
-                result-margin nil]
+                ;; Blank terminal-bg row between the code chrome
+                ;; and the result pane. Without it the code-block's
+                ;; trailing `c-pad` row (which paints code-block bg)
+                ;; sits flush against the result pane's first row,
+                ;; so the result reads as a continuation of the
+                ;; code chrome. The pad row gives the result its
+                ;; own visual band — same breathing room recap
+                ;; rows get above and below.
+                result-margin (when (and (seq result-lines)
+                                      (not (str/blank? code-text)))
+                                [(line-entry (str iteration-pad-marker ""))])]
             (vec (concat code-block result-margin result-lines))))
         grouped
         (when (seq forms)
