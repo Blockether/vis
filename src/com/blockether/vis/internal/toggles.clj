@@ -42,16 +42,25 @@
 (s/def :toggle/id           qualified-keyword?)
 (s/def :toggle/label        (s/and string? #(not (str/blank? %))))
 (s/def :toggle/description  string?)
-(s/def :toggle/default      boolean?)
+(s/def :toggle/default      any?)            ;; cross-validated against :type below
 (s/def :toggle/owner        (s/or :internal #{:vis} :extension string?))
 (s/def :toggle/since        string?)
 (s/def :toggle/persist?     boolean?)
 (s/def :toggle/group        keyword?)
+(s/def :toggle/type         #{:boolean :enum})
+(s/def :toggle/choices      (s/coll-of any? :min-count 1))
 
 (s/def :toggle/spec
-  (s/keys :req-un [:toggle/id :toggle/label :toggle/default]
-    :opt-un [:toggle/description :toggle/owner :toggle/since
-             :toggle/persist? :toggle/group]))
+  (s/and
+    (s/keys :req-un [:toggle/id :toggle/label :toggle/default]
+      :opt-un [:toggle/description :toggle/owner :toggle/since
+               :toggle/persist? :toggle/group :toggle/type :toggle/choices])
+    (fn cross-validate [{:keys [type choices default]}]
+      (case (or type :boolean)
+        :boolean (boolean? default)
+        :enum    (and (sequential? choices)
+                   (some? default)
+                   (contains? (set choices) default))))))
 
 ;; =============================================================================
 ;; Registries
@@ -86,16 +95,30 @@
 (defn- normalize-spec
   "Coerce a caller spec into the canonical registry shape. Drops
    unknown keys so a future field added here doesn't bleed into
-   listeners; missing optional fields get sane defaults."
-  [{:keys [id label default description owner since persist? group]}]
-  (cond-> {:id          id
-           :label       (str label)
-           :default     (boolean default)
-           :owner       (or owner :vis)
-           :persist?    (boolean persist?)}
-    description (assoc :description description)
-    since       (assoc :since since)
-    group       (assoc :group group)))
+   listeners; missing optional fields get sane defaults.
+
+   Two kinds of toggles share the same registry:
+     `:boolean` (default) -- simple ON/OFF.
+     `:enum`              -- a closed set of named values
+                             (e.g. `:vis/message-meta` cycles
+                             `:full -> :short -> :off`).
+   `:type` and `:choices` ride on the normalized spec so the dialog
+   row can pick its rendering strategy (toggle vs. cycle) without
+   re-deriving anything."
+  [{:keys [id label default description owner since persist? group type choices]}]
+  (let [t (or type :boolean)]
+    (cond-> {:id       id
+             :label    (str label)
+             :type     t
+             :default  (case t
+                         :boolean (boolean default)
+                         :enum    default)
+             :owner    (or owner :vis)
+             :persist? (boolean persist?)}
+      description (assoc :description description)
+      since       (assoc :since since)
+      group       (assoc :group group)
+      (= :enum t) (assoc :choices (vec choices)))))
 
 (defn register-toggle!
   "Register one toggle. `spec` must satisfy `:toggle/spec`.
@@ -140,52 +163,109 @@
   (doseq [f @listeners]
     (try (f event) (catch Throwable _ nil))))
 
-(defn enabled?
-  "Resolve the current ON/OFF value for `id`. Lookup order:
+(defn value-of
+  "Resolve the live value for `id`. Lookup order:
      1. live override in `state`,
      2. registered default,
-     3. `false` if the toggle isn't registered (fail-closed).
+     3. `nil` if the toggle isn't registered.
 
-   No allocation, no `try` \u2014 hot path."
+   Returns the raw value (boolean for `:boolean` toggles, any value
+   from `:choices` for `:enum` toggles). `enabled?` is the
+   boolean-cast convenience for the common boolean path."
   [id]
   (let [s @state]
     (if (contains? s id)
-      (boolean (get s id))
-      (boolean (:default (get @registry id))))))
+      (get s id)
+      (:default (get @registry id)))))
 
-(defn set-enabled!
-  "Flip `id` to `value` (cast to boolean). Notifies listeners. Returns
-   the new boolean.
+(defn enabled?
+  "Boolean cast of `(value-of id)`. Fail-closed: returns `false` when
+   `id` is not registered. Hot-path — one atom deref."
+  [id]
+  (boolean (value-of id)))
 
-   Does NOT auto-persist \u2014 the persistence side runs via
-   `hydrate-from-config!` + `snapshot` so the host owns where bytes
-   land. The TUI settings dispatcher calls `set-enabled!` and then writes
-   `(snapshot)` into `~/.vis/config.edn` itself, same way it already
-   handles `:tui-settings`."
+(defn choices-of
+  "Vec of legal choices for an `:enum` toggle. Empty when `id` is
+   unregistered or registered as `:boolean`."
+  [id]
+  (or (:choices (get @registry id)) []))
+
+(defn type-of
+  "`:boolean` / `:enum` / nil for unknown."
+  [id]
+  (:type (get @registry id)))
+
+(defn set-value!
+  "Set `id` to `value` and notify listeners. Returns the new value.
+   Validation matches the registered `:type`:
+     `:boolean` — coerce to boolean.
+     `:enum`    — must be one of `:choices`; otherwise throws
+                   `:vis.toggles/invalid-value` so the bug surfaces
+                   at the call site instead of later in render."
   [id value]
-  (let [v   (boolean value)
-        old (enabled? id)]
+  (let [spec (get @registry id)
+        v    (case (or (:type spec) :boolean)
+               :boolean (boolean value)
+               :enum    (let [allowed (set (:choices spec))]
+                          (when-not (contains? allowed value)
+                            (throw (ex-info "Toggle value is not one of the registered :choices"
+                                     {:type    :vis.toggles/invalid-value
+                                      :id      id
+                                      :value   value
+                                      :choices (:choices spec)})))
+                          value))
+        old  (value-of id)]
     (swap! state assoc id v)
     (when (not= old v)
       (notify! {:id id :old old :new v}))
     v))
+
+(defn cycle-value!
+  "Advance an `:enum` toggle one step through its registered
+   `:choices`. Wraps at the end. Throws on boolean toggles."
+  [id]
+  (let [spec    (get @registry id)
+        choices (vec (:choices spec))]
+    (when-not (and spec (= :enum (:type spec)))
+      (throw (ex-info "cycle-value! requires an :enum toggle"
+               {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)})))
+    (when-not (seq choices)
+      (throw (ex-info "Enum toggle has no choices"
+               {:type :vis.toggles/invalid-spec :id id})))
+    (let [current (value-of id)
+          idx     (.indexOf ^java.util.List choices current)
+          next-v  (nth choices (mod (inc (if (neg? idx) -1 idx)) (count choices)))]
+      (set-value! id next-v))))
+
+(defn set-enabled!
+  "Boolean alias of `set-value!` for the TUI dialog — keeps the
+   common toggle-flip call sites readable. Refuses `:enum` toggles
+   so an accidental boolean-flip on a multi-value toggle surfaces
+   loudly; use `cycle-value!` / `set-value!` for those."
+  [id value]
+  (let [spec (get @registry id)]
+    (when (and spec (= :enum (:type spec)))
+      (throw (ex-info "set-enabled! is boolean-only; use cycle-value! / set-value! for enum toggles"
+               {:type :vis.toggles/wrong-kind :id id :got-type (:type spec)}))))
+  (set-value! id (boolean value)))
 
 (defn reset-to-default!
   "Drop the user override for `id` so resolution falls back to the
    registered default. Notifies listeners when the effective value
    changes."
   [id]
-  (let [old (enabled? id)]
+  (let [old (value-of id)]
     (swap! state dissoc id)
-    (let [new (enabled? id)]
+    (let [new (value-of id)]
       (when (not= old new)
         (notify! {:id id :old old :new new}))
       new)))
 
 (defn snapshot
-  "Return a map `{id bool}` of EVERY toggle's effective value,
-   intended for persistence. Skips toggles whose `:persist?` is
-   false. Only registered ids are included; orphans from a
+  "Return a map `{id value}` of EVERY persistable toggle's effective
+   value, intended for serialisation. Skips toggles whose
+   `:persist?` is false. Boolean toggles are coerced to boolean;
+   enum toggles surface their raw choice value. Orphans from a
    previously-installed extension are dropped."
   []
   (let [reg @registry
@@ -193,9 +273,12 @@
     (reduce-kv
       (fn [acc id spec]
         (if (:persist? spec)
-          (assoc acc id (if (contains? s id)
-                          (boolean (get s id))
-                          (boolean (:default spec))))
+          (let [v (if (contains? s id) (get s id) (:default spec))
+                v (case (:type spec)
+                    :boolean (boolean v)
+                    :enum    v
+                    (boolean v))]
+            (assoc acc id v))
           acc))
       {}
       reg)))
@@ -203,15 +286,18 @@
 (defn hydrate-from-config!
   "Bulk-apply persisted toggle values from `(:toggles config-map)`.
    Silently skips ids not in the registry so a stale config file
-   from a previous install can't break boot. Notifies listeners for
-   every value that actually changed."
+   from a previous install can't break boot. Routes through
+   `set-value!` so enum entries get validated; individual invalid
+   values are dropped (logged via the listener) instead of aborting
+   the whole hydrate."
   [config-map]
   (let [persisted (some-> config-map :toggles)]
     (when (map? persisted)
       (let [reg @registry]
         (doseq [[id v] persisted
                 :when  (contains? reg id)]
-          (set-enabled! id v))))))
+          (try (set-value! id v)
+            (catch clojure.lang.ExceptionInfo _ nil)))))))
 
 ;; =============================================================================
 ;; Listener ops
@@ -285,4 +371,61 @@
        :owner       :vis
        :group       :diagnostics
        :persist?    true})
+
+    ;; --- TUI display toggles (migrated from `:tui-settings`) -------------
+
+    (register-toggle!
+      {:id :vis/show-thinking :label "Show model thinking"
+       :description (str "Stream reasoning_content / thinking deltas inside"
+                      " each iteration bubble (z.ai GLM, Copilot Claude,"
+                      " Codex reasoning summaries, Anthropic thinking)."
+                      " Disable for a quieter transcript.")
+       :default true :owner :vis :group :tui-display :persist? true})
+
+    (register-toggle!
+      {:id :vis/show-iterations :label "Show full execution trace"
+       :description "Blocks, eval results, errors — the whole iteration history."
+       :default true :owner :vis :group :tui-display :persist? true})
+
+    (register-toggle!
+      {:id :vis/show-silent :label "Show silent system calls"
+       :description "Include successful :vis/silent forms (title / system bookkeeping) in traces."
+       :default false :owner :vis :group :tui-display :persist? true})
+
+    (register-toggle!
+      {:id :vis/show-timestamps :label "Show per-message timestamps"
+       :description "Date + time next to every 'You' / 'Vis' label."
+       :default false :owner :vis :group :tui-display :persist? true})
+
+    (register-toggle!
+      {:id :vis/mouse-selection-copy :label "Mouse selection auto-copy"
+       :description "Drag-select visible text; copied automatically on mouse release."
+       :default true :owner :vis :group :tui-display :persist? true})
+
+    (register-toggle!
+      {:id :voice/respond? :label "Voice respond to answers"
+       :description "Speak the final answer aloud via the foundation-voice extension."
+       :default false :owner :vis :group :tui-display :persist? true})
+
+    (register-toggle!
+      {:id :vis/message-meta :label "Per-message meta footer"
+       :description (str "Footer under each assistant bubble. :full = model /"
+                      " iters / tokens / cost / duration, :short = cost +"
+                      " duration only, :off = hidden (also drops the breathing"
+                      " row above it).")
+       :type :enum :choices [:full :short :off]
+       :default :full :owner :vis :group :tui-display :persist? true})
+
+    (register-toggle!
+      {:id :vis/reasoning-level :label "Reasoning effort"
+       :description "Reasoning budget hint passed to reasoning-capable models."
+       :type :enum :choices [:quick :balanced :deep]
+       :default :balanced :owner :vis :group :provider :persist? true})
+
+    (register-toggle!
+      {:id :openai-codex/verbosity :label "OpenAI Codex verbosity"
+       :description "Provider-specific verbosity knob for the OpenAI Codex backend."
+       :type :enum :choices [:low :medium :high]
+       :default :low :owner :vis :group :provider :persist? true})
+
     true))

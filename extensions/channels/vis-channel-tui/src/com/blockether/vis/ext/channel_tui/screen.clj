@@ -1708,6 +1708,12 @@
                (tel/log! {:level :warn :id ::toggle-persist-failed
                           :data  {:error (ex-message t)}}
                  "Toggle persistence failed; in-memory value still applies.")))
+           ;; Rebuild the cached `:settings` projection so consumer
+           ;; code reading `(get-in db [:settings :show-thinking])`
+           ;; (and the rest of the migrated keys) observes the new
+           ;; value on the next paint. `:bump-render-version` then
+           ;; wakes the render thread for the actual redraw.
+           (state/dispatch [:resync-toggle-settings])
            (state/dispatch [:bump-render-version])))
        (catch Throwable t
          (tel/log! {:level :warn :id ::toggles-hydrate-failed
