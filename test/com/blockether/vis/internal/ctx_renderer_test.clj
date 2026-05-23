@@ -193,8 +193,14 @@
         (expect (str/includes? out ":scope-end \"t1/i14\""))
         (expect (str/includes? out ":summary"))))))
 
-(defdescribe render-trailer-truncation-test
-  (describe "trailer truncation"
+(defdescribe render-trailer-no-entry-cap-test
+  ;; Regression: the trailer used to cap pins at TRAILER_BUDGET (16) and
+  ;; append a `;; ⚠ trailer truncated: 16 of N entries…` hint. That cap
+  ;; was removed (see ctx_renderer.clj header note + conversation
+  ;; ccee2e1f-16ee-4acf-8d93-b4505034c0de). The model needs the full
+  ;; trailer to reason about prior iters; controlling trailer size is the
+  ;; upstream pin-policy's job, not a silent renderer cap.
+  (describe "trailer with many pins is rendered verbatim"
     (let [many-pins (vec (for [i (range 25)]
                            {:scope (str "t1/i" (inc i))
                             :forms [{:scope (str "t1/i" (inc i) "/f1")
@@ -202,14 +208,23 @@
           ctx (assoc base-ctx :session/trailer many-pins)
           out (render ctx)]
 
-      (it "emits a truncation hint when trailer exceeds budget"
-        (expect (str/includes? out "trailer truncated")))
+      (it "does NOT emit the legacy `trailer truncated` hint"
+        (expect (not (str/includes? out "trailer truncated"))))
 
-      (it "the truncation hint references the actual entry count"
-        (expect (str/includes? out " of 25 entries"))))))
+      (it "every pin scope is present in the rendered trailer (no entries dropped)"
+        (doseq [i (range 25)]
+          (expect (str/includes? out (str ":scope \"t1/i" (inc i) "\""))))))))
 
-(defdescribe render-trailer-result-bounds-test
-  (describe "large trailer form results"
+(defdescribe render-trailer-result-full-passthrough-test
+  ;; Regression: trailer form results used to be capped at
+  ;; TRAILER_FORM_RESULT_MAX_CHARS (1200) and replaced with
+  ;; {:preview … :truncated? true}. The model then perceived its own
+  ;; bound values as missing and reached for `(println x)` (banned),
+  ;; producing the I/O-side-effects error. The cap is gone — trailer
+  ;; results render verbatim; if a result is too large for the prompt,
+  ;; the upstream pin policy must address it at source, not silently
+  ;; here.
+  (describe "large trailer form results pass through untruncated"
     (let [huge (apply str (repeat 5000 "x"))
           trailer [{:scope "t1/i1"
                     :forms [{:scope "t1/i1/f1"
@@ -220,10 +235,14 @@
           ctx (assoc base-ctx :session/trailer trailer)
           out (render ctx)]
 
-      (it "keeps result preview bounded"
-        (expect (str/includes? out ":truncated? true"))
-        (expect (str/includes? out "...<+"))
-        (expect (< (count out) 8000)))
+      (it "renders the full result with no truncation marker"
+        (expect (not (str/includes? out ":truncated? true")))
+        (expect (not (str/includes? out "...<+")))
+        (expect (not (str/includes? out ":preview"))))
+
+      (it "renders every byte of the underlying payload"
+        (expect (str/includes? out huge))
+        (expect (> (count out) 5000)))
 
       (it "does not drop source provenance"
         (expect (str/includes? out ";; src t1/i1/f1"))

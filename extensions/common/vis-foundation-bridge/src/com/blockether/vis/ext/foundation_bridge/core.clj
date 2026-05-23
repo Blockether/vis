@@ -11,6 +11,7 @@
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.foundation-bridge.render :as br-render]
             [com.blockether.vis.internal.extension :as extension]))
 
 (def ^:private default-profile-paths
@@ -568,30 +569,35 @@
   [env f args]
   {:env env :fn f :args (into [env] args)})
 
+;; Each `:render-fn` is a structured IR builder over the raw
+;; `:result` map (see `render.clj`). The MODEL surface is the
+;; unwrapped SCI return value — these renderers shape ONLY the
+;; channel/TUI preview, never what the LLM reads.
+
 (def bridge-symbols
   [(vis/symbol #'init {:before-fn inject-env
                        :tag :mutation
-                       :render-fn vis/render-string
+                       :render-fn br-render/render-init
                        :arglists '([] [opts])})
    (vis/symbol #'profile {:before-fn inject-env
                           :tag :observation
-                          :render-fn vis/render-string
+                          :render-fn br-render/render-profile
                           :arglists '([] [opts])})
    (vis/symbol #'check {:before-fn inject-env
                         :tag :observation
-                        :render-fn vis/render-string
+                        :render-fn br-render/render-check
                         :arglists '([] [opts])})
    (vis/symbol #'next {:before-fn inject-env
                        :tag :observation
-                       :render-fn vis/render-string
+                       :render-fn br-render/render-next
                        :arglists '([] [opts])})
    (vis/symbol #'list-evidence {:before-fn inject-env
                                 :tag :observation
-                                :render-fn vis/render-string
+                                :render-fn br-render/render-list-evidence
                                 :arglists '([] [opts])})
    (vis/symbol #'run-evidence {:before-fn inject-env
                                :tag :mutation
-                               :render-fn vis/render-string
+                               :render-fn br-render/render-run-evidence
                                :arglists '([id] [id opts])})])
 
 (def bridge-prompt

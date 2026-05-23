@@ -50,8 +50,25 @@
 ;; Knobs
 ;; =============================================================================
 
-(def ^:private TRAILER_BUDGET 16)
-(def ^:private TRAILER_FORM_RESULT_MAX_CHARS 1200)
+;; Trailer rendering is INTENTIONALLY untruncated.
+;;
+;; Earlier this file capped trailer entries to TRAILER_BUDGET (16) and
+;; per-form result strings to TRAILER_FORM_RESULT_MAX_CHARS (1200).
+;; Both caps were removed: when the model binds a value via `(def x
+;; …)` and the trailer rendered only a {:preview … :truncated? true}
+;; map, the model perceived its own data as missing and reached for
+;; the only escape hatch the sandbox doesn't allow — `(println x)` —
+;; which then surfaced as `I/O side-effect fns are banned in the
+;; sandbox.` See conversation ccee2e1f-16ee-4acf-8d93-b4505034c0de
+;; (iters 9, 10, 12, 15, 17) for the failure mode.
+;;
+;; The fix is structural: the trailer prints the full value the form
+;; produced. Upstream (loop/form-results) controls how many forms get
+;; pinned and whether a value is even storable; once a form is in the
+;; trailer, its `:result` and the trailer's entry count are passed
+;; through to the provider verbatim. If a payload is genuinely too
+;; large to fit a prompt, that must be addressed at the source — not
+;; by silently dropping bytes here.
 (def ^:private NEXT_ACTIONS_BUDGET 5)
 (def ^:private WIDTH 80)
 
@@ -236,26 +253,14 @@
       (str/join "\n"
         (map #(str prefix ";;   " %) lines)))))
 
-(defn- bounded-trailer-result
-  "Keep trailer result payloads from swallowing the next provider prompt.
-   Small values stay as data. Large values become an explicit preview map;
-   the full value remains in persisted form-results / transcript storage."
-  [v]
-  (let [preview (fmt/bounded-value-str
-                  v {:max-chars TRAILER_FORM_RESULT_MAX_CHARS
-                     :print-length 64
-                     :print-level 6})]
-    (if (or (>= (count preview) TRAILER_FORM_RESULT_MAX_CHARS)
-          (str/includes? preview "...<+"))
-      {:preview preview :truncated? true}
-      v)))
-
 (defn- presentation-form
-  "Prompt-facing copy of one trailer form. `:src` is rendered separately;
-   huge `:result` values are capped for display only."
+  "Prompt-facing copy of one trailer form. `:src` is rendered separately
+   as a verbatim block (see `src-lines-as-block`), so the map view drops
+   `:src` to avoid printing the same source twice; everything else
+   (notably `:result`) is passed through UNTRUNCATED. See the trailer
+   truncation note at the top of this file."
   [form]
-  (cond-> (dissoc form :src)
-    (contains? form :result) (update :result bounded-trailer-result)))
+  (dissoc form :src))
 
 (defn- render-form-pin
   "Render one `:forms` entry: verbatim src block, then the form map with
@@ -292,23 +297,18 @@
     (str (pad indent) (indent-rest (zp pin) indent))))
 
 (defn- render-trailer-value
-  "Trailer is a vec, possibly large. Cap to TRAILER_BUDGET and append a
-   `;; ⚠` truncation hint when over budget. Each pin is rendered with
-   `render-trailer-pin` so form-source survives without quote-escape
-   corruption. Returns a multi-line string positioned under the trailer
-   key (caller indents the first line)."
+  "Render the full trailer vector verbatim. No entry cap, no per-form
+   payload cap — see the trailer truncation note at the top of this
+   file. Each pin is rendered with `render-trailer-pin` so form-source
+   survives without quote-escape corruption. Returns a multi-line
+   string positioned under the trailer key (caller indents the first
+   line)."
   [trailer]
-  (let [n (count trailer)
-        capped (vec (take TRAILER_BUDGET trailer))
-        body   (if (empty? capped)
-                 "[]"
-                 (str "[\n"
-                   (str/join "\n" (map #(render-trailer-pin % 1) capped))
-                   "\n ]"))
-        suffix (when (> n TRAILER_BUDGET)
-                 (str "\n;; ⚠ trailer truncated: " TRAILER_BUDGET " of " n
-                   " entries; consider :trailer-summarize at next done"))]
-    (cond-> body suffix (str suffix))))
+  (if (empty? trailer)
+    "[]"
+    (str "[\n"
+      (str/join "\n" (map #(render-trailer-pin % 1) trailer))
+      "\n ]")))
 
 (defn- render-next-actions-value
   "Next-actions vec capped to NEXT_ACTIONS_BUDGET with an overflow hint."

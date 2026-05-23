@@ -22,6 +22,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- ir-code [s] [:c {} (str s)])
+(defn- ir-strong [s] [:strong {} (str s)])
 (defn- ir-code-block [lang body]
   [:code (cond-> {} lang (assoc :lang lang)) (str body)])
 (defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
@@ -51,8 +52,9 @@
   [{:keys [default ports]}]
   (let [n (count ports)]
     (ir-root
-      (ir-p (str n " nREPL port" (when (not= n 1) "s") " visible"
-              (when default (str " — default :port " default))))
+      (ir-p (ir-strong "PORTS")
+        "  " n " visible"
+        (when default (str "  default=" default)))
       (when (seq ports)
         (ir-code-block "text"
           (str/join "\n"
@@ -66,24 +68,23 @@
 
 (defn render-eval
   [{:keys [value out err ns status ex root-ex ms port timed-out?]}]
-  (let [bad? (or timed-out? ex root-ex (contains? status "error"))
-        head (str (cond
-                    timed-out? "TIMEOUT"
-                    bad?       "ERROR"
-                    :else      "OK")
-               " @ :" port
-               (when ns (str "  ns=" ns))
-               (when (number? ms) (str "  " ms "ms")))]
+  (let [bad?  (or timed-out? ex root-ex (contains? status "error"))
+        badge (cond timed-out? "TIMEOUT"
+                bad?       "ERROR"
+                :else      "EVAL")]
     (ir-root
-      (ir-p head)
-      (when value     (ir-code-block "clojure" (cap value)))
+      (ir-p (ir-strong badge)
+        "  :" port
+        (when ns (str "  ns=" ns))
+        (when (number? ms) (str "  " ms "ms")))
+      (when value (ir-code-block "clojure" (cap value)))
       (when (and out (seq out))
         (ir-code-block "text" (str ":out\n" (cap out))))
       (when (and err (seq err))
         (ir-code-block "text" (str ":err\n" (cap err))))
       (when ex
-        (ir-p "ex: " (ir-code (str ex))
-          (when root-ex (str "  root: " root-ex)))))))
+        (ir-p (ir-strong "ex") "  " (ir-code (str ex))
+          (when root-ex (str "  root=" root-ex)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/outline
@@ -104,23 +105,23 @@
 
 (defn render-outline
   [{:keys [path bytes ns counts forms total error]}]
-  (let [head (str (or path "?") " — "
-               (cond
-                 error    (str "ERROR " error)
-                 :else    (str total " form" (when (not= total 1) "s")
-                            (when bytes (str " (" bytes "B)")))))]
-    (ir-root
-      (ir-p head)
-      (when ns
-        (ir-p "ns " (ir-code (:name ns))
-          (when (:doc ns) (str "  ; " (:doc ns)))))
-      (when (seq counts)
-        (ir-p (str/join "  "
-                (sort (map (fn [[k v]] (str v "×" (subs (str k) 1)))
-                        counts)))))
-      (when (seq forms)
-        (ir-code-block "text"
-          (cap (str/join "\n" (map outline-row forms))))))))
+  (ir-root
+    (ir-p (ir-strong (if error "OUTLINE!" "OUTLINE"))
+      "  " (ir-code (or path "?"))
+      (cond
+        error (str "  " error)
+        :else (str "  " total " form" (when (not= total 1) "s")
+                (when bytes (str "  " bytes "B")))))
+    (when ns
+      (ir-p "ns " (ir-code (:name ns))
+        (when (:doc ns) (str "  ; " (:doc ns)))))
+    (when (seq counts)
+      (ir-p (str/join "  "
+              (sort (map (fn [[k v]] (str v "×" (subs (str k) 1)))
+                      counts)))))
+    (when (seq forms)
+      (ir-code-block "text"
+        (cap (str/join "\n" (map outline-row forms)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/find
@@ -138,10 +139,11 @@
   [{:keys [matches scanned truncated? elapsed-ms]}]
   (let [n (count matches)]
     (ir-root
-      (ir-p (str n " match" (when (not= n 1) "es")
-              "  scanned " scanned " file" (when (not= scanned 1) "s")
-              "  " elapsed-ms "ms"
-              (when truncated? "  (truncated)")))
+      (ir-p (ir-strong "FIND")
+        "  " n " match" (when (not= n 1) "es")
+        "  scanned=" scanned
+        "  " elapsed-ms "ms"
+        (when truncated? "  (truncated)"))
       (when (seq matches)
         (ir-code-block "text"
           (cap (str/join "\n" (map find-row matches))))))))
@@ -155,13 +157,18 @@
   (cond
     (= :error status)
     (ir-root
-      (ir-p "EDIT FAILED — " (ir-code (or error "unknown")))
-      (when target (ir-p "target: " (ir-code (str target)))))
+      (ir-p (ir-strong "EDIT FAILED")
+        "  " (ir-code (or error "unknown"))
+        (when target (str "  target=" target))))
 
     :else
     (let [{:keys [before after]} (or bytes {})]
       (ir-root
-        (ir-p "edit " (ir-code (str op)) "  "
-          (ir-code (str target)) "  → " path)
-        (when (and before after)
-          (ir-p (str before "B → " after "B  Δ=" (or delta 0))))))))
+        (ir-p (ir-strong "EDIT")
+          "  " (ir-code (str op))
+          "  " (ir-code (str target))
+          "  → " (or path "?")
+          (when (and before after)
+            (str "  " before "B→" after "B"
+              (when delta
+                (str "  Δ=" (if (pos? delta) "+" "") delta)))))))))
