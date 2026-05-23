@@ -9,7 +9,6 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.chat :as chat]
-   [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
    [com.blockether.vis.ext.channel-tui.input :as input]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
@@ -51,8 +50,11 @@
 (def ^:private submit-input!
   (deref #'screen/submit-input!))
 
-(def ^:private palette-extra-commands
-  (deref #'screen/palette-extra-commands))
+(def ^:private registry-slash-commands
+  (deref #'screen/registry-slash-commands))
+
+(def ^:private slash-spec->menu-command
+  (deref #'screen/slash-spec->menu-command))
 
 (def ^:private menu-commands
   (deref #'screen/menu-commands))
@@ -244,24 +246,36 @@
     ;; bounded by drag-autoscroll-max-coalesce-factor (= 8)
     (expect (= 32 (coalesced-drag-scroll-amount 4 99)))))
 
-(defdescribe extension-command-test
-  (it "hides direct-only extension commands from Ctrl+K palette"
-    (expect (= [{:id :shown :label "Shown" :run-fn identity}]
-              (palette-extra-commands
-                [{:id :voice/toggle-recording
-                  :label "Voice: Toggle Recording (Ctrl+B)"
-                  :palette? false
-                  :run-fn identity}
-                 {:id :shown
-                  :label "Shown"
-                  :run-fn identity}]))))
+(defdescribe slash-menu-test
+  (it "slash-spec->menu-command adapts a slash spec into the legacy menu shape"
+    ;; PLAN.md §12 step 8: declarative slash specs feed the TUI palette
+    ;; through an adapter. `:id` is `(keyword "slash" name)` so the
+    ;; `run-command!` dispatcher can detect a slash entry by its
+    ;; namespace and resubmit through the engine slash registry.
+    (let [adapted (slash-spec->menu-command
+                    {:slash/name "workspace"
+                     :slash/doc  "Workspace ops"})]
+      (expect (= :slash/workspace (:id adapted)))
+      (expect (= "/workspace"    (:slash/text adapted)))
+      (expect (= "Workspace ops" (:label adapted)))))
 
-  (it "adds a slash-only /model alias without changing the Ctrl+K palette"
-    (with-redefs-fn {#'screen/extension-commands (constantly [])}
-      #(let [ids (mapv :id (menu-commands nil))]
-         (expect (some #{:model} ids))
-         (expect (some #{:providers} ids))
-         (expect (not-any? #{:model} (mapv :id dlg/palette-commands)))))))
+  (it "registry-slash-commands collects only top-level slashes"
+    (with-redefs [vis/registered-slashes
+                  (constantly
+                    [{:slash/name "workspace" :slash/doc "Workspace ops"}
+                     {:slash/name "apply" :slash/parent ["workspace"]
+                      :slash/doc "Apply"}
+                     {:slash/name "voice" :slash/doc "Voice toggle"}])]
+      (let [ids (mapv :id (registry-slash-commands))]
+        (expect (= #{:slash/workspace :slash/voice} (set ids))))))
+
+  (it "menu-commands concats dlg/palette-commands and the slash registry view"
+    (with-redefs [vis/registered-slashes
+                  (constantly
+                    [{:slash/name "voice" :slash/doc "Voice toggle"}])]
+      (let [ids (mapv :id (menu-commands nil))]
+        (expect (some #{:new-session} ids))
+        (expect (some #{:slash/voice} ids))))))
 
 (defdescribe channel-status-error-routing-test
   (it "routes error status events to the notification lane only"
