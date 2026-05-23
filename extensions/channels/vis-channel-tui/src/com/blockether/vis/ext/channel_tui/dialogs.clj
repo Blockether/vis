@@ -355,15 +355,18 @@
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 
 (defn scrollbar-geometry
+  "Thumb geometry for dialog scrollbars. THIN ADAPTER over
+   `render/scrollbar-thumb-geometry` — that fn is the single source of
+   truth for thumb math (Terminal.app renders stacked `\u2588` FULL BLOCK
+   cells as a ladder of separate boxes, so the thumb MUST stay one cell
+   high). Never reimplement thumb sizing here; extend the render fn
+   instead and re-shape its result if a new caller needs different keys."
   [height total scroll]
-  (when (and (pos? height) (> total height))
-    (let [thumb-h    (max 1 (int (* height (/ (double height) total))))
-          max-scroll (max 1 (- total height))
-          thumb-top  (int (* (- height thumb-h)
-                            (/ (double (clamp scroll 0 max-scroll)) max-scroll)))]
-      {:track-h height
-       :thumb-h thumb-h
-       :thumb-top thumb-top})))
+  (when-let [{:keys [thumb-top-rel thumb-h]}
+             (render/scrollbar-thumb-geometry (long total) (long height) (long height) scroll)]
+    {:track-h   height
+     :thumb-h   thumb-h
+     :thumb-top thumb-top-rel}))
 
 (defn draw-scrollbar!
   [g col top height total scroll]
