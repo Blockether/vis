@@ -30,6 +30,7 @@
   com.blockether/vis-foundation-exa               {:local/root "extensions/common/vis-foundation-exa"}
   com.blockether/vis-foundation-git               {:local/root "extensions/common/vis-foundation-git"}
   com.blockether/vis-foundation-voice             {:local/root "extensions/common/vis-foundation-voice"}
+  com.blockether/vis-language-clojure             {:local/root "extensions/languages/vis-language-clojure"}
 
   ;; Core runtime deps. Each one supports a specific surface in this
   ;; package; nothing here is shared with extensions through some
@@ -103,7 +104,8 @@
                         "extensions/common/vis-foundation-bridge/test"
                         "extensions/common/vis-foundation-exa/test"
                         "extensions/common/vis-foundation-git/test"
-                        "extensions/common/vis-foundation-voice/test"]
+                        "extensions/common/vis-foundation-voice/test"
+                        "extensions/languages/vis-language-clojure/test"]
           :extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}
                         ;; Microbenchmarks. Pulled into `:test` so a
                         ;; `*_bench_test.clj` file can `(require
@@ -128,7 +130,8 @@
                         "--dir" "extensions/common/vis-foundation-bridge/test"
                         "--dir" "extensions/common/vis-foundation-exa/test"
                         "--dir" "extensions/common/vis-foundation-git/test"
-                        "--dir" "extensions/common/vis-foundation-voice/test"]}
+                        "--dir" "extensions/common/vis-foundation-voice/test"
+                        "--dir" "extensions/languages/vis-language-clojure/test"]}
 
   ;; Development entry path. Starts an nREPL on `$NREPL_PORT` (default
   ;; 7888), writes `.nrepl-port` for `clj-nrepl-eval --discover-ports`,

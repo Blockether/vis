@@ -157,6 +157,27 @@
    :details {:profile-path profile-path
              :searched-paths searched-paths}})
 
+(defn- bridge-path-sandbox-only-policy-error?
+  [t]
+  (let [errors (get-in (ex-data t) [:validation :errors])]
+    (and (seq errors)
+      (every? (fn [err]
+                (and (= :unknown-field (:type err))
+                  (= [:bridge-path-sandbox] (:path err))))
+        errors))))
+
+(defn- load-policy
+  "Load Bridge policy while tolerating Vis-owned `:bridge-path-sandbox`.
+   Upstream Bridge validates verification policy strictly and does not know
+   this extension field yet; other validation failures still propagate."
+  [policy-path]
+  (try
+    (policy/load-policy policy-path)
+    (catch clojure.lang.ExceptionInfo t
+      (if (bridge-path-sandbox-only-policy-error? t)
+        (bio/read-data policy-path)
+        (throw t)))))
+
 (defn- load-profile+policy
   [env opts]
   (let [discovery (profile-discovery (workspace-root env) opts)]
@@ -173,7 +194,7 @@
                           (when (bio/exists? default-path)
                             default-path)))
           policy (when (and policy-path (bio/exists? policy-path))
-                   (policy/load-policy policy-path))]
+                   (load-policy policy-path))]
       {:profile profile
        :policy policy
        :profile-path profile-path*
