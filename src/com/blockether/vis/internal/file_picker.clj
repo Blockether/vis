@@ -21,8 +21,6 @@
            [org.eclipse.jgit.api Git Status]
            [org.eclipse.jgit.lib Repository]))
 
-(set! *warn-on-reflection* true)
-
 (def ^:const max-results 200)
 (def ^:const status-timeout-ms 1500)
 (def ^:private sort-order [:auto :recent :relevance])

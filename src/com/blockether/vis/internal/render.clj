@@ -60,8 +60,6 @@
     Node OrderedList Paragraph SoftLineBreak StrongEmphasis Text ThematicBreak]
    [org.commonmark.parser Parser]))
 
-(set! *warn-on-reflection* true)
-
 ;; =============================================================================
 ;; Tag taxonomy
 ;; =============================================================================

@@ -22,8 +22,6 @@
    (org.eclipse.jgit.lib Repository)
    (org.eclipse.jgit.revwalk RevWalk RevWalkUtils)))
 
-(set! *warn-on-reflection* true)
-
 (def ^:const default-status-timeout-ms
   "Hard ceiling on the JGit status walk. Two seconds is enough for
    most repos; large monorepos with many untracked files can blow

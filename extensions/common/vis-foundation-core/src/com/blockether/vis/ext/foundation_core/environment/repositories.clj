@@ -17,8 +17,6 @@
    (java.nio.file.attribute BasicFileAttributes)
    (java.util LinkedHashSet)))
 
-(set! *warn-on-reflection* true)
-
 (def ^:const default-max-files 20000)
 (def ^:const default-max-repos 12)
 (def ^:const default-deadline-ms 1000)

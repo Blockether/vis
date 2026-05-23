@@ -1402,9 +1402,17 @@
    wraps this into a full `::cs/task` map keyed by the hook id, suitable
    for direct fold onto `:session/tasks`.
 
-   Returns `{:id <kw> :task <task-map>}` or nil. Hooks that omit either
-   `:title` (body) or `:validator-fn` are rejected with a log warn — no
-   legacy zero-arity satisfy path; every hook task MUST be validatable."
+   Returns `{:id <kw> :task <task-map> :emit {:specs :tasks :facts}}`
+   or nil. The `:emit` key carries optional secondary CTX writes
+   (PLAN.md §12 step 7 follow-up): each entry under `:emit/specs` /
+   `:emit/tasks` / `:emit/facts` flows through
+   `ctx-loop/apply-and-record!` exactly like a model-emitted mutator.
+   Hooks may also return ONLY `{:emit ...}` to seed specs/tasks/facts
+   without registering a hook-task themselves — in that case both
+   `:title` and `:validator-fn` may be absent and `:task` returns nil.
+
+   Hooks that emit a hook-task but omit `:title` or `:validator-fn`
+   are rejected with a log warn."
   [ext id hit]
   (cond
     (nil? hit) nil
@@ -1418,13 +1426,19 @@
 
     :else
     (let [title         (or (:title hit) (:body hit) (:text hit))
-          validator-fn  (:validator-fn hit)]
+          validator-fn  (:validator-fn hit)
+          emit          (when (map? (:emit hit)) (:emit hit))
+          hook-task?    (and (string? title) (not (str/blank? title)))]
       (cond
-        (or (not (string? title)) (str/blank? title))
+        ;; Pure-emit hook: no hook-task body, only :emit payload.
+        (and emit (not hook-task?))
+        {:id id :task nil :emit emit}
+
+        (not hook-task?)
         (do (tel/log! {:level :warn
                        :id ::iteration-start-hook-missing-title
                        :data {:ext (:ext/name ext) :hook id :returned hit}}
-              "Hook returned map without non-blank :title / :body / :text; dropping")
+              "Hook returned map without non-blank :title / :body / :text (and no :emit payload); dropping")
           nil)
 
         (or (not (string? validator-fn)) (str/blank? validator-fn))
@@ -1435,14 +1449,15 @@
           nil)
 
         :else
-        {:id id
-         :task (cond-> {:title         title
-                        :specs         {}
-                        :status        :todo
-                        :source        :hook
-                        :hook-id       id
-                        :validator-fn  validator-fn}
-                 (:importance hit) (assoc :importance (:importance hit)))}))))
+        (cond-> {:id id
+                 :task (cond-> {:title         title
+                                :specs         {}
+                                :status        :todo
+                                :source        :hook
+                                :hook-id       id
+                                :validator-fn  validator-fn}
+                         (:importance hit) (assoc :importance (:importance hit)))}
+          emit (assoc :emit emit))))))
 
 (defn- iteration-start-hook-error-hit
   [ext id t]
@@ -3220,6 +3235,24 @@
                                     iteration-hints))
                     _ (doseq [{:keys [id task]} (or folded-hits [])]
                         (ctx-loop/apply-and-record! environment :task-set! [id task]))
+                    ;; Hook :emit payload (PLAN.md §12 step 7 follow-up):
+                    ;; route secondary `:specs / :tasks / :facts` writes
+                    ;; from every hit through `apply-and-record!` so a
+                    ;; hook can seed CTX in the same way a slash's
+                    ;; `:slash/specs` / `:slash/tasks` / `:slash/facts`
+                    ;; envelope does. Hooks that returned ONLY an :emit
+                    ;; map (no hook-task body) still flow through this
+                    ;; path — they were filtered out of `folded-hits`
+                    ;; above but kept in `iteration-hints`.
+                    _ (when (:ctx-atom environment)
+                        (doseq [{emit :emit} iteration-hints
+                                :when (map? emit)]
+                          (doseq [[k partial] (:specs emit)]
+                            (ctx-loop/apply-and-record! environment :spec-set! [k partial]))
+                          (doseq [[k partial] (:tasks emit)]
+                            (ctx-loop/apply-and-record! environment :task-set! [k partial]))
+                          (doseq [[k partial] (:facts emit)]
+                            (ctx-loop/apply-and-record! environment :fact-set! [k partial]))))
                     fold-duration-ms (- (System/currentTimeMillis) fold-start-ms)
                     _ (when (seq folded-hits)
                         (tel/log! {:level :info :id ::hook-task-fold
