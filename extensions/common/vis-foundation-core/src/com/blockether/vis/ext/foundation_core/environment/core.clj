@@ -240,39 +240,49 @@
 
 (defn- ir-text [s] [:span {} (str s)])
 (defn- ir-code [s] [:c {} (str s)])
+(defn- ir-strong [s] [:strong {} (str s)])
 (defn- ir-p [& children] (into [:p {}] children))
-(defn- lines-channel
-  [title lines]
-  (into [:ir {}
-         (ir-p (ir-code title))]
-    (when (seq lines)
-      [(into [:ul {}]
-         (map (fn [line] [:li {} (ir-p (ir-text line))]) lines))])))
+
+(defn- badge-channel
+  "pi-badge preview: `[:strong BADGE]  <inline summary>` followed by
+   an optional `[:ul]` of lines. Replaces the legacy `lines-channel`
+   helper that prefixed every preview with `[:c \"v/foo\"]`."
+  [badge lines]
+  (let [first-line (some-> lines first)
+        rest-lines (rest lines)]
+    (into [:ir {}
+           (ir-p (ir-strong badge)
+             (when first-line (ir-text (str "  " first-line))))]
+      (when (seq rest-lines)
+        [(into [:ul {}]
+           (map (fn [line] [:li {} (ir-p (ir-text line))]) rest-lines))]))))
 
 (defn- render-snapshot-channel
   [result]
-  (lines-channel "v/snapshot" (snapshot-lines result)))
+  (badge-channel "SNAPSHOT" (snapshot-lines result)))
 
 (defn- render-refresh-channel
   [result]
-  (lines-channel "v/refresh! refreshed environment" (snapshot-lines result)))
+  (badge-channel "REFRESH" (snapshot-lines result)))
 
 (defn- render-git-channel
   [result]
-  (lines-channel "v/git" [(git-summary result) (when result (str "root " (present (:root result))))]))
+  (badge-channel "GIT"
+    [(git-summary result)
+     (when result (str "root " (present (:root result))))]))
 
 (defn- render-languages-channel
   [result]
-  (lines-channel "v/languages" [(language-summary result)]))
+  (badge-channel "LANGUAGES" [(language-summary result)]))
 
 (defn- render-monorepo-channel
   [result]
-  (lines-channel "v/monorepo" [(monorepo-summary result)]))
+  (badge-channel "MONOREPO" [(monorepo-summary result)]))
 
 (defn- render-repositories-channel
   [result]
   (let [repos (take 10 (:repositories result))]
-    (lines-channel "v/repositories"
+    (badge-channel "REPOS"
       (cons (repositories-summary result)
         (map (fn [{:keys [path branch dirty? clean?]}]
                (str (present path) " / " (present branch) " / "
@@ -282,14 +292,15 @@
 (defn- guidance-summary
   [{:keys [found? source path content]}]
   (if found?
-    (str "guidance " (present source) " / " (present path)
+    (str (present source) " / " (present path)
       " / " (count (string/split-lines (or content ""))) " line(s)")
-    "guidance not found"))
+    "not found"))
 
 (defn- render-guidance-channel
-  [{:keys [content] :as result}]
+  [{:keys [content found?] :as result}]
   (into [:ir {}
-         (ir-p (ir-code "v/main-agent-instructions") (ir-text (str " — " (guidance-summary result))))]
+         (ir-p (ir-strong (if found? "GUIDANCE" "NO GUIDANCE"))
+           (ir-text (str "  " (guidance-summary result))))]
     (when (seq content)
       [[:code {:lang "text"} content]])))
 

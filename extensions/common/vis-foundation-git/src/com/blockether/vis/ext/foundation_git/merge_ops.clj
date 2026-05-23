@@ -24,8 +24,8 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.foundation-git.render :as gr]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
    [java.io File]
@@ -161,18 +161,10 @@
 
 (defn- ok [v] (extension/success {:result v}))
 
-(defn- ir-status-body [s]
-  (if-not (:in-progress? s)
-    (render/markdown->ir "No merge in progress.")
-    (let [paths   (mapv :path (:conflicts s))
-          summary (str "Merging " (:branch s)
-                    "\nHEAD = " (subs (or (:head s) "") 0 (min 8 (count (or (:head s) ""))))
-                    "\nMERGE_HEAD = " (subs (or (:merge-head s) "") 0 (min 8 (count (or (:merge-head s) ""))))
-                    "\nConflicts (" (count paths) "):\n"
-                    (if (seq paths)
-                      (str/join "\n" (map #(str "  - " %) paths))
-                      "  (none - ready for (mr/continue!))"))]
-      (render/markdown->ir summary))))
+;; NOTE: the legacy `ir-status-body` (plus markdown round-trip) was
+;; replaced by `foundation-git.render/render-merge-status`. Channel
+;; previews now consume the raw `:result` map directly — no
+;; markdown stringification, no pr-str dump.
 
 ;; SCI tool entry points — each `defn` carries its doc + arglists via
 ;; var metadata; `vis/symbol` reads both straight off the var.
@@ -207,11 +199,21 @@
   ([] (merge-abort!-tool {}))
   ([opts] (ok (abort! opts))))
 
-(defn- render-status-channel [{:keys [result]}]
-  (ir-status-body result))
+;; `:render-fn` receives the unwrapped `:result` map (per
+;; `tool-result->public-value`). The MODEL gets the same map via
+;; SCI — these renderers shape ONLY the channel/TUI preview.
 
-(defn- render-default-channel [{:keys [result]}]
-  (render/markdown->ir (pr-str result)))
+(defn- render-status-channel [result]
+  (gr/render-merge-status result))
+
+(defn- render-op-channel
+  "Shared renderer for accept-ours / accept-theirs / mark-resolved —
+   all return `{:path :op}`."
+  [result]
+  (gr/render-merge-op result))
+
+(defn- render-continue-channel [result] (gr/render-merge-continue result))
+(defn- render-abort-channel    [result] (gr/render-merge-abort    result))
 
 (def merge-status-symbol
   (extension/symbol #'merge-status-tool
@@ -223,31 +225,31 @@
   (extension/symbol #'merge-accept-ours-tool
     {:symbol 'merge-accept-ours
      :tag :mutation
-     :render-fn render-default-channel}))
+     :render-fn render-op-channel}))
 
 (def merge-accept-theirs-symbol
   (extension/symbol #'merge-accept-theirs-tool
     {:symbol 'merge-accept-theirs
      :tag :mutation
-     :render-fn render-default-channel}))
+     :render-fn render-op-channel}))
 
 (def merge-mark-resolved-symbol
   (extension/symbol #'merge-mark-resolved-tool
     {:symbol 'merge-mark-resolved
      :tag :mutation
-     :render-fn render-default-channel}))
+     :render-fn render-op-channel}))
 
 (def merge-continue!-symbol
   (extension/symbol #'merge-continue!-tool
     {:symbol 'merge-continue!
      :tag :mutation
-     :render-fn render-default-channel}))
+     :render-fn render-continue-channel}))
 
 (def merge-abort!-symbol
   (extension/symbol #'merge-abort!-tool
     {:symbol 'merge-abort!
      :tag :mutation
-     :render-fn render-default-channel}))
+     :render-fn render-abort-channel}))
 
 (def merge-ops-symbols
   [merge-status-symbol merge-accept-ours-symbol merge-accept-theirs-symbol

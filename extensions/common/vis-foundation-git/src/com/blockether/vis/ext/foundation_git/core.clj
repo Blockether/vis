@@ -12,6 +12,7 @@
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-git.merge-ops :as merge-ops]
+   [com.blockether.vis.ext.foundation-git.render :as gr]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git-core]))
 
@@ -317,35 +318,41 @@
 ;; symbol vec and populates the op registry automatically. No
 ;; per-extension `register-op!` boilerplate.
 
+;; Each `:render-fn` is a structured IR builder over the raw
+;; `:result` map (see `render.clj`). The MODEL surface is the
+;; unwrapped SCI return value (`tool-result->public-value`) — these
+;; renderers shape ONLY the channel/TUI preview, never what the LLM
+;; reads.
+
 (def diff-symbol
   (vis/symbol #'diff
     {:before-fn inject-env
      :tag       :observation
-     :render-fn vis/render-string}))
+     :render-fn gr/render-diff}))
 
 (def status-symbol
   (vis/symbol #'status
     {:before-fn inject-env
      :tag       :observation
-     :render-fn vis/render-string}))
+     :render-fn gr/render-status}))
 
 (def log-symbol
   (vis/symbol #'log
     {:before-fn inject-env
      :tag       :observation
-     :render-fn vis/render-string}))
+     :render-fn gr/render-log}))
 
 (def show-symbol
   (vis/symbol #'show
     {:before-fn inject-env
      :tag       :observation
-     :render-fn vis/render-string}))
+     :render-fn gr/render-show}))
 
 (def blame-symbol
   (vis/symbol #'blame
     {:before-fn inject-env
      :tag       :observation
-     :render-fn vis/render-string}))
+     :render-fn gr/render-blame}))
 
 (def git-symbols
   ;; Observation + merge-resolve ops all live under the `git/` alias.

@@ -306,6 +306,48 @@
             (virtual/layout msgs bubble-w settings 0 5 {})]
         (expect (>= eff-scroll 0)))))
 
+  (describe "pass-3 recovers visible bubbles missed by the pass-1 estimate"
+    ;; Regression: a fast-growing live bubble has no height cache and
+    ;; its cheap estimate undershoots reality. When that pushes
+    ;; `real-max-scroll` past `est-max-scroll` and the caller sits at
+    ;; the historical bottom, pass-1 candidates land at a SMALLER
+    ;; effective scroll than the refined `eff-2`, and earlier stable
+    ;; bubbles silently fall out of `:visible`. Layout must catch
+    ;; them in pass-3 so the painter still draws them.
+    (it "keeps the prior stable assistant bubble visible while a huge live bubble streams"
+      (render/invalidate-cache!)
+      (let [stable  (plain-assistant-msg "earlier turn answer body")
+            live    {:role :assistant :text "Sending request to provider..."}
+            inner-h 10
+            ;; ~80 iterations push the live bubble well past inner-h,
+            ;; so pass-1's cheap estimate undershoots the real height.
+            iters   (vec (for [i (range 80)]
+                           {:forms [{:code          (str "(+ " i " 1)")
+                                     :result-render (str (inc i))
+                                     :result-kind   :value
+                                     :duration-ms   1
+                                     :success?      true
+                                     :silent?       false}]}))
+            {:keys [visible total-h eff-scroll]}
+            (virtual/layout [stable live] bubble-w settings nil inner-h
+              {:loading?       true
+               :progress       {:iterations iters}
+               :progress-extra {:now-ms 1000 :turn-start-ms 0}}
+              {:session-id "s" :detail-expansions {}})
+            visible-idxs (set (map :idx visible))]
+        ;; The live bubble is always projected.
+        (expect (contains? visible-idxs 1))
+        ;; And the earlier stable bubble whose bottom row still pokes
+        ;; into the viewport must survive into `:visible`. Without
+        ;; pass-3 recovery this set is `#{1}` — the bug the user hit.
+        (let [stable-bottom (long (+ (get-in (first visible) [:top])
+                                    (get-in (first visible) [:height])))]
+          (expect (pos? total-h))
+          (expect (>= eff-scroll 0))
+          (expect (or (contains? visible-idxs 0)
+                    (zero? stable-bottom))
+            "earlier turn must paint while the live bubble streams")))))
+
   (describe "off-screen bubbles are NOT projected"
     ;; The whole point of the namespace. Count projections by
     ;; intercepting `render/format-answer-with-thinking` with a

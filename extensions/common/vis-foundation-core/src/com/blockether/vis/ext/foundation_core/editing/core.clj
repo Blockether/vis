@@ -2340,6 +2340,7 @@
 
 ;; Channel IR builders. No Markdown string round-trip on tool display.
 (defn- ir-code [s] [:c {} (str s)])
+(defn- ir-strong [s] [:strong {} (str s)])
 (defn- ir-code-block [lang body] [:code (cond-> {} lang (assoc :lang lang)) (str body)])
 (defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
 (defn- ir-p [& parts]
@@ -2379,39 +2380,41 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- channel-render-cat
-  "Channel preview: numbered-line-block + header. Reads the plain map
-   directly; no handle/deref."
+  "Channel preview: numbered-line-block + pi-badge header. Reads the
+   plain map directly; no handle/deref."
   [{:keys [path next-offset truncated? lines]}]
   (let [lines      (vec lines)
         line-count (count lines)
         first-ln   (ffirst lines)
         body       (numbered-line-block lines)]
     (ir-root
-      (ir-p "Read " (ir-code path) " — " line-count
-        " line(s)" (when first-ln (str " from line " first-ln))
+      (ir-p (ir-strong "CAT")
+        "  " (ir-code (or path "?"))
+        "  " line-count " line" (when (not= 1 line-count) "s")
+        (when first-ln (str "  from=" first-ln))
         (cond
-          next-offset (str " (next-offset " next-offset ""
-                        (when truncated? ", byte-cap hit")
-                        ").")
-          truncated?  " (byte-cap hit)."
-          :else       " (eof)."))
+          next-offset (str "  next-offset=" next-offset
+                        (when truncated? "  (byte-cap)"))
+          truncated?  "  (byte-cap)"
+          :else       "  (eof)"))
       (ir-code-block "text" (bounded-render-text body)))))
 
 (defn- channel-render-ls
-  "Channel preview: flat path list. Directory rows get a trailing `/`,
-   file rows get a `(NB)` size suffix. `:truncated?` surfaces an inline
-   note. Pure projection of `(:entries r)`."
+  "Channel preview: flat path list with pi-badge header. Directory
+   rows get a trailing `/`, file rows get a `(NB)` size suffix.
+   `:truncated?` surfaces an inline note. Pure projection of
+   `(:entries r)`."
   [{:keys [path entries entry-count file-count dir-count truncated?
            depth limit]}]
   (ir-root
-    (ir-p "Listing of " (ir-code path) " — "
-      entry-count " entr" (if (= 1 entry-count) "y" "ies")
-      " (" (or file-count 0) " file(s), " (or dir-count 0) " dir(s))"
-      (when (and depth (not= depth 10)) (str " depth=" depth))
+    (ir-p (ir-strong "LS")
+      "  " (ir-code (or path "?"))
+      "  " entry-count " entr" (if (= 1 entry-count) "y" "ies")
+      "  files=" (or file-count 0)
+      "  dirs=" (or dir-count 0)
+      (when (and depth (not= depth 10)) (str "  depth=" depth))
       (when truncated?
-        (str ", truncated at :limit " limit
-          " — narrow scope or bump :limit"))
-      ".")
+        (str "  truncated" (when limit (str "=" limit)))))
     (when (seq entries)
       (ir-code-block "text"
         (bounded-render-text
@@ -2431,26 +2434,31 @@
     [head (str/join "\n" body-lines)]))
 
 (defn- channel-render-rg
-  "Channel preview — mode-aware. Content mode renders each hit with its
-   `:before` / `:after` context (when present) so the trailer reads like a
-   miniature grep -C output. `:files-only` shows distinct paths.
-   `:counts` shows per-file totals."
+  "Channel preview — mode-aware with pi-badge header. Content mode
+   renders each hit with its `:before` / `:after` context (when
+   present) so the trailer reads like a miniature grep -C output.
+   `:files-only` shows distinct paths. `:counts` shows per-file
+   totals."
   [{:keys [mode hits files counts truncated-by hit-count file-count
            total-matches]}]
   (case mode
     :files-only
     (ir-root
-      (ir-p "Searched — " (or file-count (count files)) " file(s) with at least"
-        " one match, truncated-by " (ir-code (name (or truncated-by :none))) ".")
+      (ir-p (ir-strong "RG files")
+        "  " (or file-count (count files)) " file"
+        (when (not= 1 (or file-count (count files))) "s")
+        "  truncated-by=" (name (or truncated-by :none)))
       (when (seq files)
         (ir-code-block "text"
           (bounded-render-text (str/join "\n" files)))))
 
     :counts
     (ir-root
-      (ir-p "Searched — " (or file-count (count counts)) " file(s) with matches"
-        (when total-matches (str " (" total-matches " total match(es))"))
-        ", truncated-by " (ir-code (name (or truncated-by :none))) ".")
+      (ir-p (ir-strong "RG counts")
+        "  " (or file-count (count counts)) " file"
+        (when (not= 1 (or file-count (count counts))) "s")
+        (when total-matches (str "  total=" total-matches))
+        "  truncated-by=" (name (or truncated-by :none)))
       (when (seq counts)
         (ir-code-block "text"
           (bounded-render-text
@@ -2460,8 +2468,10 @@
 
     ;; default: :content (or unset — legacy maps without :mode)
     (ir-root
-      (ir-p "Searched — " (or hit-count (count hits)) " hit(s), truncated-by "
-        (ir-code (name (or truncated-by :none))) ".")
+      (ir-p (ir-strong "RG")
+        "  " (or hit-count (count hits)) " hit"
+        (when (not= 1 (or hit-count (count hits))) "s")
+        "  truncated-by=" (name (or truncated-by :none)))
       (when (seq hits)
         (let [rendered (mapv render-rg-hit-block hits)
               any-context? (some #(or (seq (:before %)) (seq (:after %))) hits)]
@@ -2480,7 +2490,7 @@
                          (str path ":" line " " text)) hits))))))))))
 
 (defn- channel-render-patch
-  "Channel preview: one header line per file + (capped) unified diff.
+  "Channel preview: pi-badge header + (capped) unified diff per file.
    Pure projection over the summary map (`patch-result-file-summary`).
 
    No line counts in the header — the diff itself carries the line-level
@@ -2491,10 +2501,12 @@
    their absence means byte-exact match."
   [result]
   (let [files   (if (sequential? result) result [result])
-        changed (count (filter :changed? files))]
+        changed (count (filter :changed? files))
+        nf      (count files)]
     (apply ir-root
-      (ir-p "Patched " (count files) " file(s)"
-        (when (pos? changed) (str ", " changed " changed")) ".")
+      (ir-p (ir-strong "PATCH")
+        "  " nf " file" (when (not= 1 nf) "s")
+        (when (pos? changed) (str "  changed=" changed)))
       (mapcat
         (fn [{:keys [path op diff changed? passes indent-delta]}]
           (let [header (str (name (or op :update))
@@ -2511,29 +2523,34 @@
 
 (defn- channel-render-create-dirs
   [result]
-  (ir-root (ir-p "Ensured dir " (ir-code result) ".")))
+  (ir-root (ir-p (ir-strong "MKDIR") "  " (ir-code (str result)))))
 
 (defn- channel-render-copy
   [result]
-  (ir-root (ir-p "Copied to " (ir-code result) ".")))
+  (ir-root (ir-p (ir-strong "COPY") "  → " (ir-code (str result)))))
 
 (defn- channel-render-move
   [result]
-  (ir-root (ir-p "Moved to " (ir-code result) ".")))
+  (ir-root (ir-p (ir-strong "MOVE") "  → " (ir-code (str result)))))
 
 (defn- channel-render-delete
   [result]
-  (ir-root (ir-p "Deleted. " (ir-code (pr-str result)))))
+  (ir-root
+    (ir-p (ir-strong "DELETE")
+      (cond
+        (string? result) (str "  " result)
+        :else            (str "  " (pr-str result))))))
 
 (defn- channel-render-delete-if-exists
   [result]
-  (if result
-    (ir-root (ir-p "Deleted."))
-    (ir-root (ir-p "Already absent."))))
+  (ir-root
+    (ir-p (ir-strong (if result "DELETE" "ABSENT"))
+      (when (string? result) (str "  " result)))))
 
 (defn- channel-render-exists?
   [result]
-  (ir-root (ir-p "Exists? " (ir-code (pr-str result)))))
+  (ir-root
+    (ir-p (ir-strong (if result "EXISTS" "MISSING")))))
 
 ;; =============================================================================
 ;; Symbol declarations
