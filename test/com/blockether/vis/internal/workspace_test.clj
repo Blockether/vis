@@ -120,14 +120,23 @@
           (expect (nil? (ws/for-session store "nonexistent"))))))))
 
 (defdescribe trunk-refuses-mutations-test
-  (it "apply-to-trunk! throws :workspace/trunk-merge for trunk-kind"
+  (it "ff-apply! throws :workspace/trunk-merge for trunk-kind"
     (with-store
       (fn [store]
         (let [trunk (ws/ensure-trunk! store {})]
-          (try (ws/apply-to-trunk! store {:workspace-id (:id trunk)})
+          (try (ws/ff-apply! store {:workspace-id (:id trunk)})
             (expect false)
             (catch clojure.lang.ExceptionInfo e
               (expect (= :workspace/trunk-merge (:type (ex-data e))))))))))
+
+  (it "commit! throws :workspace/trunk-commit for trunk-kind"
+    (with-store
+      (fn [store]
+        (let [trunk (ws/ensure-trunk! store {})]
+          (try (ws/commit! store {:workspace-id (:id trunk) :message "x"})
+            (expect false)
+            (catch clojure.lang.ExceptionInfo e
+              (expect (= :workspace/trunk-commit (:type (ex-data e))))))))))
 
   (it "discard! throws :workspace/trunk-discard for trunk-kind"
     (with-store
@@ -138,33 +147,98 @@
             (catch clojure.lang.ExceptionInfo e
               (expect (= :workspace/trunk-discard (:type (ex-data e)))))))))))
 
-(defdescribe branch-apply-test
-  (it "copies dirty workspace files to trunk without committing the workspace"
+(defdescribe commit-and-ff-apply-test
+  (it "commit! returns :nothing-to-commit on clean worktree"
     (with-store
       (fn [store]
-        (let [base          (temp-dir "vis-workspace-apply-test")
+        (let [base          (temp-dir "vis-workspace-commit-clean")
+              repo-root     (str (io/file base "repo"))
+              worktree-root (str (io/file base "worktree"))]
+          (try
+            (.mkdirs (io/file repo-root))
+            (init-git-repo! repo-root)
+            (let [workspace (branch-workspace! store repo-root worktree-root)
+                  result    (ws/commit! store {:workspace-id (:id workspace)
+                                               :message      "empty"})]
+              (expect (= :nothing-to-commit (:status result))))
+            (finally (delete-tree! base)))))))
+
+  (it "commit! + ff-apply! fast-forwards trunk to the new branch HEAD"
+    (with-store
+      (fn [store]
+        (let [base          (temp-dir "vis-workspace-ff-apply")
+              repo-root     (str (io/file base "repo"))
+              worktree-root (str (io/file base "worktree"))]
+          (try
+            (.mkdirs (io/file repo-root))
+            (init-git-repo! repo-root)
+            (let [trunk-head-before (git! repo-root ["rev-parse" "HEAD"])
+                  workspace         (branch-workspace! store repo-root worktree-root)]
+              (spit (io/file (:root workspace) "note.txt") "changed-via-ff\n")
+              (spit (io/file (:root workspace) "new.txt") "new-via-ff\n")
+              (let [c-result  (ws/commit! store {:workspace-id (:id workspace)
+                                                 :message      "branch work"})]
+                (expect (= :ok (:status c-result)))
+                (expect (string? (:sha c-result)))
+                (expect (not= trunk-head-before (:sha c-result))))
+              (let [ff (ws/ff-apply! store {:workspace-id (:id workspace)})]
+                (expect (= :ok (:status ff)))
+                (expect (= :merged (get-in ff [:workspace :state])))
+                (expect (= "changed-via-ff\n" (slurp (io/file repo-root "note.txt"))))
+                (expect (= "new-via-ff\n" (slurp (io/file repo-root "new.txt"))))))
+            (finally (delete-tree! base)))))))
+
+  (it "ff-apply! reports :ff-failed when trunk has diverged history"
+    (with-store
+      (fn [store]
+        (let [base          (temp-dir "vis-workspace-ff-failed")
               repo-root     (str (io/file base "repo"))
               worktree-root (str (io/file base "worktree"))]
           (try
             (.mkdirs (io/file repo-root))
             (init-git-repo! repo-root)
             (let [workspace (branch-workspace! store repo-root worktree-root)]
-              (spit (io/file (:root workspace) "note.txt") "changed\n")
-              (spit (io/file (:root workspace) "new.txt") "new\n")
-              (let [result (ws/apply-to-trunk! store {:workspace-id (:id workspace)})]
-                (expect (= "changed\n" (slurp (io/file repo-root "note.txt"))))
-                (expect (= "new\n" (slurp (io/file repo-root "new.txt"))))
-                (expect (= :merged (get-in result [:workspace :state])))
-                (expect (= "M note.txt\n?? new.txt"
-                          (git! (:root workspace) ["status" "--porcelain"])))))
-            (finally
-              (delete-tree! base))))))))
+              ;; Commit divergent work on the trunk so FF is impossible.
+              (spit (io/file repo-root "trunk-only.txt") "trunk-only\n")
+              (git! repo-root ["add" "trunk-only.txt"])
+              (git! repo-root ["commit" "-m" "trunk diverges"])
+              ;; Commit on the workspace branch.
+              (spit (io/file (:root workspace) "note.txt") "branch-edit\n")
+              (ws/commit! store {:workspace-id (:id workspace)
+                                 :message      "branch work"})
+              (let [ff (ws/ff-apply! store {:workspace-id (:id workspace)})]
+                (expect (= :ff-failed (:status ff)))
+                (expect (some? (:reason ff)))
+                ;; Workspace stays in :merging so the engine can hand off
+                ;; to start-merge-resolve! (PLAN.md §7).
+                (expect (= :merging
+                          (:state (ws/get store (:id workspace)))))))
+            (finally (delete-tree! base))))))))
 
-(defdescribe lookup-errors-test
-  (it "apply-to-trunk! reports unknown workspace-id in ex-data"
+(defdescribe start-merge-resolve-skeleton-test
+  (it "throws :workspace/not-yet-implemented (PLAN.md §12 step 10 placeholder)"
     (with-store
       (fn [store]
-        (try (ws/apply-to-trunk! store {:workspace-id "nope"})
+        (try (ws/start-merge-resolve! store {:workspace-id "ws"
+                                             :parent-session-id "s"
+                                             :channel-id :tui})
+          (expect false)
+          (catch clojure.lang.ExceptionInfo e
+            (expect (= :workspace/not-yet-implemented (:type (ex-data e))))))))))
+
+(defdescribe lookup-errors-test
+  (it "ff-apply! reports unknown workspace-id in ex-data"
+    (with-store
+      (fn [store]
+        (try (ws/ff-apply! store {:workspace-id "nope"})
+          (expect false)
+          (catch clojure.lang.ExceptionInfo e
+            (expect (= "nope" (:workspace-id (ex-data e)))))))))
+
+  (it "commit! reports unknown workspace-id in ex-data"
+    (with-store
+      (fn [store]
+        (try (ws/commit! store {:workspace-id "nope"})
           (expect false)
           (catch clojure.lang.ExceptionInfo e
             (expect (= "nope" (:workspace-id (ex-data e)))))))))

@@ -20,8 +20,7 @@ cb86afd6  HANDOFF.md: refresh — CTX redesign closure + missing inventory
 |---|---|---|
 | 1 | ✅ DONE (39facb68) | schema inline V1: workspace.label + last_focused_at_ms + repo_focus table + session_state.merge_resolve_parent_id; row->workspace surfaces new cols |
 | 2 | ✅ DONE (fccf1d31) | persistance fns: db-workspace-update-label! / db-workspace-touch-focus! / db-repo-focus-get / db-repo-focus-set!; defdelegates |
-| 3 | 🟡 PARTIAL (ddcacddb) | detect-trunk-branch + with-repo-lock + set-label! / focus! / last-focused / display-label / workspace-with-session / list-active-with-sessions + db-session-state-list-for-workspace |
-| 3 (rest) | ⏳ NEXT | spawn-branch! rewrite (PLAN §4.4) + commit! + ff-apply! + start-merge-resolve! skeleton + KILL apply-to-trunk! body (K4) + KILL workspace-apply-to-trunk! re-export (K5) + status → §6.3 stamping (K3 if applicable) |
+| 3 | ✅ DONE | (ddcacddb) detect-trunk-branch + with-repo-lock + set-label! / focus! / last-focused / display-label / workspace-with-session / list-active-with-sessions + db-session-state-list-for-workspace; **REST**: mirror-tree! + spawn-branch! rewrite (PLAN §4.4 dirty+ignored copy under with-repo-lock) + commit! + ff-apply! + start-merge-resolve! skeleton (PLAN §7.1 placeholder — throws :workspace/not-yet-implemented for step 10) + KILL apply-to-trunk! body (K4) + KILL workspace-apply-to-trunk! re-export (K5) + db-workspace-update-commit-id! persistence fn; TUI `:apply-workspace-to-trunk` palette entry temporarily routes through `workspace-ff-apply!` (full deletion lands in step 8/K6) |
 | 4 | ✅ DONE (2933936e) | KILL `:git/*` aliases (K1, K2); rename :git/file-stats → :vcs/file-stats; workspace/status emits ONLY :vcs/*; tests migrated; one comment-only mention of `:git/branch` left in ctx_spec.clj (historical rationale) |
 | 5 | ⏳ PENDING | DECLARATIVE slash surface (PLAN §3 rewrite 2026-05-22): add `::slash` + `:ext/slash-commands` specs to internal/extension.clj alongside `:ext/hooks`; internal/slash.clj `active-slashes` aggregator + parser + dispatch (NO atom, NO register-slash!); core.clj exports `active-slashes` / `slash-by-path` / `slash-children`. Engine refuses load on duplicate `[parent name]` across `(active-extensions)`. |
 | 6 | ⏳ PENDING | workspace surface lives in `vis-foundation-core` (NOT a new package — PLAN §6 updated 2026-05-22: workspace is CORE, no architectural payoff splitting into a separate ext). Add `workspace_slashes.clj` + `workspace_ctx.clj` to vis-foundation-core. Voice migration from `:tui.slot/commands` to `register-slash!` (K10). |
@@ -61,9 +60,6 @@ cb86afd6  HANDOFF.md: refresh — CTX redesign closure + missing inventory
     persist as synthetic iters in the same `session_turn_iteration`
     table (without `:llm-*` keys) so channels render them
     consistently with model iters.
-  - `workspace/spawn-branch!` dirty+ignored copy, `workspace/commit!`,
-    `workspace/ff-apply!`, `workspace/start-merge-resolve!` skeleton
-    — the heavy git ops half of PLAN §12 step 3.
   - TUI tab strip + Telegram switcher backed by
     `list-active-with-sessions` + per-repo `focus!`. The thin facade
     is in place; the channel rewrite (steps 8 + 9) wires the consumers.

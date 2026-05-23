@@ -15,12 +15,11 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.persistance :as p])
   (:import [java.io File]
+           [java.nio.file CopyOption FileVisitResult Files LinkOption Path
+            SimpleFileVisitor StandardCopyOption]
+           [java.nio.file.attribute BasicFileAttributes FileAttribute]
            [java.util UUID]
-           [org.eclipse.jgit.api Git]
-           [org.eclipse.jgit.diff DiffEntry]
-           [org.eclipse.jgit.lib Repository]
-           [org.eclipse.jgit.revwalk RevWalk]
-           [org.eclipse.jgit.treewalk CanonicalTreeParser]))
+           [org.eclipse.jgit.api Git]))
 
 (set! *warn-on-reflection* true)
 
@@ -159,77 +158,66 @@
       (some-> (.resolve (.getRepository git) "HEAD") .getName))
     (catch Throwable _ nil)))
 
-(defn- tree-parser
-  ^CanonicalTreeParser [^Repository repo rev]
-  (let [parser (CanonicalTreeParser.)
-        commit-id (.resolve repo rev)]
-    (with-open [reader (.newObjectReader repo)
-                walk (RevWalk. repo)]
-      (let [commit (.parseCommit walk commit-id)]
-        (.reset parser reader (.getId (.getTree commit)))))
-    parser))
+(defn- mirror-tree!
+  "Mirror `src` worktree → `dst` worktree, preserving symlinks, mtimes,
+   and permissions. Skips the top-level `.git/` (submodules carry their
+   own nested `.git/` deeper in the tree which is left intact). REPLACEs
+   files in `dst`. Never reads or writes outside either tree.
 
-(defn- committed-paths
-  [^Git git base-head]
-  (if-not base-head
-    []
-    (let [repo (.getRepository git)
-          old-tree (tree-parser repo base-head)
-          new-tree (tree-parser repo "HEAD")]
-      (mapcat (fn [^DiffEntry entry]
-                (let [change (some-> (.getChangeType entry) .name)]
-                  (cond
-                    (= "DELETE" change) [(.getOldPath entry)]
-                    (= "RENAME" change) [(.getOldPath entry) (.getNewPath entry)]
-                    :else [(.getNewPath entry)])))
-        (.. git diff
-          (setOldTree old-tree)
-          (setNewTree new-tree)
-          call)))))
+   PLAN.md §4.4 — branch-kind workspaces inherit trunk's dirty,
+   untracked, and gitignored state so `npm install` / `clojure -P`
+   artefacts are reused verbatim. Does NOT delete files present in
+   `dst` but absent from `src`; the worktree was just minted via
+   `git worktree add HEAD`, so the only divergence vs HEAD that can
+   shadow a deletion is something the user staged — outside scope."
+  [^String src ^String dst]
+  (let [src-path (.toPath (io/file src))
+        dst-path (.toPath (io/file dst))
+        attrs    (make-array FileAttribute 0)
+        copy-opts ^"[Ljava.nio.file.CopyOption;"
+        (into-array CopyOption
+          [StandardCopyOption/REPLACE_EXISTING
+           StandardCopyOption/COPY_ATTRIBUTES
+           LinkOption/NOFOLLOW_LINKS])
+        skip-git? (fn [^Path rel]
+                    (and (pos? (.getNameCount rel))
+                      (= ".git" (str (.getName rel 0)))))]
+    (Files/walkFileTree
+      src-path
+      (proxy [SimpleFileVisitor] []
+        (preVisitDirectory [dir ^BasicFileAttributes _attrs]
+          (let [rel (.relativize src-path ^Path dir)]
+            (cond
+              (zero? (.getNameCount rel))
+              FileVisitResult/CONTINUE
 
-(defn- status-paths
-  [^Git git]
-  (let [status (.. git status call)]
-    (concat (.getAdded status)
-      (.getChanged status)
-      (.getModified status)
-      (.getMissing status)
-      (.getRemoved status)
-      (.getUntracked status))))
+              (skip-git? rel)
+              FileVisitResult/SKIP_SUBTREE
 
-(defn- changed-paths
-  [repo-root root]
-  (with-open [git (Git/open (io/file root))]
-    (->> (concat (committed-paths git (current-head repo-root))
-           (status-paths git))
-      distinct
-      vec)))
-
-(defn- apply-path-to-trunk!
-  [root repo-root rel]
-  (let [src (io/file root rel)
-        dst (io/file repo-root rel)]
-    (cond
-      (.isDirectory src) nil
-
-      (.exists src)
-      (do
-        (some-> (.getParentFile dst) .mkdirs)
-        (io/copy src dst)
-        {:path rel :op :copied})
-
-      (.exists dst)
-      (do
-        (io/delete-file dst true)
-        {:path rel :op :deleted})
-
-      :else
-      {:path rel :op :missing})))
-
-(defn- apply-worktree-files-to-trunk!
-  [root repo-root]
-  (mapv #(apply-path-to-trunk! root repo-root %)
-    (changed-paths repo-root root)))
+              :else
+              (let [target (.resolve dst-path rel)]
+                (when-not (Files/exists target
+                            (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+                  (Files/createDirectories target attrs))
+                FileVisitResult/CONTINUE))))
+        (visitFile [file ^BasicFileAttributes _attrs]
+          (let [rel (.relativize src-path ^Path file)]
+            (if (skip-git? rel)
+              FileVisitResult/CONTINUE
+              (let [target (.resolve dst-path rel)]
+                (when-let [parent (.getParent target)]
+                  (when-not (Files/exists parent
+                              (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+                    (Files/createDirectories parent attrs)))
+                (Files/copy ^Path file ^Path target copy-opts)
+                FileVisitResult/CONTINUE))))
+        (visitFileFailed [_file _exc]
+          ;; Best-effort — ignore unreadable entries instead of aborting
+          ;; the whole mirror. The worktree's `git worktree add` step
+          ;; already wrote tracked@HEAD; missing untracked extras are
+          ;; non-fatal.
+          FileVisitResult/CONTINUE)))
+    nil))
 
 (defn- sanitize-id
   [s]
@@ -493,6 +481,13 @@
    and worktree path (`~/.vis/workspaces/<repo>/<id>/`) are both
    auto-minted (PLAN.md decision 15) - callers never pass them.
 
+   After `git worktree add HEAD`, the worktree is mirrored from the
+   trunk root via `mirror-tree!` so the new branch inherits the
+   trunk's dirty tracked edits, untracked files, AND gitignored
+   artefacts (`node_modules/`, `target/`, `.env`, ...). The branch
+   `just works` without re-running `npm install` / `clojure -P`.
+   PLAN.md §4.4.
+
    Opts:
      :from              - workspace map to fork from; nil = derive from
                           current git discovery
@@ -506,67 +501,137 @@
         ws-id     (str (UUID/randomUUID))
         branch    (str "vis/" (subs ws-id 0 8))
         root      (worktree-root rid ws-id)]
-    (.mkdirs (.getParentFile (io/file root)))
-    (if (local-branch-exists? repo-root branch)
-      (git! repo-root ["worktree" "add" root branch])
-      (git! repo-root ["worktree" "add" "-b" branch root "HEAD"]))
-    (let [commit (try (git! root ["rev-parse" "HEAD"]) (catch Throwable _ nil))
-          ws (p/db-workspace-insert! db-info
-               {:id        ws-id
-                :repo-id   rid
-                :repo-root repo-root
-                :kind      :branch
-                :branch    branch
-                :root      root
-                :parent-id (:id from)
-                :state     :active
-                :commit-id commit})]
-      (when session-state-id
-        (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
-      (fire-hook! :on-spawn ws)
-      ws)))
+    (with-repo-lock rid
+      (.mkdirs (.getParentFile (io/file root)))
+      (if (local-branch-exists? repo-root branch)
+        (git! repo-root ["worktree" "add" root branch])
+        (git! repo-root ["worktree" "add" "-b" branch root "HEAD"]))
+      ;; Overlay trunk dirty + untracked + ignored onto the fresh worktree.
+      ;; `.git/` (the worktree's gitdir link file) is preserved by the
+      ;; skip rule in `mirror-tree!`.
+      (mirror-tree! repo-root root)
+      (let [commit (try (git! root ["rev-parse" "HEAD"]) (catch Throwable _ nil))
+            ws (p/db-workspace-insert! db-info
+                 {:id        ws-id
+                  :repo-id   rid
+                  :repo-root repo-root
+                  :kind      :branch
+                  :branch    branch
+                  :root      root
+                  :parent-id (:id from)
+                  :state     :active
+                  :commit-id commit})]
+        (when session-state-id
+          (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
+        (fire-hook! :on-spawn ws)
+        ws))))
 
-(defn apply-to-trunk!
-  "Copy `:workspace-id`'s changed files onto the trunk worktree.
-   This applies branch commits, dirty tracked edits, deletions, and
-   untracked files by path. Refuses trunk-kind. Walks
-   :active/:merging → :merged on success.
+(defn commit!
+  "Stage everything (`git add -A`) and commit inside the workspace's
+   worktree. Refuses trunk-kind. Returns
+   `{:status :nothing-to-commit :workspace ws}` (no throw) when the
+   index has no diff vs HEAD. On success, bumps `workspace.commit_id`
+   to the new HEAD and returns
+   `{:status :ok :sha :message :branch :workspace}`. PLAN.md §4.3."
+  [db-info {:keys [workspace-id message]}]
+  (let [ws  (get db-info workspace-id)
+        msg (or (some-> message str str/trim not-empty) "vis workspace commit")]
+    (when-not ws
+      (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
+    (when (= :trunk (:kind ws))
+      (throw (ex-info "Trunk workspace cannot be committed via workspace/commit!"
+               {:type :workspace/trunk-commit :workspace-id workspace-id})))
+    (let [root   (:root ws)
+          branch (:branch ws)]
+      (with-repo-lock (:repo-id ws)
+        (git! root ["add" "-A"])
+        (let [staged (str/trim
+                       (:out (git-result root ["diff" "--cached" "--name-only"])))]
+          (if (str/blank? staged)
+            {:status :nothing-to-commit :workspace ws :branch branch}
+            (do (git! root ["commit" "-m" msg])
+              (let [sha (git! root ["rev-parse" "HEAD"])
+                    done (or (p/db-workspace-update-commit-id! db-info workspace-id sha)
+                           (assoc ws :commit-id sha))]
+                {:status :ok :sha sha :message msg :branch branch :workspace done}))))))))
 
-   Opts:
-     :workspace-id    - required
-     :delete-branch?  - delete local branch after success
+(defn ff-apply!
+  "Fast-forward merge `workspace-id`'s branch onto the repo's trunk
+   (PLAN.md §4.5). Refuses trunk-kind.
 
-   Returns {:workspace ws :merge {:exit :out :branch :applied}}."
-  [db-info {:keys [workspace-id delete-branch?]}]
+   Sequence (under `with-repo-lock`):
+     1. transition workspace state :active|:merging → :merging
+     2. auto-stash trunk if dirty (workspace already mirrors the trunk
+        state we want; stash is just for FF cleanliness)
+     3. `git checkout <trunk-branch>` (idempotent)
+     4. `git merge --ff-only vis/<id>`
+     5. auto-pop the stash
+     6. transition workspace state → :merged on success
+
+   Returns:
+     `{:status :ok :sha <new-HEAD> :branch :workspace}` on success
+     `{:status :ff-failed :reason :workspace :trunk}` on non-ancestor
+        / conflict; workspace is LEFT in :merging so the engine can
+        hand off to `start-merge-resolve!` (§7) without losing the
+        partial state."
+  [db-info {:keys [workspace-id]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
     (when (= :trunk (:kind ws))
-      (throw (ex-info "Trunk workspace cannot be merged"
+      (throw (ex-info "Trunk workspace cannot be merged onto itself"
                {:type :workspace/trunk-merge :workspace-id workspace-id})))
     (when-not (contains? #{:active :merging} (:state ws))
-      (throw (ex-info (str "Workspace must be :active or :merging to merge (state="
+      (throw (ex-info (str "Workspace must be :active or :merging to ff-apply (state="
                         (:state ws) ")")
                {:workspace-id workspace-id :state (:state ws)})))
     (let [repo-root (:repo-root ws)
-          root      (:root ws)
-          branch    (:branch ws)]
-      (p/db-workspace-update-state! db-info workspace-id :merging)
-      (try
-        (let [applied (apply-worktree-files-to-trunk! root repo-root)
-              out     (str "Applied " (count (remove nil? applied))
-                        " workspace path(s) from " branch)
-              done    (p/db-workspace-update-state! db-info workspace-id :merged)]
-          (when delete-branch?
-            (try (git! repo-root ["branch" "-D" branch]) (catch Throwable _ nil)))
-          (fire-hook! :on-apply done {:exit 0 :out out :branch branch :applied applied})
-          {:workspace done :merge {:exit 0 :out out :branch branch :applied applied}})
-        (catch Throwable t
-          (throw (ex-info "Apply failed; workspace left in :merging for retry"
-                   {:workspace-id workspace-id
-                    :branch       branch
-                    :error        (or (ex-message t) (str t))}
-                   t)))))))
+          branch    (:branch ws)
+          trunk     (detect-trunk-branch repo-root)]
+      (with-repo-lock (:repo-id ws)
+        (p/db-workspace-update-state! db-info workspace-id :merging)
+        (let [trunk-dirty? (not (str/blank?
+                                  (:out (git-result repo-root
+                                          ["status" "--porcelain"]))))
+              stash-tag    (str "vis-ff-" workspace-id)
+              stashed?     (when trunk-dirty?
+                             (try (git! repo-root ["stash" "push" "-u" "-m" stash-tag])
+                               true
+                               (catch Throwable _ false)))]
+          (try
+            (git! repo-root ["checkout" trunk])
+            (git! repo-root ["merge" "--ff-only" branch])
+            (let [sha  (git! repo-root ["rev-parse" "HEAD"])
+                  done (p/db-workspace-update-state! db-info workspace-id :merged)]
+              (fire-hook! :on-apply done
+                {:exit 0 :sha sha :branch branch :trunk trunk})
+              {:status :ok :sha sha :branch branch :workspace done})
+            (catch Throwable t
+              {:status    :ff-failed
+               :reason    (or (ex-message t) (str t))
+               :workspace ws
+               :branch    branch
+               :trunk     trunk})
+            (finally
+              (when stashed?
+                (try (git! repo-root ["stash" "pop"]) (catch Throwable _ nil))))))))))
+
+(defn start-merge-resolve!
+  "Bootstrap a merge-resolve sub-session for an `:ff-failed` workspace.
+   PLAN.md §7.1.
+
+   Step 3 SKELETON: declares the surface and throws
+   `:workspace/not-yet-implemented` so callers in the engine loop can
+   wire the hand-off without depending on the real flow (which arrives
+   in step 10: sub-session spawn, `merge/*` op family, conflict
+   parsing, channel event publication)."
+  [_db-info {:keys [workspace-id parent-session-id channel-id] :as opts}]
+  (throw (ex-info "workspace/start-merge-resolve! not yet implemented (PLAN.md §12 step 10)"
+           {:type              :workspace/not-yet-implemented
+            :workspace-id      workspace-id
+            :parent-session-id parent-session-id
+            :channel-id        channel-id
+            :opts              opts})))
 
 (defn discard!
   "Remove `:workspace-id`'s worktree from disk and transition the row
