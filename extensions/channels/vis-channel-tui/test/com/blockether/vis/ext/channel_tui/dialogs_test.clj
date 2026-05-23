@@ -228,6 +228,32 @@
             (apply-settings-option {:show-thinking true}
               {:key :show-thinking :type :toggle}))))
 
+    (testing "registry-toggle rows route through the toggles registry, not the local settings map"
+      ;; Use a throwaway test toggle so we don't disturb the canonical
+      ;; host toggles (`:vis/show-raw-code`, ...). Settings map stays
+      ;; UNTOUCHED: registry rows are side-effecting and the apply
+      ;; path must return `values` unchanged so no stale local copy
+      ;; bleeds into persistence.
+      (let [id :dialogs-test/registry-row
+            _  (vis/register-toggle! {:id id :label "Test" :default false})]
+        (try
+          (is (false? (vis/toggle-enabled? id)))
+          (let [out (apply-settings-option {:something "else"}
+                      {:type :registry-toggle :toggle-id id})]
+            (is (= {:something "else"} out))
+            (is (true? (vis/toggle-enabled? id))))
+          (let [label-on  (settings-option-label
+                            {:type :registry-toggle :toggle-id id :label "Test"}
+                            {})]
+            (is (str/includes? label-on "on")))
+          (vis/toggle-reset-to-default! id)
+          (let [label-off (settings-option-label
+                            {:type :registry-toggle :toggle-id id :label "Test"}
+                            {})]
+            (is (str/includes? label-off "off")))
+          (finally
+            (vis/toggle-reset-to-default! id)))))
+
     (testing "choice rows cycle quick -> balanced -> deep -> quick"
       (is (= {:reasoning-level :balanced}
             (apply-settings-option {:reasoning-level :quick}

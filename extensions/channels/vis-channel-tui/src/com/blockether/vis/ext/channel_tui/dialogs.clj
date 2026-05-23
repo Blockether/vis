@@ -1095,6 +1095,31 @@
     :label "Mouse selection auto-copy"
     :description "Drag-select visible text; copied automatically on mouse release"}])
 
+(defn- registry-toggle-rows
+  "Settings rows for every registered feature toggle.
+
+   Pure projection over `(vis/registered-toggles)`: any toggle
+   registered by the host or by an extension shows up here without a
+   per-row patch. The `:registry-toggle` row type carries
+   `:toggle-id` so the apply path flips the registry value (which
+   then fan-outs to listeners — persist + render bump — wired in
+   `screen/run-chat!`). Returns nil when no toggle is registered so
+   the section header stays hidden on a bare install."
+  []
+  (let [specs (->> (vis/registered-toggles)
+                (sort-by (juxt #(or (some-> % :group name) "zzz") :id)))]
+    (when (seq specs)
+      (vec
+        (cons {:type :section :label "Feature Toggles"}
+          (for [{:keys [id label description owner]} specs]
+            {:key         (keyword (str "toggle::" id))
+             :type        :registry-toggle
+             :toggle-id   id
+             :label       (or label (str id))
+             :description (str description
+                            (when (and owner (not= owner :vis))
+                              (str "  [" owner "]")))}))))))
+
 (def ^:private tui-contributor-slots
   #{:tui.slot/header-row :tui.slot/footer-segment :tui.slot/footer-subtitle-segment})
 
@@ -1381,6 +1406,11 @@
          :channels
          (concat [{:type :section :label "Terminal UI"}]
            (settings-ui-options)
+           ;; Registry-backed feature toggles (host + extensions).
+           ;; Sits between the TUI settings and the per-extension
+           ;; channel block so a user scanning the Channels tab finds
+           ;; the global flips together with the chrome controls.
+           (or (registry-toggle-rows) [])
            (or (contributor-rows) [])
            (when (seq channel-rows)
              (concat [{:type :section :label "Channel Settings"}]
@@ -1397,7 +1427,7 @@
     "unset"))
 
 (defn- settings-option-label
-  [{:keys [key label type choices set-key item-id]
+  [{:keys [key label type choices set-key item-id toggle-id]
     env-name :name} values]
   (case type
     :choice (str label ": " (clojure.core/name (or (get values key) (first choices))))
@@ -1407,6 +1437,11 @@
     ;; set. Inverted because the underlying setting is a HIDE list.
     (let [disabled? (boolean (some-> (get values set-key) (contains? item-id)))]
       (str label " (" (if disabled? "hidden" "shown") ")"))
+    :registry-toggle
+    ;; Read live from the registry. The values map this row consumes
+    ;; is local-settings; toggle state lives outside it so the row
+    ;; never relies on a stale settings snapshot.
+    (str label " (" (if (vis/toggle-enabled? toggle-id) "on" "off") ")")
     label))
 
 (defn- cycle-choice
@@ -1416,7 +1451,7 @@
     (nth choices (mod (inc (if (neg? idx) 0 idx)) (count choices)))))
 
 (defn- apply-settings-option
-  [values {:keys [key type choices set-key item-id]}]
+  [values {:keys [key type choices set-key item-id toggle-id]}]
   (case type
     :choice (update values key #(cycle-choice choices %))
     :toggle (update values key not)
@@ -1427,6 +1462,14 @@
           (if (contains? s item-id)
             (disj s item-id)
             (conj s item-id)))))
+    :registry-toggle
+    ;; Side-effecting branch: the toggle registry is the source of
+    ;; truth, not the settings map. `toggle-set-enabled!` fires the
+    ;; persistence + render-bump listeners wired up at TUI boot.
+    ;; Return `values` unchanged so the settings-update pipeline
+    ;; does not try to merge a registry value into the local map.
+    (do (vis/toggle-set-enabled! toggle-id (not (vis/toggle-enabled? toggle-id)))
+      values)
     values))
 
 (defn- notify-settings-change!
@@ -1437,7 +1480,7 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :env-var :set-toggle} type))
+  (contains? #{:toggle :choice :action :env-var :set-toggle :registry-toggle} type))
 
 (defn- first-selectable-index
   [rows]
