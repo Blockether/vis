@@ -1,6 +1,6 @@
 {:paths ["src" "resources"]
  :deps {com.blockether/vis {:local/root "../../.."}
-        io.github.enajski/bridge {:git/sha "3170728a456eb05078398a9c7b943a63045b21fd"}}
+        io.github.enajski/bridge {:git/sha "7a27d727c56f7a54812d16eaf9c7ad566392129a"}}
  :aliases
  {:test {:extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
     :extra-paths ["test"] 
