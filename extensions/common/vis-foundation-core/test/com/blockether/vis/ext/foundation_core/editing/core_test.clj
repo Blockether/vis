@@ -272,6 +272,75 @@
       (expect (not (contains? out :result)))
       (expect (= ["."] (:args out)))))
 
+  (it "v/rg allows current directory even when descendants are protected (regression: .bridge/ blocks rg on `.`)"
+    ;; Repro for transcript ccee2e1f-16ee-4acf-8d93-b4505034c0de iter 1:
+    ;;   (v/rg {:any ["scrollbar"] :paths ["."] :counts? true})
+    ;;   -> ERROR ":v/rg blocked: . is protected; use the owning extension API instead."
+    ;; The bridge extension registers `.bridge/` with :access :none. Because
+    ;; "." is an ancestor of every protected descendant, the composite-dir
+    ;; branch in `protected-rule-matches?` reported a match and rg failed
+    ;; closed even though it's a recursive read that can skip protected
+    ;; subtrees during its own walk. The cwd-ancestor bypass must apply to
+    ;; rg the same way it applies to ls.
+    (let [before (:ext.symbol/before-fn (private-fn "rg-symbol"))
+          out (before (protected-env [{:glob ".bridge/"
+                                       :access :none
+                                       :hint "Use (br/policy) instead."}])
+                (constantly :ok)
+                [{:any ["scrollbar"] :paths ["."] :counts? true}])]
+      (expect (not (contains? out :result)))
+      (expect (= [{:any ["scrollbar"] :paths ["."] :counts? true}] (:args out)))))
+
+  (it "v/rg with no :paths (default `.`) is allowed when only descendants are protected"
+    ;; rg-arg-paths returns ["."] when :paths is omitted; same bypass
+    ;; must apply so model can call `(v/rg {:any ["x"]})` without paths.
+    (let [before (:ext.symbol/before-fn (private-fn "rg-symbol"))
+          out (before (protected-env [{:glob ".bridge/"
+                                       :access :none
+                                       :hint "Use (br/policy) instead."}])
+                (constantly :ok)
+                [{:any ["scrollbar"]}])]
+      (expect (not (contains? out :result)))))
+
+  (it "v/exists? on `.` is allowed when only descendants are protected"
+    (let [before (:ext.symbol/before-fn (private-fn "exists?-symbol"))
+          out (before (protected-env [{:glob ".bridge/"
+                                       :access :none
+                                       :hint "Use (br/policy) instead."}])
+                (constantly :ok)
+                ["."])]
+      (expect (not (contains? out :result)))
+      (expect (= ["."] (:args out)))))
+
+  (it "v/rg still respects direct rules whose glob matches `.` itself"
+    ;; The bypass is descendant-only. If an extension explicitly says
+    ;; `:glob "." :access :none` (\"do not read cwd at all\") that's still
+    ;; honored — we don't want the bypass to be a back door.
+    (let [before (:ext.symbol/before-fn (private-fn "rg-symbol"))
+          out (before (protected-env [{:glob "."
+                                       :access :none
+                                       :hint "cwd is sealed."}])
+                (constantly :ok)
+                [{:any ["x"] :paths ["."]}])
+          failure (:result out)]
+      (expect (some? failure))
+      (expect (false? (:success? failure)))))
+
+  (it "writes on `.` are still blocked even when only descendants are protected"
+    ;; The bypass is INTENTIONALLY read-only — a recursive write on cwd
+    ;; cannot filter protected descendants safely, so we keep failing
+    ;; closed. (v/patch / v/write don't target cwd in practice, but
+    ;; v/delete on \".\" must stay blocked.)
+    (let [before (:ext.symbol/before-fn (private-fn "delete-symbol"))
+          out (before (protected-env [{:glob ".bridge/"
+                                       :access :none
+                                       :hint "Use (br/policy) instead."}])
+                (constantly :ok)
+                ["."])
+          failure (:result out)]
+      (expect (some? failure))
+      (expect (false? (:success? failure)))))
+
   (it "v/ls still blocks non-root ancestor directories that would reveal :none protected children"
     (let [hint "Use (br/files) instead of listing Bridge-owned files."
           before (:ext.symbol/before-fn (private-fn "ls-symbol"))

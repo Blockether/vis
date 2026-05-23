@@ -6,6 +6,7 @@
             [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
@@ -853,18 +854,20 @@
              (draw-slash-suggestion-row! g row left inner-w suggestion)))
 
         ;; Right-side scrollbar when more matches exist than visible rows.
-         (when (and (> total n) (pos? n) (> inner-w 2))
-           (let [bar-col   (+ left (dec inner-w))
-                 thumb-h   (max 1 (int (* n (/ (double n) total))))
-                 denom     (max 1 (- total n))
-                 track-den (max 1 (- n thumb-h))
-                 thumb-top (int (* track-den (/ (double first-idx) denom)))]
-             (p/set-colors! g t/dialog-border t/dialog-bg)
-             (doseq [r (range n)]
-               (p/set-char! g bar-col (+ first-sug r) \│))
-             (p/set-colors! g t/dialog-title-bg t/dialog-bg)
-             (doseq [r (range thumb-h)]
-               (p/set-char! g bar-col (+ first-sug thumb-top r) \█)))))))))
+        ;; Bespoke thumb math is gone — routes through the shared
+        ;; `scrollbar/draw!` so the slash overlay scrolls with the same
+        ;; feel and the same 1-row thumb as every other modal. The
+        ;; suggestion list is item-windowed: total = number of
+        ;; matches, viewport = visible count, scroll = first visible.
+         (when (and (pos? n) (> inner-w 2))
+           (scrollbar/draw! g
+             {:col      (+ left (dec inner-w))
+              :top      first-sug
+              :track-h  n
+              :total-h  total
+              :inner-h  n
+              :scroll   first-idx
+              :thumb-fg t/dialog-title-bg})))))))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
 
@@ -3813,38 +3816,6 @@
 ;; the scrollbar at cols-2, then 1 col edge after).
 (def ^:const MESSAGE_SIDE_PAD      (+ MESSAGE_MARGIN_LEFT MESSAGE_MARGIN_RIGHT))
 
-(defn scrollbar-thumb-geometry
-  "Pure thumb-row math, shared by the painter (`draw-messages-area!`)
-   and the click-detector (`screen.clj` mouse handler) so the two
-   layers can NEVER disagree about which rows belong to the thumb.
-
-   Inputs:
-   - `total-h`   total rendered height of all message bubbles.
-   - `inner-h`   visible viewport height.
-   - `track-h`   optional scrollbar track height; defaults to `inner-h`.
-   - `scroll`    current row offset; `nil` means auto-bottom.
-
-   Returns `{:thumb-top-rel long :thumb-h long :max-scroll long}`,
-   where `:thumb-top-rel` is rows from the TOP of the track (caller
-   adds the absolute `bar-top` to convert to screen coordinates).
-   The visible thumb is intentionally one terminal cell high: Terminal.app
-   renders stacked full-block cells as a ladder of separate boxes when
-   the window is tall, which reads as multiple scroll positions instead
-   of one current-position marker. Returns `nil` when there's no overflow
-   - no thumb is drawn, no click should hit-test as on-thumb."
-  ([^long total-h ^long inner-h scroll]
-   (scrollbar-thumb-geometry total-h inner-h inner-h scroll))
-  ([^long total-h ^long inner-h ^long track-h scroll]
-   (when (and (pos? inner-h) (pos? track-h) (> total-h inner-h))
-     (let [max-scroll (max 1 (- total-h inner-h))
-           eff-scroll (let [s (long (or scroll max-scroll))]
-                        (max 0 (min s max-scroll)))
-           thumb-h    1
-           thumb-top  (long (* (- track-h thumb-h)
-                              (/ (double eff-scroll) max-scroll)))]
-       {:thumb-top-rel thumb-top
-        :thumb-h       thumb-h
-        :max-scroll    max-scroll}))))
 ;; ^ Convenience: the total horizontal gutter consumed on each row.
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and
 ;; `screen.clj`'s height calculator MUST use this exact derivation.
@@ -3896,18 +3867,18 @@
 
       (let [bar-top box-top
             track-h (max 0 (- box-bottom box-top))]
-        (when-let [{:keys [thumb-top-rel thumb-h]}
-                   (scrollbar-thumb-geometry total-h inner-h track-h eff-scroll)]
         ;; Place the scrollbar inside the right gutter so it never
         ;; overlaps message content. The track spans the whole message
         ;; panel, including top/bottom breathing-room rows; otherwise a
         ;; one-row blank gap appears above the scrollbar.
-          (let [bar-col (- cols 2)
-                bar-top bar-top
-                track-h track-h]
-            (doseq [r (range track-h)]
-              (p/set-colors! g t/border-fg t/terminal-bg)
-              (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
-            (doseq [r (range thumb-h)]
-              (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-              (p/set-char! g bar-col (+ bar-top thumb-top-rel r) \u2588))))))))
+        (scrollbar/draw! g
+          {:col      (- cols 2)
+           :top      bar-top
+           :track-h  track-h
+           :total-h  total-h
+           :inner-h  inner-h
+           :scroll   eff-scroll
+           :track-fg t/border-fg
+           :track-bg t/terminal-bg
+           :thumb-fg t/dialog-hint-key
+           :thumb-bg t/terminal-bg})))))

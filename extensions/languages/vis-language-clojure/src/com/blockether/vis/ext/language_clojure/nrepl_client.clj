@@ -126,27 +126,44 @@
        :root-ex    root-ex}
 
       :else
-      (let [{:strs [value out err ns ex* root-ex*]
-             :keys [status]
-             :as   msg} (first rs)
-            v   value
-            o   out
-            e   err
-            n   ns
-            s   status
-            ex2 (or (get msg "ex") ex*)
-            rx2 (or (get msg "root-ex") root-ex*)]
+      ;; nREPL keys are *strings* over bencode; some clients
+      ;; keywordize. Read both shapes so we don't silently lose
+      ;; value / status / out depending on transport wiring.
+      (let [msg (first rs)
+            mg  (fn [k] (or (get msg k) (get msg (keyword k))))
+            v   (mg "value")
+            o   (mg "out")
+            e   (mg "err")
+            n   (mg "ns")
+            s   (mg "status")
+            ex2 (mg "ex")
+            rx2 (mg "root-ex")]
         (when o (.append out-acc ^String o))
         (when e (.append err-acc ^String e))
-        (let [new-status (into status (or s []))
-              done?      (contains? new-status "done")]
+        (let [new-status (into status (cond
+                                        (nil? s)    []
+                                        (string? s) [s]
+                                        (coll? s)   (map str s)
+                                        :else       [(str s)]))
+              done?      (contains? new-status "done")
+              values'    (cond-> values v (conj v))
+              ns''       (or n ns*)
+              ex''       (or ex2 ex)
+              rx''       (or rx2 root-ex)]
           (if done?
-            (recur nil
-              (cond-> values v (conj v))
-              out-acc err-acc (or n ns*) new-status (or ex2 ex) (or rx2 root-ex))
-            (recur (next rs)
-              (cond-> values v (conj v))
-              out-acc err-acc (or n ns*) new-status (or ex2 ex) (or rx2 root-ex))))))))
+            ;; Drain remaining queued messages but don't block — once
+            ;; "done" arrived the eval is complete; further reads would
+            ;; just spin on the response queue's timeout.
+            {:timed-out? false
+             :value      (peek values')
+             :values     values'
+             :out        (.toString out-acc)
+             :err        (.toString err-acc)
+             :ns         ns''
+             :status     new-status
+             :ex         ex''
+             :root-ex    rx''}
+            (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
 
 (defn eval!
   "Evaluate `code` in the nREPL at `host:port`. Opts:

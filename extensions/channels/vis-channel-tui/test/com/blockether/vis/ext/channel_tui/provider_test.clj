@@ -53,12 +53,20 @@
       (expect (= 17 (card-window-start 19 10 8 20)))))
 
   (it "shows a scrollbar thumb for overflowing model/provider card lists"
-    (let [card-scrollbar-geometry @#'provider/card-scrollbar-geometry]
-      (expect (= {:track-h 8 :thumb-h 1 :thumb-top 0}
-                (card-scrollbar-geometry 8 20 0)))
-      (expect (= {:track-h 8 :thumb-h 1 :thumb-top 7}
-                (card-scrollbar-geometry 8 20 17)))
-      (expect (nil? (card-scrollbar-geometry 8 3 0))))))
+    ;; Cards drive the unified primitive directly now. visible-count
+    ;; below mirrors `provider/card-visible-count` for an 8-row content
+    ;; pane: each card is 2 rows + a 1-row gap, so 3 cards fit; the
+    ;; track itself stays 8 rows tall.
+    (let [geom (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
+          ;; 20 cards, viewport fits 3, track 8 rows.
+          top  (geom 20 3 8 0)
+          bot  (geom 20 3 8 17)
+          flat (geom 3 3 8 0)]
+      (expect (= 1 (:thumb-h top)))
+      (expect (= 0 (:thumb-top-rel top)))
+      (expect (= 1 (:thumb-h bot)))
+      (expect (= 7 (:thumb-top-rel bot))) ;; track-h(8) - thumb-h(1) = 7
+      (expect (nil? flat)))))
 
 (defdescribe persisted-provider-config-test
   (it "persists the dialog provider without runtime adapter coercion"

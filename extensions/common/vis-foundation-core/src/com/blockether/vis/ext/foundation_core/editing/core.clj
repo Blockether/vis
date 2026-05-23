@@ -286,15 +286,27 @@
   (or (= :none access)
     (and (= :write access-intent) (= :read-only access))))
 
-(defn- current-dir-ls-ancestor-match?
-  "True when v/ls is reading `.` and the matched rule protects only a
-   descendant. Listing cwd itself must stay usable; hidden protected
-   extension roots (for example `.bridge/**`) should not make cwd
-   listing fail closed. Direct rules for `.` still apply."
-  [op access-intent target rule]
-  (and (= :v/ls op)
-    (= :read access-intent)
-    (= :dir (:kind target))
+(defn- current-dir-read-ancestor-match?
+  "True when a read op is targeting `.` (cwd) and the matched rule
+   protects only a descendant of `.`. Reading cwd itself must stay
+   usable for every observation tool (v/ls, v/rg, v/cat-on-dir,
+   v/exists?, v/grep, …); hidden protected extension roots (for
+   example `.bridge/**`) should not make cwd reads fail closed.
+
+   Direct rules for `.` (a glob that literally matches `.`) still
+   apply — those are explicit \"do not read cwd\" decisions and the
+   bypass leaves them intact.
+
+   This bypass is INTENTIONALLY read-only. Writes/mutations on `.`
+   stay blocked because they cannot be filtered descendant-by-descendant
+   the way a recursive search/list can.
+
+   Tools that recurse into `.` (rg, ls, grep) remain responsible for
+   skipping protected descendants in their own walk — the bypass only
+   lets the operation start."
+  [_op access-intent target rule]
+  (and (= :read access-intent)
+    (composite-path-target? target)
     (= "." (:resolved target))
     (not (protected-glob-matches? (:glob rule) (:resolved target)))))
 
@@ -362,7 +374,7 @@
             blocked (keep (fn [target]
                             (when-let [rule (resolve-protected-access rules target)]
                               (when (and (blocked-access? access-intent (:access rule))
-                                      (not (current-dir-ls-ancestor-match?
+                                      (not (current-dir-read-ancestor-match?
                                              op access-intent target rule)))
                                 (assoc rule
                                   :target target
