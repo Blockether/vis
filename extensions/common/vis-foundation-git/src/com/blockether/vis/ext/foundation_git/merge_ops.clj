@@ -1,15 +1,15 @@
-(ns com.blockether.vis.ext.foundation-core.merge-ops
+(ns com.blockether.vis.ext.foundation-git.merge-ops
   "Merge-resolve SCI op family (PLAN.md section 7.2).
 
-   Surfaces under the SCI alias `mr/` so the model can drive a merge
-   resolution without leaving the sandbox:
+   Lives under the `git/` alias alongside the rest of the JGit
+   observation surface (`git/diff`, `git/status`, `git/log`, ...):
 
-     (mr/status)                  read the current merge state
-     (mr/accept-ours \"foo.txt\")   keep the trunk side of a conflict
-     (mr/accept-theirs \"foo.txt\") keep the branch side
-     (mr/mark-resolved \"foo.txt\") stage a manually-edited file
-     (mr/continue! {:message ...}) commit the merge (no message -> 'merge-resolve')
-     (mr/abort!)                   restore HEAD via `git reset --merge`
+     (git/merge-status)                  read the current merge state
+     (git/merge-accept-ours \"foo.txt\")   keep the trunk side of a conflict
+     (git/merge-accept-theirs \"foo.txt\") keep the branch side
+     (git/merge-mark-resolved \"foo.txt\") stage a manually-edited file
+     (git/merge-continue! {:message ...}) commit the merge (default msg 'merge-resolve')
+     (git/merge-abort!)                   restore HEAD via `git reset --merge`
 
    Operations run against `(workspace/cwd)` via JGit (`Git/open`).
    The merge-resolve sub-session pins to the parent workspace whose
@@ -174,15 +174,37 @@
                       "  (none - ready for (mr/continue!))"))]
       (render/markdown->ir summary))))
 
-(defn- status-tool [] (ok (status)))
-(defn- accept-ours-tool [path] (ok (accept-ours path)))
-(defn- accept-theirs-tool [path] (ok (accept-theirs path)))
-(defn- mark-resolved-tool [path] (ok (mark-resolved path)))
-(defn- continue!-tool
-  ([] (continue!-tool {}))
+;; SCI tool entry points — each `defn` carries its doc + arglists via
+;; var metadata; `vis/symbol` reads both straight off the var.
+
+(defn merge-status-tool
+  "Read the active merge-resolve state: {:in-progress? :head :merge-head :branch :conflicts [...]}. Pure JGit read; safe to call regardless of merge state."
+  []
+  (ok (status)))
+
+(defn merge-accept-ours-tool
+  "Resolve a conflict by keeping the trunk side (HEAD). JGit CheckoutCommand(stage=OURS) + AddCommand."
+  [path]
+  (ok (accept-ours path)))
+
+(defn merge-accept-theirs-tool
+  "Resolve a conflict by keeping the branch side (MERGE_HEAD). JGit CheckoutCommand(stage=THEIRS) + AddCommand."
+  [path]
+  (ok (accept-theirs path)))
+
+(defn merge-mark-resolved-tool
+  "Stage a path the model already edited by hand (e.g. via v/patch). JGit AddCommand."
+  [path]
+  (ok (mark-resolved path)))
+
+(defn merge-continue!-tool
+  "Commit the merge via JGit CommitCommand. Opts: {:message :channel-id :session-id}."
+  ([] (merge-continue!-tool {}))
   ([opts] (ok (continue! opts))))
-(defn- abort!-tool
-  ([] (abort!-tool {}))
+
+(defn merge-abort!-tool
+  "Restore HEAD via JGit ResetCommand to ORIG_HEAD (HARD) -- equivalent to `git merge --abort`."
+  ([] (merge-abort!-tool {}))
   ([opts] (ok (abort! opts))))
 
 (defn- render-status-channel [{:keys [result]}]
@@ -191,42 +213,42 @@
 (defn- render-default-channel [{:keys [result]}]
   (render/markdown->ir (pr-str result)))
 
-(def status-symbol
-  (extension/symbol 'status (fn ([] (status-tool)))
-    {:doc "Read the active merge-resolve state: {:in-progress? :head :merge-head :branch :conflicts [...]}. Pure JGit read; safe to call regardless of merge state."
-     :arglists '([])
+(def merge-status-symbol
+  (extension/symbol #'merge-status-tool
+    {:symbol 'merge-status
+     :tag :observation
      :render-fn render-status-channel}))
 
-(def accept-ours-symbol
-  (extension/symbol 'accept-ours (fn ([path] (accept-ours-tool path)))
-    {:doc "Resolve a conflict by keeping the trunk side (HEAD). JGit CheckoutCommand(stage=OURS) + AddCommand."
-     :arglists '([path])
+(def merge-accept-ours-symbol
+  (extension/symbol #'merge-accept-ours-tool
+    {:symbol 'merge-accept-ours
+     :tag :mutation
      :render-fn render-default-channel}))
 
-(def accept-theirs-symbol
-  (extension/symbol 'accept-theirs (fn ([path] (accept-theirs-tool path)))
-    {:doc "Resolve a conflict by keeping the branch side (MERGE_HEAD). JGit CheckoutCommand(stage=THEIRS) + AddCommand."
-     :arglists '([path])
+(def merge-accept-theirs-symbol
+  (extension/symbol #'merge-accept-theirs-tool
+    {:symbol 'merge-accept-theirs
+     :tag :mutation
      :render-fn render-default-channel}))
 
-(def mark-resolved-symbol
-  (extension/symbol 'mark-resolved (fn ([path] (mark-resolved-tool path)))
-    {:doc "Stage a path the model already edited by hand (e.g. via v/patch). JGit AddCommand."
-     :arglists '([path])
+(def merge-mark-resolved-symbol
+  (extension/symbol #'merge-mark-resolved-tool
+    {:symbol 'merge-mark-resolved
+     :tag :mutation
      :render-fn render-default-channel}))
 
-(def continue!-symbol
-  (extension/symbol 'continue! (fn ([] (continue!-tool {})) ([opts] (continue!-tool opts)))
-    {:doc "Commit the merge via JGit CommitCommand. Opts: {:message :channel-id :session-id}."
-     :arglists '([] [opts])
+(def merge-continue!-symbol
+  (extension/symbol #'merge-continue!-tool
+    {:symbol 'merge-continue!
+     :tag :mutation
      :render-fn render-default-channel}))
 
-(def abort!-symbol
-  (extension/symbol 'abort! (fn ([] (abort!-tool {})) ([opts] (abort!-tool opts)))
-    {:doc "Restore HEAD via JGit ResetCommand(mode=MERGE) — equivalent to `git merge --abort`."
-     :arglists '([] [opts])
+(def merge-abort!-symbol
+  (extension/symbol #'merge-abort!-tool
+    {:symbol 'merge-abort!
+     :tag :mutation
      :render-fn render-default-channel}))
 
 (def merge-ops-symbols
-  [status-symbol accept-ours-symbol accept-theirs-symbol
-   mark-resolved-symbol continue!-symbol abort!-symbol])
+  [merge-status-symbol merge-accept-ours-symbol merge-accept-theirs-symbol
+   merge-mark-resolved-symbol merge-continue!-symbol merge-abort!-symbol])

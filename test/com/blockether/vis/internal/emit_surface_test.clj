@@ -14,27 +14,32 @@
   {:ctx-atom        (ctx-loop/make-ctx-atom "test-soul")
    :turn-state-atom (ctx-loop/make-turn-state-atom)})
 
+(def ^:dynamic *fired?* nil)
+
+(defn emit-tool
+  "demo emit symbol"
+  []
+  (when *fired?* (reset! *fired?* true))
+  (extension/success
+    {:result {:ok true}
+     :emit   {:specs {:design/api {:summary "API surface"}}
+              :tasks {:task/migrate {:title "migrate"
+                                     :status :todo}}
+              :facts {:fact/built {:value true}}}}))
+
 (defdescribe symbol-emit-test
   (it "symbol envelope :emit routes specs/tasks/facts through apply-and-record!"
-    (extension/register-op! :demo {:tag :observation})
-    (let [env     (mock-env)
-          fired?  (atom false)
-          tool-fn (fn []
-                    (reset! fired? true)
-                    (extension/success
-                      {:result {:ok true}
-                       :emit   {:specs {:design/api {:summary "API surface"}}
-                                :tasks {:task/migrate {:title "migrate"
-                                                       :status :todo}}
-                                :facts {:fact/built {:value true}}}}))
-          sym-entry (extension/symbol 'demo tool-fn
-                      {:doc "demo emit symbol"
-                       :arglists '([])
+    (let [env       (mock-env)
+          fired?    (atom false)
+          sym-entry (extension/symbol #'emit-tool
+                      {:symbol 'demo
+                       :tag :observation
                        :render-fn (fn [_] [:ir {}])})
           ext (extension/extension
                 {:ext/name "test.emit"
                  :ext/description "Symbol emit surface test."})]
-      (extension/invoke-symbol-wrapper ext sym-entry [] env)
+      (binding [*fired?* fired?]
+        (extension/invoke-symbol-wrapper ext sym-entry [] env))
       (expect (true? @fired?))
       (let [ctx @(:ctx-atom env)]
         (expect (= "API surface"

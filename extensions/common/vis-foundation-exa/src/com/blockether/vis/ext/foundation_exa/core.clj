@@ -543,11 +543,13 @@
 
 (def web-search-symbol
   (vis/symbol #'web-search
-    {:render-fn channel-render-exa}))
+    {:tag :observation
+     :render-fn channel-render-exa}))
 
 (def code-context-symbol
   (vis/symbol #'code-context
-    {:render-fn channel-render-exa}))
+    {:tag :observation
+     :render-fn channel-render-exa}))
 
 (def exa-symbols
   [web-search-symbol
@@ -587,8 +589,8 @@
     :label "Exa MCP config file"
     :description "Optional JSON config file path. Lower priority than explicit vars."}])
 
-(doseq [op [:exa/web-search :exa/code-context]]
-  (vis/register-op! op {:tag :observation}))
+;; `:tag :observation` carried INLINE on each `vis/symbol` opts map
+;; above; register-extension! auto-populates the op registry.
 
 (def vis-extension
   (vis/extension

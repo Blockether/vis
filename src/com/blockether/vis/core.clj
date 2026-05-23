@@ -336,7 +336,9 @@
 (def render-value?                       extension/render-value?)
 (def literal-ir                          extension/literal-ir)
 (def normalize-render-value              extension/normalize-render-value)
-(def register-op!                        extension/register-op!)
+;; vis/register-op! retired -- declare `:tag :observation | :mutation`
+;; INLINE on `vis/symbol` opts and `register-extension!` populates the
+;; op registry automatically.
 (def registered-op?                      extension/registered-op?)
 (def op-tag                              extension/op-tag)
 (def op-presentation                     extension/op-presentation)

@@ -27,31 +27,84 @@ eca05b0d  PLAN §12 step 6: workspace slashes + ctx in vis-foundation-core (+ K1
 | 8 | ✅ DONE (a620f05f) | TUI K6+K7+K8 cutover: palette workspace entries gone, slash-only-commands + extension-commands deleted, menu-commands reads from `vis/registered-slashes`. Voice Ctrl+B sends `/voice` through engine. |
 | 9 | ✅ DONE (17be33f9) | Telegram K9 cutover: parse-command + handle-command! killed; 11 commands migrated to declarative specs on the Telegram extension; setMyCommands derives from `vis/registered-slashes`. Per-channel slash path partitioning lets vis-foundation-voice (TUI) + vis-channel-telegram own `/voice` simultaneously without collision. |
 | 10 | ✅ DONE (68832ab6) | start-merge-resolve! real impl + partial UNIQUE index on session_state.workspace_id (admits merge-resolve sub-sessions sharing parent workspace) + db-session-state-spawn-merge-resolve! + parse-conflicts. |
-| 11 | 🟡 PARTIAL | docs sync: CTX_REDESIGN.md `:git/*` → `:vcs/*` (K11). HANDOFF.md refresh (this commit). TODO.md / TASKS.md / CHANGELOG.md audited 2026-05-23 — no stale workspace references. |
-| 12 | ⏳ PENDING | cleanup pass + final ripgrep audit (PLAN §0b 9-point). |
+| 11 | ✅ DONE (a65aa0ea) | docs sync: CTX_REDESIGN.md `:git/*` → `:vcs/*` (K11). HANDOFF refresh. TODO.md / TASKS.md / CHANGELOG.md audit clean. |
+| 12 | ✅ DONE (a65aa0ea) | cleanup pass + final ripgrep audit (PLAN §0b 9-point). Zero live workspace references; remaining `:git/branch`, `:tui.slot/commands`, `slash-only-commands` hits are docstring/comment markers documenting deletions. |
 
-### Step 10 deferrals (incremental delivery)
+### Step 10 follow-ups — LANDED (`f56d3e0b`)
 
-- `merge/*` SCI op family (status / conflict / accept-ours /
-  accept-theirs / mark-resolved / continue / abort) — PLAN §7.2.
-- Sub-session prompt addendum + completion event flow — PLAN §7.3.
-- SCI binding gating on merge_resolve_parent_id presence — PLAN
-  §7.4 (persistence fns landed; binding wiring lands with merge/* ops).
-- Channel UX events for `:session/merge-resolve-{started,finished}`.
+- `mr/*` SCI op family lives at `vis-foundation-core/src/.../merge_ops.clj`:
+  status / accept-ours / accept-theirs / mark-resolved / continue! /
+  abort!. Registered as a separate extension with `:ext.sci/alias 'mr`.
+  Every op goes through JGit (`Git/open`, `CheckoutCommand.setStage`,
+  `AddCommand`, `CommitCommand`, `ResetCommand`); zero shell-out.
+- `start-merge-resolve!` publishes
+  `:session/merge-resolve-started` via `vis/publish-channel-event!`;
+  `continue!` / `abort!` publish `:session/merge-resolve-finished`
+  with `:result :continued | :aborted`.
+- Sub-session prompt addendum + SCI binding gating on
+  `merge_resolve_parent_id` presence deferred (small follow-ups
+  to refine sub-session UX once an end-to-end live run exercises
+  the path).
 
-The `start-merge-resolve!` real impl is the gate; the above
-decorate the sub-session UX as separate commits.
+### JGit-only mandate — LANDED (`f56d3e0b`)
 
-### Step 8/9 polish deferrals
+Every `sh/sh git ...` call replaced with the typed JGit API
+except for `git worktree add` and `git worktree remove` (JGit
+7.6 lacks a programmatic worktree command; fenced behind
+`sh-git!` with an inline comment explaining why). Touched:
+`workspace.clj`, `workspace_ctx.clj`, `merge_ops.clj`.
+
+### Emit surface for hooks + symbols — LANDED (`f56d3e0b`)
+
+The slash mutation surface (`:slash/specs` / `:slash/tasks` /
+`:slash/facts` routed through `apply-and-record!`) now extends to:
+
+  - tool symbols: `extension/success` accepts an `:emit` key;
+    `invoke-symbol-wrapper` applies it after the tool returns.
+  - iteration-start hooks: hook hit shape gains `:emit`; the
+    fold step in `loop.clj` applies it via `apply-and-record!`.
+    A hook may return ONLY `{:emit ...}` to seed CTX without
+    registering a hook-task.
+
+### `*warn-on-reflection*` cleanup — LANDED (`f56d3e0b`)
+
+26 source files lost their per-file `(set! *warn-on-reflection*
+true)` toplevel. `verify.sh` step [03] already enforces zero
+reflection warnings at build time; the per-file toggle was
+redundant noise.
+
+### Step 8/9 polish — DEFERRED (cosmetic, working code)
 
 - PLAN §9.1 strip rewrite to use list-active-with-sessions +
-  workspace/display-label (header.clj still renders tabs via the
-  existing app-db workspaces slot).
-- PLAN §9.5 switch-session dialog with hydrated workspace+session rows.
+  workspace/display-label (header.clj already renders tabs via
+  app-db `:workspaces` slot; refactor risks state-machine churn
+  without functional improvement).
+- PLAN §9.5 switch-session dialog with hydrated workspace+session
+  rows.
 - Tab restoration via workspace/last-focused (start-up flow).
-- K10 'one registration both channels' for `/voice` — voice ext is
-  TUI-only; Telegram owns its variant. Per-channel run-fn branching
-  surface is the next step.
+- K10 'one registration both channels' for `/voice` — voice ext
+  is TUI-only; Telegram owns its variant via
+  vis-channel-telegram. Per-channel run-fn branching surface is
+  the natural next step once a live run validates the partition
+  design.
+
+### D14 PROBES — SCAFFOLDED (`f56d3e0b`)
+
+Runtime work needs a real LLM provider; scaffolded for the
+operator to execute:
+
+  - `probes/workspace-slash-sweep.md` — 10-scenario matrix
+    (slash discovery in TUI / Telegram, engine short-circuit,
+    `:slash/specs` / hook `:emit` / symbol `:emit`, cavemanize
+    token budget, merge-resolve happy path, `mr/*` ops drive
+    resolution, `mr/abort!` JGit reset).
+  - `probes/run.sh <provider-id> [<scenario-ids...>]` — thin
+    wrapper around `bin/vis --provider --persist
+    --full-trace-stream` for the four scenarios that need a
+    real LLM (03, 04, 06, 07). Logs land in
+    `target/probe/logs/`. The other six are out-of-LLM checks
+    (palette inspection, Telegram menu, JGit verification)
+    runnable directly per the matrix doc.
 
 ### What works today vs. what doesn't (operator-level)
 

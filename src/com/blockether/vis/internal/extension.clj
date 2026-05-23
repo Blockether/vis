@@ -83,7 +83,7 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-(declare op-tag op-tags registered-op? tool-call-name)
+(declare op-tag op-tags registered-op? register-op! tool-call-name)
 
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
@@ -599,6 +599,14 @@
 ;; envelope only. When absent, the engine uses `default-error-ir`.
 (s/def :ext.symbol/render-error-fn fn?)
 
+;; Op classification carried INLINE on the symbol entry. Replaces the
+;; previous out-of-band `(vis/register-op! :alias/sym {:tag ...})`
+;; per-symbol dance — every observed tool now declares its tag right
+;; on `vis/symbol`'s opts map, and `register-extension!` walks the
+;; symbol vec to populate the op registry automatically.
+(s/def :ext.symbol/tag #{:observation :mutation})
+(s/def :ext.symbol/self-describing? boolean?)
+
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
@@ -607,6 +615,7 @@
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists]
     :opt [:ext.symbol/raw?
+          :ext.symbol/tag :ext.symbol/self-describing?
           :ext.symbol/render-fn
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn
@@ -1081,7 +1090,13 @@
   "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Observed tools keep their symbol-specific
    channel renderer; raw helpers do not render. Used by both the
-   var-based public API and the test-friendly direct-args form below."
+   var-based public API and the test-friendly direct-args form below.
+
+   Opts may carry `:tag :observation | :mutation` and the optional
+   `:self-describing?` flag. When present, `register-extension!` walks
+   the symbol vec and auto-populates the global op registry via
+   `register-op!` so call-sites don't need an out-of-band
+   `(vis/register-op! :alias/sym {:tag ...})` per symbol."
   [{sym :symbol :keys [fn doc arglists source]} opts]
   (let [raw? (true? (:raw? opts))]
     (validate-symbol-entry!
@@ -1091,6 +1106,9 @@
                            :arglists arglists}
         raw?           (assoc :ext.symbol/raw? true)
         source         (assoc :ext.symbol/source source)
+        (:tag opts)            (assoc :ext.symbol/tag (:tag opts))
+        (contains? opts :self-describing?)
+        (assoc :ext.symbol/self-describing? (boolean (:self-describing? opts)))
         (:render-fn opts)   (assoc :ext.symbol/render-fn (:render-fn opts))
         (:before-fn opts)   (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)    (assoc :ext.symbol/after-fn (:after-fn opts))
@@ -1118,53 +1136,40 @@
    envelope enforcement, channel sink, or tool metadata.
 
    Optional opts:
-     :symbol                    - override the SCI sandbox name (default: var name).
-     :doc / :doc-fn / :arglists - metadata fallback for third-party vars.
-     :raw?                      - true for plain composable helpers.
-     :render-fn                 - required for observed tools; returns IR.
-     :before-fn :after-fn :on-error-fn
+     :symbol      - override the SCI sandbox name (default: var name).
+     :doc-fn      - compute doc lazily from `(sym v)` when the var
+                    lacks a docstring (third-party vars only).
+     :raw?        - true for plain composable helpers.
+     :tag         - REQUIRED `:observation | :mutation` for observed
+                    tools (unless `:raw? true`).
+     :render-fn   - REQUIRED for observed tools; returns IR.
+     :before-fn :after-fn :on-error-fn :render-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
    wrapper records the envelope, then returns only its payload to SCI; failure
    envelopes are converted into thrown ex-info so SCI reports normal errors.
 
+   `:doc` and `:arglists` ALWAYS come from var metadata — the previous
+   test-only `(symbol sym-name f opts)` 3-arg form is RETIRED. Tests
+   that want to register an inline fn must `defn` it first and pass
+   `#'the-fn`.
+
    See `docs/src/extensions/hooks.md` for hook semantics."
   ([v] (symbol v nil))
-  ([v opts-or-fn]
-   (if (var? v)
-     (let [opts opts-or-fn
-           {default-symbol :symbol :keys [doc arglists source]} (var-meta v true opts)
-           sym      (or (:symbol opts) default-symbol)
-           f        @v]
-       (when-not (fn? f)
-         (anomaly/incorrect!
-           (str "Var " v " does not hold a function; use vis/value for plain values.")
-           {:type :extension/symbol-not-a-fn :var v}))
-       (build-symbol-entry
-         {:symbol sym :fn f :doc doc :arglists arglists :source source}
-         opts))
+  ([v opts]
+   (when-not (var? v)
      (anomaly/incorrect!
-       "vis/symbol expects a Clojure var (e.g. #'my-tool); use the 3-arg form (symbol sym-name f opts) for test-only direct construction."
-       {:type :extension/symbol-not-a-var :given v})))
-  ([sym-name f opts]
-   ;; Test-only direct-construction arity. `:doc` and `:arglists` come from
-   ;; opts (no var to read meta from).
-   (when-not (clojure.core/fn? f)
-     (anomaly/incorrect!
-       (str "3-arg symbol expects a function as the second arg; got " (pr-str (type f)))
-       {:type :extension/symbol-not-a-fn :given f}))
-   (let [doc (:doc opts)
-         arglists (:arglists opts)]
-     (when-not (non-blank-string? doc)
+       "vis/symbol expects a Clojure var (e.g. #'my-tool); inline fns must be `defn`'d first and passed by var."
+       {:type :extension/symbol-not-a-var :given v}))
+   (let [{default-symbol :symbol :keys [doc arglists source]} (var-meta v true opts)
+         sym (or (:symbol opts) default-symbol)
+         f   @v]
+     (when-not (fn? f)
        (anomaly/incorrect!
-         (str "3-arg symbol '" sym-name "' missing :doc in opts.")
-         {:type :extension/missing-doc :symbol sym-name}))
-     (when-not (and (sequential? arglists) (seq arglists))
-       (anomaly/incorrect!
-         (str "3-arg symbol '" sym-name "' missing :arglists in opts.")
-         {:type :extension/missing-arglists :symbol sym-name}))
+         (str "Var " v " does not hold a function; use vis/value for plain values.")
+         {:type :extension/symbol-not-a-fn :var v}))
      (build-symbol-entry
-       {:symbol sym-name :fn f :doc doc :arglists (vec arglists)}
+       {:symbol sym :fn f :doc doc :arglists arglists :source source}
        opts))))
 
 (defn helper
@@ -1346,21 +1351,26 @@
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
 
 (defn- validate-symbol-op-tags!
-  "Fail closed: every observed extension tool must have a registered
-   observation/mutation tag for its canonical alias call. Raw helpers are not
-   observed tools and remain untagged plain functions/values. Returns `ext`
-   unchanged on success; throws `:extension/missing-op-tag` otherwise."
+  "Fail closed: every observed extension tool MUST carry an inline
+   `:tag :observation | :mutation` on its `vis/symbol` opts map.
+   Raw helpers (`:raw? true`) are exempt.
+
+   The legacy out-of-band `(vis/register-op! :alias/sym {:tag ...})`
+   surface is RETIRED — only inline `:tag` is allowed.
+   `register-extension!` walks the symbol vec at registration time
+   and populates the global op registry automatically."
   [ext]
   (doseq [sym-entry (ext-symbols ext)
           :when    (and (:ext.symbol/fn sym-entry)
                      (not (:ext.symbol/raw? sym-entry)))]
     (let [op (extension-symbol-op-keyword ext sym-entry)]
-      (when-not (registered-op? op)
+      (when-not (:ext.symbol/tag sym-entry)
         (anomaly/incorrect!
           (str "Extension '" (:ext/name ext) "' symbol '"
-            (:ext.symbol/symbol sym-entry) "' is missing mandatory op tag for " op
-            "; register it with (vis/register-op! " (pr-str op)
-            " {:tag :observation}) or {:tag :mutation}.")
+            (:ext.symbol/symbol sym-entry) "' is missing mandatory `:tag` on "
+            "its (vis/symbol ...) opts map. Declare `:tag :observation` "
+            "or `:tag :mutation` inline. (op-keyword for reference: "
+            (pr-str op) ".)")
           {:type      :extension/missing-op-tag
            :extension (:ext/name ext)
            :symbol    (:ext.symbol/symbol sym-entry)
@@ -1531,12 +1541,15 @@
   "Observed extension tools must carry canonical op metadata. Tool functions may
    set `:op` explicitly via `extension/success`; otherwise the wrapper derives
    it deterministically from the active alias and symbol (`v/cat`, `v/patch`,
-   ...). Either path must resolve to a registered op tag, so missing extension
-   tags fail closed instead of silently becoming observations."
+   ...). The tag now comes from the symbol entry's inline `:ext.symbol/tag`
+   first (the post-redesign source of truth) and falls back to the
+   global op registry. Missing tag in BOTH places throws via `op-tag`
+   so unregistered ops still fail closed."
   [ext sym-entry result]
   (if (and (tool-result? result) (nil? (:symbol result)))
-    (let [op (default-tool-op-keyword ext sym-entry)]
-      (assoc result :symbol op :tag (op-tag op)))
+    (let [op (default-tool-op-keyword ext sym-entry)
+          tag (or (:ext.symbol/tag sym-entry) (op-tag op))]
+      (assoc result :symbol op :tag tag))
     result))
 
 (defn- enrich-tool-result-info
@@ -2167,6 +2180,19 @@
     (dispatch-providers!   (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
     (theme/register-themes! (:ext/theme ext))
+    ;; Auto-register op metadata for every symbol that declared a
+    ;; `:tag` on its `vis/symbol` opts (PLAN.md sandbox-sym hygiene
+    ;; follow-up). Removes the per-extension `doseq + register-op!`
+    ;; boilerplate; the tag lives INLINE on the symbol entry where
+    ;; the rest of the SCI surface (doc, arglists, render-fn) lives.
+    (doseq [sym-entry (ext-symbols ext)
+            :let [tag (:ext.symbol/tag sym-entry)]
+            :when tag]
+      (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))
+            meta  (cond-> {:tag tag}
+                    (contains? sym-entry :ext.symbol/self-describing?)
+                    (assoc :self-describing? (:ext.symbol/self-describing? sym-entry)))]
+        (register-op! op-kw meta)))
     ;; Compute and store source markers in the sidecar atom. Resolved
     ;; via the helper (see source_markers.clj) which knows how to walk
     ;; both file: and jar: classpath URLs. Failures are logged at :warn
