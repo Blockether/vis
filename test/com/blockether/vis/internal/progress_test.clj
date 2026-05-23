@@ -37,7 +37,7 @@
                             :silent? true})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (= [] (:forms entry)))
-        (expect (= ["Title changed to \"New title\"."] (:recaps entry))))))
+        (expect (= ["Title — \"New title\""] (:recaps entry))))))
 
   (it "keeps mixed answer/code chunks visible"
     (let [tracker (progress/make-progress-tracker)]

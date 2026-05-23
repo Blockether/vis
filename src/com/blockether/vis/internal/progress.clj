@@ -192,6 +192,21 @@
     (or (:silent? chunk)
       (= :vis/silent (:result chunk)))))
 
+(def ^:private structural-form-prefixes
+  "Top-level call prefixes whose RAW source row is engine-only chrome:
+   the channel renders a pi-style recap line for these instead of
+   showing the literal `(mutator …)` text. Keep in sync with
+   `render/top-level-form-kind` non-`:code` cases."
+  ["(set-session-title!"
+   "(done"
+   "(task-set!"
+   "(spec-set!"
+   "(fact-set!"])
+
+(defn- contains-structural-prefix?
+  [^String code]
+  (boolean (some #(str/includes? code %) structural-form-prefixes)))
+
 (defn- visible-code-segments?
   "True when the chunk has at least one `:code` segment that should
    reach the user, regardless of structural subforms. Reads from
@@ -203,41 +218,75 @@
       (boolean (some #(= :code (:kind %)) segments))
       (let [code (str/trim (str (:code chunk)))]
         (and (not (str/blank? code))
-          (not (or (str/starts-with? code "(set-session-title!")
-                 (str/starts-with? code "(done"))))))))
+          (not (contains-structural-prefix? code)))))))
 
 (defn- structurally-silent-chunk?
   "True for host-bookkeeping forms that should never appear in user traces:
-   session-title updates and answer-emission forms. They may still execute
-   and affect channel chrome/final answer, but the code/result row itself is
+   session-title updates, answer-emission forms, and ctx mutators
+   (`task-set!`, `spec-set!`, `fact-set!`). They may still execute and
+   feed channel chrome / final answer, but the code/result row itself is
    noise in both TUI and CLI trace views. Mixed blocks with visible code
-   segments are not silent; channels consume :render-segments to hide only the
-   structural subforms."
+   segments are not silent; channels consume :render-segments to hide
+   only the structural subforms."
   [chunk]
   (let [code (str (:code chunk))]
     (boolean
       (or (:vis/structurally-silent? chunk)
         (and (not (visible-code-segments? chunk))
-          (or (str/includes? code "(set-session-title!")
-            (str/includes? code "(done")))
+          (contains-structural-prefix? code))
         (and (= :vis/silent (:result chunk))
           (not (seq (:render-segments chunk)))
-          (or (str/includes? code "(set-session-title!")
-            (str/includes? code "(done")))))))
+          (contains-structural-prefix? code))))))
 
 (defn- title-recap
   [value]
   (let [title (some-> value str str/trim not-empty)]
     (if title
-      (str "Title changed to \"" title "\".")
+      (str "Title — \"" title "\"")
       "Title changed.")))
+
+(defn- status-glyph
+  "Compact prefix glyph for a ctx status: :done -> '✓', :cancelled
+   -> '×', :todo/:doing -> '…', nil/unknown -> ''. Pure ASCII would
+   undercut the visual call-out, but the three glyphs we use here
+   render in every terminal we ship to."
+  [status]
+  (case status
+    :done       "✓ "
+    :cancelled  "× "
+    (:todo :doing) "… "
+    ""))
+
+(defn- task-recap
+  [{:keys [id status proof title]}]
+  (let [head (cond
+               (and id status) (str (status-glyph status) (pr-str id) "  :" (name status))
+               id              (str (pr-str id))
+               :else           "task update")]
+    (str "Task — " head
+      (when title (str "  \"" title "\""))
+      (when proof (str "  proof " proof)))))
+
+(defn- spec-recap
+  [{:keys [id status]}]
+  (str "Spec — " (pr-str id)
+    (when status (str "  :" (name status)))))
+
+(defn- fact-recap
+  [{:keys [id status]}]
+  (str "Fact — " (pr-str id)
+    (when status (str "  :" (name status)))))
 
 (defn- render-segment-recaps
   [segments]
   (->> segments
-    (keep (fn [{:keys [kind value]}]
-            (when (= :title kind)
-              (title-recap value))))
+    (keep (fn [{:keys [kind value] :as seg}]
+            (case kind
+              :title         (title-recap value)
+              :task-update   (task-recap seg)
+              :spec-update   (spec-recap seg)
+              :fact-update   (fact-recap seg)
+              nil)))
     vec))
 
 (defn- append-recaps
