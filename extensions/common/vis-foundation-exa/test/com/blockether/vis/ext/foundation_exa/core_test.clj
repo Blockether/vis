@@ -59,7 +59,7 @@
     (expect (str/includes? exa/exa-prompt "EXA_API_KEY"))
     (expect (str/includes? exa/exa-prompt ":max-bytes"))
     (expect (not (str/includes? exa/exa-prompt (str ":" (apply str [\p \i]) "-max"))))
-    (expect (str/includes? exa/exa-prompt "get-in r [:result :content]"))
+    (expect (str/includes? exa/exa-prompt "-> r :result :text"))
     (expect (str/includes? exa/exa-prompt "before answering current web facts")))
 
   (it "exports a valid Vis extension"
@@ -120,7 +120,7 @@
                           requests)]
            (expect (extension/tool-result? out))
            (expect (true? (:success? out)))
-           (expect (= "Result 1\nResult 2" (get-in out [:result :content])))
+           (expect (= "Result 1\nResult 2" (get-in out [:result :text])))
            (expect (= ["initialize" "notifications/initialized" "tools/call"]
                      (mapv :method payloads)))
            (expect (= "web_search_exa" (get-in (nth payloads 2) [:params :name])))
@@ -155,5 +155,5 @@
                        #'exa/env (constantly nil)
                        #'exa/*http-send-fn* (fake-mcp-send seen)}
         #(let [out (exa/web-search "latest Clojure" {:max-lines 1})]
-           (expect (= "Result 1" (get-in out [:result :content])))
+           (expect (= "Result 1" (get-in out [:result :text])))
            (expect (= :lines (get-in out [:result :truncation :truncated-by]))))))))
