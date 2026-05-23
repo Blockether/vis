@@ -1476,6 +1476,35 @@
 ;; into the canonical engine envelope shape
 ;; =============================================================================
 
+(defn- def-form-src?
+  "True when `src` opens with a `def` / `defn` / `defmacro` etc. head.
+   The model writes `(def NAME (v/cat …))` to bind tool results; SCI
+   returns the Var, which renders as `#'sandbox/NAME` in the trailer.
+   The model then re-emits NAME to inspect the actual value, wasting an
+   iter. Detect def shape here so `block->envelope` can deref the Var
+   and surface the realized value directly."
+  [src]
+  (let [s (some-> src str str/triml)]
+    (and s
+      (or (str/starts-with? s "(def ")
+        (str/starts-with? s "(def\n")
+        (str/starts-with? s "(def\t")
+        (str/starts-with? s "(defn ")
+        (str/starts-with? s "(defn-")
+        (str/starts-with? s "(defmacro ")
+        (str/starts-with? s "(defmulti ")
+        (str/starts-with? s "(defonce ")))))
+
+(defn- deref-def-result
+  "When `result` is the Var SCI returned from a `(def NAME …)` form,
+   deref it once so the trailer shows the bound VALUE instead of the
+   opaque `#'sandbox/NAME` reference. Non-Var results pass through
+   unchanged. Safe on nil / primitives / collections."
+  [result]
+  (if (instance? clojure.lang.IDeref result)
+    (try (deref result) (catch Throwable _ result))
+    result))
+
 (defn block->envelope
   "Project one loop-side block `{:code :result :error}` plus its 1-based
    position and the engine cursor into the per-form envelope shape:
@@ -1485,14 +1514,21 @@
    `:src` carries the form's source text; `:tag` is derived from the
    source via `classify-form-tag`. `:result` is included only when the
    block has one (engine convention: drop on default/nil). `:error` is
-   included only when the block errored."
+   included only when the block errored.
+
+   For `(def NAME …)` forms the raw SCI return is the Var; deref it once
+   so the trailer carries the bound value directly. Restore-on-resume
+   stays untouched — the persistence layer reads the actual value off
+   `definition_state`, not off the trailer."
   [block position cursor]
   (let [src (or (:code block) (:src block) "")
-        scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)]
+        scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
+        raw-result (:result block)
+        result (cond-> raw-result (def-form-src? src) deref-def-result)]
     (cond-> {:scope scope
              :tag   (classify-form-tag src)
              :src   src}
-      (contains? block :result) (assoc :result (:result block))
+      (contains? block :result) (assoc :result result)
       (some? (:error block))    (assoc :error  (:error block)))))
 
 (defn blocks->forms
