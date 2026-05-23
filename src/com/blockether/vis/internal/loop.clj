@@ -3109,7 +3109,10 @@
     (ctx-loop/set-turn-state! environment
       :iteration-id    nil
       :session-turn-id session-turn-id
-      :user-request    user-request)
+      :user-request    user-request
+      :turn-position   (or turn-position 1)
+      :iteration       nil
+      :form-idx        nil)
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
@@ -3940,6 +3943,14 @@
                           {:parent-session-id (:session-id env)
                            :user-request user-request
                            :status :running})
+        turn-position (session-turn-position env session-turn-id)
+        _ (ctx-loop/set-turn-state! env
+            :session-turn-id session-turn-id
+            :user-request user-request
+            :turn-position (or turn-position 1)
+            :iteration nil
+            :form-idx nil
+            :iteration-id nil)
         result (iteration-loop env user-request
                  (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)

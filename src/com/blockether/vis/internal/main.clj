@@ -467,6 +467,8 @@
    - :db          - DB target for ephemeral runs (`:memory`, path, or db spec)
    - :persist?    - Write the run to ~/.vis/vis.mdb as a `:cli`
                     session. Default false.
+   - :session-id  - Continue an existing persisted session (full UUID or
+                    unambiguous prefix). Implies persistent execution.
    - :no-persist? - Backward-compatible override; when true, forces
                     ephemeral execution even if `:persist?` is true.
 
@@ -478,7 +480,7 @@
    the `:cli` channel. Past runs are browsable via
    `(sessions/by-channel :cli)`."
   [agent-def prompt & [{:keys [spec model provider on-chunk
-                               debug? config db persist? no-persist?]
+                               debug? config db persist? no-persist? session-id]
                         :as _opts}]]
   (let [mdl       (or model (:model agent-def))
         cfg-base  (config/resolve-config config)
@@ -498,7 +500,7 @@
                     on-chunk* (assoc :hooks {:on-chunk on-chunk*})
                     debug?    (assoc :debug? true))
         messages  (if (string? prompt) [(svar/user prompt)] prompt)
-        persistent? (and persist? (not no-persist?))]
+        persistent? (and (or persist? session-id) (not no-persist?))]
     (if-not persistent?
       ;; Ephemeral path: build a fresh env on a `:memory` SQLite DB so
       ;; nothing touches `~/.vis/vis.mdb`. Disposing the env tears the
@@ -531,7 +533,34 @@
       ;; so the run shows up in `(sessions/by-channel :cli)` and
       ;; survives process restarts.
       (let [_ (when local-router? (lp/rebuild-router! cfg))
-            {session-id :id} (lp/create! :cli {:title title})]
+            db-info (lp/db-info)
+            resolve-session
+            (fn [input]
+              (let [s (some-> input str str/trim)]
+                (when (seq s)
+                  (letfn [(existing-id [id]
+                            (when (and id (try (persistance/db-get-session db-info id)
+                                            (catch Throwable _ nil)))
+                              id))]
+                    (or (try (existing-id (persistance/db-resolve-session-id db-info s))
+                          (catch Throwable _ nil))
+                      (let [matches (->> [:tui :telegram :cli]
+                                      (mapcat #(or (persistance/db-list-sessions db-info %) []))
+                                      (filter #(str/starts-with? (str (:id %)) s))
+                                      (map :id)
+                                      distinct
+                                      vec)]
+                        (when (= 1 (count matches))
+                          (existing-id (first matches)))))))))
+            resolved-session-id (when session-id
+                                  (or (resolve-session session-id)
+                                    (throw (ex-info (str "Session not found: " session-id)
+                                             {:type :vis.cli/session-not-found
+                                              :vis/user-error true
+                                              :session-id session-id}))))
+            {created-session-id :id} (when-not resolved-session-id
+                                       (lp/create! :cli {:title title}))
+            session-id (or resolved-session-id created-session-id)]
         (try
           (let [result (lp/send! session-id messages q-opts)]
             (cond-> {:session-id session-id
@@ -1207,6 +1236,7 @@
           "--model"          (recur (next more) (assoc opts :model (first more)) prompt-parts)
           "--name"           (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
           "--db"             (recur (next more) (assoc opts :db (first more)) prompt-parts)
+          "--session-id"     (recur (next more) (assoc opts :session-id (first more) :persist? true) prompt-parts)
           "--persist"        (recur more (assoc opts :persist? true) prompt-parts)
           (recur more opts (conj prompt-parts arg)))))))
 
@@ -1239,6 +1269,7 @@
   (stdout! "                       provider/name (e.g. openai/gpt-4o).")
   (stdout! "  --name NAME          Set the agent name (default: cli).")
   (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
+  (stdout! "  --session-id ID      Continue an existing persisted session.")
   (stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
   (stdout! "                       `:cli` session. Default is ephemeral:")
   (stdout! "                       no resume, no session row on disk.")
@@ -2470,6 +2501,7 @@
     "  --model MODEL                Override model or use provider/model.\n"
     "  --name NAME                  Agent name for this run.\n"
     "  --db PATH|:memory            SQLite DB path or in-memory DB.\n"
+    "  --session-id ID              Continue an existing persisted session.\n"
     "  --persist                    Persist as a :cli session.\n"
     "  --debug                      Enable verbose debug logging.\n"
     "  --help, -h                   Show help."))

@@ -23,6 +23,19 @@
         (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
       (expect (.contains (str out) "vis providers")))))
 
+(defdescribe parse-run-args-test
+  (it "parses --session-id as persistent continuation"
+    (expect (= {:session-id "abc123"
+                :persist? true
+                :provider "anthropic-coding-plan"
+                :model "claude-sonnet-4-6"
+                :prompt "what do I like?"}
+              (#'main/parse-run-args
+               ["--provider" "anthropic-coding-plan"
+                "--model" "claude-sonnet-4-6"
+                "--session-id" "abc123"
+                "what" "do" "I" "like?"])))))
+
 (defdescribe root-run-shortcut-test
   (it "treats bare prompt and run flags as root run shortcut"
     (let [root (#'main/root-command)]

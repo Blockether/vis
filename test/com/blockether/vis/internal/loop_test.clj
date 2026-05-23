@@ -3,6 +3,7 @@
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.env :as env]
+   [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [lazytest.core :refer [defdescribe it expect]]
@@ -48,6 +49,9 @@
 (def ^:private previous-turn-context
   (deref #'lp/previous-turn-context))
 
+(def ^:private run-normal-turn!
+  (deref #'lp/run-normal-turn!))
+
 (defdescribe previous-turn-context-test
   (it "loads the latest completed prior answer for short follow-ups"
     (with-redefs [persistance/db-list-session-turns
@@ -69,6 +73,37 @@
                      {:id "t2" :status :running :user-request "now"
                       :answer-markdown "partial"}])]
       (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db} "t2"))))))
+
+(defdescribe turn-position-state-test
+  (it "seeds turn-state with persisted turn position before iteration render"
+    (let [seen (atom nil)
+          env {:db-info ::db
+               :session-id "s1"
+               :turn-state-atom (ctx-loop/make-turn-state-atom)}]
+      (with-redefs [persistance/db-store-session-turn!
+                    (fn [_db opts]
+                      (expect (= {:parent-session-id "s1"
+                                  :user-request "follow up"
+                                  :status :running}
+                                opts))
+                      "turn-3")
+                    persistance/db-update-session-turn!
+                    (fn [_db turn-id opts]
+                      (reset! seen {:turn-id turn-id :opts opts}))
+                    lp/session-turn-position
+                    (fn [_env turn-id]
+                      (expect (= "turn-3" turn-id))
+                      3)
+                    lp/iteration-loop
+                    (fn [env* user-request opts]
+                      (expect (= "follow up" user-request))
+                      (expect (= "turn-3" (:session-turn-id opts)))
+                      (expect (= 3 (:turn-position (ctx-loop/read-turn-state env*))))
+                      (expect (nil? (:iteration (ctx-loop/read-turn-state env*))))
+                      {:iteration-count 1 :duration-ms 0})]
+        (let [result (run-normal-turn! env "follow up" {})]
+          (expect (= "turn-3" (:session-turn-id result)))
+          (expect (= "turn-3" (:turn-id @seen))))))))
 
 (defdescribe max-tokens-exceeded-retry-test
   (it "recognises :svar.llm/max-tokens-exceeded as retry-able"

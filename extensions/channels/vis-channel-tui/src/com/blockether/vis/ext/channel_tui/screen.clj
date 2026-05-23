@@ -2515,22 +2515,19 @@
                          (recur))
 
                        :show-palette
-                     ;; Modal stack: each command runs nested inside the
-                     ;; palette's open state, so ESC from a sub-dialog
-                     ;; (Settings, etc.) reopens the palette
-                     ;; instead of dropping the user back to the chat.
-                     ;; Only ESC pressed *inside* the palette itself
-                     ;; closes the whole stack.
                        (do
                          (when-not (:dialog-open? @state/app-db)
-                           (loop []
-                             ;; `command-palette!` re-concats `dlg/palette-commands`
-                             ;; internally. Keep extension slash roots out of
-                             ;; Ctrl+K; typed `/` suggestion owns those.
-                             (when-let [cmd (with-dialog-lock
-                                              #(dlg/command-palette! screen (command-palette-extra-commands)))]
-                               (run-command! cmd)
-                               (recur))))
+                           ;; One invocation, one command. Reopening here caused
+                           ;; a modal loop: after choosing any command the palette
+                           ;; immediately appeared again until Esc. Ctrl+K should
+                           ;; close after execution; users can press Ctrl+K again
+                           ;; for another command.
+                           ;; `command-palette!` re-concats `dlg/palette-commands`
+                           ;; internally. Keep extension slash roots out of
+                           ;; Ctrl+K; typed `/` suggestion owns those.
+                           (when-let [cmd (with-dialog-lock
+                                            #(dlg/command-palette! screen (command-palette-extra-commands)))]
+                             (run-command! cmd)))
                          (recur))
 
                        :select-workspace-index
