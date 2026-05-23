@@ -1192,7 +1192,7 @@
 
 (defn- qualified-tool-call-form?
   "True when `form` is `(qualified/sym args...)` — a direct extension tool
-   call at the top level. Pi-style rendering pairs the call header with
+   call at the top level. Rendering pairs the call header with
    the tool result pane; the raw source row is redundant noise."
   [form]
   (and (seq? form)

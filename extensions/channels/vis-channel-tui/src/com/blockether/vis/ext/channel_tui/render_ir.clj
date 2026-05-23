@@ -304,32 +304,61 @@
                          (update r :style (fnil into #{}) style-prefix)))))]
     (wrap-runs runs width prefix-runs)))
 
+(def ^:private wrap-friendly-code-langs
+  "Code-block `:lang` values whose body is plain prose / structured
+   output (file dumps, search results, tool listings) — safe to soft
+   wrap when a row exceeds the bubble width. Anything outside this
+   set (`clojure`, `diff`, `python`, … unset) keeps verbatim layout
+   so source / patch alignment survives."
+  #{"text" "plain" "output" "log"})
+
 (defn- code-block->lines
-  "Code block: never wrap, never escape, never delegate to extension
-   renderers. The TUI shows the code body exactly as source text. Empty
-   lines render as a blank line.
+  "Code block: by default the TUI shows the body verbatim — source code
+   relies on its indentation, and diff/patch output on its column
+   alignment, so wrapping there would destroy the visual contract.
+
+   When the block's `:lang` is in `wrap-friendly-code-langs` (plain
+   text / tool output / log dumps) each line is greedily wrapped to
+   `width` so long file contents and search hits stay inside the
+   bubble instead of overflowing past the right edge. Empty lines
+   render as a blank line either way.
 
    Every code block also gets one blank `:code` row above and below
    its content. Those rows are semantic *inside-code* padding: the
    bubble painter fills them with the code-block background, giving
    the chip the same breathing room as tool-call code/result zones."
-  [node _width {:keys [code-fence?] :as _opts}]
-  (let [src     (raw-body node)
-        attrs   (node-attrs node)
-        lang    (:lang attrs)
-        content (or src "")
-        pad     {:runs []}
-        body    (mapv (fn [line]
-                        {:runs (if (= "" line)
-                                 []
-                                 [{:text  line
-                                   :style #{:code}
-                                   :node  node}])})
-                  (str/split-lines content))
-        body    (if (str/ends-with? content "\n")
-                  (conj body {:runs []})
-                  body)
-        body    (vec (concat [pad] body [pad]))]
+  [node width {:keys [code-fence?] :as _opts}]
+  (let [src      (raw-body node)
+        attrs    (node-attrs node)
+        lang     (:lang attrs)
+        content  (or src "")
+        budget   (max 1 (long width))
+        wrap?    (contains? wrap-friendly-code-langs (some-> lang str/lower-case))
+        pad      {:runs []}
+        runs-of  (fn [line]
+                   [{:text line :style #{:code} :node node}])
+        verbatim-line
+        (fn [line]
+          {:runs (if (= "" line) [] (runs-of line))})
+        wrap-line
+        (fn [line]
+          (if (= "" line)
+            [{:runs []}]
+            (let [wrapped (wrap-runs (runs-of line) budget [])]
+              (if (seq wrapped)
+                wrapped
+                ;; Defensive: empty result from wrap means the input
+                ;; was pure whitespace that got dropped; preserve the
+                ;; row as blank rather than collapsing the line.
+                [{:runs []}]))))
+        body     (vec
+                   (if wrap?
+                     (mapcat wrap-line (str/split-lines content))
+                     (mapv verbatim-line (str/split-lines content))))
+        body     (if (str/ends-with? content "\n")
+                   (conj body {:runs []})
+                   body)
+        body     (vec (concat [pad] body [pad]))]
     (if code-fence?
       (let [open  {:runs [{:text (str "```" (or lang "")) :style #{:dim :code} :node node}]}
             close {:runs [{:text "```" :style #{:dim :code} :node node}]}]

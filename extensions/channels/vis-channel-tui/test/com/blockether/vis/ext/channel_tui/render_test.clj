@@ -107,13 +107,13 @@
       (expect (not (str/starts-with? ir-line p/MARKER_RESULT)))
       (expect (not (str/starts-with? ir-line p/MARKER_ANSWER_TXT)))))
 
-  (it "hides `(def r (v/ls …))` source while keeping the pi-style channel preview visible (regression: previous behaviour suppressed both)"
+  (it "hides `(def r (v/ls …))` source while keeping the channel preview visible (regression: previous behaviour suppressed both)"
     ;; Two-form fence the model emits in practice: bind a tool result
     ;; to a name, then project it via plain Clojure (`select-keys`).
     ;; Pre-fix bug: `code-source-from-render-segments` ignored
     ;; `:hidden?` so the raw `(def r (v/ls …))` row leaked into the
     ;; trace AND `form-result-kind` saw `:value` (because the
-    ;; FENCE's last value was a plain map), so the tool's pi-style
+    ;; FENCE's last value was a plain map), so the tool's
     ;; preview pane was suppressed by the `(= :tool result-kind)`
     ;; gate. Both halves are now wired.
     (let [ls-ir [:ir {} [:p {} [:strong {} [:span {} "LS"]] [:span {} "  ."]]
@@ -138,7 +138,7 @@
       ;; Visible code: only the derived projection, no def wrap.
       (expect (str/includes? body "(select-keys r [:entry-count :file-count])"))
       (expect (not (str/includes? body "(def r (v/ls")))
-      ;; Pi-style LS preview shows through despite plain-value fence
+      ;; LS preview shows through despite plain-value fence
       ;; result.
       (expect (str/includes? body "LS"))
       (expect (str/includes? body ".gitignore"))))

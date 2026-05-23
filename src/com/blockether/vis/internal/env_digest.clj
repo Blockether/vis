@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.env-digest
-  "Pi-style slim `:session/env` digest. Internal, not extension-owned.
+  "Slim `:session/env` digest. Internal, not extension-owned.
 
    Produces a bounded map the model reads each iter:
 
@@ -9,14 +9,14 @@
 
    Each slice is small (~50 bytes), so the section costs <200 bytes/turn.
    Extensions deep-merge their own slices via `:ext/ctx` returning
-   `{:session/env {their-key {\u2026}}}`; the merge happens in
+   `{:session/env {their-key {…}}}`; the merge happens in
    `ctx-loop/render-block!` so internal owns the base section, extensions
    layer on top.
 
    Heavy environment scans (full byte-counted language tables, polylith
    brick listings, multi-repo git status) live in the foundation-core
    `v/snapshot` tool for explicit deep-dives. The digest never calls
-   into extensions \u2014 host facts come from `System/getProperty`,
+   into extensions — host facts come from `System/getProperty`,
    project shape from a single directory peek. AGENTS.md / CLAUDE.md
    contents ride in their own system block (`internal.prompt`), not here."
   (:require
@@ -175,7 +175,7 @@
   "Collect `:session/env` slices from every active extension's `:ext/ctx`
    fn. Returns a single deep-merged map. Extensions that contribute
    under other top-level keys (e.g. their own `:session/voice`) are
-   silently ignored here \u2014 those go straight onto ctx through the
+   silently ignored here — those go straight onto ctx through the
    broader `:ext/ctx` merge path."
   [environment active-extensions]
   (let [full (extension/ctx-contributions environment (or active-extensions []))]

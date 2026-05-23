@@ -2251,7 +2251,9 @@
                       :mode     :write}})))))
 
 (defn- create-dirs-tool
-  "Ensure dir exists. Tool result."
+  "Ensure dir exists. Returns the canonical `v/*` map shape so the
+   model destructures `(:path r)` / `(:created? r)` directly off the
+   bound result."
   [path]
   (let [before (fs/exists? (safe-path path))
         out    (create-dirs-safe path)]
@@ -2259,12 +2261,16 @@
       {:op :v/create-dirs
        :path path
        :kind :dir
-       :result out
+       :result {:vis.op :v/create-dirs
+                :path out
+                :created? (not before)
+                :already-existed? before}
        :metadata {:created? (not before)
                   :already-existed? before}})))
 
 (defn- copy-tool
-  "Copy path. Tool result."
+  "Copy path. Returns the canonical `v/*` map shape — `(:src r)` /
+   `(:dest r)` / `(:path r)` (alias for dest)."
   ([src dest]
    (copy-tool src dest nil))
   ([src dest opts]
@@ -2273,13 +2279,17 @@
        {:op :v/copy
         :path dest
         :kind :path
-        :result out
+        :result {:vis.op :v/copy
+                 :src    src
+                 :dest   dest
+                 :path   out}
         :metadata {:src (path->target src :path)
                    :dest (path->target dest :path)
                    :opts opts}}))))
 
 (defn- move-tool
-  "Move/rename path. Tool result."
+  "Move/rename path. Returns the canonical `v/*` map shape —
+   `(:src r)` / `(:dest r)` / `(:path r)` (alias for dest)."
   ([src dest]
    (move-tool src dest nil))
   ([src dest opts]
@@ -2288,31 +2298,42 @@
        {:op :v/move
         :path dest
         :kind :path
-        :result out
+        :result {:vis.op :v/move
+                 :src    src
+                 :dest   dest
+                 :path   out}
         :metadata {:src (path->target src :path)
                    :dest (path->target dest :path)
                    :opts opts}}))))
 
 (defn- delete-tool
-  "Delete path. Tool result."
+  "Delete `path`. Returns the map every `v/*` tool returns so the
+   channel renderer (and `(def r (v/delete p))` consumers) can read
+   `(:path r)` and `(:deleted? r)` straight off. Previously this
+   returned `nil` and the channel preview painted `DELETE nil` —
+   same parity bug we already fixed in `v/exists?`."
   [path]
   (delete-safe path)
   (tool-success
     {:op :v/delete
      :path path
      :kind :path
-     :result nil
+     :result {:vis.op :v/delete :path path :deleted? true}
      :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
-  "Delete path if present. Tool result."
+  "Delete `path` if present. Returns the map every `v/*` tool returns
+   so destructuring (and the channel renderer) can read `(:path r)`
+   and `(:deleted? r)` directly. Previously this returned a bare
+   boolean which broke `(def r (v/delete-if-exists p))` consumers
+   (same lesson as `v/exists?`)."
   [path]
   (let [deleted? (delete-if-exists-safe path)]
     (tool-success
       {:op :v/delete-if-exists
        :path path
        :kind :path
-       :result deleted?
+       :result {:vis.op :v/delete-if-exists :path path :deleted? deleted?}
        :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
@@ -2382,7 +2403,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- channel-render-cat
-  "Channel preview: numbered-line-block + pi-badge header. Reads the
+  "Channel preview: numbered-line-block + badge header. Reads the
    plain map directly; no handle/deref."
   [{:keys [path next-offset truncated? lines]}]
   (let [lines      (vec lines)
@@ -2402,7 +2423,7 @@
       (ir-code-block "text" (bounded-render-text body)))))
 
 (defn- channel-render-ls
-  "Channel preview: flat path list with pi-badge header. Directory
+  "Channel preview: flat path list with badge header. Directory
    rows get a trailing `/`, file rows get a `(NB)` size suffix.
    `:truncated?` surfaces an inline note. Pure projection of
    `(:entries r)`."
@@ -2436,7 +2457,7 @@
     [head (str/join "\n" body-lines)]))
 
 (defn- channel-render-rg
-  "Channel preview — mode-aware with pi-badge header. Content mode
+  "Channel preview — mode-aware with badge header. Content mode
    renders each hit with its `:before` / `:after` context (when
    present) so the trailer reads like a miniature grep -C output.
    `:files-only` shows distinct paths. `:counts` shows per-file
@@ -2492,7 +2513,7 @@
                          (str path ":" line " " text)) hits))))))))))
 
 (defn- channel-render-patch
-  "Channel preview: pi-badge header + (capped) unified diff per file.
+  "Channel preview: badge header + (capped) unified diff per file.
    Pure projection over the summary map (`patch-result-file-summary`).
 
    No line counts in the header — the diff itself carries the line-level
@@ -2523,41 +2544,48 @@
               diff (conj (ir-code-block "diff" (bounded-render-text diff))))))
         files))))
 
+;; ---------------------------------------------------------------------------
+;; Mutation tool renderers — strict map shape only.
+;;
+;; Every `v/*` mutation tool returns `{:vis.op K :path P ...}` (see
+;; `create-dirs-tool` / `copy-tool` / `move-tool` / `delete-tool` /
+;; `delete-if-exists-tool` / `exists-tool`). Renderers destructure
+;; that map directly; bare strings, bare booleans, and nil are NOT
+;; supported shapes — if they show up the renderer fails loudly so
+;; the boundary bug surfaces at write time, not at paint time.
+;; ---------------------------------------------------------------------------
+
 (defn- channel-render-create-dirs
-  [result]
-  (ir-root (ir-p (ir-strong "MKDIR") "  " (ir-code (str result)))))
+  [{:keys [path]}]
+  (ir-root (ir-p (ir-strong "MKDIR") "  " (ir-code path))))
 
 (defn- channel-render-copy
-  [result]
-  (ir-root (ir-p (ir-strong "COPY") "  → " (ir-code (str result)))))
+  [{:keys [src dest path]}]
+  (let [target (or dest path)]
+    (ir-root (ir-p (ir-strong "COPY")
+               (when src (str "  " src))
+               "  → " (ir-code target)))))
 
 (defn- channel-render-move
-  [result]
-  (ir-root (ir-p (ir-strong "MOVE") "  → " (ir-code (str result)))))
+  [{:keys [src dest path]}]
+  (let [target (or dest path)]
+    (ir-root (ir-p (ir-strong "MOVE")
+               (when src (str "  " src))
+               "  → " (ir-code target)))))
 
 (defn- channel-render-delete
-  [result]
-  (ir-root
-    (ir-p (ir-strong "DELETE")
-      (cond
-        (string? result) (str "  " result)
-        :else            (str "  " (pr-str result))))))
+  [{:keys [path]}]
+  (ir-root (ir-p (ir-strong "DELETE") "  " (ir-code path))))
 
 (defn- channel-render-delete-if-exists
-  [result]
-  (ir-root
-    (ir-p (ir-strong (if result "DELETE" "ABSENT"))
-      (when (string? result) (str "  " result)))))
+  [{:keys [path deleted?]}]
+  (ir-root (ir-p (ir-strong (if deleted? "DELETE" "ABSENT"))
+             "  " (ir-code path))))
 
 (defn- channel-render-exists?
-  [result]
-  ;; `result` is now `{:vis.op :v/exists? :path P :exists? B}` (post
-  ;; envelope-consistency sweep, see `exists-tool`). Pull `:exists?`
-  ;; out for the EXISTS/MISSING badge; bare booleans are no longer a
-  ;; supported shape.
-  (ir-root
-    (ir-p (ir-strong (if (:exists? result) "EXISTS" "MISSING"))
-      (when-let [p (:path result)] (str "  " p)))))
+  [{:keys [path exists?]}]
+  (ir-root (ir-p (ir-strong (if exists? "EXISTS" "MISSING"))
+             "  " (ir-code path))))
 
 ;; =============================================================================
 ;; Symbol declarations

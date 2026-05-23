@@ -993,7 +993,7 @@
 
 (defn- session-report-channel
   "`v/session-report` returns a single Markdown string. Wrap it in a
-   pi-badge header + a fenced text block so the channel preview
+   header + a fenced text block so the channel preview
    matches the rest of the foundation surface (no bare `str`-dump)."
   [result]
   (let [s     (str result)
