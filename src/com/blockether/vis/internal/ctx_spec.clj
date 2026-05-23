@@ -413,6 +413,15 @@
 (s/def :session/facts     (s/map-of ::entry-key  ::fact))
 (s/def :session/trailer   (s/coll-of ::trailer-entry :kind vector?))
 
+;; `:session/env` is an open map keyed by domain-named bare keys
+;; (`:host`, `:project`, `:extensions`, plus whatever extensions
+;; deep-merge in via `:ext/ctx`). Each value is itself a small map; the
+;; engine treats the section as opaque data and only enforces that the
+;; top-level slot is a map. Domain specs live with their owners
+;; (foundation-core/environment/digest, voice ext, …) — keeping the
+;; engine free of provider-specific knowledge.
+(s/def :session/env (s/map-of keyword? (s/nilable map?)))
+
 (s/def ::ctx
   (s/keys :req [:session/id
                 :session/turn
@@ -422,7 +431,8 @@
                 :session/specs
                 :session/tasks
                 :session/facts
-                :session/trailer]))
+                :session/trailer]
+    :opt [:session/env]))
 
 ;; =============================================================================
 ;; Convenience: spec-keyed validators by subtree path

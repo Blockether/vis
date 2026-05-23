@@ -535,6 +535,24 @@
       (expect (= "line zero\nline one\nline two\nline three"
                 (selected-transcript-text [message] layout 40 {} {} sel)))))
 
+  (it "copies visible live text for pending assistant drag selection"
+    (let [message {:role :assistant
+                   :pending? true
+                   :text "Sending request to provider..."}
+          layout  {:total-h 4
+                   :heights [4]
+                   :offsets [0 4]
+                   :visible [{:idx 0
+                              :top 0
+                              :height 4
+                              :projected {:role :assistant
+                                          :text "live visible text"
+                                          :prewrapped-lines ["live visible text"]}}]}
+          sel     {:anchor (selection/point 0 1)
+                   :focus  (selection/point 39 1)}]
+      (expect (= "live visible text"
+                (selected-transcript-text [message] layout 40 {} {} sel)))))
+
   (it "uses release viewport for drag-copy focus after scrolling beyond the first screen"
     (expect (= (selection/point 7 42)
               (release-selection-focus
