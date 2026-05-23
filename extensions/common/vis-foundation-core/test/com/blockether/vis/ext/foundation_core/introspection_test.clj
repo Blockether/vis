@@ -41,7 +41,7 @@
       (expect (= :v/session-state (:symbol result)))
       (expect (map? (:result result)))))
 
-  (it "renders channel output as compact IR instead of pr-str data dump"
+  (it "renders channel output as a pi-badged SESSION IR (no pr-str data dump)"
     (let [render-channel @#'introspection/session-state-channel
           result {:session-id #uuid "fc9d9b41-05d9-4099-83e8-c9abeb1ce08a"
                   :session-index [{:id 1} {:id 2}]
@@ -55,7 +55,15 @@
                   :transcript {:turns [{:iterations [{} {}]}]
                                :totals {:tokens {:input 10} :cost-usd 0.01}}}
           ir (render-channel result)
-          rendered (pr-str ir)]
+          rendered (pr-str ir)
+          has-session-badge? (some #(and (vector? %)
+                                      (= :strong (first %))
+                                      (= "SESSION" (last %)))
+                               (tree-seq sequential? seq ir))]
       (expect (= :ir (first ir)))
-      (expect (clojure.string/includes? rendered "summary only"))
+      (expect has-session-badge?)
+      ;; pi-style header carries turn / iter / failure stats inline
+      (expect (clojure.string/includes? rendered "1 turn"))
+      (expect (clojure.string/includes? rendered "2 iter"))
+      (expect (clojure.string/includes? rendered "failures=1"))
       (expect (not (clojure.string/includes? rendered ":llm-raw-response-preview"))))))

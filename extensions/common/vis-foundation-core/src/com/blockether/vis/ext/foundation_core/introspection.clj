@@ -873,6 +873,10 @@
   [s]
   [:c {} (str s)])
 
+(defn- ir-strong
+  [s]
+  [:strong {} (str s)])
+
 (defn- ir-p
   [& children]
   (into [:p {}] children))
@@ -894,39 +898,48 @@
   [{:keys [symbol resolved-symbol found? doc arglists message]}]
   [:ir {}
    (if found?
-     (ir-p (ir-code (or resolved-symbol symbol))
-       (ir-text (str (arglists-text arglists) " — "
+     (ir-p (ir-strong "DOC")
+       (ir-text "  ")
+       (ir-code (or resolved-symbol symbol))
+       (ir-text (str (arglists-text arglists) "\n"
                   (truncate-text (or doc "<no docstring>") 1200))))
-     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found")))))])
+     (ir-p (ir-strong "NO DOC") (ir-text "  ") (ir-code symbol)
+       (ir-text (str "  " (or message "symbol not found")))))])
 
 (defn- symbol-source-ir
   [{:keys [symbol resolved-symbol found? source source-length message]}]
   (cond
     (not found?)
-    [:ir {} (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found"))))]
+    [:ir {} (ir-p (ir-strong "NO SOURCE") (ir-text "  ") (ir-code symbol)
+              (ir-text (str "  " (or message "symbol not found"))))]
 
     (seq source)
     [:ir {}
-     (ir-p (ir-code (or resolved-symbol symbol))
-       (ir-text (str " source (" source-length " chars):")))
+     (ir-p (ir-strong "SOURCE")
+       (ir-text "  ")
+       (ir-code (or resolved-symbol symbol))
+       (ir-text (str "  " source-length " chars")))
      (ir-code-block "clojure" (truncate-text source symbol-render-chars))]
 
     :else
-    [:ir {} (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " — source not available"))]))
+    [:ir {} (ir-p (ir-strong "NO SOURCE") (ir-text "  ") (ir-code (or resolved-symbol symbol))
+              (ir-text "  source not available"))]))
 
 (defn- symbol-meta-ir
   [{:keys [symbol resolved-symbol found? metadata message]}]
   (if found?
     [:ir {}
-     (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " metadata:"))
+     (ir-p (ir-strong "META") (ir-text "  ") (ir-code (or resolved-symbol symbol)))
      (ir-code-block "edn" (truncate-text (pr-str metadata) symbol-render-chars))]
-    [:ir {} (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found"))))]))
+    [:ir {} (ir-p (ir-strong "NO META") (ir-text "  ") (ir-code symbol)
+              (ir-text (str "  " (or message "symbol not found"))))]))
 
 (defn- apropos-ir
   [{:keys [query count matches]}]
   (into [:ir {}
-         (ir-p (ir-text "apropos ") (ir-code (pr-str query))
-           (ir-text (str " — " count " match(es)")))]
+         (ir-p (ir-strong "APROPOS")
+           (ir-text "  query=") (ir-code (pr-str query))
+           (ir-text (str "  " count " match" (when (not= 1 count) "es"))))]
     (when (seq matches)
       [(into [:ul {}]
          (map (fn [{:keys [symbol doc arglists]}]
@@ -945,8 +958,10 @@
         total-cost (get-in transcript [:totals :cost-usd])
         tokens     (get-in transcript [:totals :tokens])]
     [:ir {}
-     (ir-p (ir-code "v/session-state")
-       (ir-text " returned full data; rendered summary only."))
+     (ir-p (ir-strong "SESSION")
+       (ir-text (str "  " (count turns) " turn" (when (not= 1 (count turns)) "s")
+                  "  " iterations " iter" (when (not= 1 iterations) "s")
+                  "  failures=" (count failures))))
      [:ul {}
       [:li {} (ir-p (ir-code ":session-id") (ir-text (str " " session-id)))]
       [:li {} (ir-p (ir-code ":session-index") (ir-text (str " " (count session-index) " session(s)")))]
@@ -976,6 +991,19 @@
 (defn- symbol-meta-channel [result] (symbol-meta-ir result))
 (defn- apropos-channel [result] (apropos-ir result))
 
+(defn- session-report-channel
+  "`v/session-report` returns a single Markdown string. Wrap it in a
+   pi-badge header + a fenced text block so the channel preview
+   matches the rest of the foundation surface (no bare `str`-dump)."
+  [result]
+  (let [s     (str result)
+        chars (count s)
+        body  (truncate-text s symbol-render-chars)]
+    [:ir {}
+     (ir-p (ir-strong "REPORT")
+       (ir-text (str "  " chars " char" (when (not= 1 chars) "s"))))
+     (ir-code-block "markdown" body)]))
+
 (defn- inject-environment
   [env f args]
   {:env env :fn f :args (into [env] args)})
@@ -1000,7 +1028,7 @@
   (vis/symbol #'session-report
     {:before-fn inject-environment
      :tag       :observation
-     :render-fn vis/render-string}))
+     :render-fn session-report-channel}))
 
 (def engine-symbol-documentation-symbol
   (vis/symbol #'engine-symbol-documentation-tool
