@@ -71,7 +71,7 @@
   (let [ds  (:datasource store)
         sid (str (java.util.UUID/randomUUID))
         st  (str (java.util.UUID/randomUUID))]
-    (jdbc/execute! ds [(str "INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)")
+    (jdbc/execute! ds ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)"
                        sid "tui" 1])
     (jdbc/execute! ds [(str "INSERT INTO session_state "
                          "(id, session_soul_id, workspace_id, version, created_at) "
