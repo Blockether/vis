@@ -57,6 +57,7 @@
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry     :as registry]
+   [com.blockether.vis.internal.slash        :as slash]
    [com.blockether.vis.internal.theme        :as theme]
    [com.blockether.vis.internal.workspace    :as workspace]))
 
@@ -99,6 +100,15 @@
 (def workspace-list-active-with-sessions workspace/list-active-with-sessions)
 (def workspace-register-hook!    workspace/register-hook!)
 (def workspace-delete-legacy-edn! workspace/delete-legacy-edn!)
+
+;; =============================================================================
+;; Slash commands (PLAN.md §3 — declarative `:ext/slash-commands`)
+;; =============================================================================
+(def active-slashes              slash/active-slashes)
+(def slash-by-path               slash/slash-by-path)
+(def slash-children              slash/slash-children)
+(def slash-parse                 slash/parse)
+(def slash-dispatch              slash/dispatch)
 
 ;; =============================================================================
 ;; Theme facade
