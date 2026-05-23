@@ -278,6 +278,11 @@
 ;; --- Workspace (PLAN.md §2-§4) ---
 (defdelegate db-workspace-insert!            [db-info opts])
 (defdelegate db-workspace-update-state!      [db-info workspace-id new-state])
+;; PLAN.md §1 + §6 — label override + focus stamp + per-repo focus pointer.
+(defdelegate db-workspace-update-label!      [db-info workspace-id label])
+(defdelegate db-workspace-touch-focus!       [db-info workspace-id])
+(defdelegate db-repo-focus-get               [db-info repo-id])
+(defdelegate db-repo-focus-set!              [db-info repo-id workspace-id])
 (defdelegate db-workspace-get                [db-info workspace-id])
 (defn db-workspace-list-by-repo
   ([db-info repo-id]
