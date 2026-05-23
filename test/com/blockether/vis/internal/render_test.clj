@@ -38,4 +38,27 @@
 
   (it "does not treat satisfy-hint! source as structurally silent"
     (expect (false? (render/block-structurally-silent?
-                      "(satisfy-hint! :vis.foundation/session-title)")))))
+                      "(satisfy-hint! :vis.foundation/session-title)"))))
+
+  (it "flags (def NAME (qualified/call …)) wrappers as hidden code"
+    ;; The model wraps tool calls in `(def …)` for downstream reuse.
+    ;; The channel shows the tool result pane anyway, so the def
+    ;; source itself is noise. Mark the segment hidden so the renderer
+    ;; collapses the code lines but still keeps the form in the
+    ;; iteration trace.
+    (expect (= [{:kind :code
+                 :source "(def render-sb-code (v/cat \"x.clj\"))"
+                 :hidden? true}]
+              (render/parse-block-display
+                "(def render-sb-code (v/cat \"x.clj\"))"))))
+
+  (it "keeps plain (def x 1) visible (no tool wrapper)"
+    (expect (= [{:kind :code :source "(def x 1)"}]
+              (render/parse-block-display "(def x 1)"))))
+
+  (it "hides def docstring form when wrapping a tool call"
+    (expect (= [{:kind :code
+                 :source "(def named \"docstring\" (v/cat \"x.clj\"))"
+                 :hidden? true}]
+              (render/parse-block-display
+                "(def named \"docstring\" (v/cat \"x.clj\"))")))))
