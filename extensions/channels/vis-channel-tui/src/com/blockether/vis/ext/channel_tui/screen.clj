@@ -2416,6 +2416,13 @@
                                            true))))
 
                                    :apply-workspace-to-trunk
+                                   ;; PLAN.md §12 step 3 cutover: legacy file-copy
+                                   ;; `apply-to-trunk!` is gone (K4 + K5). The palette
+                                   ;; case routes through the new git-native
+                                   ;; `ff-apply!` which fast-forwards the trunk onto
+                                   ;; the workspace branch. Step 8 (K6) deletes this
+                                   ;; palette entry entirely; until then, the call
+                                   ;; keeps the action live with the new semantics.
                                    (let [db-info (vis/db-info)
                                          ws-id   (:workspace/id @state/app-db)]
                                      (cond
@@ -2426,11 +2433,17 @@
                                          :level :warn :ttl-ms copy-success-ttl-ms)
                                        :else
                                        (try
-                                         (vis/workspace-apply-to-trunk! db-info
-                                           {:workspace-id   ws-id
-                                            :delete-branch? true})
-                                         (vis/notify! "Workspace applied to trunk"
-                                           :level :info :ttl-ms copy-success-ttl-ms)
+                                         (let [result (vis/workspace-ff-apply! db-info
+                                                        {:workspace-id ws-id})]
+                                           (case (:status result)
+                                             :ok
+                                             (vis/notify! "Workspace fast-forwarded onto trunk"
+                                               :level :info :ttl-ms copy-success-ttl-ms)
+                                             :ff-failed
+                                             (vis/notify! (str "FF apply failed: " (:reason result))
+                                               :level :warn :ttl-ms copy-success-ttl-ms)
+                                             (vis/notify! (str "FF apply: " (pr-str result))
+                                               :level :warn :ttl-ms copy-success-ttl-ms)))
                                          (catch Throwable t
                                            (vis/notify! (str "Apply failed: " (or (ex-message t) (str t)))
                                              :level :error :ttl-ms copy-success-ttl-ms)))))
