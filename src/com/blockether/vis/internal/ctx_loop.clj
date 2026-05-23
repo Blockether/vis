@@ -27,6 +27,8 @@
    satisfies them via `(task-set! id {:status :done :proof \"…\"})` and the
    engine reconciles at end-of-iter via `eng/reconcile-done-hook-tasks`."
   (:require [com.blockether.vis.internal.ctx-engine :as eng]
+            [com.blockether.vis.internal.env-digest :as env-digest]
+            [com.blockether.vis.internal.prompt :as prompt]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -289,19 +291,34 @@
    rendered string, or nil when ctx-atom is missing on env.
 
    Flow:
-     deref ctx-atom → stamp cursor → build form-results map from trailer
-     → build indexes → derive progression → drain mutator warnings +
-     derive render-time warnings → derive next-actions → call renderer."
+     deref ctx-atom → stamp cursor → attach `:session/env` digest +
+     extension `:ext/ctx` contributions → build form-results map from
+     trailer → build indexes → derive progression → drain mutator
+     warnings + derive render-time warnings → derive next-actions →
+     call renderer.
+
+   `:session/env` lives on the rendered ctx but is NOT pushed back into
+   `ctx-atom`: extension contributions are recomputed each iter so
+   transient state (e.g. voice / git status) stays fresh."
   [env renderer-fn]
   (when-let [ctx (current-ctx env)]
-    (let [fr             (trailer->form-results (:session/trailer ctx))
-          idx            (eng/build-indexes ctx)
-          prog           (eng/derive-progression ctx idx fr)
+    (let [active-exts    (try (prompt/active-extensions env)
+                           (catch Throwable _ nil))
+          env-block      (try (env-digest/session-env env active-exts)
+                           (catch Throwable t
+                             (tel/log! {:level :warn :id ::env-digest-failed
+                                        :data  {:error (ex-message t)}})
+                             nil))
+          ctx*           (cond-> ctx
+                           (seq env-block) (assoc :session/env env-block))
+          fr             (trailer->form-results (:session/trailer ctx*))
+          idx            (eng/build-indexes ctx*)
+          prog           (eng/derive-progression ctx* idx fr)
           drained-warns  (drain-warnings! env)
-          derived-warns  (eng/derive-warnings ctx idx fr)
+          derived-warns  (eng/derive-warnings ctx* idx fr)
           warns          (vec (concat drained-warns derived-warns))
-          acts           (eng/derive-next-actions ctx idx prog)]
-      (renderer-fn {:ctx ctx :warnings warns
+          acts           (eng/derive-next-actions ctx* idx prog)]
+      (renderer-fn {:ctx ctx* :warnings warns
                     :progression prog :next-actions acts}))))
 
 ;; =============================================================================
