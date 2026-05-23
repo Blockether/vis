@@ -130,6 +130,236 @@
        :absolute  nil
        :kind      kind})))
 
+;; =============================================================================
+;; Extension protected paths
+;; =============================================================================
+
+(def ^:private protected-access-rank
+  {:read-write 0
+   :read-only  1
+   :none       2})
+
+(defn- extracted-paths
+  [path-extractor args]
+  (try
+    (let [paths (path-extractor args)]
+      (vec (remove nil?
+             (if (sequential? paths) paths [paths]))))
+    (catch Throwable _
+      [])))
+
+(defn- first-arg-paths
+  [args]
+  (when (seq args)
+    [(first args)]))
+
+(defn- first-two-arg-paths
+  [args]
+  (take 2 args))
+
+(defn- patch-arg-paths
+  [args]
+  (let [edits (first args)
+        edits (cond
+                (map? edits) [edits]
+                (sequential? edits) edits
+                :else [])]
+    (keep :path edits)))
+
+(defn- write-arg-paths
+  [args]
+  (when-let [path (and (map? (first args)) (:path (first args)))]
+    [path]))
+
+(defn- rg-arg-paths
+  [args]
+  (let [spec (first args)]
+    (when (map? spec)
+      (let [paths (:paths spec)]
+        (cond
+          (nil? paths) ["."]
+          (sequential? paths) paths
+          :else [paths])))))
+
+(defn- protected-target
+  [path kind]
+  (let [target (path->target path kind)]
+    (when (:resolved target)
+      target)))
+
+(defn- protected-glob-matches?
+  [glob rel]
+  (let [matcher (.getPathMatcher (java.nio.file.FileSystems/getDefault)
+                  (str "glob:" glob))
+        rel     (str/replace (str rel) (str (char 92)) "/")
+        name    (last (str/split rel #"/+"))]
+    (boolean
+      (some (fn [candidate]
+              (try
+                (.matches matcher (fs/path candidate))
+                (catch Throwable _
+                  false)))
+        (distinct [rel name])))))
+
+(def ^:private glob-meta-chars
+  #{\* \? \[ \] \{ \}})
+
+(defn- glob-static-prefix
+  [glob]
+  (let [glob (str/replace (str glob) (str (char 92)) "/")
+        idx  (first (keep-indexed (fn [idx ch]
+                                    (when (contains? glob-meta-chars ch) idx))
+                      glob))
+        raw-prefix (if idx (subs glob 0 idx) glob)
+        prefix (if (and idx (not (str/ends-with? raw-prefix "/")))
+                 (let [slash-idx (.lastIndexOf ^String raw-prefix "/")]
+                   (if (neg? slash-idx) "" (subs raw-prefix 0 slash-idx)))
+                 raw-prefix)
+        prefix (str/replace prefix #"/+$" "")]
+    (if (str/blank? prefix) "." prefix)))
+
+(defn- path-prefix?
+  [ancestor path]
+  (let [ancestor (str/replace (str ancestor) (str (char 92)) "/")
+        path     (str/replace (str path) (str (char 92)) "/")]
+    (or (= "." ancestor)
+      (= ancestor path)
+      (str/starts-with? path (str ancestor "/")))))
+
+(defn- composite-path-target?
+  [{:keys [kind absolute]}]
+  (or (= :dir kind)
+    (and (= :path kind)
+      absolute
+      (.isDirectory (io/file absolute)))))
+
+(defn- protected-rule-matches?
+  [target rule]
+  (or (protected-glob-matches? (:glob rule) (:resolved target))
+    (and (composite-path-target? target)
+      (let [rel    (:resolved target)
+            prefix (glob-static-prefix (:glob rule))]
+        (or (path-prefix? prefix rel)
+          (and (not= :read-write (:access rule))
+            (path-prefix? rel prefix)))))))
+
+(defn- rules-by-extension
+  [rules]
+  (->> (map-indexed vector rules)
+    (reduce (fn [groups [idx rule]]
+              (let [ext-name (:extension/name rule)]
+                (-> groups
+                  (update-in [ext-name :idx] #(or % idx))
+                  (update-in [ext-name :rules] (fnil conj []) rule))))
+      {})
+    vals
+    (sort-by :idx)
+    (mapv :rules)))
+
+(defn- first-matching-rule
+  [target rules]
+  (some (fn [rule]
+          (when (protected-rule-matches? target rule)
+            rule))
+    rules))
+
+(defn- more-restrictive-rule
+  [best rule]
+  (if (or (nil? best)
+        (> (protected-access-rank (:access rule))
+          (protected-access-rank (:access best))))
+    rule
+    best))
+
+(defn- resolve-protected-access
+  [rules target]
+  (reduce
+    (fn [best extension-rules]
+      (if-let [match (first-matching-rule target extension-rules)]
+        (more-restrictive-rule best match)
+        best))
+    nil
+    (rules-by-extension rules)))
+
+(defn- blocked-access?
+  [access-intent access]
+  (or (= :none access)
+    (and (= :write access-intent) (= :read-only access))))
+
+(defn- protected-failure-row
+  [{:keys [target intent glob access hint] ext-name :extension/name}]
+  {:path (:resolved target)
+   :requested (:requested target)
+   :reason :path-protected
+   :intent intent
+   :access access
+   :glob glob
+   :extension ext-name
+   :hint hint})
+
+(defn- path-protected-failure
+  [op kind access-intent blocked]
+  (let [t          (now-ms)
+        first-row  (first blocked)
+        first-tgt  (:target first-row)
+        first-hint (:hint first-row)
+        failures   (mapv protected-failure-row blocked)]
+    (extension/failure
+      {:result nil
+       :op op
+       :metadata {:target first-tgt
+                  :started-at-ms t
+                  :finished-at-ms t
+                  :duration-ms 0
+                  :access-intent access-intent
+                  :protected-paths failures}
+       :error {:message (str op " blocked: " (:resolved first-tgt)
+                          " is protected; use the owning extension API instead.")
+               :type :ext.foundation.editing/path-protected
+               :reason :path-protected
+               :intent access-intent
+               :hint first-hint
+               :loop-hint first-hint
+               :failures failures
+               :kind kind}})))
+
+(defn- path-protection-error-failure
+  [op kind err]
+  (let [t (now-ms)]
+    (extension/failure
+      {:result nil
+       :op op
+       :metadata {:target (path->target "." kind)
+                  :started-at-ms t
+                  :finished-at-ms t
+                  :duration-ms 0}
+       :error {:message "Protected path registry failed; refusing direct file operation."
+               :type :ext.foundation.editing/path-protection-error
+               :reason :path-protection-error
+               :hint "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
+               :loop-hint "Fix the extension's :ext/protected-paths callback before retrying direct file IO."
+               :cause (ex-message err)}})))
+
+(defn- path-protected-before-fn
+  [op kind access-intent path-extractor]
+  (fn [env f args]
+    (try
+      (let [rules   (extension/active-protected-globs env)
+            targets (keep #(protected-target % kind)
+                      (extracted-paths path-extractor args))
+            blocked (keep (fn [target]
+                            (when-let [rule (resolve-protected-access rules target)]
+                              (when (blocked-access? access-intent (:access rule))
+                                (assoc rule
+                                  :target target
+                                  :intent access-intent))))
+                      targets)]
+        (if (seq blocked)
+          {:result (path-protected-failure op kind access-intent (vec blocked))}
+          {:env env :fn f :args args}))
+      (catch Throwable t
+        {:result (path-protection-error-failure op kind t)}))))
+
 ;; Engine contract lives in `com.blockether.vis.internal.extension`:
 ;;   `extension/op-tag`          - canonical op-keyword -> :observation | :mutation value.
 ;;   `extension/op-presentation` - `:info` metadata `{:tag ...}` embedded in tool envelopes.
@@ -2297,6 +2527,7 @@
 (def cat-symbol
   (vis/symbol #'cat-tool
     {:symbol 'cat
+     :before-fn (path-protected-before-fn :v/cat :file :read first-arg-paths)
      :tag :observation
      :render-fn channel-render-cat
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
@@ -2304,6 +2535,7 @@
 (def ls-symbol
   (vis/symbol #'ls-tool
     {:symbol 'ls
+     :before-fn (path-protected-before-fn :v/ls :dir :read first-arg-paths)
      :tag :observation
      :render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
@@ -2311,6 +2543,7 @@
 (def rg-symbol
   (vis/symbol #'rg-tool
     {:symbol 'rg
+     :before-fn (path-protected-before-fn :v/rg :dir :read rg-arg-paths)
      :tag :observation
      :render-fn channel-render-rg
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
@@ -2318,6 +2551,7 @@
 (def patch-symbol
   (vis/symbol #'patch-tool
     {:symbol 'patch
+     :before-fn (path-protected-before-fn :v/patch :file :write patch-arg-paths)
      :tag :mutation
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
@@ -2327,6 +2561,7 @@
   ;; shape is the same single-file summary (just always 1-file long).
   (vis/symbol #'write-tool
     {:symbol 'write
+     :before-fn (path-protected-before-fn :v/write :file :write write-arg-paths)
      :tag :mutation
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/write :file nil)}))
@@ -2334,6 +2569,7 @@
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
+     :before-fn (path-protected-before-fn :v/create-dirs :dir :write first-arg-paths)
      :tag :mutation
      :render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
@@ -2341,6 +2577,7 @@
 (def copy-symbol
   (vis/symbol #'copy-tool
     {:symbol 'copy
+     :before-fn (path-protected-before-fn :v/copy :path :write first-two-arg-paths)
      :tag :mutation
      :render-fn channel-render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
@@ -2348,6 +2585,7 @@
 (def move-symbol
   (vis/symbol #'move-tool
     {:symbol 'move
+     :before-fn (path-protected-before-fn :v/move :path :write first-two-arg-paths)
      :tag :mutation
      :render-fn channel-render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
@@ -2355,6 +2593,7 @@
 (def delete-symbol
   (vis/symbol #'delete-tool
     {:symbol 'delete
+     :before-fn (path-protected-before-fn :v/delete :path :write first-arg-paths)
      :tag :mutation
      :render-fn channel-render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
@@ -2362,6 +2601,7 @@
 (def delete-if-exists-symbol
   (vis/symbol #'delete-if-exists-tool
     {:symbol 'delete-if-exists
+     :before-fn (path-protected-before-fn :v/delete-if-exists :path :write first-arg-paths)
      :tag :mutation
      :render-fn channel-render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
@@ -2369,6 +2609,7 @@
 (def exists?-symbol
   (vis/symbol #'exists-tool
     {:symbol 'exists?
+     :before-fn (path-protected-before-fn :v/exists? :path :read first-arg-paths)
      :tag :observation
      :render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
