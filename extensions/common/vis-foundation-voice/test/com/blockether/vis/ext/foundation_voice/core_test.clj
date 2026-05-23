@@ -190,18 +190,22 @@
                   (mapv :check-id msgs)))
         (expect (every? #(= :info (:level %)) msgs)))))
 
-  (it "defers TUI voice input namespace until the channel contribution is invoked"
-    (let [contribution (first (get-in voice/voice-extension
-                                [:ext/channel-contributions :tui.slot/commands]))
-          calls (atom [])]
+  (it "defers voice input namespace until the /voice slash run-fn fires (K10)"
+    ;; The declarative `/voice` slash spec lazily requiring-resolves
+    ;; `toggle-recording!` from the input ns so the host doesn't pay
+    ;; the audio stack cost until the user actually toggles voice.
+    (let [voice-slash (first (filter #(= "voice" (:slash/name %))
+                               (:ext/slash-commands voice/voice-extension)))
+          calls       (atom [])]
       (with-redefs [clojure.core/requiring-resolve
                     (fn [sym]
                       (swap! calls conj sym)
-                      (expect (= 'com.blockether.vis.ext.foundation-voice.input/tui-commands sym))
+                      (expect (= 'com.blockether.vis.ext.foundation-voice.input/toggle-recording! sym))
                       (fn [ctx]
-                        [{:id :test/voice-command
-                          :ctx ctx}]))]
-        (expect (= [{:id :test/voice-command
-                     :ctx {:source :test}}]
-                  ((:fn contribution) {:source :test})))
-        (expect (= ['com.blockether.vis.ext.foundation-voice.input/tui-commands] @calls))))))
+                        (swap! calls conj [:invoked ctx])
+                        :toggled))]
+        (let [result ((:slash/run-fn voice-slash) {:source :test})]
+          (expect (= :ok (:slash/status result)))
+          (expect (= [:invoked {:source :test}] (last @calls)))
+          (expect (= 'com.blockether.vis.ext.foundation-voice.input/toggle-recording!
+                    (first @calls))))))))
