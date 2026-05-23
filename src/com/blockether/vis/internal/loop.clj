@@ -594,23 +594,20 @@
         tool-counts  (atom {})
         ;; UI cancellation hard-cancels the SCI worker.
         ;;
-        ;; `cancel-atom` flips to `true` when the user fires
-        ;; `vis/cancel!` (Esc / Ctrl+C). The outer turn future is
-        ;; interrupted in `cancellation/cancel!` but THAT only unblocks
-        ;; the surrounding `deref`; the inner SCI worker keeps running
-        ;; (a tight `(loop [] (recur))` in user code, a blocking
-        ;; tool call, or a long CPU step). Until SCI exits the JVM is
-        ;; pinned to that thread and the TUI input loop starves — the
-        ;; user CANNOT cancel because the keystroke handler never gets
-        ;; CPU back.
+        ;; When the user fires `vis/cancel!` (Esc / Ctrl+C) the outer
+        ;; turn future is interrupted, but the inner SCI worker would
+        ;; otherwise keep spinning in user code (tight CPU loop,
+        ;; blocking tool call, …) until the eval timeout. While it
+        ;; runs the JVM has a thread pinned to it and the TUI input
+        ;; loop starves — the user CANNOT cancel because the keystroke
+        ;; handler never gets CPU back.
         ;;
-        ;; A cooperative `cancel-atom` check inside SCI is not enough
-        ;; either: by definition the bad form does not return to a
-        ;; checkpoint. The only correct fix is a hard `.cancel(true)`
-        ;; on the SCI future driven by the same flag the UI
-        ;; already flips. We add that watch BELOW (after `exec-future`
-        ;; is bound) and remove it in the `finally` of the deref.
-        cancel-atom  (:cancel-atom env)
+        ;; The cancellation TOKEN carries a callback registry
+        ;; (`cancellation/on-cancel!`). Below, right after the
+        ;; `exec-future` is built, we register a thunk that calls
+        ;; `.cancel(true)` on it. `cancel!` then fans out to every
+        ;; registered worker without per-consumer atom-watch plumbing.
+        cancel-token (:cancel-token env)
         ;; Per-top-level-form cursor pointer. Multi-form fences need the
         ;; turn-state-atom's :form-idx (used by `(done …)` to
         ;; stamp answer-atom :position, by cursor-snapshot to compute
@@ -743,29 +740,17 @@
                                         (catch Throwable _
                                           {:message (or (ex-message e)
                                                       (.getName (class e)))}))}))))
-        ;; Wire the UI cancel flag to a hard `.cancel(true)` on the SCI
-        ;; future. Watch fires on the `swap!` thread that flipped the
-        ;; flag (typically the TUI input thread under `vis/cancel!`),
-        ;; so the worker is interrupted instantly even if SCI is in a
-        ;; tight CPU loop with no iteration boundary to check.
-        ;;
-        ;; Three races to handle:
-        ;;   1. atom flips AFTER the watch is installed — watch fires,
-        ;;      cancel propagates.
-        ;;   2. atom is ALREADY true when we install — watch never fires.
-        ;;      Defensive eager check below covers this.
-        ;;   3. atom flips AFTER the deref returns — watch removed in
-        ;;      `finally`, no leak.
-        watch-key   (when cancel-atom [::sci-cancel exec-future])
-        _           (when cancel-atom
-                      (add-watch cancel-atom watch-key
-                        (fn [_ _ _ new-val]
-                          (when new-val
-                            (try (.cancel ^java.util.concurrent.Future exec-future true)
-                              (catch Throwable _ nil))))))
-        _           (when (and cancel-atom @cancel-atom)
-                      (try (.cancel ^java.util.concurrent.Future exec-future true)
-                        (catch Throwable _ nil)))
+        ;; Register the SCI worker on the cancellation token. `cancel!`
+        ;; will call this thunk and hard-cancel the future even if SCI
+        ;; is mid-form with no iteration boundary to check. `on-cancel!`
+        ;; also handles the race where the token was ALREADY cancelled
+        ;; before we registered — the thunk fires synchronously and
+        ;; returns a no-op disposer.
+        dispose-cancel-hook (when cancel-token
+                              (cancellation/on-cancel! cancel-token
+                                (fn []
+                                  (try (.cancel ^java.util.concurrent.Future exec-future true)
+                                    (catch Throwable _ nil)))))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
@@ -786,9 +771,8 @@
                                            {:message (or (ex-message e)
                                                        (.getName (class e)))}))})
                            (finally
-                             (when watch-key
-                               (try (remove-watch cancel-atom watch-key)
-                                 (catch Throwable _ nil)))))]
+                             (when dispose-cancel-hook
+                               (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
     ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
     ;; the eval succeeded; on exception/timeout, set `*e` without
     ;; advancing the value stack (the form produced no value).
@@ -3034,22 +3018,25 @@
            ;; `max-context-tokens` feeds advisory context-pressure hooks;
            ;; trailer assembly itself still owns no token trimming.
            max-context-tokens
-           hooks cancel-atom
+           hooks cancel-atom cancel-token
            reasoning-default routing extra-body turn-features allow-copilot-claude-deep?
            workspace-overrides]}]
   (let [environment (cond-> environment
                       (seq turn-features) (assoc :turn/features turn-features)
                       (seq workspace-overrides) (merge workspace-overrides)
-                      ;; Surface the cancel-atom on the environment so
-                      ;; `run-sci-code` can install a hard-cancel watch
-                      ;; on the SCI worker future. Without this the UI
-                      ;; cancel flag (already flipped by `vis/cancel!`)
-                      ;; only reaches the outer turn future; the inner
-                      ;; SCI worker keeps spinning, pins a thread and
-                      ;; starves the input loop until the timeout
-                      ;; fires — the exact "TUI unresponsive" symptom
-                      ;; the user hit in session 11d4f817.
-                      cancel-atom (assoc :cancel-atom cancel-atom))
+                      ;; Surface the cancellation token on the environment
+                      ;; so `run-sci-code` can call
+                      ;; `cancellation/on-cancel!` to register a hard
+                      ;; `.cancel(true)` on the SCI worker future.
+                      ;; Without this the UI cancel flag (already flipped
+                      ;; by `vis/cancel!`) only reaches the outer turn
+                      ;; future; the inner SCI worker keeps spinning,
+                      ;; pins a thread and starves the input loop until
+                      ;; the eval timeout fires — the exact "TUI
+                      ;; unresponsive" symptom the user hit in session
+                      ;; 11d4f817.
+                      cancel-token (assoc :cancel-token cancel-token)
+                      cancel-atom  (assoc :cancel-atom  cancel-atom))
         resolved-model (resolve-effective-model (:router environment))
         effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
@@ -4120,7 +4107,7 @@
   [env messages opts]
   (let [{:keys [spec model
                 max-context-tokens
-                system-prompt debug? hooks cancel-atom eval-timeout-ms
+                system-prompt debug? hooks cancel-atom cancel-token eval-timeout-ms
                 reasoning-default routing extra-body]
          :or   {debug? false}} opts]
     (when-not (:db-info env)
@@ -4133,7 +4120,19 @@
         {:type     :vis/invalid-eval-timeout
          :got      eval-timeout-ms
          :got-type (type eval-timeout-ms)}))
-    (let [cancel-atom            (or cancel-atom (atom false))
+    (let [;; Prefer a full cancellation TOKEN (carries the cooperative
+          ;; flag AND the on-cancel! callback registry that hard-cancels
+          ;; SCI / provider futures). Legacy callers that only ship a
+          ;; raw atom keep working: synthesize a token wrapping that atom
+          ;; so the downstream API stays uniform. New callers create the
+          ;; token via `cancellation/cancellation-token` and pass it as
+          ;; `:cancel-token`.
+          cancel-token           (or cancel-token
+                                   (when cancel-atom
+                                     {::cancellation/flag      cancel-atom
+                                      ::cancellation/callbacks (atom [])})
+                                   (cancellation/cancellation-token))
+          cancel-atom            (cancellation/cancellation-atom cancel-token)
           ;; `user-request` = ONLY the current turn's user message.
           ;;
           ;; Prior behavior joined every message's :content (including
@@ -4191,7 +4190,8 @@
           environment            (cond-> env
                                    (seq workspace-overrides) (merge workspace-overrides))
           environment-id         (:environment-id env)]
-      {:cancel-atom            cancel-atom
+      {:cancel-token           cancel-token
+       :cancel-atom            cancel-atom
        :user-request           user-request
        :router                 env-router
        :root-resolved-model    root-resolved-model
@@ -4222,7 +4222,7 @@
    Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
   [{:keys [environment user-request spec
            max-context-tokens system-prompt
-           hooks cancel-atom
+           hooks cancel-atom cancel-token
            reasoning-default routing extra-body turn-features workspace-overrides]}]
   (let [iteration-result (run-turn! environment user-request
                            (cond-> {:output-spec            spec
@@ -4230,7 +4230,8 @@
                                     :system-prompt          system-prompt
                                     :reasoning-default      reasoning-default
                                     :hooks                  hooks
-                                    :cancel-atom            cancel-atom}
+                                    :cancel-atom            cancel-atom
+                                    :cancel-token           cancel-token}
                              routing       (assoc :routing routing)
                              extra-body    (assoc :extra-body extra-body)
                              turn-features (assoc :turn-features turn-features)

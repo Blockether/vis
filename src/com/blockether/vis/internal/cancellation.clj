@@ -80,42 +80,88 @@
        (isRealized [_] (.isDone task))))))
 
 (defn cancellation-token
-  "Construct a fresh cancellation token. The token wraps a cooperative
-   flag (`:cancel-atom` of `turn!`) and a worker `Future` reference so
-   a hard `(.cancel f true)` can interrupt a blocking provider call."
+  "Construct a fresh cancellation token.
+
+   The token bundles two things every cancellable boundary needs:
+     - `::flag`      — cooperative boolean atom, polled at iteration
+                        boundaries by callers that can return
+                        gracefully.
+     - `::callbacks` — vec of `[id thunk]` pairs run by `cancel!` so
+                        any number of in-flight workers (provider
+                        HTTP call, SCI eval future, voice recorder)
+                        can register their own hard-cancel hook.
+
+   `cancellation-set-future!` (legacy single-future API) is kept for
+   call sites that have not migrated yet; it now routes through the
+   callback registry too so behaviour stays identical."
   []
-  {::flag   (atom false)
-   ::future (atom nil)})
+  {::flag      (atom false)
+   ::callbacks (atom [])})
 
 (defn cancellation-atom
-  "Cooperative flag atom - pass under `:cancel-atom` to `turn!`."
+  "Cooperative flag atom — read with `@` at iteration boundaries when
+   the consumer can return without external help."
   [token]
   (::flag token))
-
-(defn cancellation-set-future!
-  "Register the worker `Future` so a hard cancel can interrupt it.
-   Returns the future for convenient threading."
-  [token fut]
-  (reset! (::future token) fut)
-  fut)
-
-(defn cancel!
-  "Abort the in-flight turn. Sets the cooperative flag AND interrupts
-   the registered future (if any). Safe to call multiple times. Safe
-   to call when no future has been registered yet - only the flag is
-   flipped in that case, and the cooperative path will still pick it
-   up at the next iteration boundary."
-  [token]
-  (when token
-    (try (reset! (::flag token) true) (catch Throwable _ nil))
-    (when-let [^java.util.concurrent.Future f (some-> (::future token) deref)]
-      (try (.cancel f true) (catch Throwable _ nil))))
-  nil)
 
 (defn cancelled?
   "True once `cancel!` has been called on this token."
   [token]
   (boolean (some-> token ::flag deref)))
+
+(defn on-cancel!
+  "Register a no-arg `thunk` to fire the moment `cancel!` is invoked
+   on `token`. Returns a `dispose!` thunk the caller MUST invoke when
+   the cancellable work finishes normally — otherwise callbacks
+   accumulate for the token's lifetime.
+
+   If `cancel!` has already fired on this token, `thunk` runs
+   synchronously here and `dispose!` is a no-op. This matches the
+   contract every consumer wants: registering AFTER cancellation
+   must still cancel, not silently swallow the request.
+
+   Replaces the atom-watch pattern earlier eval boundaries hand-rolled:
+   one shared callback list, no per-consumer add-watch / remove-watch
+   plumbing, no risk of leaving a watch on the flag after the worker
+   finishes."
+  [token thunk]
+  (when (and token (fn? thunk))
+    (if (cancelled? token)
+      (do (try (thunk) (catch Throwable _ nil))
+        (constantly nil))
+      (let [cb-id    (Object.) ; identity key; survives equal-by-value collisions
+            callbacks (::callbacks token)]
+        (swap! callbacks conj [cb-id thunk])
+        (fn dispose! []
+          (swap! callbacks
+            (fn [cbs] (vec (remove #(identical? cb-id (first %)) cbs)))))))))
+
+(defn cancellation-set-future!
+  "Register a worker `Future` so `cancel!` interrupts it. Thin
+   convenience over `on-cancel!`: wraps `.cancel(true)` in a thunk
+   and discards the returned `dispose!` (the future's own completion
+   makes the second cancel a no-op).
+
+   Returns the future for convenient threading."
+  [token ^java.util.concurrent.Future fut]
+  (when (and token fut)
+    (on-cancel! token
+      (fn [] (try (.cancel fut true) (catch Throwable _ nil)))))
+  fut)
+
+(defn cancel!
+  "Abort the in-flight turn. Flips the cooperative flag AND runs every
+   registered `on-cancel!` callback. Each callback is wrapped in its
+   own `try`/`catch` so one bad consumer cannot starve the rest.
+   Safe to call multiple times — on the second call the flag is
+   already set, and the callback list has typically drained because
+   workers disposed themselves."
+  [token]
+  (when token
+    (try (reset! (::flag token) true) (catch Throwable _ nil))
+    (doseq [[_ thunk] @(::callbacks token)]
+      (try (thunk) (catch Throwable _ nil))))
+  nil)
 
 (defn ^:private cancellation-cause?
   "Walk an exception's cause chain looking for an `InterruptedException`.

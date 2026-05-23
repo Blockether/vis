@@ -1461,7 +1461,14 @@
                             {:on-update progress-update!})
                           result (chat/turn! session text
                                    {:on-chunk          on-chunk
-                                    :cancel-atom       (vis/cancellation-atom token)
+                                    ;; Pass the cancellation TOKEN, not the
+                                    ;; bare atom: the loop registers SCI /
+                                    ;; provider workers with the token's
+                                    ;; `on-cancel!` callback registry so
+                                    ;; `vis/cancel!` hard-cancels them all
+                                    ;; at once instead of waiting on each
+                                    ;; one's eval-timeout.
+                                    :cancel-token      token
                                     :reasoning-default reasoning-level
                                     :extra-body        extra-body
                                     :turn-features     turn-features
