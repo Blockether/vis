@@ -144,6 +144,43 @@
           (assoc c :engine/warnings [])))
       @ws)))
 
+(defn apply-done!
+  "Side-effecting wrapper around `eng/apply-done`. When the model's
+   `(done {…})` payload carries `:trailer-drop` or `:trailer-summarize`,
+   stamp a fresh cursor, run the engine, swap! the result onto ctx-atom,
+   and append any conflict warnings to `:engine/warnings`. No-op when
+   neither directive is present — keeps the call site flat.
+
+   Returns the dropped/summarised intent map for logging."
+  [{:keys [ctx-atom] :as env} {:keys [trailer-drop trailer-summarize]}]
+  (let [has-drops?     (seq trailer-drop)
+        has-summaries? (seq trailer-summarize)
+        active?        (and ctx-atom (or has-drops? has-summaries?))]
+    (when active?
+      (let [start-ms (System/nanoTime)
+            cursor   (cursor-snapshot env)
+            scope    (synthesize-scope env)
+            warns    (atom [])]
+        (swap! ctx-atom
+          (fn [c]
+            (let [c+cur (assoc c :session/scope cursor)
+                  {ctx' :ctx ws :warnings}
+                  (eng/apply-done c+cur scope
+                    {:trailer-drop trailer-drop
+                     :trailer-summarize trailer-summarize})]
+              (reset! warns (vec ws))
+              (cond-> (dissoc ctx' :session/scope)
+                (seq ws) (update :engine/warnings (fnil into []) ws)))))
+        (tel/log! {:level :info :id ::apply-done
+                   :data {:trailer-drop trailer-drop
+                          :trailer-summarize trailer-summarize
+                          :warnings @warns
+                          :duration-ms (/ (- (System/nanoTime) start-ms) 1e6)}}
+          "apply-done completed")))
+    {:trailer-drop trailer-drop
+     :trailer-summarize trailer-summarize
+     :active? active?}))
+
 (defn reconcile-done-hook-tasks!
   "Run `eng/reconcile-done-hook-tasks` against the live ctx atom; append
    any reverted-task warnings to `:engine/warnings`. Called at end-of-
@@ -192,10 +229,44 @@
 (defn current-ctx
   "Deref the CTX atom with both `:session/turn` and `:session/scope`
    stamped from the loop counters. This is the shape passed to the
-   renderer + `derive-warnings`."
-  [env]
-  (when-let [a (:ctx-atom env)]
-    (stamp-cursor env @a)))
+   renderer + `derive-warnings`. Returns nil when ctx-atom is missing
+   on env (defensive for partial test envs)."
+  [{:keys [ctx-atom] :as env}]
+  (when ctx-atom (stamp-cursor env @ctx-atom)))
+
+(defn trailer->form-results
+  "Flatten every trailer pin's :forms vec into a `{scope envelope}` map.
+   Used at render time so engine's `classify-scope` and validator-fn pass
+   can look up per-form `:result` / `:error` for any scope the model
+   references on a task proof."
+  [trailer]
+  (into {}
+    (for [entry trailer
+          :when (some? (:forms entry))
+          form  (:forms entry)
+          :when (and (some? form) (some? (:scope form)))]
+      [(:scope form) form])))
+
+(defn render-block!
+  "Build the `;; ctx` block for the next user message. Pure data flow,
+   single side effect (drain-warnings!) at the start. Returns the
+   rendered string, or nil when ctx-atom is missing on env.
+
+   Flow:
+     deref ctx-atom → stamp cursor → build form-results map from trailer
+     → build indexes → derive progression → drain mutator warnings +
+     derive render-time warnings → derive next-actions → call renderer."
+  [env renderer-fn]
+  (when-let [ctx (current-ctx env)]
+    (let [fr             (trailer->form-results (:session/trailer ctx))
+          idx            (eng/build-indexes ctx)
+          prog           (eng/derive-progression ctx idx fr)
+          drained-warns  (drain-warnings! env)
+          derived-warns  (eng/derive-warnings ctx idx fr)
+          warns          (vec (concat drained-warns derived-warns))
+          acts           (eng/derive-next-actions ctx idx prog)]
+      (renderer-fn {:ctx ctx :warnings warns
+                    :progression prog :next-actions acts}))))
 
 ;; =============================================================================
 ;; Introspect verbs — model-facing SCI bindings over engine history helpers
@@ -241,20 +312,3 @@
                                       (number? turn-key) (long turn-key)
                                       :else nil)]
                               (when t (eng/introspect-ctx-at (history) t))))}))
-
-;; =============================================================================
-;; Trailer → form-results map for engine renderer
-;; =============================================================================
-
-(defn trailer->form-results
-  "Flatten every trailer pin's :forms vec into a `{scope envelope}` map.
-   Used at render time so engine's `classify-scope` and validator-fn pass
-   can look up per-form `:result` / `:error` for any scope the model
-   references on a task proof."
-  [trailer]
-  (into {}
-    (for [entry trailer
-          :when (some? (:forms entry))
-          form  (:forms entry)
-          :when (and (some? form) (some? (:scope form)))]
-      [(:scope form) form])))
