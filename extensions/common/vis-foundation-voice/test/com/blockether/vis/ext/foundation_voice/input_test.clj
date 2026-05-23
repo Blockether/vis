@@ -16,9 +16,14 @@
     (let [slashes (:ext/slash-commands core/voice-extension)]
       (expect (some #(= "voice" (:slash/name %)) slashes))
       (let [voice-slash (first (filter #(= "voice" (:slash/name %)) slashes))]
+        ;; PLAN.md §12 step 9 follow-up: voice-ext /voice is now TUI-only;
+        ;; the Telegram /voice (with inline-keyboard mode picker) is
+        ;; registered separately by vis-channel-telegram. Per-channel
+        ;; partitioning is what lets both extensions own the same
+        ;; slash path without colliding at register time.
         (expect (= #{:channel} (:slash/requires voice-slash)))
         (expect (true?  ((:slash/availability-fn voice-slash) {:channel/id :tui})))
-        (expect (true?  ((:slash/availability-fn voice-slash) {:channel/id :telegram})))
+        (expect (false? ((:slash/availability-fn voice-slash) {:channel/id :telegram})))
         (expect (false? ((:slash/availability-fn voice-slash) {:channel/id :web})))
         (expect (ifn?   (:slash/run-fn voice-slash)))))
     ;; Voice extension no longer contributes a TUI-only commands slot.

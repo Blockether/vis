@@ -24,6 +24,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.repl :as repl]
+   [clojure.set :as set]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
@@ -2088,25 +2089,43 @@
     ;; PLAN.md §3: slash paths must be unique across the union of
     ;; `:ext/slash-commands` from every active extension. Reject
     ;; registration when this extension declares a `[parent name]`
-    ;; that any OTHER currently-registered extension already owns.
-    ;; The same ns re-registering itself (hot reload) is allowed:
-    ;; its prior entry is excluded from the conflict scan.
-    (when-let [new-paths (seq (map slash-path (:ext/slash-commands ext)))]
-      (let [own-paths (set new-paths)
-            collisions (for [[other-ns other-ext] @extension-registry
-                             :when (not= other-ns ns-sym)
-                             other-slash (:ext/slash-commands other-ext)
-                             :let  [p (slash-path other-slash)]
-                             :when (contains? own-paths p)]
-                         {:path p :other-ext other-ns})]
-        (when (seq collisions)
-          (throw (ex-info (str "Slash path collision while registering '" ns-sym "': "
-                            (str/join ", "
-                              (for [{:keys [path other-ext]} collisions]
-                                (str (pr-str path) " already owned by " other-ext))))
-                   {:type        :extension/slash-path-collision
-                    :ext         ns-sym
-                    :collisions  (vec collisions)})))))
+    ;; that any OTHER currently-registered extension already owns
+    ;; AND whose `:slash/availability-fn` intersects on the known
+    ;; channel set. Two specs with the same path but DISJOINT
+    ;; channel availability (e.g. TUI `/voice` vs Telegram `/voice`)
+    ;; do not collide — the dispatcher resolves them via
+    ;; per-channel availability at runtime.
+    (let [known-channels [:tui :telegram :web :discord :cli :repl :slack]
+          slash-channels (fn [spec]
+                           (if-let [f (:slash/availability-fn spec)]
+                             (set (filter (fn [ch]
+                                            (try (boolean (f {:channel/id ch}))
+                                              (catch Throwable _ false)))
+                                    known-channels))
+                             (set known-channels)))
+          new-by-path    (reduce (fn [m spec]
+                                   (assoc m (slash-path spec) spec))
+                           {} (:ext/slash-commands ext))]
+      (when (seq new-by-path)
+        (let [collisions
+              (for [[other-ns other-ext] @extension-registry
+                    :when (not= other-ns ns-sym)
+                    other-slash (:ext/slash-commands other-ext)
+                    :let  [p (slash-path other-slash)
+                           new-spec (get new-by-path p)]
+                    :when (and new-spec
+                            (seq (set/intersection
+                                   (slash-channels new-spec)
+                                   (slash-channels other-slash))))]
+                {:path p :other-ext other-ns})]
+          (when (seq collisions)
+            (throw (ex-info (str "Slash path collision while registering '" ns-sym "': "
+                              (str/join ", "
+                                (for [{:keys [path other-ext]} collisions]
+                                  (str (pr-str path) " already owned by " other-ext))))
+                     {:type        :extension/slash-path-collision
+                      :ext         ns-sym
+                      :collisions  (vec collisions)}))))))
     (when-not (contains? @extension-registry ns-sym)
       (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
