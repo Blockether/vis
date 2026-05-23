@@ -125,6 +125,34 @@
       (.getBranch (.getRepository git)))
     (catch Throwable _ nil)))
 
+(defn detect-trunk-branch
+  "Discover the repo's default trunk branch (PLAN.md §2). Order:
+     1. `origin/HEAD` symbolic-ref — most reliable, follows the
+        repo's published default (set via `git remote set-head origin
+        --auto` or by clone).
+     2. local `main` branch existence.
+     3. local `master` branch existence.
+     4. `current-branch` — degenerate fallback for lone-branch repos
+        with no remote tracking.
+   Returns a plain branch name with no `refs/` prefix.
+
+   Behaviour change vs the previous `(current-branch repo-root)`
+   trunk inference: a session spawned while user is on `feat/foo`
+   now correctly pins the trunk-kind workspace to `main` (or
+   whatever origin/HEAD points at), not `feat/foo`. Existing trunk
+   rows keep their stored `:branch` field; only new rows pick up
+   the corrected logic."
+  [repo-root]
+  (or (try
+        (some-> (git! repo-root ["symbolic-ref" "--short" "refs/remotes/origin/HEAD"])
+          str/trim
+          (str/replace #"^origin/" "")
+          not-empty)
+        (catch Throwable _ nil))
+    (when (local-branch-exists? repo-root "main") "main")
+    (when (local-branch-exists? repo-root "master") "master")
+    (current-branch repo-root)))
+
 (defn- current-head [repo-root]
   (try
     (with-open [git (Git/open (io/file repo-root))]
@@ -229,6 +257,41 @@
 
 (defonce ^:private hooks (atom {:on-spawn [] :on-apply [] :on-discard []}))
 
+;; -----------------------------------------------------------------------------
+;; Per-repo locking (PLAN.md §4.7)
+;; -----------------------------------------------------------------------------
+;;
+;; Git operations that mutate refs / worktrees / the index must NOT run
+;; concurrently against the same repository, even from independent
+;; sessions on different workspaces. The shared `repo_root` is the
+;; serialization domain. `with-repo-lock` acquires an `Object` monitor
+;; keyed on `repo-id`, so:
+;;
+;;   - `(with-repo-lock "vis" …)` two sessions → second blocks until
+;;     first releases.
+;;   - `(with-repo-lock "vis" …)` + `(with-repo-lock "svar" …)` →
+;;     orthogonal; both proceed.
+;;
+;; The lock map is unbounded but bounded in practice by the number of
+;; distinct repos a Vis process touches. Entries are never evicted;
+;; cheap (one Object per repo).
+
+(defonce ^:private repo-locks (atom {}))
+
+(defn- repo-lock-for ^Object [repo-id]
+  (or (clojure.core/get @repo-locks repo-id)
+    (-> (swap! repo-locks update repo-id #(or % (Object.)))
+      (clojure.core/get repo-id))))
+
+(defmacro with-repo-lock
+  "Run `body` with the per-repo monitor held. Serializes git mutations
+   (worktree add, commit, merge, branch delete) against the same
+   repository across threads / sessions. `repo-id` is the canonical
+   sanitized id used in the workspace table."
+  [repo-id & body]
+  `(locking (repo-lock-for ~repo-id)
+     ~@body))
+
 (defn register-hook!
   "Register `hook-fn` for `hook-id` ∈ {:on-spawn :on-apply :on-discard}.
    Synchronous, post-commit; exceptions swallowed."
@@ -268,6 +331,96 @@
    states (transitional, pre-step-4); non-nil under the 1:1 invariant."
   [db-info session-state-id]
   (p/db-workspace-for-session db-info session-state-id))
+
+;; -----------------------------------------------------------------------------
+;; Label + focus + hydration (PLAN.md §4.3, §6)
+;; -----------------------------------------------------------------------------
+
+(defn set-label!
+  "Set the workspace's human-friendly `:label`. Empty string / nil
+   clears the label and reverts to the default heuristic
+   (`display-label`). Returns the updated workspace record.
+   PLAN.md §1 + §6."
+  [db-info {:keys [workspace-id label]}]
+  (let [trimmed (some-> label str clojure.string/trim not-empty)]
+    (p/db-workspace-update-label! db-info workspace-id trimmed)))
+
+(defn focus!
+  "Stamp `last_focused_at_ms` on the workspace AND upsert the per-repo
+   `repo_focus` pointer. Called whenever the user switches the active
+   tab / selects a workspace (TUI tab click, Telegram `/workspace
+   switch …`). Cheap; safe to call repeatedly. Returns the updated
+   workspace record."
+  [db-info workspace-id]
+  (when-let [ws (p/db-workspace-touch-focus! db-info workspace-id)]
+    (when (:repo-id ws)
+      (p/db-repo-focus-set! db-info (:repo-id ws) workspace-id))
+    ws))
+
+(defn last-focused
+  "Return the workspace id from `repo_focus` for `repo-id`, or nil.
+   Used by the TUI tab-restore on startup and by Telegram's switcher
+   as the default landing for `/workspace switch` without an arg."
+  [db-info repo-id]
+  (some-> (p/db-repo-focus-get db-info repo-id) :workspace-id))
+
+(defn display-label
+  "Return the human-facing label for `workspace`. Order:
+     1. `:label` field when set (model / user explicit override).
+     2. The pinned session's `title` when present.
+     3. The branch name (sans `vis/` prefix for branch-kind).
+     4. Final fallback: the workspace id's leading 8 chars.
+
+   `session` is optional; the caller passes it when already hydrated.
+   When nil and the workspace has a pin, the fn fetches the session
+   itself (defensive)."
+  ([workspace]
+   (display-label nil workspace nil))
+  ([db-info workspace session]
+   (let [strip-branch #(some-> % (clojure.string/replace #"^vis/" ""))
+         hydrated     (or session
+                        (when (and db-info (:id workspace))
+                          (some->> (:id workspace)
+                            (p/db-session-state-list-for-workspace db-info)
+                            first)))]
+     (or (some-> (:label workspace) clojure.string/trim not-empty)
+       (some-> hydrated :title clojure.string/trim not-empty)
+       (case (:kind workspace)
+         :branch (strip-branch (:branch workspace))
+         :trunk  (:branch workspace)
+         nil)
+       (some-> (:id workspace) str (subs 0 (min 8 (count (str (:id workspace))))))))))
+
+(defn workspace-with-session
+  "Hydrate `workspace-id` with its pinned `session_state`. Returns
+   `{:workspace <ws> :session-state <ss>}` (single fetch; channel
+   layer never N+1s). `:session-state` is nil for unpinned workspaces."
+  [db-info workspace-id]
+  (when-let [ws (p/db-workspace-get db-info workspace-id)]
+    {:workspace     ws
+     :session-state (some->> workspace-id
+                      (p/db-session-state-list-for-workspace db-info)
+                      first)}))
+
+(defn list-active-with-sessions
+  "Like `list-active` but each entry is the `{:workspace :session-state}`
+   pair already hydrated. Sorted by `last_focused_at_ms` DESC NULLS
+   LAST, then `created_at` DESC. Drives the TUI strip + Telegram
+   switcher (PLAN.md §9, §10)."
+  [db-info repo-id]
+  (let [rows (list-active db-info repo-id)
+        ;; Compare by [recency-bucket created-at] descending. NULLS
+        ;; last via Long/MIN_VALUE sentinel.
+        cmp  (fn [a b]
+               (let [recency-of #(or (:last-focused-at-ms %) Long/MIN_VALUE)
+                     ra (recency-of a) rb (recency-of b)]
+                 (cond
+                   (not= ra rb) (compare rb ra)
+                   :else        (compare (str (:created-at b)) (str (:created-at a))))))]
+    (mapv (fn [ws]
+            (let [pair (workspace-with-session db-info (:id ws))]
+              (assoc pair :workspace ws)))
+      (sort cmp rows))))
 
 (defn status
   "Enrich a workspace record with live VCS status. Stamps both the
@@ -329,7 +482,10 @@
   [db-info {:keys [session-state-id]}]
   (or (for-session db-info session-state-id)
     (let [repo-root (discover-repo-root)
-          branch    (current-branch repo-root)
+          ;; PLAN.md §2: pin trunk-kind workspace to the repo's
+          ;; published default (origin/HEAD → main → master → current)
+          ;; instead of whatever branch the user happens to be on.
+          branch    (detect-trunk-branch repo-root)
           ws (p/db-workspace-insert! db-info
                {:repo-id   (repo-id-for repo-root)
                 :repo-root repo-root

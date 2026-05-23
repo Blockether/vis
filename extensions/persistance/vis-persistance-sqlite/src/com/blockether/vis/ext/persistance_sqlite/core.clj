@@ -717,6 +717,29 @@
            :join   [[:workspace :w] [:= :w.id :s.workspace_id]]
            :where  [:= :s.id sid]})))))
 
+(defn db-session-state-list-for-workspace
+  "List session_state rows whose `workspace_id` = `workspace-id`,
+   newest first. The 1:1 invariant guarantees at most one ACTIVE row
+   per workspace, but historical version rows (from forks) may exist
+   so the projection is a vec, not a single row. Returns canonical
+   `{:id :session-soul-id :title :version :created-at …}` shape."
+  [db-info workspace-id]
+  (when (and (ds db-info) workspace-id)
+    (let [ws-id (->ref workspace-id)]
+      (mapv
+        (fn [r]
+          {:id               (->uuid (:id r))
+           :session-soul-id  (->uuid (:session_soul_id r))
+           :title            (:title r)
+           :version          (:version r)
+           :workspace-id     (->uuid (:workspace_id r))
+           :created-at       (->date (:created_at r))})
+        (query! db-info
+          {:select   [:*]
+           :from     :session_state
+           :where    [:= :workspace_id ws-id]
+           :order-by [[:version :desc]]})))))
+
 (defn db-session-state-set-workspace!
   "Pin `session-state-id` to `workspace-id`. Caller guarantees the
    target session_state row exists and has no other workspace pinned
