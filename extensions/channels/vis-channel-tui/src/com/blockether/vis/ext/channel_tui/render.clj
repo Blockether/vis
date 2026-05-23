@@ -3525,9 +3525,15 @@
         ;; thinking trailing pad keeps its gray stripe and the code
         ;; block keeps its own code-bg top pad, so the boundary paints
         ;; as thinking-bg blank + code-bg blank with no neutral seam.
-        body (if (and direct-thinking-code? outer-iter-pad-top?)
-               (vec (rest body))
-               body)]
+        ;; Previously we trimmed the outer iter-pad blank when thinking
+        ;; was immediately followed by a code body, on the theory that
+        ;; thinking's trailing pad already gave the boundary a single
+        ;; visible seam. In practice this made iteration badges glued to
+        ;; thinking look flush, while badges that follow a CODE BLOCK kept
+        ;; the wider `result-margin` breathing row — visibly asymmetric.
+        ;; Keep the outer iter-pad here so thinking→badge and code→badge
+        ;; transitions share the same 1-row margin.
+        body body]
     ;; Layout: header (with optional ITERATION-N label) + recap lines
     ;; (which already include provider-fallback notices and any
     ;; provider-error recap) + collected thinking lines + any error

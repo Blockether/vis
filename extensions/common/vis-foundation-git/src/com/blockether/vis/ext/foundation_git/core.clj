@@ -13,6 +13,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-git.merge-ops :as merge-ops]
    [com.blockether.vis.ext.foundation-git.render :as gr]
+   [com.blockether.vis.ext.foundation-git.write-ops :as write-ops]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git-core]))
 
@@ -362,7 +363,8 @@
   ;; structured exceptions for the model to read).
   (vec (concat
          [diff-symbol status-symbol log-symbol show-symbol blame-symbol]
-         merge-ops/merge-ops-symbols)))
+         merge-ops/merge-ops-symbols
+         write-ops/write-ops-symbols)))
 
 ;; =============================================================================
 ;; Extension manifest
