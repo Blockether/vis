@@ -61,4 +61,27 @@
                  :source "(def named \"docstring\" (v/cat \"x.clj\"))"
                  :hidden? true}]
               (render/parse-block-display
-                "(def named \"docstring\" (v/cat \"x.clj\"))")))))
+                "(def named \"docstring\" (v/cat \"x.clj\"))"))))
+
+  (it "hides bare qualified tool calls so the result pane speaks for itself"
+    (expect (= [{:kind :code
+                 :source "(v/cat \"src/foo.clj\")"
+                 :hidden? true}]
+              (render/parse-block-display "(v/cat \"src/foo.clj\")"))))
+
+  (it "keeps non-namespaced engine forms visible"
+    (expect (= [{:kind :code :source "(spec-set! :K {:title \"x\"})"}]
+              (render/parse-block-display "(spec-set! :K {:title \"x\"})"))))
+
+  (it "coalesces neighboring hidden tool calls into one hidden segment"
+    (let [out (render/parse-block-display
+                "(v/cat \"a.clj\")\n(v/cat \"b.clj\")")]
+      (expect (= 1 (count out)))
+      (expect (true? (-> out first :hidden?)))))
+
+  (it "keeps visible code and hidden tool calls in separate segments"
+    (let [out (render/parse-block-display
+                "(def x 1)\n(v/cat \"a.clj\")")]
+      (expect (= 2 (count out)))
+      (expect (nil? (-> out first :hidden?)))
+      (expect (true? (-> out second :hidden?))))))

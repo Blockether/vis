@@ -1184,6 +1184,15 @@
       :code)
     :code))
 
+(defn- qualified-tool-call-form?
+  "True when `form` is `(qualified/sym args...)` — a direct extension tool
+   call at the top level. Pi-style rendering pairs the call header with
+   the tool result pane; the raw source row is redundant noise."
+  [form]
+  (and (seq? form)
+    (symbol? (first form))
+    (some? (namespace (first form)))))
+
 (defn- def-tool-call-form?
   "True when `form` is `(def NAME (qualified/call ...))` — a model-authored
    binding around an extension tool call. The channel hides the def source
@@ -1203,6 +1212,14 @@
       (and (seq? init)
         (symbol? (first init))
         (some? (namespace (first init)))))))
+
+(defn- hidden-code-form?
+  "Composite predicate: form should render with `:hidden? true` so the
+   channel collapses the raw source row. Covers both bare tool calls
+   (`(v/cat …)`) and def-wrapped tool calls (`(def x (v/cat …))`)."
+  [form]
+  (or (def-tool-call-form? form)
+    (qualified-tool-call-form? form)))
 
 (defn- form-bounds-by-meta
   "Build a parallel vector of {:start :end} byte offsets for each form by
@@ -1299,7 +1316,7 @@
                                                :value (title-value-from-form form)}]
                                  :code
                                  [(cond-> {:kind :code :source (str/trim slice)}
-                                    (def-tool-call-form? form) (assoc :hidden? true))])))
+                                    (hidden-code-form? form) (assoc :hidden? true))])))
                            (map-indexed vector forms)))
                 ;; Coalesce consecutive :code segments. The bounds-based slice
                 ;; for the LATER code form already includes the gap from the

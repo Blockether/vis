@@ -203,13 +203,86 @@
             (str " :validated? " (boolean (:validated? t))))))
       unresolved)))
 
+;; ---------------------------------------------------------------------------
+;; Trailer pins — render :src verbatim, NOT as a Clojure-escaped string.
+;;
+;; Why: the trailer's :src field holds the model's prior form source as a
+;; plain string. When the whole pin is zp'd, that string round-trips through
+;; Clojure's print-method and the inner quote chars become `\"`. The model
+;; reads the rendered trailer as informational text (CTX is NOT re-parsed
+;; back into EDN — see ns docstring), then copy-pastes the visible source
+;; into the next iter. With `\"` in the rendered text, the model copies the
+;; literal backslash + quote and emits invalid Clojure (`(str \" / \")`),
+;; producing EOF-quote / unbalanced-quote errors at the very next iter.
+;;
+;; Fix: render each form's :src as a raw code block annotation (multi-line
+;; comment with verbatim source — no escaping), and emit the form map with
+;; :src omitted. Tag + result + error stay machine-shaped. The trailer is
+;; presentation surface only, so dropping pure-EDN parseability is safe.
+;; ---------------------------------------------------------------------------
+
+(defn- src-lines-as-block
+  "Render `src` as a multi-line block whose lines are prefixed with `;;   `,
+   preceded by a `;; src <scope> (<tag>):` header. `src` may be multi-line
+   or even the literal `<unparseable trailing form>` marker — printed as-is
+   with zero quote-escaping."
+  [scope tag src indent]
+  (let [prefix (pad indent)
+        text   (or src "")
+        lines  (str/split-lines text)
+        lines  (if (seq lines) lines [""])]
+    (str prefix ";; src " scope " (" (name (or tag :form)) "):\n"
+      (str/join "\n"
+        (map #(str prefix ";;   " %) lines)))))
+
+(defn- render-form-pin
+  "Render one `:forms` entry: verbatim src block, then the form map with
+   `:src` stripped (since the block carries the source unescaped)."
+  [form indent]
+  (let [no-src    (dissoc form :src)
+        map-text  (zp no-src)
+        map-line  (str (pad indent) (indent-rest map-text indent))]
+    (str (src-lines-as-block (:scope form) (:tag form) (:src form) indent)
+      "\n" map-line)))
+
+(defn- render-trailer-pin
+  "Render one top-level trailer entry. Summary pins (carry `:summary`) zp
+   straight through — their text has no `:src` field. Form pins
+   (`:forms` vec) are rendered with `render-form-pin` per envelope so the
+   raw source survives unescaped."
+  [pin indent]
+  (cond
+    ;; summary pin — no :src, safe to zp directly
+    (contains? pin :summary)
+    (str (pad indent) (indent-rest (zp pin) indent))
+
+    ;; forms pin — :scope + :forms
+    (vector? (:forms pin))
+    (let [pad-i  (pad indent)
+          inner  (+ indent 2)
+          forms-text (str/join "\n" (map #(render-form-pin % inner) (:forms pin)))]
+      (str pad-i "{:scope " (zp (:scope pin)) "\n"
+        pad-i " :forms\n"
+        pad-i " [\n" forms-text "\n"
+        pad-i "  ]}"))
+
+    :else
+    (str (pad indent) (indent-rest (zp pin) indent))))
+
 (defn- render-trailer-value
   "Trailer is a vec, possibly large. Cap to TRAILER_BUDGET and append a
-   `;; ⚠` truncation hint when over budget. Returns a multi-line string."
+   `;; ⚠` truncation hint when over budget. Each pin is rendered with
+   `render-trailer-pin` so form-source survives without quote-escape
+   corruption. Returns a multi-line string positioned under the trailer
+   key (caller indents the first line)."
   [trailer]
   (let [n (count trailer)
         capped (vec (take TRAILER_BUDGET trailer))
-        body (if (empty? capped) "[]" (zp capped))
+        body   (if (empty? capped)
+                 "[]"
+                 (str "[\n"
+                   (str/join "\n" (map #(render-trailer-pin % 1) capped))
+                   "\n ]"))
         suffix (when (> n TRAILER_BUDGET)
                  (str "\n;; ⚠ trailer truncated: " TRAILER_BUDGET " of " n
                    " entries; consider :trailer-summarize at next done"))]
