@@ -43,6 +43,13 @@ Observation tools:
 - `(br/run-evidence id)` remains a failure when no profile exists, but the
   error is concise and actionable rather than stack-oriented.
 
+The extension also exposes Bridge policy `:bridge-path-sandbox` rules through
+Vis `:ext/protected-paths`. When policy enforcement is enabled, Bridge
+`path-pattern` entries become workspace-relative protected globs for the
+foundation editing tools. Directory patterns such as `.bridge/` are expanded
+to subtree globs such as `.bridge/**`; relative policy paths are resolved
+against the normalized Bridge profile root.
+
 All tools accept an optional opts map where relevant:
 
 ```clojure
@@ -111,6 +118,7 @@ Extension-owned:
 - converting Bridge library calls into plain Vis tool envelopes
 - emitting advisory native Vis hints that point to `br/*` operations
 - registering op tags and prompt guidance
+- translating Bridge path sandbox policy into Vis protected-path declarations
 
 ## Non-goals
 
