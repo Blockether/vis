@@ -499,19 +499,29 @@
                           on every streaming chunk from the RLM. The TUI uses this
                           to project a live per-iteration progress timeline into
                           the assistant placeholder bubble.
-     :cancel-atom       - (atom bool) honored by the iteration loop; flipping
-                          it to true causes the current turn to terminate at
-                          the next safe point and return `{:status :cancelled}`.
+     :cancel-token      - cancellation handle from `vis/cancellation-token`.
+                          Calling `vis/cancel!` on the token flips the
+                          cooperative flag (iteration loop notices on the
+                          next boundary) AND fires every registered
+                          `on-cancel!` callback (SCI worker future,
+                          provider HTTP client, voice recorder), so
+                          unresponsive SCI hangs are killed straight from
+                          the TUI input thread without waiting for the
+                          eval timeout.
+     :cancel-atom       - (deprecated) cooperative atom. New callers pass
+                          `:cancel-token` instead; the atom path is kept
+                          for legacy SDK consumers.
      :reasoning-default - base reasoning effort (`:quick`, `:balanced`, `:deep`)
                           forwarded to `vis/send!` for reasoning-capable models.
      :extra-body        - provider-specific request-body overrides forwarded to
                           `vis/send!` unchanged.
      :turn-features     - per-turn feature flags consumed by extension prompts."
   ([session text] (turn! session text {}))
-  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body turn-features workspace]}]
+  ([{:keys [id]} text {:keys [on-chunk cancel-token cancel-atom reasoning-default extra-body turn-features workspace]}]
    (try
      (let [send-opts (cond-> {}
                        on-chunk          (assoc :hooks {:on-chunk on-chunk})
+                       cancel-token      (assoc :cancel-token cancel-token)
                        cancel-atom       (assoc :cancel-atom cancel-atom)
                        reasoning-default (assoc :reasoning-default reasoning-default)
                        extra-body        (assoc :extra-body extra-body)
