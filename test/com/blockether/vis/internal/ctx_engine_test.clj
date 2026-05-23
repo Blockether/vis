@@ -385,7 +385,25 @@
                  (deref [_] (throw (ex-info "boom" {}))))
           env (eng/block->envelope {:code "(def x boom)" :result boom}
                 1 {:turn 1 :iter 1})]
-      (expect (identical? boom (:result env))))))
+      (expect (identical? boom (:result env)))))
+
+  (it "realizes lazy seqs nested inside vec results so persistence keeps data"
+    ;; Regression: model writes `(def env-files (map :path ...))`, the
+    ;; next iter observes `[env-files (:hit-count snap-fn) ...]`. Without
+    ;; force-realize the lazy seq survives in-memory but freezes as
+    ;; `{:vis/ref :expr}` on turn-end; the resumed model sees
+    ;; `#:vis{:ref :expr}` and re-runs the probe thinking it's empty.
+    (let [lazy (map inc (range 3))
+          env (eng/block->envelope {:code "[env-files 7 0]"
+                                    :result [lazy 7 0]}
+                1 {:turn 1 :iter 1})]
+      (expect (= [[1 2 3] 7 0] (:result env)))))
+
+  (it "realizes a bare lazy seq result without crashing"
+    (let [lazy (map identity ["a.clj" "b.clj"])
+          env (eng/block->envelope {:code "(map identity files)" :result lazy}
+                1 {:turn 1 :iter 1})]
+      (expect (= ["a.clj" "b.clj"] (:result env))))))
 
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
