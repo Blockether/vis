@@ -306,7 +306,27 @@
             ctx2 (eng/advance-iter ctx1 obs2)
             ctx3 (eng/advance-iter ctx2 mut3)]
         (expect (= ["t1/i3"]
-                  (mapv :scope (:session/trailer ctx3))))))))
+                  (mapv :scope (:session/trailer ctx3))))))
+
+    (it "drops earlier pins binding the same def name when the model rebinds it"
+      ;; Regression for session 51834f45 turn 24: the model rebound
+      ;; `(def persist (v/rg …))` 20 times in a row, each time with
+      ;; slightly different search terms. Without dedup the trailer
+      ;; accumulated all 20 attempts and the model could not tell
+      ;; one binding existed, so it kept retrying with fresh keywords.
+      (let [step1 (eng/advance-iter base
+                    [{:scope "t1/i1/f1" :tag :mutation
+                      :src "(def persist (v/rg {:any [\"a\"]}))"}])
+            step2 (eng/advance-iter step1
+                    [{:scope "t1/i2/f1" :tag :mutation
+                      :src "(def persist (v/rg {:any [\"b\"]}))"}])
+            step3 (eng/advance-iter step2
+                    [{:scope "t1/i3/f1" :tag :mutation
+                      :src "(def other 1)"}])]
+        (expect (= ["t1/i1"] (mapv :scope (:session/trailer step1))))
+        (expect (= ["t1/i2"] (mapv :scope (:session/trailer step2))))
+        (expect (= ["t1/i2" "t1/i3"]
+                  (mapv :scope (:session/trailer step3))))))))
 
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
