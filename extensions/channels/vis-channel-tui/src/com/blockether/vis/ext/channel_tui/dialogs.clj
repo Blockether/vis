@@ -1023,16 +1023,6 @@
 
 ;;; ── Settings dialog ─────────────────────────────────────────────────────────
 
-(def ^:private reasoning-choice-order
-  [:quick :balanced :deep])
-
-(def ^:private settings-model-options
-  [{:key :reasoning-level
-    :type :choice
-    :choices reasoning-choice-order
-    :label "Reasoning effort"
-    :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}])
-
 (def ^:private settings-model-no-effort-rows
   [{:type :info
     :label "Reasoning effort unavailable"
@@ -1063,37 +1053,19 @@
       [(keyword shared-theme/default-theme-id)])))
 
 (defn- settings-ui-options
+  "Local-only settings the TUI still owns (theme + dynamic choices).
+   Every former boolean / enum (show-thinking, show-iterations,
+   show-silent, show-timestamps, mouse-selection-copy,
+   voice/respond?, message-meta, reasoning-level,
+   openai-codex-verbosity) was migrated into the toggles registry
+   and now renders under the Feature Toggles section via
+   `registry-toggle-rows`."
   []
   [{:key :theme-name
     :type :choice
     :choices (theme-choice-order)
     :label "Theme"
-    :description "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}
-   {:key :show-thinking
-    :type :toggle
-    :label "Show model thinking"
-    :description "Stream reasoning_content / thinking deltas inside each iteration bubble (z.ai GLM, Copilot Claude, Codex reasoning summaries, Anthropic thinking). Disable for a quieter transcript."}
-   {:key :show-iterations
-    :type :toggle
-    :label "Show full execution trace"
-    :description "Blocks, eval results, errors - the whole iteration history"}
-   {:key :message-meta
-    :type :choice
-    :choices [:full :short :off]
-    :label "Per-message meta footer"
-    :description "Footer under each assistant bubble: :full = model / iters / tokens / cost / duration, :short = cost + duration only, :off = hidden (also drops the breathing row above it)"}
-   {:key :show-silent
-    :type :toggle
-    :label "Show silent system calls"
-    :description "Include successful :vis/silent forms such as title/system bookkeeping in traces"}
-   {:key :show-timestamps
-    :type :toggle
-    :label "Show per-message timestamps"
-    :description "Date+time next to every 'You' / 'Vis' label"}
-   {:key :mouse-selection-copy
-    :type :toggle
-    :label "Mouse selection auto-copy"
-    :description "Drag-select visible text; copied automatically on mouse release"}])
+    :description "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}])
 
 (defn- registry-toggle-rows
   "Settings rows for every registered feature toggle.
@@ -1384,8 +1356,13 @@
          provider-rows      (extension-rows-of-kind all-extension-rows :provider)
          channel-rows       (extension-rows-of-kind all-extension-rows :channel)
          extension-rows     (extension-rows-of-kind all-extension-rows :extension)
+         ;; Reasoning effort migrated to `:vis/reasoning-level` in the
+         ;; toggles registry. The Providers tab now only shows the
+         ;; "unavailable" notice when the active model doesn't expose
+         ;; effort tuning; the actual cycle / set-value lives under
+         ;; Feature Toggles (Channels tab) and via `:cycle-reasoning-level`.
          model-rows         (if (reasoning-effort-configurable?)
-                              settings-model-options
+                              []
                               settings-model-no-effort-rows)]
      (vec
        (case tab-id

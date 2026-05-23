@@ -14,8 +14,10 @@
       (t/clear-state!)
       (f)
       (finally
+        ;; Restore via `set-value!` so enum toggles round-trip too;
+        ;; `set-enabled!` would refuse them.
         (doseq [[id v] snapshot]
-          (t/set-enabled! id v))))))
+          (try (t/set-value! id v) (catch Throwable _ nil)))))))
 
 (defdescribe registry-contract-test
   (it "register-toggle! normalizes the spec and exposes it via registered-toggles"
