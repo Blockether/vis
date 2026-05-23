@@ -3056,7 +3056,20 @@
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
-  (let [{:keys [thinking forms recaps provider-fallbacks error repeat-count]} entry
+  (let [{:keys [thinking content-stream forms recaps provider-fallbacks error repeat-count]} entry
+        ;; Stream provider content alongside reasoning so the bubble
+        ;; keeps painting between reasoning end and parsed-form render.
+        ;; Once response-parse :done fires, :content-stream is dropped
+        ;; from the entry and the bubble switches to per-form rendering.
+        thinking (cond
+                   (and (seq (some-> thinking str str/trim))
+                     (seq (some-> content-stream str str/trim)))
+                   [thinking content-stream]
+
+                   (seq (some-> content-stream str str/trim))
+                   content-stream
+
+                   :else thinking)
         _ show-header?
         fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
