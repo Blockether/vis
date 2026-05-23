@@ -11,10 +11,21 @@
    (timeouts, missing keys, error result maps) without throwing,
    because they fire from the channel sink with no try/catch above."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.ext.language-clojure.render :as r]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- ir? [x] (and (vector? x) (= :ir (first x))))
+
+(defn- flat-text
+  "Concatenate every string leaf in an IR tree. Used by tests so
+   inline span boundaries (introduced by `ir-p` wrapping each arg)
+   don't fragment regex matches."
+  [node]
+  (cond
+    (string? node) node
+    (vector? node) (str/join "" (map flat-text (rest node)))
+    :else ""))
 
 (defdescribe render-ports-test
   (it "renders zero ports cleanly"
@@ -32,23 +43,25 @@
       (expect (re-find #"60001" flat)))))
 
 (defdescribe render-eval-test
-  (it "produces an OK header on success"
-    (let [v (r/render-eval {:value "42" :ns "user" :status #{"done"} :ms 5 :port 7888})]
+  (it "produces an EVAL header on success"
+    (let [v (r/render-eval {:value "42" :ns "user" :status #{"done"} :ms 5 :port 7888})
+          t (flat-text v)]
       (expect (ir? v))
-      (expect (re-find #"OK @ :7888" (pr-str v)))
-      (expect (re-find #"42" (pr-str v)))))
+      (expect (re-find #"EVAL" t))
+      (expect (re-find #":7888" t))
+      (expect (re-find #"42" t))))
 
   (it "produces a TIMEOUT header when timed-out?"
     (let [v (r/render-eval {:timed-out? true :status #{"done" "timeout"} :port 7888})]
-      (expect (re-find #"TIMEOUT" (pr-str v)))))
+      (expect (re-find #"TIMEOUT" (flat-text v)))))
 
   (it "shows :out and :err blocks when present"
     (let [v (r/render-eval {:value nil :out "hi\n" :err "boom\n" :status #{"done"} :port 7888})
-          s (pr-str v)]
-      (expect (re-find #":out" s))
-      (expect (re-find #":err" s))
-      (expect (re-find #"hi" s))
-      (expect (re-find #"boom" s)))))
+          t (flat-text v)]
+      (expect (re-find #":out" t))
+      (expect (re-find #":err" t))
+      (expect (re-find #"hi" t))
+      (expect (re-find #"boom" t)))))
 
 (defdescribe render-outline-test
   (it "shows ns, counts and a forms code block"
@@ -66,8 +79,10 @@
       (expect (re-find #"defn  y" s))))
 
   (it "passes :error through without throwing"
-    (let [v (r/render-outline {:path "x.clj" :error "parse-failed" :forms [] :total 0})]
-      (expect (re-find #"ERROR" (pr-str v))))))
+    (let [v (r/render-outline {:path "x.clj" :error "parse-failed" :forms [] :total 0})
+          t (flat-text v)]
+      (expect (re-find #"OUTLINE!" t))
+      (expect (re-find #"parse-failed" t)))))
 
 (defdescribe render-find-test
   (it "renders header counts and a match block"
@@ -75,10 +90,10 @@
               {:scanned 12 :elapsed-ms 4 :truncated? false
                :matches [{:path "src/a.clj" :line 3 :kind :defn :name "foo"}
                          {:path "src/b.clj" :line 9 :kind :defmacro :name "bar"}]})
-          s (pr-str v)]
-      (expect (re-find #"2 matches" s))
-      (expect (re-find #"foo" s))
-      (expect (re-find #"src/b.clj:9" s)))))
+          t (flat-text v)]
+      (expect (re-find #"2 matches" t))
+      (expect (re-find #"foo" t))
+      (expect (re-find #"src/b.clj:9" t)))))
 
 (defdescribe render-edit-test
   (it "renders an OK edit with delta"
@@ -89,7 +104,7 @@
       (expect (re-find #":replace" s))
       (expect (re-find #"foo" s))
       (expect (re-find #"src/a.clj" s))
-      (expect (re-find #"\u0394=10" s))))
+      (expect (re-find #"\u0394=\+10" s))))
 
   (it "renders an :error edit"
     (let [v (r/render-edit {:status :error :error "target not found" :target "ghost"})]

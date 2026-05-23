@@ -563,90 +563,63 @@
         (when (and loading? (pos? n)
                 (= :assistant (:role (peek messages))))
           (long (dec n)))
-        visible-idxs
-        cand-idxs
-        projected
-        (mapv
-          (fn [^long i]
-            (let [m (nth messages i)
-                  loading-bubble? (= i loading-last-idx)
-                  pm (if loading-bubble?
-                       (let [{:keys [text lines line-meta]}
-                             (render/progress->lines-data progress bubble-w settings
-                               (assoc progress-extra
-                                 :session-id session-id
-                                 ;; Live progress bubble must use the
-                                 ;; same turn key the completed answer
-                                 ;; will use a moment later; otherwise
-                                 ;; the REASONING / <details> toggle
-                                 ;; node-ids change at the live -> done
-                                 ;; flip and the user's expansion state
-                                 ;; resets to its default. See
-                                 ;; `turn-identity` for the precedence.
-                                 :session-turn-id (turn-identity m)
-                                 :detail-expansions detail-expansions))]
-                         (assoc m
-                           :text text
-                           :prewrapped-lines lines
-                           :line-meta line-meta))
-                       ;; Tail-pinned bubble fast path: when this is
-                       ;; the last message AND the effective scroll
-                       ;; position lands the viewport at the very
-                       ;; bottom of the bubble, only the bottom
-                       ;; inner-h lines are visible. Render only the
-                       ;; last 2*inner-h lines via `ir->lines-tail`.
-                       ;;
-                       ;; Bottom-locked detection: eff-1 == max-scroll.
-                       ;; This is true when scroll == nil (auto-bottom)
-                       ;; AND when scroll was passed a number that
-                       ;; got clamped to max (e.g. End key, wheel-down
-                       ;; past the tail). Both produce identical
-                       ;; user-visible content; A4 only handled the
-                       ;; first case. See A3 / A4 / A6.
-                       ;;
-                       ;; Three projection paths for the LAST bubble:
-                       ;;   1. Bottom-locked (auto-scroll OR scroll
-                       ;;      clamped to max): tail-walker (A4/A6).
-                       ;;   2. Genuine mid-scroll: window-walker (A7).
-                       ;;      Only the rows in the user's viewport are
-                       ;;      walked; bubble is reported at its full
-                       ;;      estimated height for scroll math.
-                       ;;   3. Anything else (older scrollback bubble,
-                       ;;      etc.): full render.
-                       (let [last?          (= i (long (dec n)))
-                             max-scroll     (max 0 (- est-tot inner-h))
-                             bottom-locked? (and last? (= eff-1 max-scroll))
-                             window-start   nil
-                             window-num     (when window-start
-                                              (long (* 2 inner-h)))
-                             window-total-h (when window-start
-                                              (long (nth est i)))
-                             tail-n         (when bottom-locked?
-                                              (long (* 2 inner-h)))]
-                         (project-message m bubble-w settings
-                           (cond-> {:session-id session-id
-                                    :detail-expansions detail-expansions}
-                             tail-n         (assoc :tail-lines tail-n)
-                             window-start   (assoc :window-start  window-start
-                                              :window-num    window-num
-                                              :window-total-h window-total-h)))))
-                  pm (with-turn-separator pm messages settings i)
-                  window-total-h (some-> pm :lines-window :total-h long)
-                  ;; Windowed projections only contain the visible slice
-                  ;; of the bubble. `render/bubble-height` would measure
-                  ;; that slice, then poison the sticky height cache with
-                  ;; a tiny partial height; the next scroll frame would
-                  ;; shrink total-h and clamp the viewport toward bottom.
-                  ;; Keep the full planned height instead.
-                  real-h (long (or window-total-h
-                                 (render/bubble-height pm bubble-w)))]
-              ;; Pin the real height in the sticky cache for the raw
-              ;; message identity. Skip live progress and windowed
-              ;; slices: neither is a full stable bubble measurement.
-              (when (and (not loading-bubble?) (nil? window-total-h))
-                (height-cache-put! m bubble-w settings detail-expansions real-h))
-              {:idx i :projected pm :height real-h}))
-          visible-idxs)
+        ;; Per-message projection extracted so pass-2 AND the recovery
+        ;; pass-3 (below) can reuse the same logic. `eff` is the
+        ;; effective scroll currently in play; it only matters for the
+        ;; bottom-locked tail-walker shortcut on the live bubble.
+        project-idx!
+        (fn [^long i ^long eff]
+          (let [m (nth messages i)
+                loading-bubble? (= i loading-last-idx)
+                pm (if loading-bubble?
+                     (let [{:keys [text lines line-meta]}
+                           (render/progress->lines-data progress bubble-w settings
+                             (assoc progress-extra
+                               :session-id session-id
+                               ;; Live progress bubble must use the
+                               ;; same turn key the completed answer
+                               ;; will use a moment later; otherwise
+                               ;; the REASONING / <details> toggle
+                               ;; node-ids change at the live -> done
+                               ;; flip and the user's expansion state
+                               ;; resets to its default. See
+                               ;; `turn-identity` for the precedence.
+                               :session-turn-id (turn-identity m)
+                               :detail-expansions detail-expansions))]
+                       (assoc m
+                         :text text
+                         :prewrapped-lines lines
+                         :line-meta line-meta))
+                     ;; Three projection paths for the LAST bubble:
+                     ;;   1. Bottom-locked (auto-scroll OR scroll
+                     ;;      clamped to max): tail-walker (A4/A6).
+                     ;;   2. Genuine mid-scroll: full render — the
+                     ;;      old `window-start` window-walker hook is
+                     ;;      kept nil (item-window scrolling never
+                     ;;      activated in practice and confused the
+                     ;;      live-streaming visibility set).
+                     ;;   3. Anything else (older scrollback bubble,
+                     ;;      etc.): full render.
+                     (let [last?          (= i (long (dec n)))
+                           max-scroll     (max 0 (- est-tot inner-h))
+                           bottom-locked? (and last? (= eff max-scroll))
+                           tail-n         (when bottom-locked?
+                                            (long (* 2 inner-h)))]
+                       (project-message m bubble-w settings
+                         (cond-> {:session-id session-id
+                                  :detail-expansions detail-expansions}
+                           tail-n         (assoc :tail-lines tail-n)))))
+                pm (with-turn-separator pm messages settings i)
+                window-total-h (some-> pm :lines-window :total-h long)
+                real-h (long (or window-total-h
+                               (render/bubble-height pm bubble-w)))]
+            ;; Pin the real height in the sticky cache for the raw
+            ;; message identity. Skip live progress and windowed
+            ;; slices: neither is a full stable bubble measurement.
+            (when (and (not loading-bubble?) (nil? window-total-h))
+              (height-cache-put! m bubble-w settings detail-expansions real-h))
+            {:idx i :projected pm :height real-h}))
+        projected (mapv #(project-idx! % eff-1) cand-idxs)
         ;; Refine heights vec with real measurements.
         heights' (reduce
                    (fn [hs {:keys [^long idx ^long height]}]
@@ -665,14 +638,55 @@
                      (max 0 (- total-h' inner-h))
                      (max 0 (min (long scroll)
                               (max 0 (- total-h' inner-h))))))
+        ;; Pass 3 ── recovery for messages that are visible at the
+        ;; refined `eff-2` but were missed at the cheap `eff-1`. The
+        ;; failure mode: a fast-growing LIVE bubble (no height cache,
+        ;; cheap estimate undershoots by 10–100× while iterations
+        ;; stream) makes `est-tot < real-tot`, so `eff-1 = min(scroll,
+        ;; est-max-scroll)` can land WELL ABOVE `eff-2 = min(scroll,
+        ;; real-max-scroll)`. Any stable bubble whose interval
+        ;; `[offsets'[i], offsets'[i+1])` intersects the viewport at
+        ;; `eff-2` but not at `eff-1` falls out of `cand-idxs` and is
+        ;; never projected → never painted → the user sees earlier
+        ;; turns blink out mid-stream. Project the missing ones now,
+        ;; merge them into `projected`, and refresh the cumulative
+        ;; offset vec one more time so heights/offsets stay coherent.
+        projected-by-idx (into {} (map (juxt :idx identity) projected))
+        missing-idxs
+        (vec
+          (for [^long i (range n)
+                :let [top    (- (long (nth offsets' i)) eff-2)
+                      height (long (nth heights' i))]
+                :when (and (visible? top height inner-h)
+                        (not (contains? projected-by-idx i)))]
+            i))
+        extra-projected (mapv #(project-idx! % eff-2) missing-idxs)
+        projected-all   (into projected extra-projected)
+        heights''  (reduce
+                     (fn [hs {:keys [^long idx ^long height]}]
+                       (assoc-vec hs idx height 0))
+                     heights' extra-projected)
+        offsets''  (if (seq extra-projected)
+                     (vec (reductions + 0 (map long heights'')))
+                     offsets')
+        total-h''  (long (peek offsets''))
+        eff-3      (long
+                     (if (nil? scroll)
+                       (max 0 (- total-h'' inner-h))
+                       (max 0 (min (long scroll)
+                                (max 0 (- total-h'' inner-h))))))
         visible-set
         (mapv
           (fn [{:keys [^long idx ^long height projected]}]
             {:idx       idx
              :height    height
              :projected projected
-             :top       (- (long (nth offsets' idx)) eff-2)})
-          projected)]
+             :top       (- (long (nth offsets'' idx)) eff-3)})
+          projected-all)
+        heights' heights''
+        offsets' offsets''
+        total-h' total-h''
+        eff-2    eff-3]
     {:total-h    total-h'
      :eff-scroll eff-2
      :heights    heights'
