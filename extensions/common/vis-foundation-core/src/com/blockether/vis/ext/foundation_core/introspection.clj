@@ -993,35 +993,41 @@
 (def session-state-symbol
   (vis/symbol #'session-state
     {:before-fn inject-environment
+     :tag       :observation
      :render-fn session-state-channel}))
 
 (def session-report-symbol
   (vis/symbol #'session-report
     {:before-fn inject-environment
+     :tag       :observation
      :render-fn vis/render-string}))
 
 (def engine-symbol-documentation-symbol
   (vis/symbol #'engine-symbol-documentation-tool
     {:symbol 'engine-symbol-documentation
      :before-fn inject-environment
+     :tag       :observation
      :render-fn symbol-doc-channel}))
 
 (def engine-symbol-source-code-symbol
   (vis/symbol #'engine-symbol-source-code-tool
     {:symbol 'engine-symbol-source-code
      :before-fn inject-environment
+     :tag       :observation
      :render-fn symbol-source-channel}))
 
 (def engine-symbol-metadata-symbol
   (vis/symbol #'engine-symbol-metadata-tool
     {:symbol 'engine-symbol-metadata
      :before-fn inject-environment
+     :tag       :observation
      :render-fn symbol-meta-channel}))
 
 (def engine-symbol-apropos-symbol
   (vis/symbol #'engine-symbol-apropos-tool
     {:symbol 'engine-symbol-apropos
      :before-fn inject-environment
+     :tag       :observation
      :render-fn apropos-channel}))
 
 (def all-symbols
