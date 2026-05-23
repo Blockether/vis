@@ -231,14 +231,6 @@
     (map? model)    (:name model)
     :else           nil))
 
-(def ^:private github-copilot-legacy-model-aliases
-  {"claude-sonnet-4-6" "claude-sonnet-4.6"
-   "claude-sonnet-4-5" "claude-sonnet-4.5"
-   "claude-haiku-4-5"  "claude-haiku-4.5"
-   "claude-opus-4-7"   "claude-opus-4.7"
-   "claude-opus-4-6"   "claude-opus-4.6"
-   "claude-opus-4-5"   "claude-opus-4.5"})
-
 (defn- github-copilot-claude-model?
   [model-name]
   (boolean (re-find #"^claude-(opus|sonnet|haiku)-4(?:\.\d+)?$" model-name)))
@@ -251,32 +243,25 @@
   [model-name]
   (boolean (re-find #"(?i)^glm-(?:5(?:[.-].*)?|4\.[5-9].*)$" (or model-name ""))))
 
-(defn- provider-model-name
-  [provider-id name]
-  (if (github-copilot-provider-id? provider-id)
-    (get github-copilot-legacy-model-aliases name name)
-    name))
-
 (defn ->svar-model
   "Coerce a model representation to svar-native `{:name str}`."
   ([model]
    (->svar-model nil model))
   ([provider-id model]
    (when-let [n (some-> (model-name model) str str/trim not-empty)]
-     (let [n (provider-model-name provider-id n)]
-       (cond-> {:name n}
-         (and (github-copilot-provider-id? provider-id)
-           (github-copilot-claude-model? n))
-         (assoc :api-style :openai-compatible-chat
-           :reasoning? true
-           :reasoning-style :openai-effort
-           :reasoning-effort? true)
+     (cond-> {:name n}
+       (and (github-copilot-provider-id? provider-id)
+         (github-copilot-claude-model? n))
+       (assoc :api-style :openai-compatible-chat
+         :reasoning? true
+         :reasoning-style :openai-effort
+         :reasoning-effort? true)
 
-         (and (zai-provider-id? provider-id)
-           (zai-thinking-model? n))
-         (assoc :reasoning? true
-           :reasoning-style :zai-thinking
-           :reasoning-effort? false))))))
+       (and (zai-provider-id? provider-id)
+         (zai-thinking-model? n))
+       (assoc :reasoning? true
+         :reasoning-style :zai-thinking
+         :reasoning-effort? false)))))
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
