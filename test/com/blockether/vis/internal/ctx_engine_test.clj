@@ -308,12 +308,13 @@
         (expect (= ["t1/i3"]
                   (mapv :scope (:session/trailer ctx3))))))
 
-    (it "drops earlier pins binding the same def name when the model rebinds it"
-      ;; Regression for session 51834f45 turn 24: the model rebound
-      ;; `(def persist (v/rg …))` 20 times in a row, each time with
-      ;; slightly different search terms. Without dedup the trailer
-      ;; accumulated all 20 attempts and the model could not tell
-      ;; one binding existed, so it kept retrying with fresh keywords.
+    (it "keeps earlier pins even when the model rebinds the same def"
+      ;; Rebinding `(def persist …)` across iterations is intentional model
+      ;; behaviour: each attempt refines tool arguments. Trailer pins from
+      ;; prior attempts MUST stay so the model can see what it tried and
+      ;; switch tactic. Collapsing prior pins on rebind hides the loop
+      ;; signal and lets the model run rg 20 times without realising.
+      ;; `(done {:trailer-summarize …})` is the only contract for trimming.
       (let [step1 (eng/advance-iter base
                     [{:scope "t1/i1/f1" :tag :mutation
                       :src "(def persist (v/rg {:any [\"a\"]}))"}])
@@ -323,10 +324,41 @@
             step3 (eng/advance-iter step2
                     [{:scope "t1/i3/f1" :tag :mutation
                       :src "(def other 1)"}])]
-        (expect (= ["t1/i1"] (mapv :scope (:session/trailer step1))))
-        (expect (= ["t1/i2"] (mapv :scope (:session/trailer step2))))
-        (expect (= ["t1/i2" "t1/i3"]
+        (expect (= ["t1/i1" "t1/i2" "t1/i3"]
                   (mapv :scope (:session/trailer step3))))))))
+
+(defdescribe rebind-loop-warning-test
+  (it "flags a `:trailer-rebind-loop` once the same def is rebound 3+ times"
+    (let [trailer [{:scope "t1/i1"
+                    :forms [{:src "(def persist (v/rg {:any [\"a\"]}))"
+                             :tag :mutation :scope "t1/i1/f1"}]}
+                   {:scope "t1/i2"
+                    :forms [{:src "(def persist (v/rg {:any [\"b\"]}))"
+                             :tag :mutation :scope "t1/i2/f1"}]}
+                   {:scope "t1/i3"
+                    :forms [{:src "(def persist (v/rg {:any [\"c\"]}))"
+                             :tag :mutation :scope "t1/i3/f1"}]}]
+          ctx {:session/turn 1
+               :session/scope {:turn 1 :iter 4 :next-form 1}
+               :session/trailer trailer}
+          warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
+      (expect (some #(= :trailer-rebind-loop (:code %)) warns))
+      (expect (= ["persist"]
+                (->> warns (filter #(= :trailer-rebind-loop (:code %)))
+                  first :anchor)))))
+
+  (it "stays quiet when a different def lands between rebinds"
+    (let [trailer [{:scope "t1/i1"
+                    :forms [{:src "(def persist 1)" :tag :mutation :scope "t1/i1/f1"}]}
+                   {:scope "t1/i2"
+                    :forms [{:src "(def other 2)" :tag :mutation :scope "t1/i2/f1"}]}
+                   {:scope "t1/i3"
+                    :forms [{:src "(def persist 3)" :tag :mutation :scope "t1/i3/f1"}]}]
+          ctx {:session/turn 1
+               :session/scope {:turn 1 :iter 4 :next-form 1}
+               :session/trailer trailer}
+          warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
+      (expect (not-any? #(= :trailer-rebind-loop (:code %)) warns)))))
 
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
