@@ -1199,6 +1199,29 @@
     (symbol? (first form))
     (some? (namespace (first form)))))
 
+(def ^:private def-shaped-form-heads
+  "Top-level form heads whose RAW source row is bookkeeping noise:
+   `def` / `defn` / `defn-` / `defmacro` / `defmulti` / `defonce` /
+   `defmethod`. The DEF SINK (per-iteration `:vars` envelope) already
+   surfaces the bound name + value to the model; painting the
+   matching source line in the bubble duplicates that signal and
+   pushes more useful content (recap rows, tool previews, real
+   answers) off-screen.
+
+   Class-producing heads (defprotocol / defrecord / deftype) are NOT
+   in this set because the sandbox already refuses them upstream;
+   they cannot reach the renderer."
+  #{"def" "defn" "defn-" "defmacro" "defmulti" "defonce" "defmethod"})
+
+(defn- def-shaped-form?
+  "True when `form` is one of `(def… NAME …)`. Match is
+   namespace-agnostic by NAME so a `clojure.core/defn` form qualifies
+   the same as a bare `defn`."
+  [form]
+  (and (seq? form)
+    (symbol? (first form))
+    (contains? def-shaped-form-heads (name (first form)))))
+
 (defn- def-tool-call-form?
   "True when `form` is `(def NAME (qualified/call ...))` — a model-authored
    binding around an extension tool call. The channel hides the def source
@@ -1221,11 +1244,17 @@
 
 (defn- hidden-code-form?
   "Composite predicate: form should render with `:hidden? true` so the
-   channel collapses the raw source row. Covers both bare tool calls
-   (`(v/cat …)`) and def-wrapped tool calls (`(def x (v/cat …))`)."
+   channel collapses the raw source row. Covers:
+     - bare tool calls (`(v/cat …)`)
+     - def-wrapped tool calls (`(def x (v/cat …))`)
+     - ANY def-shaped top-level form (`def`, `defn`, `defn-`,
+       `defmacro`, `defmulti`, `defonce`, `defmethod`). The DEF SINK
+       already shows the bound name + value to the model, so the
+       raw `(def …)` line is redundant chrome."
   [form]
   (or (def-tool-call-form? form)
-    (qualified-tool-call-form? form)))
+    (qualified-tool-call-form? form)
+    (def-shaped-form? form)))
 
 (defn- form-bounds-by-meta
   "Build a parallel vector of {:start :end} byte offsets for each form by
@@ -1370,16 +1399,20 @@
             (coalesce raw)))))))
 
 (defn block-structurally-silent?
-  "True when the block source contains nothing the user should see: only
-   structural forms (`:title` / `:answer-ref`). Engine stamps the persisted
-   block + stream chunk with `:vis/silent? true` based on this so channels
-   that don't parse segments still drop the entry from default display.
+  "True when the block source contains nothing the user should see:
+   only structural forms (`:title` / `:answer-ref` / ctx mutators) OR
+   `:code` segments that are all `:hidden? true` (bare tool calls,
+   def-wrapped tool calls, every def-shaped form). Engine stamps the
+   persisted block + stream chunk with `:vis/silent? true` based on
+   this so channels that don't parse segments still drop the entry
+   from default display.
 
-   Pure-code blocks and mixed blocks (any `:code` segment present) are
-   NOT structurally silent: the prelude is genuinely useful work to show.
-   Blank / nil input is not considered silent — there is no block to hide."
+   Pure visible-code blocks and mixed blocks (any non-hidden `:code`
+   segment present) are NOT structurally silent: the prelude is
+   genuinely useful work to show.  Blank / nil input is not
+   considered silent — there is no block to hide."
   [form-source]
   (let [src (str (or form-source ""))]
     (and (not (str/blank? src))
       (let [segs (parse-block-display src)]
-        (not-any? #(= :code (:kind %)) segs)))))
+        (not-any? #(and (= :code (:kind %)) (not (:hidden? %))) segs)))))

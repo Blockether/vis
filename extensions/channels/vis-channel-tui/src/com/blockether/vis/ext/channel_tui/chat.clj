@@ -196,18 +196,54 @@
    `:recaps`, and `:provider-fallbacks`. The renderer consumes both
    live and resumed traces through this single shape."
   [restored-values {:keys [produced-answer? last-iteration-id]} it]
-  (let [code        (or (:code it) "")
-        ;; `:render-segments` is a derived view of `:code`. NOT stored
-        ;; in the DB; rederived on every render via the pure
-        ;; `parse-block-display` parser so display logic stays driven
-        ;; by the same classifier that gates the live channel.
-        segments    (vis/parse-block-display code)
-        all-blocks  [(cond-> {:position 0 :code code}
-                       (contains? it :result) (assoc :result (:result it))
-                       (contains? it :error) (assoc :error (:error it))
-                       (contains? it :channel) (assoc :channel (:channel it))
-                       (seq segments) (assoc :render-segments segments)
-                       (contains? it :duration-ms) (assoc :duration-ms (:duration-ms it)))]
+  ;; The persisted shape that drives a restored bubble is the
+  ;; per-form `:forms` envelope vec on the iteration row (one entry
+  ;; per top-level form the model wrote). The legacy code path
+  ;; pretended an iteration was ONE block and pulled non-existent
+  ;; `:result` / `:error` / `:channel` keys off the row itself — so
+  ;; errored forms restored as successful, tool calls lost their
+  ;; pi-style preview, and a multi-form fence collapsed into a single
+  ;; opaque card. Live bubbles read per-form envelopes from the
+  ;; progress tracker; restored bubbles must do the same to render
+  ;; identically.
+  (let [iter-code   (or (:code it) "")
+        envelopes   (vec (or (:forms it) []))
+        ;; Sentinel block when the iteration ran no forms (eval timeout,
+        ;; pre-eval rejection, etc.). Keep the iteration visible with
+        ;; whatever code text we have so the bubble doesn't collapse to
+        ;; nothing on restore.
+        fallback-blocks
+        [(cond-> {:position 0 :code iter-code}
+           (some? (:render-segments it)) (assoc :render-segments (:render-segments it))
+           (some? (:duration-ms it))     (assoc :duration-ms (:duration-ms it))
+           (some? (:result it))          (assoc :result (:result it))
+           (some? (:error it))           (assoc :error (:error it)))]
+        envelope->block
+        (fn [idx env]
+          (let [src      (or (:src env) (:source env) (:code env) "")
+                segments (vis/parse-block-display src)]
+            (cond-> {:position idx
+                     :code     src
+                     ;; `:scope` ("tN/iM/fK") preserves the per-form
+                     ;; provenance string the engine stamped at write
+                     ;; time. Live bubbles never had it but the
+                     ;; renderer ignores unknown keys safely.
+                     :scope    (:scope env)
+                     :tag      (:tag env)}
+              (contains? env :result)      (assoc :result (:result env))
+              (contains? env :error)       (assoc :error  (:error env))
+              ;; `:channel` is the pre-rendered IR sink the loop
+              ;; serialises onto every tool-call envelope (see
+              ;; `ctx-engine/block->envelope`). Carrying it onto the
+              ;; restored block lets `block->form-record` reuse the
+              ;; LIVE chokepoint (`form-result-render`) without any
+              ;; restore-only branch — same renderer everywhere.
+              (seq (:channel env))         (assoc :channel (vec (:channel env)))
+              (seq segments)               (assoc :render-segments segments)
+              (some? (:duration-ms it))    (assoc :duration-ms (:duration-ms it)))))
+        all-blocks  (if (seq envelopes)
+                      (vec (map-indexed envelope->block envelopes))
+                      fallback-blocks)
         answer-here? (and produced-answer?
                        (= (:id it) last-iteration-id)
                        (seq all-blocks))
@@ -241,7 +277,12 @@
      :thinking           (visible-thinking (:thinking it))
      :provider-fallbacks (:llm-routing-trace it)
      :forms              forms
-     :recaps             (render-segment-recaps (:render-segments it))}))
+     ;; Iteration-level recap rows (title / task-set! / spec-set! /
+     ;; fact-set! summaries) come from the WHOLE iteration's source.
+     ;; The DB row doesn't ship `:render-segments` (derived view), so
+     ;; rebuild it on the fly from `:code` using the same pure
+     ;; `parse-block-display` parser the live channel consumes.
+     :recaps             (render-segment-recaps (vis/parse-block-display iter-code))}))
 
 (defn user-message
   "Create a structured user message with timestamp.
