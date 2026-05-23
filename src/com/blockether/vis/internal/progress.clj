@@ -354,13 +354,24 @@
 
     :response-parse
     (if (= :done (:status chunk))
-      (assoc entry :activity nil :response-parse chunk)
+      (-> entry
+        (dissoc :content-stream)
+        (assoc :activity nil :response-parse chunk))
       (assoc entry :activity :response-parse :response-parse chunk))
 
     :reasoning
     (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
                           (normalize-thinking-text (:thinking entry)))]
       (assoc entry :thinking next-thinking :activity nil))
+
+    :content
+    ;; Provider content stream (answer Markdown + code fence) — kept
+    ;; on entry as `:content-stream` so the live bubble can render it
+    ;; below the reasoning text. Cleared by :response-parse :done and
+    ;; :iteration-final once parsed forms take over.
+    (let [next-content (or (normalize-thinking-text (:content chunk))
+                         (:content-stream entry))]
+      (assoc entry :content-stream next-content :activity nil))
 
     :provider-fallback
     (-> entry

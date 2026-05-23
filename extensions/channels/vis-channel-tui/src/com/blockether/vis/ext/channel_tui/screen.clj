@@ -297,7 +297,16 @@
   (let [name (:slash/name spec)
         path [name]]
     {:id          (keyword "slash" name)
-     :label       (or (:slash/doc spec) (:slash/usage spec) (str "/" name))
+     ;; Palette label never carries the `/` sigil. Slash is the
+     ;; text-routing convention (`slash/exact-command` needs it to tell
+     ;; commands apart from chat); the visible palette/menu surface
+     ;; treats workspace/voice/etc. as first-class actions. We prefer the
+     ;; human doc, then strip a leading `/` from :slash/usage as a
+     ;; fallback, then fall back to the bare name.
+     :label       (or (:slash/doc spec)
+                    (some-> (:slash/usage spec)
+                      (clojure.string/replace #"^/+" ""))
+                    name)
      :doc         (:slash/doc spec)
      :slash/spec  spec
      :slash/path  path
@@ -2566,7 +2575,16 @@
                        ;; `input/toggle-recording!`. Transcript shows one
                        ;; synthetic :user-slash iter per toggle.
                        (do (when-not (:loading? @state/app-db)
-                             (state/dispatch [:send-message "/voice"]))
+                             ;; Direct voice toggle: bypass the slash text
+                             ;; queue so `/voice` never appears in the input
+                             ;; buffer / transcript. The /voice slash spec
+                             ;; still exists for typed invocation; this is
+                             ;; the keybind fast-path (no synthetic user
+                             ;; message, no :send-message round trip).
+                             (when-let [toggle (try (requiring-resolve
+                                                      'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
+                                                 (catch Throwable _ nil))]
+                               (try (toggle) (catch Throwable _ nil))))
                          (recur))
 
                        :show-sessions

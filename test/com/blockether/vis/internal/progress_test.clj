@@ -77,6 +77,21 @@
         (expect (= 1 (:iteration (first timeline))))
         (expect (= "warm-up" (:thinking (first timeline)))))))
 
+  (it "streams provider content as :content-stream until response-parse done"
+    ;; User-visible regression: prior to live answer streaming the
+    ;; bubble froze for several seconds between reasoning end and the
+    ;; first parsed form. Streaming `:content` keeps the bubble alive.
+    (let [tracker (progress/make-progress-tracker)
+          on     (:on-chunk tracker)]
+      (on {:phase :reasoning :iteration-count 1 :thinking "think"})
+      (on {:phase :content :iteration-count 1 :content "```clojure\n(done {:answer \"yellow\""})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (= "think" (:thinking entry)))
+        (expect (= "```clojure\n(done {:answer \"yellow\"" (:content-stream entry))))
+      (on {:phase :response-parse :iteration 1 :status :done})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (nil? (:content-stream entry))))))
+
   (it "silently drops chunks that carry neither key"
     ;; Defensive: a malformed producer must not resurrect the phantom
     ;; bucket bug. The tracker just no-ops.

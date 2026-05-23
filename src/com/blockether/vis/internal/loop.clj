@@ -1972,32 +1972,52 @@
           ;; that want append-only streaming append `:delta`; the others
           ;; ignore it and read `:thinking` as before.
           reasoning-len-volatile (volatile! 0)
+          content-len-volatile   (volatile! 0)
           streaming-fn (when on-chunk
-                         (fn [{:keys [reasoning done?] :as chunk}]
+                         (fn [{:keys [reasoning content done?] :as chunk}]
                            (cond
                              (:event/type chunk)
                              (on-chunk {:phase           :provider-fallback
                                         :iteration-count iteration-position
                                         :event           chunk})
 
-                             (or (some? reasoning) done?)
-                             (let [thinking (some-> reasoning str)
-                                   prev-len (long @reasoning-len-volatile)
-                                   cur-len  (long (count (or thinking "")))
-                                   ;; If the accumulator shrank (rare:
-                                   ;; provider reset mid-stream) treat the
-                                   ;; whole new text as fresh delta.
-                                   delta (cond
-                                           (nil? thinking)        nil
-                                           (< cur-len prev-len)   thinking
-                                           (= cur-len prev-len)   ""
-                                           :else                  (subs thinking prev-len))]
-                               (vreset! reasoning-len-volatile cur-len)
-                               (on-chunk {:phase           :reasoning
-                                          :iteration-count iteration-position
-                                          :thinking  thinking
-                                          :delta     delta
-                                          :done?     (boolean done?)})))))
+                             :else
+                             (do
+                               (when (or (some? reasoning) done?)
+                                 (let [thinking (some-> reasoning str)
+                                       prev-len (long @reasoning-len-volatile)
+                                       cur-len  (long (count (or thinking "")))
+                                       delta (cond
+                                               (nil? thinking)        nil
+                                               (< cur-len prev-len)   thinking
+                                               (= cur-len prev-len)   ""
+                                               :else                  (subs thinking prev-len))]
+                                   (vreset! reasoning-len-volatile cur-len)
+                                   (on-chunk {:phase           :reasoning
+                                              :iteration-count iteration-position
+                                              :thinking  thinking
+                                              :delta     delta
+                                              :done?     (boolean done?)})))
+                               (when (some? content)
+                                 ;; Stream provider content (the answer
+                                 ;; markdown + code fence) so the bubble
+                                 ;; surfaces live progress between reasoning
+                                 ;; and parsed forms. Same delta math as
+                                 ;; reasoning; consumers redraw or append.
+                                 (let [content-s (some-> content str)
+                                       prev-len  (long @content-len-volatile)
+                                       cur-len   (long (count (or content-s "")))
+                                       delta (cond
+                                               (nil? content-s)       nil
+                                               (< cur-len prev-len)   content-s
+                                               (= cur-len prev-len)   ""
+                                               :else                  (subs content-s prev-len))]
+                                   (vreset! content-len-volatile cur-len)
+                                   (on-chunk {:phase           :content
+                                              :iteration-count iteration-position
+                                              :content   content-s
+                                              :delta     delta
+                                              :done?     (boolean done?)})))))))
           copilot-initiator (copilot-initiator-for-iteration iteration)
           effective-llm-headers (not-empty
                                   (merge (copilot-llm-headers resolved-model copilot-initiator)
