@@ -128,6 +128,71 @@
         (expect (re-find #":type :(prove-requirement|work-unblocked-todo|review-spec|review-task)"
                   out))))))
 
+(defdescribe render-trailer-src-verbatim-test
+  (describe "trailer :src survives without quote-escape corruption"
+    ;; Repro: prior to the verbatim-render fix, the trailer entry
+    ;;   {:src "(str \"/\" name)"}
+    ;; rendered as `:src "(str \\"/\\" name)"`. The model read the visible
+    ;; `\"` as backslash-quote and copied that into the next iter's source,
+    ;; producing an SCI parse error ("EOF while reading, expected \" to
+    ;; match \""). After the fix the source must appear inside a `;; src …`
+    ;; comment block with the inner quotes UNESCAPED.
+    (let [trailer [{:scope "t18/i9"
+                    :forms [{:scope "t18/i9/f1"
+                             :tag :observation
+                             :result :ok
+                             :src "(str \"/\" name)"}]}]
+          ctx (assoc base-ctx :session/trailer trailer)
+          out (render ctx)]
+
+      (it "contains the verbatim source with bare double-quotes"
+        (expect (str/includes? out ";;   (str \"/\" name)")))
+
+      (it "does NOT emit the backslash-escaped form of the source"
+        ;; the corruption-by-zprint pattern is exactly two chars: `\"`
+        (expect (not (str/includes? out "(str \\\"/\\\" name)"))))
+
+      (it "prefixes the block with `;; src <scope> (<tag>):`"
+        (expect (str/includes? out ";; src t18/i9/f1 (observation):")))
+
+      (it "strips :src from the rendered form map (verbatim block carries it)"
+        (let [body (subs out (str/index-of out ";; src t18/i9/f1"))]
+          (expect (not (str/includes? body ":src \""))))))
+
+    ;; Multi-line source survives as a multi-line comment block. The model
+    ;; must see every original line; no `\n` escape sneaks in.
+    (let [src "(let [x 1\n      y 2]\n  (str \"/\" x y))"
+          trailer [{:scope "t2/i1"
+                    :forms [{:scope "t2/i1/f1" :tag :mutation
+                             :result :ok :src src}]}]
+          ctx (assoc base-ctx :session/trailer trailer)
+          out (render ctx)]
+
+      (it "emits each source line as its own `;;   ` comment line"
+        (expect (str/includes? out ";;   (let [x 1"))
+        (expect (str/includes? out ";;         y 2]"))
+        (expect (str/includes? out ";;     (str \"/\" x y))")))
+
+      (it "does not leak a literal `\\n` escape into the rendered text"
+        (expect (not (str/includes? out "\\n      y 2")))))))
+
+(defdescribe render-trailer-summary-pin-test
+  (describe "summary trailer pins render unchanged"
+    ;; Summary pins (from (done {:trailer-summarize …})) have no :src field;
+    ;; their `:summary` string is data and stays as a Clojure-escaped string,
+    ;; so the model can still parse it as EDN if it wants. We only special-
+    ;; case `:forms` pins.
+    (let [trailer [{:born "t17/i3/f1"
+                    :scope-start "t1/i1"
+                    :scope-end "t1/i14"
+                    :summary "Worked on Ctrl+B \"/voice\" handler."}]
+          ctx (assoc base-ctx :session/trailer trailer)
+          out (render ctx)]
+      (it "summary pin remains a normal EDN map"
+        (expect (str/includes? out ":scope-start \"t1/i1\""))
+        (expect (str/includes? out ":scope-end \"t1/i14\""))
+        (expect (str/includes? out ":summary"))))))
+
 (defdescribe render-trailer-truncation-test
   (describe "trailer truncation"
     (let [many-pins (vec (for [i (range 25)]
