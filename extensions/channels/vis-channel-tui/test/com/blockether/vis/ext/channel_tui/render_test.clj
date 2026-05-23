@@ -74,7 +74,7 @@
                   60 1 {})
           body (str/join "\n" (map (comp strip-ansi body-of) lines))]
       (expect (str/includes? body "(def x 1)"))
-      (expect (str/includes? body "* Recap: Title changed to \"Mixed forms\"."))
+      (expect (str/includes? body "TITLE  \"Mixed forms\""))
       ;; Render-segments path: the raw `(done …)` call form should not
       ;; leak — the renderer surfaces the answer reference instead.
       (expect (not (str/includes? body "(done [:ir")))
@@ -161,7 +161,7 @@
                                        :error "Exceptional status code: 429"}}]}
                   120 1 {})
           body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "* Recap: Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
+      (expect (str/includes? body "RECAP  Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
       (expect (str/includes? body "Exceptional status code: 429"))))
 
   (it "formats same-provider retry notices as recap rows"
@@ -174,7 +174,7 @@
                      :delay-ms 2000}]}
                   120 1 {})
           body (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "* Recap: Provider retry: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s"))))
+      (expect (str/includes? body "RECAP  Provider retry: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s"))))
 
   (it "renders provider error recap lines above provider error details"
     (let [lines (format-iteration-entry
@@ -184,7 +184,7 @@
                                   :body "rate limit"}}}
                   120 1 {})
           body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "* Recap: Provider error HTTP 429: Exceptional status code: 429"))
+      (expect (str/includes? body "RECAP  Provider error HTTP 429: Exceptional status code: 429"))
       (expect (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
 
 (defdescribe assistant-bubble-footer-fallback-test
