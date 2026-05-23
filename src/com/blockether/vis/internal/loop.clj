@@ -1290,9 +1290,18 @@
                                                   :vis/preflight-error err
                                                   :block-lang (:lang b)}
                                                  (let [segments        (render/parse-block-display src)
+                                                       ;; The block is structurally silent when every
+                                                       ;; `:code` segment is `:hidden? true` (def-shaped
+                                                       ;; forms, def-wrapped tool calls, bare qualified
+                                                       ;; tool calls). The renderer would paint nothing
+                                                       ;; for those, so the form-start chunk and the
+                                                       ;; bubble carry the silent flag and channels
+                                                       ;; skip the empty card.
                                                        structurally-silent?
                                                        (and (seq segments)
-                                                         (not-any? #(= :code (:kind %)) segments))]
+                                                         (not-any? #(and (= :code (:kind %))
+                                                                      (not (:hidden? %)))
+                                                           segments))]
                                                    (cond-> {:expr       src
                                                             :block-lang (:lang b)
                                                             :render-segments segments

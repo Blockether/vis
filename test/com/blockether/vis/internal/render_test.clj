@@ -23,9 +23,9 @@
               (render/->ast [:ir [:h 9 "High"]])))))
 
 (defdescribe host-bookkeeping-render-test
-  (it "classifies only top-level structural host forms"
+  (it "classifies only top-level structural host forms (def shapes hide because the DEF SINK already surfaces the bound var)"
     (expect (= [{:kind :title :value "Render cleanup"}
-                {:kind :code :source "(def x 1)"}
+                {:kind :code :source "(def x 1)" :hidden? true}
                 {:kind :answer-ref}]
               (render/parse-block-display
                 "(set-session-title! \"Render cleanup\")\n(def x 1)\n(done [:ir [:p \"ok\"]])"))))
@@ -52,9 +52,27 @@
               (render/parse-block-display
                 "(def render-sb-code (v/cat \"x.clj\"))"))))
 
-  (it "keeps plain (def x 1) visible (no tool wrapper)"
-    (expect (= [{:kind :code :source "(def x 1)"}]
+  (it "hides plain (def x 1) so the DEF SINK is the single source of bound-var truth"
+    ;; Pre-fix the renderer kept bare def source visible because the
+    ;; comment claimed \"the value is the only artifact\". In practice
+    ;; the trailer's `:vars` envelope already surfaces every bound var
+    ;; to both model and user, so painting the raw `(def …)` line
+    ;; just duplicates that signal and pushes the actual recap /
+    ;; result rows off-screen. Hide every def-shaped form; let the
+    ;; def sink speak.
+    (expect (= [{:kind :code :source "(def x 1)" :hidden? true}]
               (render/parse-block-display "(def x 1)"))))
+
+  (it "hides defn / defn- / defmacro / defmulti / defmethod / defonce uniformly"
+    (doseq [src ["(defn foo [] 1)"
+                 "(defn- bar [] 2)"
+                 "(defmacro baz [] `(println 1))"
+                 "(defmulti qux :kind)"
+                 "(defmethod qux :a [_] :a)"
+                 "(defonce only-once (atom {}))"]]
+      (let [out (render/parse-block-display src)]
+        (expect (= 1 (count out)))
+        (expect (true? (-> out first :hidden?))))))
 
   (it "hides def docstring form when wrapping a tool call"
     (expect (= [{:kind :code
@@ -83,12 +101,13 @@
       (expect (= 1 (count out)))
       (expect (true? (-> out first :hidden?)))))
 
-  (it "keeps visible code and hidden tool calls in separate segments"
+  (it "def and tool call both render hidden so the bubble shows only recap / result rows"
     (let [out (render/parse-block-display
                 "(def x 1)\n(v/cat \"a.clj\")")]
-      (expect (= 2 (count out)))
-      (expect (nil? (-> out first :hidden?)))
-      (expect (true? (-> out second :hidden?)))))
+      ;; Both forms hidden — same :hidden? flag means the coalesce
+      ;; pass merges them into one hidden code segment.
+      (expect (= 1 (count out)))
+      (expect (true? (-> out first :hidden?)))))
 
   (it "marks `(def r (v/ls …))` as hidden so the channel can collapse the raw source row"
     ;; Real-world fence the model emits when it wants to bind a tool

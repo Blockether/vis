@@ -2,17 +2,42 @@
   "Write-side SCI op family under the `git/` alias: add, commit!, amend!,
    push!, fetch!. Pure JGit, no shell. Mirrors merge_ops.clj shape.
 
-   Auth: SSH remotes use whatever ~/.ssh keys JGit's MINA backend
-   discovers. HTTPS remotes need :credentials {:username :password} or
-   {:token \"...\"}."
+   Auth: SSH remotes go through Apache MINA SSHD via JGit's
+   `SshdSessionFactory`. That factory reads ~/.ssh/config + IdentityFile,
+   speaks ed25519 / rsa-sha2-512, and talks to ssh-agent — i.e. the
+   handshake GitHub actually accepts. HTTPS remotes still need
+   :credentials {:username :password} or {:token \"...\"}."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
    [java.io File]
+   [java.nio.file Paths]
    [org.eclipse.jgit.api Git]
-   [org.eclipse.jgit.transport RefSpec UsernamePasswordCredentialsProvider]))
+   [org.eclipse.jgit.transport RefSpec SshSessionFactory UsernamePasswordCredentialsProvider]
+   [org.eclipse.jgit.transport.sshd SshdSessionFactory SshdSessionFactoryBuilder]))
+
+(defn- ^java.nio.file.Path ->path [^String s] (Paths/get s (make-array String 0)))
+
+(defn- install-sshd-session-factory!
+  "Install JGit's Apache-MINA `SshdSessionFactory` once, pointed at the
+   user's real ~/.ssh directory. The default factory cannot read
+   ssh-config or modern key algorithms; without this swap, every push to
+   GitHub fails with `remote hung up unexpectedly` mid-handshake
+   (Vis conv 11d4f817 / t10/i11). Idempotent — only the first call
+   builds and registers the factory."
+  []
+  (when-not (instance? SshdSessionFactory (SshSessionFactory/getInstance))
+    (let [home    (System/getProperty "user.home")
+          home-p  (->path home)
+          ssh-p   (->path (str home "/.ssh"))
+          factory (-> (SshdSessionFactoryBuilder.)
+                    (.setPreferredAuthentications "publickey")
+                    (.setHomeDirectory (.toFile home-p))
+                    (.setSshDirectory  (.toFile ssh-p))
+                    (.build nil))]
+      (SshSessionFactory/setInstance factory))))
 
 (defn- open-git ^Git [] (Git/open ^File (workspace/cwd)))
 
@@ -90,8 +115,14 @@
     :else           (RefSpec. (str "refs/heads/" branch ":refs/heads/" branch))))
 
 (defn push!
-  "Push to a remote. Opts: {:remote :branch :force? :tags? :delete? :credentials}."
+  "Push to a remote. Opts: {:remote :branch :force? :tags? :delete? :credentials}.
+
+   For SSH remotes, the Apache MINA `SshdSessionFactory` is installed on
+   first call; from then on JGit reads ~/.ssh/config the way `git`
+   itself does (IdentityFile, HostName, User, agent, ed25519,
+   rsa-sha2-512). HTTPS remotes use the supplied :credentials."
   [{:keys [remote branch force? tags? delete? credentials]}]
+  (install-sshd-session-factory!)
   (with-open [git (open-git)]
     (let [remote (or remote "origin")
           repo   (.getRepository git)
@@ -121,6 +152,7 @@
 (defn fetch!
   "Fetch from a remote. Opts: {:remote :credentials}."
   [{:keys [remote credentials]}]
+  (install-sshd-session-factory!)
   (with-open [git (open-git)]
     (let [cmd (.. git fetch (setRemote (or remote "origin")))]
       (when-let [cp (->credentials credentials)]

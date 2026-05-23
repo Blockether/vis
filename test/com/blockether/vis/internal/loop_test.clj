@@ -547,13 +547,18 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "keeps code visible when an answer form shares a block with code"
+  (it "keeps the iteration visible when an answer form shares a block with a def (def hides; answer-ref hides; trailer is the def sink)"
     (let [preflight (var-get #'lp/code-entries-preflight)
           src "(done {:answer \"ok\"})\n(def x \"doc\" 1)"
           entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
-      (expect (false? (:vis/structurally-silent? entry)))
+      ;; All-non-:code is the engine's `structurally-silent?` trigger.
+      ;; With the def now hidden the block has NO visible `:code`
+      ;; segment — the renderer skips the bubble entirely and the
+      ;; final answer paints below the trace, which is exactly the
+      ;; pi-style contract for a `(done…) + (def…)` mixed iteration.
+      (expect (true? (:vis/structurally-silent? entry)))
       (expect (= [{:kind :answer-ref}
-                  {:kind :code :source "(def x \"doc\" 1)"}]
+                  {:kind :code :source "(def x \"doc\" 1)" :hidden? true}]
                 (:render-segments entry)))))
 
   (it "still hides standalone direct-answer blocks"
@@ -563,7 +568,11 @@
       (expect (true? (:vis/structurally-silent? entry)))
       (expect (= [{:kind :answer-ref}] (:render-segments entry)))))
 
-  (it "streams form-start for mixed answer/code blocks"
+  (it "mixed answer/def blocks stamp structurally-silent so the loop suppresses the form-start chunk"
+    ;; With def-shaped forms hidden, an iteration that contains ONLY
+    ;; `(done …) + (def …)` carries no visible `:code` segment. The
+    ;; loop must mark it structurally-silent so the channel skips a
+    ;; ghost bubble; no `:form-start` chunk should be emitted.
     (let [env    (lp/create-environment ::router {:db :memory})
           chunks (atom [])
           src    "(done {:answer \"ok\"})\n(def x \"doc\" 1)"]
@@ -576,13 +585,8 @@
             {:iteration 0
              :resolved-model {:provider :test :name "test"}
              :on-chunk #(swap! chunks conj %)})
-          (let [start (first (filter #(= :form-start (:phase %)) @chunks))]
-            (expect (some? start))
-            (expect (= src (:code start)))
-            (expect (false? (:vis/structurally-silent? start)))
-            (expect (= [{:kind :answer-ref}
-                        {:kind :code :source "(def x \"doc\" 1)"}]
-                      (:render-segments start)))))
+          (let [starts (filter #(= :form-start (:phase %)) @chunks)]
+            (expect (empty? starts))))
         (finally
           (lp/dispose-environment! env)))))
 
@@ -604,7 +608,7 @@
       (expect (nil? (:parse-error (parse-forms regex-src)))))))
 
 (defdescribe top-level-do-unwrapping-test
-  (it "unwraps legacy top-level do before display and eval"
+  (it "unwraps legacy top-level do before display and eval; the def inside hides per the def-sink contract"
     (let [preflight (var-get #'lp/code-entries-preflight)
           src "(do (set-session-title! \"Triage render noise\") (def x \"doc\" 1))"
           entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
@@ -612,7 +616,7 @@
                 (:expr entry)))
       (expect (true? (:vis/unwrapped-do? entry)))
       (expect (= [{:kind :title :value "Triage render noise"}
-                  {:kind :code :source "(def x \"doc\" 1)"}]
+                  {:kind :code :source "(def x \"doc\" 1)" :hidden? true}]
                 (:render-segments entry))))))
 
 (defdescribe final-answer-gate-test
