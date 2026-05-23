@@ -1,6 +1,38 @@
-## Handoff — CTX engine redesign closed (D11–D13 + D15 + D16)
+## Handoff — CTX engine closed + PLAN §12 execution started (steps 1–3 partial)
 
-Status on **`5416daa8`** (origin/main, pushed):
+Status on **`ddcacddb`** (origin/main, pushed):
+
+```
+ddcacddb  PLAN §12 step 3 (partial): detect-trunk-branch + with-repo-lock
+            + label/focus/hydration facade
+fccf1d31  PLAN §12 step 2: persistance fns for label + focus + per-repo
+            focus pointer
+39facb68  PLAN §12 step 1: schema inline V1 — workspace.label +
+            last_focused_at_ms + repo_focus + session_state.merge_resolve_parent_id
+cb86afd6  HANDOFF.md: refresh — CTX redesign closure + missing inventory
+5416daa8  Single :turn-state-atom (6→1 atom collapse)
+5863ca0c  Railway-style flatten + D15 hook-task ranking + D16 :vcs/* canonical
+```
+
+### PLAN §12 progress
+
+| step | status | notes |
+|---|---|---|
+| 1 | ✅ DONE (39facb68) | schema inline V1: workspace.label + last_focused_at_ms + repo_focus table + session_state.merge_resolve_parent_id; row->workspace surfaces new cols |
+| 2 | ✅ DONE (fccf1d31) | persistance fns: db-workspace-update-label! / db-workspace-touch-focus! / db-repo-focus-get / db-repo-focus-set!; defdelegates |
+| 3 | 🟡 PARTIAL (ddcacddb) | detect-trunk-branch + with-repo-lock + set-label! / focus! / last-focused / display-label / workspace-with-session / list-active-with-sessions + db-session-state-list-for-workspace |
+| 3 (rest) | ⏳ NEXT | spawn-branch! rewrite (PLAN §4.4) + commit! + ff-apply! + start-merge-resolve! skeleton + KILL apply-to-trunk! body (K4) + KILL workspace-apply-to-trunk! re-export (K5) + status → §6.3 stamping (K3 if applicable) |
+| 4 | ⏳ PENDING | ctx_spec.clj KILL `:git/*` aliases (K1, K2); rename :git/file-stats → :vcs/file-stats; prompt.clj verify no :git/* leaks |
+| 5 | ⏳ PENDING | slash registry: internal/registry.clj `slash-registry` atom + register/deregister/lookup; internal/slash.clj parser + dispatch; core.clj exports; ::slash spec |
+| 6 | ⏳ PENDING | `vis-foundation-workspace` extension NEW + voice migration from `:tui.slot/commands` to `register-slash!` (K10) |
+| 7 | ⏳ PENDING | engine loop integration: slash dispatch at turn start; synthetic iter persistence; CTX :session/workspace pre-turn stamping |
+| 8 | ⏳ PENDING | TUI channel rewrite + KILL slash legacy (K6 / K7 / K8) |
+| 9 | ⏳ PENDING | Telegram channel rewrite + KILL parse-command / handle-command! (K9); setMyCommands from registered-slashes |
+| 10 | ⏳ PENDING | merge-resolve sub-session real impl |
+| 11 | ⏳ PENDING | docs sync (K11, K12) |
+| 12 | ⏳ PENDING | cleanup pass + final smoke (PLAN §0b 9-point ripgrep audit) |
+
+### CTX engine baseline (D11–D13 + D15 + D16) — unchanged
 
 ```
 5416daa8  Single :turn-state-atom collapses 6 per-turn atoms into one map
@@ -265,4 +297,20 @@ CTX engine: closed. Hints: collapsed. Atoms: consolidated. State:
 coherent. Logs: tel/log everywhere. Validators: FSM-guarded.
 VCS: agnostic. Multi-form: tracked. Off-by-one: fixed.
 
-Next session picks D14 (probes) or PLAN.md (workspace+slash). Lecimy.
+Next session picks up PLAN §12 step 3 REST:
+  1. spawn-branch! rewrite per PLAN §4.4 (dirty + ignored file copy,
+     with-repo-lock wrap, repo-id sanitize, branch auto-mint).
+  2. commit! (git add -A + commit, refuses trunk-kind + empty diff,
+     bumps commit_id).
+  3. ff-apply! (git merge --ff-only, auto-stash dance, transition
+     to :merged; returns :ff-failed on conflict for §7 hand-off).
+  4. start-merge-resolve! skeleton (spawn sub-session, set
+     merge_resolve_parent_id, register temp merge/* op surface).
+  5. KILL apply-to-trunk! body + workspace-apply-to-trunk! re-export
+     (K4, K5).
+
+Then step 4 (ctx_spec.clj KILL :git/* aliases) which is small. Then
+step 5 (slash registry) which is the gateway to everything else.
+
+PROBES sweep (D14) deferred until after the slash redesign so the
+cavemanize + token budget runs see the final shape.
