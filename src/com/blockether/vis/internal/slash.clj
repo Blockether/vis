@@ -65,11 +65,21 @@
   "Aggregate `:ext/slash-commands` from every active extension for `env`.
    Order: extension registration order (stable). Returns a vec.
 
-   This is the ONLY source of truth. Channels never cache or copy this
-   set; they call `active-slashes` (or the derived lookups below) per
-   turn so a hot-reload of an extension takes effect immediately."
+   This is the ONLY source of truth for engine slash dispatch (which
+   already has a turn env handy). Channels that lack a per-turn env
+   should use `registered-slashes` (no activation filtering)."
   [env]
   (vec (mapcat :ext/slash-commands (prompt/active-extensions env))))
+
+(defn registered-slashes
+  "Walk every globally registered extension and return the union of
+   their `:ext/slash-commands` specs. Activation-fn filtering is NOT
+   applied here — channels that surface slash UX before a session is
+   running (TUI palette overlay, Telegram `setMyCommands`) use this
+   env-less view. The engine dispatch path itself goes through
+   `active-slashes env` so per-session activation-fn rules still hold."
+  []
+  (vec (mapcat :ext/slash-commands (extension/registered-extensions))))
 
 (defn- index-by-path
   "Build {path-vec slash-spec} from a vec of slash specs."

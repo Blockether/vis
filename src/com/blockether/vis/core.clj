@@ -105,6 +105,7 @@
 ;; Slash commands (PLAN.md §3 — declarative `:ext/slash-commands`)
 ;; =============================================================================
 (def active-slashes              slash/active-slashes)
+(def registered-slashes          slash/registered-slashes)
 (def slash-by-path               slash/slash-by-path)
 (def slash-children              slash/slash-children)
 (def slash-parse                 slash/parse)
