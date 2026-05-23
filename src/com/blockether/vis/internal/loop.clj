@@ -23,6 +23,7 @@
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.workspace :as workspace]
    [edamame.core :as edamame]
    [sci.core :as sci]
@@ -3709,23 +3710,172 @@
                                       :trace              (conj trace trace-entry)
                                       :trailer-iters      next-recent}))))))))))))))))
 
-(defn run-turn!
-  "Store turn -> iteration-loop -> update turn -> return result.
+(defn- slash-ctx-for-env
+  "Build the slash dispatch ctx from a turn env. Pure data; carries
+   the channel/session/workspace coordinates the slash handlers read.
+   PLAN.md sections 3 + 11."
+  [env user-request]
+  (let [db-info  (:db-info env)
+        state-id (when db-info
+                   (some-> (:session-id env)
+                     (persistance/db-latest-session-state-id db-info)))]
+    (cond-> {:channel/id   (or (:channel env) :tui)
+             :session/id   (:session-id env)
+             :db-info      db-info
+             :command/raw  user-request}
+      state-id              (assoc :session/state-id state-id)
+      (:workspace/id env)   (assoc :workspace/id (:workspace/id env)))))
 
-   Derives `:prior-outcome` (one of `:complete`, `:cancelled`, `:error`)
-   from the loop result and
-   persists it on the `session_turn_state` row. The next turn's
-   `<system_state>` digest reads it."
+(defn- slash-body->ir
+  "Coerce a slash `:slash/body` value to canonical IR.
+   - nil          -> nil (no body)
+   - IR vector    -> normalized through render/->ast (identity-fast-path)
+   - Hiccup vec   -> rebuilt as IR via render/->ast
+   - String       -> parsed as Markdown via render/markdown->ir
+   - anything else -> rendered as the printable form (defensive)"
+  [body]
+  (cond
+    (nil? body)                       nil
+    (render/ir? body)                 (render/->ast body)
+    (and (vector? body) (keyword? (first body)))
+    (render/->ast body)
+    (string? body)                    (render/markdown->ir body)
+    :else                             (render/markdown->ir (pr-str body))))
+
+(defn- ir->markdown
+  "Render IR back to a flat Markdown string for the persisted
+   `answer_markdown` column. nil round-trips as nil."
+  [ir]
+  (when ir (render/render ir :markdown)))
+
+(defn- slash-result->answer-markdown
+  "Build the persisted `answer_markdown` for a slash turn from the
+   dispatch envelope. The body in `:slash/result` is IR-or-string;
+   we coerce to IR, render to Markdown, and prefix the title.
+   Channels display the IR directly; persistence stays plain Markdown
+   for transcript export / re-render."
+  [{:keys [result error reason]}]
+  (cond
+    result
+    (let [title (or (:slash/title result) "Slash handled")
+          ir    (slash-body->ir (:slash/body result))
+          body  (some-> ir ir->markdown str/trim not-empty)]
+      (cond-> (str "**" title "**")
+        body (str "\n\n" body)))
+    error
+    (str "**Slash error** (" (name (or reason :error)) ")\n\n" error)
+    :else
+    "_slash handled_"))
+
+(defn- apply-slash-mutations!
+  "Route a slash result's `:slash/specs / :slash/tasks / :slash/facts`
+   entries through `ctx-loop/apply-and-record!` so the slash leaves
+   the same kind of CTX trace a model-emitted
+   `(spec-set! ...)` / `(task-set! ...)` / `(fact-set! ...)` would.
+   Engine FSM checks, dedup, and validator-fn satisfaction all run
+   identically; warnings land on `:engine/warnings` for the next
+   render pass. PLAN.md section 12 step 7."
+  [env slash-result]
+  (let [result (:result slash-result)]
+    (when (map? result)
+      (doseq [[k partial] (:slash/specs result)]
+        (ctx-loop/apply-and-record! env :spec-set! [k partial]))
+      (doseq [[k partial] (:slash/tasks result)]
+        (ctx-loop/apply-and-record! env :task-set! [k partial]))
+      (doseq [[k partial] (:slash/facts result)]
+        (ctx-loop/apply-and-record! env :fact-set! [k partial])))))
+
+(defn- run-slash-turn!
+  "Persist a slash-only turn: one `session_turn_soul` + state + ONE
+   synthetic `session_turn_iteration` whose forms vec carries the slash
+   envelope at `:tag :user-slash`. The turn is marked :success without
+   any LLM round-trip. Returns the same shape `iteration-loop` would
+   have produced (so callers don't special-case slash turns).
+
+   When the slash result carries `:slash/specs / :tasks / :facts`,
+   those mutations are applied to the env's `ctx-atom` via
+   `apply-and-record!` BEFORE the synthetic iter row lands, so the
+   end-of-turn ctx snapshot (persisted to `session_turn_state.ctx`)
+   includes them. Engine warnings collected here flow into
+   `:engine/warnings` for the next render pass."
+  [env user-request slash-result]
+  (let [db-info     (:db-info env)
+        turn-id     (persistance/db-store-session-turn! db-info
+                      {:parent-session-id (:session-id env)
+                       :user-request      user-request
+                       :status            :running})
+        turn-pos    (or (session-turn-position env turn-id) 1)]
+    ;; Stamp turn-state so synthesize-scope returns the canonical
+    ;; `t<N>/i1/f1` scope for any CTX mutations the slash emits.
+    (ctx-loop/set-turn-state! env
+      :iteration-id    nil
+      :session-turn-id turn-id
+      :user-request    user-request
+      :turn-position   turn-pos
+      :iteration       1
+      :form-idx        0)
+    (apply-slash-mutations! env slash-result)
+    (let [scope     (str "t" turn-pos "/i1/f1")
+          envelope  {:scope  scope
+                     :tag    :user-slash
+                     :src    user-request
+                     :result (or (:result slash-result)
+                               {:slash/status :error
+                                :slash/title  (or (:error slash-result) "slash error")
+                                :slash/reason (:reason slash-result)})}
+          answer-md (slash-result->answer-markdown slash-result)
+          ;; Snapshot the CTX as it stands AFTER the slash mutations
+          ;; so resume picks up the spec/task/fact writes. Mirrors
+          ;; run-normal-turn!'s ctx-snapshot path: gc-pass + strip
+          ;; cursor + drop ephemerals before Nippy-encoding.
+          ctx-snapshot (when-let [ca (:ctx-atom env)]
+                         (let [stamped (ctx-loop/stamp-cursor env @ca)
+                               gced    (ctx-engine/gc-pass stamped)
+                               clean   (-> gced
+                                         (dissoc :session/scope)
+                                         ctx-engine/strip-ephemeral)]
+                           (reset! ca clean)
+                           clean))]
+      (try (persistance/db-store-iteration! db-info
+             {:session-turn-id          turn-id
+              :code                     user-request
+              :forms                    [envelope]
+              :duration-ms              0
+              :llm-full-duration-ms     0
+              :thinking                 ""
+              :answer                   answer-md
+              :llm-messages             []
+              :llm-returned-empty-code? false})
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::slash-iter-persist-failed
+                     :data  {:error (ex-message t)}})))
+      (persistance/db-update-session-turn! db-info turn-id
+        {:answer-markdown answer-md
+         :iteration-count 1
+         :duration-ms     0
+         :status          :success
+         :prior-outcome   :complete
+         :ctx             ctx-snapshot})
+      {:session-turn-id turn-id
+       :answer          answer-md
+       :iteration-count 1
+       :duration-ms     0
+       :status          :success
+       :slash           slash-result
+       :prior-outcome   :complete})))
+
+(defn- run-normal-turn!
+  "LLM round-trip path: store turn, run iteration-loop, persist
+   the end-of-turn CTX snapshot, update the turn row with answer +
+   tokens. Called by `run-turn!` when slash dispatch said the user
+   message was NOT a slash."
   [env user-request loop-opts]
-  (when-not (map? env)
-    (throw (ex-info "run-turn! requires an env map" {:got (type env)})))
-  (when (clojure.string/blank? user-request)
-    (throw (ex-info "run-turn! requires a non-blank user request" {:got user-request})))
   (let [session-turn-id (persistance/db-store-session-turn! (:db-info env)
                           {:parent-session-id (:session-id env)
                            :user-request user-request
                            :status :running})
-        result (iteration-loop env user-request (assoc loop-opts :session-turn-id session-turn-id))
+        result (iteration-loop env user-request
+                 (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
         ;; Snapshot the CTX as it stands at end-of-turn. Run gc-pass first
         ;; so terminal-status entries past their TTL drop out of the live
@@ -3767,6 +3917,34 @@
              :prior-outcome   prior-outcome
              :ctx             ctx-snapshot})]
     (assoc result :session-turn-id session-turn-id :prior-outcome prior-outcome)))
+
+(defn run-turn!
+  "Store turn -> iteration-loop -> update turn -> return result.
+
+   Derives `:prior-outcome` (one of `:complete`, `:cancelled`, `:error`)
+   from the loop result and
+   persists it on the `session_turn_state` row. The next turn's
+   `<system_state>` digest reads it.
+
+   PLAN.md §12 step 7: BEFORE the LLM round-trip, every turn is
+   passed through `slash/dispatch`. When the user-message resolves
+   to a registered slash, the turn is fully handled by a synthetic
+   iteration (`tag :user-slash`) and the LLM is never called. The
+   transcript still shows the user message + the slash envelope."
+  [env user-request loop-opts]
+  (when-not (map? env)
+    (throw (ex-info "run-turn! requires an env map" {:got (type env)})))
+  (when (clojure.string/blank? user-request)
+    (throw (ex-info "run-turn! requires a non-blank user request" {:got user-request})))
+  (let [slash-result (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
+                       (catch Throwable t
+                         (tel/log! {:level :warn :id ::slash-dispatch-threw
+                                    :data  {:user-request user-request
+                                            :error        (ex-message t)}})
+                         {:handled? false}))]
+    (if (:handled? slash-result)
+      (run-slash-turn! env user-request slash-result)
+      (run-normal-turn! env user-request loop-opts))))
 
 (defn custom-bindings
   "Current custom SCI bindings {sym -> value}."

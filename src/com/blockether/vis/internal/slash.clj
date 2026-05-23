@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.slash
-  "Channel-agnostic slash dispatch (PLAN.md §3).
+  "Channel-agnostic slash dispatch (PLAN.md section 3).
 
    Slashes are DECLARATIVE: every extension carries `:ext/slash-commands`
    on its manifest; the engine derives the active slash set by walking
@@ -8,14 +8,14 @@
 
    Public surface (re-exported through `core.clj`):
 
-     (active-slashes  env)              vec of slash specs
-     (slash-by-path   env path)         slash spec or nil
-     (slash-children  env parent)       vec of slash specs whose
-                                        `:slash/parent` = parent
-     (parse           text)             {:path :args :raw} | nil
-                                        (raw tokenisation only;
-                                         does NOT consult any registry)
-     (dispatch        env ctx text)     envelope (see below)
+     (active-slashes  env)              -> vec of slash specs
+     (slash-by-path   env path)         -> slash spec or nil
+     (slash-children  env parent)       -> vec of slash specs whose
+                                           `:slash/parent` = parent
+     (parse           text)             -> {:path :args :raw} | nil
+                                           (raw tokenisation only;
+                                            does NOT consult any registry)
+     (dispatch        env ctx text)     -> envelope (see below)
 
    The dispatch envelope is the contract every channel renders against:
 
@@ -25,11 +25,30 @@
      {:handled? true  :error msg :reason :unavailable :path}
      {:handled? true  :error msg :reason :no-run-fn :path}
      {:handled? true  :error msg :reason :run-failed :ex t :path}
-     {:handled? false}  — text was not a slash; channel forwards to LLM.
+     {:handled? false}  -- text was not a slash; channel forwards to LLM.
 
    A slash text is any non-blank string starting with `/` followed by
    at least one word. Plain prose without the leading `/` is ALWAYS
-   {:handled? false}."
+   {:handled? false}.
+
+   Slash run-fns may return an EXTENDED `:slash/*` envelope that lets
+   the slash write to the CTX engine just like a normal SCI mutator:
+
+     {:slash/status :ok | :error | :nothing-to-commit | :ff-failed
+      :slash/title  short headline (string, plain)
+      :slash/body   IR (vector starting with :ir ...) OR Markdown string
+      :slash/actions [{:label :slash}]   ;; optional follow-ups
+      :slash/specs   {entry-key partial-spec-map}    ;; -> :session/specs
+      :slash/tasks   {entry-key partial-task-map}    ;; -> :session/tasks
+      :slash/facts   {entry-key partial-fact-map}    ;; -> :session/facts
+      :slash/data    arbitrary payload (workspace-id, sha, ...)}
+
+   The engine routes `:slash/specs / :tasks / :facts` through
+   `ctx-loop/apply-and-record!` so a slash leaves the same kind of
+   trace on `:session/*` that a model-emitted `(spec-set! ...)` / etc.
+   would have. Validation, hook-task dedup, FSM safety all flow the
+   same way. PLAN.md section 12 step 7."
+
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
