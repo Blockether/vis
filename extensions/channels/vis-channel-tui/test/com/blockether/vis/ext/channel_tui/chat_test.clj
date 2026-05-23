@@ -73,6 +73,21 @@
         (expect (true? (:silent? form)))
         (expect (str/includes? (str (:code form)) "set-session-title!")))))
 
+  (it "rebuild-history elides synthetic preflight blocks so they don't render as success"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "preflight loop"
+                      :answer-markdown ""}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :code "(vis/preflight-error :raw-markdown-fence-leak)"}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            trace   (-> history second :traces first)]
+        (expect (= [] (:forms trace))))))
+
   (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns

@@ -1367,10 +1367,22 @@
    `:duration-ms` is the SCI sandbox eval wall time for this iteration's
    block; persisted into the named `eval_duration_ms` column. The LLM
    call wall time arrives as `:llm-full-duration-ms` and lands on
-   `llm_full_duration_ms`."
+   `llm_full_duration_ms`.
+
+   Preflight-only iterations (every form a synthetic
+   `(vis/preflight-error ...)` source) blank the `:code` column so
+   resumed bubbles don't render the synthetic source as success. The
+   model-facing `:forms` envelopes keep the rejection text so context
+   carry still teaches the next iter."
   [{:keys [forms duration-ms] :as opts}]
-  (let [code (require-iteration-code! opts)]
-    (cond-> {:code (str code)}
+  (let [code         (require-iteration-code! opts)
+        preflight-only? (and (seq forms)
+                          (every? (fn [f]
+                                    (let [s (some-> (:src f) str clojure.string/triml)]
+                                      (and s (clojure.string/starts-with? s "(vis/preflight-error"))))
+                            forms))
+        code-out (if preflight-only? "" (str code))]
+    (cond-> {:code code-out}
       (seq forms)              (assoc :forms (->blob (freeze-safe (vec forms))))
       (some? duration-ms)      (assoc :eval_duration_ms (long duration-ms)))))
 
