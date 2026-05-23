@@ -434,15 +434,32 @@
      :max-lines (min (positive-long (:max-lines opts) (:max-lines cfg))
                   (:max-lines cfg))}))
 
+(defn- exa-badge
+  "Short pi-style badge keyed off the Exa MCP tool name. Falls back
+   to a plain `EXA` token for unknown tools so the renderer never
+   throws on shape drift."
+  [tool]
+  (case tool
+    "web_search_exa"       "EXA web"
+    "get_code_context_exa" "EXA code"
+    (str "EXA " (or tool "?"))))
+
 (defn- channel-render-exa
   [result]
-  (let [{:keys [tool query content truncated? temp-file]} result]
+  (let [{:keys [tool query content truncated? temp-file mcp-error?]} result
+        badge (cond mcp-error? "EXA ERROR" :else (exa-badge tool))
+        head  [:p {}
+               [:strong {} (str badge)]
+               [:span {} "  query="]
+               [:c {} (str query)]
+               (when truncated? [:span {} "  (truncated)"])]]
     (cond-> [:ir {}
-             [:p {} [:span {} "Exa "] [:c {} tool] [:span {} ": "] [:c {} query]]
+             head
              [:code {:lang "text"} (str content)]]
-      truncated? (conj [:p {} [:span {} "Output truncated; full output saved to "]
-                        [:c {} temp-file]
-                        [:span {} "."]]))))
+      truncated?
+      (conj [:p {}
+             [:span {} "full output saved to "]
+             [:c {} (str temp-file)]]))))
 
 (defn- tool-success
   [{:keys [tool-name op query args mcp endpoint limits]}]

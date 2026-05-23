@@ -95,7 +95,10 @@ All re-probed; logs `s*_v*.log` carry the after-shots.
 
 - default 400 → 2000 lines (industry parity)
 - byte cap 64KB → 256KB
-- per-line trunc 2000 chars (`:long-line-truncations` alarm)
+- per-line cap RETIRED (was 2000 chars + `…<+N chars truncated>` /
+  `:long-line-truncations`). Same failure pattern as the trailer
+  cap removed in ccee2e1f-16ee-4acf-8d93-b4505034c0de; the byte
+  cap + `:next-offset` pagination already does the right thing.
 - dropped `(path n)` + `(path offset n)` arities — `:range start end`
   is the single positional slicer
 - added `:range start end` inclusive arity
@@ -108,7 +111,8 @@ All re-probed; logs `s*_v*.log` carry the after-shots.
 - `:before` / `:after` / `:context N` lines
 - `:files-only?` / `:counts?` output modes
 - `:regex?` opt-in (java.util.regex)
-- per-line trunc 500 chars
+- per-line cap RETIRED (was 500 chars + `…<+N chars>`). Same
+  rationale as the v/cat per-line cap above — model owns its data.
 
 ### v/ls (L1-L6)
 

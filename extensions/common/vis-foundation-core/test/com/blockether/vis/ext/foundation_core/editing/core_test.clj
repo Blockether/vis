@@ -591,10 +591,10 @@
       (expect (false? (:truncated? out)))))
 
   (it ":truncated? true when a window would exceed max-cat-window-bytes"
-    ;; Per-line trunc caps each line at ~2000 chars; the WINDOW cap is
-    ;; 256KB. Use 200 lines of ~1500 chars (each below the per-line cap)
-    ;; so the byte-cap fires on cumulative volume, not on a single huge
-    ;; line. First line always included for forward progress.
+    ;; Window byte cap is 256KB. Use 200 lines of ~1500 chars so the
+    ;; byte-cap fires on cumulative volume. First line always included
+    ;; for forward progress (even a single pathological 1MB line gets
+    ;; emitted whole — the per-line cap was retired; see source note).
     (let [chunky (apply str (repeat 1500 "x"))
           body (string/join "\n" (repeat 200 chunky))
           path (write-temp! "huge.txt" (str body "\n"))
@@ -720,22 +720,29 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(cat-tool path :not-range 1 5))))))
 
-(defdescribe vis-cat-line-truncation-test
-  (it "individual lines longer than max-line-length get a per-line truncation suffix"
-    ;; A minified-JS-style line: one 5000-char blob plus a normal short line.
+(defdescribe vis-cat-line-passthrough-test
+  ;; Regression: an earlier `max-line-length` (2000) cap rewrote every
+  ;; long line into `…<+N chars truncated>` and surfaced a
+  ;; `:long-line-truncations` count. Same failure pattern as the rg /
+  ;; trailer caps removed alongside (see ctx_renderer.clj header note
+  ;; + conversation ccee2e1f-16ee-4acf-8d93-b4505034c0de). The structural
+  ;; defense is the 256KB per-window byte cap: a pathological single
+  ;; line is included whole, the model sees real data, and the next
+  ;; window stops with `:truncated? true :next-offset N`.
+  (it "long lines pass through verbatim (no per-line cap, no `…<+N chars truncated>` marker)"
     (let [long-line (apply str (repeat 5000 "x"))
           path (write-temp! "long-line.txt" (str long-line "\nshort line\n"))
           read-file (private-fn "read-file")
           out (read-file path)
           [_ first-text] (first (:lines out))]
-      ;; Output capped at 2000 chars + suffix; short line untouched.
-      (expect (string/includes? first-text "…<+"))
-      (expect (string/includes? first-text "chars truncated"))
-      (expect (< (count first-text) 2100))
+      (expect (= long-line first-text))
+      (expect (= 5000 (count first-text)))
+      (expect (not (string/includes? first-text "…<+")))
+      (expect (not (string/includes? first-text "chars truncated")))
       (expect (= [2 "short line"] (nth (:lines out) 1)))
-      (expect (= 1 (:long-line-truncations out)))))
+      (expect (not (contains? out :long-line-truncations)))))
 
-  (it ":long-line-truncations key is ABSENT when no line was truncated"
+  (it ":long-line-truncations key is gone from the result map shape entirely"
     (let [path (write-temp! "short-lines.txt" "a\nb\nc\n")
           read-file (private-fn "read-file")
           out (read-file path)]
@@ -763,15 +770,22 @@
         (expect (= 1 (count form-sources)))
         (expect (string/includes? body "1: only-line")))))
 
-  (it "v/cat channel renderer separates inline text/code tokens with spaces"
+  (it "v/cat channel renderer wraps a pi-style CAT badge around the header"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
                 [[1898 "x"]] 1928 false)
           out (channel-render-cat r)
           paragraph (nth out 2)
-          text (apply str (filter string? (tree-seq sequential? seq paragraph)))]
-      (expect (string/includes? text
-                "Read extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj — 1 line(s) from line 1898 (next-offset 1928)."))))
+          text (apply str (filter string? (tree-seq sequential? seq paragraph)))
+          has-strong-cat? (some #(and (vector? %)
+                                   (= :strong (first %))
+                                   (= "CAT" (last %)))
+                            (tree-seq sequential? seq paragraph))]
+      (expect has-strong-cat?)
+      (expect (string/includes? text "render.clj"))
+      (expect (string/includes? text "1 line"))
+      (expect (string/includes? text "from=1898"))
+      (expect (string/includes? text "next-offset=1928"))))
 
   (it "v/cat channel renderer uses the absolute line number on each tuple"
     (let [channel-render-cat (private-fn "channel-render-cat")
@@ -997,14 +1011,23 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep {:any ["x"] :counts? true :before 1})))))
 
-  (it "long lines are truncated in hit :text to bound trailer growth"
+  (it "long lines pass through verbatim in hit :text (no per-line cap, no `…<+N chars>` marker)"
+    ;; Regression: an earlier `rg-line-preview-chars` (500 chars) cap
+    ;; mutilated every long hit line into `…<+N chars>`. That marker
+    ;; reproduced the same failure mode as the trailer cap removed in
+    ;; ccee2e1f-16ee-4acf-8d93-b4505034c0de — the model perceived its
+    ;; own search data as missing and chased phantom v/cat roundtrips
+    ;; even on normal source lines that brushed the cap. The model
+    ;; owns its data; no silent renderer-side ellipsis.
     (let [huge (apply str (repeat 1000 "x"))
-          _ (write-temp! "rgtext/big.txt" (str "NEEDLE " huge "\n"))
+          line (str "NEEDLE " huge)
+          _ (write-temp! "rgtext/big.txt" (str line "\n"))
           grep (private-fn "grep-files")
           out  (grep {:all ["NEEDLE"] :paths [(temp-dir-path "rgtext")]})
           text (:text (first (:hits out)))]
-      (expect (< (count text) 600))
-      (expect (string/includes? text "…<+")))))
+      (expect (= line text))
+      (expect (= (count line) (count text)))
+      (expect (not (string/includes? text "…<+"))))))
 
 (defdescribe thin-bbfs-wrapper-test
   ;; patch-safe and patch-envelope-safe both return a STRUCTURED MAP and
@@ -1410,14 +1433,18 @@
       (expect (not (contains? first-file :indent-delta))))))
 
 (defdescribe editing-renderer-guidance-test
-  (it "patch renderer reports patched paths as IR and tolerates sparse summaries"
+  (it "patch renderer wraps a pi-style PATCH badge around the header and lists paths"
     (let [render-patch (private-fn "channel-render-patch")
           rendered (render-patch [{:path "target/editing-test/out.txt"}])
           text-leaves (filter string? (tree-seq sequential? seq rendered))
-          joined (string/join " " text-leaves)]
+          joined (string/join " " text-leaves)
+          has-strong-patch? (some #(and (vector? %)
+                                     (= :strong (first %))
+                                     (= "PATCH" (last %)))
+                              (tree-seq sequential? seq rendered))]
       (expect (vector? rendered))
       (expect (= :ir (first rendered)))
-      (expect (string/includes? joined "Patched"))
+      (expect has-strong-patch?)
       (expect (string/includes? joined "target/editing-test/out.txt"))))
 
   (it "patch renderer surfaces :passes as a fuzzy alarm in the header"

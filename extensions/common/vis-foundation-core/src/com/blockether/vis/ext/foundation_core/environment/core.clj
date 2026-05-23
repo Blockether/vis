@@ -239,7 +239,6 @@
      (repositories-summary repositories)]))
 
 (defn- ir-text [s] [:span {} (str s)])
-(defn- ir-code [s] [:c {} (str s)])
 (defn- ir-strong [s] [:strong {} (str s)])
 (defn- ir-p [& children] (into [:p {}] children))
 
