@@ -3147,12 +3147,22 @@
                                   (str/trim (str source))))
                           code-segments)]
     (cond
-      (seq visible-sources)          (str/join "\n" visible-sources)
-      ;; segments parsed but all hidden (toggle OFF) — explicit
-      ;; blank, NOT fallback, so the hide-code-chrome? branch fires
-      ;; below and the bubble drops the code chrome entirely.
-      (seq code-segments)            ""
-      :else                           fallback-code)))
+      ;; At least one visible `:code` segment — paint it.
+      (seq visible-sources) (str/join "\n" visible-sources)
+
+      ;; The parser produced segments but no visible code was left:
+      ;; either every `:code` segment was hidden (def/tool-call) OR
+      ;; the whole iteration is ctx-mutation rows (`:task-update`,
+      ;; `:spec-update`, `:fact-update`, `:title`, `:answer-ref`).
+      ;; Both cases must render as blank source so the recap rows
+      ;; speak for themselves and the legacy fallback can NOT leak
+      ;; the raw `(task-set! …)` text next to its `TASK` badge.
+      (seq segments)        ""
+
+      ;; Truly no segments — legacy persisted chunk that pre-dates
+      ;; the parser. Fall back to the raw `code` string the chunk
+      ;; carries so the bubble still shows something.
+      :else                 fallback-code)))
 
 (defn- segment->recap-text
   "Compact one-line summary for a single ctx-mutation render

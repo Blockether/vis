@@ -469,3 +469,64 @@
 
       (it "empty input returns empty vec"
         (expect (= [] (eng/blocks->forms [] cursor)))))))
+
+(defdescribe gc-pass-turn-lifetime-test
+  ;; Vis conv 11d4f817 / t14–t16: a transient context-pressure
+  ;; hook-task lingered for 6 turns after the originating hint had
+  ;; stopped firing, because the model marked it :done with a proof
+  ;; scope that pointed at the (task-set! …) form itself instead of
+  ;; the sibling (done …), the validator (which requires (done …) or
+  ;; trailer-summarize/drop source) said no, and the renderer kept
+  ;; surfacing the resulting :done :validated? false task. Hooks now
+  ;; opt in via `:lifetime :turn` and `gc-pass` drops those entries at
+  ;; advance-turn so the next iter starts clean — re-created on
+  ;; demand by the hook only when the condition still holds.
+  (describe "gc-pass drops :lifetime :turn hook-tasks regardless of status"
+    (it "drops an open :lifetime :turn hook-task at advance-turn"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:vis.foundation/context-pressure
+                                 {:title "warn" :source :hook
+                                  :hook-id :vis.foundation/context-pressure
+                                  :status :todo :lifetime :turn
+                                  :validator-fn "(fn [_] true)"
+                                  :born "t1/i1/f1"}}}]
+        (expect (= {} (:session/tasks (eng/advance-turn ctx))))))
+
+    (it "drops a :done :validated? false :lifetime :turn task immediately"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:vis.foundation/context-pressure
+                                 {:title "warn" :source :hook
+                                  :hook-id :vis.foundation/context-pressure
+                                  :status :done :validated? false
+                                  :lifetime :turn
+                                  :validator-fn "(fn [_] true)"
+                                  :proof "t1/i1/f2" :done-born "t1/i1/f2"
+                                  :born "t1/i1/f1"}}}]
+        (expect (= {} (:session/tasks (eng/advance-turn ctx))))))
+
+    (it "keeps :lifetime :session hook-tasks until the TTL kicks in"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:vis.foundation/session-title
+                                 {:title "set title" :source :hook
+                                  :hook-id :vis.foundation/session-title
+                                  :status :todo
+                                  :validator-fn "(fn [_] true)"
+                                  :born "t1/i1/f1"}}}
+            advanced (eng/advance-turn ctx)]
+        (expect (contains? (:session/tasks advanced) :vis.foundation/session-title))))
+
+    (it "keeps user-source tasks even if :lifetime :turn is set on them"
+      ;; Defensive: only HOOK-source tasks are turn-pruned. A model-
+      ;; written task with :lifetime :turn (no current path produces
+      ;; this, but the renderer can't tell) survives until its own
+      ;; TTL or an explicit :cancelled flip.
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:user.thing
+                                 {:title "do x" :source :user
+                                  :status :todo :lifetime :turn
+                                  :born "t1/i1/f1"}}}]
+        (expect (contains? (:session/tasks (eng/advance-turn ctx)) :user.thing))))))

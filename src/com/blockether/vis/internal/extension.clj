@@ -716,11 +716,41 @@
   [phase]
   (contains? canonical-hook-phases phase))
 
+(def canonical-hook-lifetimes
+  "Hook-task lifetime policies. Controls how long an emitted hook-task
+   lingers in `:session/tasks` after the hint stops firing.
+
+     :session  Default. Task survives across turns and is GC'd by the
+               standard TTL machinery (`TTL-TASK-DONE`/`TTL-TASK-CANCELLED`
+               turns after terminal status). Right for cross-turn
+               concerns like `:vis.foundation/session-title` whose work
+               product (the session title) is itself session-scoped.
+
+     :turn     Ephemeral. Task is dropped from `:session/tasks` at
+               `advance-turn` regardless of status. If the originating
+               hint condition still holds, the next iter recreates the
+               task; if not, it stays gone. Right for transient signals
+               like `:vis.foundation/context-pressure` whose advisory
+               value evaporates the moment the next request's input
+               size drops below threshold. Prevents the cargo-cult
+               pattern where a stale `:done :validated? false` task
+               keeps showing up in the CTX render for 6 turns and the
+               model keeps re-emitting `(task-set! … :done)` to silence
+               it (Vis conv 11d4f817 / t14–t16)."
+  #{:turn :session})
+
+(defn hook-lifetime?
+  "True when `lifetime` is one of the canonical hook-task lifetimes."
+  [lifetime]
+  (contains? canonical-hook-lifetimes lifetime))
+
 (s/def :ext.hook/id keyword?)
 (s/def :ext.hook/doc non-blank-string?)
 (s/def :ext.hook/phase (s/and keyword? hook-phase?))
 (s/def :ext.hook/fn fn?)
-(s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]))
+(s/def :ext.hook/lifetime (s/and keyword? hook-lifetime?))
+(s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]
+                :opt-un [:ext.hook/lifetime]))
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 
 (s/def :ext.hook.return/text non-blank-string?)
