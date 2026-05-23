@@ -423,16 +423,13 @@
       (sort cmp rows))))
 
 (defn status
-  "Enrich a workspace record with live VCS status. Stamps both the
-   canonical `:vcs/*` keys (`:vcs/kind :git`, `:vcs/branch`, `:vcs/head`,
-   `:vcs/dirty?`) and the legacy `:git/*` aliases that the persistence
-   layer + older renderer paths still read. Both shapes are permitted by
-   `::cs/workspace` since D11.
-
-   Future Mercurial / Jujutsu detectors fork this fn (or dispatch on a
-   `:vcs/kind` discriminator at the call site) and emit the same
-   `:vcs/*` core keys; the engine reads VCS-agnostic. On error:
-   `:workspace/error`."
+  "Enrich a workspace record with live VCS status. Stamps the canonical
+   `:vcs/*` keys (`:vcs/kind :git`, `:vcs/branch`, `:vcs/head`,
+   `:vcs/dirty?`). Future Mercurial / Jujutsu detectors fork this fn
+   (or dispatch on a `:vcs/kind` discriminator at the call site) and
+   emit the same `:vcs/*` core keys; the engine reads VCS-agnostic.
+   On error: `:workspace/error`. PLAN.md §12 step 4 — the legacy
+   `:git/*` aliases are GONE."
   [db-info workspace-id]
   (when-let [ws (get db-info workspace-id)]
     (let [root (:root ws)]
@@ -444,17 +441,10 @@
                         (not (str/blank? (git! root ["status" "--porcelain"]))))]
           (assoc ws
             :workspace/exists? exists?
-            ;; Canonical VCS-agnostic keys (D11 spec). Engine consumers
-            ;; should prefer these.
             :vcs/kind          :git
             :vcs/branch        branch
             :vcs/head          head
-            :vcs/dirty?        dirty?
-            ;; Legacy `:git/*` aliases. Kept until every consumer is
-            ;; migrated; spec permits both opt.
-            :git/branch        branch
-            :git/head          head
-            :git/dirty?        dirty?))
+            :vcs/dirty?        dirty?))
         (catch Throwable t
           (assoc ws
             :workspace/exists? (.exists (io/file root))
