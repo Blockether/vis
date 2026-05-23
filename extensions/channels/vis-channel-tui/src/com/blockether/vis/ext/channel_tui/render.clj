@@ -3432,10 +3432,6 @@
         ;; label bands in live, completed, or cancelled bubbles.
         show-iteration-headers? false
         ;; Per user directive: every iteration is always visible.
-        ;; The legacy PROGRESS HISTORY collapse + `:progress/live-
-        ;; iteration-limit` truncation were removed; the settings key is
-        ;; accepted only for back-compatibility with old callers.
-        _live-iteration-limit (get settings :progress/live-iteration-limit)
         grouped-iterations (collapse-repeated-error-runs iterations)
         visible-iterations grouped-iterations
         iter-entry-fn  (fn [[idx entry]]

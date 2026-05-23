@@ -99,7 +99,6 @@
 (def workspace-with-session      workspace/workspace-with-session)
 (def workspace-list-active-with-sessions workspace/list-active-with-sessions)
 (def workspace-register-hook!    workspace/register-hook!)
-(def workspace-delete-legacy-edn! workspace/delete-legacy-edn!)
 
 ;; =============================================================================
 ;; Slash commands (PLAN.md §3 — declarative `:ext/slash-commands`)

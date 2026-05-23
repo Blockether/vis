@@ -1398,17 +1398,16 @@
 (defn- iteration-start-hook-hit
   "Normalise the value returned by a `:turn.iteration/start` hook into a
    hook-task shape (D12). Hooks emit `{:title :validator-fn :importance?}`
-   maps (legacy `:body` / `:text` aliases for `:title` accepted). The loop
-   wraps this into a full `::cs/task` map keyed by the hook id, suitable
-   for direct fold onto `:session/tasks`.
+   maps. The loop wraps this into a full `::cs/task` map keyed by the
+   hook id, suitable for direct fold onto `:session/tasks`.
 
    Returns `{:id <kw> :task <task-map> :emit {:specs :tasks :facts}}`
    or nil. The `:emit` key carries optional secondary CTX writes
-   (PLAN.md §12 step 7 follow-up): each entry under `:emit/specs` /
-   `:emit/tasks` / `:emit/facts` flows through
+   (PLAN.md section 12 step 7 follow-up): each entry under
+   `:emit/specs` / `:emit/tasks` / `:emit/facts` flows through
    `ctx-loop/apply-and-record!` exactly like a model-emitted mutator.
    Hooks may also return ONLY `{:emit ...}` to seed specs/tasks/facts
-   without registering a hook-task themselves — in that case both
+   without registering a hook-task themselves -- in that case both
    `:title` and `:validator-fn` may be absent and `:task` returns nil.
 
    Hooks that emit a hook-task but omit `:title` or `:validator-fn`
@@ -1425,7 +1424,7 @@
       nil)
 
     :else
-    (let [title         (or (:title hit) (:body hit) (:text hit))
+    (let [title         (:title hit)
           validator-fn  (:validator-fn hit)
           emit          (when (map? (:emit hit)) (:emit hit))
           hook-task?    (and (string? title) (not (str/blank? title)))]
@@ -1438,7 +1437,7 @@
         (do (tel/log! {:level :warn
                        :id ::iteration-start-hook-missing-title
                        :data {:ext (:ext/name ext) :hook id :returned hit}}
-              "Hook returned map without non-blank :title / :body / :text (and no :emit payload); dropping")
+              "Hook returned map without non-blank :title (and no :emit payload); dropping")
           nil)
 
         (or (not (string? validator-fn)) (str/blank? validator-fn))
