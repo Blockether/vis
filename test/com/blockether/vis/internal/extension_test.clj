@@ -85,6 +85,46 @@
                   (catch clojure.lang.ExceptionInfo e
                     (:type (ex-data e))))))))
 
+  (it "slash path collisions across extensions are rejected at register-extension! time"
+    ;; PLAN.md §3: the union of `:ext/slash-commands` across all
+    ;; registered extensions must contain unique `[parent name]`
+    ;; paths. A second extension that declares the same path as an
+    ;; already-registered extension is refused. Hot reload of the
+    ;; SAME extension id is still allowed because its prior entry is
+    ;; excluded from the conflict scan.
+    (try
+      (extension/register-extension!
+        {:ext/name        "test.slash-collide-a"
+         :ext/description "first owner of /probe"
+         :ext/slash-commands
+         [{:slash/name   "probe"
+           :slash/doc    "probe original"
+           :slash/run-fn (fn [_] {:slash/status :ok})}]})
+      (let [thrown (try
+                     (extension/register-extension!
+                       {:ext/name        "test.slash-collide-b"
+                        :ext/description "duplicate owner of /probe"
+                        :ext/slash-commands
+                        [{:slash/name   "probe"
+                          :slash/doc    "probe dup"
+                          :slash/run-fn (fn [_] {:slash/status :ok})}]})
+                     nil
+                     (catch clojure.lang.ExceptionInfo e
+                       (ex-data e)))]
+        (expect (= :extension/slash-path-collision (:type thrown)))
+        (expect (= ["probe"] (-> thrown :collisions first :path))))
+      ;; Hot-reload of the SAME id with the SAME path = allowed.
+      (expect (some? (extension/register-extension!
+                       {:ext/name        "test.slash-collide-a"
+                        :ext/description "reload owner of /probe"
+                        :ext/slash-commands
+                        [{:slash/name   "probe"
+                          :slash/doc    "probe reloaded"
+                          :slash/run-fn (fn [_] {:slash/status :ok})}]})))
+      (finally
+        (extension/deregister-extension! "test.slash-collide-a")
+        (extension/deregister-extension! "test.slash-collide-b"))))
+
   (it "uses the symbol-specific render-fn instead of dumping tool result data"
     (extension/register-op! :test.renderer/demo {:tag :observation})
     (let [entry (extension/symbol
