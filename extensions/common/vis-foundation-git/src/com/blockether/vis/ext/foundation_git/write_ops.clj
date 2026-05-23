@@ -236,13 +236,11 @@
 (defn- ok [v] (extension/success {:result v}))
 
 (defn- render-edn
-  "Tiny channel renderer: round-trip the result map as a pretty-printed EDN
-   block. The model gets the raw map via SCI; this only shapes the TUI/channel
-   preview."
+  "Tiny channel renderer: surface the result map as a fenced EDN code block.
+   The model gets the raw map via SCI; this only shapes the TUI/channel
+   preview. Must return canonical IR ([:ir {} …]) per `render-value?`."
   [result]
-  {:vis.ir/kind :ir/code-block
-   :language    "edn"
-   :text        (pr-str result)})
+  [:ir {} [:code {:lang "edn"} (pr-str result)]])
 
 (defn add-tool
   "Stage paths. (git/add \"file\"), (git/add [\"a\" \"b\"]), or (git/add :all)."
