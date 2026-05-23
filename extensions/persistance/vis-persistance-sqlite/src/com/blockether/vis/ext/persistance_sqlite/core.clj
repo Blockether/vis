@@ -759,6 +759,65 @@
            :where    [:= :workspace_id ws-id]
            :order-by [[:version :desc]]})))))
 
+(defn db-session-state-spawn-merge-resolve!
+  "Create a merge-resolve sub-session pinned to the parent's workspace
+   (PLAN.md §7). The new `session_state` row:
+     - Shares `session_soul_id` with the parent (sub-session is a
+       continuation, not a fresh soul).
+     - Pins to the SAME `workspace_id` as the parent (the trunk-side
+       conflict state lives there). The partial UNIQUE index
+       `uq_session_state_workspace` permits this because the new
+       row's `merge_resolve_parent_id` is non-NULL.
+     - Stamps `merge_resolve_parent_id` = parent state id; this is
+       the marker SCI binding lookup checks before exposing the
+       `merge/*` op family.
+     - Inherits provider / model / system-prompt from the parent.
+
+   Returns the new sub-session-state id (UUID)."
+  [db-info parent-session-state-id]
+  (when (and (ds db-info) parent-session-state-id)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [pid (->ref parent-session-state-id)
+              parent (query-one! tx-info
+                       {:select [:*] :from :session_state
+                        :where  [:= :id pid]})]
+          (when-not parent
+            (throw (ex-info "db-session-state-spawn-merge-resolve! parent not found"
+                     {:type :persistance/parent-not-found
+                      :parent-session-state-id parent-session-state-id})))
+          (let [new-id  (new-uuid)
+                now     (now-ms)
+                ver     (inc (long (or (:version parent) 0)))]
+            (execute! tx-info
+              {:insert-into :session_state
+               :values [{:id                       (str new-id)
+                         :session_soul_id          (:session_soul_id parent)
+                         :parent_state_id          (:id parent)
+                         :workspace_id             (:workspace_id parent)
+                         :title                    (str (or (:title parent) "Untitled") " (merge-resolve)")
+                         :version                  ver
+                         :system_prompt            (or (:system_prompt parent) "")
+                         :llm_root_provider        (:llm_root_provider parent)
+                         :llm_root_model           (:llm_root_model parent)
+                         :merge_resolve_parent_id  pid
+                         :created_at               now}]})
+            new-id))))))
+
+(defn db-session-state-merge-resolve-parent
+  "Read `merge_resolve_parent_id` for `session-state-id` or nil.
+   When non-nil, the current session_state is a merge-resolve
+   sub-session. SCI binding lookup uses this to gate the `merge/*`
+   op family."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (some-> (query-one! db-info
+              {:select [:merge_resolve_parent_id]
+               :from   :session_state
+               :where  [:= :id (->ref session-state-id)]})
+      :merge_resolve_parent_id
+      ->uuid)))
+
 (defn db-session-state-set-workspace!
   "Pin `session-state-id` to `workspace-id`. Caller guarantees the
    target session_state row exists and has no other workspace pinned

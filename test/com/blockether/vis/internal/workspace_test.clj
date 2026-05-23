@@ -11,6 +11,7 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.core :as ps]
    [com.blockether.vis.ext.persistance-sqlite.registrar]
+   [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.workspace :as ws]
    [lazytest.core :refer [defdescribe describe expect it]]
    [next.jdbc :as jdbc]))
@@ -215,16 +216,77 @@
                           (:state (ws/get store (:id workspace)))))))
             (finally (delete-tree! base))))))))
 
-(defdescribe start-merge-resolve-skeleton-test
-  (it "throws :workspace/not-yet-implemented (PLAN.md §12 step 10 placeholder)"
+(defdescribe start-merge-resolve-test
+  (it "refuses :trunk-kind workspaces"
     (with-store
       (fn [store]
-        (try (ws/start-merge-resolve! store {:workspace-id "ws"
-                                             :parent-session-id "s"
-                                             :channel-id :tui})
-          (expect false)
-          (catch clojure.lang.ExceptionInfo e
-            (expect (= :workspace/not-yet-implemented (:type (ex-data e))))))))))
+        (let [trunk (ws/ensure-trunk! store {})]
+          (try (ws/start-merge-resolve! store
+                 {:workspace-id (:id trunk)
+                  :parent-session-state-id "ss"})
+            (expect false)
+            (catch clojure.lang.ExceptionInfo e
+              (expect (= :workspace/trunk-merge-resolve (:type (ex-data e))))))))))
+
+  (it "refuses missing :parent-session-state-id"
+    (let [base (temp-dir "vis-merge-resolve-missing")]
+      (try
+        (with-store
+          (fn [store]
+            (.mkdirs (io/file base))
+            (init-git-repo! base)
+            (let [workspace (branch-workspace! store base
+                              (str (io/file base "-wt")))]
+              (try (ws/start-merge-resolve! store
+                     {:workspace-id (:id workspace)})
+                (expect false)
+                (catch clojure.lang.ExceptionInfo e
+                  (expect (= :workspace/missing-parent-session-state
+                            (:type (ex-data e)))))))))
+        (finally (delete-tree! base)))))
+
+  (it "spawns a merge-resolve sub-session pinned to the parent workspace on conflict"
+    (let [base (temp-dir "vis-merge-resolve-conflict")]
+      (try
+        (with-store
+          (fn [store]
+            ;; trunk repo with two diverging commits  — same file edited
+            ;; on both sides so `git merge` lands on a conflict.
+            (.mkdirs (io/file base))
+            (init-git-repo! base)
+            (let [trunk-branch (git! base ["rev-parse" "--abbrev-ref" "HEAD"])
+                  workspace    (branch-workspace! store base
+                                 (str (io/file base "-wt")))]
+              ;; Trunk-side divergent commit on the same file.
+              (spit (io/file base "note.txt") "trunk-side\n")
+              (git! base ["commit" "-am" "trunk-divergence"])
+              ;; Branch-side divergent commit on the same file.
+              (spit (io/file (:root workspace) "note.txt") "branch-side\n")
+              (git! (:root workspace) ["commit" "-am" "branch-divergence"])
+              ;; Stage a parent session_state pinned to the workspace.
+              (let [ds  (:datasource store)
+                    sid (str (java.util.UUID/randomUUID))
+                    st  (str (java.util.UUID/randomUUID))]
+                (jdbc/execute! ds ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)"
+                                   sid "tui" 1])
+                (jdbc/execute! ds [(str "INSERT INTO session_state "
+                                     "(id, session_soul_id, workspace_id, version, created_at) "
+                                     "VALUES (?,?,?,?,?)")
+                                   st sid (str (:id workspace)) 0 1])
+                (let [result (ws/start-merge-resolve! store
+                               {:workspace-id (:id workspace)
+                                :parent-session-state-id st})]
+                  (expect (= :ok (:status result)))
+                  (expect (some? (:sub-session-state-id result)))
+                  (expect (= trunk-branch (:trunk result)))
+                  (expect (some #(= "note.txt" (:path %)) (:conflicts result)))
+                  ;; Sub-session is queryable and carries the parent
+                  ;; pointer; the partial UNIQUE index lets it share
+                  ;; workspace_id with the parent.
+                  (let [parent-id (persistance/db-session-state-merge-resolve-parent
+                                    store (:sub-session-state-id result))]
+                    (expect (= st (str parent-id)))))))))
+        (finally (delete-tree! base))))))
 
 (defdescribe lookup-errors-test
   (it "ff-apply! reports unknown workspace-id in ex-data"

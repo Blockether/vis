@@ -173,8 +173,16 @@ CREATE TABLE session_state (
   UNIQUE (session_soul_id, version)
 );
 
+-- PLAN.md §12 step 10: the 1:1 workspace-session_state invariant is
+-- partial. A merge-resolve sub-session pins to its parent's workspace
+-- (§7.1) so the conflict state in the worktree index is visible to
+-- both sessions. We DON'T want that to violate the UNIQUE: the
+-- constraint applies only to rows where merge_resolve_parent_id IS
+-- NULL (i.e. the canonical session_state of a workspace). Resolve
+-- sub-session rows can coexist on the same workspace_id.
 CREATE UNIQUE INDEX uq_session_state_workspace
-  ON session_state(workspace_id);
+  ON session_state(workspace_id)
+  WHERE merge_resolve_parent_id IS NULL;
 
 CREATE INDEX idx_session_state_soul
   ON session_state(session_soul_id, version);
