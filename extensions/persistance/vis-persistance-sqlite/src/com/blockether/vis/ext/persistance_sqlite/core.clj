@@ -611,6 +611,75 @@
               {:select [:*] :from :workspace
                :where  [:= :id id]})))))))
 
+(defn db-workspace-update-label!
+  "Set the human-friendly `:label` override (PLAN.md §1). Pass nil to
+   clear the label and fall back to the heuristic. Returns the updated
+   record."
+  [db-info workspace-id label]
+  (when (and (ds db-info) workspace-id)
+    (let [id (->ref workspace-id)]
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:label label}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
+
+(defn db-workspace-touch-focus!
+  "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by
+   `workspace/focus!` (PLAN.md §1, §6). Returns the updated record."
+  [db-info workspace-id]
+  (when (and (ds db-info) workspace-id)
+    (let [id  (->ref workspace-id)
+          now (now-ms)]
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:last_focused_at_ms now}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
+
+(defn db-repo-focus-get
+  "Return the `workspace_id` currently pinned as the focus pointer for
+   `repo-id` (PLAN.md §1). Nil when no entry exists yet."
+  [db-info repo-id]
+  (when (and (ds db-info) repo-id)
+    (some-> (query-one! db-info
+              {:select [:workspace_id :updated_at_ms]
+               :from   :repo_focus
+               :where  [:= :repo_id repo-id]})
+      (as-> r {:workspace-id   (->uuid (:workspace_id r))
+               :updated-at-ms  (:updated_at_ms r)}))))
+
+(defn db-repo-focus-set!
+  "Upsert the per-repo focus pointer to `workspace-id`. Updates
+   `updated_at_ms` to now. Returns the new pointer map (PLAN.md §1)."
+  [db-info repo-id workspace-id]
+  (when (and (ds db-info) repo-id workspace-id)
+    (let [ws-id (->ref workspace-id)
+          now   (now-ms)]
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          ;; SQLite UPSERT: INSERT ... ON CONFLICT REPLACE the row.
+          (execute! tx-info
+            {:insert-into :repo_focus
+             :values [{:repo_id       repo-id
+                       :workspace_id  ws-id
+                       :updated_at_ms now}]
+             :on-conflict :repo_id
+             :do-update-set {:workspace_id  ws-id
+                             :updated_at_ms now}})
+          {:workspace-id   (->uuid ws-id)
+           :updated-at-ms  now})))))
+
 (defn db-workspace-get [db-info workspace-id]
   (when (and (ds db-info) workspace-id)
     (row->workspace
