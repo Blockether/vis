@@ -32,6 +32,43 @@ cb86afd6  HANDOFF.md: refresh — CTX redesign closure + missing inventory
 | 11 | ⏳ PENDING | docs sync (K11, K12) |
 | 12 | ⏳ PENDING | cleanup pass + final smoke (PLAN §0b 9-point ripgrep audit) |
 
+### What works today vs. what doesn't (operator-level)
+
+**WORKS** (CTX engine baseline, hook-task surface):
+  - `bin/vis --provider <P> --persist "…"` end-to-end with a real
+    provider. Model reads `;; ctx`, writes specs/tasks/facts/proofs,
+    satisfies foundation hook-tasks via
+    `(task-set! :vis.foundation/session-title {:status :done :proof
+    "tN/iM/fK"})`. Engine validates the proof envelope; reverts on
+    fail. Verified `2026-05-23` against `anthropic-coding-plan`.
+  - All engine mutators (`spec-set!` / `task-set!` / `fact-set!` /
+    `req-add!` / `req-update!` / `req-remove!` / `proof-add!` /
+    `proof-remove!` / `set-session-title!` / `done`) wired through
+    `ctx-loop/build-sci-bindings`.
+  - `(done {:trailer-drop […] :trailer-summarize […]})` for
+    model-owned trailer cleanup. No auto-compaction anywhere.
+  - `introspect-*` verbs (spec/task/fact/archived/ctx-at) over the
+    persisted history with per-iter DB-roundtrip cache.
+
+**DOESN'T WORK YET** (PLAN §12 steps 5–12):
+  - `/workspace …` slash commands in TUI / Telegram channels. No
+    `:ext/slash-commands` spec, no `slash.clj` aggregator, no
+    channel dispatch hook yet. PLAN §12 steps 5 (slash declarative
+    surface) + 6 (workspace slashes on vis-foundation-core) +
+    7 (engine loop integration) deliver this.
+  - Synthetic iteration persistence for slash results. The model
+    sees normal iters today; once steps 5+7 land, slashes will
+    persist as synthetic iters in the same `session_turn_iteration`
+    table (without `:llm-*` keys) so channels render them
+    consistently with model iters.
+  - `workspace/spawn-branch!` dirty+ignored copy, `workspace/commit!`,
+    `workspace/ff-apply!`, `workspace/start-merge-resolve!` skeleton
+    — the heavy git ops half of PLAN §12 step 3.
+  - TUI tab strip + Telegram switcher backed by
+    `list-active-with-sessions` + per-repo `focus!`. The thin facade
+    is in place; the channel rewrite (steps 8 + 9) wires the consumers.
+  - Merge-resolve sub-session real impl (step 10).
+
 ### CTX engine baseline (D11–D13 + D15 + D16) — unchanged
 
 ```
@@ -338,6 +375,26 @@ grep -E "::iter-end-(pre|post)|::reconcile-done|::hook-task-fold|::apply-done" ~
 ---
 
 ## Picking up cleanly
+
+**Recommended ritual when restarting a session:**
+
+```bash
+cd ~/vis
+git pull --ff-only origin main           # sanity
+cat HANDOFF.md                            # this file — start here
+cat PLAN.md | head -250                   # §0b HARD CONTRACT + §0 vocab + §1 schema
+grep -n "^## " PLAN.md                    # table of contents
+./verify.sh                               # all 7 steps must pass before touching anything
+bin/vis sessions list                     # see persisted state if any
+```
+
+Then pick the next PLAN §12 step from the progress table at the top
+of this file and follow it. Commit each step separately; re-run
+`./verify.sh` between steps.
+
+---
+
+## Picking up cleanly (engine deep-dive)
 
 1. `git log --oneline -10` — last cycle's commits.
 2. `cat HANDOFF.md` (this file).
