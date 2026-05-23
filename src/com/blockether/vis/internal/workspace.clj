@@ -616,22 +616,89 @@
               (when stashed?
                 (try (git! repo-root ["stash" "pop"]) (catch Throwable _ nil))))))))))
 
+(defn- parse-conflicts
+  "Read `git status --porcelain=v1` and project conflicting paths
+   (`UU`, `AA`, `DD`, `AU`, `UA`, `DU`, `UD`) into a vec of
+   `{:path :state}` maps. Empty vec when no conflicts. PLAN.md §7."
+  [repo-root]
+  (let [conflict-codes #{"UU" "AA" "DD" "AU" "UA" "DU" "UD"}
+        out (try (git! repo-root ["status" "--porcelain=v1"])
+              (catch Throwable _ ""))]
+    (vec
+      (for [line (str/split-lines (or out ""))
+            :let  [xy   (when (>= (count line) 2) (subs line 0 2))
+                   path (when (>= (count line) 3) (str/trim (subs line 3)))]
+            :when (and xy path (contains? conflict-codes xy))]
+        {:path path :state xy}))))
+
 (defn start-merge-resolve!
   "Bootstrap a merge-resolve sub-session for an `:ff-failed` workspace.
    PLAN.md §7.1.
 
-   Step 3 SKELETON: declares the surface and throws
-   `:workspace/not-yet-implemented` so callers in the engine loop can
-   wire the hand-off without depending on the real flow (which arrives
-   in step 10: sub-session spawn, `merge/*` op family, conflict
-   parsing, channel event publication)."
-  [_db-info {:keys [workspace-id parent-session-id channel-id] :as opts}]
-  (throw (ex-info "workspace/start-merge-resolve! not yet implemented (PLAN.md §12 step 10)"
-           {:type              :workspace/not-yet-implemented
-            :workspace-id      workspace-id
-            :parent-session-id parent-session-id
-            :channel-id        channel-id
-            :opts              opts})))
+   1. Take the per-repo lock so no other Vis process touches refs
+      while we mutate the trunk worktree's index.
+   2. `git checkout <trunk-branch>` followed by `git merge <branch>`
+      (without `--ff-only`). This lands the conflicting tree state
+      in the trunk worktree's working copy + index so a human (or
+      a future `merge/*` op family) can resolve the markers.
+   3. Spawn a sub-session_state row pinned to the SAME workspace as
+      the parent (the partial UNIQUE index on workspace_id allows
+      this when `merge_resolve_parent_id` is non-NULL). The new
+      row's `:merge_resolve_parent_id` references the parent.
+   4. Return `{:status :ok|:already-merged|:nothing-to-merge
+              :sub-session-state-id
+              :conflicts [{:path :state} ...]
+              :workspace}`. The engine loop / channel layer renders
+      a `:session/merge-resolve-started` event on top of this.
+
+   `merge/*` SCI op family + sub-session prompt + channel UX events
+   are out of scope for this commit (incremental delivery; the
+   bootstrap is the gate for the rest)."
+  [db-info {:keys [workspace-id parent-session-state-id]}]
+  (let [ws (get db-info workspace-id)]
+    (when-not ws
+      (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
+    (when (= :trunk (:kind ws))
+      (throw (ex-info "Cannot merge-resolve trunk-kind workspace"
+               {:type :workspace/trunk-merge-resolve
+                :workspace-id workspace-id})))
+    (when-not parent-session-state-id
+      (throw (ex-info "start-merge-resolve! requires :parent-session-state-id"
+               {:type :workspace/missing-parent-session-state})))
+    (let [repo-root (:repo-root ws)
+          branch    (:branch ws)
+          trunk     (detect-trunk-branch repo-root)]
+      (with-repo-lock (:repo-id ws)
+        ;; Make sure we're on trunk before attempting the merge.
+        (try (git! repo-root ["checkout" trunk]) (catch Throwable _ nil))
+        (let [merge-result (try {:ok? true
+                                 :out (git! repo-root ["merge" "--no-ff" "--no-commit" branch])}
+                             (catch clojure.lang.ExceptionInfo e
+                               {:ok? false
+                                :exit (:exit (ex-data e))
+                                :out  (:out (ex-data e))
+                                :err  (:err (ex-data e))}))
+              conflicts    (parse-conflicts repo-root)
+              sub-id       (p/db-session-state-spawn-merge-resolve!
+                             db-info parent-session-state-id)]
+          (cond
+            ;; Merge succeeded cleanly (no conflicts) AND no diff to
+            ;; commit — we landed in a no-op state. Abort the merge
+            ;; (clean index) and surface :nothing-to-merge.
+            (and (:ok? merge-result) (empty? conflicts))
+            (do (try (git! repo-root ["merge" "--abort"]) (catch Throwable _ nil))
+              {:status :nothing-to-merge
+               :sub-session-state-id sub-id
+               :workspace ws
+               :trunk trunk})
+
+            :else
+            {:status :ok
+             :sub-session-state-id sub-id
+             :conflicts conflicts
+             :workspace ws
+             :trunk trunk
+             :merge merge-result}))))))
 
 (defn discard!
   "Remove `:workspace-id`'s worktree from disk and transition the row
