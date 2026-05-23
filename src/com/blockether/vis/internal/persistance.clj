@@ -293,6 +293,8 @@
 (defdelegate db-workspace-for-session        [db-info session-state-id])
 (defdelegate db-session-state-list-for-workspace [db-info workspace-id])
 (defdelegate db-session-state-set-workspace! [db-info session-state-id workspace-id])
+(defdelegate db-session-state-spawn-merge-resolve! [db-info parent-session-state-id])
+(defdelegate db-session-state-merge-resolve-parent [db-info session-state-id])
 
 ;; --- Session lifecycle ---
 (defdelegate db-store-session! [db-info opts])
