@@ -1,0 +1,134 @@
+(ns com.blockether.vis.internal.env-digest-test
+  "Internal `:session/env` digest contract.
+
+   The digest is core functionality (drives the per-iter `;; ctx`),
+   not extension-owned. Tests stub upstream agents + prompt readers so
+   the contract stays independent of the running JVM / repo state."
+  (:require
+   [babashka.fs :as fs]
+   [com.blockether.vis.internal.agents :as agents]
+   [com.blockether.vis.internal.env-digest :as env-digest]
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.workspace :as workspace]
+   [lazytest.core :refer [defdescribe expect it]]))
+
+(defn- with-tmp-root*
+  [f]
+  (let [tmp (fs/create-temp-dir {:prefix "vis-digest-test-"})]
+    (try (f (.toFile tmp))
+      (finally (fs/delete-tree tmp)))))
+
+(defdescribe deep-merge-test
+  (it "merges nested maps key-by-key, scalar wins on collision"
+    (expect (= {:a 1 :b {:c 2 :d 3}}
+              (env-digest/deep-merge {:a 1 :b {:c 2}} {:b {:d 3}}))))
+
+  (it "later scalar replaces earlier"
+    (expect (= {:a 2} (env-digest/deep-merge {:a 1} {:a 2}))))
+
+  (it "nil in `b` preserves `a` value"
+    (expect (= 1 (:a (env-digest/deep-merge {:a 1} {:a nil}))))))
+
+(defdescribe base-digest-test
+  (it "produces :host + :project + :extensions when an environment is supplied"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  prompt/active-extensions
+                  (constantly [{:ext/name "foundation-core"
+                                :ext/sci {:ext.sci/alias 'v}}
+                               {:ext/name "foundation-git"
+                                :ext/sci {:ext.sci/alias 'git}}
+                               {:ext/name "no-alias-ext"}])]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (let [d (env-digest/base-digest {:fake true})]
+              (expect (contains? d :host))
+              (expect (string? (get-in d [:host :cwd])))
+              (expect (keyword? (get-in d [:host :os])))
+              (expect (contains? d :project))
+              (expect (false? (get-in d [:project :agents-md?])))
+              (expect (= :single (get-in d [:project :kind])))
+              (expect (= 3 (get-in d [:extensions :active-count])))
+              (expect (= #{'v 'git} (get-in d [:extensions :aliases])))))))))
+
+  (it "detects :polylith when bases/ + components/ are both present"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  prompt/active-extensions (constantly [])]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (.mkdir (java.io.File. root "bases"))
+          (.mkdir (java.io.File. root "components"))
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (let [d (env-digest/base-digest nil)]
+              (expect (= :polylith (get-in d [:project :kind])))))))))
+
+  (it "detects :monorepo when one of packages/apps/modules/crates exists"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  prompt/active-extensions (constantly [])]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (.mkdir (java.io.File. root "packages"))
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (expect (= :monorepo (get-in (env-digest/base-digest nil)
+                                   [:project :kind]))))))))
+
+  (it "guesses primary-language from canonical build files"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  prompt/active-extensions (constantly [])]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (spit (java.io.File. root "deps.edn") "{}")
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (expect (= :clojure (get-in (env-digest/base-digest nil)
+                                  [:project :primary-language]))))))))
+
+  (it "marks :agents-md? true when AGENTS.md is present in the workspace"
+    (with-redefs [agents/instructions (constantly {:found? true
+                                                   :source :repo
+                                                   :path "/tmp/AGENTS.md"})
+                  prompt/active-extensions (constantly [])]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (expect (true? (get-in (env-digest/base-digest nil)
+                            [:project :agents-md?]))))))))
+
+  (it "skips :extensions slice when no environment is provided"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  prompt/active-extensions (constantly [])]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (let [d (env-digest/base-digest nil)]
+              (expect (nil? (:extensions d))))))))))
+
+(defdescribe session-env-merges-extension-contributions-test
+  (it "deep-merges `:session/env` slices coming from extension `:ext/ctx`"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  prompt/active-extensions
+                  (constantly [{:ext/name "voice-ext"
+                                :ext/sci  {:ext.sci/alias 'voice}}])
+                  extension/ctx-contributions
+                  (constantly {:session/env {:voice {:tts-loaded? true}}})]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (let [env-block (env-digest/session-env {:fake true} nil)]
+              (expect (contains? env-block :host))
+              (expect (contains? env-block :voice))
+              (expect (true? (get-in env-block [:voice :tts-loaded?])))))))))
+
+  (it "treats non-`:session/env` extension contributions as opaque (ignored here)"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  prompt/active-extensions (constantly [])
+                  extension/ctx-contributions
+                  (constantly {:session/workspace {:should-be-ignored true}
+                               :session/env {:custom {:x 1}}})]
+      (with-tmp-root*
+        (fn [^java.io.File root]
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+            (let [env-block (env-digest/session-env {} nil)]
+              (expect (contains? env-block :custom))
+              (expect (= 1 (get-in env-block [:custom :x])))
+              (expect (not (contains? env-block :should-be-ignored))))))))))

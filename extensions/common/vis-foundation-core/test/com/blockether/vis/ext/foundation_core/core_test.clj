@@ -45,11 +45,14 @@
         ;; output-mode idioms + the v/cat :range arity doc.
         (expect (< (count prompt) 9000)))))
 
-  (it "contributes environment info through ctx"
+  (it "contributes only the workspace block through ctx now"
+    ;; `:session/env` (host / project / extensions digest) moved to
+    ;; `internal.env-digest` — it's core functionality, not extension-
+    ;; owned. Foundation-core's `:ext/ctx` keeps only the workspace
+    ;; block; `(:project ctx)` is gone for good.
     (let [ctx ((:ext/ctx foundation/vis-extension) {})]
-      (expect (contains? ctx :project))
-      (expect (contains? (:project ctx) :host))
-      (expect (contains? (:project ctx) :root))))
+      (expect (not (contains? ctx :project)))
+      (expect (not (contains? ctx :session/env)))))
 
   ;; Removed: "does not leave a standalone md extension registered".
   ;; The extension registry shape changed; presence of 'v vs absence
