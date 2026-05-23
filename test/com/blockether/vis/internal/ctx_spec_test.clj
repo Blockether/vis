@@ -233,11 +233,6 @@
                 {:vcs/kind :git :vcs/branch "master" :vcs/trunk "master"
                  :vcs/head "abc" :vcs/dirty? true :vcs/stats {}})))
 
-    (it "accepts legacy :git/* keys (transition shim)"
-      (expect (s/valid? ::cs/workspace
-                {:git/branch "main" :git/trunk "main" :git/head "abc"
-                 :git/dirty? false :git/stats {}})))
-
     (it "accepts hg branch shape"
       (expect (s/valid? ::cs/workspace
                 {:vcs/kind :hg :vcs/branch "default" :vcs/head "rev"})))
@@ -248,11 +243,11 @@
     (it "rejects non-string :vcs/branch"
       (expect (not (s/valid? ::cs/workspace {:vcs/branch 42}))))
 
-    (it "rejects negative :added in :git/stats"
+    (it "rejects negative :added in :vcs/stats"
       (expect (not (s/valid? ::cs/workspace
-                     {:git/branch "x" :git/trunk "y" :git/head "z"
-                      :git/dirty? false
-                      :git/stats {"a.clj" {:added -1 :removed 0}}}))))))
+                     {:vcs/branch "x" :vcs/trunk "y" :vcs/head "z"
+                      :vcs/dirty? false
+                      :vcs/stats {"a.clj" {:added -1 :removed 0}}}))))))
 
 (defdescribe symbol-info-test
   (describe "::symbol-info — {:born :arglists? :doc?}"
@@ -390,9 +385,9 @@
                 {:session/id        "01HXYZ"
                  :session/turn      7
                  :session/scope     {:turn 7 :iter 3 :next-form 1}
-                 :session/workspace {:git/branch "feat/x" :git/trunk "main"
-                                     :git/head "abc1234" :git/dirty? true
-                                     :git/stats {"src/a.clj" {:added 5 :removed 2}}}
+                 :session/workspace {:vcs/branch "feat/x" :vcs/trunk "main"
+                                     :vcs/head "abc1234" :vcs/dirty? true
+                                     :vcs/stats {"src/a.clj" {:added 5 :removed 2}}}
                  :session/symbols
                  {'auth-check {:arglists '(([tok])) :doc "literal-compare check"
                                :born "t5/i1/f1"}

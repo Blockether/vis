@@ -334,30 +334,21 @@
 (s/def :vcs/head    string?)
 (s/def :vcs/dirty?  boolean?)
 
-;; Legacy `:git/*` aliases (deprecated; detectors should prefer
-;; `:vcs/*`). Kept as opt-spec so existing renderer paths and
-;; serialised snapshots keep validating during the transition.
-(s/def :git/branch  string?)
-(s/def :git/trunk   string?)
-(s/def :git/head    string?)
-(s/def :git/dirty?  boolean?)
+;; Per-file added/removed line counts — the only VCS-namespaced sub-spec.
+;; Used by `:vcs/stats {path → file-stats}`. Common to every detector
+;; (git diff --numstat, hg diff --stat, jj diff …).
+(s/def :vcs.file/added    nat-int?)
+(s/def :vcs.file/removed  nat-int?)
 
-(s/def :git.file/added    nat-int?)
-(s/def :git.file/removed  nat-int?)
-
-(s/def :git/file-stats
-  (s/keys :req-un [:git.file/added :git.file/removed]))
-
-(s/def :git/stats
-  (s/map-of string? :git/file-stats))
+(s/def :vcs/file-stats
+  (s/keys :req-un [:vcs.file/added :vcs.file/removed]))
 
 (s/def :vcs/stats
-  (s/map-of string? :git/file-stats))
+  (s/map-of string? :vcs/file-stats))
 
 (s/def ::workspace
   (s/keys :opt [:vcs/kind
-                :vcs/branch :vcs/trunk :vcs/head :vcs/dirty? :vcs/stats
-                :git/branch :git/trunk :git/head :git/dirty? :git/stats]))
+                :vcs/branch :vcs/trunk :vcs/head :vcs/dirty? :vcs/stats]))
 
 ;; =============================================================================
 ;; Symbol directory — engine-rendered from SCI introspection + engine-side :born index

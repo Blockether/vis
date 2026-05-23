@@ -107,8 +107,8 @@
    :session/turn  3
    :session/scope {:turn 3 :iter 1 :next-form 1}
    :session/workspace
-   {:git/branch "main" :git/trunk "main" :git/head "x"
-    :git/dirty? false :git/stats {}}
+   {:vcs/branch "main" :vcs/trunk "main" :vcs/head "x"
+    :vcs/dirty? false :vcs/stats {}}
    :session/symbols {}
    :session/specs
    {:rl {:title "rate-limit"
