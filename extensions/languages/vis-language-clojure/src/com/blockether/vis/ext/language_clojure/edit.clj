@@ -46,9 +46,15 @@
         nm   (when (sequential? sx) (nth sx 1 nil))]
     (and (contains? def-heads head)
       (= (str nm) (str target-name))
-      (or (not= 'defmethod head)
-        (nil? target-dispatch)
-        (= (pr-str (nth sx 2 nil)) (pr-str target-dispatch))))))
+      (if target-dispatch
+        ;; Caller specified a dispatch value -> only `defmethod`
+        ;; forms can match, and their dispatch must equal the target.
+        (and (= 'defmethod head)
+          (= (pr-str (nth sx 2 nil)) (pr-str target-dispatch)))
+        ;; No dispatch -> any def-family form with the same name
+        ;; matches, except `defmethod` (those need an explicit
+        ;; dispatch so we don't replace an arbitrary one).
+        (not= 'defmethod head)))))
 
 (defn- find-top-form
   "Move a zipper to the first top-level form matching `target`.

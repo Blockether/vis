@@ -3,6 +3,7 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.theme :as shared-theme]
@@ -354,31 +355,6 @@
 
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 
-(defn scrollbar-geometry
-  "Thumb geometry for dialog scrollbars. THIN ADAPTER over
-   `render/scrollbar-thumb-geometry` — that fn is the single source of
-   truth for thumb math (Terminal.app renders stacked `\u2588` FULL BLOCK
-   cells as a ladder of separate boxes, so the thumb MUST stay one cell
-   high). Never reimplement thumb sizing here; extend the render fn
-   instead and re-shape its result if a new caller needs different keys."
-  [height total scroll]
-  (when-let [{:keys [thumb-top-rel thumb-h]}
-             (render/scrollbar-thumb-geometry (long total) (long height) (long height) scroll)]
-    {:track-h   height
-     :thumb-h   thumb-h
-     :thumb-top thumb-top-rel}))
-
-(defn draw-scrollbar!
-  [g col top height total scroll]
-  (when-let [{:keys [track-h thumb-h thumb-top]}
-             (scrollbar-geometry height total scroll)]
-    (doseq [r (range track-h)]
-      (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/set-char! g col (+ top r) Symbols/SINGLE_LINE_VERTICAL))
-    (doseq [r (range thumb-h)]
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/set-char! g col (+ top thumb-top r) \█))))
-
 (defn select-dialog!
   "Show a selection list dialog. Returns selected item map or nil on Esc.
    `items` is a vec of {:label str, ...} maps."
@@ -405,7 +381,9 @@
             (when (< idx total)
               (draw-list-item! g left row (if (> total content-h) (dec inner-w) inner-w) (= idx @selected)
                 (:label (nth items idx))))))
-        (draw-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+        (scrollbar/draw! g
+          {:col (+ left inner-w) :top content-top :track-h content-h
+           :total-h total :inner-h content-h :scroll @scroll})
 
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter" "select"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
@@ -573,7 +551,9 @@
               (p/set-colors! g t/dialog-fg t/dialog-bg)
               (p/fill-rect! g (inc left) row inner-w 1)
               (p/put-str! g (+ left 2) row (ellipsize (nth wrapped idx) text-w)))))
-        (draw-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+        (scrollbar/draw! g
+          {:col (+ left inner-w) :top content-top :track-h content-h
+           :total-h total :inner-h content-h :scroll @scroll})
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Enter/Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
@@ -681,14 +661,6 @@
       (p/put-str! g x row (ellipsize line table-w)))
     (p/put-str! g x row (ellipsize line table-w))))
 
-(defn file-picker-scrollbar-geometry
-  [height total scroll]
-  (scrollbar-geometry height total scroll))
-
-(defn- draw-file-picker-scrollbar!
-  [g col top height total scroll]
-  (draw-scrollbar! g col top height total scroll))
-
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
    the selected relative path, Esc cancels. `Alt+I` toggles ignored files;
@@ -776,7 +748,8 @@
                   (p/set-colors! g t/dialog-fg t/dialog-bg)
                   (p/fill-rect! g table-x row table-content-w 1)))))
 
-          (draw-file-picker-scrollbar! g scrollbar-col list-top list-h total @scroll)
+          (scrollbar/draw! g {:col scrollbar-col :top list-top :track-h list-h
+                              :total-h total :inner-h list-h :scroll @scroll})
 
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) mode-margin-row inner-w 1)
@@ -1556,7 +1529,9 @@
               (when (< idx total)
                 (draw-list-item! g left row-y (if (> total content-h) (dec inner-w) inner-w) (= idx @selected)
                   (:label (nth items idx))))))
-          (draw-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+          (scrollbar/draw! g
+            {:col (+ left inner-w) :top content-top :track-h content-h
+             :total-h total :inner-h content-h :scroll @scroll})
           (draw-hint-bar! g left hint-row inner-w [["↑/↓" "preview"] ["Enter" "choose"] ["Esc" "cancel"]])
           (.setCursorPosition screen (p/cursor-pos 0 0))
           (.refresh screen Screen$RefreshType/DELTA)
@@ -1714,6 +1689,7 @@
          selected       (atom (first-selectable-index (settings-rows :channels extension-rows)))
          scroll         (atom 0)
          values         (atom (or settings {}))
+         scrollbar-drag-offset (volatile! nil)
          check-w        4
          switch-tab!    (fn [tab-id]
                           (let [rows (settings-rows tab-id extension-rows)]
@@ -1835,7 +1811,9 @@
                  (p/set-colors! g t/dialog-fg t/dialog-bg)
                  (p/fill-rect! g (inc left) row-y paint-w 1)))))
 
-         (draw-scrollbar! g (+ left inner-w) list-top visible-h visual-n @scroll)
+         (scrollbar/draw! g
+           {:col (+ left inner-w) :top list-top :track-h visible-h
+            :total-h visual-n :inner-h visible-h :scroll @scroll})
          (draw-hint-bar! g left hint-row inner-w [["<-/-> Tab" "switch"] ["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
@@ -1849,13 +1827,71 @@
                      action (.getActionType ma)
                      pos    (.getPosition ma)
                      mx     (.getColumn pos)
-                     my     (.getRow pos)]
+                     my     (.getRow pos)
+                     bar-col (+ left inner-w)
+                     geom    (scrollbar/geometry visual-n visible-h visible-h @scroll)]
                  (cond
+                   ;; Tab click in tab strip.
                    (and (= action MouseActionType/CLICK_DOWN)
                      (= my tabs-row)
                      (settings-tab-at left inner-w mx))
                    (do
                      (switch-tab! (settings-tab-at left inner-w mx))
+                     (recur))
+
+                   ;; Mouse wheel anywhere in the dialog — scroll the
+                   ;; list view; selection follows the wheel direction
+                   ;; so the cursor stays in the visible window without
+                   ;; the user having to chase it with arrow keys.
+                   (or (= action MouseActionType/SCROLL_UP)
+                     (= action MouseActionType/SCROLL_DOWN))
+                   (let [step (or (modal-wheel-step key)
+                                (if (= action MouseActionType/SCROLL_UP) -1 1))]
+                     (swap! selected #(move-settings-selection rows % step))
+                     (recur))
+
+                   ;; CLICK_DOWN on the scrollbar thumb — start drag,
+                   ;; preserve the grip so the row under the cursor
+                   ;; stays glued to the same point on the thumb.
+                   (and (= action MouseActionType/CLICK_DOWN)
+                     (some? geom)
+                     (scrollbar/on-thumb? mx my
+                       {:col bar-col :top list-top} geom))
+                   (let [thumb-top (+ list-top (long (:thumb-top-rel geom)))]
+                     (vreset! scrollbar-drag-offset (- my thumb-top))
+                     (recur))
+
+                   ;; CLICK_DOWN on the scrollbar TRACK off-thumb —
+                   ;; jump-to-position (modern macOS behaviour). Then
+                   ;; arm a drag with a centred grip so an immediate
+                   ;; follow-up motion tracks naturally.
+                   (and (= action MouseActionType/CLICK_DOWN)
+                     (some? geom)
+                     (scrollbar/on-track? mx my
+                       {:col bar-col :top list-top :track-h visible-h}))
+                   (let [grip (long (quot (long (:thumb-h geom)) 2))]
+                     (vreset! scrollbar-drag-offset grip)
+                     (reset! scroll
+                       (or (scrollbar/scroll-from-mouse-y
+                             my list-top visible-h visual-n visible-h grip)
+                         0))
+                     (recur))
+
+                   ;; DRAG continues to track the cursor while the
+                   ;; user holds the button after a thumb grab.
+                   (and (= action MouseActionType/DRAG)
+                     (some? @scrollbar-drag-offset)
+                     (some? geom))
+                   (do
+                     (reset! scroll
+                       (or (scrollbar/scroll-from-mouse-y
+                             my list-top visible-h visual-n visible-h
+                             (long @scrollbar-drag-offset))
+                         0))
+                     (recur))
+
+                   (= action MouseActionType/CLICK_RELEASE)
+                   (do (vreset! scrollbar-drag-offset nil)
                      (recur))
 
                    :else (recur)))

@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -17,7 +18,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.internal.external-opener :as opener]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna SGR Symbols TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType
             MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
@@ -1043,15 +1044,17 @@
 
 (defn- render-scrollbar!
   [g cols bar-top inner-h track-h total-h eff-scroll]
-  (when-let [{:keys [thumb-top-rel thumb-h]}
-             (render/scrollbar-thumb-geometry total-h inner-h track-h eff-scroll)]
-    (let [bar-col (- cols 2)]
-      (doseq [r (range track-h)]
-        (p/set-colors! g t/border-fg t/terminal-bg)
-        (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
-      (doseq [r (range thumb-h)]
-        (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-        (p/set-char! g bar-col (+ bar-top thumb-top-rel r) \u2588)))))
+  (scrollbar/draw! g
+    {:col      (- cols 2)
+     :top      bar-top
+     :track-h  track-h
+     :total-h  total-h
+     :inner-h  inner-h
+     :scroll   eff-scroll
+     :track-fg t/border-fg
+     :track-bg t/terminal-bg
+     :thumb-fg t/dialog-hint-key
+     :thumb-bg t/terminal-bg}))
 
 (defn- render-live-bubble-frame!
   "Fast path for 80ms live ticks. Recompute virtual layout, but only
@@ -1989,12 +1992,12 @@
                        bar-top   messages-top
                        track-h   (+ inner-h render/MESSAGE_MARGIN_TOP render/MESSAGE_MARGIN_BOTTOM)
                        ;; Single source of truth for thumb geometry
-                       ;; lives in `render/scrollbar-thumb-geometry`,
-                       ;; so painter and hit-test cannot drift apart.
-                       ;; A nil return means there's no overflow - no
+                       ;; lives in `scrollbar/geometry` so painter
+                       ;; and hit-test cannot drift apart. A nil
+                       ;; return means there is no overflow — no
                        ;; thumb is painted, and every click below is
                        ;; correctly classified as off-thumb.
-                       geom      (render/scrollbar-thumb-geometry
+                       geom      (scrollbar/geometry
                                    total-h inner-h track-h (:messages-scroll db))
                        thumb-top (when geom
                                    (+ bar-top (long (:thumb-top-rel geom))))
