@@ -162,8 +162,14 @@
         answer-here? (and produced-answer?
                        (= (:id it) last-iteration-id)
                        (seq all-blocks))
+        preflight-source? (fn [b]
+                            (let [c (some-> (:code b) str str/triml)]
+                              (and c (str/starts-with? c "(vis/preflight-error"))))
         preflight-idxs (into #{}
-                         (keep-indexed (fn [i b] (when (:vis/preflight? b) i)))
+                         (keep-indexed (fn [i b]
+                                         (when (or (:vis/preflight? b)
+                                                 (preflight-source? b))
+                                           i)))
                          all-blocks)
         answer-idx  (when answer-here?
                       (let [idx   (or (:answer-position it)
