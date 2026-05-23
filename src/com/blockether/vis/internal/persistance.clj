@@ -290,6 +290,7 @@
   ([db-info repo-id state-set]
    ((deref (resolve-impl db-info 'db-workspace-list-by-repo)) db-info repo-id state-set)))
 (defdelegate db-workspace-for-session        [db-info session-state-id])
+(defdelegate db-session-state-list-for-workspace [db-info workspace-id])
 (defdelegate db-session-state-set-workspace! [db-info session-state-id workspace-id])
 
 ;; --- Session lifecycle ---
