@@ -553,6 +553,11 @@
         content-w   (long (max 0 (- bubble-w (* 2 bubble-content-h-pad))))
         offsets     (vec (:offsets layout))
         heights     (vec (:heights layout))
+        visible-projected-by-idx
+        (into {}
+          (keep (fn [{:keys [idx projected]}]
+                  (when (some? idx) [idx projected]))
+            (:visible layout)))
         {:keys [start end]} (selection/normalize selection)
         start-row   (long (:row start))
         end-row     (long (:row end))]
@@ -564,8 +569,15 @@
                     bottom (long (or (get offsets (inc idx))
                                    (+ top (long (or (get heights idx) 0)))))]
               :when (and (<= top end-row) (>= (dec bottom) start-row))
-              :let [projected   (if (:prewrapped-lines message)
+              :let [visible-projected (get visible-projected-by-idx idx)
+                    projected   (cond
+                                  (and (:pending? message) visible-projected)
+                                  visible-projected
+
+                                  (:prewrapped-lines message)
                                   message
+
+                                  :else
                                   (virtual/project-message message bubble-w settings copy-opts))
                     message     (or projected message {})
                     top-pad     (if (= :user (:role message)) 1 0)
