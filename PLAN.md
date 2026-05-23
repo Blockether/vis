@@ -658,37 +658,45 @@ last_focused workspace in repo (or trunk-kind ensure if none left).
 
 ---
 
-## 6. Foundation extension — `vis-foundation-workspace` (NEW)
+## 6. Foundation extension — workspace surface lives in `vis-foundation-core`
 
-Mirrors `vis-foundation-git` shape:
+**Design decision (2026-05-22)**: workspace is CORE — every session
+pins to a workspace, persistence schema has the table, and
+`workspace.clj` lives in `src/com/blockether/vis/internal/`. Splitting
+out a separate `vis-foundation-workspace` package for ~3–5 fn
+definitions (slash tree + ctx renderer + read-only `:v/workspace-*`
+ops) is ceremony without architectural payoff.
+
+The HARD CONTRACT in §0b only requires `register-slash!` to live in
+an extension, not in `internal/`. `vis-foundation-core` is the
+canonical "engine companion" extension and already hosts hook tasks
+(title, context-pressure) + the environment renderer + transcript.
+The workspace slash tree fits naturally alongside those.
+
+Resulting file layout (extends `vis-foundation-core`, no new package):
 
 ```
-extensions/common/vis-foundation-workspace/
-  deps.edn
-  resources/META-INF/vis-extension/vis.edn        ;; {workspace {:nses [...]}}
-  src/com/blockether/vis/ext/foundation_workspace/core.clj
-  src/com/blockether/vis/ext/foundation_workspace/handlers.clj
-  src/com/blockether/vis/ext/foundation_workspace/ctx.clj
-  test/com/blockether/vis/ext/foundation_workspace/core_test.clj
-  test/com/blockether/vis/ext/foundation_workspace/handlers_test.clj
-  test/com/blockether/vis/ext/foundation_workspace/ctx_test.clj
+extensions/common/vis-foundation-core/
+  src/com/blockether/vis/ext/foundation_core/
+    workspace_slashes.clj  ;; NEW — (register-slash! …) calls + handlers
+    workspace_ctx.clj      ;; NEW — render-workspace-block + :v/workspace-* ops
+    … (existing hints.clj, transcript.clj, environment/, etc.)
+  test/com/blockether/vis/ext/foundation_core/
+    workspace_slashes_test.clj  ;; NEW
+    workspace_ctx_test.clj      ;; NEW
 ```
 
-### 6.1 `core.clj` — registration
+No new deps.edn, no new META-INF/vis.edn, no new dependency wiring.
+Workspace stays where it semantically belongs.
+
+### 6.1 Registration site (inside `vis-foundation-core` init)
 
 ```clojure
-(vis/register-extension!
-  (vis/extension
-    {:ext/name        "foundation-workspace"
-     :ext/description "Workspace + slash command surface for /workspace … intents."
-     :ext/requires    ["foundation-git"]
-     :ext/owner       "vis"
-     :ext/version     "0.1.0"}))
-
-(doseq [spec slash-specs] (vis/register-slash! spec))
-(vis/register-ctx-renderer! :session/workspace #'ctx/render-workspace-block)
+;; In existing vis-foundation-core/src/.../core.clj, post-extension-registration:
+(doseq [spec workspace-slashes/slash-specs] (vis/register-slash! spec))
+(vis/register-ctx-renderer! :session/workspace #'workspace-ctx/render-block)
 ;; Read-only :v/workspace-* ops for the model. No mutators.
-(doseq [op read-ops] (vis/register-op! op))
+(doseq [op workspace-ctx/read-ops] (vis/register-op! op))
 ```
 
 ### 6.2 `handlers.clj` — slash → core

@@ -22,9 +22,9 @@ cb86afd6  HANDOFF.md: refresh — CTX redesign closure + missing inventory
 | 2 | ✅ DONE (fccf1d31) | persistance fns: db-workspace-update-label! / db-workspace-touch-focus! / db-repo-focus-get / db-repo-focus-set!; defdelegates |
 | 3 | 🟡 PARTIAL (ddcacddb) | detect-trunk-branch + with-repo-lock + set-label! / focus! / last-focused / display-label / workspace-with-session / list-active-with-sessions + db-session-state-list-for-workspace |
 | 3 (rest) | ⏳ NEXT | spawn-branch! rewrite (PLAN §4.4) + commit! + ff-apply! + start-merge-resolve! skeleton + KILL apply-to-trunk! body (K4) + KILL workspace-apply-to-trunk! re-export (K5) + status → §6.3 stamping (K3 if applicable) |
-| 4 | ⏳ PENDING | ctx_spec.clj KILL `:git/*` aliases (K1, K2); rename :git/file-stats → :vcs/file-stats; prompt.clj verify no :git/* leaks |
+| 4 | ✅ DONE (2933936e) | KILL `:git/*` aliases (K1, K2); rename :git/file-stats → :vcs/file-stats; workspace/status emits ONLY :vcs/*; tests migrated; one comment-only mention of `:git/branch` left in ctx_spec.clj (historical rationale) |
 | 5 | ⏳ PENDING | slash registry: internal/registry.clj `slash-registry` atom + register/deregister/lookup; internal/slash.clj parser + dispatch; core.clj exports; ::slash spec |
-| 6 | ⏳ PENDING | `vis-foundation-workspace` extension NEW + voice migration from `:tui.slot/commands` to `register-slash!` (K10) |
+| 6 | ⏳ PENDING | workspace surface lives in `vis-foundation-core` (NOT a new package — PLAN §6 updated 2026-05-22: workspace is CORE, no architectural payoff splitting into a separate ext). Add `workspace_slashes.clj` + `workspace_ctx.clj` to vis-foundation-core. Voice migration from `:tui.slot/commands` to `register-slash!` (K10). |
 | 7 | ⏳ PENDING | engine loop integration: slash dispatch at turn start; synthetic iter persistence; CTX :session/workspace pre-turn stamping |
 | 8 | ⏳ PENDING | TUI channel rewrite + KILL slash legacy (K6 / K7 / K8) |
 | 9 | ⏳ PENDING | Telegram channel rewrite + KILL parse-command / handle-command! (K9); setMyCommands from registered-slashes |
@@ -253,6 +253,70 @@ ctx-renderer the ONLY string producer.
 | D14 | Probes sweep for the new engine | PROBES.md methodology. Re-run cavemanize + token budget probes now that `:session/hints` is gone, hook-tasks are part of `:session/tasks`, renderer ranks them. Token budget should drop another notch. |
 | PLAN | Workspace + cross-channel slash redesign | §0b in PLAN.md is HARD CONTRACT; the rest of PLAN.md spells the schema, registry, command tree, sub-session machinery, TUI/Telegram surface changes, 12-step implementation sequence. ENGINE side of the work is the CTX redesign that's now done; the SLASH side is the next major. |
 | - | TODO.md items T10–T15 | Already queued in TODO.md; not engine work. |
+
+---
+
+## How to run vis (operator cheatsheet)
+
+```bash
+# One-shot agent run (CLI, prompt argv, persisted session)
+bin/vis --provider anthropic-coding-plan --persist "refactor auth flow"
+bin/vis --provider zai-coding-plan --persist "summarise this repo"
+
+# In-memory smoke (no DB pollution; useful for engine probes)
+bin/vis --db :memory --full-trace-edn-stream "echo task done"
+
+# Interactive TUI
+bin/vis channels tui                              # launches TUI in current shell
+bin/vis channels tui --session-id <prefix>        # resume by id (any unambiguous prefix)
+
+# Inspect persisted sessions
+bin/vis sessions list                             # latest sessions table
+bin/vis sessions show <prefix>                    # session metadata + state versions
+bin/vis sessions export <prefix> --md             # markdown transcript on stdout
+bin/vis sessions export <prefix> --html out.html  # standalone html
+
+# Providers / auth
+bin/vis providers list                            # all configured + auth status
+bin/vis providers auth <provider-id>              # interactive auth (OAuth, API key)
+bin/vis providers status                          # live model + quota probe
+bin/vis models list                               # frontier model cheatsheet
+
+# Cross-extension doctor + ext-contributed commands
+bin/vis doctor                                    # cross-ext diagnostics
+bin/vis ext list                                  # extensions installed
+bin/vis ext run <ext-cmd>                         # run an extension subcommand
+
+# Help
+bin/vis --help                                    # top-level
+bin/vis <command> --help                          # subcommand help
+
+# DEV: start a controllable JVM with nREPL
+bin/dev                                           # equivalent to clojure -M:dev
+clj-nrepl-eval --discover-ports                   # find the port the JVM listens on
+clj-nrepl-eval -p <port> "(require '[com.blockether.vis.dev :as dev] :reload)"
+clj-nrepl-eval -p <port> "(dev/cli! \"providers\" \"list\")"
+clj-nrepl-eval -p <port> "(dev/tui!)"             # opens TUI in a fresh Terminal.app
+
+# Provider currently used for live CTX smoke tests in this thread:
+#   anthropic-coding-plan (Claude Sonnet/Opus, subscription) — authed via
+#   ~/.vis/anthropic-auth.json. zai-coding-plan also authed when you want
+#   to swap providers for token-budget probes.
+```
+
+DB lives at `~/.vis/vis.mdb/vis.db` (SQLite + Flyway V1, multiprocess
+WAL). Schema autoselects + applies migrations on first `bin/vis` per
+fresh DB. `rm -rf ~/.vis/vis.mdb` between scenarios for clean state;
+do NOT delete it while a Vis JVM holds the lock.
+
+Logs live at `~/.vis/vis.log`. Telemere ingest; the iter-end pipeline
+logs `::iter-end-pre-reconcile`, `::iter-end-post-reconcile`,
+`::reconcile-done-hook-tasks`, `::hook-task-fold`, `::apply-done` at
+`:info`. Replay any run by tailing.
+
+```bash
+tail -F ~/.vis/vis.log | rg "::iter-end|::reconcile-done|::hook-task-fold|::apply-done"
+```
 
 ---
 
