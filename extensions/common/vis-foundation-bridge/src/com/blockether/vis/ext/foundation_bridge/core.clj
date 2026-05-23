@@ -180,6 +180,102 @@
        :policy-path policy-path
        :discovery discovery})))
 
+(defn- normalize-path-fragment
+  [path]
+  (-> (str path)
+    (str/replace (str (char 92)) "/")
+    (str/replace #"^\./+" "")))
+
+(defn- clean-path-prefix
+  [path]
+  (-> (normalize-path-fragment path)
+    (str/replace #"^/+" "")
+    (str/replace #"/+$" "")))
+
+(defn- relative-to-workspace
+  [workspace-root* path]
+  (try
+    (let [rel (normalize-path-fragment
+                (bio/relativize-path workspace-root* path))]
+      (when-not (or (= ".." rel)
+                  (str/starts-with? rel "../"))
+        rel))
+    (catch Throwable _
+      nil)))
+
+(defn- prefixed-glob
+  [prefix pattern]
+  (let [prefix* (clean-path-prefix prefix)
+        pattern* (-> (normalize-path-fragment pattern)
+                   (str/replace #"^/+" ""))]
+    (cond
+      (str/blank? pattern*) nil
+      (or (str/blank? prefix*) (= "." prefix*)) pattern*
+      :else (str prefix* "/" pattern*))))
+
+(defn- directory-glob
+  [glob]
+  (when glob
+    (if (str/ends-with? glob "/")
+      (str glob "**")
+      glob)))
+
+(defn- policy-pattern->workspace-glob
+  [env profile pattern]
+  (let [workspace-root* (workspace-root env)
+        pattern* (normalize-path-fragment pattern)
+        file (java.io.File. pattern*)]
+    (directory-glob
+      (if (.isAbsolute file)
+        (relative-to-workspace workspace-root* pattern*)
+        (let [profile-prefix (relative-to-workspace workspace-root*
+                               (:root-path profile))]
+          (when profile-prefix
+            (prefixed-glob profile-prefix pattern*)))))))
+
+(defn- protected-access
+  [access]
+  (case (cond
+          (keyword? access) (name access)
+          (some? access) (str access)
+          :else nil)
+    "read-only" :read-only
+    "read-write" :read-write
+    "none" :none
+    (throw (ex-info "Invalid Bridge path sandbox access."
+             {:type :vis.bridge/invalid-path-sandbox-access
+              :access access}))))
+
+(def ^:private protected-path-hint
+  "Bridge policy protects this path; use the br/* tool surface instead of direct file IO.")
+
+(defn- protected-path-hint-for-rule
+  [rule]
+  (let [reason (:reason rule)]
+    (if (and (string? reason) (not (str/blank? reason)))
+      reason
+      protected-path-hint)))
+
+(defn- bridge-sandbox-rule->protected-path
+  [env profile sandbox rule]
+  (when-let [glob (policy-pattern->workspace-glob env profile (:path-pattern rule))]
+    {:glob glob
+     :access (protected-access (or (:access rule) (:default-access sandbox)))
+     :hint (protected-path-hint-for-rule rule)}))
+
+(defn- bridge-protected-paths
+  [env]
+  (let [discovery (profile-discovery (workspace-root env) {})]
+    (if-not (:configured? discovery)
+      []
+      (let [{:keys [profile policy]} (load-profile+policy env {})
+            sandbox (:bridge-path-sandbox policy)]
+        (if (and sandbox (:enforce? sandbox))
+          (mapv identity
+            (keep #(bridge-sandbox-rule->protected-path env profile sandbox %)
+              (:rules sandbox)))
+          [])))))
+
 (defn- selected-opts
   [opts]
   (select-keys opts [:profile :policy :changed-files :subject :out-dir
@@ -658,6 +754,7 @@
      :ext/cli bridge-cli
      :ext/hooks bridge-hooks
      :ext/kind "verification"
+     :ext/protected-paths bridge-protected-paths
      :ext/prompt bridge-prompt}))
 
 (vis/register-extension! vis-extension)

@@ -3,6 +3,7 @@
             [lazytest.core :refer [defdescribe expect it]]
             [bridge.io :as bio]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.ext.foundation-bridge.core :as bridge]))
 
 (defn- run-in!
@@ -13,6 +14,25 @@
           exit (.waitFor proc)]
       (expect (zero? exit))
       exit)))
+
+(defn- temp-root
+  [prefix]
+  (str (java.nio.file.Files/createTempDirectory
+         prefix
+         (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(defn- write-policy!
+  [root sandbox]
+  (bio/write-data (str root "/.bridge/verification-policy.yaml")
+    {:artifact "verification-policy"
+     :policy-id "sandboxed"
+     :bridge-path-sandbox sandbox
+     :rules []}))
+
+(defn- protected-env
+  [root]
+  {:workspace/root root
+   :extensions (atom [bridge/vis-extension])})
 
 (defdescribe bridge-extension-test
   (it "configures the extension",
@@ -26,6 +46,7 @@
       (expect (str/includes? prompt-text ":status-summary"))
       (expect (str/includes? prompt-text ":required-obligations"))
       (expect (str/includes? prompt-text "Keep policy obligations and runnable evidence ids distinct"))
+      (expect (fn? (:ext/protected-paths bridge/vis-extension)))
 
       (expect (= [{:id :vis.bridge/next
                    :doc "Hint the model about the next Bridge action when the workspace is unconfigured or Bridge has open evidence work."
@@ -36,6 +57,88 @@
       (expect (= :observation (vis/op-tag :br/next)))
       (expect (= :mutation (vis/op-tag :br/init)))
       (expect (= :mutation (vis/op-tag :br/run-evidence))))))
+
+(defdescribe bridge-protected-paths-test
+  (it "returns no protected path rules when Bridge is unconfigured"
+    (let [root (temp-root "bridge-ext-protected-unconfigured")]
+      (expect (= [] ((:ext/protected-paths bridge/vis-extension)
+                     (protected-env root))))
+      (expect (= [] (extension/active-protected-globs
+                      (protected-env root))))))
+
+  (it "returns no protected path rules when policy enforcement is disabled"
+    (let [root (temp-root "bridge-ext-protected-disabled")
+          env {:workspace/root root}]
+      (bridge/init env)
+      (write-policy! root {:enforce? false
+                           :rules [{:path-pattern ".bridge/"
+                                    :access "none"}]})
+      (expect (= [] ((:ext/protected-paths bridge/vis-extension)
+                     (protected-env root))))))
+
+  (it "maps enforced Bridge path sandbox rules to Vis protected path rules"
+    (let [root (temp-root "bridge-ext-protected")
+          env {:workspace/root root}
+          hint "Policy changes require human approval."]
+      (bridge/init env)
+      (write-policy! root {:enforce? true
+                           :default-access "read-write"
+                           :rules [{:path-pattern ".bridge/"
+                                    :access "none"
+                                    :reason "Use br/* tools for Bridge-owned state."}
+                                   {:path-pattern ".bridge/verification-policy.yaml"
+                                    :access "read-only"
+                                    :reason hint}
+                                   {:path-pattern ".bridge/ephemeral/evidence/**"
+                                    :access "read-write"}]})
+      (expect (= [{:glob ".bridge/**"
+                   :access :none
+                   :hint "Use br/* tools for Bridge-owned state."}
+                  {:glob ".bridge/verification-policy.yaml"
+                   :access :read-only
+                   :hint hint}
+                  {:glob ".bridge/ephemeral/evidence/**"
+                   :access :read-write
+                   :hint "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."}]
+                ((:ext/protected-paths bridge/vis-extension)
+                 (protected-env root))))
+      (expect (= [{:glob ".bridge/**"
+                   :access :none
+                   :hint "Use br/* tools for Bridge-owned state."
+                   :extension/name "foundation-bridge"}
+                  {:glob ".bridge/verification-policy.yaml"
+                   :access :read-only
+                   :hint hint
+                   :extension/name "foundation-bridge"}
+                  {:glob ".bridge/ephemeral/evidence/**"
+                   :access :read-write
+                   :hint "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."
+                   :extension/name "foundation-bridge"}]
+                (extension/active-protected-globs
+                  (protected-env root))))))
+
+  (it "prefixes policy patterns when the Bridge profile root is below the workspace"
+    (let [root (temp-root "bridge-ext-protected-subroot")
+          project-root (str root "/project")
+          env {:workspace/root root}
+          profile-path (str root "/.bridge/profile.edn")]
+      (bridge/init env)
+      (.mkdirs (java.io.File. project-root ".bridge"))
+      (bio/write-data profile-path
+        (assoc (bio/read-data profile-path)
+          :root-path "../project"))
+      (bio/write-data (str project-root "/.bridge/verification-policy.yaml")
+        {:artifact "verification-policy"
+         :policy-id "sandboxed-subroot"
+         :bridge-path-sandbox {:enforce? true
+                               :rules [{:path-pattern ".bridge/"
+                                        :access "none"}]}
+         :rules []})
+      (expect (= [{:glob "project/.bridge/**"
+                   :access :none
+                   :hint "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."}]
+                ((:ext/protected-paths bridge/vis-extension)
+                 (protected-env root)))))))
 
 (defdescribe bridge-unconfigured-workspace-test
   (it "can initialize an unconfigured workspace and run the CLI",

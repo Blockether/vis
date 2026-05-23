@@ -1,5 +1,10 @@
 artifact: verification-policy
 policy-id: vis-bridge-v1
+bridge-path-sandbox:
+  enforce?: true
+  rules:
+    - path-pattern: .bridge/
+      access: none
 rules:
 - scope:
     subsystems:
