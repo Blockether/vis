@@ -217,6 +217,92 @@
                  (catch clojure.lang.ExceptionInfo e e))]
     (expect (= :extension/unregistered-op (:type (ex-data thrown))))))
 
+(defn- protected-env
+  [rules]
+  {:extensions (atom [(extension/extension
+                        {:ext/name "test.protected-paths"
+                         :ext/description "Test protected paths."
+                         :ext/protected-paths (constantly (vec rules))})])})
+
+(defdescribe protected-path-before-fn-test
+  (it "v/cat blocks :none protected paths and returns the extension hint"
+    (let [hint "Use (br/policy) instead of reading this file directly."
+          path "target/editing-test/protected/secret.edn"
+          before (:ext.symbol/before-fn (private-fn "cat-symbol"))
+          out (before (protected-env [{:glob "target/editing-test/protected/*.edn"
+                                       :access :none
+                                       :hint hint}])
+                (constantly :ok)
+                [path])
+          failure (:result out)]
+      (expect (some? failure))
+      (expect (false? (:success? failure)))
+      (expect (= :ext.foundation.editing/path-protected
+                (-> failure :error :type)))
+      (expect (= hint (-> failure :error :hint)))
+      (expect (= hint (-> failure :error :loop-hint)))
+      (expect (= :none (-> failure :error :failures first :access)))
+      (expect (= :read (-> failure :error :failures first :intent)))))
+
+  (it "v/patch blocks writes to :read-only protected paths and returns the extension hint"
+    (let [hint "Use (br/update-policy!) instead of patching policy files."
+          path "target/editing-test/protected/policy.txt"
+          before (:ext.symbol/before-fn (private-fn "patch-symbol"))
+          out (before (protected-env [{:glob "target/editing-test/protected/*.txt"
+                                       :access :read-only
+                                       :hint hint}])
+                (constantly :ok)
+                [[{:path path :search "old" :replace "new"}]])
+          failure (:result out)]
+      (expect (some? failure))
+      (expect (false? (:success? failure)))
+      (expect (= :ext.foundation.editing/path-protected
+                (-> failure :error :type)))
+      (expect (= hint (-> failure :error :hint)))
+      (expect (= :read-only (-> failure :error :failures first :access)))
+      (expect (= :write (-> failure :error :failures first :intent)))))
+
+  (it "v/ls blocks ancestor directories that would reveal :none protected children"
+    (let [hint "Use (br/files) instead of listing Bridge-owned files."
+          before (:ext.symbol/before-fn (private-fn "ls-symbol"))
+          out (before (protected-env [{:glob "target/editing-test/protected/*.edn"
+                                       :access :none
+                                       :hint hint}])
+                (constantly :ok)
+                ["target/editing-test"])
+          failure (:result out)]
+      (expect (some? failure))
+      (expect (false? (:success? failure)))
+      (expect (= :ext.foundation.editing/path-protected
+                (-> failure :error :type)))
+      (expect (= hint (-> failure :error :hint)))
+      (expect (= :read (-> failure :error :failures first :intent)))))
+
+  (it "allows first-match :read-write exceptions for the exact file without unblocking parents"
+    (let [hint "Use (br/files) instead of listing Bridge-owned files."
+          path "target/editing-test/protected/public.edn"
+          rules [{:glob path
+                  :access :read-write
+                  :hint "Direct edits are allowed for this file."}
+                 {:glob "target/editing-test/protected/*.edn"
+                  :access :none
+                  :hint hint}]
+          patch-before (:ext.symbol/before-fn (private-fn "patch-symbol"))
+          ls-before (:ext.symbol/before-fn (private-fn "ls-symbol"))
+          patch-out (patch-before (protected-env rules)
+                      (constantly :ok)
+                      [[{:path path :search "old" :replace "new"}]])
+          ls-out (ls-before (protected-env rules)
+                   (constantly :ok)
+                   ["target/editing-test/protected"])
+          failure (:result ls-out)]
+      (expect (not (contains? patch-out :result)))
+      (expect (= [[{:path path :search "old" :replace "new"}]] (:args patch-out)))
+      (expect (some? failure))
+      (expect (false? (:success? failure)))
+      (expect (= hint (-> failure :error :hint)))
+      (expect (= :none (-> failure :error :failures first :access))))))
+
 (defdescribe editing-prompt-read-policy-test
   (it "teaches windowed reads, canonical patching, and no duplicate rereads by default"
     (let [patch-symbol (some #(when (= 'patch (:ext.symbol/symbol %)) %)

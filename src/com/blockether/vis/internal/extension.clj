@@ -660,6 +660,21 @@
 ;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt fn?)
 
+;; Extension-owned file boundary declarations. The callback receives the
+;; live environment and returns rules in first-match-wins order *within
+;; that extension*. Global enforcement across extensions is handled by
+;; the editing core with most-restrictive-wins semantics.
+(s/def :ext.protected-path/glob string?)
+(s/def :ext.protected-path/access #{:read-only :read-write :none})
+(s/def :ext.protected-path/hint string?)
+(s/def ::protected-path
+  (s/keys :req-un [:ext.protected-path/glob
+                   :ext.protected-path/access
+                   :ext.protected-path/hint]))
+(s/def ::protected-paths-result
+  (s/coll-of ::protected-path :kind vector?))
+(s/def :ext/protected-paths fn?)
+
 ;; Optional structured data merged into engine `ctx` before every model call.
 ;; Return a map such as `{:project {...}}`; engine-owned keys still win on
 ;; collision.
@@ -994,7 +1009,7 @@
   (s/and
     (s/keys :req [:ext/name :ext/description]
       :opt [:ext/source-nses :ext/kind :ext/activation-fn
-            :ext/sci :ext/prompt :ext/ctx
+            :ext/sci :ext/prompt :ext/ctx :ext/protected-paths
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
@@ -1640,6 +1655,63 @@
 
 (defn current-extension-id []
   (some-> *current-extension* :ext/name))
+
+(defn- call-extension-env-fn
+  [ext f environment]
+  (binding [*current-extension* ext
+            *current-symbol* nil
+            workspace/*workspace-root* (workspace/workspace-root environment)]
+    (f environment)))
+
+(defn- active-extension?
+  [environment ext]
+  (try
+    (boolean (call-extension-env-fn ext
+               (or (:ext/activation-fn ext) (constantly true))
+               environment))
+    (catch Throwable t
+      (tel/log! {:level :error :id ::ext-activation-error
+                 :data {:ext (:ext/name ext)
+                        :error (ex-message t)}}
+        (str "Extension '" (:ext/name ext) "' activation-fn threw"))
+      false)))
+
+(defn- active-extension-rows
+  [environment]
+  (let [active-value (:active-extensions environment)]
+    (cond
+      (some? active-value)
+      (vec (if (instance? clojure.lang.IDeref active-value)
+             @active-value
+             active-value))
+
+      :else
+      (filterv #(active-extension? environment %)
+        (vec (or (some-> (:extensions environment) deref) []))))))
+
+(defn active-protected-globs
+  "Aggregate protected path rules from active extensions in extension order.
+
+   Each active extension may declare `:ext/protected-paths` as
+   `(fn [env] -> [{:glob string :access :read-only|:read-write|:none
+                   :hint string} ...])`. Rule order is preserved within
+   each extension; the foundation editing core resolves first-match-wins
+   per extension and most-restrictive-wins globally. Returned rows are
+   enriched with `:extension/name` for diagnostics."
+  [environment]
+  (mapv identity
+    (mapcat
+      (fn [ext]
+        (when-let [f (:ext/protected-paths ext)]
+          (let [rows (call-extension-env-fn ext f environment)]
+            (when-not (s/valid? ::protected-paths-result rows)
+              (throw (ex-info ":ext/protected-paths returned invalid protected path rules"
+                       {:type :extension/invalid-protected-paths
+                        :extension (:ext/name ext)
+                        :value rows
+                        :explain (s/explain-data ::protected-paths-result rows)})))
+            (mapv #(assoc % :extension/name (:ext/name ext)) rows))))
+      (active-extension-rows environment))))
 
 (defn- deep-merge
   [& maps]
