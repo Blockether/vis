@@ -2126,11 +2126,13 @@
   ;; not in the command palette — keystroke F3 / Shift+F3 /
   ;; in-place input field. Removing it from this menu avoids two
   ;; entry points for the same action.
+  ;; PLAN.md §12 step 8 (K6): workspace palette entries
+  ;; (`:workspace`, `:apply-workspace-to-trunk`,
+  ;; `:discard-workspace-{soft,hard}`) are GONE. Workspace ops are
+  ;; slash-only now (`/workspace new|apply|discard|...`) and surface
+  ;; through `menu-commands` (§9.3) which aggregates them from the
+  ;; engine slash registry.
   [{:id :new-session    :label "New Session"}
-   {:id :workspace                  :label "Workspace (new)"}
-   {:id :apply-workspace-to-trunk   :label "Apply workspace to trunk"}
-   {:id :discard-workspace-soft     :label "Discard workspace (keep branch)"}
-   {:id :discard-workspace-hard     :label "Discard workspace (delete branch)"}
    {:id :fork-session   :label "Fork Session"}
    {:id :switch-session :label "Switch Session"}
    {:id :providers           :label "Configure Providers"}

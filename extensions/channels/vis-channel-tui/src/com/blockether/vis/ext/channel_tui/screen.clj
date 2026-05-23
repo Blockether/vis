@@ -287,40 +287,43 @@
     :notify        (vis/notify! (or text "") :level (or level :info) :ttl-ms (or ttl-ms copy-success-ttl-ms))
     nil))
 
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} extension-commands
-  [screen]
-  (let [ctx {:channel/id :tui
-             :screen screen
-             :app-db state/app-db
-             :publish! #(vis/publish-channel-event! :tui %)}]
-    (->> (vis/channel-contributions-for :tui :tui.slot/commands)
-      (mapcat (fn [{:keys [id] f :fn}]
-                (try
-                  (map #(assoc % :contribution-id id) (or (some-> f (apply [ctx])) []))
-                  (catch Throwable t
-                    (vis/notify! (str "Extension command contribution failed: " (or (ex-message t) t))
-                      :level :warn :ttl-ms copy-success-ttl-ms)
-                    []))))
-      (filter #(and (:id %) (:label %) (ifn? (:run-fn %))))
-      vec)))
+(defn- slash-spec->menu-command
+  "Adapt a declarative slash spec (PLAN.md §3) into the legacy
+   menu-command shape `command_suggest.clj` consumes. Only TOP-LEVEL
+   slashes (`:slash/parent []`) get a palette entry; nested commands
+   stay typed-only (the engine's `slash/dispatch` does longest-prefix
+   resolution regardless of palette discoverability)."
+  [spec]
+  (let [name (:slash/name spec)
+        path [name]]
+    {:id          (keyword "slash" name)
+     :label       (or (:slash/doc spec) (:slash/usage spec) (str "/" name))
+     :doc         (:slash/doc spec)
+     :slash/spec  spec
+     :slash/path  path
+     :slash/text  (str "/" name)}))
 
-(defn- palette-extra-commands
-  [commands]
-  (filterv #(not= false (:palette? %)) commands))
-
-(def ^:private slash-only-commands
-  "Built-in slash commands that should not add another Ctrl+K palette row."
-  [{:id :model
-    :label "Model / Providers"
-    :doc "Open the provider/model router dialog."}])
+(defn- registry-slash-commands
+  "Top-level slashes harvested from the engine registry. Returns the
+   adapted vec ready to feed `command_suggest.clj`. The fuzzy matcher
+   keys off `:label` / `:doc` / `:id` so this surface degrades
+   gracefully when a slash has no doc."
+  []
+  (try
+    (mapv slash-spec->menu-command
+      (filter (fn [s] (empty? (:slash/parent s)))
+        (vis/registered-slashes)))
+    (catch Throwable _t [])))
 
 (defn- menu-commands
-  "All slash commands shown in the TUI overlay: built-in palette commands,
-   slash-only aliases, plus extension-contributed palette commands."
-  [screen]
-  (vec (concat dlg/palette-commands
-         slash-only-commands
-         (palette-extra-commands (extension-commands screen)))))
+  "All slash commands shown in the TUI overlay (PLAN.md §12 step 8):
+   built-in palette commands + the engine's registered slashes
+   (`vis/active-slashes`). Legacy `slash-only-commands` vec + the
+   `:tui.slot/commands` extension-contribution path are GONE (K7+K8).
+   Workspace ops (`/workspace ...`) and voice (`/voice`) now reach the
+   palette through the engine slash registry."
+  [_screen]
+  (vec (concat dlg/palette-commands (registry-slash-commands))))
 
 (defn- slash-command-for-input
   [screen input-state]
@@ -333,12 +336,6 @@
    (slash/suggestions (input/input->text input-state) (menu-commands screen)
      {:limit Integer/MAX_VALUE
       :selected-index selected-index})))
-
-(defn- command-argv
-  [args]
-  (if (str/blank? args)
-    []
-    (str/split (str/trim args) #"\s+")))
 
 (defn- input-state-from-text
   [text]
@@ -2360,135 +2357,45 @@
                  :else
                  (let [{:keys [action state workspace-index]} (input/handle-key key (:input db))]
                    (state/dispatch [:update-input state])
-                   (let [extra-commands (extension-commands screen)
-                         palette-commands (palette-extra-commands extra-commands)
-                         extra-by-id    (into {} (map (juxt :id identity)) extra-commands)
-                         run-command!
+                   (let [run-command!
+                         ;; PLAN.md §12 step 8 (K8): the extension-contributed
+                         ;; `:tui.slot/commands` slot is GONE; the only
+                         ;; surfaces dispatched through `run-command!` are
+                         ;; (a) built-in palette ids (`:new-session`,
+                         ;; `:fork-session`, ...) and (b) declarative slash
+                         ;; entries from `vis/registered-slashes`. Slash
+                         ;; entries carry `:id (keyword "slash" name)` +
+                         ;; `:slash/text`; we resubmit as a user message
+                         ;; so the engine's `run-turn!` dispatch (§12
+                         ;; step 7) handles them through the canonical
+                         ;; `slash/dispatch` path.
                          (fn [cmd & [args]]
-                           (let [cmd-id (if (map? cmd) (:id cmd) cmd)
-                                 args   (or args (:slash/args cmd) "")]
-                             (if-let [ext-cmd (get extra-by-id cmd-id)]
+                           (let [cmd-id  (if (map? cmd) (:id cmd) cmd)
+                                 args    (or args (:slash/args cmd) "")
+                                 cmd-map (when (map? cmd) cmd)]
+                             (cond
+                               (and cmd-map (= "slash" (namespace cmd-id)))
                                (when-not (:dialog-open? @state/app-db)
-                                 ((:run-fn ext-cmd)
-                                  {:channel/id :tui
-                                   :screen screen
-                                   :app-db state/app-db
-                                   :command/args args
-                                   :command/argv (command-argv args)
-                                   :publish! #(vis/publish-channel-event! :tui %)}))
+                                 (let [text (cond-> (:slash/text cmd-map)
+                                              (not (str/blank? args))
+                                              (str " " (str/trim args)))]
+                                   (state/dispatch [:send-message text])
+                                   (state/dispatch [:reset-input])))
+
+                               :else
                                (when-not (:dialog-open? @state/app-db)
                                  (case cmd-id
                                    :new-session
                                    (switch-session! {:action :new})
 
-                                   :workspace
-                                   ;; PLAN.md decision 6 — /workspace spawns a
-                                   ;; fresh `vis/<short-id>` branch workspace
-                                   ;; (real git worktree under
-                                   ;; ~/.vis/workspaces/<repo>/<id>/) and pins
-                                   ;; the new session 1:1 to it. Falls back
-                                   ;; to auto-trunk if spawn fails so the user
-                                   ;; still gets a usable new session slot.
-                                   (when-let [config (:config @state/app-db)]
-                                     (let [before-count (count (:workspaces @state/app-db))
-                                           db           (vis/db-info)
-                                           current-id   (:workspace/id @state/app-db)
-                                           current-ws   (when (and db current-id)
-                                                          (vis/workspace-get db current-id))
-                                           spawned      (try (vis/workspace-spawn-branch! db
-                                                               {:from current-ws})
-                                                          (catch Throwable t
-                                                            (vis/notify! (str "Spawn failed: "
-                                                                           (or (ex-message t) (str t)))
-                                                              :level :error :ttl-ms copy-success-ttl-ms)
-                                                            nil))]
-                                       (state/dispatch [:create-workspace
-                                                        (when spawned
-                                                          {:workspace      spawned
-                                                           :workspace/root (:root spawned)
-                                                           :label          (:branch spawned)})])
-                                       (if (= before-count (count (:workspaces @state/app-db)))
-                                         (vis/notify! "Maximum 8 workspaces open"
-                                           :level :warn :ttl-ms copy-success-ttl-ms)
-                                         (install-session!
-                                           (chat/make-session config
-                                             (when spawned {:workspace-id (:id spawned)}))
-                                           true))))
-
-                                   :apply-workspace-to-trunk
-                                   ;; PLAN.md §12 step 3 cutover: legacy file-copy
-                                   ;; `apply-to-trunk!` is gone (K4 + K5). The palette
-                                   ;; case routes through the new git-native
-                                   ;; `ff-apply!` which fast-forwards the trunk onto
-                                   ;; the workspace branch. Step 8 (K6) deletes this
-                                   ;; palette entry entirely; until then, the call
-                                   ;; keeps the action live with the new semantics.
-                                   (let [db-info (vis/db-info)
-                                         ws-id   (:workspace/id @state/app-db)]
-                                     (cond
-                                       (nil? ws-id)
-                                       (vis/notify! "No active workspace" :level :warn :ttl-ms copy-success-ttl-ms)
-                                       (= :trunk (:workspace/kind @state/app-db))
-                                       (vis/notify! "Trunk workspace cannot be applied to itself"
-                                         :level :warn :ttl-ms copy-success-ttl-ms)
-                                       :else
-                                       (try
-                                         (let [result (vis/workspace-ff-apply! db-info
-                                                        {:workspace-id ws-id})]
-                                           (case (:status result)
-                                             :ok
-                                             (vis/notify! "Workspace fast-forwarded onto trunk"
-                                               :level :info :ttl-ms copy-success-ttl-ms)
-                                             :ff-failed
-                                             (vis/notify! (str "FF apply failed: " (:reason result))
-                                               :level :warn :ttl-ms copy-success-ttl-ms)
-                                             (vis/notify! (str "FF apply: " (pr-str result))
-                                               :level :warn :ttl-ms copy-success-ttl-ms)))
-                                         (catch Throwable t
-                                           (vis/notify! (str "Apply failed: " (or (ex-message t) (str t)))
-                                             :level :error :ttl-ms copy-success-ttl-ms)))))
-
-                                   :discard-workspace-soft
-                                   (let [db-info (vis/db-info)
-                                         ws-id   (:workspace/id @state/app-db)]
-                                     (cond
-                                       (nil? ws-id)
-                                       (vis/notify! "No active workspace" :level :warn :ttl-ms copy-success-ttl-ms)
-                                       (= :trunk (:workspace/kind @state/app-db))
-                                       (vis/notify! "Trunk workspace cannot be discarded"
-                                         :level :warn :ttl-ms copy-success-ttl-ms)
-                                       :else
-                                       (try
-                                         (vis/workspace-discard! db-info
-                                           {:workspace-id   ws-id
-                                            :delete-branch? false
-                                            :force?         false})
-                                         (vis/notify! "Workspace worktree removed (branch kept)"
-                                           :level :info :ttl-ms copy-success-ttl-ms)
-                                         (catch Throwable t
-                                           (vis/notify! (str "Discard failed: " (or (ex-message t) (str t)))
-                                             :level :error :ttl-ms copy-success-ttl-ms)))))
-
-                                   :discard-workspace-hard
-                                   (let [db-info (vis/db-info)
-                                         ws-id   (:workspace/id @state/app-db)]
-                                     (cond
-                                       (nil? ws-id)
-                                       (vis/notify! "No active workspace" :level :warn :ttl-ms copy-success-ttl-ms)
-                                       (= :trunk (:workspace/kind @state/app-db))
-                                       (vis/notify! "Trunk workspace cannot be discarded"
-                                         :level :warn :ttl-ms copy-success-ttl-ms)
-                                       :else
-                                       (try
-                                         (vis/workspace-discard! db-info
-                                           {:workspace-id   ws-id
-                                            :delete-branch? true
-                                            :force?         true})
-                                         (vis/notify! "Workspace + branch removed"
-                                           :level :info :ttl-ms copy-success-ttl-ms)
-                                         (catch Throwable t
-                                           (vis/notify! (str "Discard failed: " (or (ex-message t) (str t)))
-                                             :level :error :ttl-ms copy-success-ttl-ms)))))
+                                   ;; PLAN.md §12 step 8 (K6): workspace ops
+                                   ;; (`:workspace`, `:apply-workspace-to-trunk`,
+                                   ;; `:discard-workspace-{soft,hard}`) live as
+                                   ;; slash commands now. `menu-commands`
+                                   ;; aggregates `/workspace new|apply|discard|...`
+                                   ;; from the engine slash registry and routes
+                                   ;; them through `slash-dispatch`. No bespoke
+                                   ;; palette case here.
 
                                    :fork-session
                                    (switch-session! {:action :fork})
@@ -2597,7 +2504,11 @@
                        (do
                          (when-not (:dialog-open? @state/app-db)
                            (loop []
-                             (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen palette-commands))]
+                             ;; `command-palette!` re-concats `dlg/palette-commands`
+                             ;; internally; we only feed the dynamic slash
+                             ;; entries pulled from the engine registry.
+                             (when-let [cmd (with-dialog-lock
+                                              #(dlg/command-palette! screen (registry-slash-commands)))]
                                (run-command! cmd)
                                (recur))))
                          (recur))
@@ -2630,7 +2541,15 @@
                          (recur))
 
                        :toggle-voice-recording
-                       (do (run-command! :voice/toggle-recording)
+                       ;; PLAN.md §12 step 8 (K10 cont.): voice toggle
+                       ;; now flows through the engine slash registry as
+                       ;; `/voice`. The submitted user message goes through
+                       ;; `run-turn!` -> `slash/dispatch` -> the voice
+                       ;; extension's run-fn which lazily triggers
+                       ;; `input/toggle-recording!`. Transcript shows one
+                       ;; synthetic :user-slash iter per toggle.
+                       (do (when-not (:loading? @state/app-db)
+                             (state/dispatch [:send-message "/voice"]))
                          (recur))
 
                        :show-sessions
