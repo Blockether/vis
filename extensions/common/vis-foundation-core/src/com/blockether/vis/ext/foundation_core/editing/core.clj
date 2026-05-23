@@ -66,15 +66,19 @@
 ;;                             each call writes one Nippy blob to
 ;;                             `definition_state.value`, bounded by this.
 ;;                             Not user-tunable; it is the storage contract.
-;;   `max-line-length`       - per-line character cap (industry parity
-;;                             with Claude Code / Roo Code). Minified
-;;                             JSON / JS / log lines are truncated to
-;;                             this length, with a `…<+N chars>` suffix.
-;;                             Without per-line trunc a single 10k-char
-;;                             line burns ~15% of the window cap.
+;;
+;; The earlier `max-line-length` per-line cap (2000 chars + `…<+N chars
+;; truncated>` marker) was retired. It produced the same failure pattern
+;; as the trailer/rg caps removed alongside it (see ctx_renderer.clj
+;; header + conversation ccee2e1f-16ee-4acf-8d93-b4505034c0de): a
+;; silent ellipsis made the model perceive its own data as missing and
+;; chase phantom roundtrips even on legitimate long source lines.
+;; The structural defense is the per-window byte cap above — a single
+;; pathological line is included whole (so the model sees actual data)
+;; and the next iteration stops with `:truncated? true :next-offset N`,
+;; which the model already knows how to page through.
 (def ^:private default-cat-limit 2000)
 (def ^:private max-cat-window-bytes 262144)
-(def ^:private max-line-length 2000)
 
 ;; =============================================================================
 ;; Path safety
@@ -475,18 +479,6 @@
              {:type :ext.foundation.editing/invalid-cat-args
               :limit n}))))
 
-(defn- truncate-long-line
-  "Cap a single line at `max-line-length` chars. Returns
-   `[<text> <was-truncated?>]`. Mirrors Claude Code / Roo Code per-line
-   truncation — a 50k-char minified JS line burns the whole window cap
-   without it."
-  [^String s]
-  (if (<= (count s) max-line-length)
-    [s false]
-    [(str (subs s 0 max-line-length)
-       "…<+" (- (count s) max-line-length) " chars truncated>")
-     true]))
-
 (defn- read-file
   "Read a window of a text file as pure structured data.
 
@@ -497,14 +489,13 @@
 
    Returns
    `{:path :lines [[N text]…] :next-offset N? :eof? B :truncated? B
-     :mtime EPOCH-MS :size BYTES
-     :long-line-truncations N?}`.
+     :mtime EPOCH-MS :size BYTES}`.
 
    `:lines` is a vec of `[line-number, text]` tuples — line number first so
-   the model destructures `[ln t]` without offset arithmetic. Individual
-   lines longer than `max-line-length` (2000 chars) are truncated with a
-   `…<+N chars truncated>` suffix; `:long-line-truncations` reports how
-   many lines were affected (absent when zero).
+   the model destructures `[ln t]` without offset arithmetic. Each line's
+   `text` is verbatim — no per-line character cap. A pathological single
+   long line is included whole and the next iteration's byte cap will
+   page the rest via `:next-offset`.
    `:next-offset` is nil at EOF, integer otherwise.
    `:eof? true` iff the window reached end-of-file (unambiguous; distinct
    from `:truncated?` which only fires when the window byte cap chopped
@@ -534,7 +525,6 @@
        (loop [acc        (transient [])
               bytes-used 0
               read-count 0
-              long-trunc 0
               stop       nil]
          (cond
            stop
@@ -543,33 +533,29 @@
                  eof?        (= stop :eof)
                  next-offset (when-not eof?
                                (+ (long offset) returned))]
-             (cond-> {:path        (rel-path f)
-                      :lines       lines
-                      :next-offset next-offset
-                      :eof?        eof?
-                      :truncated?  (= stop :bytes)
-                      :mtime       mtime
-                      :size        size}
-               (pos? long-trunc) (assoc :long-line-truncations long-trunc)))
+             {:path        (rel-path f)
+              :lines       lines
+              :next-offset next-offset
+              :eof?        eof?
+              :truncated?  (= stop :bytes)
+              :mtime       mtime
+              :size        size})
 
            (>= read-count limit)
-           (recur acc bytes-used read-count long-trunc :limit)
+           (recur acc bytes-used read-count :limit)
 
            :else
            (let [raw (.readLine rdr)]
              (if (nil? raw)
-               (recur acc bytes-used read-count long-trunc :eof)
-               (let [[^String s truncated?] (truncate-long-line raw)
-                     line-bytes (+ 1 (alength (.getBytes s "UTF-8")))
+               (recur acc bytes-used read-count :eof)
+               (let [line-bytes (+ 1 (alength (.getBytes raw "UTF-8")))
                      new-bytes  (+ bytes-used line-bytes)
-                     line-no    (+ (long offset) read-count)
-                     long-trunc (if truncated? (inc long-trunc) long-trunc)]
+                     line-no    (+ (long offset) read-count)]
                  (if (and (pos? read-count) (> new-bytes byte-cap))
-                   (recur acc bytes-used read-count long-trunc :bytes)
-                   (recur (conj! acc [line-no s])
+                   (recur acc bytes-used read-count :bytes)
+                   (recur (conj! acc [line-no raw])
                      new-bytes
                      (inc read-count)
-                     long-trunc
                      nil)))))))))))
 
 (defn- tail-file
@@ -602,35 +588,35 @@
             (let [kept     (vec (.toArray buf))
                   kept-cnt (count kept)
                   start    (inc (- (long total) kept-cnt))
-                  ;; Walk kept from the END backwards, accumulating until
-                  ;; byte cap. Anything we drop off the front bumps
-                  ;; truncated?. Per-line truncation is applied at this
-                  ;; point too — tail is the slow path so the cost is
-                  ;; bounded by the kept window, not the whole file.
-                  [final-lines bytes-truncated? long-trunc]
+                  ;; Walk kept from the END backwards, accumulating
+                  ;; until the byte cap. Anything dropped off the front
+                  ;; bumps `:truncated?`. Per-line text is verbatim —
+                  ;; the per-line cap was retired (see the
+                  ;; `default-cat-limit` / `max-cat-window-bytes`
+                  ;; header note up-file); a single pathological long
+                  ;; line is included whole and the byte cap stops
+                  ;; further accumulation.
+                  [final-lines bytes-truncated?]
                   (loop [i          (dec kept-cnt)
                          bytes-used 0
-                         acc        ()
-                         long-trunc 0]
+                         acc        ()]
                     (if (neg? i)
-                      [(vec acc) false long-trunc]
-                      (let [[^String s truncated?] (truncate-long-line (nth kept i))
+                      [(vec acc) false]
+                      (let [^String s (nth kept i)
                             lb        (+ 1 (alength (.getBytes s "UTF-8")))
-                            nb        (+ bytes-used lb)
-                            long-trunc (if truncated? (inc long-trunc) long-trunc)]
+                            nb        (+ bytes-used lb)]
                         (if (and (seq acc) (> nb byte-cap))
-                          [(vec acc) true long-trunc]
-                          (recur (dec i) nb (cons s acc) long-trunc)))))
+                          [(vec acc) true]
+                          (recur (dec i) nb (cons s acc))))))
                   start-line   (+ (long start) (- kept-cnt (count final-lines)))
                   numbered     (mapv vector (iterate inc start-line) final-lines)]
-              (cond-> {:path        (rel-path f)
-                       :lines       numbered
-                       :next-offset nil
-                       :eof?        true
-                       :truncated?  bytes-truncated?
-                       :mtime       mtime
-                       :size        size}
-                (pos? long-trunc) (assoc :long-line-truncations long-trunc)))
+              {:path        (rel-path f)
+               :lines       numbered
+               :next-offset nil
+               :eof?        true
+               :truncated?  bytes-truncated?
+               :mtime       mtime
+               :size        size})
             (do
               (when (>= (.size buf) n) (.removeFirst buf))
               (.addLast buf raw)
@@ -876,22 +862,27 @@
     :else
     (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
 
-(def ^:private rg-line-preview-chars
-  "Per-line text cap for v/rg hits. Mirrors Roo Code's 500-char cap so
-   matching lines from minified JS / wide log files don't bloat the
-   trailer."
-  500)
-
-(defn- truncate-rg-line
-  [^String s]
-  (if (<= (count s) rg-line-preview-chars)
-    s
-    (str (subs s 0 rg-line-preview-chars) "…<+" (- (count s) rg-line-preview-chars) " chars>")))
+;; Per-line text cap for v/rg hits was retired (was 500 chars,
+;; mirroring Roo Code). The cap had the same failure mode as the
+;; trailer cap before it: the `…<+N chars>` marker made the model
+;; perceive its own data as missing and chase a phantom "full line"
+;; via extra v/cat roundtrips, even on normal source lines that
+;; happened to brush the cap. The model owns its data — see the
+;; trailer truncation note in `internal/ctx_renderer.clj`.
+;;
+;; Realistic corpus exposure is bounded by:
+;;   - the hit cap (`:truncated-by :limit`, default 250 hits)
+;;   - the model's choice to use `:files-only?` / `:counts?` /
+;;     `:exclude` when scanning minified or wide-line corpora
+;; If a `:text` ever needs to be capped again, the cap MUST be
+;; explicit at the spec layer (e.g. an opt-in `:max-text-chars`) so
+;; the model controls it, NOT a silent renderer-side ellipsis.
 
 (defn- search-file-content
   "Walk one file once, emit hits with optional context. Content-mode helper.
-   Returns a vec of hit maps; an empty vec means no match. Long lines are
-   truncated to `rg-line-preview-chars` to bound trailer growth."
+   Returns a vec of hit maps; an empty vec means no match. Hit `:text`,
+   `:before`, and `:after` carry source bytes verbatim — no per-line cap
+   (see the retirement note above for rationale)."
   [^File f matches? before-ctx after-ctx]
   (try
     (let [path  (rel-path f)
@@ -907,15 +898,15 @@
           (>= i n) (persistent! out)
           (matches? (nth lines i))
           (let [line-no (inc i)
-                text    (truncate-rg-line (nth lines i))
+                text    (nth lines i)
                 hit (cond-> {:path path :line line-no :text text}
                       want-before?
                       (assoc :before
-                        (mapv (fn [j] [(inc j) (truncate-rg-line (nth lines j))])
+                        (mapv (fn [j] [(inc j) (nth lines j)])
                           (range (max 0 (- i before-ctx)) i)))
                       want-after?
                       (assoc :after
-                        (mapv (fn [j] [(inc j) (truncate-rg-line (nth lines j))])
+                        (mapv (fn [j] [(inc j) (nth lines j)])
                           (range (inc i) (min n (+ i after-ctx 1))))))]
             (recur (inc i) (conj! out hit)))
           :else (recur (inc i) out))))
@@ -950,8 +941,9 @@
      {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
 
    `:truncated-by` is `:limit` when the configured limit clamped the
-   result, `:end-of-results` otherwise. Per-line text is capped at 500
-   chars (`rg-line-preview-chars`) with a `…<+N chars>` suffix."
+   result, `:end-of-results` otherwise. Per-line `:text`, `:before`,
+   and `:after` are verbatim — no per-line cap (see the per-line cap
+   retirement note above)."
   [spec]
   (let [{:keys [op needles patterns paths include exclude hidden? respect-gitignore?
                 limit before-ctx after-ctx files-only? counts? regex?]} (coerce-rg-spec spec)
@@ -1808,13 +1800,13 @@
 
    Result shape:
      {:vis.op :v/cat :path P :lines [[<line-number> <text>] …]
-      :next-offset N? :eof? B :truncated? B :mtime :size
-      :long-line-truncations N?}
+      :next-offset N? :eof? B :truncated? B :mtime :size}
    `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
    offset arithmetic. Filter content with `(filter (fn [[_ t]] …) :lines)`.
-   `:next-offset` is nil at EOF or for tail; integer otherwise — pass to
-   a follow-up `(v/cat path :range next-offset …)` to paginate. `:truncated?`
-   is true when the 256KB byte cap chopped the window; paginate regardless.
+   Each line's text is verbatim — no per-line cap. `:next-offset` is nil
+   at EOF or for tail; integer otherwise — pass to a follow-up
+   `(v/cat path :range next-offset …)` to paginate. `:truncated?` is
+   true when the 256KB byte cap chopped the window; paginate regardless.
 
    The legacy `(v/cat path n)` and `(v/cat path offset n)` arities were
    removed because they competed with `:range`. Use:
@@ -2690,16 +2682,14 @@
      "  (v/cat path :tail)            — last 2000 lines (tail)."
      "  (v/cat path :tail n)          — last n lines."
      "  result: {:vis.op :v/cat :path :lines :next-offset :eof? :truncated?"
-     "          :mtime :size :long-line-truncations?}. :lines is a vec of"
-     "  `[<line-number> <text>]` tuples — destructure with `[n t]`, no offset"
-     "  math. Page with `(:next-offset prev)` until `:eof? true`. `:truncated?`"
-     "  only fires when the 256KB window cap chopped the window mid-file;"
-     "  paginate via :next-offset regardless. Individual lines longer than"
-     "  2000 chars get a per-line `…<+N chars truncated>` suffix; the count"
-     "  surfaces as `:long-line-truncations` (absent when zero). Thread"
-     "  `:mtime` / `:size` into a subsequent v/patch / v/write as"
-     "  :expected-mtime / :expected-size to fail closed if the file was"
-     "  rewritten between read and patch."
+     "          :mtime :size}. :lines is a vec of `[<line-number> <text>]`"
+     "  tuples — destructure with `[n t]`, no offset math. Page with"
+     "  `(:next-offset prev)` until `:eof? true`. `:truncated?` only fires"
+     "  when the 256KB window cap chopped the window mid-file; paginate via"
+     "  :next-offset regardless. Each line's text is verbatim — no per-line"
+     "  character cap. Thread `:mtime` / `:size` into a subsequent v/patch /"
+     "  v/write as :expected-mtime / :expected-size to fail closed if the"
+     "  file was rewritten between read and patch."
      ""
      "  (v/ls path)             — FLAT recursive entry list. Default :depth 10,"
      "  :limit 500. opts: {:depth N :limit N :files-only? B :dirs-only? B"
