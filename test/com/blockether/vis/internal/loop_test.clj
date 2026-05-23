@@ -4,6 +4,7 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.persistance :as persistance]
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci]))
 
@@ -43,6 +44,31 @@
 
 (def ^:private llm-provider-error-context
   (deref #'lp/llm-provider-error-context))
+
+(def ^:private previous-turn-context
+  (deref #'lp/previous-turn-context))
+
+(defdescribe previous-turn-context-test
+  (it "loads the latest completed prior answer for short follow-ups"
+    (with-redefs [persistance/db-list-session-turns
+                  (fn [_db-info session-id]
+                    (expect (= "s1" session-id))
+                    [{:id "t1" :status :done :user-request "What changed?"
+                      :answer-markdown "First answer"}
+                     {:id "t2" :status :done :user-request "Which option?"
+                      :answer-markdown "Use option B"}
+                     {:id "t3" :status :running :user-request "yes"}])]
+      (expect (= {:user-request "Which option?" :answer "Use option B"}
+                (previous-turn-context {:session-id "s1" :db-info ::db} "t3")))))
+
+  (it "skips current/running/blank-answer turns"
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly
+                    [{:id "t1" :status :done :user-request "old"
+                      :answer-markdown ""}
+                     {:id "t2" :status :running :user-request "now"
+                      :answer-markdown "partial"}])]
+      (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db} "t2"))))))
 
 (defdescribe max-tokens-exceeded-retry-test
   (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
@@ -441,6 +467,31 @@
             (expect (nil? (get-in result [:blocks 0 :error])))
             (expect (str/includes? (get-in result [:llm-executable-blocks 0 :source])
                       "```\\nSUBCOMMANDS"))))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "recovers torn direct answers before executing nested example fences"
+    (let [env    (lp/create-environment ::router {:db :memory})
+          answer (str "# What went wrong\n\n"
+                   "```clojure\n"
+                   "(v/rg {:any [\":ext/slash-commands\"] :paths [\"extensions\" \"src\"]})\n"
+                   "```\n"
+                   "Done.")
+          raw    (str "```clojure\n(done {:answer " (pr-str answer) "})\n```")
+          torn   "(done {:answer \"# What went wrong\n\n```clojure\n(v/rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"
+          example "(v/rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"]
+      (try
+        (with-redefs [svar/ask-code! (fn [_ _]
+                                       {:blocks [{:lang "clojure" :source torn}
+                                                 {:lang "clojure" :source example}]
+                                        :raw raw
+                                        :tokens {}})]
+          (let [result (lp/run-iteration env []
+                         {:iteration 0
+                          :resolved-model {:provider :test :name "test"}})]
+            (expect (= answer (get-in result [:final-result :answer :answer])))
+            (expect (= 1 (count (:llm-executable-blocks result))))
+            (expect (nil? (get-in result [:blocks 0 :error])))))
         (finally
           (lp/dispose-environment! env)))))
 

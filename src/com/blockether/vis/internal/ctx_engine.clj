@@ -848,21 +848,51 @@
 ;; advance-iter / advance-turn / gc-pass
 ;; =============================================================================
 
+(defn- mutation-form?
+  [form]
+  (= :mutation (:tag form)))
+
+(defn- observation-only-trailer-entry?
+  [entry]
+  (let [forms (:forms entry)]
+    (and (seq forms) (every? #(= :observation (:tag %)) forms))))
+
+(defn- prune-stale-observation-pins
+  "When current iter mutates state, previous observation-only pins become
+   stale. Keep them while no mutation has happened; drop them at first later
+   mutation so the trailer carries tool observations only as long as their
+   underlying world is unchanged. Mixed pins and summaries stay model-owned."
+  [trailer iter-scope current-forms]
+  (if-not (some mutation-form? current-forms)
+    (vec (or trailer []))
+    (let [current-form-scope (str iter-scope "/f1")]
+      (vec
+        (remove (fn [entry]
+                  (and (observation-only-trailer-entry? entry)
+                    (:scope entry)
+                    (neg? (scope-compare (str (:scope entry) "/f1")
+                            current-form-scope))))
+          (or trailer []))))))
+
 (defn advance-iter
   "Append a trailer pin for the just-finished iter (if it had any non-done
    form-results) and advance the cursor so the next iter starts at
    :iter (current+1) :next-form 1. `form-results-vec` is the ordered vec of
    `{:scope :tag :src :result :error}` envelopes captured during the iter.
-   Forms whose src begins with `(done` are excluded from the pin."
+   Forms whose src begins with `(done` are excluded from the pin. Observation-
+   only pins carry forward until a later mutation makes them stale."
   [ctx form-results-vec]
   (let [cursor    (:session/scope ctx)
         iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
         keepable  (vec (remove #(str/starts-with? (str (:src %)) "(done")
                          form-results-vec))
+        trailer'  (prune-stale-observation-pins
+                    (:session/trailer ctx) iter-scope keepable)
+        ctx*      (assoc ctx :session/trailer trailer')
         ctx'      (if (seq keepable)
-                    (update ctx :session/trailer (fnil conj [])
+                    (update ctx* :session/trailer (fnil conj [])
                       {:scope iter-scope :forms keepable})
-                    ctx)]
+                    ctx*)]
     (assoc ctx' :session/scope
       (-> cursor (update :iter inc) (assoc :next-form 1)))))
 
@@ -1360,7 +1390,11 @@
      done set-session-title!
      ;; Common sandbox mutators (alias-prefixed forms route through the
      ;; extension registry; bare names here cover unprefixed cases)
-     reset! swap! alter-var-root})
+     reset! swap! alter-var-root
+     ;; Foundation filesystem mutation tools. Inline tool tags normally
+     ;; classify these, but persisted source fallback must still mark
+     ;; stale-observation boundaries correctly.
+     v/patch v/write v/move v/delete v/delete-if-exists v/create-dirs v/copy})
 
 (defn classify-form-tag
   "Classify a form-source string as :observation or :mutation. Engine
