@@ -12,21 +12,79 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
-   [java.io File]
+   [java.io File IOException]
    [java.nio.file Paths]
+   [java.util.function Function]
    [org.eclipse.jgit.api Git]
    [org.eclipse.jgit.transport RefSpec SshSessionFactory UsernamePasswordCredentialsProvider]
-   [org.eclipse.jgit.transport.sshd SshdSessionFactory SshdSessionFactoryBuilder]))
+   [org.eclipse.jgit.transport.sshd KeyPasswordProvider SshdSessionFactory SshdSessionFactoryBuilder]))
 
 (defn- ^java.nio.file.Path ->path [^String s] (Paths/get s (make-array String 0)))
 
+;; ----------------------------------------------------------------------------
+;; Encrypted SSH key passphrase prompting
+;; ----------------------------------------------------------------------------
+
+(def ^:private ssh-passphrase-prompt-fn
+  "Atom holding the active passphrase prompt:
+     (fn [resource-uri attempt] -> String | nil)
+   Channels with a UI (TUI) reset this to a masked dialog via
+   `set-ssh-passphrase-prompt!`. Headless callers leave it `nil` and rely
+   on the `VIS_SSH_KEY_PASSPHRASE` env var fallback. `nil` return
+   (user cancelled / no env var) raises a structured IOException so JGit
+   skips the encrypted key instead of looping."
+  (atom nil))
+
+(defn set-ssh-passphrase-prompt!
+  "Register a channel-aware passphrase prompt. The fn receives the
+   resource URI string + attempt counter (1-based) and returns a non-blank
+   passphrase or `nil` to cancel. Pass `nil` to clear (e.g. when the TUI
+   channel shuts down)."
+  [f]
+  (reset! ssh-passphrase-prompt-fn f))
+
+(defn- resolve-passphrase
+  "Prompt -> env var fallback. Returns String or nil."
+  [resource attempt]
+  (let [from-fn  (when-let [f @ssh-passphrase-prompt-fn]
+                   (try (f resource attempt)
+                        (catch Throwable _ nil)))
+        from-env (when (str/blank? from-fn)
+                   (System/getenv "VIS_SSH_KEY_PASSPHRASE"))]
+    (cond
+      (not (str/blank? from-fn))  from-fn
+      (not (str/blank? from-env)) from-env
+      :else                       nil)))
+
+(defn- ^KeyPasswordProvider ->key-password-provider []
+  ;; Three attempts mirrors OpenSSH ssh-add default; after that JGit
+  ;; treats the key as unusable and tries the next identity.
+  (let [attempts (atom 3)]
+    (reify KeyPasswordProvider
+      (getPassphrase [_ uri attempt]
+        (let [resource (str uri)
+              pw       (resolve-passphrase resource attempt)]
+          (when (str/blank? pw)
+            (throw (IOException.
+                     (str "SSH key " resource " is encrypted; no passphrase available. "
+                       "Set VIS_SSH_KEY_PASSPHRASE or register a passphrase prompt "
+                       "(set-ssh-passphrase-prompt!) before calling git/push! again."))))
+          (.toCharArray ^String pw)))
+      (setAttempts [_ n] (reset! attempts n))
+      (getAttempts [_] @attempts)
+      (keyLoaded [_ _uri _attempt error]
+        ;; true -> try again with a new passphrase (we don't loop here;
+        ;; user-supplied prompt is single-shot). false -> give up on key.
+        (nil? error)))))
+
 (defn- install-sshd-session-factory!
   "Install JGit's Apache-MINA `SshdSessionFactory` once, pointed at the
-   user's real ~/.ssh directory. The default factory cannot read
-   ssh-config or modern key algorithms; without this swap, every push to
-   GitHub fails with `remote hung up unexpectedly` mid-handshake
-   (Vis conv 11d4f817 / t10/i11). Idempotent — only the first call
-   builds and registers the factory."
+   user's real ~/.ssh directory and wired to our channel-aware
+   `KeyPasswordProvider`. The default factory cannot read ssh-config or
+   modern key algorithms; without this swap, every push to GitHub fails
+   with `remote hung up unexpectedly` mid-handshake (Vis conv 11d4f817 /
+   t10/i11). Idempotent — only the first call builds and registers the
+   factory."
   []
   (when-not (instance? SshdSessionFactory (SshSessionFactory/getInstance))
     (let [home    (System/getProperty "user.home")
@@ -36,6 +94,10 @@
                     (.setPreferredAuthentications "publickey")
                     (.setHomeDirectory (.toFile home-p))
                     (.setSshDirectory  (.toFile ssh-p))
+                    (.setKeyPasswordProvider
+                      (reify Function
+                        (apply [_ _credentials-provider]
+                          (->key-password-provider))))
                     (.build nil))]
       (SshSessionFactory/setInstance factory))))
 

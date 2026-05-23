@@ -1591,6 +1591,55 @@
   (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
   (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil)))
 
+;; ---------------------------------------------------------------------------
+;; Encrypted SSH key passphrase prompt
+;;
+;; foundation-git's git/push! and git/fetch! install JGit's Apache MINA SSHD
+;; factory on first call. Encrypted keys (passphrase-protected ed25519 /
+;; rsa) need a `KeyPasswordProvider`; foundation-git exposes a registration
+;; hook (`set-ssh-passphrase-prompt!`) so each channel can plug in its own
+;; UI. The TUI plugs in a masked text-input dialog. Headless callers
+;; leave the prompt nil and supply the passphrase via
+;; `VIS_SSH_KEY_PASSPHRASE` (foundation-git's fallback path).
+;;
+;; `requiring-resolve` keeps this a soft, lazy dep: if foundation-git is
+;; ever stripped from the build, the TUI still starts cleanly.
+;; ---------------------------------------------------------------------------
+
+(defn- install-ssh-passphrase-prompt!
+  "Register a TUI-aware passphrase prompt with foundation-git. Returns a
+   zero-arg cleanup that clears the registration; the screen's outer
+   finally invokes it so a torn-down TUI doesn't leave a prompt
+   pointing at a dead screen."
+  [^TerminalScreen screen]
+  (when-let [setter (requiring-resolve
+                      'com.blockether.vis.ext.foundation-git.write-ops/set-ssh-passphrase-prompt!)]
+    (let [prompt (fn [resource attempt]
+                   ;; Run on whatever thread JGit calls us on (worker /
+                   ;; SCI eval). `with-dialog-lock` grabs `draw-lock`
+                   ;; for the dialog's whole session so the render
+                   ;; thread can't scribble underneath, then dispatches
+                   ;; the open/close flags into app-db.
+                   (let [label (str (or resource "SSH key")
+                                 (when (and attempt (> (long attempt) 1))
+                                   (str " (attempt " attempt ")")))]
+                     (try
+                       (with-dialog-lock
+                         #(let [raw (dlg/text-input-dialog! screen
+                                      "SSH Key Passphrase"
+                                      "Passphrase:"
+                                      :mask \*
+                                      :body label)]
+                            (when-not (str/blank? raw) raw)))
+                       (catch Throwable t
+                         (tel/log! {:level :warn :id ::ssh-passphrase-prompt-failed
+                                    :data  {:error (ex-message t)}}
+                           "SSH passphrase prompt failed; returning nil so JGit falls back.")
+                         nil))))]
+      (setter prompt)
+      (fn cleanup-ssh-passphrase-prompt! []
+        (try (setter nil) (catch Throwable _ nil))))))
+
 (defn- sweep-orphaned-running-turns!
   []
   (try (vis/db-sweep-orphaned-running-turns! (vis/db-info)) (catch Throwable _ nil)))
@@ -1639,6 +1688,32 @@
      (when-let [c (vis/load-config)]
        (state/dispatch [:set-config c]))
 
+  ;; Hydrate feature toggles (`:toggles` slot in ~/.vis/config.edn).
+  ;; Runs AFTER `vis/load-config` and before the input loop; the
+  ;; render pipeline reads toggles per-paint, so the first frame
+  ;; already reflects persisted overrides instead of falling back
+  ;; to registry defaults for one tick. We also install a listener
+  ;; that auto-persists every change — toggles flipped from a future
+  ;; settings dialog land in config.edn without any per-callsite
+  ;; save plumbing. The listener bumps `:render-version` so the
+  ;; bubble repaints with the new value on the same tick.
+     (try
+       (vis/toggles-hydrate-from-config! (or (vis/load-config-raw) {}))
+       (vis/toggle-add-listener!
+         (fn [_event]
+           (try
+             (let [raw (or (vis/load-config-raw) {})]
+               (vis/save-config! (assoc raw :toggles (vis/toggles-snapshot))))
+             (catch Throwable t
+               (tel/log! {:level :warn :id ::toggle-persist-failed
+                          :data  {:error (ex-message t)}}
+                 "Toggle persistence failed; in-memory value still applies.")))
+           (state/dispatch [:bump-render-version])))
+       (catch Throwable t
+         (tel/log! {:level :warn :id ::toggles-hydrate-failed
+                    :data  {:error (ex-message t)}}
+           "Toggle hydration from config failed; defaults stand.")))
+
      (let [terminal (create-terminal! opts)
            _        (configure-terminal-input! terminal opts)
            screen   (TerminalScreen. terminal)
@@ -1655,8 +1730,10 @@
            provider-limits-thread (volatile! nil)
            terminal-signal-cleanup (volatile! nil)]
        (.startScreen screen)
-       (try
+       (let [ssh-passphrase-cleanup (volatile! nil)]
+        (try
          (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))
+         (vreset! ssh-passphrase-cleanup (install-ssh-passphrase-prompt! screen))
       ;; Show provider dialog on first launch if no config
          (when-not (:config @state/app-db)
            (when (not (:dialog-open? @state/app-db))
@@ -2717,7 +2794,9 @@
              (try (cleanup) (catch Throwable _ nil)))
            (doseq [session (workspace-sessions)]
              (chat/dispose! session))
-           (.stopScreen screen)))))))
+           (when-let [cleanup @ssh-passphrase-cleanup]
+             (try (cleanup) (catch Throwable _ nil)))
+           (.stopScreen screen))))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 

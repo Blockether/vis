@@ -59,6 +59,7 @@
    [com.blockether.vis.internal.registry     :as registry]
    [com.blockether.vis.internal.slash        :as slash]
    [com.blockether.vis.internal.theme        :as theme]
+   [com.blockether.vis.internal.toggles      :as toggles]
    [com.blockether.vis.internal.workspace    :as workspace]))
 
 ;; =============================================================================
@@ -74,6 +75,20 @@
 (def virtual-threads-available? cancellation/virtual-threads-available?)
 (def worker-runtime             cancellation/worker-runtime)
 (def worker-future              cancellation/worker-future)
+
+;; =============================================================================
+;; Feature toggles (channels + extensions read this; TUI settings flips it)
+;; =============================================================================
+(def register-toggle!           toggles/register-toggle!)
+(def register-toggles!          toggles/register-toggles!)
+(def registered-toggles         toggles/registered-toggles)
+(def toggle-spec                toggles/toggle-spec)
+(def toggle-enabled?            toggles/enabled?)
+(def toggle-set-enabled!        toggles/set-enabled!)
+(def toggle-reset-to-default!   toggles/reset-to-default!)
+(def toggles-snapshot           toggles/snapshot)
+(def toggles-hydrate-from-config! toggles/hydrate-from-config!)
+(def toggle-add-listener!       toggles/add-listener!)
 
 ;; =============================================================================
 ;; Workspace (PLAN.md §3)
