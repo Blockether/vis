@@ -286,6 +286,18 @@
   (or (= :none access)
     (and (= :write access-intent) (= :read-only access))))
 
+(defn- current-dir-ls-ancestor-match?
+  "True when v/ls is reading `.` and the matched rule protects only a
+   descendant. Listing cwd itself must stay usable; hidden protected
+   extension roots (for example `.bridge/**`) should not make cwd
+   listing fail closed. Direct rules for `.` still apply."
+  [op access-intent target rule]
+  (and (= :v/ls op)
+    (= :read access-intent)
+    (= :dir (:kind target))
+    (= "." (:resolved target))
+    (not (protected-glob-matches? (:glob rule) (:resolved target)))))
+
 (defn- protected-failure-row
   [{:keys [target intent glob access hint] ext-name :extension/name}]
   {:path (:resolved target)
@@ -349,7 +361,9 @@
                       (extracted-paths path-extractor args))
             blocked (keep (fn [target]
                             (when-let [rule (resolve-protected-access rules target)]
-                              (when (blocked-access? access-intent (:access rule))
+                              (when (and (blocked-access? access-intent (:access rule))
+                                      (not (current-dir-ls-ancestor-match?
+                                             op access-intent target rule)))
                                 (assoc rule
                                   :target target
                                   :intent access-intent))))

@@ -262,7 +262,17 @@
       (expect (= :read-only (-> failure :error :failures first :access)))
       (expect (= :write (-> failure :error :failures first :intent)))))
 
-  (it "v/ls blocks ancestor directories that would reveal :none protected children"
+  (it "v/ls allows current directory even when descendants are protected"
+    (let [before (:ext.symbol/before-fn (private-fn "ls-symbol"))
+          out (before (protected-env [{:glob "target/editing-test/protected/*.edn"
+                                       :access :none
+                                       :hint "Use owner API."}])
+                (constantly :ok)
+                ["."])]
+      (expect (not (contains? out :result)))
+      (expect (= ["."] (:args out)))))
+
+  (it "v/ls still blocks non-root ancestor directories that would reveal :none protected children"
     (let [hint "Use (br/files) instead of listing Bridge-owned files."
           before (:ext.symbol/before-fn (private-fn "ls-symbol"))
           out (before (protected-env [{:glob "target/editing-test/protected/*.edn"

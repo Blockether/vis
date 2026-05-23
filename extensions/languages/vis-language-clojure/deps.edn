@@ -1,0 +1,20 @@
+;; vis-language-clojure
+;;
+;; Clojure-specific tooling for Vis. Activates ONLY when the workspace
+;; language scan (foundation-core) sees Clojure files. Surfaces a small
+;; `clj/` alias inside the SCI sandbox:
+;;
+;;   clj/eval     - evaluate code in a running nREPL (per-port conn pool)
+;;   clj/ports    - discover nREPL ports (.nrepl-port, scan, hint)
+;;   clj/edit     - rewrite-clj structure-aware defn/defmethod edits
+;;   clj/outline  - collapsed file view (ns + defs + arglists + docline)
+;;   clj/find     - name/regex def search across the workspace
+;;
+;; Format-on-write inside `clj/edit` reuses the root `zprint` already
+;; on the classpath (vis brings it in for the sandbox pretty-printer).
+;; rewrite-clj + nrepl are extension-private and only pulled when this
+;; jar is on the classpath.
+{:paths ["src" "resources"]
+ :deps  {com.blockether/vis {:local/root "../../.."}
+         rewrite-clj/rewrite-clj {:mvn/version "1.1.49"}
+         nrepl/nrepl             {:mvn/version "1.3.0"}}}

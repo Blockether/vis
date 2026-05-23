@@ -208,6 +208,27 @@
       (it "the truncation hint references the actual entry count"
         (expect (str/includes? out " of 25 entries"))))))
 
+(defdescribe render-trailer-result-bounds-test
+  (describe "large trailer form results"
+    (let [huge (apply str (repeat 5000 "x"))
+          trailer [{:scope "t1/i1"
+                    :forms [{:scope "t1/i1/f1"
+                             :tag :observation
+                             :src "(def huge-result (v/cat \"big.clj\"))"
+                             :result {:path "big.clj"
+                                      :lines [[1 huge]]}}]}]
+          ctx (assoc base-ctx :session/trailer trailer)
+          out (render ctx)]
+
+      (it "keeps result preview bounded"
+        (expect (str/includes? out ":truncated? true"))
+        (expect (str/includes? out "...<+"))
+        (expect (< (count out) 8000)))
+
+      (it "does not drop source provenance"
+        (expect (str/includes? out ";; src t1/i1/f1"))
+        (expect (str/includes? out "(def huge-result"))))))
+
 (defdescribe render-empty-subtrees-test
   (describe "empty subtree rendering"
     (let [ctx (eng/empty-ctx "fresh")

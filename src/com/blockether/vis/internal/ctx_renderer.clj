@@ -51,6 +51,7 @@
 ;; =============================================================================
 
 (def ^:private TRAILER_BUDGET 16)
+(def ^:private TRAILER_FORM_RESULT_MAX_CHARS 1200)
 (def ^:private NEXT_ACTIONS_BUDGET 5)
 (def ^:private WIDTH 80)
 
@@ -235,11 +236,32 @@
       (str/join "\n"
         (map #(str prefix ";;   " %) lines)))))
 
+(defn- bounded-trailer-result
+  "Keep trailer result payloads from swallowing the next provider prompt.
+   Small values stay as data. Large values become an explicit preview map;
+   the full value remains in persisted form-results / transcript storage."
+  [v]
+  (let [preview (fmt/bounded-value-str
+                  v {:max-chars TRAILER_FORM_RESULT_MAX_CHARS
+                     :print-length 64
+                     :print-level 6})]
+    (if (or (>= (count preview) TRAILER_FORM_RESULT_MAX_CHARS)
+          (str/includes? preview "...<+"))
+      {:preview preview :truncated? true}
+      v)))
+
+(defn- presentation-form
+  "Prompt-facing copy of one trailer form. `:src` is rendered separately;
+   huge `:result` values are capped for display only."
+  [form]
+  (cond-> (dissoc form :src)
+    (contains? form :result) (update :result bounded-trailer-result)))
+
 (defn- render-form-pin
   "Render one `:forms` entry: verbatim src block, then the form map with
    `:src` stripped (since the block carries the source unescaped)."
   [form indent]
-  (let [no-src    (dissoc form :src)
+  (let [no-src    (presentation-form form)
         map-text  (zp no-src)
         map-line  (str (pad indent) (indent-rest map-text indent))]
     (str (src-lines-as-block (:scope form) (:tag form) (:src form) indent)
