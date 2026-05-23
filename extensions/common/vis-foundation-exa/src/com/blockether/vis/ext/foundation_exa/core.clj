@@ -446,7 +446,7 @@
 
 (defn- channel-render-exa
   [result]
-  (let [{:keys [tool query content truncated? temp-file mcp-error?]} result
+  (let [{:keys [tool query text truncated? temp-file mcp-error?]} result
         badge (cond mcp-error? "EXA ERROR" :else (exa-badge tool))
         head  [:p {}
                [:strong {} (str badge)]
@@ -455,7 +455,7 @@
                (when truncated? [:span {} "  (truncated)"])]]
     (cond-> [:ir {}
              head
-             [:code {:lang "text"} (str content)]]
+             [:code {:lang "text"} (str text)]]
       truncated?
       (conj [:p {}
              [:span {} "full output saved to "]
@@ -470,7 +470,7 @@
                    :query query
                    :arguments args
                    :endpoint (redact-endpoint endpoint)
-                   :content (:content trunc)
+                   :text (:content trunc)
                    :mcp-error? (= true (:isError mcp))
                    :truncated? (:truncated? trunc)
                    :truncation (dissoc trunc :content)}
@@ -515,7 +515,7 @@
     (kw-get opts :tokens-num :tokensNum) (assoc :tokensNum (kw-get opts :tokens-num :tokensNum))))
 
 (defn web-search
-  "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :result."
+  "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Returns a tool-result envelope; observed text lives at [:result :text]."
   ([query] (web-search query {}))
   ([query opts]
    (let [query (str query)
@@ -537,7 +537,7 @@
          (tool-failure :exa/web-search "web_search_exa" query ep t))))))
 
 (defn code-context
-  "Search code/docs through Exa MCP for API usage/examples. Tool result; payload under :result."
+  "Search code/docs through Exa MCP for API usage/examples. Returns a tool-result envelope; observed text lives at [:result :text]."
   ([query] (code-context query {}))
   ([query opts]
    (let [query (str query)
@@ -573,7 +573,7 @@
    code-context-symbol])
 
 (def exa-prompt
-  "`exa/` evidence search: before answering current web facts or unfamiliar APIs, bind `(def r (exa/web-search query opts?))` or `(def r (exa/code-context query opts?))`, then read observed text with `(get-in r [:result :content])`. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :max-bytes, :max-lines. code-context supports :tokens-num, :max-bytes, :max-lines. Tool results are envelopes; do not use `(:content r)` or `[:result ...]`.")
+  "`exa/` evidence search: before answering current web facts or unfamiliar APIs, bind `(def r (exa/web-search query opts?))` or `(def r (exa/code-context query opts?))`, then read the observed text with `(-> r :result :text)`. The `:result` map also carries `:tool`, `:query`, `:arguments`, `:endpoint`, `:truncated?`, `:truncation` and (when output was truncated) `:temp-file` pointing at the full payload on disk. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :max-bytes, :max-lines. code-context supports :tokens-num, :max-bytes, :max-lines.")
 
 (def exa-env
   [{:name "EXA_API_KEY"
