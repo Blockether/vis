@@ -10,8 +10,6 @@
   (:require
    [com.blockether.vis.internal.agents :as internal]))
 
-(def MAX_BYTES internal/MAX_BYTES)
-
 (defn scan-in        [root]   (internal/scan-in root))
 (defn scan           []       (internal/scan))
 (defn current        []       (internal/current))

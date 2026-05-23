@@ -69,9 +69,13 @@
                  :hidden? true}]
               (render/parse-block-display "(v/cat \"src/foo.clj\")"))))
 
-  (it "keeps non-namespaced engine forms visible"
-    (expect (= [{:kind :code :source "(spec-set! :K {:title \"x\"})"}]
-              (render/parse-block-display "(spec-set! :K {:title \"x\"})"))))
+  (it "classifies ctx mutators as structured recap segments (engine-only — raw source is hidden)"
+    (expect (= [{:kind :spec-update :id :K :title "x"}]
+              (render/parse-block-display "(spec-set! :K {:title \"x\"})")))
+    (expect (= [{:kind :task-update :id :K :status :done :proof "t1/i1/f1"}]
+              (render/parse-block-display "(task-set! :K {:status :done :proof \"t1/i1/f1\"})")))
+    (expect (= [{:kind :fact-update :id :K}]
+              (render/parse-block-display "(fact-set! :K {:summary \"f\"})"))))
 
   (it "coalesces neighboring hidden tool calls into one hidden segment"
     (let [out (render/parse-block-display
@@ -84,4 +88,17 @@
                 "(def x 1)\n(v/cat \"a.clj\")")]
       (expect (= 2 (count out)))
       (expect (nil? (-> out first :hidden?)))
-      (expect (true? (-> out second :hidden?))))))
+      (expect (true? (-> out second :hidden?)))))
+
+  (it "marks `(def r (v/ls …))` as hidden so the channel can collapse the raw source row"
+    ;; Real-world fence the model emits when it wants to bind a tool
+    ;; result and then project it. Pi-style render: the def wrapping
+    ;; collapses, only the derived form (`select-keys`) stays
+    ;; visible. The tool's channel preview lives in `:channel`
+    ;; sink entries on the chunk, separate from this source
+    ;; classification.
+    (let [out (render/parse-block-display
+                "(def r (v/ls \".\"))\n(select-keys r [:entry-count :file-count])")]
+      (expect (= 2 (count out)))
+      (expect (true?  (-> out first  :hidden?)))
+      (expect (nil?   (-> out second :hidden?))))))

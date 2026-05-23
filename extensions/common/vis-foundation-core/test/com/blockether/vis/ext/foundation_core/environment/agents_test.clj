@@ -1,6 +1,9 @@
 (ns com.blockether.vis.ext.foundation-core.environment.agents-test
-  "Unit tests for AGENTS.md / CLAUDE.md discovery, byte-truncate
-   boundary, and cwd-keyed caching. See plan §6 / Q4 / Q5 / Q10."
+  "Unit tests for AGENTS.md / CLAUDE.md discovery + cwd-keyed caching.
+
+   The old byte-truncate boundary suite was removed when project rules
+   were promoted to a real system block: AGENTS.md / CLAUDE.md are now
+   inlined verbatim, no MAX_BYTES cap, no `[TRUNCATED …]` marker."
   (:require
    [babashka.fs :as fs]
    [clojure.string :as str]
@@ -31,7 +34,6 @@
                    (expect (= :repo (:source result)))
                    (expect (str/ends-with? (:path result) "AGENTS.md"))
                    (expect (= "# rules\nuse honeysql\n" (:content result)))
-                   (expect (false? (:truncated? result)))
                    (expect (empty? warnings))))))
 
   (it "AGENTS.md absent + CLAUDE.md present -> :repo:claude-md-fallback"
@@ -57,38 +59,21 @@
                    (expect (false? (:found? result)))
                    (expect (empty? warnings))))))
 
-  (it "exactly MAX_BYTES (16384): no truncation"
-    (with-tmp* (fn [root]
-                 (let [f (java.io.File. root "AGENTS.md")]
-                   (write-bytes! f agents/MAX_BYTES \a)
-                   (let [{:keys [result]} (agents/scan-in root)]
-                     (expect (:found? result))
-                     (expect (false? (:truncated? result)))
-                     (expect (= agents/MAX_BYTES (:bytes result)))
-                     (expect (= agents/MAX_BYTES (count (:content result)))))))))
-
-  (it "MAX_BYTES + 1 (16385): truncates with marker"
-    (with-tmp* (fn [root]
-                 (let [f (java.io.File. root "AGENTS.md")]
-                   (write-bytes! f (inc agents/MAX_BYTES) \a)
-                   (let [{:keys [result]} (agents/scan-in root)
-                         content (:content result)]
-                     (expect (:found? result))
-                     (expect (true? (:truncated? result)))
-                     (expect (= (inc agents/MAX_BYTES) (:original-bytes result)))
-                     (expect (str/includes? content "[TRUNCATED - 1 more bytes."))
-                     (expect (str/includes? content "(vis/main-agent-instructions)")))))))
-
-  (it "much larger file (32KB): truncates, original-bytes preserved"
+  (it "large file is inlined verbatim — no truncation, no marker"
+    ;; AGENTS.md content rides in the PROJECT-INSTRUCTIONS system
+    ;; block; provider prompt caching covers the cost. The reader
+    ;; must never silently drop bytes.
     (with-tmp* (fn [root]
                  (let [f (java.io.File. root "AGENTS.md")
-                       n (* 2 agents/MAX_BYTES)]
-                   (write-bytes! f n \b)
+                       n (* 64 1024)] ;; 64 KB ≫ old 16 KB cap
+                   (write-bytes! f n \a)
                    (let [{:keys [result]} (agents/scan-in root)]
-                     (expect (true? (:truncated? result)))
-                     (expect (= n (:original-bytes result)))
-                     (expect (str/includes? (:content result)
-                               (str "[TRUNCATED - " agents/MAX_BYTES " more bytes.")))))))))
+                     (expect (:found? result))
+                     (expect (= n (:bytes result)))
+                     (expect (= n (count (:content result))))
+                     (expect (not (contains? result :truncated?)))
+                     (expect (not (contains? result :original-bytes)))
+                     (expect (not (str/includes? (:content result) "[TRUNCATED")))))))))
 
 (defdescribe instructions-shape-test
   (it "instructions uses active workspace root instead of JVM cwd"
@@ -126,12 +111,3 @@
 
   (it "placeholder for render-prompt-block coverage - covered via render_test.clj"
     (expect true)))
-
-(defdescribe truncation-marker-format-test
-  (it "marker text matches plan Q5 spec exactly"
-    (with-tmp* (fn [root]
-                 (let [f (java.io.File. root "AGENTS.md")]
-                   (write-bytes! f (+ agents/MAX_BYTES 999) \c)
-                   (let [{:keys [result]} (agents/scan-in root)
-                         content (:content result)]
-                     (expect (str/includes? content "[TRUNCATED - 999 more bytes. Read full content via (vis/main-agent-instructions).]"))))))))

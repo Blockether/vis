@@ -17,11 +17,10 @@
    brick listings, multi-repo git status) live in the foundation-core
    `v/snapshot` tool for explicit deep-dives. The digest never calls
    into extensions \u2014 host facts come from `System/getProperty`,
-   project shape from a single directory peek, AGENTS.md status from
-   `internal.agents`."
+   project shape from a single directory peek. AGENTS.md / CLAUDE.md
+   contents ride in their own system block (`internal.prompt`), not here."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.workspace :as workspace])
@@ -128,13 +127,15 @@
 
 (defn- project-digest
   []
+  ;; Project guidance (AGENTS.md / CLAUDE.md) ships its content via
+  ;; the PROJECT-INSTRUCTIONS system block (see `internal.prompt`), so
+  ;; we no longer surface a boolean `:agents-md?` here — the model sees
+  ;; the actual rules instead of a stale hint.
   (try
     (let [cwd     (or workspace/*workspace-root* (System/getProperty "user.dir"))
           kind    (project-kind cwd)
-          primary (primary-language-guess cwd)
-          ag      (try (boolean (:found? (agents/instructions)))
-                    (catch Throwable _ false))]
-      (cond-> {:kind kind :agents-md? ag}
+          primary (primary-language-guess cwd)]
+      (cond-> {:kind kind}
         primary (assoc :primary-language primary)))
     (catch Throwable _ nil)))
 

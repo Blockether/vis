@@ -2,10 +2,12 @@
   "Prompt assembly.
 
    Provider messages are explicit blocks in send order: core system rules,
-   extension fragments, current user message. Per-iteration user-role context
-   is the engine `ctx` snapshot rendered as Clojure data by the loop."
+   project instructions (AGENTS.md / CLAUDE.md when present), extension
+   fragments, current user message. Per-iteration user-role context is the
+   engine `ctx` snapshot rendered as Clojure data by the loop."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
 
@@ -105,12 +107,14 @@
                              {:vcs/kind :none} for non-VCS sessions)
       :session/env       := {:host {:cwd :os :shell :clock}
                              :project {:kind :primary-language :language-share
-                                       :extension-count? :agents-md?}
+                                       :extension-count?}
                              :extensions {:active-count :aliases}}
                             Slim auto-pin digest (host / project / extensions).
                             Read it before calling `v/snapshot` — most of
                             the time the digest is enough. Extensions may
                             deep-merge their own slices under bare keys.
+                            Project rules (AGENTS.md / CLAUDE.md) ride in a
+                            separate system block — not here.
       :session/symbols   := {sym ↦ {:arglists? :doc? :born}}
       :session/specs     := {K ↦ {:title :requirements [{:id :title :facts? :validator-fn?}]
                                   :status :born :done-born?}}
@@ -211,6 +215,22 @@
       data → compose → effects. Bind values to defs, reference downstream,
       refine via rebind. Never restate logic across iters.
 
+    EPISTEMIC
+      runtime > source > docs > assumption. When asked about the project,
+      read it before answering. Verify capability/dependency claims against
+      files on disk (v/cat deps.edn, v/ls, v/rg) before defending memory.
+
+    IDENTITY
+      'you' / 'your' usually means the HOST PROJECT around the sandbox —
+      whatever repository this REPL is running in, not the engine and not
+      the SCI interpreter. When a question reads like a self-capability
+      claim ('can you X?', 'do you have Y?'), probe the host project
+      first: open the files (deps.edn / package.json / pyproject.toml /
+      go.mod / Cargo.toml / build.gradle / …), inspect deps, check the
+      source. Only after that explain a true SANDBOX limit. The SANDBOX
+      rules below constrain the interpreter; they do not constrain
+      investigation of the host project.
+
     ANSWER  :answer is Markdown.
 
     DEFS    Only `def` / `defn`. defrecord/deftype/defprotocol/gen-class/
@@ -231,6 +251,36 @@
     (str CORE_SYSTEM_PROMPT
       (when (and (string? addendum) (not (str/blank? addendum)))
         (str "\n\n" addendum)))))
+
+(defn- project-instructions-block
+  "Inline project rules (AGENTS.md — or CLAUDE.md fallback) as a stable
+   system block. The model sees the actual rules, not a boolean hint.
+
+   `internal.agents` already does the read + size cap + caching; this fn
+   just labels the content for the prompt. Returns nil when no file is
+   present or the file is empty."
+  []
+  (try
+    (let [{:keys [found? source path content]} (agents/instructions)]
+      (when (and found?
+              (string? content)
+              (not (str/blank? content)))
+        (let [origin (case source
+                       :repo                    "AGENTS.md"
+                       :repo:claude-md-fallback "CLAUDE.md (AGENTS.md fallback)"
+                       (str source))
+              header (str "Project rules from " origin
+                       (when path (str " (" path ")"))
+                       ". These are PROJECT-OWNED instructions; honor them "
+                       "alongside CORE rules. On conflict with CORE engine\n"
+                       "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")]
+          (prompt-block "project-instructions"
+            (str header "\n\n" content)))))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::project-instructions-error
+                 :data  {:error (ex-message t)}}
+        "project-instructions-block read failed")
+      nil)))
 
 (defn active-extensions
   "Returns the seq of registered extensions whose `:ext/activation-fn` returns
@@ -359,11 +409,13 @@
   "Assemble provider-prefix messages.
 
    Send order is explicit and tested:
-     `SYSTEM-PROMPT`       - CORE_SYSTEM_PROMPT + caller addendum
-     `TURN-SYSTEM-CONTEXT` - turn-scoped runtime capability context. Today it
-                             contains extension prompt fragments; future
-                             extension reloads should replace this one message,
-                             never append a second extension context.
+     `SYSTEM-PROMPT`         - CORE_SYSTEM_PROMPT + caller addendum
+     `PROJECT-INSTRUCTIONS`  - AGENTS.md / CLAUDE.md contents (when present)
+     `TURN-SYSTEM-CONTEXT`   - turn-scoped runtime capability context. Today
+                               it contains extension prompt fragments; future
+                               extension reloads should replace this one
+                               message, never append a second extension
+                               context.
 
    Extension fragments are separate from the core system prompt and are not
    repeated in per-iteration trailers.
@@ -380,8 +432,9 @@
              {:type :vis/missing-active-extensions})))
   (let [core-block (prompt-block "system-prompt"
                      (build-system-prompt {:system-prompt system-prompt}))
+        project-block (project-instructions-block)
         turn-system-block (turn-system-context-block environment active-extensions)]
     (vec
       (keep stable-prompt-message
-        [core-block turn-system-block]))))
+        [core-block project-block turn-system-block]))))
 
