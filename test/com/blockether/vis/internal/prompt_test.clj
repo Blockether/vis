@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.prompt-test
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.prompt :as prompt]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -28,7 +29,56 @@
     (let [text (prompt/build-system-prompt {})]
       (expect (str/includes? text "bare symbols"))
       (expect (str/includes? text "never namespace-qualify"))
-      (expect (str/includes? text "(set-session-title!")))))
+      (expect (str/includes? text "(set-session-title!"))))
+
+  (it "carries EPISTEMIC + IDENTITY stance so the model probes the project first"
+    (let [text (prompt/build-system-prompt {})]
+      (expect (str/includes? text "EPISTEMIC"))
+      (expect (str/includes? text "runtime > source > docs > assumption"))
+      (expect (str/includes? text "IDENTITY"))
+      (expect (str/includes? text "HOST PROJECT around the sandbox"))
+      ;; IDENTITY must be project-agnostic: it has to work in any repo.
+      (expect (not (str/includes? text "the Vis PROJECT"))))))
+
+(defdescribe project-instructions-hoist-test
+  (it "injects AGENTS.md contents as a dedicated PROJECT-INSTRUCTIONS system block"
+    (with-redefs [agents/instructions
+                  (constantly {:found? true
+                               :source :repo
+                               :path "/tmp/repo/AGENTS.md"
+                               :content "PROJECT-RULE-FROM-AGENTS-MD\nreproduce -> inspect -> minimal change"})]
+      (let [env {:extensions (atom [])}
+            messages (prompt/assemble-stable-prompt-messages env
+                       {:active-extensions []})
+            text (prompt/stable-prompt-text messages)]
+        (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
+        (expect (str/includes? text "PROJECT-RULE-FROM-AGENTS-MD"))
+        (expect (str/includes? text "/tmp/repo/AGENTS.md"))
+        ;; Send order: SYSTEM-PROMPT first, then PROJECT-INSTRUCTIONS.
+        (expect (< (str/index-of text "SYSTEM-PROMPT")
+                  (str/index-of text "PROJECT-INSTRUCTIONS"))))))
+
+  (it "falls back to CLAUDE.md when AGENTS.md is absent and labels the source"
+    (with-redefs [agents/instructions
+                  (constantly {:found? true
+                               :source :repo:claude-md-fallback
+                               :path "/tmp/repo/CLAUDE.md"
+                               :content "CLAUDE-FALLBACK-RULE"})]
+      (let [env {:extensions (atom [])}
+            messages (prompt/assemble-stable-prompt-messages env
+                       {:active-extensions []})
+            text (prompt/stable-prompt-text messages)]
+        (expect (str/includes? text "PROJECT-INSTRUCTIONS"))
+        (expect (str/includes? text "CLAUDE-FALLBACK-RULE"))
+        (expect (str/includes? text "CLAUDE.md")))))
+
+  (it "emits no PROJECT-INSTRUCTIONS block when no guidance file is present"
+    (with-redefs [agents/instructions (constantly {:found? false})]
+      (let [env {:extensions (atom [])}
+            messages (prompt/assemble-stable-prompt-messages env
+                       {:active-extensions []})
+            text (prompt/stable-prompt-text messages)]
+        (expect (not (str/includes? text "PROJECT-INSTRUCTIONS")))))))
 
 (defdescribe extension-activation-test
   (it "assembles from precomputed active extensions without activating again"

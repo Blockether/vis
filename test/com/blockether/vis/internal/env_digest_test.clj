@@ -47,7 +47,9 @@
               (expect (string? (get-in d [:host :cwd])))
               (expect (keyword? (get-in d [:host :os])))
               (expect (contains? d :project))
-              (expect (false? (get-in d [:project :agents-md?])))
+              ;; AGENTS.md content now rides in PROJECT-INSTRUCTIONS
+              ;; system block; the digest no longer carries the flag.
+              (expect (not (contains? (:project d) :agents-md?)))
               (expect (= :single (get-in d [:project :kind])))
               (expect (= 3 (get-in d [:extensions :active-count])))
               (expect (= #{'v 'git} (get-in d [:extensions :aliases])))))))))
@@ -83,16 +85,17 @@
             (expect (= :clojure (get-in (env-digest/base-digest nil)
                                   [:project :primary-language]))))))))
 
-  (it "marks :agents-md? true when AGENTS.md is present in the workspace"
+  (it "never surfaces :agents-md? — AGENTS.md content lives in PROJECT-INSTRUCTIONS system block"
     (with-redefs [agents/instructions (constantly {:found? true
                                                    :source :repo
-                                                   :path "/tmp/AGENTS.md"})
+                                                   :path "/tmp/AGENTS.md"
+                                                   :content "rule"})
                   prompt/active-extensions (constantly [])]
       (with-tmp-root*
         (fn [^java.io.File root]
           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
-            (expect (true? (get-in (env-digest/base-digest nil)
-                             [:project :agents-md?]))))))))
+            (let [d (env-digest/base-digest nil)]
+              (expect (not (contains? (:project d) :agents-md?)))))))))
 
   (it "skips :extensions slice when no environment is provided"
     (with-redefs [agents/instructions (constantly {:found? false})

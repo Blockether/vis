@@ -107,6 +107,42 @@
       (expect (not (str/starts-with? ir-line p/MARKER_RESULT)))
       (expect (not (str/starts-with? ir-line p/MARKER_ANSWER_TXT)))))
 
+  (it "hides `(def r (v/ls …))` source while keeping the pi-style channel preview visible (regression: previous behaviour suppressed both)"
+    ;; Two-form fence the model emits in practice: bind a tool result
+    ;; to a name, then project it via plain Clojure (`select-keys`).
+    ;; Pre-fix bug: `code-source-from-render-segments` ignored
+    ;; `:hidden?` so the raw `(def r (v/ls …))` row leaked into the
+    ;; trace AND `form-result-kind` saw `:value` (because the
+    ;; FENCE's last value was a plain map), so the tool's pi-style
+    ;; preview pane was suppressed by the `(= :tool result-kind)`
+    ;; gate. Both halves are now wired.
+    (let [ls-ir [:ir {} [:p {} [:strong {} [:span {} "LS"]] [:span {} "  ."]]
+                 [:code {:lang "text"} ".gitignore\nsrc/"]]
+          lines (format-iteration-entry
+                  {:iteration 0
+                   :forms [{:code (str "(def r (v/ls \".\"))\n"
+                                    "(select-keys r [:entry-count :file-count])")
+                            :comment nil
+                            :render-segments [{:kind :code
+                                               :source "(def r (v/ls \".\"))"
+                                               :hidden? true}
+                                              {:kind :code
+                                               :source "(select-keys r [:entry-count :file-count])"}]
+                            :result-render ls-ir
+                            :result-kind   :tool   ;; promoted via channel sink entries
+                            :result-detail nil
+                            :error nil :started-at-ms nil :duration-ms 1
+                            :success? true :silent? false}]}
+                  80 1 {})
+          body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) lines))]
+      ;; Visible code: only the derived projection, no def wrap.
+      (expect (str/includes? body "(select-keys r [:entry-count :file-count])"))
+      (expect (not (str/includes? body "(def r (v/ls")))
+      ;; Pi-style LS preview shows through despite plain-value fence
+      ;; result.
+      (expect (str/includes? body "LS"))
+      (expect (str/includes? body ".gitignore"))))
+
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
           err  {:message "Unable to resolve symbol: 'v/git-diff"

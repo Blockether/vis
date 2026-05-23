@@ -2,18 +2,19 @@
   "Project-guidance discovery — internal, no extension required.
 
    Reads `AGENTS.md` (preferred) or `CLAUDE.md` (fallback) at the
-   active workspace root and exposes its contents as the data behind
-   `(vis/main-agent-instructions)` and the per-iteration `:session/env`
-   `:project/agents-md?` flag.
+   active workspace root and exposes its full contents as the data
+   behind `(vis/main-agent-instructions)` and the PROJECT-INSTRUCTIONS
+   system block in `internal.prompt`.
 
    Strict precedence: AGENTS.md wins; CLAUDE.md is only consulted when
    AGENTS.md is absent. No user-global merge — the rules a project ships
    in its repo root are the rules.
 
-   Size policy: inline up to `MAX_BYTES` verbatim. Beyond that, render
-   the first `MAX_BYTES` followed by an inline truncation marker that
-   names the missing byte count and points at `vis/main-agent-instructions`
-   for the full content.
+   Size policy: NO truncation. The whole file goes into the system
+   prompt verbatim. Provider prompt caching amortizes the cost across
+   every iter in the session; trimming would risk dropping the very
+   rule the user is testing. The cwd + (path, mtime, length) marker
+   cache below ensures we read the file at most once per change.
 
    Failure modes (file unreadable, permissions, I/O error) land in the
    read-warning vec, NOT in the rendered prompt. The model isn't bound
@@ -27,10 +28,6 @@
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
-(def ^:const MAX_BYTES
-  "Byte-truncate ceiling for inlined project guidance."
-  16384)
-
 (defn- repo-cwd ^java.io.File []
   ;; Treat the active workspace root as the repo root. The channel
   ;; rebinds `*workspace-root*` per turn; calling outside that binding
@@ -38,68 +35,44 @@
   (workspace/cwd))
 
 (defn- read-bytes-safely
-  "Read up to `(inc MAX_BYTES)` bytes from `f`. Returns
-   `{:bytes byte-array :total-bytes long :truncated? bool}` or
-   `{:error string}` on I/O failure. Reading one extra byte lets us
-   detect truncation deterministically without `.length` races."
+  "Read the entire file `f` into a byte array. Returns
+   `{:bytes byte-array :total-bytes long}` or `{:error string}` on
+   I/O failure. No size cap — the whole file rides in the system
+   prompt; provider prompt caching keeps the cost amortized."
   [^java.io.File f]
   (try
     (let [total (.length f)
-          cap   (inc MAX_BYTES)
-          n     (long (min cap total))
+          n     (long total)
           buf   (byte-array n)]
       (with-open [in (java.io.FileInputStream. f)]
         (loop [off 0]
           (when (< off n)
             (let [r (.read in buf off (- n off))]
               (when (pos? r) (recur (+ off r)))))))
-      {:bytes       buf
-       :total-bytes total
-       :truncated?  (> total MAX_BYTES)})
+      {:bytes buf :total-bytes total})
     (catch Throwable t
       (tel/log! {:level :warn :id ::read-failed
                  :data  {:path  (.getAbsolutePath f)
                          :error (ex-message t)}})
       {:error (ex-message t)})))
 
-(defn- truncation-marker
-  [^long original-bytes]
-  (str "\n\n[TRUNCATED - " (- original-bytes MAX_BYTES)
-    " more bytes. Read full content via (vis/main-agent-instructions).]"))
-
 (defn- ->utf8-string ^String [^bytes b ^long len]
   (String. b 0 (int len) java.nio.charset.StandardCharsets/UTF_8))
 
 (defn- read-instructions-file
   [source ^java.io.File f]
-  (let [{:keys [bytes total-bytes truncated?] err :error} (read-bytes-safely f)]
-    (cond
-      err
-      {:found?         false
-       :source         source
-       :path           (.getAbsolutePath f)
-       :error          err}
-
-      truncated?
-      (let [head    (->utf8-string bytes MAX_BYTES)
-            content (str head (truncation-marker total-bytes))]
-        {:found?         true
-         :source         source
-         :path           (.getAbsolutePath f)
-         :bytes          (count (.getBytes content "UTF-8"))
-         :content        content
-         :truncated?     true
-         :original-bytes total-bytes})
-
-      :else
+  (let [{:keys [bytes total-bytes] err :error} (read-bytes-safely f)]
+    (if err
+      {:found? false
+       :source source
+       :path   (.getAbsolutePath f)
+       :error  err}
       (let [content (->utf8-string bytes total-bytes)]
-        {:found?         true
-         :source         source
-         :path           (.getAbsolutePath f)
-         :bytes          total-bytes
-         :content        content
-         :truncated?     false
-         :original-bytes total-bytes}))))
+        {:found?  true
+         :source  source
+         :path    (.getAbsolutePath f)
+         :bytes   total-bytes
+         :content content}))))
 
 (defn scan-in
   "Scan `root` for project-guidance files. Pure I/O. Returned shape
@@ -185,9 +158,11 @@
    Always a map. `:found?` discriminates present vs absent.
 
      present:  `{:found? true :source :repo|:repo:claude-md-fallback
-                 :path \"\u2026\" :bytes N :content \"\u2026\"
-                 :truncated? bool :original-bytes N}`
-     absent:   `{:found? false}`"
+                 :path \"\u2026\" :bytes N :content \"\u2026\"}`
+     absent:   `{:found? false}`
+
+   No truncation: `:content` is the full file verbatim. Caller-side
+   display limits (e.g. tape pretty-printing) are caller business."
   []
   (:result (current)))
 
