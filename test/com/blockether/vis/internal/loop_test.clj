@@ -327,19 +327,6 @@
                 hits))
       (expect (= ctx @seen))))
 
-  (it "accepts legacy `:body` / `:text` aliases for `:title` so older hooks still load"
-    (let [validator "(fn [_] true)"
-          ext {:ext/name "test.legacy-aliases"
-               :ext/hooks [{:id :test/from-body
-                            :phase :turn.iteration/start
-                            :fn (fn [_] {:body "via body" :validator-fn validator})}
-                           {:id :test/from-text
-                            :phase :turn.iteration/start
-                            :fn (fn [_] {:text "via text" :validator-fn validator})}]}]
-      (expect (= #{"via body" "via text"}
-                (set (map #(get-in % [:task :title])
-                       (collect-iteration-start-hints {} [ext] {})))))))
-
   (it "set-session-title! is a bare engine symbol, not a v/ tool"
     (let [env (lp/create-environment ::router {:db :memory})]
       (try

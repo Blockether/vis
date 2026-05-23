@@ -454,16 +454,15 @@
 
   (it "live progress always renders every iteration with no PROGRESS HISTORY toggle"
     ;; Per user directive: no collapsible iteration history. Every
-    ;; iteration paints in place; the `PROGRESS HISTORY` summary band
-    ;; and `:progress/live-iteration-limit` truncation are gone.
+    ;; iteration paints in place; the PROGRESS HISTORY summary band
+    ;; is gone.
     (let [mk-entry (fn [n]
                      {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
           payload   (render/progress->lines-data
                       {:iterations (mapv mk-entry (range 12))}
                       80
                       {:show-thinking true
-                       :show-iterations true
-                       :progress/live-iteration-limit 4}
+                       :show-iterations true}
                       {:now-ms            1000
                        :turn-start-ms     0
                        :session-id   "session"
