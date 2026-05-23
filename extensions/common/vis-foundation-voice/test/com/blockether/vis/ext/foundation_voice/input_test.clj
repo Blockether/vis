@@ -7,16 +7,23 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe voice-input-test
-  (it "registers a hidden direct-toggle TUI channel contribution"
-    (let [contributions (vis/channel-contributions-for :tui :tui.slot/commands)]
-      (expect (some #(= :voice/input (:id %)) contributions))
-      (expect (some #(= :voice/input (:id %))
-                (get-in core/voice-extension [:ext/channel-contributions :tui.slot/commands])))
-      (let [commands (voice/tui-commands {})]
-        (expect (= [:voice/toggle-recording]
-                  (mapv :id commands)))
-        (expect (= [false] (mapv :palette? commands)))
-        (expect (every? ifn? (map :run-fn commands))))))
+  (it "registers /voice as a declarative slash command (PLAN.md §3, K10)"
+    ;; K10 migration: the TUI-only `:tui.slot/commands` contribution
+    ;; has been replaced by a declarative `:ext/slash-commands` entry
+    ;; whose availability spans BOTH TUI and Telegram. One
+    ;; registration, every channel renders the same surface via the
+    ;; engine slash dispatch.
+    (let [slashes (:ext/slash-commands core/voice-extension)]
+      (expect (some #(= "voice" (:slash/name %)) slashes))
+      (let [voice-slash (first (filter #(= "voice" (:slash/name %)) slashes))]
+        (expect (= #{:channel} (:slash/requires voice-slash)))
+        (expect (true?  ((:slash/availability-fn voice-slash) {:channel/id :tui})))
+        (expect (true?  ((:slash/availability-fn voice-slash) {:channel/id :telegram})))
+        (expect (false? ((:slash/availability-fn voice-slash) {:channel/id :web})))
+        (expect (ifn?   (:slash/run-fn voice-slash)))))
+    ;; Voice extension no longer contributes a TUI-only commands slot.
+    (expect (not-any? #(= :voice/input (:id %))
+              (vis/channel-contributions-for :tui :tui.slot/commands))))
 
   (it "appends Parakeet transcript without rewriting or replacing existing input"
     (let [events (atom [])
