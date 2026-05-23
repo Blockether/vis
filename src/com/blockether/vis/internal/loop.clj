@@ -1461,9 +1461,15 @@
    without registering a hook-task themselves -- in that case both
    `:title` and `:validator-fn` may be absent and `:task` returns nil.
 
+   `lifetime` (`:turn` | `:session`) flows from the hook registration
+   spec into the task. `:turn` tasks are dropped at advance-turn so a
+   transient signal (e.g. context-pressure) doesn't linger in CTX as
+   stale `:done :validated? false` chrome the model keeps re-marking;
+   `:session` tasks (default) follow the standard TTL.
+
    Hooks that emit a hook-task but omit `:title` or `:validator-fn`
    are rejected with a log warn."
-  [ext id hit]
+  [ext id lifetime hit]
   (cond
     (nil? hit) nil
 
@@ -1506,7 +1512,8 @@
                                 :source        :hook
                                 :hook-id       id
                                 :validator-fn  validator-fn}
-                         (:importance hit) (assoc :importance (:importance hit)))}
+                         (:importance hit) (assoc :importance (:importance hit))
+                         lifetime          (assoc :lifetime lifetime))}
           emit (assoc :emit emit))))))
 
 (defn- iteration-start-hook-error-hit
@@ -1531,12 +1538,12 @@
   [_environment active-extensions ctx]
   (vec
     (mapcat (fn [ext]
-              (keep (fn [{:keys [id phase] hook-fn :fn}]
+              (keep (fn [{:keys [id phase lifetime] hook-fn :fn}]
                       (when (= :turn.iteration/start phase)
                         (binding [extension/*current-extension* ext
                                   extension/*current-symbol* nil]
                           (try
-                            (iteration-start-hook-hit ext id (hook-fn ctx))
+                            (iteration-start-hook-hit ext id lifetime (hook-fn ctx))
                             (catch Throwable t
                               (iteration-start-hook-error-hit ext id t))))))
                 (or (:ext/hooks ext) [])))
