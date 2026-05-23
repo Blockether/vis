@@ -551,7 +551,13 @@
       (:parent_workspace_id row) (assoc :parent-id (->uuid (:parent_workspace_id row)))
       (:commit_id row)           (assoc :commit-id (:commit_id row))
       (:merged_at row)           (assoc :merged-at (->date (:merged_at row)))
-      (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row))))))
+      (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row)))
+      ;; PLAN.md §1 additions — surfaced for the workspace facade's
+      ;; label/focus helpers. NULL columns are skipped so callers can
+      ;; treat absence as "fall back to default" (label → session.title;
+      ;; last-focused → created_at).
+      (:label row)               (assoc :label (:label row))
+      (:last_focused_at_ms row)  (assoc :last-focused-at-ms (:last_focused_at_ms row)))))
 
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).

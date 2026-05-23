@@ -105,6 +105,16 @@ CREATE TABLE workspace (
 
   commit_id            TEXT,              -- repo HEAD sha at worktree creation
 
+  -- PLAN.md §1: human-friendly label that overrides the default
+  -- (session.title / branch name) in the TUI strip + Telegram
+  -- switcher. NULL falls back to the heuristic. Set via
+  -- `/workspace label "…"` / `workspace/set-label!`.
+  label                TEXT,
+  -- PLAN.md §1: monotonic timestamp of the last `workspace/focus!`.
+  -- Drives TUI strip ordering (most-recent first) and tab restore
+  -- (`workspace/last-focused`). NULL falls back to `created_at`.
+  last_focused_at_ms   INTEGER,
+
   created_at           INTEGER NOT NULL,
   merged_at            INTEGER,
   discarded_at         INTEGER,
@@ -118,6 +128,19 @@ CREATE UNIQUE INDEX uq_workspace_repo_branch
 
 CREATE INDEX idx_workspace_repo_state
   ON workspace(repo_id, state);
+
+-- =============================================================================
+-- repo_focus — PLAN.md §1: per-repo last-active workspace pointer.
+-- One row per repo; updated by `workspace/focus!`. The TUI uses this to
+-- restore the active tab across restarts; the Telegram switcher uses it
+-- as the default landing for `/workspace switch` without an argument.
+-- =============================================================================
+CREATE TABLE repo_focus (
+  repo_id        TEXT PRIMARY KEY NOT NULL,
+  workspace_id   TEXT NOT NULL
+                 REFERENCES workspace(id) ON DELETE CASCADE,
+  updated_at_ms  INTEGER NOT NULL
+);
 
 -- =============================================================================
 -- Session state - forkable mutable snapshot. Pinned 1:1 to a workspace.
@@ -136,6 +159,16 @@ CREATE TABLE session_state (
   llm_root_provider     TEXT,
   llm_root_model        TEXT,
   created_at            INTEGER NOT NULL,
+
+  -- PLAN.md §7: when this session_state is the engine-spawned
+  -- merge-resolve sub-session, this column points at the parent
+  -- session_state that initiated the merge. The sub-session's
+  -- prompt + permitted op set are gated on the column being
+  -- non-NULL; completion deletes the sub-session and the
+  -- parent resumes. Distinct from `parent_state_id` which is
+  -- the fork lineage column.
+  merge_resolve_parent_id  TEXT
+                        REFERENCES session_state(id) ON DELETE SET NULL,
 
   UNIQUE (session_soul_id, version)
 );
