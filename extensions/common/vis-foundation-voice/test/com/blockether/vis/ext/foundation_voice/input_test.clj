@@ -101,6 +101,73 @@
         (expect (some #(= "Voice transcription cannot be cancelled" (:text %))
                   @events)))))
 
+  (it "empty ASR transcription surfaces a clear no-audible-text notification (NOT a false `✓ appended` success)"
+    ;; Regression: when the ASR returned an empty / blank string
+    ;; (silent recording, mic muted, too-quiet input), we still
+    ;; fired `:input/append` with `\"\"` AND published a
+    ;; \"✓ Voice appended to input\" success notification — so the
+    ;; toast lied: the editor never changed. User experience:
+    ;; \"Ctrl+B not adding text\" with no actionable feedback. See
+    ;; conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a / \"why
+    ;; ctrl+b is not fucking ADDING TO THE FUCKING TEXT\".
+    ;;
+    ;; Fix: when transcription is blank, skip `:input/append` and
+    ;; publish a `:warn` notify that names the likely causes so the
+    ;; user knows it ran but produced nothing.
+    (let [events (atom [])]
+      (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+      (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
+                    recorder/stop! (fn [_] :silent.wav)
+                    asr/transcribe-file! (fn [_] "")
+                    vis/publish-channel-event! (fn [channel event]
+                                                 (expect (= :tui channel))
+                                                 (swap! events conj event))]
+        (voice/start-recording! {})
+        (voice/stop-and-transcribe! {})
+        (loop [n 50]
+          (when (and (pos? n)
+                  (not (some #(and (= :notify (:op %))
+                                (= :warn (:level %))
+                                (clojure.string/includes? (str (:text %)) "no audible text"))
+                         @events)))
+            (Thread/sleep 20)
+            (recur (dec n))))
+        ;; No `:input/append` should have fired — the editor must not
+        ;; receive a phantom empty-string append.
+        (expect (not-any? #(= :input/append (:op %)) @events))
+        ;; The fake “appended” toast must NOT fire on empty text.
+        (expect (not-any? #(and (= :notify (:op %))
+                             (clojure.string/includes? (str (:text %)) "✓ Voice appended"))
+                  @events))
+        ;; A clear no-audible-text warning DID fire.
+        (expect (some #(and (= :notify (:op %))
+                         (= :warn (:level %))
+                         (clojure.string/includes? (str (:text %)) "no audible text"))
+                  @events))
+        (expect (= false (:transcribing? @voice/state))))))
+
+  (it "blank-only (whitespace) ASR transcription is treated the same as empty (no false append)"
+    ;; Some ASR runs return a whitespace string instead of empty.
+    ;; Treat both identically so the user sees actionable feedback.
+    (let [events (atom [])]
+      (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+      (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
+                    recorder/stop! (fn [_] :silent.wav)
+                    asr/transcribe-file! (fn [_] "   \t\n  ")
+                    vis/publish-channel-event! (fn [_ event] (swap! events conj event))]
+        (voice/start-recording! {})
+        (voice/stop-and-transcribe! {})
+        (loop [n 50]
+          (when (and (pos? n)
+                  (not (some #(and (= :notify (:op %))
+                                (clojure.string/includes? (str (:text %)) "no audible text"))
+                         @events)))
+            (Thread/sleep 20)
+            (recur (dec n))))
+        (expect (not-any? #(= :input/append (:op %)) @events))
+        (expect (some #(clojure.string/includes? (str (:text %)) "no audible text")
+                  @events)))))
+
   (it "publishes clean voice failure and logs ASR exceptions"
     (let [events (atom [])
           logs   (atom [])]

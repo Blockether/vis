@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.foundation-voice.input
   "TUI voice input backed by local Parakeet-class ASR."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.foundation-voice.recorder :as recorder]
             [com.blockether.vis.ext.foundation-voice.asr :as asr]
             [taoensso.telemere :as tel]))
@@ -85,13 +86,25 @@
   (future
     (try
       (voice-status! "● Transcribing..." :info)
-      (let [text (asr/transcribe-file! audio-file)]
-        (publish! (cond-> {:op :input/append
-                           :text text
-                           :source :voice/input}
-                    workspace-id (assoc :workspace-id workspace-id)))
+      (let [text  (asr/transcribe-file! audio-file)
+            blank? (or (nil? text) (str/blank? text))]
         (idle-status!)
-        (publish! {:op :notify :text "✓ Voice appended to input" :level :success}))
+        (if blank?
+          ;; Empty ASR result was the silent failure mode that made
+          ;; Ctrl+B feel broken: we still fired `:input/append` with
+          ;; an empty string AND a \"✓ Voice appended to input\"
+          ;; notification, so the user saw the success toast but
+          ;; nothing changed in the editor. Surface the empty case
+          ;; explicitly instead of pretending we appended text.
+          (publish! {:op :notify
+                     :text "Voice produced no audible text (try speaking longer or check your mic level)"
+                     :level :warn})
+          (do
+            (publish! (cond-> {:op :input/append
+                               :text text
+                               :source :voice/input}
+                        workspace-id (assoc :workspace-id workspace-id)))
+            (publish! {:op :notify :text "✓ Voice appended to input" :level :success}))))
       (catch Throwable t
         (let [message (or (ex-message t) (str t))]
           (log-voice-asr-failed! audio-file t message)
