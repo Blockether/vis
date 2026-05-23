@@ -3230,25 +3230,10 @@
                     ;; progression / next-actions. Drained mutation-time
                     ;; warnings (from collisions / cycle rejects fired this
                     ;; iter) are merged with render-time invariants so the
-                    ;; model sees the full set in one pass.
-                    ctx-rendered (when-let [a (:ctx-atom environment)]
-                                   (let [c     (ctx-loop/stamp-cursor environment @a)
-                                         ;; form-results map keyed by scope-form, sourced from
-                                         ;; every trailer pin captured this turn. Drives the
-                                         ;; scope-class T1 pass + the validator-fn T2 pass so
-                                         ;; proofs that point at executed forms get full
-                                         ;; semantic validation, not just shape checks.
-                                         fr    (ctx-loop/trailer->form-results
-                                                 (:session/trailer c))
-                                         idx   (ctx-engine/build-indexes c)
-                                         prog  (ctx-engine/derive-progression c idx fr)
-                                         warns (vec (concat
-                                                      (ctx-loop/drain-warnings! environment)
-                                                      (ctx-engine/derive-warnings c idx fr)))
-                                         acts  (ctx-engine/derive-next-actions c idx prog)]
-                                     (ctx-renderer/render-ctx
-                                       {:ctx c :warnings warns
-                                        :progression prog :next-actions acts})))
+                    ;; model sees the full set in one pass. Whole pipeline
+                    ;; lives in `ctx-loop/render-block!` — one fn call,
+                    ;; one nil guard.
+                    ctx-rendered (ctx-loop/render-block! environment ctx-renderer/render-ctx)
                     iteration-context (->> [iteration-context ctx-rendered]
                                         (remove str/blank?)
                                         (str/join "\n\n"))
@@ -3502,9 +3487,12 @@
                         ;; live-vars view reads this to age user vars out of
                         ;; the discovery line after
                         ;; `JOURNAL_LRU_TURN_WINDOW` quiet turns.
-                        _ (when-let [lru-atom (:def-resolve-lru-atom environment)]
-                            (when-let [iteration-lru (not-empty (:lru block))]
-                              (swap! lru-atom merge iteration-lru)))
+                        ;; Phase 7 LRU merge. Flat: read both ends, then
+                        ;; a single guarded swap!. No nested when-let.
+                        lru-atom      (:def-resolve-lru-atom environment)
+                        iteration-lru (not-empty (:lru block))
+                        _ (when (and lru-atom iteration-lru)
+                            (swap! lru-atom merge iteration-lru))
                         ;; Multi-form capture: every executed top-level form
                         ;; in this iter's fence becomes one envelope on the
                         ;; new :forms column. `:code` is the whole fence body
@@ -4487,40 +4475,27 @@
                                    ;; surface a user-visible message, and
                                    ;; the answer-validation gate may reject
                                    ;; it downstream.
-                                   (let [value (cond
-                                                 (needs-input-answer? s) s
-                                                 (markdown-answer? s)    s
-                                                 (string? s)             {:answer s}
-                                                 (nil? s)                {:answer ""}
-                                                 :else                   {:answer (pr-str s)
-                                                                          :vis/coerced? true})
-                                         ;; CTX engine: when (done {:trailer-drop […]
-                                         ;; :trailer-summarize […]}) carries trailer
-                                         ;; directives, apply them to the live ctx-atom
-                                         ;; right here so the snapshot persisted at
-                                         ;; turn end already reflects the model's
-                                         ;; intent. Hard rejects (partial-overlap
-                                         ;; summaries) emit warnings into the
-                                         ;; warnings atom rather than refusing.
+                                   ;; Flat: classify value — extract trailer
+                                   ;; directives — hand off to ctx-loop —
+                                   ;; stamp answer. No nested when/let chains
+                                   ;; juggling ctx-atom; that lives behind
+                                   ;; `ctx-loop/apply-done!`.
+                                   (let [value             (cond
+                                                             (needs-input-answer? s) s
+                                                             (markdown-answer? s)    s
+                                                             (string? s)             {:answer s}
+                                                             (nil? s)                {:answer ""}
+                                                             :else                   {:answer (pr-str s)
+                                                                                      :vis/coerced? true})
                                          trailer-drop      (when (map? value) (:trailer-drop value))
-                                         trailer-summarize (when (map? value) (:trailer-summarize value))]
-                                     (when (or (seq trailer-drop) (seq trailer-summarize))
-                                       (let [cur-env {:current-turn-position-atom current-turn-position-atom
-                                                      :current-iteration-atom current-iteration-atom
-                                                      :current-form-idx-atom current-form-idx-atom}
-                                             scope  (ctx-loop/synthesize-scope cur-env)
-                                             cursor (ctx-loop/cursor-snapshot cur-env)]
-                                         (swap! ctx-atom
-                                           (fn [c]
-                                             (let [c+cur (assoc c :session/scope cursor)
-                                                   {ctx' :ctx ws :warnings}
-                                                   (ctx-engine/apply-done
-                                                     c+cur scope
-                                                     {:trailer-drop trailer-drop
-                                                      :trailer-summarize trailer-summarize})]
-                                               (cond-> (dissoc ctx' :session/scope)
-                                                 (seq ws)
-                                                 (update :engine/warnings (fnil into []) ws)))))))
+                                         trailer-summarize (when (map? value) (:trailer-summarize value))
+                                         done-env          {:ctx-atom                   ctx-atom
+                                                            :current-turn-position-atom current-turn-position-atom
+                                                            :current-iteration-atom     current-iteration-atom
+                                                            :current-form-idx-atom      current-form-idx-atom}]
+                                     (ctx-loop/apply-done! done-env
+                                       {:trailer-drop trailer-drop
+                                        :trailer-summarize trailer-summarize})
                                      (reset! answer-atom
                                        {:value    value
                                         :position @current-form-idx-atom})
