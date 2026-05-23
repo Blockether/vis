@@ -9,12 +9,12 @@
 
 (defdescribe default-settings-test
   (it "shows provider reasoning in chat UI by default"
-    ;; Hidden-by-default policy was retired (state.clj): GLM `reasoning_content`,
-    ;; Copilot Claude `reasoning_text`, Codex / Anthropic thinking summaries
-    ;; are exactly the signal users want when an agent turn looks like it
-    ;; froze. Toggle stays available in Settings (`Show model thinking`).
-    (expect (true? (:show-thinking state/default-settings)))
-    (expect (true? (:show-iterations state/default-settings)))))
+    ;; The boolean lives in the toggles registry now. Default ON so
+    ;; GLM `reasoning_content`, Copilot Claude `reasoning_text`,
+    ;; Codex / Anthropic thinking summaries are visible when an agent
+    ;; turn looks like it froze. Flip in Settings (Feature Toggles).
+    (expect (true? (vis/toggle-enabled? :vis/show-thinking)))
+    (expect (true? (vis/toggle-enabled? :vis/show-iterations)))))
 
 (defdescribe detail-toggle-test
   (it "does not cold-clear render and height caches on disclosure click"
@@ -263,77 +263,108 @@
       (expect (false?
                 (get-in @state/app-db [:settings :voice/respond?])))))
 
-  (it "normalizes low/medium/high aliases from persisted config"
-    (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:reasoning-level "HIGH"}})]
-      (state/init!)
-      (expect (= :deep
-                (get-in @state/app-db [:settings :reasoning-level])))))
+  (it "hydrates persisted enum toggles into the registry"
+    ;; The persistence shape now lives under `:toggles`, not
+    ;; `:tui-settings`. `state/init!` keeps the `:settings`
+    ;; projection coherent by pulling each migrated toggle's value
+    ;; off the registry; toggle hydration itself runs from
+    ;; `screen/run-chat!` before `init!` in production.
+    (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :deep}})
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (= :deep
+                  (get-in @state/app-db [:settings :reasoning-level]))))
+      (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
 
-  (it "normalizes Codex verbosity from persisted config strings"
-    (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:openai-codex-verbosity "MEDIUM"}})]
-      (state/init!)
-      (expect (= :medium
-                (get-in @state/app-db [:settings :openai-codex-verbosity])))))
+  (it "hydrates Codex verbosity from the toggles registry"
+    (vis/toggles-hydrate-from-config! {:toggles {:openai-codex/verbosity :medium}})
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (= :medium
+                  (get-in @state/app-db [:settings :openai-codex-verbosity]))))
+      (finally (vis/toggle-reset-to-default! :openai-codex/verbosity))))
 
   (it "honours persisted show-thinking choice in either direction"
-    ;; Pre-2026-05 policy force-disabled `:show-thinking` on every load —
-    ;; even when the user had explicitly enabled it. That made the Settings
-    ;; toggle a one-way switch (off-by-default with no usable on) and
-    ;; silently overrode persisted user preference. We now honour both
-    ;; persisted true and persisted false; coerce non-booleans to bool so
-    ;; legacy strings/nils don't escape `:show-thinking`'s contract.
-    (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:show-thinking true}})]
-      (state/init!)
-      (expect (true?
-                (get-in @state/app-db [:settings :show-thinking]))))
-    (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:show-thinking false}})]
-      (state/init!)
-      (expect (false?
-                (get-in @state/app-db [:settings :show-thinking])))))
+    ;; Source of truth: the toggles registry. `state/init!` projects
+    ;; the registry value into `:settings :show-thinking`.
+    (vis/toggle-set-value! :vis/show-thinking true)
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (true? (get-in @state/app-db [:settings :show-thinking]))))
+      (finally (vis/toggle-reset-to-default! :vis/show-thinking)))
+    (vis/toggle-set-value! :vis/show-thinking false)
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (false? (get-in @state/app-db [:settings :show-thinking]))))
+      (finally (vis/toggle-reset-to-default! :vis/show-thinking))))
 
-  (it "falls back to balanced / low on invalid persisted values"
-    (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:reasoning-level :turbo
-                                                             :openai-codex-verbosity :loud}})]
-      (state/init!)
-      (expect (= :balanced
-                (get-in @state/app-db [:settings :reasoning-level])))
-      (expect (= :low
-                (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
+  (it "drops invalid persisted enum values back to registered defaults"
+    ;; `hydrate-from-config!` routes through `set-value!` which
+    ;; validates against `:choices`. Invalid entries are silently
+    ;; skipped — the registered default stands.
+    (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :turbo
+                                                  :openai-codex/verbosity :loud}})
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})]
+        (state/init!)
+        (expect (= :balanced
+                  (get-in @state/app-db [:settings :reasoning-level])))
+        (expect (= :low
+                  (get-in @state/app-db [:settings :openai-codex-verbosity]))))
+      (finally
+        (vis/toggle-reset-to-default! :vis/reasoning-level)
+        (vis/toggle-reset-to-default! :openai-codex/verbosity)))))
 
 (defdescribe settings-shortcut-test
   (it "commits shortcut settings before notification watchers dispatch render bumps"
-    (with-redefs [vis/load-config-raw (fn [] {})
-                  vis/save-config! (fn [_])
-                  vis/get-router (constantly :router)
-                  vis/resolve-effective-model (fn [_] {:provider :openai
-                                                       :name "gpt-5"
-                                                       :reasoning? true})
-                  vis/notify! (fn [& _]
-                                (state/dispatch [:bump-render-version]))]
-      (reset! state/app-db {:settings {:reasoning-level :deep
-                                       :openai-codex-verbosity :low}
-                            :render-version 0})
-      (let [result (future
-                     (state/dispatch [:cycle-reasoning-level])
-                     :done)]
-        (expect (= :done (deref result 1000 :timeout)))
-        (expect (= :quick
-                  (get-in @state/app-db [:settings :reasoning-level]))))))
+    ;; The cycle event mutates the toggle registry; the cached
+    ;; `:settings` projection is rebuilt synchronously in the same
+    ;; FX :db so notification listeners observe the new value the
+    ;; moment they fire.
+    (vis/toggle-set-value! :vis/reasoning-level :deep)
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    vis/save-config! (fn [_])
+                    vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :openai
+                                                         :name "gpt-5"
+                                                         :reasoning? true})
+                    vis/notify! (fn [& _]
+                                  (state/dispatch [:bump-render-version]))]
+        (reset! state/app-db {:settings {:reasoning-level :deep
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (let [result (future
+                       (state/dispatch [:cycle-reasoning-level])
+                       :done)]
+          (expect (= :done (deref result 1000 :timeout)))
+          (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
+          (expect (= :quick
+                    (get-in @state/app-db [:settings :reasoning-level])))))
+      (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
 
   (it "wraps reasoning level from deep back to quick"
-    (with-redefs [vis/load-config-raw (fn [] {})
-                  vis/save-config! (fn [_])
-                  vis/get-router (constantly :router)
-                  vis/resolve-effective-model (fn [_] {:provider :openai
-                                                       :name "gpt-5"
-                                                       :reasoning? true})
-                  vis/notify! (fn [& _])]
-      (reset! state/app-db {:settings {:reasoning-level :deep
-                                       :openai-codex-verbosity :low}
-                            :render-version 0})
-      (state/dispatch [:cycle-reasoning-level])
-      (expect (= :quick
-                (get-in @state/app-db [:settings :reasoning-level])))))
+    (vis/toggle-set-value! :vis/reasoning-level :deep)
+    (try
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    vis/save-config! (fn [_])
+                    vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :openai
+                                                         :name "gpt-5"
+                                                         :reasoning? true})
+                    vis/notify! (fn [& _])]
+        (reset! state/app-db {:settings {:reasoning-level :deep
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (state/dispatch [:cycle-reasoning-level])
+        (expect (= :quick (vis/toggle-value :vis/reasoning-level)))
+        (expect (= :quick
+                  (get-in @state/app-db [:settings :reasoning-level]))))
+      (finally (vis/toggle-reset-to-default! :vis/reasoning-level))))
 
   (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
     (let [notified (atom nil)]

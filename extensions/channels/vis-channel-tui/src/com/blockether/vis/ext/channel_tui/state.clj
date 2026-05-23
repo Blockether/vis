@@ -292,47 +292,6 @@
            (do (swap! last-by-phase assoc phase now-ms)
              (dispatch-fn [:set-progress-iterations timeline]))))))))
 
-(def ^:private reasoning-level-order
-  [:quick :balanced :deep])
-
-(def ^:private codex-verbosity-order
-  [:low :medium :high])
-
-(defn- normalize-reasoning-level
-  "Canonical reasoning level for persisted TUI settings.
-
-   Accepts the native UI vocabulary (`:quick/:balanced/:deep`) plus the
-   low/medium/high aliases the shared turn engine already accepts.
-   Unknown values fall back to `:balanced` so a hand-edited config never
-   wedges the TUI into an invalid state."
-  [v]
-  (case (cond
-          (keyword? v) v
-          (string? v)  (keyword (str/lower-case (str/trim v)))
-          :else        nil)
-    :low      :quick
-    :medium   :balanced
-    :high     :deep
-    :quick    :quick
-    :balanced :balanced
-    :deep     :deep
-    :balanced))
-
-(defn- normalize-codex-verbosity
-  "Canonical OpenAI Codex verbosity level for persisted TUI settings.
-
-   Accepts `:low/:medium/:high` plus strings; unknown values fall back
-   to `:low`, matching the provider's current default."
-  [v]
-  (case (cond
-          (keyword? v) v
-          (string? v)  (keyword (str/lower-case (str/trim v)))
-          :else        nil)
-    :low    :low
-    :medium :medium
-    :high   :high
-    :low))
-
 (defn- normalize-theme-name
   [v]
   (let [s (cond
@@ -344,27 +303,41 @@
                s))))
 
 (defn- normalize-settings
+  "Coerce the two settings keys this layer still OWNS:
+     `:theme-name`           — enum, picked from registered themes
+                              (dynamic; not in the toggles registry).
+     `:contributors-disabled` — set of contributor ids the user wants
+                              hidden.
+
+   Every other former settings key (`:show-thinking`,
+   `:show-iterations`, `:show-silent`, `:show-timestamps`,
+   `:mouse-selection-copy`, `:voice/respond?`, `:message-meta`,
+   `:reasoning-level`, `:openai-codex-verbosity`) now lives in the
+   toggles registry. The `:settings` map in app-db is a cached
+   projection of (registry + these two locals); a listener wired in
+   `init!` keeps the projection in sync."
   [settings]
   (-> settings
     (update :theme-name normalize-theme-name)
-    (update :reasoning-level normalize-reasoning-level)
-    (update :openai-codex-verbosity normalize-codex-verbosity)
-    ;; Honour the persisted `:show-thinking` value. Earlier policy
-    ;; force-disabled it on every load ("forensic data, not chat UI")
-    ;; but that masked Z.ai GLM `reasoning_content`, Copilot Claude
-    ;; `reasoning_text` deltas, and Codex / Anthropic thinking-summary
-    ;; streams — exactly the signal users want to inspect when an
-    ;; agent turn loops or burns budget on hidden chain-of-thought.
-    ;; Coerce to bool so a stale string/nil from old configs falls
-    ;; through cleanly to the `default-settings` default (true).
-    (update :show-thinking boolean)
-    (update :show-iterations boolean)
-    (update :show-silent boolean)
-    (update :show-timestamps boolean)
-    (update :mouse-selection-copy boolean)
-    (update :voice/respond? boolean)
     (update :contributors-disabled
       (fn [v] (cond (nil? v) #{} (set? v) v :else (set v))))))
+
+(defn- migrated-toggle-projection
+  "Pull the migrated boolean + enum toggles back into a flat
+   `:settings`-shaped map so existing consumers
+   (`(get settings :show-thinking ...)`) keep working without
+   reaching into the registry directly. The registry is the source
+   of truth; this projection is the cached view."
+  []
+  {:show-thinking          (vis/toggle-enabled? :vis/show-thinking)
+   :show-iterations        (vis/toggle-enabled? :vis/show-iterations)
+   :show-silent            (vis/toggle-enabled? :vis/show-silent)
+   :show-timestamps        (vis/toggle-enabled? :vis/show-timestamps)
+   :mouse-selection-copy   (vis/toggle-enabled? :vis/mouse-selection-copy)
+   :voice/respond?         (vis/toggle-enabled? :voice/respond?)
+   :message-meta           (vis/toggle-value    :vis/message-meta)
+   :reasoning-level        (vis/toggle-value    :vis/reasoning-level)
+   :openai-codex-verbosity (vis/toggle-value    :openai-codex/verbosity)})
 
 (def default-settings
   "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
@@ -399,43 +372,22 @@
    the rendering pipeline outright (the visual zones already convey
    the same boundaries without the labels)."
   {:theme-name            (keyword shared-theme/default-theme-id)
-   ;; Default ON: thinking is the agent's own narration of why it
-   ;; chose the next probe / patch / answer. Hiding it makes long
-   ;; reasoning turns look like the TUI froze (no visible output
-   ;; while the model spends 4-8K tokens on hidden thinking, e.g.
-   ;; session 831cedee 2026-05-20). Users who want a quieter
-   ;; transcript can flip it off in Settings.
-   :show-thinking          true
-   :show-iterations        true
-   ;; Per-message meta footer (model / iters / tokens / cost / duration)
-   ;; rendered under each assistant bubble. `:full` keeps the canonical
-   ;; vis/format-meta-line; `:short` drops model + iters + tokens, leaving
-   ;; just `cost / duration` (+ any fallback suffix); `:off` removes the
-   ;; footer entirely (including the breathing row above it) so dense
-   ;; transcripts stop visually wasting the row pair per turn.
-   :message-meta           :full
-   :show-silent            false
-   :reasoning-level        :balanced
-   :openai-codex-verbosity :low
-   :show-timestamps        false
-   :mouse-selection-copy   true
-   :voice/respond?         false
    ;; Set of contributor ids the user wants hidden in the TUI
    ;; header / footer. Each extension that contributes a row /
    ;; segment / status registers under a keyword id (e.g. :goal
-   ;; from vis-goal, :voice from vis-foundation-voice). Adding the id to this
-   ;; set skips that contributor's rendering. Default empty (every
-   ;; registered contributor shows). See
+   ;; from vis-goal, :voice from vis-foundation-voice). Adding the id
+   ;; to this set skips that contributor's rendering. Default empty
+   ;; (every registered contributor shows). See
    ;; `com.blockether.vis.ext.channel-tui.contributors`.
    :contributors-disabled  #{}})
 
 (defn- load-persisted-settings
-  "Read `:tui-settings` from `~/.vis/config.edn` and merge over
-   `default-settings`. Missing keys fall back to defaults; unknown
-   keys are dropped so a forward-compatible future we add new
-   toggles into a previously-saved config doesn't blow up here."
+  "Read `:tui-settings` from `~/.vis/config.edn` for the keys this
+   layer still owns (`:theme-name`, `:contributors-disabled`). The
+   migrated boolean + enum settings are loaded by
+   `vis/toggles-hydrate-from-config!` in `screen/run-chat!`."
   []
-  (let [raw (try (vis/load-config-raw) (catch Throwable _ nil))
+  (let [raw   (try (vis/load-config-raw) (catch Throwable _ nil))
         saved (when (map? raw) (:tui-settings raw))]
     (normalize-settings
       (merge default-settings (when (map? saved)
@@ -453,24 +405,22 @@
     (catch Throwable _ nil)))
 
 (defn- apply-settings-update!
+  "Merge `new-settings` over the local-owned slice (theme +
+   contributors-disabled), persist that slice into
+   `~/.vis/config.edn`, and rebuild the cached `:settings` view by
+   overlaying the toggle projection. Migrated keys ignored here —
+   they route through `vis/toggle-set-value!` / `cycle-value!` and
+   the listener installed in `init!` keeps the projection coherent."
   [db new-settings]
-  ;; Settings (show-thinking?, show-iterations?, etc.) are part of
-  ;; every format-answer cache key, so toggling them already
-  ;; invalidates cache entries naturally. But the OLD entries
-  ;; linger until the cache fills - which on a quiet session
-  ;; never happens. Drop them now so memory stays bounded across
-  ;; many toggles.
   (render/invalidate-cache!)
-  (let [merged (normalize-settings (merge default-settings (:settings db) new-settings))]
-    (tui-theme/apply-theme! (:theme-name merged))
-    (persist-settings! merged)
-    (assoc db :settings merged)))
-
-(defn- cycle-choice
-  [choices current]
-  (let [choices (vec choices)
-        idx     (.indexOf ^java.util.List choices current)]
-    (nth choices (mod (inc (if (neg? idx) 0 idx)) (count choices)))))
+  (let [local-merged (normalize-settings
+                       (merge default-settings
+                         (select-keys (:settings db) (keys default-settings))
+                         (select-keys new-settings   (keys default-settings))))
+        projected    (merge (migrated-toggle-projection) local-merged)]
+    (tui-theme/apply-theme! (:theme-name local-merged))
+    (persist-settings! local-merged)
+    (assoc db :settings projected)))
 
 (defn- move-to-front
   [pred coll]
@@ -687,9 +637,18 @@
         (not= :zai-thinking (:reasoning-style info))))))
 
 (defn init!
-  "Initialize app-db with default state."
+  "Initialize app-db with default state. The persisted layer now
+   has two halves: `~/.vis/config.edn :tui-settings` holds the
+   handful of locals this channel still owns (theme +
+   contributors-disabled). All migrated booleans / enums live in the
+   toggles registry (`:toggles` slot, loaded by
+   `vis/toggles-hydrate-from-config!` in `screen/run-chat!`). We
+   merge a one-shot projection of the registry into `:settings` here
+   so the first paint is coherent; ongoing changes flow through the
+   listener registered there."
   []
-  (let [settings (load-persisted-settings)]
+  (let [local-settings (load-persisted-settings)
+        settings       (merge (migrated-toggle-projection) local-settings)]
     (tui-theme/apply-theme! (:theme-name settings))
     (reset! app-db {:config     nil
                     :session nil
@@ -756,14 +715,26 @@
   (fn [db [_ new-settings]]
     (apply-settings-update! db new-settings)))
 
+(reg-event-db :resync-toggle-settings
+  ;; Triggered by the toggles-registry listener whenever a flip
+  ;; happens (settings dialog row, programmatic vis/toggle-set-value!,
+  ;; provider-side cycle event). Rebuilds the cached `:settings`
+  ;; projection so consumers reading `(get settings :show-thinking)`
+  ;; etc. observe the new value on the very next paint.
+  (fn [db _]
+    (assoc db :settings (merge (migrated-toggle-projection)
+                          (select-keys (:settings db) (keys default-settings))))))
+
 (reg-event-fx :cycle-reasoning-level
   (fn [db _]
     (if-not (reasoning-effort-configurable?)
       {:db db
        :fx [[:notify "Reasoning effort is not configurable for this model" :warn settings-notification-ttl-ms]]}
-      (let [current (normalize-reasoning-level (get-in db [:settings :reasoning-level]))
-            next    (cycle-choice reasoning-level-order current)]
-        {:db (apply-settings-update! db {:reasoning-level next})
+      (let [next (vis/toggle-cycle-value! :vis/reasoning-level)]
+        ;; The toggle listener wired in `init!` will fire next; this
+        ;; just refreshes the cached :settings projection here too
+        ;; so the FX :db ends up consistent within the same tick.
+        {:db (apply-settings-update! db {})
          :fx [[:notify (str "Reasoning: " (name next)) :info settings-notification-ttl-ms]]}))))
 
 (reg-event-fx :cycle-codex-verbosity
@@ -771,9 +742,8 @@
     (if-not (= :openai-codex (current-provider-id))
       {:db db
        :fx [[:notify "Codex verbosity is only available for OpenAI Codex" :warn settings-notification-ttl-ms]]}
-      (let [current (normalize-codex-verbosity (get-in db [:settings :openai-codex-verbosity]))
-            next    (cycle-choice codex-verbosity-order current)]
-        {:db (apply-settings-update! db {:openai-codex-verbosity next})
+      (let [next (vis/toggle-cycle-value! :openai-codex/verbosity)]
+        {:db (apply-settings-update! db {})
          :fx [[:notify (str "Codex verbosity: " (name next)) :info settings-notification-ttl-ms]]}))))
 
 (reg-event-fx :cycle-model

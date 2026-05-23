@@ -3710,15 +3710,50 @@
                         ;; form after the first from the trailer pin and
                         ;; from the form-results map the model references
                         ;; on proof scopes.
+                        ;; Per-form expansion. Each entry inherits a
+                        ;; `:channel` slice from the parent fence so the
+                        ;; per-form envelope carries the pre-rendered tool
+                        ;; sink IR persisted on `session_turn_iteration.forms`.
+                        ;; Without this, restored bubbles for any iteration
+                        ;; whose model wrote `(def r (v/patch …))` lost the
+                        ;; PATCH preview pane (session
+                        ;; 311fd734-3640-4288-ba3d-cff83fb7260f turn 8): the
+                        ;; channel sink lives on the FENCE atom but the
+                        ;; expansion dropped it when projecting per-form,
+                        ;; so `block->envelope` couldn't attach `:channel`
+                        ;; and the rebuild path had no IR to replay.
+                        ;;
+                        ;; Distribution rules:
+                        ;;   * single-form fence → the whole fence sink
+                        ;;     belongs to that one form, copy it over;
+                        ;;   * multi-form fence → partition sink entries
+                        ;;     by their recorded `:form-idx` (engine
+                        ;;     stamps it on every entry); entries
+                        ;;     without a form-idx (legacy / shape drift)
+                        ;;     ride on the FIRST form so they aren't lost.
                         expanded-blocks
-                        (mapcat (fn [b]
-                                  (if-let [fs (seq (:forms b))]
-                                    (map (fn [f]
-                                           {:code   (or (:source f) (:src f) (:code f) "")
-                                            :result (:result f)
-                                            :error  (:error f)})
-                                      fs)
-                                    [b]))
+                        (mapcat
+                          (fn [b]
+                            (if-let [fs (seq (:forms b))]
+                              (let [fence-channel (vec (:channel b))
+                                    by-form-idx (group-by #(or (:form-idx %) ::no-form-idx)
+                                                  fence-channel)
+                                    orphan      (vec (get by-form-idx ::no-form-idx))
+                                    single?     (= 1 (count fs))]
+                                (map-indexed
+                                  (fn [idx f]
+                                    (let [direct (vec (get by-form-idx idx))
+                                          channel (cond
+                                                    single?              fence-channel
+                                                    (and (zero? idx)
+                                                      (seq orphan))      (into direct orphan)
+                                                    :else                 direct)]
+                                      (cond-> {:code   (or (:source f) (:src f) (:code f) "")
+                                               :result (:result f)
+                                               :error  (:error f)}
+                                        (seq channel) (assoc :channel channel))))
+                                  fs))
+                              [b]))
                           blocks)
                         forms-vec   (if (seq expanded-blocks)
                                       (ctx-engine/blocks->forms expanded-blocks cursor)
