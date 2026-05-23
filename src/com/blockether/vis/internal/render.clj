@@ -1174,6 +1174,9 @@
   "Classify a parsed top-level form into a render segment kind:
      :answer-ref  —  (done …)
      :title       —  (set-session-title! …)
+     :task-update —  (task-set! K {…})
+     :spec-update —  (spec-set! K {…})
+     :fact-update —  (fact-set! K {…})
      :code        —  anything else (def, fn call, nested do/let/when, etc.)
    Match is namespace-agnostic by NAME; engine forms come unqualified."
   [form]
@@ -1181,6 +1184,9 @@
     (case (name (first form))
       "done"             :answer-ref
       "set-session-title!"  :title
+      "task-set!"        :task-update
+      "spec-set!"        :spec-update
+      "fact-set!"        :fact-update
       :code)
     :code))
 
@@ -1255,6 +1261,21 @@
           prev-end (or (some-> (nth bounds (dec idx) nil) :end) 0)]
       (subs src prev-end end))))
 
+(defn- ctx-mutation-payload
+  "Pull `{:k :partial}` out of `(mutator k partial)` shape — used by
+   `parse-block-display` to surface `task-set!`/`spec-set!`/
+   `fact-set!` calls as structured recap segments instead of raw
+   source lines. Returns nil when the form doesn't match the
+   2-arg mutator shape."
+  [form]
+  (when (and (seq? form)
+          (= 3 (count form))
+          (or (keyword? (second form)) (symbol? (second form))))
+    (let [k       (second form)
+          partial (nth form 2)]
+      {:k        k
+       :partial  (when (map? partial) partial)})))
+
 (defn- title-value-from-form
   "Extract the literal title string from a `(set-session-title! \"X\")`
    form. Returns the raw string when shape matches; nil for dynamic args
@@ -1314,6 +1335,16 @@
                                  :answer-ref [{:kind :answer-ref}]
                                  :title      [{:kind :title
                                                :value (title-value-from-form form)}]
+                                 (:task-update :spec-update :fact-update)
+                                 (let [payload (ctx-mutation-payload form)]
+                                   [(cond-> {:kind kind
+                                             :id   (some-> payload :k)}
+                                      (some-> payload :partial :status)
+                                      (assoc :status (-> payload :partial :status))
+                                      (some-> payload :partial :proof)
+                                      (assoc :proof  (-> payload :partial :proof))
+                                      (some-> payload :partial :title)
+                                      (assoc :title  (-> payload :partial :title)))])
                                  :code
                                  [(cond-> {:kind :code :source (str/trim slice)}
                                     (hidden-code-form? form) (assoc :hidden? true))])))

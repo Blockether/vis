@@ -3022,8 +3022,14 @@
                   ;; content (`(str thinking-marker " " %)`), so the bubble
                   ;; no longer paints Recap text flush against the marker
                   ;; column. wrap-text width drops by 1 to compensate.
+                  ;;
+                  ;; Pi-style line: `RECAP <body>`. The whole row is
+                  ;; already painted bold+italic by the marker handler
+                  ;; in `paint-iteration!`, so the leading `RECAP`
+                  ;; token reads as a bold badge — same visual
+                  ;; vocabulary as foundation tool previews.
                   (map #(line-entry (str recap-marker " " %))
-                    (wrap-text (str "* Recap: " recap) pad-w)))
+                    (wrap-text (str "RECAP  " recap) pad-w)))
           recaps)))))
 
 (defn- code-source-from-render-segments
@@ -3036,19 +3042,47 @@
       (str/join "\n" sources)
       fallback-code)))
 
+(defn- segment->recap-text
+  "Compact one-line summary for a single ctx-mutation render
+   segment. Returns nil for kinds the recap channel doesn't surface
+   (e.g. plain `:code`)."
+  [{:keys [kind value id status proof title]}]
+  (let [status-glyph (case status
+                       :done       "✓ "
+                       :cancelled  "× "
+                       (:todo :doing) "… "
+                       "")]
+    (case kind
+      :title         (if (str/blank? (str value))
+                       "TITLE  (cleared)"
+                       (str "TITLE  \"" value "\""))
+      :task-update   (str "TASK   " status-glyph
+                       (when id (pr-str id))
+                       (when status (str "  :" (name status)))
+                       (when title (str "  \"" title "\""))
+                       (when proof (str "  proof " proof)))
+      :spec-update   (str "SPEC   "
+                       (when id (pr-str id))
+                       (when status (str "  :" (name status))))
+      :fact-update   (str "FACT   "
+                       (when id (pr-str id))
+                       (when status (str "  :" (name status))))
+      nil)))
+
 (defn- render-segment-title-entries
+  "Recap rows for ctx-mutation render segments. Covers title /
+   task-set! / spec-set! / fact-set!. Each row paints bold+italic on
+   terminal-bg via the recap-marker handler in `paint-iteration!`,
+   so the leading pi-style label (`TITLE` / `TASK` / `SPEC` / `FACT`)
+   reads as a bold badge — same vocabulary as foundation tool
+   previews."
   [line-entry segments fill-w]
   (let [pad-w (max 1 (dec fill-w))]
     (vec
-      (mapcat (fn [{:keys [kind value]}]
-                (when (= :title kind)
-                  (let [title (if (str/blank? (str value))
-                                "Title changed."
-                                (str "Title changed to \"" value "\"."))]
-                    ;; Mirror recap-entries: 1-col left padding inside the
-                    ;; header-bg zone, wrap-text width compensated.
-                    (map #(line-entry (str recap-marker " " %))
-                      (wrap-text (str "* Recap: " title) pad-w)))))
+      (mapcat (fn [seg]
+                (when-let [text (segment->recap-text seg)]
+                  (map #(line-entry (str recap-marker " " %))
+                    (wrap-text text pad-w))))
         segments))))
 
 (defn- format-iteration-entry-entries
