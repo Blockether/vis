@@ -1505,6 +1505,30 @@
     (try (deref result) (catch Throwable _ result))
     result))
 
+(defn- realize-trailer-value
+  "Force-realize lazy seqs / nested IDeref refs in `v` so the trailer
+   carries DATA, not computations. Without this the freeze-safe path on
+   turn-end persists lazy seqs as `{:vis/ref :expr}`, and the next
+   iteration / resume sees `#:vis{:ref :expr}` instead of the actual
+   collection. Model then misreads the form as `empty` and reruns the
+   probe.
+
+   Walks the same shapes `loop/realize-value` covers: maps, vectors,
+   sets, sequentials (LazySeq, lists). Plain scalars pass through. Depth
+   bounded so a self-referential structure cannot loop."
+  ([v] (realize-trailer-value v 8))
+  ([v depth]
+   (cond
+     (or (nil? v) (zero? depth)) v
+     (instance? clojure.lang.IDeref v)
+     (try (realize-trailer-value (deref v) (dec depth))
+       (catch Throwable _ v))
+     (map? v)        (into {} (map (fn [[k val]] [k (realize-trailer-value val (dec depth))])) v)
+     (vector? v)     (mapv #(realize-trailer-value % (dec depth)) v)
+     (set? v)        (into #{} (map #(realize-trailer-value % (dec depth))) v)
+     (sequential? v) (doall (map #(realize-trailer-value % (dec depth)) v))
+     :else           v)))
+
 (defn block->envelope
   "Project one loop-side block `{:code :result :error}` plus its 1-based
    position and the engine cursor into the per-form envelope shape:
@@ -1517,14 +1541,16 @@
    included only when the block errored.
 
    For `(def NAME …)` forms the raw SCI return is the Var; deref it once
-   so the trailer carries the bound value directly. Restore-on-resume
-   stays untouched — the persistence layer reads the actual value off
-   `definition_state`, not off the trailer."
+   so the trailer carries the bound value directly. Every result is also
+   walked through `realize-trailer-value` so lazy seqs land as data—the
+   model used to see `#:vis{:ref :expr}` after persistence flattened
+   unrealized seqs."
   [block position cursor]
   (let [src (or (:code block) (:src block) "")
         scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
         raw-result (:result block)
-        result (cond-> raw-result (def-form-src? src) deref-def-result)]
+        result (cond-> raw-result (def-form-src? src) deref-def-result)
+        result (realize-trailer-value result)]
     (cond-> {:scope scope
              :tag   (classify-form-tag src)
              :src   src}
