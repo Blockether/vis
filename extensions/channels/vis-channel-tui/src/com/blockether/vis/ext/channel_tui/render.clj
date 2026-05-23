@@ -949,6 +949,19 @@
 (def ^:private duration-marker  p/MARKER_DURATION)
 (def ^:private iteration-hdr-marker  p/MARKER_ITERATION_HDR)
 (def ^:private recap-marker          p/MARKER_RECAP)
+
+(def ^:private recap-kinds
+  "Known recap badge tokens. Drives both the per-row meta tag and
+   the painter's color picker. Keep the keys EXACTLY equal to the
+   leading token emitted by `segment->recap-text` /
+   `recap-row-entries` so the parser stays a simple
+   `(first (str/split text #\"\\s+\"))` lookup.
+
+   Declared near `recap-marker` because the paint dispatch (which
+   reads it) lives in the same paint loop, hundreds of lines above
+   the recap row builders."
+  #{"TITLE" "TASK" "SPEC" "FACT" "RECAP"})
+
 (def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
 (def ^:private code-pad-marker   p/MARKER_CODE_PAD)
 (def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
@@ -1833,21 +1846,74 @@
                       (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
 
-              ;; ── Iteration recap - terminal-bg, BOLD + ITALIC ──
-              ;; No bubble-wide fill: recap text breathes on the bare
-              ;; transcript background so it cannot be mistaken for the
-              ;; iteration-header chrome. The bold + italic styling
-              ;; (plus the leading `* Recap:` bullet) is what calls the
-              ;; row out; surrounding pad rows render as truly empty
-              ;; terminal-bg rows so the block has visible top + bottom
-              ;; breathing room.
+              ;; ── Iteration recap — pi-style triple-zone paint ──
+              ;;
+              ;; Each recap line carries `:meta {:recap-kind :task |
+              ;; :spec | :fact | :title | :recap}` so we can paint a
+              ;; per-kind accent without changing the marker scheme.
+              ;;
+              ;; Layout (terminal-bg throughout):
+              ;;   col 0       — marker (zero-width sentinel)
+              ;;   col 1       — leading pad (single space)
+              ;;   col 2       — gutter glyph `▎` in kind-fg
+              ;;   col 3       — pad
+              ;;   col 4..N    — badge token (TASK / SPEC / …) in
+              ;;                 kind-fg, BOLD
+              ;;   col N+2..   — body in dialog-hint, BOLD + ITALIC
+              ;;
+              ;; Falls back to the old uniform paint when the line
+              ;; lacks a recognised badge (legacy recaps, untagged
+              ;; rows, defensive guard for shape drift).
                     (str/starts-with? line recap-marker)
-                    (let [raw (subs line 1)]
-                      (p/set-colors! g t/dialog-hint t/terminal-bg)
-                      (p/styled g [p/BOLD p/ITALIC]
-                        (p/paint-styled-line! g x y raw
-                          t/dialog-hint t/terminal-bg
-                          t/code-block-fg t/code-block-bg)))
+                    (let [raw         (subs line 1)
+                          recap-kind  (:recap-kind meta)
+                          kind-fg     (case recap-kind
+                                        :task   t/tool-color-edit
+                                        :spec   t/tool-color-meta
+                                        :fact   t/tool-color-read
+                                        :title  t/md-h1-fg
+                                        :recap  t/dialog-hint-key
+                                        t/dialog-hint)
+                          trimmed     (str/triml raw)
+                          parts       (str/split trimmed #"\s+" 2)
+                          badge-token (first parts)
+                          rest-text   (or (second parts) "")
+                          badge?      (and recap-kind
+                                        (contains? recap-kinds badge-token))]
+                      (if-not badge?
+                        ;; Untagged or first-wrap continuation row —
+                        ;; same legacy paint.
+                        (do (p/set-colors! g t/dialog-hint t/terminal-bg)
+                          (p/styled g [p/BOLD p/ITALIC]
+                            (p/paint-styled-line! g x y raw
+                              t/dialog-hint t/terminal-bg
+                              t/code-block-fg t/code-block-bg)))
+                        ;; Tagged head row — paint gutter + badge + body.
+                        (let [gutter-x (inc x)              ; col after leading pad
+                              badge-x  (+ gutter-x 2)       ; ▎ + space
+                              body-x   (+ badge-x (count badge-token) 2)]
+                          ;; Leading pad space first — keeps the band
+                          ;; aligned with the surrounding chrome.
+                          (p/set-colors! g t/dialog-hint t/terminal-bg)
+                          (p/put-str! g x y " ")
+                          ;; Gutter glyph in kind color.
+                          (p/set-colors! g kind-fg t/terminal-bg)
+                          (p/styled g [p/BOLD]
+                            (p/put-str! g gutter-x y "▎"))
+                          (p/put-str! g (inc gutter-x) y " ")
+                          ;; Badge token — kind-fg, BOLD.
+                          (p/set-colors! g kind-fg t/terminal-bg)
+                          (p/styled g [p/BOLD]
+                            (p/put-str! g badge-x y badge-token))
+                          ;; Two-space separator between badge and body.
+                          (p/set-colors! g t/dialog-hint t/terminal-bg)
+                          (p/put-str! g (+ badge-x (count badge-token)) y "  ")
+                          ;; Body — dialog-hint, BOLD + ITALIC, inline
+                          ;; sentinels honoured.
+                          (p/styled g [p/BOLD p/ITALIC]
+                            (p/paint-styled-line! g body-x y rest-text
+                              t/dialog-hint t/terminal-bg
+                              t/code-block-fg t/code-block-bg)))))
 
               ;; ── Thinking - dimmed bg, italic ──
               ;; Inline span sentinels (**bold** etc.) embedded in
@@ -3011,25 +3077,41 @@
             msg    (or (:message error) (some-> (:body data) str str/trim) (str (:type error)) "provider error")]
         (str "Provider error" (when status (str " HTTP " status)) ": " msg)))))
 
+(defn- recap-kind-of
+  "Tag a raw recap row with its kind by reading the leading badge
+   token. `nil` for unrecognised rows — the painter falls back to
+   neutral recap styling, same as before."
+  [^String text]
+  (let [token (some-> text (str/split #"\s+" 2) first)]
+    (when (contains? recap-kinds token)
+      (keyword (str/lower-case token)))))
+
+(defn- recap-row-entries
+  "Wrap one recap body to `pad-w` and tag every produced row with
+   `:meta {:kind :recap :recap-kind <kind>}`. The paint dispatch in
+   `paint-iteration!` reads `:recap-kind` to pick the gutter + badge
+   color so each engine event (`TITLE`/`TASK`/`SPEC`/`FACT`/`RECAP`)
+   gets its own pi-style accent without touching the marker scheme."
+  [body pad-w]
+  (let [kind (recap-kind-of body)]
+    (mapv (fn [line]
+            {:line (str recap-marker " " line)
+             :meta {:kind :recap :recap-kind kind}})
+      (wrap-text body pad-w))))
+
 (defn- recap-entries
-  [line-entry recaps fill-w]
+  [_line-entry recaps fill-w]
   (when (seq recaps)
     (let [pad-w (max 1 (dec fill-w))]
       (vec
         (mapcat (fn [recap]
-                  ;; Single leading space inside the header-bg zone gives
-                  ;; Recap rows the same left breathing room as thinking
-                  ;; content (`(str thinking-marker " " %)`), so the bubble
-                  ;; no longer paints Recap text flush against the marker
-                  ;; column. wrap-text width drops by 1 to compensate.
-                  ;;
-                  ;; Pi-style line: `RECAP <body>`. The whole row is
-                  ;; already painted bold+italic by the marker handler
-                  ;; in `paint-iteration!`, so the leading `RECAP`
-                  ;; token reads as a bold badge — same visual
-                  ;; vocabulary as foundation tool previews.
-                  (map #(line-entry (str recap-marker " " %))
-                    (wrap-text (str "RECAP  " recap) pad-w)))
+                  ;; Generic `:recaps` strings get a leading `RECAP`
+                  ;; badge so they share the pi-style vocabulary with
+                  ;; the engine-mutation recap rows produced by
+                  ;; `render-segment-title-entries`. The painter
+                  ;; reads the kind off `:meta` (see
+                  ;; `recap-row-entries`).
+                  (recap-row-entries (str "RECAP  " recap) pad-w))
           recaps)))))
 
 (defn- code-source-from-render-segments
@@ -3092,18 +3174,16 @@
 
 (defn- render-segment-title-entries
   "Recap rows for ctx-mutation render segments. Covers title /
-   task-set! / spec-set! / fact-set!. Each row paints bold+italic on
-   terminal-bg via the recap-marker handler in `paint-iteration!`,
-   so the leading pi-style label (`TITLE` / `TASK` / `SPEC` / `FACT`)
-   reads as a bold badge — same vocabulary as foundation tool
-   previews."
-  [line-entry segments fill-w]
+   task-set! / spec-set! / fact-set!. Each produced row carries
+   `:meta {:kind :recap :recap-kind <kw>}` so the paint dispatch in
+   `paint-iteration!` can pick a kind-specific gutter / badge color
+   — same vocabulary as foundation tool previews."
+  [_line-entry segments fill-w]
   (let [pad-w (max 1 (dec fill-w))]
     (vec
       (mapcat (fn [seg]
                 (when-let [text (segment->recap-text seg)]
-                  (map #(line-entry (str recap-marker " " %))
-                    (wrap-text text pad-w))))
+                  (recap-row-entries text pad-w)))
         segments))))
 
 (defn- format-iteration-entry-entries

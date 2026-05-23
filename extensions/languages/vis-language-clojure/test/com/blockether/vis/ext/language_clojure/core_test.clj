@@ -58,3 +58,36 @@
 
   (it "stays dark when :workspace/root is missing"
     (expect (false? ((activation-fn) {})))))
+
+(defn- classpath-manifests
+  "Return every parsed `META-INF/vis-extension/vis.edn` on the classpath.
+   `io/resource` only yields the FIRST match (whichever jar loads first),
+   but the scanner walks `getResources` — mirror that here so the test
+   sees this extension's manifest even when another extension is also
+   on the test classpath."
+  []
+  (let [cl (.getContextClassLoader (Thread/currentThread))
+        urls (enumeration-seq (.getResources cl "META-INF/vis-extension/vis.edn"))]
+    (mapv (fn [u] (read-string (slurp u))) urls)))
+
+(defdescribe manifest-discovery-test
+  ;; Regression: the extension was invisible because
+  ;; `resources/META-INF/vis-extension/vis.edn` did not exist. With no
+  ;; manifest the classpath scanner skips the namespace, the ns is
+  ;; never `require`d, `(vis/register-extension! …)` never runs, and
+  ;; `clj/` shows up nowhere — see conversation
+  ;; 11d4f817-fbd1-43ab-a6b4-052c8557af0a issue #3
+  ;; (\"Dlaczego CLOJURE extension nie jest widoczny?!\"). The manifest
+  ;; is the public discovery contract; keep it pinned by a test so
+  ;; nobody silently deletes it again.
+  (it "ships a vis-extension manifest with the language-clojure id on the classpath"
+    (let [manifests (classpath-manifests)
+          merged    (reduce merge {} manifests)]
+      (expect (seq manifests))
+      (expect (contains? merged 'language-clojure))))
+
+  (it "manifest registers the core namespace under the language-clojure id"
+    (let [manifests (classpath-manifests)
+          merged    (reduce merge {} manifests)]
+      (expect (some #{'com.blockether.vis.ext.language-clojure.core}
+                (get-in merged ['language-clojure :nses]))))))

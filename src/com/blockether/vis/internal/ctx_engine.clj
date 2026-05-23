@@ -1530,32 +1530,48 @@
      :else           v)))
 
 (defn block->envelope
-  "Project one loop-side block `{:code :result :error}` plus its 1-based
-   position and the engine cursor into the per-form envelope shape:
+  "Project one loop-side block `{:code :result :error :channel}` plus its
+   1-based position and the engine cursor into the per-form envelope
+   shape:
 
-     {:scope :tag :src :result :error}
+     {:scope :tag :src :result :error :channel}
 
    `:src` carries the form's source text; `:tag` is derived from the
    source via `classify-form-tag`. `:result` is included only when the
    block has one (engine convention: drop on default/nil). `:error` is
-   included only when the block errored.
+   included only when the block errored. `:channel` is included only
+   when the form actually called one or more extension tools.
 
    For `(def NAME …)` forms the raw SCI return is the Var; deref it once
    so the trailer carries the bound value directly. Every result is also
    walked through `realize-trailer-value` so lazy seqs land as data—the
    model used to see `#:vis{:ref :expr}` after persistence flattened
-   unrealized seqs."
+   unrealized seqs.
+
+   Why `:channel` is carried through (regression: conversation
+   11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 2 \"show me ls\"): the
+   model wraps tool calls in `(def r (v/ls \".\"))` per the engine
+   contract (\"bind values to defs\"). SCI's `def` unwraps the tool
+   envelope to its inner `:result` value before binding `r`, so the
+   block's `:result` is a plain map without `:success?` and the TUI's
+   `render-tool-result` cannot dispatch to the v/ls renderer — no
+   widget/badge. The pre-rendered IR for every call already lives in
+   the per-form channel-sink under `:channel`; carrying it onto the
+   envelope lets the TUI replay paint the badge from the sink entry
+   even after persistence + restore."
   [block position cursor]
   (let [src (or (:code block) (:src block) "")
         scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
         raw-result (:result block)
         result (cond-> raw-result (def-form-src? src) deref-def-result)
-        result (realize-trailer-value result)]
+        result (realize-trailer-value result)
+        channel (seq (:channel block))]
     (cond-> {:scope scope
              :tag   (classify-form-tag src)
              :src   src}
       (contains? block :result) (assoc :result result)
-      (some? (:error block))    (assoc :error  (:error block)))))
+      (some? (:error block))    (assoc :error  (:error block))
+      channel                   (assoc :channel (vec channel)))))
 
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`

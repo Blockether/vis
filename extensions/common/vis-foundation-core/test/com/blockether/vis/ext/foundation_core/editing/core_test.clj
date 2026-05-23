@@ -1348,6 +1348,38 @@
       (expect (true? (delete-if-exists path)))
       (expect (false? (exists? path)))))
 
+  (it "v/exists? tool returns the canonical {:vis.op :v/exists? :path :exists?} map (envelope-shape consistency)"
+    ;; Regression for conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
+    ;; turn 4 iter 1→2:
+    ;;   model wrote `(def ports (v/exists? \".nrepl-port\"))` then
+    ;;   `(:exists? ports)`, expecting the map shape every other `v/*`
+    ;;   tool returns. The old `exists-tool` returned a bare boolean
+    ;;   so `(:exists? true)` evaluated to `nil` and the model burned
+    ;;   an iter realizing \"v/exists? is returning true directly rather
+    ;;   than a map containing an :exists? key\".
+    ;; Fix: every v/* tool returns a map keyed on :vis.op for shape
+    ;; consistency; bare booleans are no longer a supported result.
+    (let [present-path (write-temp! "exists-shape/yes.txt" "x")
+          missing-path "exists-shape/no.txt"
+          exists-tool  (private-fn "exists-tool")
+          present (:result (exists-tool present-path))
+          missing (:result (exists-tool missing-path))]
+      (expect (map? present))
+      (expect (= :v/exists? (:vis.op present)))
+      (expect (true? (:exists? present)))
+      (expect (= present-path (:path present)))
+      (expect (map? missing))
+      (expect (= :v/exists? (:vis.op missing)))
+      (expect (false? (:exists? missing)))
+      (expect (= missing-path (:path missing)))))
+
+  (it "editing-prompt documents v/exists?'s map-shape return so the model destructures :exists?"
+    ;; Without explicit prompt guidance the model treated v/exists? as
+    ;; a bare boolean (see conv 11d4f817-fbd1-43ab-a6b4-052c8557af0a t4).
+    ;; The prompt must say so directly.
+    (expect (string/includes? editing/editing-prompt ":vis.op :v/exists?"))
+    (expect (string/includes? editing/editing-prompt ":exists?")))
+
   (it "bash helpers fully removed from the editing core"
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "run-bash-safe"))))
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "bash-tool"))))
