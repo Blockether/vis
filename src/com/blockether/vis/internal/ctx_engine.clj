@@ -772,6 +772,51 @@
               " (" (:reason res)
               (when-let [d (:detail res)] (str ": " (pr-str d))) ")")))))))
 
+(def ^:private rebind-loop-threshold
+  "Number of consecutive trailer pins binding the same def-name that
+   trigger a `:trailer-rebind-loop` advisory. 3 catches a real loop
+   (model repeating the same `(def x …)` over and over) without
+   flagging healthy refinement (typical 1-2 retries)."
+  3)
+
+(def ^:private rebind-loop-name-re
+  #"^\(\s*def(?:n|n-|macro|multi)?\s+([A-Za-z_*+!?<>=/.-][A-Za-z0-9_*+!?<>=/.\-]*)")
+
+(defn- form-def-name
+  [form]
+  (when-let [src (some-> (:src form) str str/triml)]
+    (when-let [[_ n] (re-find rebind-loop-name-re src)]
+      n)))
+
+(defn- pin-def-names
+  [entry]
+  (into #{}
+    (keep form-def-name)
+    (:forms entry)))
+
+(defn- pass-rebind-loop
+  "Surface advisory when the tail of `:session/trailer` repeats the same
+   `(def NAME …)` binding `rebind-loop-threshold` times in a row. Rebinding
+   is intentional model behaviour and stays allowed; the warning gives the
+   model a clear signal that the current tactic is not converging so it can
+   switch to a different probe instead of looping silently. Forms pins only;
+   summary entries do not count."
+  [ctx _indexes]
+  (let [trailer (vec (or (:session/trailer ctx) []))
+        forms-pins (filterv :forms trailer)]
+    (when (>= (count forms-pins) rebind-loop-threshold)
+      (let [tail (subvec forms-pins
+                   (max 0 (- (count forms-pins) rebind-loop-threshold)))
+            name-sets (mapv pin-def-names tail)
+            common (apply set/intersection name-sets)]
+        (for [n (sort common)]
+          (warn :trailer-rebind-loop [n]
+            (str "`(def " n " …)` has been rebound "
+              rebind-loop-threshold "+ iters in a row."
+              " The current tactic is not converging—switch to a"
+              " different probe or call `(done {:trailer-summarize …})`"
+              " before another rebind.")))))))
+
 (defn derive-warnings
   "Run every invariant pass and return a sorted, deduped vec of warning maps.
    `form-results` may be nil for off-line / write-time use; pass it from the
@@ -786,7 +831,8 @@
           (pass-spec-done-coverage    ctx indexes)
           (pass-task-done-deps        ctx indexes)
           (pass-scope-classification  ctx indexes form-results)
-          (pass-validators            ctx indexes form-results))
+          (pass-validators            ctx indexes form-results)
+          (pass-rebind-loop           ctx indexes))
      distinct
      (sort-by (juxt :code (comp str :anchor)))
      vec)))
@@ -874,65 +920,30 @@
                             current-form-scope))))
           (or trailer []))))))
 
-(def ^:private def-name-re
-  "Captures NAME from a top-level `(def NAME ...)` source. The model often
-   rebinds the same var across iterations with different tool arguments;
-   without dedup the trailer accumulates every attempt and the model loses
-   the signal that `persist` already exists, looping with fresh search
-   terms."
-  #"^\(\s*def(?:n|n-|macro|multi)?\s+([A-Za-z_*+!?<>=/.-][A-Za-z0-9_*+!?<>=/.\-]*)")
-
-(defn- form-def-name
-  [form]
-  (when-let [src (some-> (:src form) str str/triml)]
-    (when-let [[_ n] (re-find def-name-re src)]
-      n)))
-
-(defn- pin-def-names
-  [entry]
-  (into #{}
-    (keep form-def-name)
-    (:forms entry)))
-
-(defn- dedup-rebound-defs
-  "Drop earlier pins whose def-names the current iter rebinds. The runtime
-   binding for that name no longer holds, so the persisted pin is misleading;
-   keeping only the latest binding pin teaches the model that one attempt
-   landed instead of N."
-  [trailer current-pin]
-  (let [current-names (pin-def-names current-pin)]
-    (if (empty? current-names)
-      (vec trailer)
-      (vec
-        (remove (fn [entry]
-                  (let [names (pin-def-names entry)]
-                    (and (seq names)
-                      (some current-names names))))
-          trailer)))))
-
 (defn advance-iter
   "Append a trailer pin for the just-finished iter (if it had any non-done
    form-results) and advance the cursor so the next iter starts at
    :iter (current+1) :next-form 1. `form-results-vec` is the ordered vec of
    `{:scope :tag :src :result :error}` envelopes captured during the iter.
    Forms whose src begins with `(done` are excluded from the pin. Observation-
-   only pins carry forward until a later mutation makes them stale. Pins that
-   bind a def-name later rebound in `keepable` are dropped so the trailer
-   reflects only the live SCI bindings."
+   only pins carry forward until a later mutation makes them stale.
+
+   Rebinding the same def is intentional model behaviour (each iter
+   refines arguments / inspects shapes). Pins from earlier rebinds stay
+   in the trailer so the model can see prior attempts and avoid looping;
+   if a run truly bloats, `(done {:trailer-summarize …})` is the contract
+   to collapse the history."
   [ctx form-results-vec]
   (let [cursor    (:session/scope ctx)
         iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
         keepable  (vec (remove #(str/starts-with? (str (:src %)) "(done")
                          form-results-vec))
-        new-pin   (when (seq keepable) {:scope iter-scope :forms keepable})
         trailer'  (prune-stale-observation-pins
                     (:session/trailer ctx) iter-scope keepable)
-        trailer'  (if new-pin
-                    (dedup-rebound-defs trailer' new-pin)
-                    trailer')
         ctx*      (assoc ctx :session/trailer trailer')
-        ctx'      (if new-pin
-                    (update ctx* :session/trailer (fnil conj []) new-pin)
+        ctx'      (if (seq keepable)
+                    (update ctx* :session/trailer (fnil conj [])
+                      {:scope iter-scope :forms keepable})
                     ctx*)]
     (assoc ctx' :session/scope
       (-> cursor (update :iter inc) (assoc :next-form 1)))))
