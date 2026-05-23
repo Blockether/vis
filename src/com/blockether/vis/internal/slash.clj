@@ -82,19 +82,34 @@
   (vec (mapcat :ext/slash-commands (extension/registered-extensions))))
 
 (defn- index-by-path
-  "Build {path-vec slash-spec} from a vec of slash specs."
+  "Build `{path-vec [slash-spec ...]}` from a vec of slash specs.
+   Multiple specs may share a path when their availability-fn
+   predicates partition the channel set (e.g. TUI `/voice` and
+   Telegram `/voice` registered by separate extensions). Per-path
+   vec is in registration order."
   [slashes]
-  (reduce (fn [acc s] (assoc acc (extension/slash-path s) s))
+  (reduce (fn [acc s]
+            (update acc (extension/slash-path s) (fnil conj []) s))
     {}
     slashes))
 
+(defn- spec-available-for?
+  "True when `spec` permits dispatch for `ctx` per its
+   `:slash/availability-fn` (or always-true when absent)."
+  [spec ctx]
+  (if-let [f (:slash/availability-fn spec)]
+    (try (boolean (f ctx)) (catch Throwable _ false))
+    true))
+
 (defn slash-by-path
   "Return the slash spec whose full path = `path`, or nil. `path` is a
-   non-empty vec of names like `[\"workspace\" \"apply\"]`."
+   non-empty vec of names like `[\"workspace\" \"apply\"]`. When
+   multiple specs share the path (per-channel partitioning), returns
+   the first registered."
   [env path]
   (let [path (vec path)]
     (when (seq path)
-      (get (index-by-path (active-slashes env)) path))))
+      (first (get (index-by-path (active-slashes env)) path)))))
 
 (defn slash-children
   "Return the vec of slash specs whose `:slash/parent` = `parent` vec.
@@ -144,17 +159,26 @@
 
 (defn- resolve-longest-prefix
   "Walk the token vec back-to-front and return the deepest prefix
-   that resolves to a registered slash. Returns
-   `{:path :args :slash}` or nil."
-  [env tokens]
+   that resolves to a registered slash. When multiple specs share
+   the same path with disjoint availability predicates, prefer the
+   first whose predicate accepts `ctx`; otherwise fall back to the
+   first spec at that path so the dispatcher can surface
+   `:reason :unavailable` (rather than masking the slash as
+   `:unknown`). Returns `{:path :args :slash}` or nil."
+  [env ctx tokens]
   (let [by-path (index-by-path (active-slashes env))]
     (loop [n (count tokens)]
       (when (pos? n)
-        (let [prefix (subvec tokens 0 n)]
-          (if-let [s (get by-path prefix)]
-            {:path prefix
-             :args (vec (subvec tokens n))
-             :slash s}
+        (let [prefix (subvec tokens 0 n)
+              specs  (get by-path prefix)]
+          (if (seq specs)
+            (let [chosen (or (some (fn [spec]
+                                     (when (spec-available-for? spec ctx) spec))
+                               specs)
+                           (first specs))]
+              {:path prefix
+               :args (vec (subvec tokens n))
+               :slash chosen})
             (recur (dec n))))))))
 
 ;; =============================================================================
@@ -196,7 +220,7 @@
     (let [tokens (tokenize text)]
       (if (empty? tokens)
         {:handled? true :error "Empty slash command" :reason :unknown}
-        (if-let [{:keys [path args slash]} (resolve-longest-prefix env tokens)]
+        (if-let [{:keys [path args slash]} (resolve-longest-prefix env ctx tokens)]
           (let [ctx*    (assoc ctx
                           :command/path path
                           :command/argv args
@@ -210,13 +234,12 @@
                :missing  missing
                :path     path}
 
-              (and (:slash/availability-fn slash)
-                (not (try (boolean ((:slash/availability-fn slash) ctx*))
-                       (catch Throwable t
-                         (tel/log! {:level :warn :id ::availability-fn-threw
-                                    :data  {:path  path
-                                            :error (ex-message t)}})
-                         false))))
+              ;; resolve-longest-prefix already filtered on
+              ;; availability against the OUTER `ctx`; re-check
+              ;; against `ctx*` (with :command/path stamped) so a
+              ;; spec whose availability depends on path/args still
+              ;; has a chance to refuse.
+              (not (spec-available-for? slash ctx*))
               {:handled? true
                :error    (str "Slash " (pr-str path) " not available in this context")
                :reason   :unavailable

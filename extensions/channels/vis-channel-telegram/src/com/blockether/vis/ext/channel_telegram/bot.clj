@@ -12,6 +12,7 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
+            [com.blockether.vis.internal.extension :as extension]
             [taoensso.telemere :as tel])
   (:import
    (java.lang ProcessBuilder$Redirect ProcessHandle)
@@ -81,22 +82,6 @@
    :openai-codex-verbosity :low
    :voice-mode :off})
 
-(def ^:private bot-menu-commands-before-voice
-  [{"command" "help"      "description" "Show Vis help"}
-   {"command" "status"    "description" "Show session/model/status"}
-   {"command" "model"     "description" "Show current model"}
-   {"command" "models"    "description" "List and choose models"}
-   {"command" "reasoning" "description" "Show or set reasoning effort"}
-   {"command" "verbosity" "description" "Show or set Codex verbosity"}])
-
-(def ^:private bot-menu-command-voice
-  {"command" "voice" "description" "Show or set voice mode"})
-
-(def ^:private bot-menu-commands-after-voice
-  [{"command" "cancel"  "description" "Cancel current request"}
-   {"command" "restart" "description" "Restart the bot in a fresh JVM"}
-   {"command" "export"  "description" "Export session as Markdown"}])
-
 (defn- voice-input-extension? []
   (boolean (requiring-resolve 'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)))
 
@@ -106,11 +91,36 @@
 (defn- voice-extension? []
   (or (voice-input-extension?) (voice-output-extension?)))
 
-(defn- bot-menu-commands []
-  (vec
-    (concat bot-menu-commands-before-voice
-      (when (voice-extension?) [bot-menu-command-voice])
-      bot-menu-commands-after-voice)))
+(defn- slash-available-for-telegram?
+  "True when `slash-spec` is allowed to surface on the Telegram bot.
+   Uses `:slash/availability-fn` when present (synthesising a
+   `:channel/id :telegram` ctx) and falls back to allowing any spec
+   without an availability gate."
+  [slash-spec]
+  (if-let [f (:slash/availability-fn slash-spec)]
+    (try (boolean (f {:channel/id :telegram})) (catch Throwable _ false))
+    true))
+
+(defn- bot-menu-commands
+  "Build the Telegram bot's `setMyCommands` payload from the engine
+   slash registry (PLAN.md §12 step 9). Only top-level slashes
+   surface; Telegram's bot menu cannot render nested commands.
+   Filtered by `:slash/availability-fn` so TUI-only entries don't
+   leak into the Telegram menu; specs marked `:slash/hidden? true`
+   (e.g. `/start` alias) are dispatched normally but excluded from
+   the menu. The /voice entry is filtered out entirely when no
+   voice extension is loaded (matches legacy bot-menu behaviour
+   pre-step-9)."
+  []
+  (let [voice? (voice-extension?)]
+    (vec
+      (for [spec (vis/registered-slashes)
+            :when (and (empty? (:slash/parent spec))
+                    (not (:slash/hidden? spec))
+                    (slash-available-for-telegram? spec)
+                    (or voice? (not= "voice" (:slash/name spec))))]
+        {"command"     (:slash/name spec)
+         "description" (or (:slash/doc spec) (str "/" (:slash/name spec)))}))))
 
 (defn- extract-text [message] (or (:text message) (:caption message)))
 
@@ -991,36 +1001,63 @@
     (vis/markdown->ir
       (if (seq markdown) markdown "No persisted turns to export yet."))))
 
-(defn- parse-command [text]
-  (let [text (str/trim (or text ""))]
-    (when (str/starts-with? text "/")
-      (let [[raw & _] (str/split text #"\s+" 2)
-            cmd       (-> raw
-                        (str/replace #"@.*$" "")
-                        str/lower-case)
-            arg       (str/trim (subs text (min (count text) (count raw))))]
-        {:cmd cmd :arg arg}))))
+;; ----------------------------------------------------------------------------
+;; Slash dispatch (PLAN.md §12 step 9 — K9 cutover)
+;;
+;; The hand-rolled `parse-command` + `handle-command!` slash tree is
+;; GONE. Every Telegram slash now lives as a declarative entry on the
+;; vis-channel-telegram extension's `:ext/slash-commands` (built
+;; further down). Incoming text is tokenised by `vis/slash-parse`
+;; and dispatched through the engine `slash/dispatch` infrastructure
+;; against the global registry. Channel-private commands
+;; (`/help`, `/status`, ...) ship with `:slash/availability-fn`
+;; restricted to `:channel/id :telegram` so they don't bleed into
+;; the TUI palette.
+;;
+;; Reply markups (Telegram inline keyboards) flow back via the
+;; `:slash/data {:reply-markup ...}` slot on the envelope; the
+;; dispatcher below extracts and threads them into `send!`.
+;; ----------------------------------------------------------------------------
 
-(defn- handle-command! [token chat-id text]
-  (when-let [{:keys [cmd arg]} (parse-command text)]
-    (let [{:keys [message reply-markup]}
-          (case cmd
-            "/start"     {:message (command-help)}
-            "/help"      {:message (command-help)}
-            "/status"    {:message (command-status chat-id)}
-            "/model"     {:message (command-model)}
-            "/models"    (command-models arg)
-            "/reasoning" {:message (command-reasoning chat-id arg)}
-            "/verbosity" {:message (command-verbosity chat-id arg)}
-            "/voice"     (command-voice chat-id arg)
-            "/cancel"    {:message (command-cancel chat-id)}
-            "/restart"   {:message (command-restart)}
-            "/export"    {:message (command-export chat-id)}
-            ;; Unknown command — build IR directly to keep the strict
-            ;; contract.
-            {:message (vis/markdown->ir (str "Unknown command: " cmd))})]
-      (send! token chat-id message {:reply-markup reply-markup})
-      true)))
+(defn- slash-env []
+  ;; A throwaway env shape that mirrors what `prompt/active-extensions`
+  ;; reads: an `:extensions` atom holding every registered extension.
+  ;; Activation-fn filtering passes through every registered extension
+  ;; here (channels surface slash UX before a per-turn env exists).
+  {:extensions (atom (vec (extension/registered-extensions)))})
+
+(defn- handle-slash!
+  "Cross-channel slash dispatch entry. Returns `true` when the engine
+   handled the text as a slash (with the answer / error sent to the
+   chat); `false` when the text is not a slash and should flow to
+   `handle-user-text!` for a normal LLM turn."
+  [token chat-id text]
+  (when (vis/slash-parse text)
+    (let [{:keys [id]}  (vis/for-telegram-chat! chat-id)
+          db-info       (vis/db-info)
+          ctx           {:channel/id       :telegram
+                         :session/id       id
+                         :telegram/chat-id chat-id
+                         :db-info          db-info
+                         :command/raw      text}
+          result        (vis/slash-dispatch (slash-env) ctx text)]
+      (cond
+        (not (:handled? result))
+        false
+
+        (:error result)
+        (do (send! token chat-id
+              (vis/markdown->ir (str "**Slash error** (" (name (or (:reason result) :error)) ")\n\n"
+                                  (:error result))))
+          true)
+
+        :else
+        (let [r           (:result result)
+              body        (or (:slash/body r)
+                            (vis/markdown->ir (or (:slash/title r) "Slash handled")))
+              reply-markup (get-in r [:slash/data :reply-markup])]
+          (send! token chat-id body {:reply-markup reply-markup})
+          true)))))
 
 (defn- answer->markdown-string
   "Extract the Markdown string from a turn-result `:answer` field.
@@ -1244,7 +1281,7 @@
 
           text
           (do
-            (when-not (handle-command! token chat-id text)
+            (when-not (handle-slash! token chat-id text)
               (handle-user-text! token chat-id text sender))
             true)
 
@@ -1363,6 +1400,114 @@
     :cmd/usage  "vis channels telegram restart"
     :cmd/run-fn #'telegram-restart-command}])
 
+;; ----------------------------------------------------------------------------
+;; Telegram-private slash specs (PLAN.md §12 step 9, K9 cutover)
+;;
+;; Each entry is a declarative `:slash/*` spec routed through the
+;; engine slash registry. Run-fns delegate to the existing
+;; command-* helpers and wrap their return in the canonical
+;; envelope shape:
+;;
+;;   {:slash/status :ok
+;;    :slash/body   <IR>
+;;    :slash/data   {:reply-markup <inline-keyboard?>}}
+;;
+;; `handle-slash!` extracts `:reply-markup` from `:slash/data` so
+;; the inline keyboards (models / voice mode pickers) survive the
+;; engine round-trip. `:slash/availability-fn` pins every spec to
+;; the Telegram channel so the entries never leak into TUI.
+;; ----------------------------------------------------------------------------
+
+(defn- telegram-only-channel? [ctx]
+  (= :telegram (:channel/id ctx)))
+
+(defn- ctx-chat-id [ctx]
+  (or (:telegram/chat-id ctx)
+    ;; Engine-side slash dispatch (no chat-id stamped). Resolve from
+    ;; the session_soul.external_id column.
+    (when-let [db (:db-info ctx)]
+      (when-let [sid (:session/id ctx)]
+        (try (some-> (vis/db-get-session db sid) :external-id)
+          (catch Throwable _ nil))))))
+
+(defn- argv-arg [ctx]
+  (str/join " " (:command/argv ctx)))
+
+(defn- ok-ir [ir]
+  {:slash/status :ok :slash/body ir})
+
+(defn- ok-msg [{:keys [message reply-markup]}]
+  (cond-> {:slash/status :ok :slash/body message}
+    reply-markup (assoc :slash/data {:reply-markup reply-markup})))
+
+;; Slash specs in `setMyCommands` order: help, status, model, models,
+;; reasoning, verbosity, voice, cancel, restart, export. `/start`
+;; ships as a hidden alias for `/help` (no menu entry).
+(def ^:private telegram-menu-slash-specs
+  [{:slash/name "help"
+    :slash/doc  "Show Vis help"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [_ctx] (ok-ir (command-help)))}
+   {:slash/name "status"
+    :slash/doc  "Show session/model/status"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-ir (command-status (ctx-chat-id ctx))))}
+   {:slash/name "model"
+    :slash/doc  "Show current model"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [_ctx] (ok-ir (command-model)))}
+   {:slash/name "models"
+    :slash/doc  "List and choose models"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-msg (command-models (argv-arg ctx))))}
+   {:slash/name "reasoning"
+    :slash/doc  "Show or set reasoning effort"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-ir (command-reasoning (ctx-chat-id ctx) (argv-arg ctx))))}
+   {:slash/name "verbosity"
+    :slash/doc  "Show or set Codex verbosity"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-ir (command-verbosity (ctx-chat-id ctx) (argv-arg ctx))))}
+   ;; /voice has Telegram-specific semantics (mode picker +
+   ;; inline keyboard); vis-foundation-voice registers a
+   ;; separate /voice for the TUI. The two specs do NOT collide
+   ;; because their `:slash/availability-fn` predicates partition
+   ;; the channel set.
+   ;; /voice is always reachable on Telegram — command-voice itself
+   ;; surfaces the 'voice not loaded' message when the runtime
+   ;; doesn't have ASR/TTS available. Restricting availability
+   ;; here would render a confusing 'unavailable' envelope when
+   ;; voice is genuinely off.
+   {:slash/name "voice"
+    :slash/doc  "Show or set voice mode"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-msg (command-voice (ctx-chat-id ctx) (argv-arg ctx))))}
+   {:slash/name "cancel"
+    :slash/doc  "Cancel current request"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-ir (command-cancel (ctx-chat-id ctx))))}
+   {:slash/name "restart"
+    :slash/doc  "Restart the bot in a fresh JVM"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [_ctx] (ok-ir (command-restart)))}
+   {:slash/name "export"
+    :slash/doc  "Export session as Markdown"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-ir (command-export (ctx-chat-id ctx))))}])
+
+;; Hidden Telegram slashes — dispatched normally but excluded from
+;; `setMyCommands`. `/start` aliases `/help` so first-time users get
+;; the help text without polluting the menu.
+(def ^:private telegram-hidden-slash-specs
+  [{:slash/name "start"
+    :slash/doc  "Show Vis help (alias)"
+    :slash/availability-fn telegram-only-channel?
+    :slash/hidden? true
+    :slash/run-fn (fn [_ctx] (ok-ir (command-help)))}])
+
+(def ^:private telegram-slash-specs
+  (vec (concat telegram-menu-slash-specs telegram-hidden-slash-specs)))
+
 (vis/register-extension!
   (vis/extension
     {:ext/name      "channel-telegram"
@@ -1371,6 +1516,7 @@
      :ext/author    "Blockether"
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
+     :ext/slash-commands telegram-slash-specs
      :ext/channels  [{:channel/id      :telegram
                       :channel/cmd     "telegram"
                       :channel/doc     "Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)."

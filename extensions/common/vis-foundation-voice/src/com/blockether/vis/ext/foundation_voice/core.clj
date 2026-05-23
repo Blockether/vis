@@ -724,13 +724,19 @@
      ;; slash registry. Until step 8 wires the TUI keybind through
      ;; `slash-dispatch`, Ctrl+B keeps no-opping at the TUI layer
      ;; (the slash itself is fully live in the registry).
+     ;; PLAN.md §12 step 9 follow-up: the TUI variant of /voice
+     ;; toggles recording via input/toggle-recording!. The Telegram
+     ;; channel has different /voice semantics (mode picker + inline
+     ;; keyboard) and registers its own /voice spec on
+     ;; vis-channel-telegram. K10's 'one registration both channels'
+     ;; intent will land once the per-channel branching surface
+     ;; matures (post-step-12 polish).
      :ext/slash-commands
      [{:slash/name     "voice"
-       :slash/doc      "Toggle voice recording (TUI / Telegram)."
+       :slash/doc      "Toggle voice recording (TUI)."
        :slash/usage    "/voice"
        :slash/requires #{:channel}
-       :slash/availability-fn (fn [{ch :channel/id}]
-                                (contains? #{:tui :telegram} ch))
+       :slash/availability-fn (fn [{ch :channel/id}] (= :tui ch))
        :slash/run-fn   voice-toggle-recording!}]}))
 
 (vis/register-extension! voice-extension)
