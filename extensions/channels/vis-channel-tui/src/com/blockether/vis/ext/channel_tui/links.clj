@@ -22,8 +22,6 @@
   (:require
    [com.blockether.vis.internal.external-opener :as opener]))
 
-(set! *warn-on-reflection* true)
-
 ;; =============================================================================
 ;; Bracket-link tokeniser
 ;; =============================================================================

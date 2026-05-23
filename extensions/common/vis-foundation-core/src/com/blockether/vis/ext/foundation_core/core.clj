@@ -5,6 +5,7 @@
    [com.blockether.vis.ext.foundation-core.environment.core :as environment]
    [com.blockether.vis.ext.foundation-core.introspection :as introspection]
    [com.blockether.vis.ext.foundation-core.hints :as hints]
+   [com.blockether.vis.ext.foundation-core.merge-ops :as merge-ops]
    [com.blockether.vis.ext.foundation-core.workspace-ctx :as workspace-ctx]
    [com.blockether.vis.ext.foundation-core.workspace-slashes :as workspace-slashes]
    [com.blockether.vis.internal.workspace :as workspace]))
@@ -27,7 +28,13 @@
                      :symbol sym})))
     args))
 
-(doseq [[op tag] [[:v/session-state :observation]
+(doseq [[op tag] [[:mr/status :observation]
+                  [:mr/accept-ours :mutation]
+                  [:mr/accept-theirs :mutation]
+                  [:mr/mark-resolved :mutation]
+                  [:mr/continue! :mutation]
+                  [:mr/abort! :mutation]
+                  [:v/session-state :observation]
                   [:v/session-report :observation]
                   [:v/engine-symbol-documentation :observation]
                   [:v/engine-symbol-source-code :observation]
@@ -97,3 +104,25 @@
      :ext/doctor-fn      lazy-doctor-fn}))
 
 (vis/register-extension! vis-extension)
+
+;; ----------------------------------------------------------------------------
+;; Merge-resolve SCI alias `mr/` (PLAN.md §7.2, step 10 follow-up).
+;;
+;; Registered as a SEPARATE extension because :ext.sci/alias is
+;; per-extension. Same package, so the merge ops ship alongside the
+;; rest of foundation-core; no new deps.edn, no new META-INF.
+;; Operations run against `(workspace/cwd)` — the merge-resolve
+;; sub-session pins to the parent workspace whose `:root` is the
+;; conflicting tree (start-merge-resolve! sets up trunk-side merge).
+;; ----------------------------------------------------------------------------
+(vis/register-extension!
+  (vis/extension
+    {:ext/name        "foundation-core.merge"
+     :ext/description "Merge-resolve SCI ops (status / accept-ours / accept-theirs / mark-resolved / continue! / abort!) under the `mr/` alias."
+     :ext/version     "0.1.0"
+     :ext/author      "Blockether"
+     :ext/owner       "vis"
+     :ext/license     "Apache-2.0"
+     :ext/kind        "foundation"
+     :ext/sci         {:ext.sci/alias 'mr
+                       :ext.sci/symbols merge-ops/merge-ops-symbols}}))

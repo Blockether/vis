@@ -1,8 +1,6 @@
 (ns com.blockether.vis.ext.foundation-core.environment.render
   "Build compact foundation environment data for `ctx`. No prompt labels.")
 
-(set! *warn-on-reflection* true)
-
 (defn- compact-runtime
   [{:keys [host git languages monorepo repositories]}]
   (cond-> {:host (select-keys host

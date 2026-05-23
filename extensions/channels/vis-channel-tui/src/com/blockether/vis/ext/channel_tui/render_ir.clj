@@ -37,8 +37,6 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.internal.render :as ir]))
 
-(set! *warn-on-reflection* true)
-
 ;; =============================================================================
 ;; Helpers
 ;; =============================================================================
