@@ -232,4 +232,18 @@
    {:id    :vis.foundation/context-pressure
     :doc   "Warn when assembled input tokens cross ~50% of the model's context window."
     :phase :turn.iteration/start
+    ;; Ephemeral signal — the hint reads the LAST iter's prompt_tokens,
+    ;; which can swing wildly across turns (heavy refactor turn at 60%
+    ;; followed by a one-word "ok" turn at 1%). Letting the resulting
+    ;; hook-task survive across turns turned into a cargo-cult bug:
+    ;; the model marked it `:done` with `:proof` pointing at the
+    ;; `(task-set! …)` form itself, the validator (which expects a
+    ;; `(done …)` / trailer-summarize source) said no, the task stayed
+    ;; in `:session/tasks` as `:done :validated? false` for 6 turns,
+    ;; and the renderer kept surfacing it so the model kept re-marking
+    ;; it on every turn including trivial chat replies (Vis conv
+    ;; 11d4f817 / t14–t16). `:lifetime :turn` drops the task at
+    ;; `advance-turn`; if next turn's input is still over budget the
+    ;; hint re-fires and the task is re-created cleanly.
+    :lifetime :turn
     :fn    context-pressure-hint}])

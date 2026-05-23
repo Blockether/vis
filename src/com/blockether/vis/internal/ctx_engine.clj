@@ -971,21 +971,46 @@
     (when-let [{:keys [turn]} (parse-scope-form (:done-born entry))]
       (>= (- current-turn turn) ttl))))
 
+(defn- turn-lifetime-hook-task?
+  "True for hook-tasks declared `:lifetime :turn` at hook-registration
+   time. These are ephemeral signals (e.g.
+   `:vis.foundation/context-pressure`) that should not survive across
+   turns: if the originating hint condition still holds, the next iter
+   recreates them; if not, they stay gone. Without this prune, a
+   transient warning lingered as a `:done :validated? false` task for
+   6 turns and the model kept emitting `(task-set! … :done)` every
+   turn to silence stale CTX chrome it could never actually resolve
+   (Vis conv 11d4f817 / t14–t16)."
+  [entry]
+  (and (= :hook (:source entry))
+    (= :turn (:lifetime entry))))
+
 (defn gc-pass
   "Drop terminal-status entries past TTL from live CTX. Uses the current
    :session/turn as the reference clock. Returns ctx with affected subtrees
    pared down. Pure: archived entries vanish from ctx but the caller is
-   responsible for snapshotting before calling (so history is reachable)."
+   responsible for snapshotting before calling (so history is reachable).
+
+   On top of the TTL pass, `:session/tasks` also drops every entry
+   registered with hook `:lifetime :turn`. The turn-boundary prune
+   runs regardless of `:status` because turn-lifetime tasks are
+   recreated on demand by the next iter's hook fire."
   [ctx]
   (let [t (:turn (:session/scope ctx))
         gc (fn [subtree etype]
              (into {}
                (for [[k v] (or (get ctx subtree) {})
                      :when (not (entry-due-for-archive? t etype v))]
-                 [k v])))]
+                 [k v])))
+        gc-tasks (fn []
+                   (into {}
+                     (for [[k v] (or (:session/tasks ctx) {})
+                           :when (not (or (entry-due-for-archive? t :task v)
+                                        (turn-lifetime-hook-task? v)))]
+                       [k v])))]
     (-> ctx
       (assoc :session/specs (gc :session/specs :spec))
-      (assoc :session/tasks (gc :session/tasks :task))
+      (assoc :session/tasks (gc-tasks))
       (assoc :session/facts (gc :session/facts :fact)))))
 
 (defn advance-turn

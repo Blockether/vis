@@ -55,7 +55,7 @@
   (it "iteration-start-hook-hit surfaces :emit alongside :task"
     (let [hit @(ns-resolve 'com.blockether.vis.internal.loop
                  'iteration-start-hook-hit)
-          out (hit {:ext/name "test"} :h
+          out (hit {:ext/name "test"} :h nil
                 {:title "do thing"
                  :validator-fn "(fn [_] true)"
                  :emit {:specs {:design/seed {:summary "seed"}}}})]
@@ -63,10 +63,27 @@
       (expect (= "do thing" (:title (:task out))))
       (expect (= {:specs {:design/seed {:summary "seed"}}} (:emit out)))))
 
+  (it "stamps :lifetime onto the hook-task when the hook spec declares one"
+    ;; Lifetime threads from the hook registration spec into the task
+    ;; so gc-pass can prune `:lifetime :turn` entries at advance-turn
+    ;; without consulting the registry at GC time.
+    (let [hit @(ns-resolve 'com.blockether.vis.internal.loop
+                 'iteration-start-hook-hit)
+          out (hit {:ext/name "test"} :h :turn
+                {:title "warn" :validator-fn "(fn [_] true)"})]
+      (expect (= :turn (:lifetime (:task out))))))
+
+  (it "omits :lifetime when the hook spec does not declare one (back-compat)"
+    (let [hit @(ns-resolve 'com.blockether.vis.internal.loop
+                 'iteration-start-hook-hit)
+          out (hit {:ext/name "test"} :h nil
+                {:title "warn" :validator-fn "(fn [_] true)"})]
+      (expect (not (contains? (:task out) :lifetime)))))
+
   (it "hooks may return ONLY :emit (no hook-task) and still surface emits"
     (let [hit @(ns-resolve 'com.blockether.vis.internal.loop
                  'iteration-start-hook-hit)
-          out (hit {:ext/name "test"} :h
+          out (hit {:ext/name "test"} :h nil
                 {:emit {:facts {:fact/seeded {:value 1}}}})]
       (expect (= :h (:id out)))
       (expect (nil? (:task out)))
@@ -75,5 +92,5 @@
   (it "hook with neither :title nor :emit drops to nil"
     (let [hit @(ns-resolve 'com.blockether.vis.internal.loop
                  'iteration-start-hook-hit)]
-      (expect (nil? (hit {:ext/name "test"} :h {})))
-      (expect (nil? (hit {:ext/name "test"} :h {:foo :bar}))))))
+      (expect (nil? (hit {:ext/name "test"} :h nil {})))
+      (expect (nil? (hit {:ext/name "test"} :h nil {:foo :bar}))))))
