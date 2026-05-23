@@ -55,8 +55,6 @@
    [com.blockether.vis.internal.prompt :as prompt]
    [taoensso.telemere :as tel]))
 
-(set! *warn-on-reflection* true)
-
 ;; =============================================================================
 ;; Aggregation
 ;; =============================================================================

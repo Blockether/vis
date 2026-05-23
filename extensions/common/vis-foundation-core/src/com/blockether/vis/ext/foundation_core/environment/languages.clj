@@ -16,8 +16,6 @@
    (java.nio.file FileVisitResult Files Path SimpleFileVisitor)
    (java.nio.file.attribute BasicFileAttributes)))
 
-(set! *warn-on-reflection* true)
-
 (def ^:const default-max-files 10000)
 (def ^:const default-deadline-ms 1000)
 

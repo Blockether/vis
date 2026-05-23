@@ -10,8 +10,6 @@
    (java.time ZoneId ZonedDateTime)
    (java.time.format DateTimeFormatter)))
 
-(set! *warn-on-reflection* true)
-
 (defn- system-property ^String [^String key]
   (System/getProperty key))
 

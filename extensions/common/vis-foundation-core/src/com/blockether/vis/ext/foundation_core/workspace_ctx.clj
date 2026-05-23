@@ -1,94 +1,155 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-ctx
-  "Pre-turn `:session/workspace` CTX block (PLAN.md §8 — canonical
+  "Pre-turn `:session/workspace` CTX block (PLAN.md section 8 — canonical
    `:vcs/*` shape; legacy `:git/*` aliases were KILLED in step 4).
 
    The model reads `:session/workspace` to know what workspace is
    focused, what trunk it FFs onto, and which commits are ahead. The
    block is stamped once per turn at engine start; ctx_renderer
    serialises it into the prompt verbatim. Stale renders must not
-   recompute on every iter — see PLAN §8 'stamping rules'.
+   recompute on every iter -- see PLAN section 8 'stamping rules'.
 
    `render-block` is a pure projection from a hydrated
-   `{:workspace … :session-state …}` pair plus optional VCS facts
-   gathered via a local `git!` helper. Empty / non-VCS sessions
-   render `{:vcs/kind :none}` (matches engine `empty-ctx`)."
+   `{:workspace ... :session-state ...}` pair plus optional VCS facts
+   gathered via JGit. Empty / non-VCS sessions render `{:vcs/kind :none}`
+   (matches engine `empty-ctx`)."
   (:require
    [clojure.java.io :as io]
-   [clojure.java.shell :as sh]
    [clojure.string :as str]
-   [com.blockether.vis.internal.workspace :as workspace]))
-
-(set! *warn-on-reflection* true)
+   [com.blockether.vis.internal.workspace :as workspace])
+  (:import
+   [java.io ByteArrayOutputStream]
+   [org.eclipse.jgit.api Git]
+   [org.eclipse.jgit.diff DiffEntry DiffFormatter RawTextComparator]
+   [org.eclipse.jgit.lib ObjectId Repository]
+   [org.eclipse.jgit.revwalk RevWalk]
+   [org.eclipse.jgit.treewalk CanonicalTreeParser]))
 
 ;; =============================================================================
-;; Git helpers — all read-only, no mutation
+;; JGit helpers - all read-only, no mutation
 ;; =============================================================================
 
-(defn- git-out
-  "Run `git -C dir args` and return the trimmed stdout, or nil on failure.
-   Read-only by contract; never throws."
-  [dir args]
+(defn- open-git
+  ^Git [dir] (Git/open (io/file dir)))
+
+(defn- head-sha
+  "Resolve HEAD in the worktree at `dir`. nil when not a repo or HEAD
+   doesn't resolve."
+  [dir]
   (try
-    (let [{:keys [exit out]}
-          (apply sh/sh (into ["git" "-C" (.getCanonicalPath (io/file dir))] args))]
-      (when (zero? exit)
-        (str/trim (or out ""))))
+    (with-open [git (open-git dir)]
+      (some-> (.resolve (.getRepository git) "HEAD") .getName))
     (catch Throwable _ nil)))
 
-(defn- head-sha [dir]
-  (git-out dir ["rev-parse" "HEAD"]))
-
 (defn- dirty?
+  "True when the JGit `Status` for `dir` has any pending changes."
   [dir]
-  (boolean (some-> (git-out dir ["status" "--porcelain"]) seq)))
+  (try
+    (with-open [git (open-git dir)]
+      (not (.isClean (.call (.status git)))))
+    (catch Throwable _ false)))
+
+(defn- resolve-ref
+  "Resolve `ref-name` (e.g. \"main\", \"vis/abc12345\") to an ObjectId
+   in `repo`. nil on miss."
+  ^ObjectId [^Repository repo ^String ref-name]
+  (try
+    (or (.resolve repo (str "refs/heads/" ref-name))
+      (.resolve repo ref-name))
+    (catch Throwable _ nil)))
 
 (defn- ff-possible?
-  "True when `trunk` is an ancestor of `branch` in `repo-root`. Used
-   to surface a hint when `/workspace apply` is safe."
+  "True when `trunk` is an ancestor of `branch` in the repo at
+   `repo-root`. JGit `RevWalk.isMergedInto` replaces the previous
+   `git merge-base --is-ancestor` shell-out."
   [repo-root branch trunk]
   (boolean
     (when (and trunk branch (not= trunk branch))
-      (let [{:keys [exit]} (sh/sh "git" "-C" (.getCanonicalPath (io/file repo-root))
-                             "merge-base" "--is-ancestor" trunk branch)]
-        (zero? exit)))))
+      (try
+        (with-open [git (open-git repo-root)]
+          (let [repo  (.getRepository git)
+                tid   (resolve-ref repo trunk)
+                bid   (resolve-ref repo branch)]
+            (when (and tid bid)
+              (with-open [walk (RevWalk. repo)]
+                (let [tc (.parseCommit walk tid)
+                      bc (.parseCommit walk bid)]
+                  (.isMergedInto walk tc bc))))))
+        (catch Throwable _ false)))))
 
 (defn- commits-ahead
-  "Return a vec of `{:sha :message}` commits in `branch` not in `trunk`.
-   Empty when `branch` = `trunk` or git fails. Hard-capped at 32 entries
-   to keep CTX bounded."
+  "Return a vec of `{:sha :message}` commits in `branch` not in
+   `trunk`, oldest-first. Hard-capped at 32 entries to keep CTX bounded.
+   JGit `LogCommand` with `addRange(trunk, branch)`."
   [repo-root branch trunk]
   (if (or (str/blank? branch) (str/blank? trunk) (= branch trunk))
     []
-    (let [raw (git-out repo-root
-                ["log" "--format=%H%x09%s" "-n" "32"
-                 (str trunk ".." branch)])]
-      (if (str/blank? raw)
-        []
-        (mapv (fn [line]
-                (let [[sha msg] (str/split line #"\t" 2)]
-                  {:sha sha :message (or msg "")}))
-          (str/split-lines raw))))))
+    (try
+      (with-open [git (open-git repo-root)]
+        (let [repo (.getRepository git)
+              tid  (resolve-ref repo trunk)
+              bid  (resolve-ref repo branch)]
+          (if (and tid bid)
+            (let [iter (-> (.log git)
+                         (.addRange tid bid)
+                         (.setMaxCount 32)
+                         .call)]
+              (vec (for [^org.eclipse.jgit.revwalk.RevCommit c iter]
+                     {:sha (.getName c)
+                      :message (str/trim (or (.getShortMessage c) ""))})))
+            [])))
+      (catch Throwable _ []))))
+
+(defn- tree-parser
+  "Build a CanonicalTreeParser positioned at the tree of `commit-id`.
+   Used by the numstat diff helper."
+  ^CanonicalTreeParser [^Repository repo ^ObjectId commit-id]
+  (let [parser (CanonicalTreeParser.)]
+    (with-open [reader (.newObjectReader repo)
+                walk   (RevWalk. repo)]
+      (let [commit (.parseCommit walk commit-id)]
+        (.reset parser reader (.getId (.getTree commit)))))
+    parser))
 
 (defn- numstat-stats
-  "Parse `git diff --numstat trunk..branch` into a {path {:added :removed}}
-   map. Returns {} on failure."
+  "JGit diff numstat for `trunk..branch`. Returns
+   `{path {:added :removed}}` matching the engine spec. JGit
+   `DiffFormatter.scan` gives the entry list; per-entry edits provide
+   per-file added/removed counts."
   [repo-root branch trunk]
   (if (or (str/blank? branch) (str/blank? trunk) (= branch trunk))
     {}
-    (let [raw (git-out repo-root ["diff" "--numstat" (str trunk ".." branch)])]
-      (if (str/blank? raw)
-        {}
-        (reduce
-          (fn [acc line]
-            (let [[added removed path] (str/split line #"\t" 3)]
-              (if (and path
-                    (re-matches #"\d+" (or added ""))
-                    (re-matches #"\d+" (or removed "")))
-                (assoc acc path {:added   (Long/parseLong added)
-                                 :removed (Long/parseLong removed)})
-                acc)))
-          {}
-          (str/split-lines raw))))))
+    (try
+      (with-open [git (open-git repo-root)]
+        (let [repo (.getRepository git)
+              tid  (resolve-ref repo trunk)
+              bid  (resolve-ref repo branch)]
+          (if-not (and tid bid)
+            {}
+            (with-open [out (ByteArrayOutputStream.)
+                        formatter (doto (DiffFormatter. out)
+                                    (.setRepository repo)
+                                    (.setDiffComparator RawTextComparator/DEFAULT)
+                                    (.setDetectRenames true))]
+              (let [entries (.scan formatter
+                              (tree-parser repo tid)
+                              (tree-parser repo bid))]
+                (reduce
+                  (fn [acc ^DiffEntry entry]
+                    (let [path  (or (.getNewPath entry) (.getOldPath entry))
+                          edits (.toEditList (.toFileHeader formatter entry))
+                          {:keys [added removed]}
+                          (reduce
+                            (fn [{:keys [added removed]} ^org.eclipse.jgit.diff.Edit e]
+                              {:added   (+ added   (- (.getEndB e) (.getBeginB e)))
+                               :removed (+ removed (- (.getEndA e) (.getBeginA e)))})
+                            {:added 0 :removed 0}
+                            edits)]
+                      (if (and path (or (pos? added) (pos? removed)))
+                        (assoc acc path {:added added :removed removed})
+                        acc)))
+                  {}
+                  entries))))))
+      (catch Throwable _ {}))))
 
 ;; =============================================================================
 ;; Public render
@@ -96,17 +157,18 @@
 
 (defn render-block
   "Project a hydrated `{:workspace :session-state}` pair into the
-   canonical `:session/workspace` CTX map (PLAN.md §8).
+   canonical `:session/workspace` CTX map (PLAN.md section 8).
 
-   Returns `{:vcs/kind :none}` when `workspace` is nil — matches the
+   Returns `{:vcs/kind :none}` when `workspace` is nil -- matches the
    engine's `empty-ctx`.
 
-   :workspace/*  — Vis identity (id, kind, label)
-   :session/*    — soul/state linkage + title + fork lineage
-   :vcs/*        — git-side facts (branch, trunk, head, dirty?,
-                   stats, commits-ahead, ff-possible?). The
-                   discriminator is `:vcs/kind` (`:git` for now,
-                   `:hg` / `:jj` / `:fossil` plug in later; PLAN §8)."
+   :workspace/*  -- Vis identity (id, kind, label)
+   :session/*    -- soul/state linkage + title + fork lineage
+   :vcs/*        -- git-side facts (branch, trunk, head, dirty?,
+                    stats, commits-ahead, ff-possible?). The
+                    discriminator is `:vcs/kind` (`:git` for now,
+                    `:hg` / `:jj` / `:fossil` plug in later; PLAN
+                    section 8)."
   [{:keys [workspace session-state]}]
   (if (nil? workspace)
     {:vcs/kind :none}

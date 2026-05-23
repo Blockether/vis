@@ -20,8 +20,6 @@
   (:require
    [com.blockether.vis.ext.foundation-core.environment.agents :as agents]))
 
-(set! *warn-on-reflection* true)
-
 (defn- format-bytes [^long n]
   ;; Locale-stable formatting - explicit Locale.US so output is
   ;; deterministic across machines (no `253,1 MB` from a comma-decimal

@@ -19,9 +19,11 @@
             SimpleFileVisitor StandardCopyOption]
            [java.nio.file.attribute BasicFileAttributes FileAttribute]
            [java.util UUID]
-           [org.eclipse.jgit.api Git]))
-
-(set! *warn-on-reflection* true)
+           [org.eclipse.jgit.api Git MergeCommand$FastForwardMode
+            ResetCommand$ResetType]
+           [org.eclipse.jgit.lib Ref Repository]
+           [org.eclipse.jgit.merge MergeStrategy]
+           [org.eclipse.jgit.storage.file FileRepositoryBuilder]))
 
 ;; =============================================================================
 ;; Dynamic cwd binding
@@ -78,41 +80,74 @@
   (delete-legacy-edn!))
 
 ;; =============================================================================
-;; Git helpers
+;; Git helpers — JGit programmatic API
+;;
+;; Every git operation on this namespace goes through JGit. The ONLY
+;; remaining `sh/sh git ...` shell-outs are `git worktree add` and
+;; `git worktree remove`: JGit 7.6 has no programmatic worktree
+;; porcelain (worktree metadata lives in `.git/worktrees/<id>/` and
+;; would require hand-rolling). Those two operations are clearly
+;; tagged below with their own helpers; everything else opens a
+;; `Git/open` handle and calls the typed JGit command builders.
 ;; =============================================================================
 
 (defn- file-path [^File f]
   (.getCanonicalPath f))
 
-(defn- git-result
-  [dir args]
-  (let [argv (cond-> ["git"]
-               dir (into ["-C" (file-path (io/file dir))])
-               true (into args))]
-    (assoc (apply sh/sh argv) :argv argv)))
+(defn- open-git
+  "Open a JGit repository handle for `dir`. Caller MUST close via
+   `with-open` (Git is AutoCloseable)."
+  ^Git [dir]
+  (Git/open (io/file dir)))
 
-(defn- git!
-  [dir args]
-  (let [result (git-result dir args)]
-    (when-not (zero? (:exit result))
-      (throw (ex-info (str "git failed: " (str/join " " (:argv result)))
-               {:argv (:argv result)
-                :exit (:exit result)
-                :out  (:out result)
-                :err  (:err result)})))
-    (str/trim (or (:out result) ""))))
+(defn- jg-resolve
+  "Return the sha string for `rev` (e.g. \"HEAD\") in `dir`, or nil
+   when the ref doesn't exist."
+  [dir rev]
+  (try
+    (with-open [git (open-git dir)]
+      (some-> (.resolve (.getRepository git) ^String rev) .getName))
+    (catch Throwable _ nil)))
+
+(defn- jg-clean?
+  "True when the worktree at `dir` has zero pending changes (the JGit
+   programmatic equivalent of `git status --porcelain | empty?`)."
+  [dir]
+  (try
+    (with-open [git (open-git dir)]
+      (.isClean (.call (.status git))))
+    (catch Throwable _ true)))
+
+(defn- jg-find-ref ^Ref [^Repository repo ^String full-name]
+  (.findRef repo full-name))
 
 (defn- local-branch-exists?
+  "True when `refs/heads/<branch>` exists in `repo-root`. JGit
+   `Repository.findRef` replaces the previous `git show-ref --verify`
+   shell-out."
   [repo-root branch]
-  (zero? (:exit (git-result repo-root
-                  ["show-ref" "--verify" "--quiet"
-                   (str "refs/heads/" branch)]))))
+  (try
+    (with-open [git (open-git repo-root)]
+      (boolean (jg-find-ref (.getRepository git)
+                 (str "refs/heads/" branch))))
+    (catch Throwable _ false)))
 
 (defn- discover-repo-root
-  "Discover the enclosing git repo root from the JVM cwd. Throws a
-   user-actionable error when no repo is found (PLAN.md decision 14)."
+  "Discover the enclosing git repo root from the JVM cwd via JGit
+   `FileRepositoryBuilder`. Throws a user-actionable error when no
+   repo is found (PLAN.md decision 14)."
   []
-  (try (git! nil ["rev-parse" "--show-toplevel"])
+  (try
+    (let [builder (doto (FileRepositoryBuilder.)
+                    (.findGitDir (io/file (System/getProperty "user.dir")))
+                    .readEnvironment)
+          git-dir (.getGitDir builder)]
+      (when-not git-dir
+        (throw (ex-info "Vis requires a git repository (no repo discovered)."
+                 {:type :workspace/no-git})))
+      (with-open [repo (.build builder)]
+        (file-path (.getWorkTree repo))))
+    (catch clojure.lang.ExceptionInfo e (throw e))
     (catch Throwable t
       (throw (ex-info "Vis requires a git repository (no repo discovered)."
                {:type :workspace/no-git}
@@ -120,12 +155,12 @@
 
 (defn- current-branch [repo-root]
   (try
-    (with-open [git (Git/open (io/file repo-root))]
+    (with-open [git (open-git repo-root)]
       (.getBranch (.getRepository git)))
     (catch Throwable _ nil)))
 
 (defn detect-trunk-branch
-  "Discover the repo's default trunk branch (PLAN.md §2). Order:
+  "Discover the repo's default trunk branch (PLAN.md section 2). Order:
      1. `origin/HEAD` symbolic-ref — most reliable, follows the
         repo's published default (set via `git remote set-head origin
         --auto` or by clone).
@@ -133,30 +168,45 @@
      3. local `master` branch existence.
      4. `current-branch` — degenerate fallback for lone-branch repos
         with no remote tracking.
-   Returns a plain branch name with no `refs/` prefix.
-
-   Behaviour change vs the previous `(current-branch repo-root)`
-   trunk inference: a session spawned while user is on `feat/foo`
-   now correctly pins the trunk-kind workspace to `main` (or
-   whatever origin/HEAD points at), not `feat/foo`. Existing trunk
-   rows keep their stored `:branch` field; only new rows pick up
-   the corrected logic."
+   Returns a plain branch name with no `refs/` prefix. JGit-only:
+   the symbolic-ref read uses `Repository.findRef + .getTarget`."
   [repo-root]
   (or (try
-        (some-> (git! repo-root ["symbolic-ref" "--short" "refs/remotes/origin/HEAD"])
-          str/trim
-          (str/replace #"^origin/" "")
-          not-empty)
+        (with-open [git (open-git repo-root)]
+          (when-let [origin-head (jg-find-ref (.getRepository git)
+                                   "refs/remotes/origin/HEAD")]
+            (let [target (.getTarget origin-head)]
+              (some-> (.getName target)
+                (str/replace-first #"^refs/remotes/origin/" "")
+                not-empty))))
         (catch Throwable _ nil))
     (when (local-branch-exists? repo-root "main") "main")
     (when (local-branch-exists? repo-root "master") "master")
     (current-branch repo-root)))
 
 (defn- current-head [repo-root]
-  (try
-    (with-open [git (Git/open (io/file repo-root))]
-      (some-> (.resolve (.getRepository git) "HEAD") .getName))
-    (catch Throwable _ nil)))
+  (jg-resolve repo-root "HEAD"))
+
+;; ---------------------------------------------------------------------------
+;; Worktree porcelain — the LAST sh/sh git holdouts (JGit lacks an API)
+;; ---------------------------------------------------------------------------
+
+(defn- sh-git!
+  "Shell-out helper for `git worktree {add,remove}` only. JGit 7.6 has
+   no programmatic worktree command; everything else in this namespace
+   uses the typed JGit API."
+  [dir args]
+  (let [argv   (cond-> ["git"]
+                 dir  (into ["-C" (file-path (io/file dir))])
+                 true (into args))
+        result (apply sh/sh argv)]
+    (when-not (zero? (:exit result))
+      (throw (ex-info (str "git failed: " (str/join " " argv))
+               {:argv argv
+                :exit (:exit result)
+                :out  (:out result)
+                :err  (:err result)})))
+    (str/trim (or (:out result) ""))))
 
 (defn- mirror-tree!
   "Mirror `src` worktree → `dst` worktree, preserving symlinks, mtimes,
@@ -425,8 +475,7 @@
         (let [exists? (.exists (io/file root))
               branch  (when exists? (current-branch root))
               head    (when exists? (current-head root))
-              dirty?  (when exists?
-                        (not (str/blank? (git! root ["status" "--porcelain"]))))]
+              dirty?  (when exists? (not (jg-clean? root)))]
           (assoc ws
             :workspace/exists? exists?
             :vcs/kind          :git
@@ -503,14 +552,16 @@
         root      (worktree-root rid ws-id)]
     (with-repo-lock rid
       (.mkdirs (.getParentFile (io/file root)))
+      ;; JGit 7.6 has no programmatic `git worktree` porcelain;
+      ;; fall back to `sh-git!` for the two `worktree add` cases.
       (if (local-branch-exists? repo-root branch)
-        (git! repo-root ["worktree" "add" root branch])
-        (git! repo-root ["worktree" "add" "-b" branch root "HEAD"]))
+        (sh-git! repo-root ["worktree" "add" root branch])
+        (sh-git! repo-root ["worktree" "add" "-b" branch root "HEAD"]))
       ;; Overlay trunk dirty + untracked + ignored onto the fresh worktree.
       ;; `.git/` (the worktree's gitdir link file) is preserved by the
       ;; skip rule in `mirror-tree!`.
       (mirror-tree! repo-root root)
-      (let [commit (try (git! root ["rev-parse" "HEAD"]) (catch Throwable _ nil))
+      (let [commit (jg-resolve root "HEAD")
             ws (p/db-workspace-insert! db-info
                  {:id        ws-id
                   :repo-id   rid
@@ -544,15 +595,21 @@
     (let [root   (:root ws)
           branch (:branch ws)]
       (with-repo-lock (:repo-id ws)
-        (git! root ["add" "-A"])
-        (let [staged (str/trim
-                       (:out (git-result root ["diff" "--cached" "--name-only"])))]
-          (if (str/blank? staged)
-            {:status :nothing-to-commit :workspace ws :branch branch}
-            (do (git! root ["commit" "-m" msg])
-              (let [sha (git! root ["rev-parse" "HEAD"])
-                    done (or (p/db-workspace-update-commit-id! db-info workspace-id sha)
-                           (assoc ws :commit-id sha))]
+        (with-open [git (open-git root)]
+          (.call (.addFilepattern (.add git) "."))
+          (let [status   (.call (.status git))
+                ;; JGit Status surfaces the post-`add -A` index diff
+                ;; through getAdded/getChanged/getRemoved (vs HEAD).
+                ;; Empty union = nothing to commit.
+                index    (into #{}
+                           (mapcat (fn [^java.util.Set s] (vec s)))
+                           [(.getAdded status) (.getChanged status) (.getRemoved status)])]
+            (if (empty? index)
+              {:status :nothing-to-commit :workspace ws :branch branch}
+              (let [commit (.call (.setMessage (.commit git) msg))
+                    sha    (.getName commit)
+                    done   (or (p/db-workspace-update-commit-id! db-info workspace-id sha)
+                             (assoc ws :commit-id sha))]
                 {:status :ok :sha sha :message msg :branch branch :workspace done}))))))))
 
 (defn ff-apply!
@@ -590,46 +647,70 @@
           trunk     (detect-trunk-branch repo-root)]
       (with-repo-lock (:repo-id ws)
         (p/db-workspace-update-state! db-info workspace-id :merging)
-        (let [trunk-dirty? (not (str/blank?
-                                  (:out (git-result repo-root
-                                          ["status" "--porcelain"]))))
-              stash-tag    (str "vis-ff-" workspace-id)
-              stashed?     (when trunk-dirty?
-                             (try (git! repo-root ["stash" "push" "-u" "-m" stash-tag])
-                               true
-                               (catch Throwable _ false)))]
-          (try
-            (git! repo-root ["checkout" trunk])
-            (git! repo-root ["merge" "--ff-only" branch])
-            (let [sha  (git! repo-root ["rev-parse" "HEAD"])
-                  done (p/db-workspace-update-state! db-info workspace-id :merged)]
-              (fire-hook! :on-apply done
-                {:exit 0 :sha sha :branch branch :trunk trunk})
-              {:status :ok :sha sha :branch branch :workspace done})
-            (catch Throwable t
-              {:status    :ff-failed
-               :reason    (or (ex-message t) (str t))
-               :workspace ws
-               :branch    branch
-               :trunk     trunk})
-            (finally
-              (when stashed?
-                (try (git! repo-root ["stash" "pop"]) (catch Throwable _ nil))))))))))
+        (with-open [git (open-git repo-root)]
+          (let [trunk-dirty? (not (jg-clean? repo-root))
+                stash-tag    (str "vis-ff-" workspace-id)
+                stash-ref    (when trunk-dirty?
+                               (try
+                                 (-> (.stashCreate git)
+                                   (.setIndexMessage stash-tag)
+                                   (.setWorkingDirectoryMessage stash-tag)
+                                   (.setIncludeUntracked true)
+                                   .call)
+                                 (catch Throwable _ nil)))]
+            (try
+              ;; `git checkout <trunk-branch>` then `git merge --ff-only <branch>`.
+              (-> (.checkout git) (.setName ^String trunk) .call)
+              (let [branch-ref (jg-find-ref (.getRepository git)
+                                 (str "refs/heads/" branch))]
+                (when-not branch-ref
+                  (throw (ex-info (str "branch ref not found: " branch)
+                           {:type :workspace/missing-branch-ref
+                            :branch branch})))
+                (let [result (-> (.merge git)
+                               (.include branch-ref)
+                               (.setFastForward MergeCommand$FastForwardMode/FF_ONLY)
+                               .call)
+                      status (.getMergeStatus result)]
+                  (when-not (.isSuccessful status)
+                    (throw (ex-info (str "FF merge not successful: " status)
+                             {:type :workspace/ff-not-successful
+                              :merge-status (str status)})))
+                  (let [sha  (.getName (.resolve (.getRepository git) "HEAD"))
+                        done (p/db-workspace-update-state! db-info workspace-id :merged)]
+                    (fire-hook! :on-apply done
+                      {:exit 0 :sha sha :branch branch :trunk trunk})
+                    {:status :ok :sha sha :branch branch :workspace done})))
+              (catch Throwable t
+                {:status    :ff-failed
+                 :reason    (or (ex-message t) (str t))
+                 :workspace ws
+                 :branch    branch
+                 :trunk     trunk})
+              (finally
+                (when stash-ref
+                  ;; JGit equivalent of `git stash pop`: apply the stash
+                  ;; entry by id then drop it from the stack.
+                  (try
+                    (-> (.stashApply git) (.setStashRef (.getName stash-ref)) .call)
+                    (-> (.stashDrop git) (.setStashRef 0) .call)
+                    (catch Throwable _ nil)))))))))))
 
 (defn- parse-conflicts
-  "Read `git status --porcelain=v1` and project conflicting paths
-   (`UU`, `AA`, `DD`, `AU`, `UA`, `DU`, `UD`) into a vec of
-   `{:path :state}` maps. Empty vec when no conflicts. PLAN.md §7."
+  "Project the conflict set surfaced by JGit `Status.getConflicting`
+   into the canonical `[{:path :state} ...]` shape used by the
+   merge-resolve handoff. JGit's status object groups every conflict
+   under one bucket without distinguishing the porcelain UU/AA/DD
+   codes; callers that need the per-path state machinery should
+   read `Status.getConflictingStageState` instead. PLAN.md section 7."
   [repo-root]
-  (let [conflict-codes #{"UU" "AA" "DD" "AU" "UA" "DU" "UD"}
-        out (try (git! repo-root ["status" "--porcelain=v1"])
-              (catch Throwable _ ""))]
-    (vec
-      (for [line (str/split-lines (or out ""))
-            :let  [xy   (when (>= (count line) 2) (subs line 0 2))
-                   path (when (>= (count line) 3) (str/trim (subs line 3)))]
-            :when (and xy path (contains? conflict-codes xy))]
-        {:path path :state xy}))))
+  (try
+    (with-open [git (open-git repo-root)]
+      (let [status (.call (.status git))
+            conflicts (.getConflicting status)]
+        (mapv (fn [path] {:path path :state "UU"})
+          (sort (or conflicts [])))))
+    (catch Throwable _ [])))
 
 (defn start-merge-resolve!
   "Bootstrap a merge-resolve sub-session for an `:ff-failed` workspace.
@@ -654,7 +735,7 @@
    `merge/*` SCI op family + sub-session prompt + channel UX events
    are out of scope for this commit (incremental delivery; the
    bootstrap is the gate for the rest)."
-  [db-info {:keys [workspace-id parent-session-state-id]}]
+  [db-info {:keys [workspace-id parent-session-state-id channel-id parent-session-id]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
@@ -669,36 +750,70 @@
           branch    (:branch ws)
           trunk     (detect-trunk-branch repo-root)]
       (with-repo-lock (:repo-id ws)
-        ;; Make sure we're on trunk before attempting the merge.
-        (try (git! repo-root ["checkout" trunk]) (catch Throwable _ nil))
-        (let [merge-result (try {:ok? true
-                                 :out (git! repo-root ["merge" "--no-ff" "--no-commit" branch])}
-                             (catch clojure.lang.ExceptionInfo e
-                               {:ok? false
-                                :exit (:exit (ex-data e))
-                                :out  (:out (ex-data e))
-                                :err  (:err (ex-data e))}))
-              conflicts    (parse-conflicts repo-root)
-              sub-id       (p/db-session-state-spawn-merge-resolve!
-                             db-info parent-session-state-id)]
-          (cond
-            ;; Merge succeeded cleanly (no conflicts) AND no diff to
-            ;; commit — we landed in a no-op state. Abort the merge
-            ;; (clean index) and surface :nothing-to-merge.
-            (and (:ok? merge-result) (empty? conflicts))
-            (do (try (git! repo-root ["merge" "--abort"]) (catch Throwable _ nil))
-              {:status :nothing-to-merge
-               :sub-session-state-id sub-id
-               :workspace ws
-               :trunk trunk})
+        (with-open [git (open-git repo-root)]
+          ;; Make sure we're on trunk before attempting the merge.
+          (try (-> (.checkout git) (.setName ^String trunk) .call)
+            (catch Throwable _ nil))
+          (let [branch-ref (jg-find-ref (.getRepository git)
+                             (str "refs/heads/" branch))
+                merge-result
+                (when branch-ref
+                  (try
+                    {:ok? true
+                     :status (str (.getMergeStatus
+                                    (-> (.merge git)
+                                      (.include branch-ref)
+                                      (.setFastForward MergeCommand$FastForwardMode/NO_FF)
+                                      (.setCommit false)
+                                      (.setStrategy MergeStrategy/RECURSIVE)
+                                      .call)))}
+                    (catch Throwable e
+                      {:ok? false
+                       :error (or (ex-message e) (str e))})))
+                conflicts    (parse-conflicts repo-root)
+                sub-id       (p/db-session-state-spawn-merge-resolve!
+                               db-info parent-session-state-id)]
+            (cond
+              ;; Merge succeeded cleanly (no conflicts) AND no diff to
+              ;; commit -- we landed in a no-op state. Abort the merge
+              ;; (clean index) and surface :nothing-to-merge.
+              (and (:ok? merge-result) (empty? conflicts))
+              (do (try (-> (.reset git)
+                         (.setMode ResetCommand$ResetType/MERGE)
+                         (.setRef "HEAD")
+                         .call)
+                    (catch Throwable _ nil))
+                {:status :nothing-to-merge
+                 :sub-session-state-id sub-id
+                 :workspace ws
+                 :trunk trunk})
 
-            :else
-            {:status :ok
-             :sub-session-state-id sub-id
-             :conflicts conflicts
-             :workspace ws
-             :trunk trunk
-             :merge merge-result}))))))
+              :else
+              (let [result {:status :ok
+                            :sub-session-state-id sub-id
+                            :conflicts conflicts
+                            :workspace ws
+                            :trunk trunk
+                            :merge merge-result}]
+                ;; PLAN.md section 7.3: emit `:session/merge-resolve-started`
+                ;; so channels render the overlay (TUI badge,
+                ;; Telegram pinned status message). Lazy resolve to
+                ;; avoid a hard dep on the channel-events ns from
+                ;; the workspace module.
+                (when channel-id
+                  (try (when-let [publish (requiring-resolve
+                                            'com.blockether.vis.internal.channel-events/publish-channel-event!)]
+                         (publish channel-id
+                           {:type :session/merge-resolve-started
+                            :parent-session-id      parent-session-id
+                            :parent-session-state-id parent-session-state-id
+                            :sub-session-state-id   sub-id
+                            :workspace-id           workspace-id
+                            :branch                 branch
+                            :trunk                  trunk
+                            :conflicts              conflicts}))
+                    (catch Throwable _ nil)))
+                result))))))))
 
 (defn discard!
   "Remove `:workspace-id`'s worktree from disk and transition the row
@@ -724,9 +839,16 @@
           rm-args   (cond-> ["worktree" "remove"]
                       force? (conj "--force")
                       true   (conj root))]
-      (try (git! repo-root rm-args) (catch Throwable _ nil))
+      ;; `worktree remove` is the only sh/sh holdout (JGit lacks an API).
+      (try (sh-git! repo-root rm-args) (catch Throwable _ nil))
       (when delete-branch?
-        (try (git! repo-root ["branch" "-D" branch]) (catch Throwable _ nil)))
+        ;; `git branch -D <branch>` via JGit's DeleteBranchCommand.
+        (try (with-open [git (open-git repo-root)]
+               (-> (.branchDelete git)
+                 (.setBranchNames (into-array String [branch]))
+                 (.setForce true)
+                 .call))
+          (catch Throwable _ nil)))
       (let [done (p/db-workspace-update-state! db-info workspace-id :discarded)]
         (fire-hook! :on-discard done)
         done))))

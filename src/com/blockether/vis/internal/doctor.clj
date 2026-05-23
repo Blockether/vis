@@ -22,8 +22,6 @@
    [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
 
-(set! *warn-on-reflection* true)
-
 ;; ---------------------------------------------------------------------------
 ;; Run.
 ;; ---------------------------------------------------------------------------

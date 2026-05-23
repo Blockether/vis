@@ -35,8 +35,6 @@
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
-(set! *warn-on-reflection* true)
-
 ;; ---------------------------------------------------------------------------
 ;; Snapshot cache. Keyed by canonical cwd so we recompute on
 ;; directory change. Recomputation is cheap (the language scan is

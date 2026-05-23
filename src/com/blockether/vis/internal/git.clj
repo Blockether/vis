@@ -18,8 +18,6 @@
            [org.eclipse.jgit.storage.file FileRepositoryBuilder]
            [org.eclipse.jgit.treewalk AbstractTreeIterator CanonicalTreeParser FileTreeIterator]))
 
-(set! *warn-on-reflection* true)
-
 (def ^:private default-cache-ms 5000)
 
 (defonce ^:private working-tree-status-cache

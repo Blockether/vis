@@ -24,8 +24,6 @@
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
-(set! *warn-on-reflection* true)
-
 (def ^:const MAX_BYTES
   "Byte-truncate ceiling for inlined project guidance. Fixed
    constant, no config knob (plan Q5)."

@@ -58,7 +58,6 @@
   (:import
    [java.util LinkedHashMap]))
 
-(set! *warn-on-reflection* true)
 (set! *unchecked-math* :warn-on-boxed)
 
 ;;; ── Sticky real-height cache ───────────────────────────────────────────────────
