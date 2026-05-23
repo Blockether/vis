@@ -3244,6 +3244,12 @@
                                                   (str/split-lines trimmed))]
                                   (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
                 title-lines   (render-segment-title-entries line-entry render-segments fill-w)
+                ;; Pi-style hiding: parse-block-display marks bookkeeping
+                ;; forms (`(def NAME (v/cat …))`, bare `(v/cat …)` tool
+                ;; calls) with `:hidden? true`. The result pane below
+                ;; already shows the OBSERVATION/MUTATION badge + tool
+                ;; output, so the raw source row stays hidden by default.
+                ;; Errors and plain Clojure forms keep their source.
                 code-text     (str/trim (or (code-source-from-render-segments render-segments code) ""))
                 inline-error-code-lines (when error
                                           (inline-error-context-lines code-text error))
@@ -3304,28 +3310,43 @@
                                   (vec (concat
                                          (when badge-entry [badge-entry])
                                          detail-entries))))
-                code-block    (vec (concat
-                                     ;; Title-recap call-out: one TRUE neutral
-                                     ;; (terminal-bg) blank row above and below.
-                                     ;; The thinking-pad row that may precede
-                                     ;; this block paints with iteration-header-bg
-                                     ;; (gray stripe) and reads as the tail of
-                                     ;; thinking — NOT as a margin. The user
-                                     ;; sees the recap glued to thinking unless
-                                     ;; we add a terminal-bg blank here.
-                                     (when (seq title-lines) [(line-entry "")])
-                                     title-lines
-                                     (when (seq title-lines) [(line-entry "")])
-                                     (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
-                                     (when (seq comment-lines)
-                                       (concat [(line-entry (str thinking-marker ""))]
-                                         comment-lines
-                                         [(line-entry (str thinking-marker ""))]))
-                                     [(line-entry (str c-pad ""))]
-                                     c-lines
-                                     (when (seq inline-error-message-lines) inline-error-message-lines)
-                                     (when status-line [status-line])
-                                     [(line-entry (str c-pad ""))]))
+                hide-code-chrome? (and (str/blank? code-text) (not is-error?))
+                code-block    (cond
+                                hide-code-chrome?
+                                ;; Pi-style: when raw code is hidden (def-wrapped
+                                ;; tool call or any successful tool form), drop
+                                ;; the code chrome entirely so the result pane
+                                ;; below speaks for itself. Title recap rows
+                                ;; still appear because they are recap text,
+                                ;; not code.
+                                (vec (concat
+                                       (when (seq title-lines) [(line-entry "")])
+                                       title-lines
+                                       (when (seq title-lines) [(line-entry "")])))
+
+                                :else
+                                (vec (concat
+                                       ;; Title-recap call-out: one TRUE neutral
+                                       ;; (terminal-bg) blank row above and below.
+                                       ;; The thinking-pad row that may precede
+                                       ;; this block paints with iteration-header-bg
+                                       ;; (gray stripe) and reads as the tail of
+                                       ;; thinking — NOT as a margin. The user
+                                       ;; sees the recap glued to thinking unless
+                                       ;; we add a terminal-bg blank here.
+                                       (when (seq title-lines) [(line-entry "")])
+                                       title-lines
+                                       (when (seq title-lines) [(line-entry "")])
+                                       (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
+                                       (when (seq comment-lines)
+                                         (concat [(line-entry (str thinking-marker ""))]
+                                           comment-lines
+                                           [(line-entry (str thinking-marker ""))]))
+                                       [(line-entry (str c-pad ""))]
+                                       c-lines
+                                       (when (seq inline-error-message-lines) inline-error-message-lines)
+                                       (when status-line [status-line])
+                                       [(line-entry (str c-pad ""))])))
                 result-margin nil]
             (vec (concat code-block result-margin result-lines))))
         grouped
