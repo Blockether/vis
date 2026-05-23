@@ -920,6 +920,18 @@
                             current-form-scope))))
           (or trailer []))))))
 
+(defn- iteration-lifetime-hook-task?
+  "True for hook-tasks declared `:lifetime :iteration`. These are
+   hyper-transient signals that evaporate at the next iter boundary,
+   not just the next turn boundary. Use for hooks whose firing
+   condition is recomputed every iter from per-iter state (e.g. a
+   one-iter retry-shape warning that should not haunt the model after
+   the next provider call). If the condition still holds on the next
+   iter, the hook re-creates the task; if not, it stays gone."
+  [entry]
+  (and (= :hook (:source entry))
+    (= :iteration (:lifetime entry))))
+
 (defn advance-iter
   "Append a trailer pin for the just-finished iter (if it had any non-done
    form-results) and advance the cursor so the next iter starts at
@@ -927,6 +939,11 @@
    `{:scope :tag :src :result :error}` envelopes captured during the iter.
    Forms whose src begins with `(done` are excluded from the pin. Observation-
    only pins carry forward until a later mutation makes them stale.
+
+   Also drops every `:lifetime :iteration` hook-task from
+   `:session/tasks` so hyper-transient signals do not survive into the
+   next iter. The next iter's hook fire is the single source of truth
+   for whether the task should exist.
 
    Rebinding the same def is intentional model behaviour (each iter
    refines arguments / inspects shapes). Pins from earlier rebinds stay
@@ -940,7 +957,13 @@
                          form-results-vec))
         trailer'  (prune-stale-observation-pins
                     (:session/trailer ctx) iter-scope keepable)
-        ctx*      (assoc ctx :session/trailer trailer')
+        tasks'    (into {}
+                    (for [[k v] (or (:session/tasks ctx) {})
+                          :when (not (iteration-lifetime-hook-task? v))]
+                      [k v]))
+        ctx*      (-> ctx
+                    (assoc :session/trailer trailer')
+                    (assoc :session/tasks tasks'))
         ctx'      (if (seq keepable)
                     (update ctx* :session/trailer (fnil conj [])
                       {:scope iter-scope :forms keepable})

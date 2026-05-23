@@ -720,24 +720,34 @@
   "Hook-task lifetime policies. Controls how long an emitted hook-task
    lingers in `:session/tasks` after the hint stops firing.
 
-     :session  Default. Task survives across turns and is GC'd by the
-               standard TTL machinery (`TTL-TASK-DONE`/`TTL-TASK-CANCELLED`
-               turns after terminal status). Right for cross-turn
-               concerns like `:vis.foundation/session-title` whose work
-               product (the session title) is itself session-scoped.
+     :session    Default. Task survives across turns and is GC'd by the
+                 standard TTL machinery (`TTL-TASK-DONE`/
+                 `TTL-TASK-CANCELLED` turns after terminal status). Right
+                 for cross-turn concerns like
+                 `:vis.foundation/session-title` whose work product (the
+                 session title) is itself session-scoped.
 
-     :turn     Ephemeral. Task is dropped from `:session/tasks` at
-               `advance-turn` regardless of status. If the originating
-               hint condition still holds, the next iter recreates the
-               task; if not, it stays gone. Right for transient signals
-               like `:vis.foundation/context-pressure` whose advisory
-               value evaporates the moment the next request's input
-               size drops below threshold. Prevents the cargo-cult
-               pattern where a stale `:done :validated? false` task
-               keeps showing up in the CTX render for 6 turns and the
-               model keeps re-emitting `(task-set! … :done)` to silence
-               it (Vis conv 11d4f817 / t14–t16)."
-  #{:turn :session})
+     :turn       Ephemeral. Task is dropped from `:session/tasks` at
+                 `advance-turn` regardless of status. If the originating
+                 hint condition still holds, the next iter recreates the
+                 task; if not, it stays gone. Right for transient signals
+                 like `:vis.foundation/context-pressure` whose advisory
+                 value evaporates the moment the next request's input
+                 size drops below threshold. Prevents the cargo-cult
+                 pattern where a stale `:done :validated? false` task
+                 keeps showing up in the CTX render for 6 turns and the
+                 model keeps re-emitting `(task-set! … :done)` to silence
+                 it (Vis conv 11d4f817 / t14–t16).
+
+     :iteration  Hyper-transient. Task is dropped at `advance-iter`
+                 (every iter boundary), not just turn boundary. Right
+                 for hints whose firing condition is recomputed from
+                 per-iter state (e.g. a one-iter retry-shape warning,
+                 an in-flight tool-call status banner). The next iter's
+                 hook fire is the single source of truth; if the
+                 condition still holds the task re-materialises
+                 immediately."
+  #{:iteration :turn :session})
 
 (defn hook-lifetime?
   "True when `lifetime` is one of the canonical hook-task lifetimes."

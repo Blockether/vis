@@ -530,3 +530,89 @@
                                   :status :todo :lifetime :turn
                                   :born "t1/i1/f1"}}}]
         (expect (contains? (:session/tasks (eng/advance-turn ctx)) :user.thing))))))
+
+(defdescribe advance-iter-iteration-lifetime-test
+  ;; `:lifetime :iteration` hook-tasks evaporate at every iter
+  ;; boundary, not just turn boundary. Use for hyper-transient signals
+  ;; whose value disappears the moment the iter that emitted them
+  ;; ends (e.g. a one-iter retry-shape banner). The next iter's hook
+  ;; fire is the single source of truth.
+  (describe "advance-iter drops :lifetime :iteration hook-tasks"
+    (it "drops an open :lifetime :iteration hook-task at advance-iter"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:vis.foundation/retry-shape
+                                 {:title "retry" :source :hook
+                                  :hook-id :vis.foundation/retry-shape
+                                  :status :todo :lifetime :iteration
+                                  :validator-fn "(fn [_] true)"
+                                  :born "t1/i1/f1"}}}]
+        (expect (= {} (:session/tasks (eng/advance-iter ctx []))))))
+
+    (it "drops a :done :validated? false :lifetime :iteration task immediately"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:vis.foundation/retry-shape
+                                 {:title "retry" :source :hook
+                                  :hook-id :vis.foundation/retry-shape
+                                  :status :done :validated? false
+                                  :lifetime :iteration
+                                  :validator-fn "(fn [_] true)"
+                                  :proof "t1/i1/f2" :done-born "t1/i1/f2"
+                                  :born "t1/i1/f1"}}}]
+        (expect (= {} (:session/tasks (eng/advance-iter ctx []))))))
+
+    (it "keeps :lifetime :turn hook-tasks across advance-iter (turn boundary owns them)"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:vis.foundation/context-pressure
+                                 {:title "warn" :source :hook
+                                  :hook-id :vis.foundation/context-pressure
+                                  :status :todo :lifetime :turn
+                                  :validator-fn "(fn [_] true)"
+                                  :born "t1/i1/f1"}}}]
+        (expect (contains? (:session/tasks (eng/advance-iter ctx []))
+                  :vis.foundation/context-pressure))))
+
+    (it "keeps :lifetime :session hook-tasks across advance-iter"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:vis.foundation/session-title
+                                 {:title "set title" :source :hook
+                                  :hook-id :vis.foundation/session-title
+                                  :status :todo
+                                  :validator-fn "(fn [_] true)"
+                                  :born "t1/i1/f1"}}}]
+        (expect (contains? (:session/tasks (eng/advance-iter ctx []))
+                  :vis.foundation/session-title))))
+
+    (it "ignores :lifetime :iteration on non-hook-source tasks"
+      ;; Defensive: only HOOK-source tasks are iter-pruned. A model-
+      ;; or user-written task that happens to carry the keyword keeps
+      ;; its TTL-based lifetime.
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {:user.thing
+                                 {:title "do x" :source :user
+                                  :status :todo :lifetime :iteration
+                                  :born "t1/i1/f1"}}}]
+        (expect (contains? (:session/tasks (eng/advance-iter ctx []))
+                  :user.thing))))
+
+    (it "still advances the cursor + appends trailer pin as before"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 2 :next-form 1}
+                 :session/trailer []
+                 :session/tasks {:vis.foundation/retry-shape
+                                 {:title "retry" :source :hook
+                                  :hook-id :vis.foundation/retry-shape
+                                  :status :todo :lifetime :iteration
+                                  :validator-fn "(fn [_] true)"
+                                  :born "t1/i2/f1"}}}
+            advanced (eng/advance-iter ctx
+                       [{:scope "t1/i2/f1" :src "(v/cat \"a.clj\")"
+                         :tag :observation :result "ok"}])]
+        (expect (= 3 (:iter (:session/scope advanced))))
+        (expect (= 1 (:next-form (:session/scope advanced))))
+        (expect (= 1 (count (:session/trailer advanced))))
+        (expect (= {} (:session/tasks advanced)))))))
