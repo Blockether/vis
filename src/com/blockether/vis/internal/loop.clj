@@ -1067,10 +1067,34 @@
       (symbol? (first form))
       (= 'set-session-title! (first form)))))
 
+(defn- code-string-reads-clean?
+  "True when `code` parses as one or more well-formed Clojure forms.
+   Used by `raw-markdown-fence-leak-error` to distinguish a real raw
+   fence leak (a stray triple-backtick line floating between forms)
+   from a triple-backtick substring living *inside* a string literal
+   of a single well-formed form — e.g. the `:answer` body of
+   `(done {:answer \"… <three-backticks>clojure (deftest …)
+   <three-backticks> …\"})`. The reader handles string-literal
+   backticks fine; only when the reader itself rejects the source do
+   start-of-line backticks count as chrome that survived extraction."
+  [code]
+  (try
+    (edamame/parse-string-all (or code "") edamame-opts)
+    true
+    (catch Throwable _ false)))
+
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
         lines (str/split-lines (or code ""))]
-    (when (some #(str/starts-with? (str/triml %) fence) lines)
+    (when (and (some #(str/starts-with? (str/triml %) fence) lines)
+            ;; Critical guard: a fence-shaped line inside a string
+            ;; literal of a balanced form is legitimate model output,
+            ;; not extractor chrome. Vis conv 311fd734 / t3/i9: model
+            ;; emitted (done {:answer "… ```clojure (deftest …) ```
+            ;; …"}). Pre-guard, the preflight rejected the whole
+            ;; iteration and the model never got SCI feedback, so it
+            ;; couldn't self-correct.
+            (not (code-string-reads-clean? code)))
       (str "Raw Markdown fence leaked into extracted :code before evaluation. "
         "Aborting the whole iteration before eval; remove all " fence
         " fence marker lines from extracted Clojure before retrying."))))
