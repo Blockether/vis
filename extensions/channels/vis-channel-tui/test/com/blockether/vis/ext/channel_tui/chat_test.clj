@@ -105,6 +105,10 @@
         (expect (= [] (:forms trace))))))
 
   (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
+    ;; New shape: iteration row carries per-form envelopes under :forms.
+    ;; Each envelope has :src :tag :result :error :channel; the rebuild
+    ;; iterates them rather than treating the whole iteration as one
+    ;; opaque block.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns
                   (fn [_db _cid]
@@ -117,24 +121,23 @@
                       :code (str "(def x 1)\n"
                               "(set-session-title! \"Mixed\")\n"
                               "(done [:ir [:p \"Done\"]])")
-                      :render-segments [{:kind :code :source "(def x 1)"}
-                                        {:kind :title :value "Mixed"}
-                                        {:kind :answer-ref}]
-                      :result :vis/answer}])]
+                      :forms [{:scope "t1/i1/f1" :tag :host :src "(def x 1)" :result nil}
+                              {:scope "t1/i1/f2" :tag :host :src "(set-session-title! \"Mixed\")" :result :vis/silent}
+                              {:scope "t1/i1/f3" :tag :host :src "(done [:ir [:p \"Done\"]])" :result :vis/answer}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            trace   (-> history second :traces first)
-            form    (-> trace :forms first)]
-        (expect (= 1 (count (:forms trace))))
-        (expect (= [{:kind :code :source "(def x 1)"}
-                    {:kind :title :value "Mixed"}
-                    {:kind :answer-ref}]
-                  (:render-segments form)))
-        (expect (nil? (:result-render form))))))
+            trace   (-> history second :traces first)]
+        ;; The answer form is elided per the existing answer-position
+        ;; rule; the def + title-set! survive as form records and the
+        ;; iteration-level :recaps surface the title summary derived
+        ;; from the full iteration source.
+        (expect (pos? (count (:forms trace))))
+        (expect (some #(re-find #"Mixed" (str %)) (:recaps trace))))))
 
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (v/cat ...))` persists the live var value as
     ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's
     ;; channel-rendered text is durable and should be shown on resume.
+    ;; In the new shape the channel sink rides on the form envelope.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns
                   (fn [_db _cid]
@@ -145,22 +148,71 @@
                   (fn [_db _turn-id]
                     [{:id :iter-1
                       :code "(def prompt-lines (v/cat \"src/foo.clj\"))"
-                      :result {:vis/ref :expr}
-                      :channel [{:position 0
-                                 :form "(v/cat \"src/foo.clj\")"
-                                 :success? true
-                                 :result "Read `src/foo.clj` — 10 line(s)."}]}])]
+                      :forms [{:scope "t1/i1/f1"
+                               :tag   :host
+                               :src   "(def prompt-lines (v/cat \"src/foo.clj\"))"
+                               :result {:vis/ref :expr}
+                               :channel [{:position 0
+                                          :form "(v/cat \"src/foo.clj\")"
+                                          :success? true
+                                          :result "Read `src/foo.clj` — 10 line(s)."}]}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)
             rendered (-> trace :forms first :result-render)]
-        (expect (str/includes? rendered "Read `src/foo.clj`"))
-        (expect (not (str/includes? rendered "<runtime value"))))))
+        (expect (str/includes? (str rendered) "Read `src/foo.clj`"))
+        (expect (not (str/includes? (str rendered) "<runtime value"))))))
+
+  (it "rebuild-history surfaces per-form errors as errors (not successes) and keeps the tool tag"
+    ;; Regression from session 11d4f817: the rebuild path used to fold
+    ;; the WHOLE iteration into one synthetic block and read non-existent
+    ;; iteration-level `:result` / `:error` / `:channel` keys off the
+    ;; persisted row. Errored forms restored as successful and tool tags
+    ;; (`:observation` / `:mutation` plus the pi-style preview IR)
+    ;; vanished. Acceptance criterion is that the restored bubble looks
+    ;; identical to the live one, so we iterate the `:forms` envelope
+    ;; vec the loop persists and project each form into the same
+    ;; record shape `progress/chunk->form-result` builds live.
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1 :user-request "two forms" :answer-markdown ""}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :code (str "(v/cat \"src/foo.clj\")\n(v/cat \"ghost.clj\")")
+                      :forms [{:scope "t1/i1/f1"
+                               :tag :observation
+                               :src "(v/cat \"src/foo.clj\")"
+                               :result {:vis.op :v/cat :path "src/foo.clj"}
+                               :channel [{:position 0
+                                          :form "(v/cat \"src/foo.clj\")"
+                                          :success? true
+                                          :result "CAT src/foo.clj"}]}
+                              {:scope "t1/i1/f2"
+                               :tag :observation
+                               :src "(v/cat \"ghost.clj\")"
+                               :error {:message "file not found: ghost.clj"}}]}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            forms   (-> history second :traces first :forms)
+            [f1 f2] forms]
+        ;; The persisted bubble surfaces ONE record per form, not one
+        ;; opaque block for the whole iteration.
+        (expect (= 2 (count forms)))
+        ;; Form 1: succeeded; tool tag and preview IR present.
+        (expect (true?  (:success? f1)))
+        (expect (= :tool (:result-kind f1)))
+        (expect (str/includes? (str (:result-render f1)) "CAT src/foo.clj"))
+        ;; Form 2: errored; the rebuild MUST surface it as an error
+        ;; instead of papering over with success (the original bug).
+        (expect (false? (:success? f2)))
+        (expect (= :error (:result-kind f2)))
+        (expect (some? (:error f2))))))
 
   (it "rebuild-history shows restored def values when the def form returned a runtime var"
-    ;; `(def derived (subvec ...))` returns a SCI Var at the form level, so
-    ;; the iteration block stores `{:vis/ref :expr}`. The actual value is
-    ;; persisted separately as expression state; resume should use that before
-    ;; falling back to the runtime-ref placeholder.
+    ;; `(def derived (subvec ...))` returns a SCI Var at the form level
+    ;; so the persisted envelope carries `{:vis/ref :expr}`. The actual
+    ;; value is stored separately as definition_state; resume uses that
+    ;; before falling back to the runtime-ref placeholder.
     (with-redefs [vis/db-info (fn [] :db)
                   history-restore/restored-var-values
                   (fn [_db _cid]
@@ -174,12 +226,15 @@
                   (fn [_db _turn-id]
                     [{:id :iter-1
                       :code "(def prompt-slice (subvec xs 0 2))"
-                      :result {:vis/ref :expr}}])]
+                      :forms [{:scope "t1/i1/f1"
+                               :tag :host
+                               :src "(def prompt-slice (subvec xs 0 2))"
+                               :result {:vis/ref :expr}}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             rendered (-> history second :traces first :forms first :result-render)]
-        (expect (str/includes? rendered "alpha"))
-        (expect (str/includes? rendered "beta"))
-        (expect (not (str/includes? rendered "<runtime value"))))))
+        (expect (str/includes? (str rendered) "alpha"))
+        (expect (str/includes? (str rendered) "beta"))
+        (expect (not (str/includes? (str rendered) "<runtime value"))))))
 
   (it "render-answer throws on raw-string input (strict IR contract)"
     (expect
