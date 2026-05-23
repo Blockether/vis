@@ -4473,6 +4473,8 @@
   ([environment]
    (sync-active-extension-symbols! environment (prompt/active-extensions environment)))
   ([environment active-extensions]
+   (when-let [active-atom (:active-extensions environment)]
+     (reset! active-atom (vec (or active-extensions []))))
    (when-let [sci-ctx (:sci-ctx environment)]
      (let [installed (vec (or (some-> (:extensions environment) deref) []))
            active-set (set (map :ext/name active-extensions))]
@@ -4815,7 +4817,8 @@
               :router                            router
               :answer-atom                       answer-atom
               :session-title-atom           session-title-atom
-              :extensions                        (atom []))]
+              :extensions                        (atom [])
+              :active-extensions                 (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
     ;; Restore persisted vars when resuming an existing session.
