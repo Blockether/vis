@@ -13,13 +13,13 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.provider-anthropic :as anthropic]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.external-opener :as opener])
-  (:import [com.googlecode.lanterna Symbols]
-           [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
+  (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]
            [java.net URI]))
 
@@ -542,29 +542,6 @@
   [selected current-start content-h total]
   (dlg/visible-window-start selected current-start (card-visible-count content-h) total))
 
-(defn- card-scrollbar-geometry
-  [height total first-visible]
-  (let [visible-count (card-visible-count height)]
-    (when (and (pos? height) (> total visible-count))
-      (let [thumb-h   (max 1 (int (* height (/ (double visible-count) total))))
-            max-start (max 1 (- total visible-count))
-            thumb-top (int (* (- height thumb-h)
-                             (/ (double (dlg/clamp first-visible 0 max-start)) max-start)))]
-        {:track-h height
-         :thumb-h thumb-h
-         :thumb-top thumb-top}))))
-
-(defn- draw-card-scrollbar!
-  [g col top height total first-visible]
-  (when-let [{:keys [track-h thumb-h thumb-top]}
-             (card-scrollbar-geometry height total first-visible)]
-    (doseq [r (range track-h)]
-      (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/set-char! g col (+ top r) Symbols/SINGLE_LINE_VERTICAL))
-    (doseq [r (range thumb-h)]
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/set-char! g col (+ top thumb-top r) \█))))
-
 (defn- draw-provider-card!
   "Draw a 2-line provider card.
     Line 1: ① Label  url.host  ●
@@ -785,7 +762,13 @@
                 model
                 previous-name
                 next-name))))
-        (draw-card-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+        (scrollbar/draw! g
+          {:col     (+ left inner-w)
+           :top     content-top
+           :track-h content-h
+           :total-h total
+           :inner-h (card-visible-count content-h)
+           :scroll  @scroll})
 
         (dlg/draw-hint-bar! g left hint-row inner-w
           [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
@@ -1323,7 +1306,13 @@
                  (nth @items idx)
                  (get @statuses (:id (nth @items idx)))
                  (get @limits (:id (nth @items idx)))))))
-         (draw-card-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+         (scrollbar/draw! g
+           {:col     (+ left inner-w)
+            :top     content-top
+            :track-h content-h
+            :total-h total
+            :inner-h (card-visible-count content-h)
+            :scroll  @scroll})
 
          (dlg/draw-hint-bar! g left hint-row inner-w
            [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])

@@ -807,12 +807,10 @@
         (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
 (defdescribe scrollbar-thumb-geometry-test
-  ;; Pinning the painter/hit-test contract. Both the message-area
-  ;; painter and the input-thread mouse handler must agree on which
-  ;; rows belong to the thumb; if they drift, the user clicks "on
-  ;; the thumb" and nothing happens, or clicks "off the thumb" and
-  ;; the viewport jumps. The pure helper IS the contract.
-  (let [g render/scrollbar-thumb-geometry]
+  ;; Geometry now lives in `scrollbar/geometry` — the single source of
+  ;; truth for painter and hit-test. Test pinned here for back-compat,
+  ;; mirrored in `scrollbar_test.clj`.
+  (let [g (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)]
     (describe "Returns nil when there's no overflow"
       (it "total-h < inner-h: nothing to scroll"
         (expect (nil? (g 10 20 nil))))
@@ -829,15 +827,15 @@
           (expect (= 80 max-scroll))))    ;; 100 - 20
 
       (it "scroll=0 places thumb at the TOP"
-        (expect (= {:thumb-top-rel 0 :thumb-h 1 :max-scroll 80}
+        (expect (= {:thumb-top-rel 0 :thumb-h 1 :max-scroll 80 :track-h 20}
                   (g 100 20 0))))
 
       (it "scroll=40 places thumb in the MIDDLE of the free track"
-        (expect (= {:thumb-top-rel 9 :thumb-h 1 :max-scroll 80}
+        (expect (= {:thumb-top-rel 9 :thumb-h 1 :max-scroll 80 :track-h 20}
                   (g 100 20 40))))
 
       (it "scroll=80 places thumb at the BOTTOM (== max-scroll)"
-        (expect (= {:thumb-top-rel 19 :thumb-h 1 :max-scroll 80}
+        (expect (= {:thumb-top-rel 19 :thumb-h 1 :max-scroll 80 :track-h 20}
                   (g 100 20 80)))))
 
     (describe "Out-of-range scroll values are clamped"

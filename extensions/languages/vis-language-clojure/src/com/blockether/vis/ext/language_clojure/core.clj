@@ -12,7 +12,14 @@
      (clj/edit {:path :op :target :code}) -> rewrite-clj edit
 
    No surface duplicates foundation-core's `v/*`. `v/cat`/`v/rg`/
-   `v/patch` stay the right answer for everything Clojure-agnostic."
+   `v/patch` stay the right answer for everything Clojure-agnostic.
+
+   The SCI surface registered here exposes `clj/eval` and `clj/find`.
+   Inside this namespace the matching vars (`eval`, `find`) shadow
+   `clojure.core/eval` and `clojure.core/find`; that is intentional
+   — we never use the core fns here, and `:refer-clojure :exclude`
+   silences the load-time warning so the build log stays clean."
+  (:refer-clojure :exclude [eval find])
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
@@ -22,6 +29,7 @@
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.outline :as outline]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
+   [com.blockether.vis.ext.language-clojure.render :as render]
    [com.blockether.vis.internal.extension :as extension]))
 
 ;; =============================================================================
@@ -101,7 +109,7 @@
          root (env-root env)
          port (or port (ports/find-default root))]
      (when-not port
-       (throw (ex-info (str "no nREPL port found — start one (e.g. `bin/dev`) or call (clj/ports) to inspect candidates")
+       (throw (ex-info "no nREPL port found — start one (e.g. `bin/dev`) or call (clj/ports) to inspect candidates"
                 {:type :clj/no-port
                  :workspace-root root})))
      (extension/success
@@ -168,25 +176,30 @@
 (def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{:path :op :target :code [:match] [:format?]}`. `:op` ∈ #{:replace :insert-before :insert-after :replace-sexp}. `:target` is a defn/def name string, `[name dispatch]` for defmethod, or the wrapping form name for `:replace-sexp` (use `:match` for the sexp text to swap). Writes only when the result round-trips parse-clean. `:format? true` (default) runs zprint before writing."
        :arglists '([opts])} edit clj-edit-fn)
 
+;; Each `:render-fn` is a structured IR builder over the raw
+;; `:result` map (see render.clj). The MODEL surface is the SCI
+;; return value (`pr-str` of the map) — these renderers shape
+;; ONLY the channel/TUI preview, never what the LLM reads.
+
 (def ports-symbol
   (vis/symbol #'ports
-    {:before-fn inject-env :tag :observation :render-fn vis/render-string}))
+    {:before-fn inject-env :tag :observation :render-fn render/render-ports}))
 
 (def eval-symbol
   (vis/symbol #'eval
-    {:before-fn inject-env :tag :mutation :render-fn vis/render-string}))
+    {:before-fn inject-env :tag :mutation :render-fn render/render-eval}))
 
 (def outline-symbol
   (vis/symbol #'outline
-    {:before-fn inject-env :tag :observation :render-fn vis/render-string}))
+    {:before-fn inject-env :tag :observation :render-fn render/render-outline}))
 
 (def find-symbol
   (vis/symbol #'find
-    {:before-fn inject-env :tag :observation :render-fn vis/render-string}))
+    {:before-fn inject-env :tag :observation :render-fn render/render-find}))
 
 (def edit-symbol
   (vis/symbol #'edit
-    {:before-fn inject-env :tag :mutation :render-fn vis/render-string}))
+    {:before-fn inject-env :tag :mutation :render-fn render/render-edit}))
 
 (def clj-symbols
   [ports-symbol eval-symbol outline-symbol find-symbol edit-symbol])

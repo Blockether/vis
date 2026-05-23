@@ -164,7 +164,7 @@
         headers         (var-get #'dlg/file-picker-table-headers)
         content-lines   (var-get #'dlg/file-picker-content-lines)
         body-height     (var-get #'dlg/file-picker-table-body-height)
-        scrollbar-geom  (var-get #'dlg/file-picker-scrollbar-geometry)
+        scrollbar-geom  (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
         widths          (table-widths 72)]
     (testing "file picker renders a table with headers and no outer side borders"
       (let [top-line    (border-line widths :top)
@@ -188,9 +188,15 @@
     (testing "picker body has a constant height and hides unused scrollbar geometry"
       (is (= 20 (content-lines)))
       (is (= 10 (body-height 50)))
-      (is (= {:track-h 10 :thumb-h 5 :thumb-top 2}
-            (scrollbar-geom 10 20 5)))
-      (is (nil? (scrollbar-geom 10 3 0))))))
+      ;; Canonical primitive: 20 items in a 10-row viewport, scroll=5
+      ;; ⇒ 1-cell thumb halfway down the 10-row track. Overflow gone
+      ;; when total ≤ inner (3 items in a 10-row view).
+      (let [g (scrollbar-geom 20 10 5)]
+        (is (= 1 (:thumb-h g)))
+        (is (= 10 (:track-h g)))
+        (is (= 10 (:max-scroll g)))
+        (is (= 4 (:thumb-top-rel g))))
+      (is (nil? (scrollbar-geom 3 10 0))))))
 
 (deftest settings-dialog-footprint-and-indent-test
   (let [settings-content-width  (var-get #'dlg/settings-content-width)
@@ -480,5 +486,9 @@
             (mapv :label palette-commands))))
 
     (testing "command palette content fits the default dialog without an unused scrollbar"
-      (let [scrollbar-geom (var-get #'dlg/scrollbar-geometry)]
-        (is (nil? (scrollbar-geom 10 (count palette-commands) 0)))))))
+      (let [scrollbar-geom (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)]
+        ;; Canonical `geometry` arity is (total inner [track] scroll) —
+        ;; for the dialog adapter shape callers used `(height total scroll)`
+        ;; with track == height. Pass `(count palette-commands)` as total,
+        ;; 10 as the viewport, scroll 0.
+        (is (nil? (scrollbar-geom (count palette-commands) 10 0)))))))
