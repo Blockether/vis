@@ -307,10 +307,13 @@
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.
    The public helper vars above stay plain Clojure functions for host callers;
-   only the SCI symbol implementation returns a tool envelope."
+   only the SCI symbol implementation returns a tool envelope.
+   Every env data symbol is an :observation (pure read); the
+   inline `:tag` lets `register-extension!` populate the op registry
+   without an out-of-band `vis/register-op!` doseq."
   [v sym]
   (vis/symbol v
-    (assoc (env-renderers sym) :symbol sym)))
+    (assoc (env-renderers sym) :symbol sym :tag :observation)))
 
 (def snapshot-symbol
   (env-data-symbol #'snapshot-tool 'snapshot))

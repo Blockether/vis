@@ -1,14 +1,17 @@
-(ns com.blockether.vis.ext.foundation-core.merge-ops-test
-  "PLAN.md §12 step 10 follow-up — merge-resolve SCI ops.
+(ns com.blockether.vis.ext.foundation-git.merge-ops-test
+  "PLAN.md section 12 step 10 follow-up -- merge-resolve helper fns.
 
-   Each test sets up a real temp git repo with a divergent commit
-   on the same file from both sides, runs `git merge` to land the
-   conflict, then exercises mr/* against the resulting worktree."
+   The host-side Clojure fns under test are aliased as `mr/` in this
+   namespace for brevity; SCI-side they surface under the `git/`
+   alias as `git/merge-status`, `git/merge-accept-ours`, etc. Each
+   test sets up a real temp git repo with a divergent commit on the
+   same file from both sides, runs `git merge` to land the conflict,
+   then exercises the helpers against the resulting worktree."
   (:require
    [clojure.java.io :as io]
    [clojure.java.shell :as sh]
    [clojure.string :as str]
-   [com.blockether.vis.ext.foundation-core.merge-ops :as mr]
+   [com.blockether.vis.ext.foundation-git.merge-ops :as mr]
    [com.blockether.vis.internal.channel-events :as channel-events]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))

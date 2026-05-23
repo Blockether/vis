@@ -453,21 +453,27 @@
 
 (def bridge-symbols
   [(vis/symbol #'init {:before-fn inject-env
+                       :tag :mutation
                        :render-fn vis/render-string
                        :arglists '([] [opts])})
    (vis/symbol #'profile {:before-fn inject-env
+                          :tag :observation
                           :render-fn vis/render-string
                           :arglists '([] [opts])})
    (vis/symbol #'check {:before-fn inject-env
+                        :tag :observation
                         :render-fn vis/render-string
                         :arglists '([] [opts])})
    (vis/symbol #'next {:before-fn inject-env
+                       :tag :observation
                        :render-fn vis/render-string
                        :arglists '([] [opts])})
    (vis/symbol #'list-evidence {:before-fn inject-env
+                                :tag :observation
                                 :render-fn vis/render-string
                                 :arglists '([] [opts])})
    (vis/symbol #'run-evidence {:before-fn inject-env
+                               :tag :mutation
                                :render-fn vis/render-string
                                :arglists '([id] [id opts])})])
 
@@ -493,13 +499,8 @@
     :phase :turn.iteration/start
     :fn bridge-hint}])
 
-(doseq [[op tag] [[:br/init :mutation]
-                  [:br/profile :observation]
-                  [:br/check :observation]
-                  [:br/next :observation]
-                  [:br/list-evidence :observation]
-                  [:br/run-evidence :mutation]]]
-  (vis/register-op! op {:tag tag}))
+;; Tags carried INLINE on each `vis/symbol` opts map above;
+;; register-extension! auto-populates the op registry.
 
 ;; =============================================================================
 ;; CLI surface -- `vis ext bridge <subcommand>`

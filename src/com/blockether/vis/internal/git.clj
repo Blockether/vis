@@ -42,13 +42,13 @@
     (catch Throwable _ nil)))
 
 (defn in-repository?
-  "True when `start` is inside a git repository. Uses JGit only."
+  "True when `start` is inside a git repository. Uses JGit only.
+   Closes the discovered Repository via `with-open` so callers can
+   probe freely without leaking handles."
   [^File start]
-  (boolean
-    (when-let [^Repository repo (open-repository start)]
-      (try true
-        (finally
-          (try (.close repo) (catch Throwable _ nil)))))))
+  (if-let [^Repository repo (open-repository start)]
+    (with-open [_ repo] true)
+    false))
 
 (defn repo-name
   "Human label for a repository, currently its work-tree directory name."

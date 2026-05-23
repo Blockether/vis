@@ -8,6 +8,11 @@
   [& _]
   nil)
 
+(defn ^{:doc "demo"} demo-symbol-fn
+  "demo"
+  []
+  (extension/success {:result {:secret "payload"}}))
+
 (defdescribe prompt-normalization-test
   (it "normalizes string and fn extension prompts"
     (let [prompt-text "\n\n    First line\n\n\n\n      Nested line\n"
@@ -67,11 +72,8 @@
 
 (defdescribe symbol-renderer-test
   (it "requires a render fn for observed tool symbols"
-    (extension/register-op! :test.missing-renderer/demo {:tag :observation})
-    (let [entry (extension/symbol
-                  'demo
-                  (fn [] (extension/success {:result {:secret "payload"}}))
-                  {:doc "demo" :arglists '([])})]
+    (let [entry (extension/symbol #'demo-symbol-fn
+                  {:symbol 'demo :tag :observation})]
       (expect (= :extension/missing-renderer
                 (try
                   (extension/extension
@@ -126,12 +128,9 @@
         (extension/deregister-extension! "test.slash-collide-b"))))
 
   (it "uses the symbol-specific render-fn instead of dumping tool result data"
-    (extension/register-op! :test.renderer/demo {:tag :observation})
-    (let [entry (extension/symbol
-                  'demo
-                  (fn [] (extension/success {:result {:secret "payload"}}))
-                  {:doc "demo"
-                   :arglists '([])
+    (let [entry (extension/symbol #'demo-symbol-fn
+                  {:symbol 'demo
+                   :tag :observation
                    :render-fn (fn [_] [:ir {} [:p {} [:span {} "render-specific"]]])})
           ext   (extension/register-extension!
                   {:ext/name "test.renderer"

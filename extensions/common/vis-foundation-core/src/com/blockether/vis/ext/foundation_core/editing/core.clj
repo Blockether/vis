@@ -140,18 +140,8 @@
 ;; the abstraction boundary (color-role lived here too). Use the engine
 ;; functions directly.
 
-(doseq [[op tag] [[:v/cat :observation]
-                  [:v/ls :observation]
-                  [:v/rg :observation]
-                  [:v/exists? :observation]
-                  [:v/patch :mutation]
-                  [:v/write :mutation]
-                  [:v/create-dirs :mutation]
-                  [:v/copy :mutation]
-                  [:v/move :mutation]
-                  [:v/delete :mutation]
-                  [:v/delete-if-exists :mutation]]]
-  (extension/register-op! op {:tag tag}))
+;; Op tags carried INLINE on each `vis/symbol` opts map below; the
+;; old (extension/register-op! ...) doseq retired.
 
 (defn- tool-success
   "Build a successful tool envelope. The caller passes `:metadata` (per-op
@@ -2307,24 +2297,28 @@
 (def cat-symbol
   (vis/symbol #'cat-tool
     {:symbol 'cat
+     :tag :observation
      :render-fn channel-render-cat
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
 
 (def ls-symbol
   (vis/symbol #'ls-tool
     {:symbol 'ls
+     :tag :observation
      :render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
 
 (def rg-symbol
   (vis/symbol #'rg-tool
     {:symbol 'rg
+     :tag :observation
      :render-fn channel-render-rg
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
 
 (def patch-symbol
   (vis/symbol #'patch-tool
     {:symbol 'patch
+     :tag :mutation
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
 
@@ -2333,42 +2327,49 @@
   ;; shape is the same single-file summary (just always 1-file long).
   (vis/symbol #'write-tool
     {:symbol 'write
+     :tag :mutation
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/write :file nil)}))
 
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
+     :tag :mutation
      :render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
 
 (def copy-symbol
   (vis/symbol #'copy-tool
     {:symbol 'copy
+     :tag :mutation
      :render-fn channel-render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
 
 (def move-symbol
   (vis/symbol #'move-tool
     {:symbol 'move
+     :tag :mutation
      :render-fn channel-render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
 
 (def delete-symbol
   (vis/symbol #'delete-tool
     {:symbol 'delete
+     :tag :mutation
      :render-fn channel-render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
 
 (def delete-if-exists-symbol
   (vis/symbol #'delete-if-exists-tool
     {:symbol 'delete-if-exists
+     :tag :mutation
      :render-fn channel-render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
 
 (def exists?-symbol
   (vis/symbol #'exists-tool
     {:symbol 'exists?
+     :tag :observation
      :render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
 

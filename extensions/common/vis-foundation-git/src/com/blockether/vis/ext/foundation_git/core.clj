@@ -11,6 +11,7 @@
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.foundation-git.merge-ops :as merge-ops]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git-core]))
 
@@ -311,40 +312,50 @@
   [env f args]
   {:env env :fn f :args (into [env] args)})
 
+;; All `git/*` symbols carry their `:tag :observation | :mutation`
+;; INLINE on their `vis/symbol` opts; `register-extension!` walks the
+;; symbol vec and populates the op registry automatically. No
+;; per-extension `register-op!` boilerplate.
+
 (def diff-symbol
   (vis/symbol #'diff
     {:before-fn inject-env
+     :tag       :observation
      :render-fn vis/render-string}))
 
 (def status-symbol
   (vis/symbol #'status
     {:before-fn inject-env
+     :tag       :observation
      :render-fn vis/render-string}))
 
 (def log-symbol
   (vis/symbol #'log
     {:before-fn inject-env
+     :tag       :observation
      :render-fn vis/render-string}))
 
 (def show-symbol
   (vis/symbol #'show
     {:before-fn inject-env
+     :tag       :observation
      :render-fn vis/render-string}))
 
 (def blame-symbol
   (vis/symbol #'blame
     {:before-fn inject-env
+     :tag       :observation
      :render-fn vis/render-string}))
 
 (def git-symbols
-  [diff-symbol status-symbol log-symbol show-symbol blame-symbol])
-
-;; =============================================================================
-;; Op registry
-;; =============================================================================
-
-(doseq [op [:git/diff :git/status :git/log :git/show :git/blame]]
-  (vis/register-op! op {:tag :observation}))
+  ;; Observation + merge-resolve ops all live under the `git/` alias.
+  ;; Merge ops are gated behind the existing `:ext/activation-fn`
+  ;; (must sit in a git repo); they no-op the SCI sandbox layer when
+  ;; called outside an active merge (JGit-side checks surface as
+  ;; structured exceptions for the model to read).
+  (vec (concat
+         [diff-symbol status-symbol log-symbol show-symbol blame-symbol]
+         merge-ops/merge-ops-symbols)))
 
 ;; =============================================================================
 ;; Extension manifest
@@ -353,7 +364,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-git"
-     :ext/description    "JGit-backed observation tools under git/: diff, status, log, show, blame. Activates only when the active workspace sits inside a repo."
+     :ext/description    "JGit-backed git/ surface: observation (diff, status, log, show, blame) + merge-resolve sub-session ops (merge-status / merge-accept-ours / merge-accept-theirs / merge-mark-resolved / merge-continue! / merge-abort!). Activates only when the active workspace sits inside a repo."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
