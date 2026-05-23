@@ -125,8 +125,7 @@
     (select-keys settings
       [:show-thinking :show-iterations :show-silent :show-iteration-headers
        :preview/default-lines
-       :message-meta
-       :progress/live-iteration-limit])))
+       :message-meta])))
 
 (defn- height-key [message bubble-w settings _detail-expansions]
   [(message-content-fingerprint message)

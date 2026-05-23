@@ -59,27 +59,6 @@
   (io/file (or *workspace-root* (System/getProperty "user.dir"))))
 
 ;; =============================================================================
-;; Legacy EDN cleanup
-;;
-;; ~/.vis/workspaces.edn predated the DB-backed workspace table. PLAN.md
-;; §1 decision 4 dropped EDN entirely with no import; this is the
-;; idempotent one-shot delete that runs on first ns load.
-;; =============================================================================
-
-(defn- legacy-edn-file ^File []
-  (io/file (System/getProperty "user.home") ".vis" "workspaces.edn"))
-
-(defn delete-legacy-edn!
-  "Best-effort delete of ~/.vis/workspaces.edn. Idempotent."
-  []
-  (let [f (legacy-edn-file)]
-    (when (.exists f)
-      (try (.delete f) (catch Throwable _ nil)))))
-
-(defonce ^:private _legacy-edn-cleanup
-  (delete-legacy-edn!))
-
-;; =============================================================================
 ;; Git helpers — JGit programmatic API
 ;;
 ;; Every git operation on this namespace goes through JGit. The ONLY
