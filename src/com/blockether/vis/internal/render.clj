@@ -51,6 +51,7 @@
    [clojure.string :as str]
    [clojure+.walk :as cwalk]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.toggles     :as toggles]
    [edamame.core :as edamame])
   (:import
    [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
@@ -1410,9 +1411,17 @@
    Pure visible-code blocks and mixed blocks (any non-hidden `:code`
    segment present) are NOT structurally silent: the prelude is
    genuinely useful work to show.  Blank / nil input is not
-   considered silent — there is no block to hide."
+   considered silent — there is no block to hide.
+
+   Toggle interaction: when the `:vis/show-raw-code` feature toggle
+   is ON the hide-by-default classification is overridden and EVERY
+   `:code` segment counts as visible, so a block of bare tool calls
+   stays unsilenced and the bubble paints the raw source."
   [form-source]
   (let [src (str (or form-source ""))]
     (and (not (str/blank? src))
-      (let [segs (parse-block-display src)]
-        (not-any? #(and (= :code (:kind %)) (not (:hidden? %))) segs)))))
+      (let [segs      (parse-block-display src)
+            show-raw? (toggles/enabled? :vis/show-raw-code)]
+        (if show-raw?
+          (not-any? #(= :code (:kind %)) segs)
+          (not-any? #(and (= :code (:kind %)) (not (:hidden? %))) segs))))))

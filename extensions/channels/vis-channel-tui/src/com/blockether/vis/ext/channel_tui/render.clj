@@ -3118,11 +3118,18 @@
   "Stitch the *visible* `:code` source out of a parsed segment vector.
 
    `parse-block-display` tags bookkeeping forms
-   (`(def r (v/ls …))`, bare `(v/cat …)` tool calls, etc.) with
-   `:hidden? true` so the channel can collapse the raw source row
-   and let the tool's result pane speak for itself.
+   (`(def r (v/ls …))`, bare `(v/cat …)` tool calls, every
+   def-shaped form, ...) with `:hidden? true` so the channel can
+   collapse the raw source row and let the tool's result pane speak
+   for itself.
 
-   Three shapes:
+   Feature toggle `:vis/show-raw-code` flips that policy at the
+   bubble: when ON every `:code` segment is treated as visible and
+   the raw source paints, even for forms parse-block-display would
+   otherwise hide. Off by default; the TUI settings dialog flips it
+   live.
+
+   Three shapes (toggle OFF, default):
 
      1. Segments parsed AND at least one *visible* `:code` segment
         — stitch only those sources, ignoring hidden ones.
@@ -3132,16 +3139,18 @@
      3. No segments at all (legacy persisted chunk) — fall back to
         the raw `code` string the chunk carries."
   [segments fallback-code]
-  (let [code-segments    (filter #(= :code (:kind %)) segments)
-        visible-sources  (keep (fn [{:keys [source hidden?]}]
-                                 (when (and (not hidden?)
-                                         (not (str/blank? (str source))))
-                                   (str/trim (str source))))
-                           code-segments)]
+  (let [show-raw?       (vis/toggle-enabled? :vis/show-raw-code)
+        code-segments   (filter #(= :code (:kind %)) segments)
+        visible-sources (keep (fn [{:keys [source hidden?]}]
+                                (when (and (or show-raw? (not hidden?))
+                                        (not (str/blank? (str source))))
+                                  (str/trim (str source))))
+                          code-segments)]
     (cond
       (seq visible-sources)          (str/join "\n" visible-sources)
-      ;; segments parsed but all hidden — explicit blank, NOT fallback,
-      ;; so the hide-code-chrome? branch fires below.
+      ;; segments parsed but all hidden (toggle OFF) — explicit
+      ;; blank, NOT fallback, so the hide-code-chrome? branch fires
+      ;; below and the bubble drops the code chrome entirely.
       (seq code-segments)            ""
       :else                           fallback-code)))
 
