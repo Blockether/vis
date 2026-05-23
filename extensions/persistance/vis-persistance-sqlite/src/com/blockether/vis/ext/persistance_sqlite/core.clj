@@ -611,6 +611,25 @@
               {:select [:*] :from :workspace
                :where  [:= :id id]})))))))
 
+(defn db-workspace-update-commit-id!
+  "Set `commit_id` on `workspace-id` (PLAN.md §4.5). Called by
+   `workspace/commit!` after a fresh commit lands on the worktree
+   so callers see the new HEAD without re-running `git rev-parse`.
+   Returns the updated record."
+  [db-info workspace-id commit-id]
+  (when (and (ds db-info) workspace-id)
+    (let [id (->ref workspace-id)]
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:commit_id commit-id}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
+
 (defn db-workspace-update-label!
   "Set the human-friendly `:label` override (PLAN.md §1). Pass nil to
    clear the label and fall back to the heuristic. Returns the updated
