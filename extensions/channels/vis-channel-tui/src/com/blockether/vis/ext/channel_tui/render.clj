@@ -3662,7 +3662,13 @@
         cancel-text             (if (ir-non-empty? answer)
                                   (str/trim (vis/extract-text answer))
                                   "Cancelled by user.")
-        cancel-rows             (mapv line-entry (wrap-text cancel-text (max 1 (- fill-w 2))))
+        ;; Wrap each cancel body line in INLINE_ITALIC sentinels so the
+        ;; painter applies italic on top of the `cancelled-fg` color.
+        ;; The Vis role label already paints muted; the body row stayed
+        ;; plain text and looked like a normal answer in the wrong color.
+        cancel-rows             (mapv (fn [line]
+                                        (line-entry (str p/INLINE_ITALIC_ON line p/INLINE_ITALIC_OFF)))
+                                  (wrap-text cancel-text (max 1 (- fill-w 2))))
         ;; Answer layout shape mirrors code blocks:
         ;;   neutral blank row = outside top margin (unless the trace
         ;;                       already ended with a neutral margin row)

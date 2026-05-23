@@ -874,24 +874,65 @@
                             current-form-scope))))
           (or trailer []))))))
 
+(def ^:private def-name-re
+  "Captures NAME from a top-level `(def NAME ...)` source. The model often
+   rebinds the same var across iterations with different tool arguments;
+   without dedup the trailer accumulates every attempt and the model loses
+   the signal that `persist` already exists, looping with fresh search
+   terms."
+  #"^\(\s*def(?:n|n-|macro|multi)?\s+([A-Za-z_*+!?<>=/.-][A-Za-z0-9_*+!?<>=/.\-]*)")
+
+(defn- form-def-name
+  [form]
+  (when-let [src (some-> (:src form) str str/triml)]
+    (when-let [[_ n] (re-find def-name-re src)]
+      n)))
+
+(defn- pin-def-names
+  [entry]
+  (into #{}
+    (keep form-def-name)
+    (:forms entry)))
+
+(defn- dedup-rebound-defs
+  "Drop earlier pins whose def-names the current iter rebinds. The runtime
+   binding for that name no longer holds, so the persisted pin is misleading;
+   keeping only the latest binding pin teaches the model that one attempt
+   landed instead of N."
+  [trailer current-pin]
+  (let [current-names (pin-def-names current-pin)]
+    (if (empty? current-names)
+      (vec trailer)
+      (vec
+        (remove (fn [entry]
+                  (let [names (pin-def-names entry)]
+                    (and (seq names)
+                      (some current-names names))))
+          trailer)))))
+
 (defn advance-iter
   "Append a trailer pin for the just-finished iter (if it had any non-done
    form-results) and advance the cursor so the next iter starts at
    :iter (current+1) :next-form 1. `form-results-vec` is the ordered vec of
    `{:scope :tag :src :result :error}` envelopes captured during the iter.
    Forms whose src begins with `(done` are excluded from the pin. Observation-
-   only pins carry forward until a later mutation makes them stale."
+   only pins carry forward until a later mutation makes them stale. Pins that
+   bind a def-name later rebound in `keepable` are dropped so the trailer
+   reflects only the live SCI bindings."
   [ctx form-results-vec]
   (let [cursor    (:session/scope ctx)
         iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
         keepable  (vec (remove #(str/starts-with? (str (:src %)) "(done")
                          form-results-vec))
+        new-pin   (when (seq keepable) {:scope iter-scope :forms keepable})
         trailer'  (prune-stale-observation-pins
                     (:session/trailer ctx) iter-scope keepable)
+        trailer'  (if new-pin
+                    (dedup-rebound-defs trailer' new-pin)
+                    trailer')
         ctx*      (assoc ctx :session/trailer trailer')
-        ctx'      (if (seq keepable)
-                    (update ctx* :session/trailer (fnil conj [])
-                      {:scope iter-scope :forms keepable})
+        ctx'      (if new-pin
+                    (update ctx* :session/trailer (fnil conj []) new-pin)
                     ctx*)]
     (assoc ctx' :session/scope
       (-> cursor (update :iter inc) (assoc :next-form 1)))))
