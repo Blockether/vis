@@ -2316,14 +2316,24 @@
        :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
-  "Existence check. Returns boolean."
+  "Filesystem existence check.
+
+   Returns `{:vis.op :v/exists? :path P :exists? B}` so the model
+   destructures the same shape every `v/*` tool uses (industry parity
+   with `v/cat`, `v/ls`, `v/rg`, …). Earlier this returned a bare
+   boolean, which broke `(def r (v/exists? P))` consumers that
+   reached for `(:exists? r)` — a wholly reasonable assumption given
+   the surrounding map-shaped `v/*` API. See conversation
+   11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 4 iter 1→2."
   [path]
   (let [exists? (exists-safe? path)]
     (tool-success
       {:op :v/exists?
        :path path
        :kind :path
-       :result exists?
+       :result {:vis.op :v/exists?
+                :path   (str path)
+                :exists? exists?}
        :metadata {:exists? exists?}})))
 
 ;; =============================================================================
@@ -2541,8 +2551,13 @@
 
 (defn- channel-render-exists?
   [result]
+  ;; `result` is now `{:vis.op :v/exists? :path P :exists? B}` (post
+  ;; envelope-consistency sweep, see `exists-tool`). Pull `:exists?`
+  ;; out for the EXISTS/MISSING badge; bare booleans are no longer a
+  ;; supported shape.
   (ir-root
-    (ir-p (ir-strong (if result "EXISTS" "MISSING")))))
+    (ir-p (ir-strong (if (:exists? result) "EXISTS" "MISSING"))
+      (when-let [p (:path result)] (str "  " p)))))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -2796,7 +2811,10 @@
      "  Prefer batching related edits in ONE v/patch call."
      ""
      "PATH OPS"
-     "  v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?."
+     "  v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists."
+     "  v/exists? path -> {:vis.op :v/exists? :path :exists?}. Destructure"
+     "  `:exists?` for the boolean; the map shape is the standard `v/*`"
+     "  contract — do NOT treat the return as a bare boolean."
      ""
      "RULES"
      "  - Execute side effects (v/patch, v/move, v/create-dirs, etc.) in their"

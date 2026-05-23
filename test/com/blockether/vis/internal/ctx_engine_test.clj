@@ -403,7 +403,44 @@
     (let [lazy (map identity ["a.clj" "b.clj"])
           env (eng/block->envelope {:code "(map identity files)" :result lazy}
                 1 {:turn 1 :iter 1})]
-      (expect (= ["a.clj" "b.clj"] (:result env))))))
+      (expect (= ["a.clj" "b.clj"] (:result env)))))
+
+  (it "carries the per-form `:channel` sink onto the envelope when present (regression: badge missing on def-wrapped tool calls)"
+    ;; Regression for conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
+    ;; turn 2 \"show me ls\":
+    ;;   model wrote `(def r (v/ls \".\"))` per the engine contract
+    ;;   (\"bind values to defs\"). SCI's def unwrapped the tool envelope
+    ;;   to its inner :result, so the persisted block's :result is a
+    ;;   plain `{:vis.op :v/ls …}` map without `:success?`. The TUI's
+    ;;   `render-tool-result` then refused to dispatch to the v/ls
+    ;;   renderer (envelope guard) and the bubble showed plain EDN —
+    ;;   no widget, no badge. The pre-rendered IR already lives on
+    ;;   each per-form `:channel` sink entry; block->envelope must
+    ;;   carry that vec through so persistence + replay can paint the
+    ;;   badge from the sink.
+    (let [channel [{:position 1 :form "(v/ls \".\")"
+                    :success? true
+                    :result [:ir {} [:strong {} "v/ls"] [:p {} ". (844)"]]
+                    :error nil}]
+          env (eng/block->envelope
+                {:code "(def r (v/ls \".\"))"
+                 :result {:vis.op :v/ls :path "." :entry-count 844}
+                 :channel channel}
+                1 {:turn 2 :iter 1})]
+      (expect (= (vec channel) (:channel env)))
+      (expect (= "t2/i1/f1" (:scope env)))
+      (expect (= :mutation (:tag env)))))
+
+  (it "omits `:channel` when the form did not call any tool (no empty-vec noise)"
+    (let [env-no-channel (eng/block->envelope {:code "(+ 1 2)" :result 3}
+                           1 {:turn 1 :iter 1})
+          env-empty-channel (eng/block->envelope {:code "(+ 1 2)" :result 3 :channel []}
+                              1 {:turn 1 :iter 1})
+          env-nil-channel (eng/block->envelope {:code "(+ 1 2)" :result 3 :channel nil}
+                            1 {:turn 1 :iter 1})]
+      (expect (not (contains? env-no-channel :channel)))
+      (expect (not (contains? env-empty-channel :channel)))
+      (expect (not (contains? env-nil-channel :channel))))))
 
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
