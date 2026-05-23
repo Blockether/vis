@@ -20,8 +20,8 @@
     (expect (= 0 (patch/seek-sequence ["   foo  "] ["foo"] 0 false))))
 
   (it "normalizes typographic punctuation"
-    (expect (= 0 (patch/seek-sequence ["it\u2019s"] ["it's"] 0 false)))
-    (expect (= 0 (patch/seek-sequence ["a\u2014b"] ["a-b"] 0 false))))
+    (expect (= 0 (patch/seek-sequence ["it’s"] ["it's"] 0 false)))
+    (expect (= 0 (patch/seek-sequence ["a—b"] ["a-b"] 0 false))))
 
   (it "returns nil when pattern not present"
     (expect (nil? (patch/seek-sequence ["a" "b"] ["c"] 0 false))))
@@ -51,7 +51,7 @@
       (expect (= :trim (:pass hit)))))
 
   (it "reports :unicode when typographic punctuation differs"
-    (let [hit (patch/seek-sequence-with-pass ["it\u2019s late"] ["it's late"] 0 false)]
+    (let [hit (patch/seek-sequence-with-pass ["it’s late"] ["it's late"] 0 false)]
       (expect (= :unicode (:pass hit)))))
 
   (it "reports :relative-indent when only the absolute indentation differs"

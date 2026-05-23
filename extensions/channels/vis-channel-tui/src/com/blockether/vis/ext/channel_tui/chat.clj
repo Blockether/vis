@@ -73,7 +73,7 @@
     (when status (str "  :" (name status)))))
 
 (defn- render-segment-recaps
-  "Pi-style recap lines for ctx-mutation render segments. Keep in
+  "Recap lines for ctx-mutation render segments. Keep in
    sync with `progress/render-segment-recaps` — chat replays the same
    shape from persisted block segments after a session restore."
   [segments]
@@ -123,7 +123,7 @@
    form is `:tool`-kind whenever it touched the tool surface, even
    indirectly via `:channel` sink entries (e.g. `(def r (v/ls …))`
    followed by `(select-keys r …)`). Without this the channel's
-   pi-style preview pane is hidden because the FENCE's last value
+   preview pane is hidden because the FENCE's last value
    is plain data."
   [{:keys [result error channel]}]
   (cond

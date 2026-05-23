@@ -41,7 +41,7 @@
       (expect (= :v/session-state (:symbol result)))
       (expect (map? (:result result)))))
 
-  (it "renders channel output as a pi-badged SESSION IR (no pr-str data dump)"
+  (it "renders channel output as a badged SESSION IR (no pr-str data dump)"
     (let [render-channel @#'introspection/session-state-channel
           result {:session-id #uuid "fc9d9b41-05d9-4099-83e8-c9abeb1ce08a"
                   :session-index [{:id 1} {:id 2}]
@@ -62,7 +62,7 @@
                                (tree-seq sequential? seq ir))]
       (expect (= :ir (first ir)))
       (expect has-session-badge?)
-      ;; pi-style header carries turn / iter / failure stats inline
+      ;; header carries turn / iter / failure stats inline
       (expect (clojure.string/includes? rendered "1 turn"))
       (expect (clojure.string/includes? rendered "2 iter"))
       (expect (clojure.string/includes? rendered "failures=1"))

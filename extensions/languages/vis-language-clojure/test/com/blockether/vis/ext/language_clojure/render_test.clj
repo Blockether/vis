@@ -28,19 +28,33 @@
     :else ""))
 
 (defdescribe render-ports-test
-  (it "renders zero ports cleanly"
+  (it "renders zero ports as a single badge headline (no body)"
     (let [v (r/render-ports {:default nil :ports []})]
       (expect (ir? v))
-      (expect (some #(and (vector? %) (= :p (first %))) v))))
+      (expect (some #(and (vector? %) (= :p (first %))) v))
+      ;; No listing body when n <= 1.
+      (expect (not-any? #(and (vector? %) (= :code (first %))) v))))
 
-  (it "renders multiple ports as a code block"
+  (it "drops the listing when only one port is visible (badge already carries default=)"
+    (let [v    (r/render-ports {:default 7888
+                                :ports   [{:port 7888 :source "/x/.nrepl-port"}]})
+          flat (pr-str v)]
+      (expect (ir? v))
+      (expect (re-find #"default=7888" flat))
+      ;; The path used to leak as a code-block row — verify it is
+      ;; gone, otherwise the user reads it as duplicate noise next
+      ;; to the badge.
+      (expect (not (re-find #"\.nrepl-port" flat)))))
+
+  (it "renders multiple ports as a code block (disambiguates which file the default came from)"
     (let [v (r/render-ports {:default 7888
                              :ports   [{:port 7888 :source "/x/.nrepl-port"}
                                        {:port 60001 :source "/y/.nrepl-port"}]})
           flat (pr-str v)]
       (expect (ir? v))
       (expect (re-find #"7888" flat))
-      (expect (re-find #"60001" flat)))))
+      (expect (re-find #"60001" flat))
+      (expect (re-find #"\.nrepl-port" flat)))))
 
 (defdescribe render-eval-test
   (it "produces an EVAL header on success"
@@ -104,7 +118,7 @@
       (expect (re-find #":replace" s))
       (expect (re-find #"foo" s))
       (expect (re-find #"src/a.clj" s))
-      (expect (re-find #"\u0394=\+10" s))))
+      (expect (re-find #"Δ=\+10" s))))
 
   (it "renders an :error edit"
     (let [v (r/render-edit {:status :error :error "target not found" :target "ghost"})]

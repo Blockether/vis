@@ -435,7 +435,7 @@
                   (:max-lines cfg))}))
 
 (defn- exa-badge
-  "Short pi-style badge keyed off the Exa MCP tool name. Falls back
+  "Short badge keyed off the Exa MCP tool name. Falls back
    to a plain `EXA` token for unknown tools so the renderer never
    throws on shape drift."
   [tool]

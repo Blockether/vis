@@ -49,18 +49,32 @@
 ;; ---------------------------------------------------------------------------
 
 (defn render-ports
+  "Preview for `(clj/ports)`.
+
+   When the workspace has exactly ZERO or ONE nREPL port the badge
+   line already carries the essential info (`default=7888`) and the
+   per-source listing only adds the `.nrepl-port` path — noise the
+   user has to scan past. Drop the body in that case so the row
+   reads as a single badge headline, consistent with `TITLE` /
+   `TASK` / `SPEC` recap rows.
+
+   With TWO or more ports the listing disambiguates which file the
+   default came from, so it's worth showing.
+
+   The model still sees the full `:ports` vector via the SCI return
+   value — this trim only shapes the channel preview."
   [{:keys [default ports]}]
   (let [n (count ports)]
-    (ir-root
-      (ir-p (ir-strong "PORTS")
-        "  " n " visible"
-        (when default (str "  default=" default)))
-      (when (seq ports)
-        (ir-code-block "text"
-          (str/join "\n"
-            (map (fn [{:keys [port source]}]
-                   (str port "  " source))
-              ports)))))))
+    (cond-> (ir-root
+              (ir-p (ir-strong "PORTS")
+                "  " n " visible"
+                (when default (str "  default=" default))))
+      (> n 1)
+      (conj (ir-code-block "text"
+              (str/join "\n"
+                (map (fn [{:keys [port source]}]
+                       (str port "  " source))
+                  ports)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/eval
