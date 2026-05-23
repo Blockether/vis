@@ -303,25 +303,49 @@
      :slash/path  path
      :slash/text  (str "/" name)}))
 
+(defn- slash-available-in-tui?
+  "True when a slash spec is safe to expose in TUI slash UX.
+   `registered-slashes` is env-less and includes Telegram-only specs,
+   so the TUI must apply channel availability itself before rendering
+   suggestions."
+  [spec]
+  (and (not (:slash/hidden? spec))
+    (if-let [available? (:slash/availability-fn spec)]
+      (try (boolean (available? {:channel/id :tui}))
+        (catch Throwable _ false))
+      true)))
+
 (defn- registry-slash-commands
-  "Top-level slashes harvested from the engine registry. Returns the
-   adapted vec ready to feed `command_suggest.clj`. The fuzzy matcher
-   keys off `:label` / `:doc` / `:id` so this surface degrades
-   gracefully when a slash has no doc."
+  "Top-level slashes harvested from the engine registry for typed `/`
+   suggestions / exact slash submission in the TUI. Hidden specs and
+   non-TUI channel specs stay out; this prevents Telegram menu commands
+   (`/help`, `/models`, ...) from leaking into TUI slash UX."
   []
   (try
     (mapv slash-spec->menu-command
-      (filter (fn [s] (empty? (:slash/parent s)))
+      (filter (fn [s]
+                (and (empty? (:slash/parent s))
+                  (slash-available-in-tui? s)))
         (vis/registered-slashes)))
     (catch Throwable _t [])))
 
+(defn- command-palette-extra-commands
+  "Extra commands appended to Ctrl+K.
+
+   Keep this empty by default: typed slash suggestions already expose the
+   slash registry, and duplicating top-level roots (`/workspace`, `/voice`,
+   help-ish extension commands) bloats Ctrl+K. Extensions must not appear in
+   Ctrl+K unless we add an explicit opt-in later."
+  []
+  [])
+
 (defn- menu-commands
-  "All slash commands shown in the TUI overlay (PLAN.md §12 step 8):
-   built-in palette commands + the engine's registered slashes
-   (`vis/active-slashes`). Legacy `slash-only-commands` vec + the
-   `:tui.slot/commands` extension-contribution path are GONE (K7+K8).
-   Workspace ops (`/workspace ...`) and voice (`/voice`) now reach the
-   palette through the engine slash registry."
+  "Command universe for typed slash suggestion/exact-match handling.
+
+   Built-in palette commands stay here because input matching shares the
+   legacy command shape; registered top-level slashes stay here so typing `/`
+   discovers `/workspace`, `/voice`, etc. Ctrl+K itself uses
+   `command-palette-extra-commands` and remains minimal."
   [_screen]
   (vec (concat dlg/palette-commands (registry-slash-commands))))
 
@@ -2359,16 +2383,15 @@
                    (state/dispatch [:update-input state])
                    (let [run-command!
                          ;; PLAN.md §12 step 8 (K8): the extension-contributed
-                         ;; `:tui.slot/commands` slot is GONE; the only
-                         ;; surfaces dispatched through `run-command!` are
-                         ;; (a) built-in palette ids (`:new-session`,
-                         ;; `:fork-session`, ...) and (b) declarative slash
-                         ;; entries from `vis/registered-slashes`. Slash
-                         ;; entries carry `:id (keyword "slash" name)` +
-                         ;; `:slash/text`; we resubmit as a user message
-                         ;; so the engine's `run-turn!` dispatch (§12
-                         ;; step 7) handles them through the canonical
-                         ;; `slash/dispatch` path.
+                         ;; `:tui.slot/commands` slot is GONE; dispatchable
+                         ;; command maps are either built-in palette ids
+                         ;; (`:new-session`, `:fork-session`, ...) or typed
+                         ;; slash suggestions from `vis/registered-slashes`.
+                         ;; Slash entries carry `:id (keyword "slash" name)`
+                         ;; + `:slash/text`; we resubmit as a user message so
+                         ;; `run-turn!` handles them through canonical
+                         ;; `slash/dispatch`. Ctrl+K no longer includes those
+                         ;; slash roots by default.
                          (fn [cmd & [args]]
                            (let [cmd-id  (if (map? cmd) (:id cmd) cmd)
                                  args    (or args (:slash/args cmd) "")
@@ -2391,11 +2414,8 @@
                                    ;; PLAN.md §12 step 8 (K6): workspace ops
                                    ;; (`:workspace`, `:apply-workspace-to-trunk`,
                                    ;; `:discard-workspace-{soft,hard}`) live as
-                                   ;; slash commands now. `menu-commands`
-                                   ;; aggregates `/workspace new|apply|discard|...`
-                                   ;; from the engine slash registry and routes
-                                   ;; them through `slash-dispatch`. No bespoke
-                                   ;; palette case here.
+                                   ;; typed slash commands now. No bespoke
+                                   ;; Ctrl+K palette case here.
 
                                    :fork-session
                                    (switch-session! {:action :fork})
@@ -2505,10 +2525,10 @@
                          (when-not (:dialog-open? @state/app-db)
                            (loop []
                              ;; `command-palette!` re-concats `dlg/palette-commands`
-                             ;; internally; we only feed the dynamic slash
-                             ;; entries pulled from the engine registry.
+                             ;; internally. Keep extension slash roots out of
+                             ;; Ctrl+K; typed `/` suggestion owns those.
                              (when-let [cmd (with-dialog-lock
-                                              #(dlg/command-palette! screen (registry-slash-commands)))]
+                                              #(dlg/command-palette! screen (command-palette-extra-commands)))]
                                (run-command! cmd)
                                (recur))))
                          (recur))

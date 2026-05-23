@@ -59,6 +59,9 @@
 (def ^:private menu-commands
   (deref #'screen/menu-commands))
 
+(def ^:private command-palette-extra-commands
+  (deref #'screen/command-palette-extra-commands))
+
 (def ^:private copy-session-id!
   (deref #'screen/copy-session-id!))
 
@@ -259,23 +262,37 @@
       (expect (= "/workspace"    (:slash/text adapted)))
       (expect (= "Workspace ops" (:label adapted)))))
 
-  (it "registry-slash-commands collects only top-level slashes"
+  (it "registry-slash-commands collects only TUI-available visible top-level slashes"
     (with-redefs [vis/registered-slashes
                   (constantly
                     [{:slash/name "workspace" :slash/doc "Workspace ops"}
                      {:slash/name "apply" :slash/parent ["workspace"]
                       :slash/doc "Apply"}
-                     {:slash/name "voice" :slash/doc "Voice toggle"}])]
+                     {:slash/name "voice" :slash/doc "Voice toggle"
+                      :slash/availability-fn (fn [{ch :channel/id}] (= :tui ch))}
+                     {:slash/name "help" :slash/doc "Telegram help"
+                      :slash/availability-fn (fn [{ch :channel/id}] (= :telegram ch))}
+                     {:slash/name "start" :slash/doc "Hidden alias"
+                      :slash/hidden? true}
+                     {:slash/name "broken" :slash/doc "Broken availability"
+                      :slash/availability-fn (fn [_ctx] (throw (ex-info "boom" {})))}])]
       (let [ids (mapv :id (registry-slash-commands))]
         (expect (= #{:slash/workspace :slash/voice} (set ids))))))
 
-  (it "menu-commands concats dlg/palette-commands and the slash registry view"
+  (it "menu-commands keeps slash registry for typed slash suggestions"
     (with-redefs [vis/registered-slashes
                   (constantly
                     [{:slash/name "voice" :slash/doc "Voice toggle"}])]
       (let [ids (mapv :id (menu-commands nil))]
         (expect (some #{:new-session} ids))
-        (expect (some #{:slash/voice} ids))))))
+        (expect (some #{:slash/voice} ids)))))
+
+  (it "Ctrl+K palette gets no registry slash roots by default"
+    (with-redefs [vis/registered-slashes
+                  (constantly
+                    [{:slash/name "voice" :slash/doc "Voice toggle"}
+                     {:slash/name "workspace" :slash/doc "Workspace ops"}])]
+      (expect (= [] (command-palette-extra-commands))))))
 
 (defdescribe channel-status-error-routing-test
   (it "routes error status events to the notification lane only"

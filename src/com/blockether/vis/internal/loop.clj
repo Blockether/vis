@@ -1146,15 +1146,21 @@
   "Recover a torn `(done {:answer ...})` block when Markdown fence extraction
    closed early on a nested answer code fence. Uses raw provider text as
    source of truth, rebuilds balanced Clojure with `pr-str`, and only swaps
-   blocks when the rebuilt form parses."
+   blocks when the rebuilt form parses.
+
+   Nested answer fences often yield MULTIPLE extracted Clojure blocks: the
+   torn leading `(done ...)` plus example snippets from the answer body. In
+   that shape the leading answer is authoritative; executing sibling snippets
+   is exactly the failure loop this recovery prevents."
   [ask-result]
-  (let [blocks (vec (:blocks ask-result))]
-    (if (and (= 1 (count blocks))
-          (direct-answer-block-recoverable? (first blocks)))
+  (let [blocks (vec (:blocks ask-result))
+        first-block (first blocks)]
+    (if (and first-block
+          (direct-answer-block-recoverable? first-block))
       (if-let [source (raw-response->direct-answer-source (:raw ask-result))]
         (if-not (:parse-error (parse-top-level-forms source))
           (assoc ask-result
-            :blocks [(assoc (first blocks) :source source)]
+            :blocks [(assoc first-block :source source)]
             :vis/recovered-direct-answer? true
             :all-blocks (or (:all-blocks ask-result) blocks))
           ask-result)
@@ -1509,6 +1515,34 @@
           "Could not resolve session turn position for iteration hooks")
         nil))
     1))
+
+(defn- previous-turn-context
+  "Return latest completed prior turn as follow-up context.
+
+   Cross-turn trailer carry preserves code/eval evidence, but final prose
+   answers are otherwise absent from the next provider call. Short follow-ups
+   (`yes`, `do it`, `the second one`) need the immediate prior Q/A as their
+   referent, so seed exactly one latest prior answer from persistence."
+  [environment current-turn-id]
+  (try
+    (when-let [session-id (:session-id environment)]
+      (let [turns (persistance/db-list-session-turns (:db-info environment) session-id)
+            answered? (fn [turn]
+                        (let [answer (some-> (:answer-markdown turn) str str/trim)]
+                          (and (seq answer)
+                            (not= (str (:id turn)) (str current-turn-id))
+                            (not= :running (:status turn)))))]
+        (when-let [turn (last (filter answered? turns))]
+          {:user-request (:user-request turn)
+           :answer       (:answer-markdown turn)})))
+    (catch Throwable t
+      (tel/log! {:level :warn
+                 :id ::previous-turn-context-failed
+                 :data {:session-id (:session-id environment)
+                        :session-turn-id current-turn-id
+                        :error (ex-message t)}}
+        "Could not load previous turn context; continuing without Q/A carry")
+      nil)))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2959,7 +2993,7 @@
         initial-messages (prompt/assemble-initial-messages
                            {:stable-prompt-messages stable-prompt-messages
                             :initial-user-content   user-request
-                            :previous-turn-context  nil})
+                            :previous-turn-context  (previous-turn-context environment session-turn-id)})
         ;; The cumulative `:input-tokens` field sums `prompt_tokens`
         ;; from every iteration in this turn — useful for billing /
         ;; budget accounting but MUST NOT be passed to the

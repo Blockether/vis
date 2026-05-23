@@ -282,7 +282,31 @@
       (expect (= :observation (eng/classify-form-tag "(introspect-form \"t1/i1/f1\")")))
       (expect (= :observation (eng/classify-form-tag "42")))
       (expect (= :observation (eng/classify-form-tag ":kw")))
-      (expect (= :observation (eng/classify-form-tag ""))))))
+      (expect (= :observation (eng/classify-form-tag ""))))
+
+    (it ":mutation for foundation filesystem write tools"
+      (expect (= :mutation (eng/classify-form-tag "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])")))
+      (expect (= :mutation (eng/classify-form-tag "(v/write {:path \"x\" :content \"b\"})"))))))
+
+(defdescribe advance-iter-trailer-test
+  (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
+              :session/trailer []}
+        obs1 [{:scope "t1/i1/f1" :tag :observation :src "(v/cat \"a\")" :result "old"}]
+        obs2 [{:scope "t1/i2/f1" :tag :observation :src "(v/cat \"b\")" :result "new"}]
+        mut3 [{:scope "t1/i3/f1" :tag :mutation :src "(v/patch [])" :result []}]]
+
+    (it "carries observation-only pins while no mutation occurs"
+      (let [ctx1 (eng/advance-iter base obs1)
+            ctx2 (eng/advance-iter ctx1 obs2)]
+        (expect (= ["t1/i1" "t1/i2"]
+                  (mapv :scope (:session/trailer ctx2))))))
+
+    (it "drops older observation-only pins when a later mutation occurs"
+      (let [ctx1 (eng/advance-iter base obs1)
+            ctx2 (eng/advance-iter ctx1 obs2)
+            ctx3 (eng/advance-iter ctx2 mut3)]
+        (expect (= ["t1/i3"]
+                  (mapv :scope (:session/trailer ctx3))))))))
 
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
