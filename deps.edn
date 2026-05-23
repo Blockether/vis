@@ -58,12 +58,18 @@
   ;;   org.babashka/http-client -> vis-channel-telegram + provider/exa extensions
   ;;   rewrite-clj              -> vis-language-clojure
   ;;   lanterna                 -> vis-channel-tui
+  ;; 0.5.9: http-error message is never nil/blank. babashka's
+  ;; HttpClient surfaces low-level exceptions (stream finalisation,
+  ;; connection edge) with nil message; pre-fix that piped straight
+  ;; into `:com.blockether.anomaly.core/message nil` and downstream
+  ;; consumers (chat error bubble, telemetry) saw `ExceptionInfo:
+  ;; null` with no actionable signal (Vis conv c8dc39b1).
   ;; 0.5.8: FenceBlocksParser nests inner ```clojure code samples
   ;; emitted inside an :answer string of a (done {…}) form, instead of
   ;; letting the sample's bare ``` close the outer block early
   ;; (Vis conv 11d4f817 / t12/i1: torn (done …), dropped trailer keys,
   ;; model retry burns an iteration).
-  com.blockether/svar                             {:mvn/version "0.5.8"}
+  com.blockether/svar                             {:mvn/version "0.5.9"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
