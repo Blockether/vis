@@ -74,6 +74,34 @@
         (expect (= 1 (count out)))
         (expect (true? (-> out first :hidden?))))))
 
+  (it "hides bare-symbol top-level forms (e.g. `st` following `(def st (git/status))`)"
+    ;; The model often writes `(def NAME (tool/call ...)) NAME` so the
+    ;; trailer shows the value. The channel preview of the tool call
+    ;; already paints the data; the loose symbol row is just chrome
+    ;; that pushes recap / answer rows off-screen. Same hide-by-default
+    ;; policy as bare tool calls and def-shaped forms.
+    (let [out (render/parse-block-display "(def st (git/status))\nst")]
+      ;; Both segments hidden → coalesce merges them into one entry.
+      (expect (= 1 (count out)))
+      (expect (true? (-> out first :hidden?)))))
+
+  (it "drops the engine auto-ack `:vis.foundation/session-title` task-set! — paired with the :title recap, no duplicate row"
+    ;; Engine inserts this immediately after every successful
+    ;; `(set-session-title! …)` to mark the foundation hook done.
+    ;; The user already sees the TITLE recap; the auto-ack would
+    ;; show as a TASK recap right below it (`Task — ✓
+    ;; :vis.foundation/session-title :done`) which is pure noise.
+    (expect (= [{:kind :title :value "Greeting"}]
+              (render/parse-block-display
+                "(set-session-title! \"Greeting\")\n(task-set! :vis.foundation/session-title {:status :done :proof \"t1/i1/f1\"})"))))
+
+  (it "keeps the model's own task-set! recaps for non-engine ids"
+    ;; A model-emitted task-set! that ISN'T the session-title
+    ;; auto-ack still surfaces as a `Task — …` recap row.
+    (expect (= [{:kind :task-update :id :user/migration :status :doing}]
+              (render/parse-block-display
+                "(task-set! :user/migration {:status :doing})"))))
+
   (it "hides def docstring form when wrapping a tool call"
     (expect (= [{:kind :code
                  :source "(def named \"docstring\" (v/cat \"x.clj\"))"
