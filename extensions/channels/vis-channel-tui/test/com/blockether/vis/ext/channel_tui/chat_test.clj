@@ -54,6 +54,22 @@
         (expect (= :ir (first ir)))
         (expect (str/includes? (vis/render ir :markdown) "Cancelled by user")))))
 
+  (it "rebuild-history shows cancelled status text when persisted answer is blank"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-cancelled
+                      :user-request "no live"
+                      :prior-outcome :cancelled
+                      :answer-markdown ""}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id] [])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            assistant (second history)
+            ir (:ir assistant)]
+        (expect (= :cancelled (:status assistant)))
+        (expect (str/includes? (vis/render ir :markdown) "Cancelled by user")))))
+
   (it "rebuild-history marks persisted silent system calls for the TUI visibility toggle"
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns

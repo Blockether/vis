@@ -338,6 +338,8 @@
       "\n"
       (render-section :session/workspace
         (zp (or (:session/workspace ctx) {})) nil)                "\n\n"
+      (when-let [env-block (:session/env ctx)]
+        (str (render-section :session/env (zp env-block) nil) "\n\n"))
       (render-section :session/symbols
         (zp (or (:session/symbols ctx) {})) nil)                  "\n\n"
       (render-section :session/specs

@@ -321,12 +321,22 @@
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
+                        ;; `:prior-outcome :cancelled` is how the
+                        ;; persistance layer marks an aborted turn (the
+                        ;; sweep + cancel paths both write that value).
+                        cancelled? (= :cancelled (:prior-outcome q))
                         ;; Persistence stores the raw Markdown source
                         ;; the model wrote in `(done {:answer ...})`.
                         ;; Channels derive IR via `vis/markdown->ir` at
                         ;; render time; keep the source so copy/export
-                        ;; round-trip byte-for-byte.
-                        answer-md (or (:answer-markdown q) "")
+                        ;; round-trip byte-for-byte. Cancelled turns can
+                        ;; persist with no answer when the user aborts
+                        ;; before the first iteration; show an explicit
+                        ;; status line instead of a blank gray Vis bubble.
+                        answer-md (let [stored (or (:answer-markdown q) "")]
+                                    (if (and cancelled? (str/blank? stored))
+                                      "Cancelled by user."
+                                      stored))
                         answer-ir (if (str/blank? answer-md)
                                     empty-ir
                                     (vis/markdown->ir answer-md))
@@ -367,15 +377,6 @@
                                               {:produced-answer? produced-answer?
                                                :last-iteration-id last-iteration-id}))
                                 turn-iterations)
-                        ;; `:prior-outcome :cancelled` is how the
-                        ;; persistance layer marks an aborted turn (the
-                        ;; sweep + cancel paths both write that value).
-                        ;; Surface it as `:status :cancelled` on the
-                        ;; assistant message so the bubble renderer
-                        ;; emits the trace + dim italic status footer
-                        ;; the same way live cancellations render -
-                        ;; on bare terminal-bg, no bubble-wide fill.
-                        cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message answer-ir (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :session-turn-id (:id q))
                                             (seq trace) (assoc :traces trace :ir answer-ir)

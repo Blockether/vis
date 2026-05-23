@@ -103,6 +103,14 @@
                             (or kind-namespaced aliases :git/* :hg/* :jj/*
                              when detector emits them; everything optional;
                              {:vcs/kind :none} for non-VCS sessions)
+      :session/env       := {:host {:cwd :os :shell :clock}
+                             :project {:kind :primary-language :language-share
+                                       :extension-count? :agents-md?}
+                             :extensions {:active-count :aliases}}
+                            Slim auto-pin digest (host / project / extensions).
+                            Read it before calling `v/snapshot` — most of
+                            the time the digest is enough. Extensions may
+                            deep-merge their own slices under bare keys.
       :session/symbols   := {sym ↦ {:arglists? :doc? :born}}
       :session/specs     := {K ↦ {:title :requirements [{:id :title :facts? :validator-fn?}]
                                   :status :born :done-born?}}

@@ -3,6 +3,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-core.editing.core :as editing]
    [com.blockether.vis.ext.foundation-core.environment.core :as environment]
+   [com.blockether.vis.ext.foundation-core.environment.digest :as env-digest]
    [com.blockether.vis.ext.foundation-core.introspection :as introspection]
    [com.blockether.vis.ext.foundation-core.hints :as hints]
    [com.blockether.vis.ext.foundation-core.workspace-ctx :as workspace-ctx]
@@ -48,13 +49,22 @@
         (workspace-ctx/render-block pair)))))
 
 (defn- combined-ctx
-  "Foundation-core's single `:ext/ctx` fn. Merges the project/env
-   contribution (snapshot, AGENTS.md, extension warnings) with the
-   workspace block under `:session/workspace`. PLAN.md §6 / §8."
+  "Foundation-core's single `:ext/ctx` fn. Merges:
+     - the slim auto-pin `:session/env` digest (host / project /
+       extensions) so the model sees cwd, OS, primary language, and
+       active aliases without calling `v/snapshot`.
+     - the legacy `(:project ctx)` block (fat snapshot + agents.md
+       guidance + extension warnings), kept for deep-dive callers.
+     - the workspace block under `:session/workspace`.
+   Other extensions extend `:session/env` via their own `:ext/ctx`
+   returning `{:session/env {their-key {…}}}`; the engine deep-merges
+   contributions."
   [env]
   (let [project   (environment/environment-ctx env)
+        digest    (try (env-digest/digest env) (catch Throwable _ nil))
         ws-block  (session-workspace-block env)]
     (cond-> (or project {})
+      (seq digest) (assoc :session/env digest)
       ws-block (assoc :session/workspace ws-block))))
 
 (def vis-extension
