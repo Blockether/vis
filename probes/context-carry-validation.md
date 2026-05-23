@@ -49,3 +49,36 @@ Ask agent to read a file, then ask follow-up before mutation.
 Expected: read observation remains in ctx trailer.
 Then ask agent to patch/write.
 Expected: older observation-only pins are pruned after mutation; mutation evidence remains.
+
+## Verified run: 2026-05-23
+
+Provider/model:
+
+```bash
+--provider anthropic-coding-plan --model claude-haiku-4-5
+```
+
+Session:
+
+```text
+e84e621b-9526-42aa-9e4f-aae6be3f62c0
+```
+
+Turns:
+
+1. "remember favorite color is yellow" → `OK`
+2. "Say only bridge." → `bridge`
+3. "Say only river." → `river`
+4. "Say only stone." → `stone`
+5. "What color did I say I like?" → `yellow`
+
+Prompt snapshot check via `tr/prompt-snapshots`:
+
+```clojure
+{:turn-count 5
+ :turn-positions [1 2 3 4 5]
+ :ctx-turns ["1" "2" "3" "4" "5"]
+ :last-answer "yellow"}
+```
+
+Result: resumed CLI continuation keeps turn number and prior memory across distractor turns.
