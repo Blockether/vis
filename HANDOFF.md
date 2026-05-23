@@ -1,35 +1,57 @@
-## Handoff — CTX engine closed + PLAN §12 execution started (steps 1–3 partial)
+## Handoff — CTX engine closed + PLAN §12 steps 1–10 landed
 
-Status on **`ddcacddb`** (origin/main, pushed):
+Status on **`68832ab6`** (origin/main):
 
 ```
-ddcacddb  PLAN §12 step 3 (partial): detect-trunk-branch + with-repo-lock
-            + label/focus/hydration facade
-fccf1d31  PLAN §12 step 2: persistance fns for label + focus + per-repo
-            focus pointer
-39facb68  PLAN §12 step 1: schema inline V1 — workspace.label +
-            last_focused_at_ms + repo_focus + session_state.merge_resolve_parent_id
-cb86afd6  HANDOFF.md: refresh — CTX redesign closure + missing inventory
-5416daa8  Single :turn-state-atom (6→1 atom collapse)
-5863ca0c  Railway-style flatten + D15 hook-task ranking + D16 :vcs/* canonical
+68832ab6  PLAN §12 step 10: real start-merge-resolve! + sub-session schema
+17be33f9  PLAN §12 step 9: Telegram K9 cutover + per-channel slash partitioning
+a620f05f  PLAN §12 step 8: TUI slash registry cutover (K6+K7+K8) + voice keybind
+124c449e  PLAN §12 step 7: engine slash dispatch + synthetic iter + CTX mutation
+eca05b0d  PLAN §12 step 6: workspace slashes + ctx in vis-foundation-core (+ K10)
+02b386c4  PLAN §12 step 5: declarative :ext/slash-commands + slash.clj aggregator
+2784fdfb  PLAN §12 step 3 (REST): mirror-tree + commit!/ff-apply!/start-merge-resolve! skeleton (K4, K5)
+2933936e  PLAN §12 step 4: KILL :git/* aliases — :vcs/* canonical only (K1, K2)
 ```
 
 ### PLAN §12 progress
 
 | step | status | notes |
 |---|---|---|
-| 1 | ✅ DONE (39facb68) | schema inline V1: workspace.label + last_focused_at_ms + repo_focus table + session_state.merge_resolve_parent_id; row->workspace surfaces new cols |
-| 2 | ✅ DONE (fccf1d31) | persistance fns: db-workspace-update-label! / db-workspace-touch-focus! / db-repo-focus-get / db-repo-focus-set!; defdelegates |
-| 3 | ✅ DONE | (ddcacddb) detect-trunk-branch + with-repo-lock + set-label! / focus! / last-focused / display-label / workspace-with-session / list-active-with-sessions + db-session-state-list-for-workspace; **REST**: mirror-tree! + spawn-branch! rewrite (PLAN §4.4 dirty+ignored copy under with-repo-lock) + commit! + ff-apply! + start-merge-resolve! skeleton (PLAN §7.1 placeholder — throws :workspace/not-yet-implemented for step 10) + KILL apply-to-trunk! body (K4) + KILL workspace-apply-to-trunk! re-export (K5) + db-workspace-update-commit-id! persistence fn; TUI `:apply-workspace-to-trunk` palette entry temporarily routes through `workspace-ff-apply!` (full deletion lands in step 8/K6) |
-| 4 | ✅ DONE (2933936e) | KILL `:git/*` aliases (K1, K2); rename :git/file-stats → :vcs/file-stats; workspace/status emits ONLY :vcs/*; tests migrated; one comment-only mention of `:git/branch` left in ctx_spec.clj (historical rationale) |
-| 5 | ⏳ PENDING | DECLARATIVE slash surface (PLAN §3 rewrite 2026-05-22): add `::slash` + `:ext/slash-commands` specs to internal/extension.clj alongside `:ext/hooks`; internal/slash.clj `active-slashes` aggregator + parser + dispatch (NO atom, NO register-slash!); core.clj exports `active-slashes` / `slash-by-path` / `slash-children`. Engine refuses load on duplicate `[parent name]` across `(active-extensions)`. |
-| 6 | ⏳ PENDING | workspace surface lives in `vis-foundation-core` (NOT a new package — PLAN §6 updated 2026-05-22: workspace is CORE, no architectural payoff splitting into a separate ext). Add `workspace_slashes.clj` + `workspace_ctx.clj` to vis-foundation-core. Voice migration from `:tui.slot/commands` to `register-slash!` (K10). |
-| 7 | ⏳ PENDING | engine loop integration: slash dispatch at turn start; synthetic iter persistence; CTX :session/workspace pre-turn stamping |
-| 8 | ⏳ PENDING | TUI channel rewrite + KILL slash legacy (K6 / K7 / K8) |
-| 9 | ⏳ PENDING | Telegram channel rewrite + KILL parse-command / handle-command! (K9); setMyCommands from registered-slashes |
-| 10 | ⏳ PENDING | merge-resolve sub-session real impl |
-| 11 | ⏳ PENDING | docs sync (K11, K12) |
-| 12 | ⏳ PENDING | cleanup pass + final smoke (PLAN §0b 9-point ripgrep audit) |
+| 1 | ✅ DONE (39facb68) | schema inline V1: workspace.label + last_focused_at_ms + repo_focus table + session_state.merge_resolve_parent_id |
+| 2 | ✅ DONE (fccf1d31) | persistance fns for label + focus + per-repo focus pointer |
+| 3 | ✅ DONE (2784fdfb) | detect-trunk-branch + with-repo-lock + label/focus/hydration facade; mirror-tree! + spawn-branch! rewrite (PLAN §4.4 dirty+ignored copy) + commit! + ff-apply! + start-merge-resolve! skeleton + K4 + K5 + db-workspace-update-commit-id! |
+| 4 | ✅ DONE (2933936e) | KILL :git/* aliases (K1, K2); :vcs/* canonical only |
+| 5 | ✅ DONE (02b386c4) | declarative `:ext/slash-commands` spec + `internal/slash.clj` (active-slashes / registered-slashes / by-path / children / parse / dispatch). NO atom. Path-collision detector at register-extension! time. |
+| 6 | ✅ DONE (eca05b0d) | workspace_slashes.clj + workspace_ctx.clj on vis-foundation-core. Voice K10 (vis-foundation-voice migrated from `:tui.slot/commands` to `:ext/slash-commands`). |
+| 7 | ✅ DONE (124c449e) | engine slash dispatch in run-turn! + synthetic :user-slash iter persistence + IR-aware `:slash/body` + extended envelope contract (`:slash/specs` / `:slash/tasks` / `:slash/facts` route through ctx-loop/apply-and-record!). |
+| 8 | ✅ DONE (a620f05f) | TUI K6+K7+K8 cutover: palette workspace entries gone, slash-only-commands + extension-commands deleted, menu-commands reads from `vis/registered-slashes`. Voice Ctrl+B sends `/voice` through engine. |
+| 9 | ✅ DONE (17be33f9) | Telegram K9 cutover: parse-command + handle-command! killed; 11 commands migrated to declarative specs on the Telegram extension; setMyCommands derives from `vis/registered-slashes`. Per-channel slash path partitioning lets vis-foundation-voice (TUI) + vis-channel-telegram own `/voice` simultaneously without collision. |
+| 10 | ✅ DONE (68832ab6) | start-merge-resolve! real impl + partial UNIQUE index on session_state.workspace_id (admits merge-resolve sub-sessions sharing parent workspace) + db-session-state-spawn-merge-resolve! + parse-conflicts. |
+| 11 | 🟡 PARTIAL | docs sync: CTX_REDESIGN.md `:git/*` → `:vcs/*` (K11). HANDOFF.md refresh (this commit). TODO.md / TASKS.md / CHANGELOG.md audited 2026-05-23 — no stale workspace references. |
+| 12 | ⏳ PENDING | cleanup pass + final ripgrep audit (PLAN §0b 9-point). |
+
+### Step 10 deferrals (incremental delivery)
+
+- `merge/*` SCI op family (status / conflict / accept-ours /
+  accept-theirs / mark-resolved / continue / abort) — PLAN §7.2.
+- Sub-session prompt addendum + completion event flow — PLAN §7.3.
+- SCI binding gating on merge_resolve_parent_id presence — PLAN
+  §7.4 (persistence fns landed; binding wiring lands with merge/* ops).
+- Channel UX events for `:session/merge-resolve-{started,finished}`.
+
+The `start-merge-resolve!` real impl is the gate; the above
+decorate the sub-session UX as separate commits.
+
+### Step 8/9 polish deferrals
+
+- PLAN §9.1 strip rewrite to use list-active-with-sessions +
+  workspace/display-label (header.clj still renders tabs via the
+  existing app-db workspaces slot).
+- PLAN §9.5 switch-session dialog with hydrated workspace+session rows.
+- Tab restoration via workspace/last-focused (start-up flow).
+- K10 'one registration both channels' for `/voice` — voice ext is
+  TUI-only; Telegram owns its variant. Per-channel run-fn branching
+  surface is the next step.
 
 ### What works today vs. what doesn't (operator-level)
 

@@ -96,7 +96,10 @@ Three model-managed memo subtrees + engine views + trailer:
 
  ;; ── ENGINE-RENDERED VIEWS ──
  :session/scope      {:turn N :iter M :next-form K}    ; current cursor; engine-stamped each iter
- :session/workspace  {:git/branch :git/trunk :git/head :git/dirty? :git/stats}
+ :session/workspace  {:vcs/kind :vcs/branch :vcs/trunk :vcs/head :vcs/dirty? :vcs/stats
+                      :vcs/commits-ahead :vcs/ff-possible?
+                      :workspace/id :workspace/kind :workspace/label
+                      :session/state-id :session/title :session/fork-of}
  :session/symbols    {sym {:arglists? :doc? :born}}   ; :doc omitted when no docstring; never :doc nil
  :session/hints      {hint-id {:body :importance :satisfy-with}}
 
@@ -439,7 +442,7 @@ Bare EDN literal under `;; ctx` marker. **No `(def ctx …)`.** Engine emits spa
  :session/scope {:turn 7 :iter 3 :next-form 1}
 
  :session/workspace
-   {:git/branch "feat/ctx-redesign" :git/trunk "main" :git/head "abc1234" :git/dirty? true
+   {:vcs/kind :git :vcs/branch "feat/ctx-redesign" :vcs/trunk "main" :vcs/head "abc1234" :vcs/dirty? true
     :git/stats  {"src/auth.clj"    {:added 5 :removed 2}
                  "src/logging.clj" {:added 47 :removed 0}}}
 
@@ -576,7 +579,7 @@ MODEL >
 ```clojure
 {:session/id   "01HXYZ"
  :session/turn 5
- :session/workspace {:git/branch "main" :git/trunk "main" :git/head "abc1234" :git/dirty? false :git/stats {}}
+ :session/workspace {:vcs/kind :git :vcs/branch "main" :vcs/trunk "main" :vcs/head "abc1234" :vcs/dirty? false :vcs/stats {}}
  :session/symbols   {}
  :session/hints     {}
  :session/specs     {}
@@ -634,7 +637,7 @@ MODEL >
 ### CTX AFTER TURN 2 (excerpt)
 ```clojure
 :session/workspace
-  {:git/branch "feat/auth-bcrypt" :git/trunk "main" :git/head "def5678" :git/dirty? true
+  {:vcs/kind :git :vcs/branch "feat/auth-bcrypt" :vcs/trunk "main" :vcs/head "def5678" :vcs/dirty? true
    :git/stats {"src/auth.clj" {:added 1 :removed 1}}}
 :session/facts {}                                     ; stale fact removed
 :session/trailer
@@ -837,10 +840,13 @@ Deterministic `;;` annotations next to entries:
 10. **`:session/workspace`** rendered from `(workspace/for-session db-info session-id)` + `(workspace/status db-info ws-id)` + `(workspace/trunk-info)`. The Vis-native `:git/*` keys flow through directly to CTX — namespacing is preserved as a VCS discriminator. Future Mercurial/jj/etc support adds `:hg/*` / `:jj/*` alongside without colliding.
 
     Engine picks the relevant keys:
-    - `:git/branch`  from `(ws/status …)`
-    - `:git/trunk`   from `(ws/trunk-info) :branch`
-    - `:git/head`    from `(ws/status …)`
-    - `:git/dirty?`  from `(ws/status …)`
+    - `:vcs/branch`  from `(ws/status …)` (was `:git/branch`)
+    - `:vcs/trunk`   from `(ws/trunk-info) :branch` (was `:git/trunk`)
+    - `:vcs/head`    from `(ws/status …)` (was `:git/head`)
+    - `:vcs/dirty?`  from `(ws/status …)` (was `:git/dirty?`)
+    - `:git/*` aliases were K1/K2-killed in PLAN.md §12 step 4; see
+      PLAN.md §8 for canonical sourcing rules + the workspace_ctx.clj
+      stamping pipeline.
     - `:git/stats`   derived via `git diff --numstat <trunk> HEAD` (per-file added/removed)
 
 #### Symbols
