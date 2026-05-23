@@ -54,7 +54,7 @@
 
 (def ^:private default-grep-limit 250)
 (def ^:private default-list-depth 10)
-(def ^:private default-list-limit 500)
+(def ^:private default-list-limit 3000)
 (def ^:private render-preview-chars 3000)
 
 ;; v/cat pagination contract:
@@ -1881,7 +1881,7 @@
       :truncated?    B            — true when the :limit clamped the walk
       :depth N :limit N}
 
-   Default behaviour: recursive walk up to `:depth 10` and 500 entries.
+   Default behaviour: recursive walk up to `:depth 10` and 3000 entries.
    Paths are workspace-relative (same shape as v/cat / v/patch :path);
    `:type :dir` carries no trailing slash on the path — the discriminator
    IS the `:type` field. Sort order: depth-first pre-order; within each
@@ -1894,7 +1894,7 @@
 
    `(v/ls path)` reads with defaults; `(v/ls path opts)` accepts:
      {:depth N            — max recursion depth (default 10)
-      :limit N            — stop after N entries (default 500;
+      :limit N            — stop after N entries (default 3000;
                             sets :truncated? true)
       :files-only? B      — emit only file entries (no directories)
       :dirs-only?  B      — emit only directory entries
@@ -2692,7 +2692,7 @@
      "  file was rewritten between read and patch."
      ""
      "  (v/ls path)             — FLAT recursive entry list. Default :depth 10,"
-     "  :limit 500. opts: {:depth N :limit N :files-only? B :dirs-only? B"
+     "  :limit 3000. opts: {:depth N :limit N :files-only? B :dirs-only? B"
      "  :hidden? B :respect-gitignore? B}. result: {:vis.op :v/ls :path"
      "  :entries [{:path :type :size}...] :entry-count :file-count :dir-count"
      "  :truncated?}. Paths are workspace-relative — feed them straight to"

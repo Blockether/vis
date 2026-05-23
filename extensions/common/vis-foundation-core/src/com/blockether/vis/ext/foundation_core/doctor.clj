@@ -38,17 +38,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- agents-md-diagnostics [_environment]
-  (let [{:keys [found? source path bytes truncated? original-bytes]} (agents/instructions)]
+  (let [{:keys [found? source path bytes]} (agents/instructions)]
     (if found?
-      [(cond-> {:level   :info
-                :message (str "Project guidance loaded from " path
-                           " (" (format-bytes (long (or bytes 0))) ", source: " (name source) ")")}
-         truncated?
-         (assoc :remediation
-           (str "File is " (format-bytes (long original-bytes))
-             " on disk; only the first 16 KB are inlined. Trim to "
-             "~8 KB of essential rules, or read the full content via "
-             "`(vis/main-agent-instructions)` from `:code`.")))]
+      ;; AGENTS.md / CLAUDE.md is inlined verbatim into the
+      ;; PROJECT-INSTRUCTIONS system block; no truncation, no remediation.
+      [{:level   :info
+        :message (str "Project guidance loaded from " path
+                   " (" (format-bytes (long (or bytes 0))) ", source: " (name source) ")")}]
       [{:level       :warn
         :message     "No project guidance found (neither AGENTS.md nor CLAUDE.md in the repo root)."
         :remediation "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))

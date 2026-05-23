@@ -3033,14 +3033,35 @@
           recaps)))))
 
 (defn- code-source-from-render-segments
+  "Stitch the *visible* `:code` source out of a parsed segment vector.
+
+   `parse-block-display` tags bookkeeping forms
+   (`(def r (v/ls …))`, bare `(v/cat …)` tool calls, etc.) with
+   `:hidden? true` so the channel can collapse the raw source row
+   and let the tool's pi-style result pane speak for itself.
+
+   Three shapes:
+
+     1. Segments parsed AND at least one *visible* `:code` segment
+        — stitch only those sources, ignoring hidden ones.
+     2. Segments parsed but every `:code` segment is `:hidden?`
+        true — return `\"\"` so the caller's `hide-code-chrome?`
+        branch fires and the source row is suppressed.
+     3. No segments at all (legacy persisted chunk) — fall back to
+        the raw `code` string the chunk carries."
   [segments fallback-code]
-  (let [sources (keep (fn [{:keys [kind source]}]
-                        (when (and (= :code kind) (not (str/blank? (str source))))
-                          (str/trim (str source))))
-                  segments)]
-    (if (seq sources)
-      (str/join "\n" sources)
-      fallback-code)))
+  (let [code-segments    (filter #(= :code (:kind %)) segments)
+        visible-sources  (keep (fn [{:keys [source hidden?]}]
+                                 (when (and (not hidden?)
+                                         (not (str/blank? (str source))))
+                                   (str/trim (str source))))
+                           code-segments)]
+    (cond
+      (seq visible-sources)          (str/join "\n" visible-sources)
+      ;; segments parsed but all hidden — explicit blank, NOT fallback,
+      ;; so the hide-code-chrome? branch fires below.
+      (seq code-segments)            ""
+      :else                           fallback-code)))
 
 (defn- segment->recap-text
   "Compact one-line summary for a single ctx-mutation render

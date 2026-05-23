@@ -112,11 +112,25 @@
              (long (:started-at-ms envelope))))))
 
 (defn- form-result-kind
+  "Classify a form chunk for the channel's `show-result?` gate.
+
+   Rules:
+     :error  —  the form threw / preflight rejected.
+     :tool   —  the form *touched* the tool surface (either its
+                top-level value is a tool envelope, OR it carries
+                `:channel` sink entries from inner tool calls like
+                `(def r (v/ls …))`). Without this, a pi-style tool
+                preview computed by `format-form-result` would be
+                suppressed by the renderer's `(= :tool result-kind)`
+                gate when the FENCE's last value is plain data
+                (e.g. `(select-keys r …)`).
+     :value  —  everything else (plain Clojure values)."
   [chunk]
   (cond
-    (:error chunk) :error
-    (extension/tool-result? (:result chunk)) :tool
-    :else :value))
+    (:error chunk)                            :error
+    (extension/tool-result? (:result chunk))  :tool
+    (seq (:channel chunk))                    :tool
+    :else                                     :value))
 
 (defn- tool-result-detail
   "Project tool-result envelope to the small detail map TUI labels

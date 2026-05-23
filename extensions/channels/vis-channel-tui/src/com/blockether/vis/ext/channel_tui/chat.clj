@@ -43,16 +43,60 @@
   [value]
   (let [title (some-> value str str/trim not-empty)]
     (if title
-      (str "Title changed to \"" title "\".")
+      (str "Title — \"" title "\"")
       "Title changed.")))
 
+(defn- status-glyph
+  [status]
+  (case status
+    :done       "✓ "
+    :cancelled  "× "
+    (:todo :doing) "… "
+    ""))
+
+(defn- task-recap
+  [{:keys [id status proof title]}]
+  (str "Task — " (status-glyph status)
+    (when id (pr-str id))
+    (when status (str "  :" (name status)))
+    (when title (str "  \"" title "\""))
+    (when proof (str "  proof " proof))))
+
+(defn- spec-recap
+  [{:keys [id status]}]
+  (str "Spec — " (pr-str id)
+    (when status (str "  :" (name status)))))
+
+(defn- fact-recap
+  [{:keys [id status]}]
+  (str "Fact — " (pr-str id)
+    (when status (str "  :" (name status)))))
+
 (defn- render-segment-recaps
+  "Pi-style recap lines for ctx-mutation render segments. Keep in
+   sync with `progress/render-segment-recaps` — chat replays the same
+   shape from persisted block segments after a session restore."
   [segments]
   (->> segments
-    (keep (fn [{:keys [kind value]}]
-            (when (= :title kind)
-              (title-recap value))))
+    (keep (fn [{:keys [kind value] :as seg}]
+            (case kind
+              :title         (title-recap value)
+              :task-update   (task-recap seg)
+              :spec-update   (spec-recap seg)
+              :fact-update   (fact-recap seg)
+              nil)))
     vec))
+
+(def ^:private structural-form-prefixes
+  ["(set-session-title!"
+   "(done"
+   "(task-set!"
+   "(spec-set!"
+   "(fact-set!"])
+
+(defn- contains-structural-prefix?
+  [^String code]
+  (boolean (some #(str/includes? code %) structural-form-prefixes)))
 
 (defn- visible-code-segments?
   "True when an iteration block has at least one `:code` segment that
@@ -62,25 +106,30 @@
 
 (defn- structurally-silent-block?
   "True for host-bookkeeping forms that should never appear in user
-   traces (answer-emission / title updates / mixed blocks where the
-   visible segment is purely structural)."
+   traces: title updates, answer emission, and ctx mutators
+   (`task-set!`, `spec-set!`, `fact-set!`)."
   [b]
   (let [code    (str (:code b))]
     (boolean
       (or (:vis/structurally-silent? b)
         (and (not (visible-code-segments? b))
-          (or (str/includes? code "(set-session-title!")
-            (str/includes? code "(done")))
+          (contains-structural-prefix? code))
         (and (= :vis/silent (:result b))
           (not (seq (:render-segments b)))
-          (or (str/includes? code "(set-session-title!")
-            (str/includes? code "(done")))))))
+          (contains-structural-prefix? code))))))
 
 (defn- form-result-kind
-  [{:keys [result error]}]
+  "Mirror of `progress/form-result-kind` for restored sessions: a
+   form is `:tool`-kind whenever it touched the tool surface, even
+   indirectly via `:channel` sink entries (e.g. `(def r (v/ls …))`
+   followed by `(select-keys r …)`). Without this the channel's
+   pi-style preview pane is hidden because the FENCE's last value
+   is plain data."
+  [{:keys [result error channel]}]
   (cond
     error                            :error
     (extension/tool-result? result)  :tool
+    (seq channel)                    :tool
     :else                            :value))
 
 (defn- form-result-detail
