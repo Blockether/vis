@@ -1184,6 +1184,26 @@
       :code)
     :code))
 
+(defn- def-tool-call-form?
+  "True when `form` is `(def NAME (qualified/call ...))` — a model-authored
+   binding around an extension tool call. The channel hides the def source
+   on render because the tool result pane already shows what the call did;
+   the def wrapping is bookkeeping noise. Bare `(def x value)` (no tool
+   call) stays visible because the value itself is the only artifact."
+  [form]
+  (and (seq? form)
+    (symbol? (first form))
+    (= 'def (first form))
+    (symbol? (second form))
+    (let [body (drop 2 form)
+          body (if (and (>= (count body) 2) (string? (first body)))
+                 (rest body)
+                 body)
+          init (first body)]
+      (and (seq? init)
+        (symbol? (first init))
+        (some? (namespace (first init)))))))
+
 (defn- form-bounds-by-meta
   "Build a parallel vector of {:start :end} byte offsets for each form by
    reading edamame's `:row :col :end-row :end-col` meta. Returns nil-entries
@@ -1278,7 +1298,8 @@
                                  :title      [{:kind :title
                                                :value (title-value-from-form form)}]
                                  :code
-                                 [{:kind :code :source (str/trim slice)}])))
+                                 [(cond-> {:kind :code :source (str/trim slice)}
+                                    (def-tool-call-form? form) (assoc :hidden? true))])))
                            (map-indexed vector forms)))
                 ;; Coalesce consecutive :code segments. The bounds-based slice
                 ;; for the LATER code form already includes the gap from the
@@ -1291,7 +1312,8 @@
                            (reduce
                              (fn [acc seg]
                                (let [prev (peek acc)]
-                                 (if (and prev (= :code (:kind prev)) (= :code (:kind seg)))
+                                 (if (and prev (= :code (:kind prev)) (= :code (:kind seg))
+                                       (= (boolean (:hidden? prev)) (boolean (:hidden? seg))))
                                    (let [merged-source (str (:source prev) "\n" (:source seg))]
                                      (conj (pop acc) (assoc prev :source merged-source)))
                                    (conj acc seg))))
