@@ -83,15 +83,10 @@
   io.github.tonsky/fast-edn                       {:mvn/version "1.1.3"}
   com.cnuernber/charred                           {:mvn/version "1.038"}
   ;; JGit is now used by root-internal picker plumbing too, not just the
-  ;; foundation extension.
-  org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.6.0.202603022253-r"}
-  ;; Apache MINA SSHD-backed SshSessionFactory for JGit. Without this,
-  ;; the default JSch factory cannot read ~/.ssh/config / IdentityFile
-  ;; the way OpenSSH does, and pushes to GitHub fail mid-handshake with
-  ;; "remote hung up unexpectedly" (TransportException). The Apache
-  ;; sshd factory understands ssh-config, ed25519 keys, ssh-agent, and
-  ;; rsa-sha2-512 — i.e. everything GitHub currently insists on.
-  org.eclipse.jgit/org.eclipse.jgit.ssh.apache    {:mvn/version "7.6.0.202603022253-r"}}
+  ;; foundation extension. The Apache MINA SSHD transport
+  ;; (`org.eclipse.jgit.ssh.apache`) lives in the foundation-git extension's
+  ;; deps.edn — push/fetch is the only caller that needs an SSH factory.
+  org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.6.0.202603022253-r"}}
 
  :aliases
  {  ;; Primary alias - the `vis` CLI.

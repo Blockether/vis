@@ -1,2 +1,13 @@
 {:paths ["src" "resources"]
- :deps  {com.blockether/vis {:local/root "../../.."}}}
+ :deps  {com.blockether/vis {:local/root "../../.."}
+         ;; Apache MINA SSHD-backed SshSessionFactory for JGit. Without
+         ;; this, the default factory cannot read ~/.ssh/config /
+         ;; IdentityFile the way OpenSSH does, and pushes to GitHub fail
+         ;; mid-handshake with "remote hung up unexpectedly"
+         ;; (TransportException). The Apache sshd factory understands
+         ;; ssh-config, ed25519 keys, ssh-agent, and rsa-sha2-512 — i.e.
+         ;; everything GitHub currently insists on. Only the git/push! /
+         ;; git/fetch! write-ops install it, so the dep belongs here
+         ;; (extension-local) instead of the root deps.edn.
+         org.eclipse.jgit/org.eclipse.jgit.ssh.apache
+         {:mvn/version "7.6.0.202603022253-r"}}}
