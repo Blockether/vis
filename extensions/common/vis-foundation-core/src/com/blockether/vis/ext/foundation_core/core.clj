@@ -4,7 +4,10 @@
    [com.blockether.vis.ext.foundation-core.editing.core :as editing]
    [com.blockether.vis.ext.foundation-core.environment.core :as environment]
    [com.blockether.vis.ext.foundation-core.introspection :as introspection]
-   [com.blockether.vis.ext.foundation-core.hints :as hints]))
+   [com.blockether.vis.ext.foundation-core.hints :as hints]
+   [com.blockether.vis.ext.foundation-core.workspace-ctx :as workspace-ctx]
+   [com.blockether.vis.ext.foundation-core.workspace-slashes :as workspace-slashes]
+   [com.blockether.vis.internal.workspace :as workspace]))
 
 (defn- combined-prompt
   "Stitch foundation-owned tool strategy prompt text. Structured runtime
@@ -53,6 +56,27 @@
   [env]
   (call-resolved! 'com.blockether.vis.ext.foundation-core.doctor/doctor-fn env))
 
+(defn- session-workspace-block
+  "Resolve the env's pinned workspace + session-state and render the
+   canonical `:session/workspace` CTX block. Returns nil when there
+   is no DB / no workspace pin yet (engine seeds `:vcs/kind :none`
+   from `empty-ctx` in that case)."
+  [env]
+  (when-let [db (:db-info env)]
+    (when-let [ws-id (or (:workspace/id env) (some-> env :workspace :id))]
+      (when-let [pair (workspace/workspace-with-session db ws-id)]
+        (workspace-ctx/render-block pair)))))
+
+(defn- combined-ctx
+  "Foundation-core's single `:ext/ctx` fn. Merges the project/env
+   contribution (snapshot, AGENTS.md, extension warnings) with the
+   workspace block under `:session/workspace`. PLAN.md §6 / §8."
+  [env]
+  (let [project   (environment/environment-ctx env)
+        ws-block  (session-workspace-block env)]
+    (cond-> (or project {})
+      ws-block (assoc :session/workspace ws-block))))
+
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
@@ -67,8 +91,9 @@
                                                   environment/environment-symbols))}
      :ext/kind           "foundation"
      :ext/hooks          hints/hooks
-     :ext/ctx            environment/environment-ctx
+     :ext/slash-commands workspace-slashes/specs
+     :ext/ctx            combined-ctx
      :ext/prompt         combined-prompt
-     :ext/doctor-fn       lazy-doctor-fn}))
+     :ext/doctor-fn      lazy-doctor-fn}))
 
 (vis/register-extension! vis-extension)

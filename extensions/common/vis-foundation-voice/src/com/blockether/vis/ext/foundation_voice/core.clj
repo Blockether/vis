@@ -621,12 +621,17 @@
 (defn- ensure-parakeet! []
   (voice-asr-call! 'ensure-model!))
 
-(defn- voice-input-tui-commands
+(defn- voice-toggle-recording!
+  "Slash run-fn body for `/voice` (PLAN.md §12 step 6, K10).
+   Resolves the input ns lazily so the host doesn't pay the audio
+   stack cost until the user actually triggers voice."
   [ctx]
-  ((or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.input/tui-commands)
-     (throw (ex-info "Voice input namespace did not expose TUI commands"
-              {:type :voice-input/missing-tui-commands})))
-   ctx))
+  (let [toggle (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
+                 (throw (ex-info "Voice input namespace did not expose toggle-recording!"
+                          {:type :voice-input/missing-toggle})))]
+    (toggle ctx)
+    {:slash/status :ok
+     :slash/title  "Voice recording toggled"}))
 
 (defn- voice-models-status-command [_parsed _residual]
   (vis/init-cli!)
@@ -712,9 +717,20 @@
                                      {:name "all" :kind :flag :type :boolean
                                       :doc "Download/check both voice models."}]
                           :cmd/run-fn #'voice-models-download-command}]}]}]
-     :ext/channel-contributions
-     {:tui.slot/commands
-      [{:id :voice/input
-        :fn #'voice-input-tui-commands}]}}))
+     ;; PLAN.md §12 step 6 (K10): declarative slash registration
+     ;; replaces the TUI-only `:ext/channel-contributions
+     ;; {:tui.slot/commands [...]}` slot. ONE registration, both TUI
+     ;; and Telegram channels render the same surface via the engine
+     ;; slash registry. Until step 8 wires the TUI keybind through
+     ;; `slash-dispatch`, Ctrl+B keeps no-opping at the TUI layer
+     ;; (the slash itself is fully live in the registry).
+     :ext/slash-commands
+     [{:slash/name     "voice"
+       :slash/doc      "Toggle voice recording (TUI / Telegram)."
+       :slash/usage    "/voice"
+       :slash/requires #{:channel}
+       :slash/availability-fn (fn [{ch :channel/id}]
+                                (contains? #{:tui :telegram} ch))
+       :slash/run-fn   voice-toggle-recording!}]}))
 
 (vis/register-extension! voice-extension)
