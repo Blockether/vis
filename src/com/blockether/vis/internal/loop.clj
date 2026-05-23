@@ -592,6 +592,25 @@
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [thrown       (atom nil)
         tool-counts  (atom {})
+        ;; UI cancellation hard-cancels the SCI worker.
+        ;;
+        ;; `cancel-atom` flips to `true` when the user fires
+        ;; `vis/cancel!` (Esc / Ctrl+C). The outer turn future is
+        ;; interrupted in `cancellation/cancel!` but THAT only unblocks
+        ;; the surrounding `deref`; the inner SCI worker keeps running
+        ;; (a tight `(loop [] (recur))` in user code, a blocking
+        ;; tool call, or a long CPU step). Until SCI exits the JVM is
+        ;; pinned to that thread and the TUI input loop starves — the
+        ;; user CANNOT cancel because the keystroke handler never gets
+        ;; CPU back.
+        ;;
+        ;; A cooperative `cancel-atom` check inside SCI is not enough
+        ;; either: by definition the bad form does not return to a
+        ;; checkpoint. The only correct fix is a hard `.cancel(true)`
+        ;; on the SCI future driven by the same flag the UI
+        ;; already flips. We add that watch BELOW (after `exec-future`
+        ;; is bound) and remove it in the `finally` of the deref.
+        cancel-atom  (:cancel-atom env)
         ;; Per-top-level-form cursor pointer. Multi-form fences need the
         ;; turn-state-atom's :form-idx (used by `(done …)` to
         ;; stamp answer-atom :position, by cursor-snapshot to compute
@@ -724,11 +743,40 @@
                                         (catch Throwable _
                                           {:message (or (ex-message e)
                                                       (.getName (class e)))}))}))))
+        ;; Wire the UI cancel flag to a hard `.cancel(true)` on the SCI
+        ;; future. Watch fires on the `swap!` thread that flipped the
+        ;; flag (typically the TUI input thread under `vis/cancel!`),
+        ;; so the worker is interrupted instantly even if SCI is in a
+        ;; tight CPU loop with no iteration boundary to check.
+        ;;
+        ;; Three races to handle:
+        ;;   1. atom flips AFTER the watch is installed — watch fires,
+        ;;      cancel propagates.
+        ;;   2. atom is ALREADY true when we install — watch never fires.
+        ;;      Defensive eager check below covers this.
+        ;;   3. atom flips AFTER the deref returns — watch removed in
+        ;;      `finally`, no leak.
+        watch-key   (when cancel-atom [::sci-cancel exec-future])
+        _           (when cancel-atom
+                      (add-watch cancel-atom watch-key
+                        (fn [_ _ _ new-val]
+                          (when new-val
+                            (try (.cancel ^java.util.concurrent.Future exec-future true)
+                              (catch Throwable _ nil))))))
+        _           (when (and cancel-atom @cancel-atom)
+                      (try (.cancel ^java.util.concurrent.Future exec-future true)
+                        (catch Throwable _ nil)))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
                              (reset! thrown e)
+                             ;; Interrupt path: outer was cancelled while we
+                             ;; were blocked on `deref`. Hard-cancel the
+                             ;; inner worker too so it cannot keep running
+                             ;; orphaned in the background pinning a thread.
+                             (try (.cancel ^java.util.concurrent.Future exec-future true)
+                               (catch Throwable _ nil))
                              {:result nil
                               :channel @channel-sink
                               :def-sink @def-sink
@@ -736,7 +784,11 @@
                               :error   (try (extension/ex->op-error e {:form-source code})
                                          (catch Throwable _
                                            {:message (or (ex-message e)
-                                                       (.getName (class e)))}))}))]
+                                                       (.getName (class e)))}))})
+                           (finally
+                             (when watch-key
+                               (try (remove-watch cancel-atom watch-key)
+                                 (catch Throwable _ nil)))))]
     ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
     ;; the eval succeeded; on exception/timeout, set `*e` without
     ;; advancing the value stack (the form produced no value).
@@ -2987,7 +3039,17 @@
            workspace-overrides]}]
   (let [environment (cond-> environment
                       (seq turn-features) (assoc :turn/features turn-features)
-                      (seq workspace-overrides) (merge workspace-overrides))
+                      (seq workspace-overrides) (merge workspace-overrides)
+                      ;; Surface the cancel-atom on the environment so
+                      ;; `run-sci-code` can install a hard-cancel watch
+                      ;; on the SCI worker future. Without this the UI
+                      ;; cancel flag (already flipped by `vis/cancel!`)
+                      ;; only reaches the outer turn future; the inner
+                      ;; SCI worker keeps spinning, pins a thread and
+                      ;; starves the input loop until the timeout
+                      ;; fires — the exact "TUI unresponsive" symptom
+                      ;; the user hit in session 11d4f817.
+                      cancel-atom (assoc :cancel-atom cancel-atom))
         resolved-model (resolve-effective-model (:router environment))
         effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
