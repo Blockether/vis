@@ -126,7 +126,7 @@
         (case (:status result)
           :ok        {:slash/status :ok
                       :slash/title  "Workspace applied"
-                      :slash/body   (str (:branch result) " → " (:trunk result "trunk")
+                      :slash/body   (str (:branch result) " -> " (:trunk result "trunk")
                                       " (" (subs (:sha result) 0 8) ")")
                       :slash/data   result}
           :ff-failed {:slash/status :ff-failed
