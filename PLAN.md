@@ -57,17 +57,28 @@ we just killed.
 
 ### Locked definitions
 
-- **Engine-owned (in `src/com/blockether/vis/internal/`)**: slash registry,
-  slash parser, slash dispatch, handler invocation, synthetic iteration
-  persistence, result envelope shape.
+- **Engine-owned (in `src/com/blockether/vis/internal/`)**: slash spec
+  (`::slash`, `:ext/slash-commands`), slash parser, slash dispatch,
+  handler invocation, synthetic iteration persistence, result envelope
+  shape, aggregation fn `(active-slashes env)` that walks
+  `(active-extensions env)` and pulls `:ext/slash-commands` vecs.
 - **Channel-owned (in `extensions/channels/vis-channel-{tui,telegram,web,…}/`)**:
   detect text-from-user, route through `slash/dispatch`, render the
   resulting envelope (modal / reply+inline-kbd / web component / stdout),
-  expose autocomplete hints from `(vis/registered-slashes)` filtered by
+  expose autocomplete hints from `(vis/active-slashes env)` filtered by
   availability.
-- **Extension-owned (in `extensions/common/vis-foundation-*/`)**: register
-  slash entries via `register-slash!`, provide pure handlers, optionally
-  return channel-agnostic `:slash/actions` in the envelope.
+- **Extension-owned (in `extensions/common/vis-foundation-*/`)**: declare
+  slash entries on the extension manifest under `:ext/slash-commands`
+  (vec of `::slash` maps, mirrors `:ext/hooks` shape), provide pure
+  handlers, optionally return channel-agnostic `:slash/actions` in the
+  envelope.
+
+**Design (2026-05-22):** slashes are DECLARATIVE — `:ext/slash-commands`
+on the extension manifest, same pattern as `:ext/hooks`. NO
+`register-slash!` imperative fn, NO global `slash-registry` atom. The
+engine aggregates from `(active-extensions env)` at lookup time.
+Duplicate `[parent name]` across active extensions is rejected at
+extension-load time.
 
 ### Forbidden patterns (lint + review must reject)
 
@@ -78,16 +89,17 @@ we just killed.
 3. Engine knowing about specific slash commands (no `workspace-slash?`
    helper, no hardcoded `"workspace"` switch). Engine sees opaque
    `["workspace" "apply"]` paths; extension owns the semantics.
-4. Extension calling `register-slash!` multiple times for the same path
-   to register "per channel". One call → every channel via
-   `:slash/availability-fn`.
-5. Channels mutating `slash-registry` directly. Read-only access via
-   `(vis/registered-slashes)`.
+4. The same `[parent name]` appearing on two extensions'
+   `:ext/slash-commands` vecs. One declarer per path; cross-channel
+   availability flows through `:slash/availability-fn`, not multiple
+   declarations.
+5. Channels reading any private slash state. Read-only access via
+   `(vis/active-slashes env)`.
 6. Telegram `setMyCommands` fed from a hardcoded vec. It must derive
-   live from `(vis/registered-slashes)` filtered by
-   `(:telegram (:slash/availability-fn entry))`.
-7. New channel introduction touching `register-slash!` call sites. A
-   new channel = one new entry in the boundary table below + render
+   live from `(vis/active-slashes env)` filtered by the
+   `:slash/availability-fn` accepting the telegram ctx.
+7. New channel introduction touching extension manifests. A new
+   channel = one new entry in the boundary table below + render
    envelope code. Zero existing extension files modified.
 
 ### Cross-channel input boundary table (after redesign)
@@ -103,19 +115,24 @@ add a channel, add a row here, write the boundary code, ship.
 | CLI/SDK (future) | future `vis/send!` opt `:slash-handle? true` | dispatch invoked inside `send!` when opt set; envelope returned alongside result |
 | Discord / Slack / IRC / mail (future) | their message handler | one `slash/dispatch` call at message receipt; render envelope to channel-native format |
 
-### Registration sites (after redesign)
+### Declaration sites (after redesign)
 
-Every `register-slash!` call lives in **exactly one** of:
+Every `:ext/slash-commands` vec lives on **exactly one** of:
 
-- `vis-foundation-workspace` — `/workspace *` tree
-- `vis-foundation-voice` — `/voice` (one entry, multi-channel availability)
-- `vis-foundation-core` — if any core slashes emerge (e.g. `/help`, `/status`)
-- `vis-channel-telegram` — channel-specific slashes (e.g. `/restart` for the bot
-  process itself) registered with `:slash/availability-fn (= :telegram (:channel/id %))`
-- 3rd-party extension `vis-foundation-{x}` — owns its own tree (`/x *`)
+- `vis-foundation-core` — `/workspace *` tree (PLAN §6 — workspace is
+  CORE, slashes live alongside hook tasks + environment renderer on
+  the canonical engine-companion extension), `/help`, `/status`, etc.
+- `vis-foundation-voice` — `/voice` (one entry, multi-channel
+  availability via `:slash/availability-fn`).
+- `vis-channel-telegram` — channel-specific slashes (e.g. `/restart`
+  for the bot process itself) with `:slash/availability-fn` accepting
+  ONLY the telegram channel-id.
+- 3rd-party extension `vis-foundation-{x}` — owns its own tree
+  (`/x *`) via its own `:ext/slash-commands` vec.
 
-NO call to `register-slash!` from inside `src/com/blockether/vis/internal/`.
-The engine REGISTRY exists in internal; the REGISTRATIONS live in extensions.
+NO `:ext/slash-commands` declared from inside
+`src/com/blockether/vis/internal/`. The engine SPEC + AGGREGATOR live
+in internal; the DECLARATIONS live on extension manifests.
 
 ### Smoke check before merging the cutover
 
@@ -125,9 +142,10 @@ The engine REGISTRY exists in internal; the REGISTRATIONS live in extensions.
 4. `rg -n ":git/branch|:git/trunk|:git/head|:git/dirty|:git/stats" src/com/blockether/vis/` returns ZERO hits.
 5. `rg -n "apply-to-trunk!" .` returns ZERO hits.
 6. `rg -n "bot-menu-commands-before-voice|bot-menu-commands-after-voice" .` returns ZERO hits.
-7. Telegram bot start logs the slashes it pushed to `setMyCommands`, derived from `(vis/registered-slashes)`.
-8. TUI palette overlay shows all `/workspace *` and `/voice` entries without any of those being in `palette-commands` source.
-9. Send `/workspace list` from Telegram, get the same envelope a TUI `/workspace list` returns (modulo channel rendering).
+7. `rg -n "register-slash!\\|slash-registry" .` returns ZERO hits (declarative-only).
+8. Telegram bot start logs the slashes it pushed to `setMyCommands`, derived from `(vis/active-slashes env)`.
+9. TUI palette overlay shows all `/workspace *` and `/voice` entries without any of those being in `palette-commands` source.
+10. Send `/workspace list` from Telegram, get the same envelope a TUI `/workspace list` returns (modulo channel rendering).
 
 If any of these fail, the cross-channel discipline isn't there yet.
 Keep working.
@@ -299,18 +317,44 @@ the new surface; tests on the new path go in first.
   (`:tui.slot/header-row`) stay because they describe real TUI UI,
   not slash semantics.
 
-## 3. Slash registry — fourth global registry (cross-channel, not TUI-only)
+## 3. Slash declaration — `:ext/slash-commands` on the extension manifest
+
+**Design decision (2026-05-22)**: slashes are DECLARATIVE, mirroring
+`:ext/hooks` / `:ext/channel-contributions`. There is NO global
+`slash-registry` atom, NO `register-slash!` imperative call. Every
+extension carries a `:ext/slash-commands` vec on its manifest; the
+engine derives the active slash set by walking `(active-extensions)`
+at lookup time.
+
+Why declarative beats imperative here (same reasoning that made
+`:ext/hooks` declarative):
+
+  - Restart-safe automatically (manifest re-evaluated on extension
+    load; no atom state to seed).
+  - Conflicts detectable STATICALLY at extension-discovery time —
+    engine validates the union of `:ext/slash-commands` across all
+    active extensions and refuses load when two extensions declare
+    the same `[parent name]`.
+  - Single source of truth: `(active-extensions)` already enumerates
+    everything; aggregating slashes is one more field read.
+  - Symmetric with the existing `:ext/hooks` shape — the model in
+    code (hooks-as-data) extends to slashes-as-data with no new
+    primitive.
+  - Channel-specific availability flows through the spec's
+    `:slash/availability-fn` (a pure pred); no `:ext.channel/*`
+    namespace games, no per-channel duplication.
 
 **Cross-channel surface.** Slash commands are an engine-level concept,
 rendered by every channel that has a user-input surface — TUI today,
 Telegram today, Web soon (no `web` channel yet — confirmed by
 `extensions/channels/` ls), Discord / Slack / API later. There is
-exactly one registry; channels read from it. There are NO
-channel-private slash trees, NO duplicate registrations.
+exactly one slash set; channels read from it via
+`(vis/active-slashes)`. There are NO channel-private slash trees, NO
+duplicate registrations.
 
 **Cross-channel implication.** Telegram's `setMyCommands` API is fed
-from the SAME registry (see §10 step 2). The Web channel, when it
-lands, will pull its `/`-menu from the SAME registry. A user typing
+from the SAME aggregation (see §10 step 2). The Web channel, when it
+lands, will pull its `/`-menu from the SAME aggregation. A user typing
 `/workspace apply` in any channel hits the exact same handler with
 the same ctx contract.
 
@@ -320,45 +364,68 @@ ORTHOGONAL `register-cmd!` API. Those are launch-time admin ops, NOT
 in-session slash intents — they keep their own surface. See §13 row
 `telegram bot.clj` for the audit.
 
-Lives in `src/com/blockether/vis/internal/registry.clj`, peer with
-`channel-registry`, `provider-registry`, `command-registry`.
+### Spec (extension.clj alongside `:ext/hooks`)
 
 ```clojure
-;; spec
-(s/def :slash/name       non-blank-string?)
-(s/def :slash/parent     (s/coll-of non-blank-string? :kind vector?))
-(s/def :slash/doc        non-blank-string?)
-(s/def :slash/usage      non-blank-string?)
-(s/def :slash/run-fn     ifn?)
-(s/def :slash/requires   (s/coll-of #{:session :workspace :channel} :kind set?))
-(s/def :slash/availability-fn ifn?)
-(s/def :slash/subcommands (s/coll-of non-blank-string? :kind vector?))
+;; Path coords — `:slash/parent` is the nested-command lineage. Top-level
+;; commands like /workspace have :parent []; /workspace apply has
+;; :parent ["workspace"], etc.
+(s/def :slash/name            non-blank-string?)
+(s/def :slash/parent          (s/coll-of non-blank-string? :kind vector?))
+(s/def :slash/doc             non-blank-string?)
+(s/def :slash/usage           non-blank-string?)
+(s/def :slash/run-fn          ifn?)
+(s/def :slash/requires        (s/coll-of #{:session :workspace :channel} :kind set?))
+(s/def :slash/availability-fn ifn?)   ;; (fn [ctx] bool) — e.g. channel-id check
+(s/def :slash/subcommands     (s/coll-of non-blank-string? :kind vector?))
 (s/def ::slash
   (s/keys :req [:slash/name]
     :opt [:slash/parent :slash/doc :slash/usage :slash/run-fn
           :slash/requires :slash/availability-fn :slash/subcommands]))
 
-;; atom: vec preserves registration order, dedup on [parent name]
-(defonce slash-registry (atom []))
+(s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
+```
 
-(defn register-slash!   [spec])
-(defn deregister-slash! [parent name])
-(defn registered-slashes [])
-(defn slash-by-path     [path])           ; e.g. ["workspace" "apply"]
-(defn slash-children    [parent-path])
+The `extension` constructor (existing `defn extension` in
+`internal/extension.clj`) gains the new opt key:
+
+```clojure
+(vis/extension
+  {:ext/name             "foundation-core"
+   :ext/hooks            […]
+   :ext/slash-commands   workspace-slashes/specs   ;; <- NEW
+   :ext/channel-contributions {…}})
+```
+
+### Lookup surface (`internal/slash.clj`, no atom)
+
+```clojure
+(defn active-slashes
+  "Aggregate :ext/slash-commands from every active extension. Engine
+   validates the union at extension-load time and refuses to load any
+   extension that introduces a duplicate [parent name]."
+  [environment]
+  (mapcat :ext/slash-commands (active-extensions environment)))
+
+(defn slash-by-path [environment path])     ; e.g. ["workspace" "apply"]
+(defn slash-children [environment parent])
 ```
 
 Engine is 100% generic. NO hardcoded knowledge of `/workspace`.
-Workspace ops live in a foundation extension (§6) that registers
-through this API exactly like any third-party extension would.
+Workspace slashes live on `vis-foundation-core`'s manifest under
+`:ext/slash-commands` (§6). Third-party extensions ship their own
+entries the same way.
 
 Public re-exports in `core.clj`:
 ```clojure
-(def register-slash!     registry/register-slash!)
-(def deregister-slash!   registry/deregister-slash!)
-(def registered-slashes  registry/registered-slashes)
-(def slash-by-path       registry/slash-by-path)
+(def active-slashes   slash/active-slashes)
+(def slash-by-path    slash/slash-by-path)
+(def slash-children   slash/slash-children)
 ```
+
+No `register-slash!`. No `slash-registry` atom. No `deregister-slash!`
+(removing a slash means dropping it from the extension manifest +
+reloading the extension, same as any other `:ext/*` change).
 
 ### Dispatch — `src/com/blockether/vis/internal/slash.clj` (NEW)
 
@@ -689,13 +756,21 @@ extensions/common/vis-foundation-core/
 No new deps.edn, no new META-INF/vis.edn, no new dependency wiring.
 Workspace stays where it semantically belongs.
 
-### 6.1 Registration site (inside `vis-foundation-core` init)
+### 6.1 Declaration site (inside `vis-foundation-core`'s extension map)
 
 ```clojure
-;; In existing vis-foundation-core/src/.../core.clj, post-extension-registration:
-(doseq [spec workspace-slashes/slash-specs] (vis/register-slash! spec))
-(vis/register-ctx-renderer! :session/workspace #'workspace-ctx/render-block)
-;; Read-only :v/workspace-* ops for the model. No mutators.
+;; In existing vis-foundation-core/src/.../core.clj, when building the
+;; extension manifest:
+(vis/register-extension!
+  (vis/extension
+    {:ext/name        "foundation-core"
+     :ext/hooks       hints/hooks
+     :ext/slash-commands workspace-slashes/specs   ;; <- NEW (PLAN §3)
+     :ext/ctx         #'workspace-ctx/render-block ;; ctx renderer
+     …}))
+;; Read-only :v/workspace-* ops still go through register-op! (existing
+;; ops surface stays imperative for now; declarative migration of
+;; :ext/ops is out of scope for this PR).
 (doseq [op workspace-ctx/read-ops] (vis/register-op! op))
 ```
 
@@ -1109,16 +1184,25 @@ belong to that step. No transitional flags.
    - delete `:git/*` opt-keys from `::workspace` (K2).
    - update `prompt.clj` to advertise only `:vcs/*` (already does;
      verify no `:git/*` leaks).
-5. **Slash registry**: extend `internal/registry.clj` with `slash-registry`
-   atom + register/deregister/lookup; add `internal/slash.clj` with
-   parser + dispatch; export from `core.clj`. Spec for `::slash`
-   (§3). No slash handlers yet — just the surface.
-6. **`vis-foundation-workspace` extension + foundation-voice migration**:
-   - new `extensions/common/vis-foundation-workspace/` package; registers
-     workspace slash tree, CTX stamping fn, read-only SCI ops.
-   - MIGRATE `vis-foundation-voice` from `:tui.slot/commands` to
-     `(vis/register-slash! …)` with `requires #{:channel}` and
-     `availability-fn` accepting `:tui` AND `:telegram` (K10).
+5. **Slash declarative surface**: add `::slash` + `:ext/slash-commands`
+   specs to `internal/extension.clj` (alongside `:ext/hooks`); add
+   `internal/slash.clj` with `active-slashes` aggregator + parser +
+   dispatch; export `active-slashes` / `slash-by-path` /
+   `slash-children` from `core.clj`. NO atom, NO `register-slash!`
+   imperative call (PLAN §3). Engine validates the union of
+   `:ext/slash-commands` across active extensions at
+   `register-extension!` time and refuses load on duplicate
+   `[parent name]`.
+6. **Workspace surface in `vis-foundation-core` + foundation-voice migration**:
+   - add `extensions/common/vis-foundation-core/src/.../workspace_slashes.clj`
+     (slash specs vec) + `workspace_ctx.clj` (render-block + read-only
+     ops). Declare them via `:ext/slash-commands workspace-slashes/specs`
+     on the existing vis-foundation-core extension manifest (PLAN §6,
+     no new package).
+   - MIGRATE `vis-foundation-voice` from `:ext/channel-contributions
+     {:tui.slot/commands […]}` to `:ext/slash-commands […]` with
+     `:slash/requires #{:channel}` and `:slash/availability-fn`
+     accepting `:tui` AND `:telegram` (K10).
    - DELETE `voice-input-tui-commands` + `:ext/channel-contributions`
      map entry from `foundation_voice/core.clj`.
 7. **Engine loop integration**: slash dispatch at turn start in
