@@ -41,9 +41,14 @@
               :key kind})))
   v)
 
+(defn- read-turn-state-field
+  "Helper: pull a field from the single :turn-state-atom on env."
+  [env k]
+  (some-> (:turn-state-atom env) deref (get k)))
+
 (defn- latest-turn-state-id [env]
   (let [db-info (db-info! env)
-        turn-id (safe-deref (:current-session-turn-id-atom env))]
+        turn-id (read-turn-state-field env :session-turn-id)]
     (when turn-id
       (some->> (persistance/db-list-session-turn-states db-info turn-id)
         (sort-by :version)
@@ -126,12 +131,12 @@
      :session-state-id      (current-session-state-id env)
      :session-turn-state-id (latest-turn-state-id env)
      :iteration-id               (require-scope-id scope :iteration-id
-                                   (safe-deref (:current-iteration-id-atom env)))}
+                                   (read-turn-state-field env :iteration-id))}
 
     (= :block scope)
     (let [iteration-id (require-scope-id scope :iteration-id
-                         (safe-deref (:current-iteration-id-atom env)))
-          form-index  (safe-deref (:current-form-idx-atom env))]
+                         (read-turn-state-field env :iteration-id))
+          form-index  (read-turn-state-field env :form-idx)]
       {:session-soul-id       (:session-id env)
        :session-state-id      (current-session-state-id env)
        :session-turn-state-id (latest-turn-state-id env)

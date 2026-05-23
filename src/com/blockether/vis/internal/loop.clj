@@ -592,14 +592,14 @@
   (let [thrown       (atom nil)
         tool-counts  (atom {})
         ;; Per-top-level-form cursor pointer. Multi-form fences need the
-        ;; outer loop's :current-form-idx-atom (used by `(done …)` to
+        ;; turn-state-atom's :form-idx (used by `(done …)` to
         ;; stamp answer-atom :position, by cursor-snapshot to compute
         ;; :next-form for proof classification, etc.) to ADVANCE as
         ;; each top-level form runs. Without this update the atom
         ;; stayed at whatever the outer executed-mapv set (0 for a
         ;; single-fence iter), so cursor :next-form was always 1 and
         ;; the engine classified every past form-scope as :future-form.
-        form-idx-atom (some-> env :current-form-idx-atom)
+        turn-state-atom (:turn-state-atom env)
         ;; Per-top-level-form channel sink. `invoke-symbol-wrapper` writes
         ;; ONE entry per tool-symbol call; `*sink-position*` stamps each
         ;; entry with a stable position. Both rebind cleanly when the form
@@ -619,7 +619,7 @@
         def-sink     (env/fresh-sink-atom)
         lru          (env/fresh-lru-atom)
         turn-position (when env
-                        (some-> (:current-turn-position-atom env) deref))
+                        (:turn-position (ctx-loop/read-turn-state env)))
         ;; Live tool-event callback only - no longer accumulated into a vec.
         ;; Storage role retired (was dead persistence). The TUI/progress UI
         ;; consumes via `tool-event-fn` synchronously during eval.
@@ -641,7 +641,7 @@
             {:source source
              :error {:message hint :data {:phase :vis/lint}}}
             (try
-              (when form-idx-atom (reset! form-idx-atom idx))
+              (when turn-state-atom (swap! turn-state-atom assoc :form-idx idx))
               {:source source :result (sci/eval-form sci-ctx form)}
               (catch Throwable e
                 (let [err-map (try (extension/ex->op-error e {:form-source source})
@@ -1497,7 +1497,7 @@
 
 (defn- runtime-turn-prefix
   [environment]
-  (let [id-s (str (or (some-> (:current-session-turn-id-atom environment) deref)
+  (let [id-s (str (or (:session-turn-id (ctx-loop/read-turn-state environment))
                     (:environment-id environment)
                     "00000000"))
         prefix (subs id-s 0 (min 8 (count id-s)))]
@@ -1896,11 +1896,12 @@
           ;; expression's eval so `answer-fn` can stamp `:form-idx` on
           ;; the answer-atom payload. Pairs with the discard check
           ;; below: an answer is gated only by the form that emitted
-          ;; it, not by sibling forms.
-          current-form-idx-atom (or (:current-form-idx-atom environment)
-                                  (throw (ex-info "environment missing :current-form-idx-atom"
-                                           {:type :vis/missing-current-form-idx-atom})))
-          _ (reset! current-form-idx-atom nil)
+          ;; it, not by sibling forms. Form-idx now lives on the
+          ;; single turn-state-atom (see ctx-loop/make-turn-state-atom).
+          turn-state-atom (or (:turn-state-atom environment)
+                            (throw (ex-info "environment missing :turn-state-atom"
+                                     {:type :vis/missing-turn-state-atom})))
+          _ (swap! turn-state-atom assoc :form-idx nil)
           ;; Stream reasoning chunks to the TUI while the LLM is
           ;; thinking. Every chunk carries `:phase` - consumers
           ;; dispatch on it. Phases:
@@ -2082,7 +2083,7 @@
                            ;; `(done ...)` call inside this form
                            ;; captures the right index on the
                            ;; answer-atom payload.
-                           (reset! current-form-idx-atom idx)
+                           (swap! turn-state-atom assoc :form-idx idx)
                            (let [scope (form-ref idx)
                                  raw-result (cond
                                               preflight-error
@@ -2912,7 +2913,7 @@
            ;; `max-context-tokens` feeds advisory context-pressure hooks;
            ;; trailer assembly itself still owns no token trimming.
            max-context-tokens
-           hooks cancel-atom current-iteration-atom
+           hooks cancel-atom
            reasoning-default routing extra-body turn-features allow-copilot-claude-deep?
            workspace-overrides]}]
   (let [environment (cond-> environment
@@ -3055,9 +3056,11 @@
     ;; now rendered into every user message as bare-EDN under `;; ctx`,
     ;; not bound as a SCI value. See ctx_loop/build-sci-bindings for
     ;; the model-facing mutator + introspect surface.
-    (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
-    (when-let [a (:current-session-turn-id-atom environment)] (reset! a session-turn-id))
-    (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
+    ;; Seed turn-scoped fields on the single turn-state-atom in one swap.
+    (ctx-loop/set-turn-state! environment
+      :iteration-id    nil
+      :session-turn-id session-turn-id
+      :user-request    user-request)
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
@@ -3133,7 +3136,7 @@
                             (when (seq seeded-trailer-iters)
                               {:trailer-iters seeded-trailer-iters}))]
           (let [{:keys [iteration messages trace trailer-iters llm-provider]} loop-state]
-            (when current-iteration-atom (reset! current-iteration-atom (inc (long iteration))))
+            (ctx-loop/set-turn-state! environment :iteration (inc (long iteration)))
             (cond
               (when cancel-atom @cancel-atom)
               (do (log-stage! :error iteration {:reason :cancelled})
@@ -3422,7 +3425,7 @@
                                                         :cache-created-tokens (iteration-cache-created-tokens tc)}
                                                  tc (assoc :tokens (:tokens tc)
                                                       :cost-usd (:cost-usd tc)))))]
-                      (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
+                      (ctx-loop/set-turn-state! environment :iteration-id err-iteration-id)
                       ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
@@ -3501,7 +3504,7 @@
                         ;; Cursor for trailer pin + per-form envelope keying.
                         ;; `iteration` here is the 0-based loop counter; the
                         ;; loop normalises it to 1-based via
-                        ;; `(reset! current-iteration-atom (inc iteration))`
+                        ;; `(ctx-loop/set-turn-state! env :iteration (inc iteration))`
                         ;; at the top of each iter. The renderer +
                         ;; cursor-snapshot consume that atom, so they see
                         ;; 1-based iters. Trailer pin + form envelopes
@@ -3514,8 +3517,8 @@
                         ;; model `t1/i1` — hook-task validators couldn't
                         ;; find their proof scope in the form-results
                         ;; map and reverted satisfied tasks.
-                        cursor      {:turn (or (some-> (:current-turn-position-atom environment) deref) 1)
-                                     :iter (or (some-> (:current-iteration-atom environment) deref)
+                        cursor      {:turn (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
+                                     :iter (or (:iteration (ctx-loop/read-turn-state environment))
                                              (inc (long (or iteration 0))))}
                         ;; Expand multi-form blocks into per-form mini-blocks
                         ;; before projecting into engine envelopes. The eval
@@ -3567,7 +3570,7 @@
                                                   :cache-created-tokens (iteration-cache-created-tokens tc)}
                                            tc (assoc :tokens (:tokens tc)
                                                 :cost-usd (:cost-usd tc)))))
-                        _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
+                        _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
                         ;; =====================================================
                         ;; CTX engine end-of-iter pipeline (D11/D12).
                         ;; Flat: advance-iter, then reconcile, with phase
@@ -3836,23 +3839,19 @@
           root-provider          (:provider root-resolved-model)
           db-info                (:db-info env)
           custom-bindings        (custom-bindings env)
-          current-iteration-atom (:current-iteration-atom env)
           sci-ctx                (:sci-ctx env)
           _                      (doseq [[sym val] (or custom-bindings {})]
                                    (when val
                                      (env/sci-update-binding! sci-ctx sym val)))
-          current-iteration-id-atom (:current-iteration-id-atom env)
-          current-session-turn-id-atom (:current-session-turn-id-atom env)
           ;; Workspace pin lives on the env itself (set in create-environment).
           ;; Opts may carry namespaced `:workspace/*` overrides for unusual
           ;; per-turn cases; the legacy bare `:workspace` key was removed
           ;; (PLAN.md §5 — pure :workspace/* keys, never a bare :workspace).
+          ;; turn-state-atom already lives on env (one atom for all
+          ;; per-turn cursor + id fields); no re-assoc needed.
           workspace-overrides    (select-keys opts [:workspace/root :workspace/id
                                                     :workspace/kind :workspace/branch])
-          environment            (cond-> (assoc env
-                                           :current-iteration-atom current-iteration-atom
-                                           :current-iteration-id-atom current-iteration-id-atom
-                                           :current-session-turn-id-atom current-session-turn-id-atom)
+          environment            (cond-> env
                                    (seq workspace-overrides) (merge workspace-overrides))
           environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom
@@ -3862,7 +3861,6 @@
        :root-model             root-model
        :root-provider          root-provider
        :db-info                db-info
-       :current-iteration-atom current-iteration-atom
        :environment            environment
        :environment-id         environment-id
        :spec                   spec
@@ -3887,14 +3885,13 @@
    Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
   [{:keys [environment user-request spec
            max-context-tokens system-prompt
-           current-iteration-atom hooks cancel-atom
+           hooks cancel-atom
            reasoning-default routing extra-body turn-features workspace-overrides]}]
   (let [iteration-result (run-turn! environment user-request
                            (cond-> {:output-spec            spec
                                     :max-context-tokens     max-context-tokens
                                     :system-prompt          system-prompt
                                     :reasoning-default      reasoning-default
-                                    :current-iteration-atom current-iteration-atom
                                     :hooks                  hooks
                                     :cancel-atom            cancel-atom}
                              routing       (assoc :routing routing)
@@ -4378,20 +4375,18 @@
         ;; itself errored (Option C scoping - sibling errors do NOT
         ;; gate the answer). Reset to nil before every iteration runs.
         answer-atom              (atom nil)
-        ;; Form-index pointer the iteration loop reset!s before each
-        ;; expression's `execute-code` call so `answer-fn` knows which
-        ;; form's evaluation invoked it. Pairs with `answer-atom` to
-        ;; implement Option C (scoped) discard semantics.
-        current-form-idx-atom    (atom nil)
-        ;; Stable per-env turn/iteration atoms. Extension symbol wrappers
-        ;; close over the environment installed at creation time, so these
-        ;; atoms must live on that base env and be reset per turn instead of
-        ;; being introduced only on the transient turn env.
-        current-iteration-atom    (atom 1)
-        current-iteration-id-atom (atom nil)
-        current-session-turn-id-atom (atom nil)
-        current-turn-position-atom (atom nil)
-        current-user-request-atom (atom nil)
+        ;; SINGLE turn-state atom replaces the legacy soup
+        ;; (current-{turn-position,iteration,form-idx,iteration-id,
+        ;;  session-turn-id,user-request}-atom). All six fields live
+        ;; under map keys with the same names minus `current-` /
+        ;; `-atom`. Reads via `ctx-loop/read-turn-state`; writes via
+        ;; `ctx-loop/set-turn-state!` / `swap-turn-state!`. Extension
+        ;; symbol wrappers close over THIS atom; the loop swap!s it
+        ;; between turns and forms.
+        turn-state-atom          (ctx-loop/make-turn-state-atom)
+        ;; Seed iteration to 1 so early hooks reading the atom before
+        ;; the loop's per-turn reset see a sensible value.
+        _                        (swap! turn-state-atom assoc :iteration 1)
         ;; Title atom: in-memory cache for the session title.
         ;; The DB column on `session_state` is the persisted
         ;; truth; this atom is the fast read path for  and
@@ -4448,7 +4443,7 @@
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
         ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
-        ;; `current-form-idx-atom` so the iteration loop can scope
+        ;; turn-state-atom's :form-idx so the iteration loop can scope
         ;; the discard check to the form that actually called this.
         ;; Returns the marker keyword so the per-form result row makes
         ;; request visible.
@@ -4489,16 +4484,14 @@
                                                                                       :vis/coerced? true})
                                          trailer-drop      (when (map? value) (:trailer-drop value))
                                          trailer-summarize (when (map? value) (:trailer-summarize value))
-                                         done-env          {:ctx-atom                   ctx-atom
-                                                            :current-turn-position-atom current-turn-position-atom
-                                                            :current-iteration-atom     current-iteration-atom
-                                                            :current-form-idx-atom      current-form-idx-atom}]
+                                         done-env          {:ctx-atom        ctx-atom
+                                                            :turn-state-atom turn-state-atom}]
                                      (ctx-loop/apply-done! done-env
                                        {:trailer-drop trailer-drop
                                         :trailer-summarize trailer-summarize})
                                      (reset! answer-atom
                                        {:value    value
-                                        :position @current-form-idx-atom})
+                                        :position (:form-idx @turn-state-atom)})
                                      :vis/answer))
         ;; SCI binding for the session title:
         ;;   `(set-session-title! \"...\")` - writes the title through
@@ -4529,10 +4522,8 @@
         ;; live as `:engine/warnings` on the ctx itself, no side atoms.
         ;; (D12 retired `:engine/pending-satisfies` along with
         ;; satisfy-hint!; hook-task satisfaction is plain `task-set!`.)
-        ctx-loop-env             {:ctx-atom                   ctx-atom
-                                  :current-turn-position-atom current-turn-position-atom
-                                  :current-iteration-atom     current-iteration-atom
-                                  :current-form-idx-atom      current-form-idx-atom}
+        ctx-loop-env             {:ctx-atom        ctx-atom
+                                  :turn-state-atom turn-state-atom}
         ;; The current human turn text and engine context flow through ctx.
         ;; Introspect verbs reach archived entries + any past turn snapshot
         ;; via the soul/state chain. History loader is a thunk so the
@@ -4550,12 +4541,12 @@
         introspect-history-cache (atom {:key nil :value nil})
         introspect-history-loader
         (fn []
-          (let [t       (some-> current-turn-position-atom deref)
-                i-raw   (some-> current-iteration-atom deref)
+          (let [{:keys [turn-position iteration]} @turn-state-atom
+                i-raw   iteration
                 i       (cond (map? i-raw)    (or (:position i-raw) 1)
                           (number? i-raw) i-raw
                           :else           1)
-                k       [t i]
+                k       [turn-position i]
                 cached  @introspect-history-cache]
             (if (= k (:key cached))
               (:value cached)
@@ -4600,6 +4591,7 @@
               ;; mutate them. Mutator-time writes happen via SCI bindings
               ;; built above; render-time reads via ctx-loop/current-ctx.
               :ctx-atom                          ctx-atom
+              :turn-state-atom                   turn-state-atom
               :state-atom                        state-atom
               :sci-ctx                           sci-ctx
               :sandbox-ns                        sandbox-ns
@@ -4612,12 +4604,6 @@
               :def-resolve-lru-atom              (atom {})
               :router                            router
               :answer-atom                       answer-atom
-              :current-form-idx-atom             current-form-idx-atom
-              :current-iteration-atom            current-iteration-atom
-              :current-iteration-id-atom         current-iteration-id-atom
-              :current-session-turn-id-atom current-session-turn-id-atom
-              :current-turn-position-atom        current-turn-position-atom
-              :current-user-request-atom         current-user-request-atom
               :session-title-atom           session-title-atom
               :extensions                        (atom []))]
     (reset! environment-atom env)
