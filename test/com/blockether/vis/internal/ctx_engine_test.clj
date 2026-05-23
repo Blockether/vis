@@ -360,6 +360,33 @@
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
       (expect (not-any? #(= :trailer-rebind-loop (:code %)) warns)))))
 
+(defdescribe block-envelope-def-deref-test
+  (it "derefs the Var returned by `(def NAME …)` so the trailer carries the bound value"
+    ;; Regression: model writes `(def persist (v/rg …))`, SCI returns the
+    ;; Var, trailer shows `{:vis/ref :expr}` (or `#'sandbox/persist`).
+    ;; Model then re-emits `persist` to inspect, wasting an iter.
+    ;; block->envelope now derefs IDeref results for def-shaped sources.
+    (let [boxed (atom {:files ["a.clj"] :count 1})
+          env (eng/block->envelope {:code "(def persist (v/rg :any [\"x\"]))"
+                                    :result boxed}
+                1 {:turn 3 :iter 4})]
+      (expect (= {:files ["a.clj"] :count 1} (:result env)))
+      (expect (= :mutation (:tag env)))))
+
+  (it "leaves non-def results untouched"
+    (let [env (eng/block->envelope {:code "(+ 1 2)" :result 3}
+                1 {:turn 1 :iter 1})]
+      (expect (= 3 (:result env)))))
+
+  (it "survives a Var that throws on deref (cell broken at runtime)"
+    ;; Defensive: deref-def-result must never bubble an exception. We pass
+    ;; through the raw Var so the channel can still render a placeholder.
+    (let [boom (reify clojure.lang.IDeref
+                 (deref [_] (throw (ex-info "boom" {}))))
+          env (eng/block->envelope {:code "(def x boom)" :result boom}
+                1 {:turn 1 :iter 1})]
+      (expect (identical? boom (:result env))))))
+
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
     (let [cursor {:turn 5 :iter 2}
