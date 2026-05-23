@@ -2598,8 +2598,16 @@
                              ;; message, no :send-message round trip).
                              (when-let [toggle (try (requiring-resolve
                                                       'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
-                                                 (catch Throwable _ nil))]
-                               (try (toggle) (catch Throwable _ nil))))
+                                                 (catch Throwable t
+                                                   (tel/log! {:level :error
+                                                              :id ::voice-toggle-resolve-failed
+                                                              :data {:ex t}})
+                                                   nil))]
+                               (try (toggle {:app-db state/app-db})
+                                 (catch Throwable t
+                                   (tel/log! {:level :error
+                                              :id ::voice-toggle-failed
+                                              :data {:ex t}})))))
                          (recur))
 
                        :show-sessions
