@@ -1251,11 +1251,17 @@
      - ANY def-shaped top-level form (`def`, `defn`, `defn-`,
        `defmacro`, `defmulti`, `defonce`, `defmethod`). The DEF SINK
        already shows the bound name + value to the model, so the
-       raw `(def …)` line is redundant chrome."
+       raw `(def …)` line is redundant chrome.
+     - bare top-level SYMBOL lookups (e.g. `st` following
+       `(def st (git/status))`). The value either rides on the
+       channel render of the preceding tool call or in the DEF
+       SINK; the loose `st` row carries no extra information for
+       the user and pushes recap / preview rows off-screen."
   [form]
   (or (def-tool-call-form? form)
     (qualified-tool-call-form? form)
-    (def-shaped-form? form)))
+    (def-shaped-form? form)
+    (symbol? form)))
 
 (defn- form-bounds-by-meta
   "Build a parallel vector of {:start :end} byte offsets for each form by
@@ -1366,15 +1372,33 @@
                                  :title      [{:kind :title
                                                :value (title-value-from-form form)}]
                                  (:task-update :spec-update :fact-update)
-                                 (let [payload (ctx-mutation-payload form)]
-                                   [(cond-> {:kind kind
-                                             :id   (some-> payload :k)}
-                                      (some-> payload :partial :status)
-                                      (assoc :status (-> payload :partial :status))
-                                      (some-> payload :partial :proof)
-                                      (assoc :proof  (-> payload :partial :proof))
-                                      (some-> payload :partial :title)
-                                      (assoc :title  (-> payload :partial :title)))])
+                                 (let [payload (ctx-mutation-payload form)
+                                       k       (some-> payload :k)]
+                                   (cond
+                                     ;; Engine auto-pin: every successful
+                                     ;; `(set-session-title! …)` is
+                                     ;; followed by `(task-set!
+                                     ;; :vis.foundation/session-title
+                                     ;; {:status :done :proof scope})`
+                                     ;; from the foundation hook. The
+                                     ;; matching `:title` recap row
+                                     ;; already tells the user what
+                                     ;; happened; the auto-ack row right
+                                     ;; below it is bookkeeping noise.
+                                     ;; Drop the segment so it never
+                                     ;; reaches the renderer.
+                                     (= :vis.foundation/session-title k)
+                                     []
+
+                                     :else
+                                     [(cond-> {:kind kind
+                                               :id   k}
+                                        (some-> payload :partial :status)
+                                        (assoc :status (-> payload :partial :status))
+                                        (some-> payload :partial :proof)
+                                        (assoc :proof  (-> payload :partial :proof))
+                                        (some-> payload :partial :title)
+                                        (assoc :title  (-> payload :partial :title)))]))
                                  :code
                                  [(cond-> {:kind :code :source (str/trim slice)}
                                     (hidden-code-form? form) (assoc :hidden? true))])))
