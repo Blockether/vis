@@ -92,7 +92,7 @@
         (fn [^java.io.File root]
           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
             (expect (true? (get-in (env-digest/base-digest nil)
-                            [:project :agents-md?]))))))))
+                             [:project :agents-md?]))))))))
 
   (it "skips :extensions slice when no environment is provided"
     (with-redefs [agents/instructions (constantly {:found? false})
