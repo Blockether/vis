@@ -37,15 +37,12 @@
 
 (defn- mk-env
   "Loop env subset that ctx-loop bindings + helpers actually touch.
-   Single ctx-atom; `:engine/warnings` lives on the ctx itself, no
-   side atoms."
+   Single ctx-atom; single turn-state-atom."
   [db-info session-id turn-pos]
-  {:db-info                    db-info
-   :session-id                 session-id
-   :ctx-atom                   (ctx-loop/make-ctx-atom session-id)
-   :current-turn-position-atom (atom turn-pos)
-   :current-iteration-atom     (atom 1)
-   :current-form-idx-atom      (atom 0)})
+  {:db-info         db-info
+   :session-id      session-id
+   :ctx-atom        (ctx-loop/make-ctx-atom session-id)
+   :turn-state-atom (atom {:turn-position turn-pos :iteration 1 :form-idx 0})})
 
 (defdescribe end-to-end-persist-restart-test
   (describe "engine state survives DB round-trip"

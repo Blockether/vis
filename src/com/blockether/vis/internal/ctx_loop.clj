@@ -44,45 +44,81 @@
 ;; Scope synthesis
 ;; =============================================================================
 
-(defn- read-or
-  "Deref atom or return default. Loop atoms may be unset early in turn."
-  [a default]
-  (if a (or (deref a) default) default))
+;; =============================================================================
+;; Single turn-state atom
+;; =============================================================================
+;;
+;; Replaces the six-atom soup
+;;   :current-turn-position-atom
+;;   :current-iteration-atom
+;;   :current-form-idx-atom
+;;   :current-iteration-id-atom
+;;   :current-session-turn-id-atom
+;;   :current-user-request-atom
+;; with ONE `:turn-state-atom` holding a map of the same fields, plus
+;; an `:iteration-shape` value that mirrors the legacy
+;; `:current-iteration-atom`'s flexibility (number or {:position N}).
+;;
+;; Reads are `(@(:turn-state-atom env) :field)` or via helpers below.
+;; Writes go through `swap-turn-state!`, `set-form-idx!`, etc. — same
+;; atomic update path, single source of truth.
+
+(defn make-turn-state-atom
+  "Initialize the per-session turn-state atom. Holds every cursor +
+   DB-id field the iteration loop and ctx-loop helpers consume."
+  []
+  (atom {:turn-position   nil
+         :iteration       nil
+         :form-idx        nil
+         :iteration-id    nil
+         :session-turn-id nil
+         :user-request    nil}))
+
+(defn swap-turn-state!
+  "swap! the turn-state map. Returns the new state. No-op if no atom on env."
+  [env f & args]
+  (when-let [a (:turn-state-atom env)]
+    (apply swap! a f args)))
+
+(defn set-turn-state!
+  "swap! `assoc` shortcut for one or more turn-state keys."
+  [env & kvs]
+  (when-let [a (:turn-state-atom env)]
+    (swap! a #(apply assoc % kvs))))
+
+(defn read-turn-state
+  "Deref the turn-state map or {} when atom is missing."
+  [env]
+  (or (some-> (:turn-state-atom env) deref) {}))
+
+(defn- normalize-iteration
+  "Iteration field accepts a number, a {:position N} map, or nil. Returns N."
+  [v]
+  (cond
+    (map? v)     (or (:position v) 1)
+    (number? v)  v
+    :else        1))
 
 (defn synthesize-scope
-  "Build the current form scope `tN/iM/fK` from the loop's running counters.
-
-   Inputs (all atoms on env):
-     :current-turn-position-atom    → N
-     :current-iteration-atom        → {:position M} (or M directly)
-     :current-form-idx-atom         → K (0-based; we add 1 for scope)
-
-   When any counter is missing, defaults to 1. This keeps mutators safe to
-   call before the loop has fully initialised the cursor (e.g. early hooks)."
-  [{:keys [current-turn-position-atom
-           current-iteration-atom
-           current-form-idx-atom]}]
-  (let [turn (read-or current-turn-position-atom 1)
-        iter-raw (read-or current-iteration-atom 1)
-        iter (cond
-               (map? iter-raw)        (or (:position iter-raw) 1)
-               (number? iter-raw)     iter-raw
-               :else                  1)
-        form-idx (read-or current-form-idx-atom 0)
-        form (inc form-idx)]
-    (str "t" turn "/i" iter "/f" form)))
+  "Build the current form scope `tN/iM/fK` from `:turn-state-atom`.
+   Defaults each field to 1 (form-idx defaults to 0 → next-form 1) so
+   the helper is safe to call before the loop has initialised the
+   atom (e.g. early hooks)."
+  [env]
+  (let [{:keys [turn-position iteration form-idx]} (read-turn-state env)]
+    (str "t" (or turn-position 1)
+      "/i" (normalize-iteration iteration)
+      "/f" (inc (or form-idx 0)))))
 
 (defn cursor-snapshot
-  "Build a `:session/scope` map from the loop's atoms. Mirrors the engine's
-   `{:turn :iter :next-form}` shape used by `classify-scope` and the renderer."
+  "Build a `:session/scope` map from `:turn-state-atom`. Mirrors the
+   engine's `{:turn :iter :next-form}` shape used by `classify-scope`
+   and the renderer."
   [env]
-  (let [turn (read-or (:current-turn-position-atom env) 1)
-        iter-raw (read-or (:current-iteration-atom env) 1)
-        iter (cond (map? iter-raw)    (or (:position iter-raw) 1)
-               (number? iter-raw) iter-raw
-               :else              1)
-        form-idx (read-or (:current-form-idx-atom env) 0)]
-    {:turn turn :iter iter :next-form (inc form-idx)}))
+  (let [{:keys [turn-position iteration form-idx]} (read-turn-state env)]
+    {:turn      (or turn-position 1)
+     :iter      (normalize-iteration iteration)
+     :next-form (inc (or form-idx 0))}))
 
 ;; =============================================================================
 ;; Mutator bindings
