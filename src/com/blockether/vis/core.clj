@@ -67,6 +67,7 @@
 (def cancellation-token        cancellation/cancellation-token)
 (def cancellation-atom         cancellation/cancellation-atom)
 (def cancellation-set-future!  cancellation/cancellation-set-future!)
+(def on-cancel!                cancellation/on-cancel!)
 (def cancel!                   cancellation/cancel!)
 (def cancelled?                cancellation/cancelled?)
 (def cancellation?             cancellation/cancellation?)

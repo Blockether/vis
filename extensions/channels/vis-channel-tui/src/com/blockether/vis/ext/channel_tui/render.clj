@@ -3514,12 +3514,16 @@
         body (or grouped [])
         trailing-errors (error-lines)
         thinking-body (or (thinking-lines thinking) [])
-        direct-thinking-code? (and (seq thinking-body) (seq body) (empty? trailing-errors))
-        outer-iter-pad-top? (let [line (or (:line (first body)) "")
-                                  body-text (if (pos? (count line)) (subs line 1) line)]
-                              (and (pos? (count line))
-                                (.startsWith ^String line ^String iteration-pad-marker)
-                                (str/blank? body-text)))
+        ;; Dead bindings: see the long comment below — the iteration-pad
+        ;; trimming heuristic was reverted but the predicates were left
+        ;; behind. Underscore-prefix silences clj-kondo while keeping
+        ;; the names available for a future re-introduction.
+        _direct-thinking-code? (and (seq thinking-body) (seq body) (empty? trailing-errors))
+        _outer-iter-pad-top?   (let [line (or (:line (first body)) "")
+                                     body-text (if (pos? (count line)) (subs line 1) line)]
+                                 (and (pos? (count line))
+                                   (.startsWith ^String line ^String iteration-pad-marker)
+                                   (str/blank? body-text)))
         ;; When reasoning is immediately followed by code, drop ONLY
         ;; the outer iter-pad blank that wraps the form vector. The
         ;; thinking trailing pad keeps its gray stripe and the code
