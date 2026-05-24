@@ -864,11 +864,17 @@
 ;; =============================================================================
 
 (defn derive-next-actions
-  "Top-N ranked suggestions. Pure fn. Priority categories (lower = higher):
+  "Ranked suggestions. Pure fn. Priority categories (lower = higher):
      1 :fix-consistency  — spec :done with unproven; task :done with pending dep
+                          (rendered as `:blocking? true` — the symbolic
+                          critic says: fix these before generating new work)
      2 :work-unblocked-todo  — task :todo with all deps terminal
      3 :prove-requirement    — spec :partial / :open req without proof
-     4 :revisit-stale        — task :doing (stale heuristic deferred to loop)"
+     4 :revisit-stale        — task :doing (stale heuristic deferred to loop)
+
+   Returns the full sorted vec. The renderer caps at NEXT_ACTIONS_BUDGET
+   and surfaces the suppressed count so the model sees the backlog
+   pressure instead of a silently-truncated list."
   ([ctx indexes progression] (derive-next-actions ctx indexes progression {}))
   ([ctx indexes progression _last-mutation-map]
    (let [{:keys [task-status dep-graph]} indexes
@@ -879,7 +885,7 @@
            (for [[spec-id _] specs
                  :let [p (get progression spec-id)]
                  :when (and p (= (:state p) :partial) (= :done (get-in specs [spec-id :status])))]
-             {:type :review-spec :target spec-id :priority 1
+             {:type :review-spec :target spec-id :priority 1 :blocking? true
               :hint (str "spec " spec-id " :done but "
                       (count (:missing p)) " req(s) unproven: "
                       (vec (sort (:missing p))))})
@@ -888,7 +894,7 @@
                  d (or (:depends-on task) [])
                  :let [dep (get tasks d)]
                  :when (and (some? dep) (not (task-terminal? (:status dep))))]
-             {:type :review-task :target task-id :priority 1
+             {:type :review-task :target task-id :priority 1 :blocking? true
               :hint (str "task " task-id " :done but dep " d " is " (:status dep))}))
          todo-actions
          (for [[task-id task] tasks
@@ -909,7 +915,6 @@
             :hint (str "spec " spec-id " req " rid " needs a task proof")})]
      (->> (concat consistency-actions todo-actions prove-actions)
        (sort-by (juxt :priority (comp str :target)))
-       (take 5)
        vec))))
 
 ;; =============================================================================
