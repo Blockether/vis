@@ -45,6 +45,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.tokens :as tokens]))
 
 ;; =============================================================================
@@ -78,68 +79,36 @@
 ;; ---------------------------------------------------------------------------
 ;; Engine renders the prompt; engine measures size; engine clips the
 ;; VIEW (not the data). Full payloads always survive in CTX + DB and
-;; remain reachable through `introspect-*` verbs. Three layers, same
-;; shape `{:vis/preview :vis/size :vis/full}`:
+;; remain reachable through `introspect-*` verbs.
 ;;
-;;   form-result    > FORM_RESULT_TOKEN_LIMIT  — single envelope
-;;                                                preview + introspect-form
-;;   fact-content   > FACT_CONTENT_TOKEN_LIMIT — single fact preview +
-;;                                                introspect-fact
-;;   trailer-total  (engine summarization)        — see ctx-engine
+;; Per-entry guards use `safe-guards/clip-value` which produces a
+;; `{:vis/head :vis/tail :vis/size :vis/full}` head+tail preview.
+;; No companion call, no AI summarization — deterministic mechanical
+;; clip. Engine-driven trailer fold (when total prompt > budget) lives
+;; in `safe-guards/ensure-prompt-under-budget!` and uses the same
+;; never-LLM policy.
 ;;
-;; Limits are tokens (jtokkit cl100k), not chars: provider budgets are
-;; tokenwise and char→token ratio swings 0.25–1 across English code vs
-;; chinese/cyrillic facts. Engine-side decisions need stable units.
-;;
-;; All limits sized for a typical 200k-token provider window:
-;;   form-result   2 000 tok   (~1% window)  — fits a mid-size source file
-;;   fact-content    800 tok   (~0.4% window) — facts are stable summaries,
-;;                                              not snapshots
-;;   preview         200 tok                  — first paragraph + size hint
+;; Limits in tokens (jtokkit cl100k_base, ~10-30% margin vs native
+;; provider tokenizers). Sized for a 200k-token provider window:
+;;   form-result   2 000 tok   (~1% window)
+;;   fact-content    800 tok   (~0.4% window)
 
 (def ^:private FORM_RESULT_TOKEN_LIMIT 2000)
 (def ^:private FACT_CONTENT_TOKEN_LIMIT 800)
-(def ^:private PREVIEW_TOKEN_LIMIT 200)
-
-(defn- preview-text
-  "Single-line `pr-str` of `v`, trimmed and capped to roughly
-   PREVIEW_TOKEN_LIMIT tokens. Hard char cap of 1200 stays as a safety
-   net for pathological 1-token-per-char inputs (CJK / cyrillic)."
-  [v]
-  (let [s         (-> (try (pr-str v) (catch Throwable _ ""))
-                    (str/replace #"\s+" " ")
-                    str/trim)
-        char-cap  1200
-        clipped   (if (> (count s) char-cap)
-                    (str (subs s 0 char-cap) "…")
-                    s)
-        toks      (tokens/count-tokens clipped)]
-    (if (> toks PREVIEW_TOKEN_LIMIT)
-      ;; second pass: pr-str length scales ~4 chars/token for code,
-      ;; so cut to PREVIEW_TOKEN_LIMIT*4 chars and re-mark elision
-      (let [target-chars (* PREVIEW_TOKEN_LIMIT 4)]
-        (str (subs clipped 0 (min (count clipped) target-chars)) "…"))
-      clipped)))
-
-(defn- ref-stub
-  "Build the `{:vis/preview :vis/size :vis/full}` safe-guard stub
-   shared by every clipped slot. `:full` is the bare introspect call
-   the model should emit to recover the value verbatim."
-  [v full-call]
-  {:vis/preview (preview-text v)
-   :vis/size    (tokens/count-pr-tokens v)
-   :vis/full    full-call})
 
 (defn- bound-fact-content
-  "Replace `(:content fact)` with a safe-guard stub when its token
-   weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass through.
-   Mirrors the engine's `:fact-content-too-large` write-time warning."
+  "Replace `(:content fact)` with a safe-guard head+tail stub when its
+   token weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass
+   through. Mirrors the engine's `:fact-content-too-large` write-time
+   warning. Full content stays in CTX + DB; `(introspect-fact :K)`
+   recovers it verbatim."
   [fact-k fact]
-  (let [content (:content fact)]
-    (if (and (some? content)
-          (> (tokens/count-pr-tokens content) FACT_CONTENT_TOKEN_LIMIT))
-      (assoc fact :content (ref-stub content (str "(introspect-fact " fact-k ")")))
-      fact)))
+  (if-let [content (:content fact)]
+    (assoc fact :content
+      (safe-guards/clip-value content
+        FACT_CONTENT_TOKEN_LIMIT
+        (str "(introspect-fact " fact-k ")")))
+    fact))
 
 (defn- bound-facts
   "Walk every fact entry in `facts` and apply `bound-fact-content`.
@@ -153,20 +122,20 @@
       facts)))
 
 (defn- bound-form-result
-  "Replace `(:result form)` with a safe-guard stub when its token
-   weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error` / `:channel` /
-   `:src` / `:scope` / `:tag` pass through verbatim. The full result
-   stays on the envelope (CTX) and in DB (`session_turn_iteration.forms`)
-   so `(introspect-form \"<scope>\")` returns the original payload.
+  "Replace `(:result form)` with a head+tail safe-guard stub when its
+   token weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error`,
+   `:channel`, `:src`, `:scope`, `:tag` pass through. Full result
+   stays on the envelope (CTX) and in DB (`session_turn_iteration.forms`);
+   `(introspect-form \"<scope>\")` returns the original payload.
 
-   This is THE fix for the `c8dc39b1` / `1a9a61ee` trailer-bloat class:
-   `(def x (v/cat huge-file))` no longer rides into every later prompt
-   verbatim; the model sees the preview + handle."
+   This is THE fix for the c8dc39b1 / 1a9a61ee trailer-bloat class:
+   `(def x (v/cat huge-file))` no longer rides every later prompt
+   verbatim — the model sees head + tail + the handle."
   [form]
-  (if (and (contains? form :result)
-        (> (tokens/count-pr-tokens (:result form)) FORM_RESULT_TOKEN_LIMIT))
+  (if (contains? form :result)
     (assoc form :result
-      (ref-stub (:result form)
+      (safe-guards/clip-value (:result form)
+        FORM_RESULT_TOKEN_LIMIT
         (str "(introspect-form " (pr-str (:scope form)) ")")))
     form))
 
