@@ -10,7 +10,7 @@
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
-   [com.blockether.vis.internal.compaction :as compaction]
+   [com.blockether.vis.internal.summarization :as summarization]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
@@ -53,9 +53,18 @@
   "Dynamic timeout in milliseconds for SCI code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
 
+(def ASK_CODE_TTFT_TIMEOUT_MS
+  "Default time-to-first-token timeout for Vis `svar/ask-code!` calls.
+   60s avoids false positives from Codex queue/cold-start spikes while
+   still bounding truly stuck pre-header connections. A separate retry
+   handles the one-off watchdog interrupt case."
+  (* 60 1000))
+
 (def ASK_CODE_IDLE_TIMEOUT_MS
-  "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls."
-  (* 5 60 1000))
+  "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls.
+   3min gives slow reasoning streams room while avoiding long hangs when
+   provider stops sending bytes entirely."
+  (* 3 60 1000))
 
 (def ASK_CODE_SEMANTIC_TIMEOUT_MS
   "Default model/progress timeout for Vis `svar/ask-code!` streams (ms).
@@ -82,6 +91,9 @@
 (defn- with-default-ask-code-idle-timeout
   [opts]
   (cond-> opts
+    (not (contains? opts :ttft-timeout-ms))
+    (assoc :ttft-timeout-ms ASK_CODE_TTFT_TIMEOUT_MS)
+
     (not (contains? opts :idle-timeout-ms))
     (assoc :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS)
 
@@ -3243,12 +3255,12 @@
                     ;; `render-block!` builds the bare-EDN `;; ctx`
                     ;; block the model reads/writes against. Before
                     ;; handing it to the provider we wrap the call in
-                    ;; `compaction/ensure-prompt-under-budget!`: it
+                    ;; `summarization/ensure-prompt-under-budget!`: it
                     ;; renders once, measures total prompt tokens
                     ;; (jtokkit cl100k_base — approximation, ~10-30%
                     ;; margin), and if the prompt would cross the
                     ;; configured budget (default 144k / 72% of a
-                    ;; 200k-token window) it auto-compacts the oldest
+                    ;; 200k-token window) it auto-summarises the oldest
                     ;; trailer pins into a summary stub (companion-LLM
                     ;; semantic summary OR engine dummy if companion
                     ;; unconfigured / timed out), then re-renders.
@@ -3257,11 +3269,11 @@
                     ;; sync companion call (15 s hard wall) plus a
                     ;; re-render. The mutation lands on `:ctx-atom`
                     ;; so subsequent iters see the compacted trailer
-                    ;; too. Engine never throws — if the compaction
+                    ;; too. Engine never throws — if the summarization
                     ;; cascade exhausts itself the prompt ships
                     ;; over-budget and the provider's own error is
                     ;; the next signal.
-                    compact-render (compaction/ensure-prompt-under-budget!
+                    summary-render (summarization/ensure-prompt-under-budget!
                                      environment
                                      {:render-fn     (fn [env]
                                                        (ctx-loop/render-block!
@@ -3270,16 +3282,16 @@
                                       :main-provider (:provider pre-resolved-model)
                                       :born-scope    (str "t" turn-position
                                                        "/i" (inc iteration) "/f0")})
-                    ctx-rendered   (:rendered compact-render)
-                    _ (when (seq (:rounds compact-render))
-                        (log-stage! :ctx/auto-compacted iteration
-                          {:rounds       (count (:rounds compact-render))
-                           :final-tokens (:total-tokens compact-render)
-                           :over-budget? (:over-budget? compact-render)
+                    ctx-rendered   (:rendered summary-render)
+                    _ (when (seq (:rounds summary-render))
+                        (log-stage! :ctx/auto-summarized iteration
+                          {:rounds       (count (:rounds summary-render))
+                           :final-tokens (:total-tokens summary-render)
+                           :over-budget? (:over-budget? summary-render)
                            :batches      (mapv (fn [r] (select-keys r [:source :batch-size
                                                                        :tokens-freed
                                                                        :scope-range]))
-                                           (:rounds compact-render))}))
+                                           (:rounds summary-render))}))
                     iteration-context (->> [iteration-context ctx-rendered]
                                         (remove str/blank?)
                                         (str/join "\n\n"))
