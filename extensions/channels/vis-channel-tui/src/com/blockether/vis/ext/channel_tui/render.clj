@@ -3504,21 +3504,35 @@
           (let [code+result-lines
                 (into []
                   (mapcat (fn [[idx form]]
-                            ;; ONE blank between consecutive forms
-                            ;; inside the same iteration. Standardised
-                            ;; per the 1-line-max margin policy.
+                            ;; ONE terminal-bg blank between
+                            ;; consecutive forms inside the same
+                            ;; iteration. The coalesce pass keeps
+                            ;; this gap and the form's colored
+                            ;; c-pad band-edge BOTH visible (they
+                            ;; belong to different marker families).
                             (concat
                               (when (pos? idx) [(line-entry (str iteration-pad-marker ""))])
                               (form-lines form (inc idx))))
                     (map-indexed vector forms)))]
-            ;; NO leading or trailing iter-pad blank — each
-            ;; iteration's body is glued to the previous one via
-            ;; whatever blank the IR walker or recap section already
-            ;; emits. The post-process coalesce in
-            ;; `trace-render-entries` then guarantees at most one
-            ;; blank between any two visible rows.
+            ;; Leading + trailing iter-pad so the iteration's body
+            ;; is separated from the recap above (and from the
+            ;; next iteration below) by a single terminal-bg blank.
+            ;; The coalesce keeps gap blanks separate from colored
+            ;; band-edge pads, so the green code top/bottom edges
+            ;; survive and the user sees:
+            ;;   recap row
+            ;;   [gap]               <- this leading iter-pad
+            ;;   [green code top]
+            ;;   code lines
+            ;;   [green code bot]
+            ;;   [gap]
+            ;;   badge / result
+            ;;   [gap]               <- this trailing iter-pad
+            ;;   next iteration ...
             (when (seq code+result-lines)
-              (vec code+result-lines))))
+              (-> [(line-entry (str iteration-pad-marker ""))]
+                (into code+result-lines)
+                (conj (line-entry (str iteration-pad-marker "")))))))
         body (or grouped [])
         trailing-errors (error-lines)
         thinking-body (or (thinking-lines thinking) [])]
@@ -3598,30 +3612,61 @@
       :else       (str "Vis is working (iter " n ")"))))
 
 (defn- coalesce-bubble-blanks
-  "Collapse any run of adjacent blank rows down to ONE — standardised
-   1-line-max margin between sections (user contract: max 1 blank
-   between rendered things).
+  "Collapse adjacent SAME-FAMILY blank rows down to ONE; preserve
+   adjacent DIFFERENT-FAMILY blanks (each paints a distinct visual
+   band the user reads as part of the section, not as a gap).
 
-   Sources of trailing blanks that stack: code-block outer margin,
-   the bookend guard re-inserted by `ir->lines`, per-iteration
-   leading iter-pad, recap top margin, combine-render-values
-   separators, answer-top margin, cancel block bottom. Without this
-   pass two adjacent bubbles stack 2-3 blanks (each in a different
-   paint band) against each other.
+   Marker families:
+     - terminal-bg / outer-margin gap — the empty string
+       (`\"\"`) and MARKER_ITERATION_PAD (`\u206C`). Painted with the
+       terminal default bg — the literal \"blank row\" the user expects
+       between sections.
+     - thinking pad — MARKER_THINKING (`\u200B`). Paints the dim band
+       wrapping a thinking section; band edges, NOT gaps. The test
+       suite pins their presence; reading them as gaps collapses the
+       band to a single line.
+     - code/tool/status PUA pads — (`\uE000`..`\uE0FF`). Paint a
+       colored band-edge row at the top/bottom of a code block or
+       tool result; the row itself is glyph-less but the bg color
+       reads as \"top/bottom of the bubble\".
+     - answer pad — MARKER_ANSWER_PAD (`\u206F`). Paints the answer-
+       bg band edge.
 
-   The THINKING pad (`MARKER_THINKING`, \u200B) is exempt: those
-   rows paint the dim band wrapping a thinking section and reading
-   them as \"gap\" collapses the band into a single line. The
-   test suite pins their presence too.
+   The user's spacing contract: green code blocks keep their colored
+   top/bottom pad rows AND a terminal-bg gap separates them from
+   the next section. The previous \"keep the most neutral blank\"
+   rule collapsed the green pad out, gluing the next badge against
+   the code body and dropping the green band-edge entirely.
+
+   Same-family adjacent: drop duplicates (no visual value).
+   Different-family adjacent: keep both (each row paints a distinct
+   band the user reads as semantically meaningful).
 
    Use this at every bubble-assembly seam (trace stream, full
    bubble payload) so live and restored paths share one contract."
   [entries]
-  (let [thinking-blank?
+  (let [family
         (fn [{:keys [^String line]}]
-          (and (string? line) (pos? (count line))
-            (= (.charAt line 0) (.charAt ^String thinking-marker 0))
-            (str/blank? (subs line 1))))
+          (cond
+            (or (nil? line) (zero? (count line))) :gap
+            :else
+            (let [n0 (int (.charAt line 0))]
+              (cond
+                ;; Pure terminal-bg / outer-margin family.
+                (or (= n0 0x206C)         ; MARKER_ITERATION_PAD
+                  (= n0 0x206A))          ; MARKER_CODE_PAD (running/neutral code-bg pad)
+                :gap
+                ;; Thinking pad — NEVER coalesce; flushes via the
+                ;; explicit branch below.
+                (= n0 0x200B) :thinking
+                ;; Answer-pad band edge.
+                (= n0 0x206F) :answer-pad
+                ;; Code/tool/status PUA band edges — distinct per
+                ;; codepoint so an OK pad never coalesces with an
+                ;; ERR pad even when both happen to be blank.
+                (<= 0xE000 n0 0xE0FF) [:pua n0]
+                ;; Other invisible format chars.
+                :else [:other n0]))))
         blank?
         (fn [{:keys [^String line]}]
           (let [body (if (and (string? line) (pos? (count line)))
@@ -3629,21 +3674,26 @@
                        (str line))]
             (str/blank? body)))]
     (loop [out         (transient [])
-           prev-blank? false
+           prev-family nil
            xs          (seq entries)]
       (if (nil? xs)
         (persistent! out)
-        (let [e   (first xs)
-              bk? (blank? e)]
+        (let [e (first xs)]
           (cond
-            (thinking-blank? e)
-            (recur (conj! out e) false (next xs))
+            (and (blank? e) (= :thinking (family e)))
+            ;; Thinking band: emit verbatim, reset family so a
+            ;; following gap row still counts as a fresh blank.
+            (recur (conj! out e) :thinking (next xs))
 
-            (and bk? prev-blank?)
-            (recur out true (next xs))
+            (blank? e)
+            (let [f (family e)]
+              (if (= f prev-family)
+                ;; Same-family duplicate — drop.
+                (recur out prev-family (next xs))
+                (recur (conj! out e) f (next xs))))
 
             :else
-            (recur (conj! out e) bk? (next xs))))))))
+            (recur (conj! out e) nil (next xs))))))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed

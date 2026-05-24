@@ -373,32 +373,35 @@
         (expect (visually-blank? (nth ln 0)))
         (expect (not-any? pad? ln))))
 
-    (it "answer with code-bearing trace has exactly one blank between trace and answer (1-line-max margin contract)"
+    (it "answer with code-bearing trace keeps band edges + a terminal-bg gap between trace and answer"
       ;; Spacing contract enforced by `coalesce-bubble-blanks`:
-      ;; whatever blanks the trace + answer-top-margin would have
-      ;; stacked (code-block outer margin + answer-pad above the
-      ;; answer text) collapse to ONE blank row above the answer.
-      ;; The previous \"reuses trace pad as outside margin\" assertion
-      ;; pinned two stacked blanks; that's exactly what the user
-      ;; reported as ugly and what the coalesce step now suppresses.
+      ;; different marker families paint distinct visual bands
+      ;; (code-bg pad, terminal-bg gap, answer-bg pad), so adjacent
+      ;; blanks from DIFFERENT families are preserved — they ARE the
+      ;; visual band edges the user reads as section borders. Only
+      ;; same-family duplicates collapse.
+      ;;
+      ;; Above the answer text the user sees, in order:
+      ;;   [code-pad bottom]   band edge of the last form's code block
+      ;;   [terminal-bg gap]   iter-pad / outer margin
+      ;;   [answer-pad top]    band edge of the answer band
+      ;;   answer text
+      ;; The assertion: the row immediately above the answer is
+      ;; visually blank (band edge or gap), and no run of three
+      ;; identical blank rows appears above the answer (regression
+      ;; guard for the old triple-stacked terminal-bg blanks).
       (with-raw-code-on
-        (let [p   (render/format-answer-with-thinking-data*
-                    ans [iter] 80 settings nil false nil)
-              idx (index-of p "hello")
-              ln  (:lines p)]
+        (let [p     (render/format-answer-with-thinking-data*
+                      ans [iter] 80 settings nil false nil)
+              idx   (index-of p "hello")
+              ln    (:lines p)
+              above (when (and idx (>= idx 3))
+                      [(nth ln (dec idx))
+                       (nth ln (- idx 2))
+                       (nth ln (- idx 3))])]
           (expect (some? idx))
-          ;; The row immediately above the answer text is a blank —
-          ;; either truly empty (\"\") or one of the invisible-format
-          ;; / answer-pad PUA codepoints. With the 1-line-max
-          ;; spacing contract the bubble emits exactly ONE blank
-          ;; above the answer regardless of what shape the trace
-          ;; ended in.
           (expect (visually-blank? (nth ln (dec idx))))
-          ;; Two rows above the answer text is the previous content
-          ;; row (the trace), NOT another blank — coalesce dropped
-          ;; the duplicate gap.
-          (expect (or (< idx 2)
-                    (not (visually-blank? (nth ln (- idx 2))))))))
+          (expect (or (nil? above) (not (apply = above))))))
 
     (it "cancelled with non-empty answer renders the answer text once"
       ;; `cancel-text` falls back to the answer text when the IR is
