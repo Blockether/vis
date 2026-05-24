@@ -382,15 +382,26 @@
       "\n ]")))
 
 (defn- render-next-actions-value
-  "Next-actions vec capped to NEXT_ACTIONS_BUDGET with an overflow hint."
+  "Next-actions vec capped to NEXT_ACTIONS_BUDGET with an overflow hint.
+   When the head of the list carries `:blocking? true` (priority 1 fix-
+   consistency actions), prepend a `;; ⛔ BLOCKING ...` banner so the
+   model cannot miss it even when scanning the ctx fast. Without the
+   banner the action is just another entry in the EDN list."
   [actions]
-  (let [n (count actions)
-        capped (vec (take NEXT_ACTIONS_BUDGET actions))
-        body (if (empty? capped) "[]" (zp capped))
-        suffix (when (> n NEXT_ACTIONS_BUDGET)
-                 (str "\n;; " (- n NEXT_ACTIONS_BUDGET)
-                   " more action(s) suppressed"))]
-    (cond-> body suffix (str suffix))))
+  (let [n         (count actions)
+        capped    (vec (take NEXT_ACTIONS_BUDGET actions))
+        blocking  (filterv :blocking? capped)
+        body      (if (empty? capped) "[]" (zp capped))
+        prefix    (when (seq blocking)
+                    (str ";; ⛔ " (count blocking)
+                      " BLOCKING action(s) — resolve before generating new work"
+                      (str/join ""
+                        (map (fn [a] (str "\n;;   → " (:hint a))) blocking))
+                      "\n"))
+        suffix    (when (> n NEXT_ACTIONS_BUDGET)
+                    (str "\n;; " (- n NEXT_ACTIONS_BUDGET)
+                      " more action(s) suppressed (raise NEXT_ACTIONS_BUDGET or close work)"))]
+    (str prefix (cond-> body suffix (str suffix)))))
 
 ;; =============================================================================
 ;; Top-level
@@ -408,7 +419,17 @@
 
    Output: a string starting with `;; ctx\\n{` and ending with `}`."
   [{:keys [ctx warnings progression next-actions]}]
-  (let [by-sub        (anchors-by-subtree ctx (or warnings []))
+  (let [warnings*     (or warnings [])
+        actions*      (or next-actions [])
+        blocking-n    (count (filter :blocking? actions*))
+        warn-n        (count warnings*)
+        banner        (when (or (pos? blocking-n) (pos? warn-n))
+                        (str ";; ⚠ ctx-summary: "
+                          (when (pos? warn-n) (str warn-n " warning(s)"))
+                          (when (and (pos? warn-n) (pos? blocking-n)) ", ")
+                          (when (pos? blocking-n) (str blocking-n " blocking action(s)"))
+                          " — read :session/next-actions first\n"))
+        by-sub        (anchors-by-subtree ctx warnings*)
         prog-entries  (vec (or progression {}))
         specs-tail    (section-annotations
                         (get by-sub :session/specs [])
@@ -425,6 +446,7 @@
         other-tail    (section-annotations (get by-sub :other []) [] 1)]
     (str
       ";; ctx\n"
+      banner
       "{" (zp :session/id)    "        " (zp (:session/id ctx))    "\n"
       " " (zp :session/turn)  "      "   (zp (:session/turn ctx))  "\n"
       " " (zp :session/scope) "     "    (zp (:session/scope ctx)) "\n"
@@ -444,6 +466,6 @@
       (render-section :session/trailer
         (render-trailer-value (or (:session/trailer ctx) [])) nil) "\n\n"
       (render-section :session/next-actions
-        (render-next-actions-value (or next-actions []))
+        (render-next-actions-value actions*)
         other-tail)
       "}")))
