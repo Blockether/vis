@@ -10,6 +10,7 @@
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
+   [com.blockether.vis.internal.compaction :as compaction]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
@@ -29,7 +30,8 @@
    [sci.core :as sci]
    [taoensso.telemere :as tel])
   (:import
-   [java.security MessageDigest]))
+   [java.security MessageDigest]
+   [java.util.concurrent CancellationException]))
 
 ;; =============================================================================
 ;; Query runtime settings
@@ -115,13 +117,91 @@
 ;; `introspect-turn` (DB reads against `session_turn_iteration.forms`).
 ;; ---------------------------------------------------------------------------
 
+(def ^:private MINI_STACK_DEPTH 12)
+
+(defn- throwable-chain
+  [^Throwable t]
+  (vec (take-while some? (iterate (fn [^Throwable x] (.getCause x)) t))))
+
+(defn- throwable-cause-summary
+  [^Throwable t]
+  (mapv (fn [^Throwable x]
+          (cond-> {:class (.getName (class x))
+                   :message (or (ex-message x) (str x))}
+            (:type (ex-data x)) (assoc :type (:type (ex-data x)))))
+    (throwable-chain t)))
+
+(defn- mini-stack-trace
+  [^Throwable t]
+  (when t
+    (let [frames (take MINI_STACK_DEPTH (.getStackTrace t))]
+      (str/join "\n"
+        (map (fn [^StackTraceElement frame]
+               (str "  at " frame))
+          frames)))))
+
 (defn- format-exception-short [^Throwable t]
-  {:class (.getName (class t))
-   :message (or (ex-message t) (str t))})
+  (let [ed (ex-data t)]
+    (cond-> {:class (.getName (class t))
+             :message (or (ex-message t) (str t))
+             :causes (throwable-cause-summary t)
+             :mini-trace (mini-stack-trace t)}
+      (:type ed) (assoc :type (:type ed))
+      (:status ed) (assoc :status (:status ed))
+      (:cause-class ed) (assoc :cause-class (:cause-class ed)))))
 
 (defn- format-exception [^Throwable t & [{:keys [context]}]]
   (merge (format-exception-short t)
     {:data (ex-data t) :context context}))
+
+(defn- interrupted-cause?
+  [^Throwable t]
+  (boolean
+    (some (fn [^Throwable x]
+            (or (instance? InterruptedException x)
+              (instance? CancellationException x)
+              (= "java.lang.InterruptedException" (ex-message x))))
+      (throwable-chain t))))
+
+(def ^:private PROVIDER_INTERRUPT_RETRIES 1)
+
+(defn- provider-call-cancelled?
+  [environment]
+  (boolean (some-> environment :cancel-atom deref)))
+
+(defn- retryable-provider-interrupt?
+  "True for provider-thread interrupts that were not caused by Vis user cancel.
+   svar's TTFT watchdog currently can surface as a naked InterruptedException;
+   retry once instead of letting router treat it like Esc cancellation."
+  [^Throwable t environment]
+  (and (interrupted-cause? t)
+    (not (provider-call-cancelled? environment))))
+
+(defn- call-provider-with-interrupt-retry!
+  [environment iteration-position f]
+  (loop [attempt 0]
+    (let [outcome (try
+                    {:ok? true :value (f)}
+                    (catch Throwable t
+                      {:ok? false :throwable t}))]
+      (if (:ok? outcome)
+        (:value outcome)
+        (let [t (:throwable outcome)]
+          (if (and (< attempt PROVIDER_INTERRUPT_RETRIES)
+                (retryable-provider-interrupt? t environment))
+            (do
+              ;; Router restores interrupt status before rethrowing. Clear it
+              ;; before retry or next HTTP call can fail immediately.
+              (Thread/interrupted)
+              (tel/log! {:level :warn
+                         :data (assoc (format-exception-short t)
+                                 :iteration iteration-position
+                                 :attempt (inc attempt)
+                                 :max-retries PROVIDER_INTERRUPT_RETRIES
+                                 :cancelled? (provider-call-cancelled? environment))}
+                "Provider call interrupted without user cancel; retrying")
+              (recur (inc attempt)))
+            (throw t)))))))
 
 ;; ---------------------------------------------------------------------------
 
@@ -1957,20 +2037,21 @@
                          :iteration iteration-position
                          :started-at-ms provider-started-at-ms}))
           provider-start-ns (System/nanoTime)
+          ask-opts (with-default-ask-code-idle-timeout
+                     (cond-> {:lang     "clojure"
+                              :messages messages
+                              :routing  (or routing {})
+                              :check-context? true
+                              :preserved-thinking? true}
+                       effective-reasoning  (assoc :reasoning effective-reasoning)
+                       streaming-fn         (assoc :on-chunk streaming-fn)
+                       effective-llm-headers (assoc :llm-headers effective-llm-headers)
+                       extra-body           (assoc :extra-body extra-body)))
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                             :session-turn-id (:environment-id environment)
                                                             :iteration iteration-position)]
-                           (svar/ask-code! (:router environment)
-                             (with-default-ask-code-idle-timeout
-                               (cond-> {:lang     "clojure"
-                                        :messages messages
-                                        :routing  (or routing {})
-                                        :check-context? true
-                                        :preserved-thinking? true}
-                                 effective-reasoning  (assoc :reasoning effective-reasoning)
-                                 streaming-fn         (assoc :on-chunk streaming-fn)
-                                 effective-llm-headers (assoc :llm-headers effective-llm-headers)
-                                 extra-body           (assoc :extra-body extra-body)))))
+                           (call-provider-with-interrupt-retry! environment iteration-position
+                             #(svar/ask-code! (:router environment) ask-opts)))
           ask-result (recover-direct-answer-blocks ask-result-raw)
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
@@ -3157,16 +3238,48 @@
                                           :duration-ms fold-duration-ms}}
                           "Folded foundation hook-tasks into :session/tasks"))
                     iteration-context ""
-                    ;; CTX engine render — the new bare-EDN `;; ctx` block
-                    ;; the model reads/writes against. Built per iter from
-                    ;; the live ctx-atom plus engine-derived warnings /
-                    ;; progression / next-actions. Drained mutation-time
-                    ;; warnings (from collisions / cycle rejects fired this
-                    ;; iter) are merged with render-time invariants so the
-                    ;; model sees the full set in one pass. Whole pipeline
-                    ;; lives in `ctx-loop/render-block!` — one fn call,
-                    ;; one nil guard.
-                    ctx-rendered (ctx-loop/render-block! environment ctx-renderer/render-ctx)
+                    ;; CTX engine render + budget guard.
+                    ;;
+                    ;; `render-block!` builds the bare-EDN `;; ctx`
+                    ;; block the model reads/writes against. Before
+                    ;; handing it to the provider we wrap the call in
+                    ;; `compaction/ensure-prompt-under-budget!`: it
+                    ;; renders once, measures total prompt tokens
+                    ;; (jtokkit cl100k_base — approximation, ~10-30%
+                    ;; margin), and if the prompt would cross the
+                    ;; configured budget (default 144k / 72% of a
+                    ;; 200k-token window) it auto-compacts the oldest
+                    ;; trailer pins into a summary stub (companion-LLM
+                    ;; semantic summary OR engine dummy if companion
+                    ;; unconfigured / timed out), then re-renders.
+                    ;;
+                    ;; Up to 3 round-trips; each round-trip is one
+                    ;; sync companion call (15 s hard wall) plus a
+                    ;; re-render. The mutation lands on `:ctx-atom`
+                    ;; so subsequent iters see the compacted trailer
+                    ;; too. Engine never throws — if the compaction
+                    ;; cascade exhausts itself the prompt ships
+                    ;; over-budget and the provider's own error is
+                    ;; the next signal.
+                    compact-render (compaction/ensure-prompt-under-budget!
+                                     environment
+                                     {:render-fn     (fn [env]
+                                                       (ctx-loop/render-block!
+                                                         env ctx-renderer/render-ctx))
+                                      :stable-msgs   initial-messages
+                                      :main-provider (:provider pre-resolved-model)
+                                      :born-scope    (str "t" turn-position
+                                                       "/i" (inc iteration) "/f0")})
+                    ctx-rendered   (:rendered compact-render)
+                    _ (when (seq (:rounds compact-render))
+                        (log-stage! :ctx/auto-compacted iteration
+                          {:rounds       (count (:rounds compact-render))
+                           :final-tokens (:total-tokens compact-render)
+                           :over-budget? (:over-budget? compact-render)
+                           :batches      (mapv (fn [r] (select-keys r [:source :batch-size
+                                                                       :tokens-freed
+                                                                       :scope-range]))
+                                           (:rounds compact-render))}))
                     iteration-context (->> [iteration-context ctx-rendered]
                                         (remove str/blank?)
                                         (str/join "\n\n"))
