@@ -8,8 +8,8 @@
        `internal/render.clj` and channel-tui's render layer.
 
    A toggle has stable metadata (`id`, label, description, default,
-   owner) and a current ON/OFF value. Anyone \u2014 internal modules,
-   extensions, channels \u2014 registers their toggles into the same
+   owner) and a current ON/OFF value. Anyone — internal modules,
+   extensions, channels — registers their toggles into the same
    registry; any caller flips a toggle through the same `set!`. The
    TUI settings dialog walks the registry to render the list, so
    adding a new toggle from an extension shows up in the user's UI

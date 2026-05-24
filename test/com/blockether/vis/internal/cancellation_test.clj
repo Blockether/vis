@@ -58,5 +58,5 @@
       (.start thread)
       (cancellation/cancellation-set-future! token task)
       (cancellation/cancel! token)
-      ;; Future was hard-cancelled \u2014 isCancelled flips true.
+      ;; Future was hard-cancelled — isCancelled flips true.
       (expect (true? (.isCancelled task))))))
