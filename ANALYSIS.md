@@ -357,3 +357,193 @@ must not be reproduced from source.
    prompt-side render per pin?
 5. Do we expose `safe-to-replay?` as engine surface so extensions can
    register their own tool tier (read / mutation)?
+
+## PART 6 — Next-session work (parked while we rest)
+
+Three threads to rejoin after a break. Each one needs head-space, not
+a quick patch. They interlock — picking one in isolation will make the
+others worse.
+
+### 6.1 The `(def a 1) => 1` vs `=> a` dilemma
+
+Today `block->envelope` (`src/com/blockether/vis/internal/ctx_engine.clj:1580-1622`)
+derefs the SCI Var returned by `(def a 1)` so the trailer shows the
+**bound value** `1`, not the Var `#'sandbox/a`. Originally this came
+from a restore bug: when SCI rebuilt a session, def history landed as
+`{:vis/ref :expr}` because the dependency rebuild table did not
+actually replay properly, so we papered over it by surfacing the value
+directly.
+
+Trade-off matrix:
+
+| behaviour                  | model sees           | duplication risk                         | restore correctness                              |
+| -------------------------- | -------------------- | ---------------------------------------- | ------------------------------------------------ |
+| `(def a 1) => 1` (today)   | value once           | low — model has no reason to re-emit `a` | depends on the `:vis/expr` ghost surviving restore |
+| `(def a 1) => a` (classic) | Var, then probes `a` | high — `a` follows the def as a second form, both pinned with the same payload (we saw this in `t1/i2`) | clean: replay the form, get the Var, separate fetch for value |
+
+Neither pure choice is good. Real options to explore on return:
+
+- **A1**: keep `=> value` for prompt rendering, but stop storing the
+  derefed value into the trailer pin. Pin gets `:result {:vis/var 'a
+  :preview "1"}`; the DB holds the value via
+  `definition_state.value`. Restore reads DB.
+- **A2**: classic `=> Var`, but engine auto-dedups when the very next
+  form is the bare symbol bound by the previous def (drop the second
+  pin or fold both into one envelope).
+- **A3**: classify the RHS. Pure literal / small data → keep deref.
+  Tool result (`v/cat`, `v/rg`, …) → never deref into pin; keep
+  `{:vis/result-ref true :scope … :preview …}`. This is Option A from
+  Part 4 with the def-deref decision tied in.
+
+**Restore-side requirement that gates all three**: the `:vis/expr`
+ghost on resume must be killed by a real replay path. Without that we
+are patching the prompt to hide a deeper bug. Next-session todo: trace
+one real resume and write down exactly when `{:vis/ref :expr}`
+appears, against which def, and why `definition_state` did not feed
+the Var back in.
+
+### 6.2 Introspection tools — audit what exists, what returns, what is dead weight
+
+The system prompt (`src/com/blockether/vis/internal/prompt.clj:158-167`)
+advertises this menu of introspection verbs:
+
+```
+(introspect-iter        "t<N>/i<M>")
+(introspect-form        "t<N>/i<M>/f<K>")
+(introspect-turn        "t<N>")
+(introspect-iter-heads  "t<N>")
+(introspect-turn-list)
+(introspect-spec / -task / -fact :K)
+(introspect-archived  :tasks|:specs|:facts)
+(introspect-ctx-at    "t<N>")
+(introspect-symbol-doc/-source/-meta 'sym)
+(introspect-symbol-apropos "pattern")
+```
+
+`build-introspect-bindings` (`src/com/blockether/vis/internal/ctx_loop.clj:356-367`)
+actually exposes only:
+
+```
+introspect-spec, introspect-task, introspect-fact, introspect-archived, introspect-ctx-at
+```
+
+The symbol-* family lives in
+`extensions/common/vis-foundation-core/src/com/blockether/vis/ext/foundation_core/introspection.clj`
+but under `v/engine-symbol-*` (namespaced through `v/`, not the bare
+names the prompt promises).
+
+Missing — bindings the prompt names but no namespace defines:
+
+- `introspect-iter`
+- `introspect-form`
+- `introspect-turn`
+- `introspect-iter-heads`
+- `introspect-turn-list`
+- bare `introspect-symbol-doc / -source / -meta`
+- bare `introspect-symbol-apropos`
+
+**Real-world hit:** in c8dc39b1 the model emitted
+`(introspect-symbol-apropos "git/")` in `t1/i5` and got `Unable to
+resolve symbol`. It retried with `(v/engine-symbol-apropos "git/")`
+in `t1/i6` and got the right answer. So the prompt is lying to the
+model today, and Option A in Part 4 assumes `(introspect-form …)`
+exists when it does not.
+
+Next-session todo:
+
+1. At the REPL, call every existing introspect verb against a real
+   session (`c8dc39b1` is fine) and record the exact return shape +
+   character size for typical inputs. Goal: confirm that each return
+   is bounded and useful, not another trailer-style blob.
+2. Decide which of the missing names ship and which get deleted from
+   the prompt. Realistic minimum to unblock Option A:
+   - `introspect-form "tN/iM/fK"` → returns one stored envelope from
+     `session_turn_iteration.forms`. Bounded by definition.
+   - `introspect-iter "tN/iM"` → ordered vec of envelopes for one
+     iter. Wrap in same bound as above (sum over forms).
+   - `introspect-turn-list` → small index, cheap.
+3. Either rename `v/engine-symbol-*` to the bare prompt forms or
+   delete the bare-name promise from the prompt. The split today is
+   accidental.
+
+### 6.3 Specs, tasks, facts are not actually used
+
+CTX has the shapes (`:session/specs`, `:session/tasks`, `:session/facts`)
+and the mutators (`spec-set!`, `task-set!`, `fact-set!`, `req-*`,
+`proof-*`). They work mechanically. But the model almost never reaches
+for them on its own. Only the foundation hook-task
+`:vis.foundation/session-title` reliably gets satisfied — because the
+engine drives it. Everything else stays empty across sessions.
+
+Reason on first read: the system prompt names the shapes but does not
+teach **when** to use which:
+
+- when does a piece of evidence become a `:fact`?
+- when does a multi-step plan justify a `:spec` with `:requirements`?
+- when does a `:task` exist vs just running the work?
+- how does the model decide "this needs a proof scope" vs "this is
+  one-shot"?
+
+Without that policy the model treats specs/tasks/facts as engine
+ceremony rather than a context-management tool. So we lose the entire
+point of having structured memory next to the unstructured trailer.
+
+Next-session todo:
+
+1. Sketch a `WHEN TO USE` mini-policy block for the system prompt:
+   - `:fact` ← any stable observation referenced more than once
+     (file paths, branch heads, ids). Replaces a re-derivable
+     observation in the trailer.
+   - `:spec` ← any multi-requirement deliverable the user can
+     acceptance-test.
+   - `:task` ← any pending work item (esp. cross-iter). Closes via
+     `:proof`.
+   - hook-task vs model-task: hook-tasks are engine-driven
+     (`:source :hook`), model-tasks are model-driven; both close via
+     `task-set!`.
+2. Tie this to context strategy: a satisfied `:fact` lets the model
+   drop the originating trailer pin. A done `:task` with `:proof`
+   means the proof scope is reachable via `introspect-form` and the
+   bulky form result can be summarised.
+3. Demonstrate with one walked example in the prompt — short, one
+   spec + one task + one fact resolving in three iters. The model
+   learns pattern from one example faster than from a shape
+   description.
+
+### 6.4 Why these three interlock — "connect the entities"
+
+The shared insight (the user phrased it as "trzeba połączyć encje"):
+
+- The trailer is the dumping ground because no other entity is
+  competing for the same role. If `:fact` were the home for stable
+  observations and `:task`/`:spec` were the home for in-flight work,
+  the trailer would naturally become just the live-iter scratch and
+  the historical evidence ledger — much smaller.
+- Restore would gain a hook: replay defs, but also rehydrate
+  `:facts` from DB so the model walks into turn N+1 already knowing
+  what is stable.
+- Introspection becomes navigation between entities, not a guided
+  tour of a fat trailer. `introspect-form` for raw evidence;
+  `introspect-task`/`-spec`/`-fact` for structured state;
+  `introspect-ctx-at` for time-travel.
+- Bridge (extension-side) inherits the same vocabulary. Once specs /
+  tasks / facts are first-class for the engine they can be first-class
+  for bridge tools too — current bridge work has been gated on this
+  ambiguity.
+
+### 6.5 Order of attack on return
+
+Proposed: **6.2 first**, **6.3 second**, **6.1 third**.
+
+- 6.2 is a contained audit + small fixes. Lowest cost to start. Plus
+  Option A from Part 4 actually depends on `introspect-form`
+  existing, so we cannot ship A without doing 6.2.
+- 6.3 is the prompt-writing pass. No code change. Lets us start
+  observing whether specs/tasks/facts get used once the model knows
+  when to reach for them. Cheap experiment.
+- 6.1 is the deepest — touches restore, def-deref, and pin shape.
+  Worth doing after 6.2 + 6.3 because by then we will know:
+  - what introspection actually returns (so the `:vis/expr` ghost
+    becomes visible, not silently coped with)
+  - whether facts/tasks already shrink the trailer enough that the
+    def-deref decision matters less in practice.
