@@ -659,7 +659,14 @@
              :error {:message hint :data {:phase :vis/lint}}}
             (try
               (when turn-state-atom (swap! turn-state-atom assoc :form-idx idx))
-              {:source source :result (sci/eval-form sci-ctx form)}
+              ;; Per-form binding of `*current-form-idx*` so every
+              ;; `record-render-entry!` write during this form's eval
+              ;; stamps `:form-idx`. The rebuild path partitions the
+              ;; fence's channel slice back onto per-form envelopes
+              ;; via this key — without it every tool IR ride-shares
+              ;; on form 0.
+              (binding [extension/*current-form-idx* idx]
+                {:source source :result (sci/eval-form sci-ctx form)})
               (catch Throwable e
                 (let [err-map (try (extension/ex->op-error e {:form-source source})
                                 (catch Throwable _

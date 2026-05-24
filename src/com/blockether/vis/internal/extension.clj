@@ -144,6 +144,7 @@
 
 (s/def :ext.sink/position  (s/and integer? (complement neg?)))
 (s/def :ext.sink/form      non-blank-string?)
+(s/def :ext.sink/form-idx  (s/and integer? (complement neg?)))
 (s/def :ext.sink/success?  boolean?)
 (s/def :ext.sink/result    (s/nilable render-value?))
 (s/def :ext.sink/error     ::error)           ; ::error is itself nilable per its spec
@@ -151,7 +152,8 @@
 (s/def ::sink-entry
   (s/and
     (s/keys :req-un [:ext.sink/position :ext.sink/form
-                     :ext.sink/success? :ext.sink/result :ext.sink/error])
+                     :ext.sink/success? :ext.sink/result :ext.sink/error]
+            :opt-un [:ext.sink/form-idx])
     (fn [{:keys [success? result error]}]
       (if success?
         (and (render-value? result) (nil? error))
@@ -212,6 +214,22 @@
    a stable `:position` even across nested calls."
   nil)
 
+(def ^:dynamic *current-form-idx*
+  "Zero-based index of the top-level form currently evaluating, bound
+   per-form by `run-sci-code` so the render sink writer can stamp
+   `:form-idx` on every entry.
+
+   The render sink atom itself is iteration-scoped (one channel-sink
+   per `run-sci-code` invocation, fed by every tool call across every
+   top-level form). Persisted iteration rows carry a `:forms` envelope
+   vec; on rebuild `expanded-blocks` partitions the fence's channel
+   slice by `:form-idx` so each form envelope only carries the IR for
+   tool calls it actually made. Without per-entry form-idx every tool
+   IR ride-shared on form 0 and a 4-form fence (\"three v/ls calls\")
+   restored as one bubble with three pre-rendered IRs glommed onto
+   the first `(def ...)` form and nothing on the rest."
+  nil)
+
 (def ^:dynamic *turn-observation-cache*
   "Turn-scoped atom (or nil) of `{form-string {:iteration N :position P}}`.
    The iteration loop binds this once per turn so the sink writer can
@@ -244,11 +262,19 @@
 
 (defn record-render-entry!
   "Validate `entry` against `::sink-entry` and conj into the active
-   render sink atom. No-op when `*render-sink*` is unbound."
+   render sink atom. No-op when `*render-sink*` is unbound.
+
+   Auto-stamps `:form-idx` from `*current-form-idx*` when the caller
+   didn't supply one; the rebuild path uses this key to partition the
+   fence's render sink back onto per-form envelopes."
   [entry]
   (when *render-sink*
-    (assert-sink-entry! entry)
-    (swap! *render-sink* conj entry))
+    (let [entry (cond-> entry
+                  (and (some? *current-form-idx*)
+                    (not (contains? entry :form-idx)))
+                  (assoc :form-idx *current-form-idx*))]
+      (assert-sink-entry! entry)
+      (swap! *render-sink* conj entry)))
   entry)
 
 (defn tool-result?
