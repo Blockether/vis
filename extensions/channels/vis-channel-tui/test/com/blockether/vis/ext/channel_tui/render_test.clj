@@ -316,18 +316,37 @@
 
 (defn- visually-blank?
   "True when a rendered line carries no visible glyphs — either truly
-   empty, plain whitespace, or made up entirely of the invisible
-   Unicode format-class characters (U+200B–U+200D, U+2060–U+206F,
-   U+FEFF) the TUI painter uses as line-kind sentinels. From the
-   user's perspective such rows are blank."
+   empty, plain whitespace, or composed entirely of the invisible
+   Unicode format-class characters and PUA line-kind markers the
+   TUI painter uses as line-kind sentinels.
+
+   Recognised sentinel families:
+   - U+200B–U+200D, U+2060–U+206F, U+FEFF — invisible format chars
+     used as text-band markers (THINKING, ITER-PAD, ANSWER-PAD,
+     channel/recap pads).
+   - U+E000–U+E0FF — PUA markers reserved for code/tool/status bands
+     (code-ok pad, code-err pad, status row chrome). A row whose
+     body past the leading marker char is whitespace paints a
+     coloured background bar with NO glyphs — the user reads it
+     as blank."
   [s]
   (let [s (strip-ansi (or s ""))]
-    (or (str/blank? s)
+    (cond
+      (str/blank? s) true
+
       (every? (fn [^Character c]
                 (let [n (int c)]
                   (or (= n 0x200B) (= n 0x200C) (= n 0x200D) (= n 0xFEFF)
                     (<= 0x2060 n 0x206F))))
-        s))))
+        s)
+      true
+
+      :else
+      (let [c0   (.charAt ^String s 0)
+            n0   (int c0)
+            body (subs s 1)]
+        (and (<= 0xE000 n0 0xE0FF)
+          (str/blank? body))))))
 
 (defdescribe answer-trailer-margin-test
   ;; Answer layout mirrors code-block chrome: one neutral outside
@@ -354,17 +373,32 @@
         (expect (visually-blank? (nth ln 0)))
         (expect (not-any? pad? ln))))
 
-    (it "answer with code-bearing trace reuses trace pad as outside margin"
+    (it "answer with code-bearing trace has exactly one blank between trace and answer (1-line-max margin contract)"
+      ;; Spacing contract enforced by `coalesce-bubble-blanks`:
+      ;; whatever blanks the trace + answer-top-margin would have
+      ;; stacked (code-block outer margin + answer-pad above the
+      ;; answer text) collapse to ONE blank row above the answer.
+      ;; The previous \"reuses trace pad as outside margin\" assertion
+      ;; pinned two stacked blanks; that's exactly what the user
+      ;; reported as ugly and what the coalesce step now suppresses.
       (with-raw-code-on
         (let [p   (render/format-answer-with-thinking-data*
-                  ans [iter] 80 settings nil false nil)
-            idx (index-of p "hello")
-            ln  (:lines p)]
-        (expect (some? idx))
-        (expect (visually-blank? (nth ln (dec idx))))
-        (expect (visually-blank? (nth ln (- idx 2))))
-        (expect (or (< idx 3)
-                  (not (visually-blank? (nth ln (- idx 3))))))))
+                    ans [iter] 80 settings nil false nil)
+              idx (index-of p "hello")
+              ln  (:lines p)]
+          (expect (some? idx))
+          ;; The row immediately above the answer text is a blank —
+          ;; either truly empty (\"\") or one of the invisible-format
+          ;; / answer-pad PUA codepoints. With the 1-line-max
+          ;; spacing contract the bubble emits exactly ONE blank
+          ;; above the answer regardless of what shape the trace
+          ;; ended in.
+          (expect (visually-blank? (nth ln (dec idx))))
+          ;; Two rows above the answer text is the previous content
+          ;; row (the trace), NOT another blank — coalesce dropped
+          ;; the duplicate gap.
+          (expect (or (< idx 2)
+                    (not (visually-blank? (nth ln (- idx 2))))))))
 
     (it "cancelled with non-empty answer renders the answer text once"
       ;; `cancel-text` falls back to the answer text when the IR is
