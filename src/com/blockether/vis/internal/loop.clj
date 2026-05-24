@@ -1314,18 +1314,22 @@
                                                   :vis/preflight-error err
                                                   :block-lang (:lang b)}
                                                  (let [segments        (render/parse-block-display src)
-                                                       ;; The block is structurally silent when every
-                                                       ;; `:code` segment is `:hidden? true` (def-shaped
-                                                       ;; forms, def-wrapped tool calls, bare qualified
-                                                       ;; tool calls). The renderer would paint nothing
-                                                       ;; for those, so the form-start chunk and the
-                                                       ;; bubble carry the silent flag and channels
-                                                       ;; skip the empty card.
+                                                       ;; The block is structurally silent when its
+                                                       ;; parsed segments carry only recap kinds
+                                                       ;; (`:title` / `:answer-ref` /
+                                                       ;; `:task-update` / `:spec-update` /
+                                                       ;; `:fact-update`) — no `:code` segments at
+                                                       ;; all. The channel hides `:code` rows by
+                                                       ;; default (`:vis/show-raw-code` toggle
+                                                       ;; flips it), but the engine-side
+                                                       ;; classification only cares whether the
+                                                       ;; block has any code at all so the
+                                                       ;; persistence + downstream code path
+                                                       ;; agrees with what the renderer would
+                                                       ;; paint when the toggle is ON.
                                                        structurally-silent?
                                                        (and (seq segments)
-                                                         (not-any? #(and (= :code (:kind %))
-                                                                      (not (:hidden? %)))
-                                                           segments))]
+                                                         (not-any? #(= :code (:kind %)) segments))]
                                                    (cond-> {:expr       src
                                                             :block-lang (:lang b)
                                                             :render-segments segments

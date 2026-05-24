@@ -1191,109 +1191,25 @@
       :code)
     :code))
 
-(defn- qualified-tool-call-form?
-  "True when `form` is `(qualified/sym args...)` — a direct extension tool
-   call at the top level. Rendering pairs the call header with
-   the tool result pane; the raw source row is redundant noise."
-  [form]
-  (and (seq? form)
-    (symbol? (first form))
-    (some? (namespace (first form)))))
-
-(def ^:private def-shaped-form-heads
-  "Top-level form heads whose RAW source row is bookkeeping noise:
-   `def` / `defn` / `defn-` / `defmacro` / `defmulti` / `defonce` /
-   `defmethod`. The DEF SINK (per-iteration `:vars` envelope) already
-   surfaces the bound name + value to the model; painting the
-   matching source line in the bubble duplicates that signal and
-   pushes more useful content (recap rows, tool previews, real
-   answers) off-screen.
-
-   Class-producing heads (defprotocol / defrecord / deftype) are NOT
-   in this set because the sandbox already refuses them upstream;
-   they cannot reach the renderer."
-  #{"def" "defn" "defn-" "defmacro" "defmulti" "defonce" "defmethod"})
-
-(defn- def-shaped-form?
-  "True when `form` is one of `(def… NAME …)`. Match is
-   namespace-agnostic by NAME so a `clojure.core/defn` form qualifies
-   the same as a bare `defn`."
-  [form]
-  (and (seq? form)
-    (symbol? (first form))
-    (contains? def-shaped-form-heads (name (first form)))))
-
-(defn- def-tool-call-form?
-  "True when `form` is `(def NAME (qualified/call ...))` — a model-authored
-   binding around an extension tool call. The channel hides the def source
-   on render because the tool result pane already shows what the call did;
-   the def wrapping is bookkeeping noise. Bare `(def x value)` (no tool
-   call) stays visible because the value itself is the only artifact."
-  [form]
-  (and (seq? form)
-    (symbol? (first form))
-    (= 'def (first form))
-    (symbol? (second form))
-    (let [body (drop 2 form)
-          body (if (and (>= (count body) 2) (string? (first body)))
-                 (rest body)
-                 body)
-          init (first body)]
-      (and (seq? init)
-        (symbol? (first init))
-        (some? (namespace (first init)))))))
-
-(defn- keyword-lookup-form?
-  "True when `form` is a top-level keyword-as-fn call:
-     `(:size ir-file)`, `(:k m default)`, `(:foo bar)`.
-   Model writes these to project a sub-value from a bound var; the
-   value is in the DEF SINK / trailer, the bare source row is just
-   noise next to the channel preview of the call that produced the
-   var."
-  [form]
-  (and (seq? form) (keyword? (first form))))
-
-(defn- accessor-form?
-  "True when `form` is a top-level value-projection call: keyword
-   lookups (covered by `keyword-lookup-form?`) and the canonical
-   accessor symbols (`get`, `get-in`, `select-keys`, `keys`, `vals`,
-   `nth`, `first`, `second`, `last`, `count`, `peek`, `pop`, `name`,
-   `str`). They consume a bound var, return a sub-value, write
-   nothing. Same hide-by-default policy as bare-symbol lookups."
-  [form]
-  (and (seq? form)
-    (symbol? (first form))
-    (nil? (namespace (first form)))
-    (contains? #{'get 'get-in 'select-keys 'keys 'vals 'nth
-                 'first 'second 'last 'count 'peek 'pop 'name 'str}
-      (first form))))
-
-(defn- hidden-code-form?
-  "Composite predicate: form should render with `:hidden? true` so the
-   channel collapses the raw source row. Covers:
-     - bare tool calls (`(v/cat …)`)
-     - def-wrapped tool calls (`(def x (v/cat …))`)
-     - ANY def-shaped top-level form (`def`, `defn`, `defn-`,
-       `defmacro`, `defmulti`, `defonce`, `defmethod`). The DEF SINK
-       already shows the bound name + value to the model, so the
-       raw `(def …)` line is redundant chrome.
-     - bare top-level SYMBOL lookups (e.g. `st` following
-       `(def st (git/status))`). Value rides on DEF SINK + channel
-       preview.
-     - top-level KEYWORD-AS-FN lookups (`(:size ir-file)`,
-       `(:foo bar)`). Same intent as a bare-symbol lookup: project
-       a sub-value out of a bound var; the source row carries no
-       extra information past what the DEF SINK already shows.
-     - canonical accessor calls (`(get-in m […])`, `(select-keys m
-       […])`, `(first xs)`, …). The bound result rides on the
-       trailer; the source row is duplicate chrome."
-  [form]
-  (or (def-tool-call-form? form)
-    (qualified-tool-call-form? form)
-    (def-shaped-form? form)
-    (symbol? form)
-    (keyword-lookup-form? form)
-    (accessor-form? form)))
+;; ---------------------------------------------------------------------------
+;; Channel-render policy: CONTEXT vs CHANNEL split
+;;
+;; CONTEXT (model surface): every form, every result, full transcript.
+;; The trailer + def sink + ctx engine carry the raw data; the model
+;; reads whatever it bound, accessors and all.
+;;
+;; CHANNEL (TUI / Telegram): user-facing. Show TOOL CALL previews
+;; (CAT / LS / RG / EDIT badges + bodies), RECAP rows (title / task /
+;; spec / fact), and the final answer. Everything else — def
+;; bindings, accessor projections, keyword lookups, bare symbols,
+;; plain-value forms — is bookkeeping noise.
+;;
+;; Policy is enforced AT THE CHANNEL (not in the IR): the
+;; `:vis/show-raw-code` toggle in the registry decides whether the
+;; TUI paints raw `:code` rows. Off by default; on shows everything.
+;; The IR itself stays neutral — segments are classified by KIND only;
+;; no per-block `:hidden?` flag, no source-text pruning.
+;; ---------------------------------------------------------------------------
 
 (defn- form-bounds-by-meta
   "Build a parallel vector of {:start :end} byte offsets for each form by
@@ -1432,8 +1348,7 @@
                                         (some-> payload :partial :title)
                                         (assoc :title  (-> payload :partial :title)))]))
                                  :code
-                                 [(cond-> {:kind :code :source (str/trim slice)}
-                                    (hidden-code-form? form) (assoc :hidden? true))])))
+                                 [{:kind :code :source (str/trim slice)}])))
                            (map-indexed vector forms)))
                 ;; Coalesce consecutive :code segments. The bounds-based slice
                 ;; for the LATER code form already includes the gap from the
@@ -1442,12 +1357,17 @@
                 ;; a :code segment surviving into the same group. Rebuild the
                 ;; merged source by reading from the FIRST form's prev-end
                 ;; through the LAST form's end.
+                ;; Consecutive `:code` segments merge into one entry
+                ;; — keeps a prelude of `(def …)` lines rendered as a
+                ;; single source block when the user flips
+                ;; `:vis/show-raw-code` on.
                 coalesce (fn [groups]
                            (reduce
                              (fn [acc seg]
                                (let [prev (peek acc)]
-                                 (if (and prev (= :code (:kind prev)) (= :code (:kind seg))
-                                       (= (boolean (:hidden? prev)) (boolean (:hidden? seg))))
+                                 (if (and prev
+                                       (= :code (:kind prev))
+                                       (= :code (:kind seg)))
                                    (let [merged-source (str (:source prev) "\n" (:source seg))]
                                      (conj (pop acc) (assoc prev :source merged-source)))
                                    (conj acc seg))))
@@ -1456,28 +1376,32 @@
             (coalesce raw)))))))
 
 (defn block-structurally-silent?
-  "True when the block source contains nothing the user should see:
-   only structural forms (`:title` / `:answer-ref` / ctx mutators) OR
-   `:code` segments that are all `:hidden? true` (bare tool calls,
-   def-wrapped tool calls, every def-shaped form). Engine stamps the
-   persisted block + stream chunk with `:vis/silent? true` based on
-   this so channels that don't parse segments still drop the entry
-   from default display.
+  "True when the block source carries only structural recap segments
+   (`:title`, `:answer-ref`, `:task-update`, `:spec-update`,
+   `:fact-update`) AND the user hasn't flipped
+   `:vis/show-raw-code` on. The engine stamps the persisted block +
+   stream chunk with `:vis/silent? true` based on this so channels
+   that don't parse segments still drop the entry from default
+   display.
 
-   Pure visible-code blocks and mixed blocks (any non-hidden `:code`
-   segment present) are NOT structurally silent: the prelude is
-   genuinely useful work to show.  Blank / nil input is not
-   considered silent — there is no block to hide.
-
-   Toggle interaction: when the `:vis/show-raw-code` feature toggle
-   is ON the hide-by-default classification is overridden and EVERY
-   `:code` segment counts as visible, so a block of bare tool calls
-   stays unsilenced and the bubble paints the raw source."
+   With `:vis/show-raw-code` OFF (default) the CHANNEL hides every
+   `:code` segment globally, so a block of pure code (def bindings,
+   accessor projections, tool calls) reads as \"nothing structural
+   to show\" — the recap rows + tool channel previews + final
+   answer carry the visible content. With the toggle ON the
+   classifier never marks the block silent so the raw source paints."
   [form-source]
   (let [src (str (or form-source ""))]
     (and (not (str/blank? src))
-      (let [segs      (parse-block-display src)
-            show-raw? (toggles/enabled? :vis/show-raw-code)]
-        (if show-raw?
-          (not-any? #(= :code (:kind %)) segs)
-          (not-any? #(and (= :code (:kind %)) (not (:hidden? %))) segs))))))
+      (let [segs (parse-block-display src)]
+        ;; Narrow definition: silent ONLY when zero `:code` segments
+        ;; survived parsing (block is purely structural — a
+        ;; `(set-session-title! …)`, a `(done …)`, a `(task-set! …)`,
+        ;; or any combination of those). Anything with a `:code`
+        ;; segment flows through; the CHANNEL decides at paint time
+        ;; whether to actually show the code rail, gated on the
+        ;; `:vis/show-raw-code` toggle. Going through the channel
+        ;; instead of stamping silent at parse time lets the user
+        ;; flip the toggle ON and reveal historical iterations
+        ;; without re-parsing.
+        (not-any? #(= :code (:kind %)) segs)))))

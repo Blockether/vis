@@ -3115,54 +3115,47 @@
           recaps)))))
 
 (defn- code-source-from-render-segments
-  "Stitch the *visible* `:code` source out of a parsed segment vector.
+  "Stitch the `:code` source the TUI should paint for this block.
 
-   `parse-block-display` tags bookkeeping forms
-   (`(def r (v/ls …))`, bare `(v/cat …)` tool calls, every
-   def-shaped form, ...) with `:hidden? true` so the channel can
-   collapse the raw source row and let the tool's result pane speak
-   for itself.
+   CHANNEL policy (PLAN: hide-by-default).
+     `:vis/show-raw-code` OFF (default) — every `:code` segment is
+        hidden; return `\"\"` so `hide-code-chrome?` fires and the
+        bubble drops the source rail. Recap rows + tool channel
+        previews + the final answer carry the visible content.
+     `:vis/show-raw-code` ON — every `:code` segment paints. Joined
+        in source order; coalesced runs share one block.
 
-   Feature toggle `:vis/show-raw-code` flips that policy at the
-   bubble: when ON every `:code` segment is treated as visible and
-   the raw source paints, even for forms parse-block-display would
-   otherwise hide. Off by default; the TUI settings dialog flips it
-   live.
-
-   Three shapes (toggle OFF, default):
-
-     1. Segments parsed AND at least one *visible* `:code` segment
-        — stitch only those sources, ignoring hidden ones.
-     2. Segments parsed but every `:code` segment is `:hidden?`
-        true — return `\"\"` so the caller's `hide-code-chrome?`
-        branch fires and the source row is suppressed.
-     3. No segments at all (legacy persisted chunk) — fall back to
-        the raw `code` string the chunk carries."
+   Three branches:
+     1. Toggle ON and there is at least one `:code` segment — stitch
+        the sources and paint.
+     2. Segments parsed but toggle OFF, or no `:code` segments —
+        return `\"\"` so the bubble suppresses the source row. The
+        recap segments still paint above the (now-empty) code rail.
+     3. No segments at all (legacy persisted chunk that pre-dates
+        the parser) — fall back to the raw `code` string the chunk
+        carries so the bubble still shows something."
   [segments fallback-code]
-  (let [show-raw?       (vis/toggle-enabled? :vis/show-raw-code)
-        code-segments   (filter #(= :code (:kind %)) segments)
-        visible-sources (keep (fn [{:keys [source hidden?]}]
-                                (when (and (or show-raw? (not hidden?))
-                                        (not (str/blank? (str source))))
-                                  (str/trim (str source))))
-                          code-segments)]
+  (let [show-raw?     (vis/toggle-enabled? :vis/show-raw-code)
+        code-segments (filter #(= :code (:kind %)) segments)]
     (cond
-      ;; At least one visible `:code` segment — paint it.
-      (seq visible-sources) (str/join "\n" visible-sources)
+      ;; Toggle ON + at least one :code segment — paint everything.
+      (and show-raw? (seq code-segments))
+      (->> code-segments
+        (keep #(when-not (str/blank? (str (:source %)))
+                 (str/trim (str (:source %)))))
+        (str/join "\n"))
 
-      ;; The parser produced segments but no visible code was left:
-      ;; either every `:code` segment was hidden (def/tool-call) OR
-      ;; the whole iteration is ctx-mutation rows (`:task-update`,
-      ;; `:spec-update`, `:fact-update`, `:title`, `:answer-ref`).
-      ;; Both cases must render as blank source so the recap rows
-      ;; speak for themselves and the legacy fallback can NOT leak
-      ;; the raw `(task-set! …)` text next to its `TASK` badge.
-      (seq segments)        ""
+      ;; Segments parsed (either no :code at all OR toggle OFF) —
+      ;; the bubble must drop the source row so recap / tool
+      ;; previews speak for themselves.
+      (seq segments) ""
 
-      ;; Truly no segments — legacy persisted chunk that pre-dates
-      ;; the parser. Fall back to the raw `code` string the chunk
-      ;; carries so the bubble still shows something.
-      :else                 fallback-code)))
+      ;; Legacy chunk (no segment vec at all). The same hide-by-
+      ;; default rule applies — paint the raw code only when the
+      ;; toggle is ON, otherwise the bubble drops the rail.
+      show-raw?      fallback-code
+
+      :else          "")))
 
 (defn- segment->recap-text
   "Compact one-line summary for a single ctx-mutation render

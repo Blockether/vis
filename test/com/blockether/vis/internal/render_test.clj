@@ -25,7 +25,7 @@
 (defdescribe host-bookkeeping-render-test
   (it "classifies only top-level structural host forms (def shapes hide because the DEF SINK already surfaces the bound var)"
     (expect (= [{:kind :title :value "Render cleanup"}
-                {:kind :code :source "(def x 1)" :hidden? true}
+                {:kind :code :source "(def x 1)"}
                 {:kind :answer-ref}]
               (render/parse-block-display
                 "(set-session-title! \"Render cleanup\")\n(def x 1)\n(done [:ir [:p \"ok\"]])"))))
@@ -47,8 +47,7 @@
     ;; collapses the code lines but still keeps the form in the
     ;; iteration trace.
     (expect (= [{:kind :code
-                 :source "(def render-sb-code (v/cat \"x.clj\"))"
-                 :hidden? true}]
+                 :source "(def render-sb-code (v/cat \"x.clj\"))"}]
               (render/parse-block-display
                 "(def render-sb-code (v/cat \"x.clj\"))"))))
 
@@ -60,7 +59,7 @@
     ;; just duplicates that signal and pushes the actual recap /
     ;; result rows off-screen. Hide every def-shaped form; let the
     ;; def sink speak.
-    (expect (= [{:kind :code :source "(def x 1)" :hidden? true}]
+    (expect (= [{:kind :code :source "(def x 1)"}]
               (render/parse-block-display "(def x 1)"))))
 
   (it "hides defn / defn- / defmacro / defmulti / defmethod / defonce uniformly"
@@ -72,7 +71,7 @@
                  "(defonce only-once (atom {}))"]]
       (let [out (render/parse-block-display src)]
         (expect (= 1 (count out)))
-        (expect (true? (-> out first :hidden?))))))
+        (expect (= :code (-> out first :kind))))))
 
   (it "hides top-level keyword-lookup and accessor calls (e.g. `(:size ir-file)`, `(get-in m [...])`, `(first xs)`)"
     ;; The model often does `(def x (tool/call))` followed by
@@ -92,7 +91,7 @@
                  "(str x)"]]
       (let [out (render/parse-block-display src)]
         (expect (= 1 (count out)))
-        (expect (true? (-> out first :hidden?))))))
+        (expect (= :code (-> out first :kind))))))
 
   (it "hides bare-symbol top-level forms (e.g. `st` following `(def st (git/status))`)"
     ;; The model often writes `(def NAME (tool/call ...)) NAME` so the
@@ -103,7 +102,7 @@
     (let [out (render/parse-block-display "(def st (git/status))\nst")]
       ;; Both segments hidden → coalesce merges them into one entry.
       (expect (= 1 (count out)))
-      (expect (true? (-> out first :hidden?)))))
+      (expect (= :code (-> out first :kind)))))
 
   (it "drops the engine auto-ack `:vis.foundation/session-title` task-set! — paired with the :title recap, no duplicate row"
     ;; Engine inserts this immediately after every successful
@@ -124,15 +123,13 @@
 
   (it "hides def docstring form when wrapping a tool call"
     (expect (= [{:kind :code
-                 :source "(def named \"docstring\" (v/cat \"x.clj\"))"
-                 :hidden? true}]
+                 :source "(def named \"docstring\" (v/cat \"x.clj\"))"}]
               (render/parse-block-display
                 "(def named \"docstring\" (v/cat \"x.clj\"))"))))
 
   (it "hides bare qualified tool calls so the result pane speaks for itself"
     (expect (= [{:kind :code
-                 :source "(v/cat \"src/foo.clj\")"
-                 :hidden? true}]
+                 :source "(v/cat \"src/foo.clj\")"}]
               (render/parse-block-display "(v/cat \"src/foo.clj\")"))))
 
   (it "classifies ctx mutators as structured recap segments (engine-only — raw source is hidden)"
@@ -147,7 +144,7 @@
     (let [out (render/parse-block-display
                 "(v/cat \"a.clj\")\n(v/cat \"b.clj\")")]
       (expect (= 1 (count out)))
-      (expect (true? (-> out first :hidden?)))))
+      (expect (= :code (-> out first :kind)))))
 
   (it "def and tool call both render hidden so the bubble shows only recap / result rows"
     (let [out (render/parse-block-display
@@ -155,7 +152,7 @@
       ;; Both forms hidden — same :hidden? flag means the coalesce
       ;; pass merges them into one hidden code segment.
       (expect (= 1 (count out)))
-      (expect (true? (-> out first :hidden?)))))
+      (expect (= :code (-> out first :kind)))))
 
   (it "marks `(def r (v/ls …))` + `(select-keys r […])` BOTH hidden so the channel preview speaks alone"
     ;; Real-world fence the model emits when it wants to bind a tool
@@ -167,4 +164,4 @@
     (let [out (render/parse-block-display
                 "(def r (v/ls \".\"))\n(select-keys r [:entry-count :file-count])")]
       (expect (= 1 (count out)))
-      (expect (true? (-> out first :hidden?))))))
+      (expect (= :code (-> out first :kind))))))

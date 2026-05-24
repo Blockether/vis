@@ -547,18 +547,20 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "keeps the iteration visible when an answer form shares a block with a def (def hides; answer-ref hides; trailer is the def sink)"
+  (it "per-form segments: `(done…) + (def…)` block surfaces answer-ref + :code (channel hides code via toggle)"
     (let [preflight (var-get #'lp/code-entries-preflight)
           src "(done {:answer \"ok\"})\n(def x \"doc\" 1)"
           entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
-      ;; All-non-:code is the engine's `structurally-silent?` trigger.
-      ;; With the def now hidden the block has NO visible `:code`
-      ;; segment — the renderer skips the bubble entirely and the
-      ;; final answer paints below the trace, which is exactly the
-      ;; pi-style contract for a `(done…) + (def…)` mixed iteration.
-      (expect (true? (:vis/structurally-silent? entry)))
+      ;; The engine-side `structurally-silent?` is narrow: only
+      ;; true when ZERO `:code` segments survive parsing (a block
+      ;; of pure recap / answer-ref forms). Anything with a `:code`
+      ;; segment flows through; the CHANNEL hides those at paint
+      ;; time when `:vis/show-raw-code` is OFF, so the user sees
+      ;; only the answer / recap rails. This way flipping the toggle
+      ;; ON reveals historical iterations without re-parsing.
+      (expect (false? (:vis/structurally-silent? entry)))
       (expect (= [{:kind :answer-ref}
-                  {:kind :code :source "(def x \"doc\" 1)" :hidden? true}]
+                  {:kind :code :source "(def x \"doc\" 1)"}]
                 (:render-segments entry)))))
 
   (it "still hides standalone direct-answer blocks"
@@ -568,11 +570,12 @@
       (expect (true? (:vis/structurally-silent? entry)))
       (expect (= [{:kind :answer-ref}] (:render-segments entry)))))
 
-  (it "mixed answer/def blocks stamp structurally-silent so the loop suppresses the form-start chunk"
-    ;; With def-shaped forms hidden, an iteration that contains ONLY
-    ;; `(done …) + (def …)` carries no visible `:code` segment. The
-    ;; loop must mark it structurally-silent so the channel skips a
-    ;; ghost bubble; no `:form-start` chunk should be emitted.
+  (it "mixed answer/def blocks: form-start chunk fires; CHANNEL decides per-paint whether to hide the code"
+    ;; The engine no longer stamps `structurally-silent?` on a block
+    ;; just because every `:code` form is a def — \":vis/show-raw-code\"
+    ;; toggle ON should still reveal the def source. The CHANNEL
+    ;; reads the toggle per paint instead. Loop emits the chunk
+    ;; either way.
     (let [env    (lp/create-environment ::router {:db :memory})
           chunks (atom [])
           src    "(done {:answer \"ok\"})\n(def x \"doc\" 1)"]
@@ -586,7 +589,8 @@
              :resolved-model {:provider :test :name "test"}
              :on-chunk #(swap! chunks conj %)})
           (let [starts (filter #(= :form-start (:phase %)) @chunks)]
-            (expect (empty? starts))))
+            (expect (= 1 (count starts)))
+            (expect (false? (:vis/structurally-silent? (first starts))))))
         (finally
           (lp/dispose-environment! env)))))
 
@@ -616,7 +620,7 @@
                 (:expr entry)))
       (expect (true? (:vis/unwrapped-do? entry)))
       (expect (= [{:kind :title :value "Triage render noise"}
-                  {:kind :code :source "(def x \"doc\" 1)" :hidden? true}]
+                  {:kind :code :source "(def x \"doc\" 1)"}]
                 (:render-segments entry))))))
 
 (defdescribe final-answer-gate-test
