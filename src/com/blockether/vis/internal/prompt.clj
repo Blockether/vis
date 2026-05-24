@@ -150,21 +150,34 @@
         :validator-fn is an SCI fn source string evaluated against the
         :proof scope's form result (bounded sandbox).
 
-      SYMBOLS (native SCI; persist across turns):
-        (defn foo [x] …)   ; create / overwrite
-        (def  foo nil)     ; drop on next restore
+      SYMBOLS (intra-turn scratch — SCI sandbox is FRESH each turn):
+        (defn foo [x] …)   ; live for the rest of THIS turn only
+        (def  foo 1)       ; live for the rest of THIS turn only
+        — anything you need next turn goes in `:session/facts` instead.
 
-      INTROSPECTION (lazy; reach shapes you don't remember):
-        (introspect-iter        \"t<N>/i<M>\")     ; one iter, full forms
-        (introspect-form        \"t<N>/i<M>/f<K>\") ; single form envelope
-        (introspect-turn        \"t<N>\")          ; turn TOC
-        (introspect-iter-heads  \"t<N>\")          ; iter list w/ first-form head
-        (introspect-turn-list)                  ; all turns + status
-        (introspect-spec / -task / -fact :K)    ; latest existence (incl. archived)
-        (introspect-archived  :tasks|:specs|:facts)
-        (introspect-ctx-at    \"t<N>\")
-        (introspect-symbol-doc/-source/-meta 'sym)
-        (introspect-symbol-apropos \"pattern\")
+      INTROSPECTION (lazy; reach evidence not visible in live ctx):
+        (introspect-turn-list)                       ; every turn: scope, status, iters
+        (introspect-iter        \"t<N>/i<M>\")         ; full :forms vec for one iter
+        (introspect-form        \"t<N>/i<M>/f<K>\")    ; one form envelope
+        (introspect-spec / -task / -fact :K)         ; latest entity (incl. archived)
+        (introspect-archived    :tasks|:specs|:facts)
+        (introspect-ctx-at      \"t<N>\")              ; full ctx snapshot at turn N
+        (v/engine-symbol-doc / -source / -meta 'sym) ; SCI symbol docs
+        (v/engine-symbol-apropos \"pattern\")
+
+      WHEN TO REACH FOR WHAT:
+        • trivial probe / single observation → fence form, see live trailer
+        • stable observation referenced more than once → (fact-set! :K …)
+          • user's prior answer worth remembering → fact, not a re-quote
+          • file paths, branch heads, ids the next turn will need → fact
+          • keep :content small — it rides into every prompt; large blobs
+            stay in the trailer or behind (introspect-form …)
+        • multi-requirement deliverable the user can acceptance-test
+          → (spec-set! :K …) + (req-add! :K …) + (proof-add! …)
+        • pending cross-iter work → (task-set! :K {:status :doing …})
+          close via (task-set! :K {:status :done :proof \"<scope>\"})
+        • trailer feels stale or fat → (done {:trailer-drop […] …}) or
+          (done {:trailer-summarize [{:scope-start :scope-end :summary} …]})
 
       CONTROL:
         (done                {:answer :trailer-drop? :trailer-summarize?})
