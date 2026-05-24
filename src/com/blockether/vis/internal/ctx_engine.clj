@@ -69,6 +69,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [edamame.core :as edamame]
+            [com.blockether.vis.internal.tokens :as tokens]
             [sci.core :as sci]))
 
 ;; =============================================================================
@@ -1258,6 +1259,165 @@
            (let [c (iter-compare a b)]
              (if (zero? c) (compare a-tag b-tag) c)))
          trailer)))
+
+;; =============================================================================
+;; Auto-compaction — PURE helpers (call-site supplies summarizer side-effect)
+;; =============================================================================
+;;
+;; Engine measures the trailer in tokens; when the rendered total
+;; crosses a budget the integration layer (`loop.clj`) compacts the
+;; oldest pins into one summary entry. The summary TEXT can come from
+;; either a real companion LLM call (semantic) or a deterministic
+;; fallback (`dummy-compact-summary`). Either way the resulting stub
+;; shape is identical — same `:scope-start :scope-end :summary :born`
+;; the model already knows from `(done {:trailer-summarize …})`, plus
+;; `:vis/auto?` / `:vis/summary-source` flags so the model can tell who
+;; wrote it.
+;;
+;; The engine NEVER calls a companion LLM directly — staying out of the
+;; side-effect business keeps these helpers pure-test-friendly. The
+;; integration layer threads the summarizer in via
+;; `compact-trailer-with-summarizer`.
+
+(defn pin-tokens
+  "Token weight of one trailer entry as it would render into the
+   prompt. Uses `pr-str` over the whole pin then `tokens/count-tokens`
+   for a fast O(n) approximation. Summary stubs are typically tiny
+   (a few hundred tokens); forms pins scale with their `:result`
+   payload (post `bound-form-result` in the renderer, but this helper
+   runs BEFORE that view-clip so it sees the full envelope — which is
+   precisely the budget we are trying to free)."
+  ^long [pin]
+  (tokens/count-pr-tokens pin))
+
+(defn trailer-total-tokens
+  "Sum `pin-tokens` over a trailer vec. 0 for nil/empty."
+  ^long [trailer]
+  (reduce + 0 (map pin-tokens (or trailer []))))
+
+(defn pick-oldest-batch-for-compaction
+  "Walk `trailer` oldest-first, accruing pins until dropping that prefix
+   would bring `trailer-total-tokens` under `target-tokens`. Returns
+   `{:batch <vec-of-oldest-pins> :kept <vec-of-survivors> :tokens-freed N}`
+   where `kept = (subvec trailer (count batch))`.
+
+   Refuses to collapse the LAST trailer entry — there is no point
+   compacting if the result is one giant summary; the model needs at
+   least one verbatim recent pin to reason against.
+
+   Returns `nil` when no batch can hit the target while leaving a tail
+   (i.e. total is already under target, or only one pin exists)."
+  [trailer target-tokens]
+  (let [trailer  (vec (or trailer []))
+        n        (count trailer)]
+    (when (>= n 2)
+      (let [sizes (mapv pin-tokens trailer)
+            total (reduce + 0 sizes)]
+        (when (> total target-tokens)
+          ;; sweep k = 1..n-1 keeping at least one tail entry
+          (loop [k 1
+                 batch-tokens (long (nth sizes 0))]
+            (let [remaining (- total batch-tokens)]
+              (cond
+                (<= remaining target-tokens)
+                {:batch        (subvec trailer 0 k)
+                 :kept         (subvec trailer k)
+                 :tokens-freed batch-tokens}
+
+                (>= (inc k) n) nil   ;; would have to absorb the tail; refuse
+
+                :else
+                (recur (inc k)
+                  (+ batch-tokens (long (nth sizes k))))))))))))
+
+(defn- batch-scope-range
+  "Return `[scope-start scope-end]` covering a batch of pins. Works for
+   forms pins (`:scope`) and existing summary stubs (`:scope-start` /
+   `:scope-end`) so recursive compaction stays consistent."
+  [batch]
+  (let [scopes (mapcat (fn [p]
+                         (cond
+                           (:scope p)        [(:scope p)]
+                           (:scope-start p)  [(:scope-start p) (:scope-end p)]
+                           :else             []))
+                 batch)]
+    [(first scopes) (last scopes)]))
+
+(defn dummy-compact-summary
+  "Deterministic fallback summary string when no companion LLM is
+   available (unconfigured, timed out, errored). Carries enough
+   anchors that the model can recover details via introspection."
+  [batch]
+  (let [n-iters (count batch)
+        n-forms (reduce + 0 (map (fn [p] (count (:forms p []))) batch))
+        [s e]   (batch-scope-range batch)]
+    (str "auto-compacted; " n-iters " iter(s), " n-forms
+      " form(s); reach details via (introspect-iter \"" s "\")"
+      (when (not= s e) (str " … (introspect-iter \"" e "\")")) ".")))
+
+(defn make-compact-stub
+  "Build the summary stub for an oldest-batch compaction.
+   `summary-source` is `:companion-llm` (semantic) or `:engine-dummy`
+   (deterministic). `summary-text` MUST be a non-blank string — callers
+   that lose the companion call fall back to `dummy-compact-summary`
+   before reaching here."
+  [batch summary-text summary-source born-scope]
+  (let [[s e] (batch-scope-range batch)]
+    {:scope-start         s
+     :scope-end           e
+     :summary             summary-text
+     :born                born-scope
+     :vis/auto?           true
+     :vis/summary-source  summary-source}))
+
+(defn compact-trailer-with-summarizer
+  "Pure compaction step parameterised over a `summarizer-fn` callback.
+
+   `ctx` is the engine ctx; `:session/trailer` is the only thing
+   touched. `opts`:
+     :target-tokens      desired post-compaction trailer total
+     :born-scope         scope string stamped onto the new stub
+     :summarizer-fn      `(fn [batch]) -> {:summary str :source kw}`
+                          where :source is :companion-llm or :engine-dummy.
+                          Must return synchronously; loop side handles
+                          timeouts + cascade BEFORE invoking this fn.
+                          When nil the engine uses `dummy-compact-summary`.
+
+   Returns `{:ctx new-ctx :compacted? bool :tokens-freed N :batch-size K
+             :scope-range [start end] :warnings vec}`."
+  [ctx {:keys [target-tokens born-scope summarizer-fn]}]
+  (let [trailer (or (:session/trailer ctx) [])
+        pick    (pick-oldest-batch-for-compaction trailer target-tokens)]
+    (if-not pick
+      {:ctx ctx :compacted? false}
+      (let [{:keys [batch kept tokens-freed]} pick
+            [scope-start scope-end] (batch-scope-range batch)
+            summarized (when summarizer-fn
+                         (try (summarizer-fn batch) (catch Throwable _ nil)))
+            summary    (or (:summary summarized)
+                         (dummy-compact-summary batch))
+            source     (or (:source summarized) :engine-dummy)
+            stub       (make-compact-stub batch summary source born-scope)
+            ;; preserve sort order: stub takes the oldest slot, kept pins
+            ;; stay in their original order (already sorted oldest-first)
+            new-trail  (vec (cons stub kept))]
+        {:ctx          (assoc ctx :session/trailer new-trail)
+         :compacted?   true
+         :tokens-freed tokens-freed
+         :batch-size   (count batch)
+         :scope-range  [scope-start scope-end]
+         :warnings     [(warn :trailer-auto-compacted
+                          [scope-start scope-end]
+                          (str "Trailer auto-compacted: " (count batch)
+                            " oldest iter(s) (" scope-start
+                            (when (not= scope-start scope-end)
+                              (str " .. " scope-end))
+                            ") collapsed into one "
+                            (case source
+                              :companion-llm "companion-LLM summary"
+                              "engine fallback summary")
+                            ". Full data via (introspect-iter \""
+                            scope-start "\")."))]}))))
 
 ;; =============================================================================
 ;; reconcile-done-hook-tasks — validate hook-task :done transitions

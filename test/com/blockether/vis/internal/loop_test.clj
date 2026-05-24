@@ -49,8 +49,37 @@
 (def ^:private previous-turn-context
   (deref #'lp/previous-turn-context))
 
+(def ^:private call-provider-with-interrupt-retry!
+  (deref #'lp/call-provider-with-interrupt-retry!))
+
 (def ^:private run-normal-turn!
   (deref #'lp/run-normal-turn!))
+
+(defdescribe provider-interrupt-retry-test
+  (it "retries a provider interrupt once when user did not cancel"
+    (let [calls (atom 0)
+          out   (call-provider-with-interrupt-retry!
+                  {:cancel-atom (atom false)}
+                  6
+                  (fn []
+                    (if (= 1 (swap! calls inc))
+                      (throw (InterruptedException. "java.lang.InterruptedException"))
+                      ::ok)))]
+      (expect (= ::ok out))
+      (expect (= 2 @calls))))
+
+  (it "does not retry a provider interrupt after user cancel"
+    (let [calls (atom 0)]
+      (try
+        (call-provider-with-interrupt-retry!
+          {:cancel-atom (atom true)}
+          6
+          (fn []
+            (swap! calls inc)
+            (throw (InterruptedException. "cancel"))))
+        (expect false)
+        (catch InterruptedException _
+          (expect (= 1 @calls)))))))
 
 (defdescribe previous-turn-context-test
   (it "loads the latest completed prior answer for short follow-ups"
