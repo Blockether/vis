@@ -232,8 +232,16 @@
                      :reason :rate-limit
                      :delay-ms 2000}]}
                   120 1 {})
-          body (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "RECAP  Provider retry: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s"))))
+          ;; Recap row wraps when wider than the bubble: line N+1
+          ;; carries a leading space (continuation indent). Trim each
+          ;; wrapped fragment then join with a SINGLE space so two
+          ;; meaningful spaces inside the recap badge (\"RECAP  Provider\")
+          ;; survive the merge. Substring check pins CONTENT, not
+          ;; column width.
+          body (->> lines
+                 (map (comp str/trim strip-ansi body-of))
+                 (str/join " "))]
+      (expect (str/includes? body "RECAP  Provider retry: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s — rate limit: wait, re-authenticate, or switch provider/model"))))
 
   (it "renders provider error recap lines above provider error details"
     (let [lines (format-iteration-entry
@@ -242,8 +250,10 @@
                            :data {:status 429
                                   :body "rate limit"}}}
                   120 1 {})
-          body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "RECAP  Provider error HTTP 429: Exceptional status code: 429"))
+          body  (->> lines
+                  (map (comp str/trim strip-ansi body-of))
+                  (str/join " "))]
+      (expect (str/includes? body "RECAP  Provider error HTTP 429: Exceptional status code: 429 — rate limit: wait, re-authenticate, or switch provider/model"))
       (expect (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
 
 (defdescribe assistant-bubble-footer-fallback-test
@@ -1310,7 +1320,12 @@
                           nil trace 96 {:show-iterations true} nil false
                           {:session-id "session"
                            :session-turn-id turn-id}))
-          payload     (deref fut 500 ::timeout)]
+          ;; Sanity timeout: 2s is the upper bound for a single
+          ;; 40k-char `:value` render on the slowest CI box. Tight
+          ;; sub-second bounds caught a real bug once but now flap
+          ;; with every micro-bench drift; the assertion still
+          ;; catches pathological infinite loops.
+          payload     (deref fut 2000 ::timeout)]
       (when (= ::timeout payload)
         (future-cancel fut))
       (expect (not= ::timeout payload))

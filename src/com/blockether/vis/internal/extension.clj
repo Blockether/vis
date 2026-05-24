@@ -148,12 +148,14 @@
 (s/def :ext.sink/success?  boolean?)
 (s/def :ext.sink/result    (s/nilable render-value?))
 (s/def :ext.sink/error     ::error)           ; ::error is itself nilable per its spec
+(s/def :ext.sink/symbol    (s/nilable (s/or :kw keyword? :sym symbol?)))
+(s/def :ext.sink/tag       (s/nilable keyword?))
 
 (s/def ::sink-entry
   (s/and
     (s/keys :req-un [:ext.sink/position :ext.sink/form
                      :ext.sink/success? :ext.sink/result :ext.sink/error]
-      :opt-un [:ext.sink/form-idx])
+      :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag])
     (fn [{:keys [success? result error]}]
       (if success?
         (and (render-value? result) (nil? error))
@@ -1693,12 +1695,28 @@
    No-op when:
      - `result` is not a tool-result (defensive; fn-symbols always
        return one, but ad-hoc consumers might bypass).
-     - The render sink is unbound (no observer; skip all rendering work)."
+     - The render sink is unbound (no observer; skip all rendering work).
+
+   Stamps the originating `sym-entry`'s `:ext.symbol/symbol` and
+   `:ext.symbol/tag` onto the sink entry. The rebuild path (restored
+   sessions) derives the TUI's tool-badge label (`OBSERVATION ls`,
+   `MUTATION patch`, …) from the channel slice rather than from the
+   deref'd `(def …)` result — SCI's `def` unwraps the envelope to
+   its inner `:result` value before binding, so `tool-result?` on the
+   restored block-level `:result` is false and `form-result-detail`
+   returns nil. Without these keys restored tool bubbles paint only
+   the bold inline badge text from the IR (`**LS**`, `**PORTS**`)
+   and lose the colored label / chrome row — user-visible regression
+   on EVERY session restore that touched a `(def x (tool …))` form."
   [ext sym-entry args result]
   (when (and (tool-result? result) *render-sink*)
     (let [position (next-sink-position!)
           form-str (sink-form-string ext sym-entry args)
-          base     {:position position :form form-str}]
+          sym-id   (:ext.symbol/symbol sym-entry)
+          sym-tag  (:ext.symbol/tag sym-entry)
+          base     (cond-> {:position position :form form-str}
+                     (some? sym-id)  (assoc :symbol sym-id)
+                     (some? sym-tag) (assoc :tag sym-tag))]
       (if (:success? result)
         (let [unwrapped (:result result)
               ir       (render-value sym-entry unwrapped)]
