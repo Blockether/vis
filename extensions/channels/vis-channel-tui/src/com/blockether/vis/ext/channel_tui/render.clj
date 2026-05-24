@@ -3229,19 +3229,15 @@
                             (provider-error-recap error) (conj (provider-error-recap error)))
                           fill-w)
         recap-lines (if (seq raw-recap-lines)
-                      ;; Recap chrome paints on terminal-bg: there is
-                      ;; no header-bg fill any more, so the call-out is
-                      ;; carried purely by the bold + italic recap rows
-                      ;; plus a single blank row above and below.
-                      ;;   neutral    = top margin
-                      ;;   recap-rows = bold + italic text
-                      ;;   neutral    = bottom margin
-                      ;; The neutral row above thinking comes from
-                      ;; `thinking-lines` itself, which separates this
-                      ;; recap block from the thinking that follows.
-                      (vec (concat [(line-entry "")]
-                             raw-recap-lines
-                             [(line-entry "")]))
+                      ;; Recap chrome paints on terminal-bg. Call-out
+                      ;; carried by the bold + italic recap rows plus
+                      ;; ONE leading neutral blank — the top margin.
+                      ;; NO trailing blank: whatever follows (thinking
+                      ;; band, body's leading iter-pad, the next
+                      ;; iteration's leading blank) owns the boundary
+                      ;; row, so consecutive sections never stack two
+                      ;; blanks against each other.
+                      (vec (cons (line-entry "") raw-recap-lines))
                       raw-recap-lines)
         thinking-lines
         (fn [thinking-text-or-texts]
@@ -3508,49 +3504,37 @@
           (let [code+result-lines
                 (into []
                   (mapcat (fn [[idx form]]
+                            ;; ONE blank between consecutive forms
+                            ;; inside the same iteration. Standardised
+                            ;; per the 1-line-max margin policy.
                             (concat
                               (when (pos? idx) [(line-entry (str iteration-pad-marker ""))])
                               (form-lines form (inc idx))))
                     (map-indexed vector forms)))]
+            ;; NO leading or trailing iter-pad blank — each
+            ;; iteration's body is glued to the previous one via
+            ;; whatever blank the IR walker or recap section already
+            ;; emits. The post-process coalesce in
+            ;; `trace-render-entries` then guarantees at most one
+            ;; blank between any two visible rows.
             (when (seq code+result-lines)
-              (vec (concat
-                     [(line-entry (str iteration-pad-marker ""))]
-                     code+result-lines
-                     [(line-entry (str iteration-pad-marker ""))])))))
+              (vec code+result-lines))))
         body (or grouped [])
         trailing-errors (error-lines)
-        thinking-body (or (thinking-lines thinking) [])
-        ;; Dead bindings: see the long comment below — the iteration-pad
-        ;; trimming heuristic was reverted but the predicates were left
-        ;; behind. Underscore-prefix silences clj-kondo while keeping
-        ;; the names available for a future re-introduction.
-        _direct-thinking-code? (and (seq thinking-body) (seq body) (empty? trailing-errors))
-        _outer-iter-pad-top?   (let [line (or (:line (first body)) "")
-                                     body-text (if (pos? (count line)) (subs line 1) line)]
-                                 (and (pos? (count line))
-                                   (.startsWith ^String line ^String iteration-pad-marker)
-                                   (str/blank? body-text)))
-        ;; When reasoning is immediately followed by code, drop ONLY
-        ;; the outer iter-pad blank that wraps the form vector. The
-        ;; thinking trailing pad keeps its gray stripe and the code
-        ;; block keeps its own code-bg top pad, so the boundary paints
-        ;; as thinking-bg blank + code-bg blank with no neutral seam.
-        ;; Previously we trimmed the outer iter-pad blank when thinking
-        ;; was immediately followed by a code body, on the theory that
-        ;; thinking's trailing pad already gave the boundary a single
-        ;; visible seam. In practice this made iteration badges glued to
-        ;; thinking look flush, while badges that follow a CODE BLOCK kept
-        ;; the wider `result-margin` breathing row — visibly asymmetric.
-        ;; Keep the outer iter-pad here so thinking→badge and code→badge
-        ;; transitions share the same 1-row margin.
-        body body]
-    ;; Layout: header (with optional ITERATION-N label) + recap lines
-    ;; (which already include provider-fallback notices and any
-    ;; provider-error recap) + collected thinking lines + any error
-    ;; rows + body (per-form code/result pairs). Resume / live share
-    ;; the same flat layout. When reasoning is immediately followed by
-    ;; code, keep thinking bottom padding but trim duplicated code-side
-    ;; pad rows so TUI shows exactly one blank row on the boundary.
+        thinking-body (or (thinking-lines thinking) [])]
+    ;; Layout: header (optional ITERATION-N label) + recap lines
+    ;; (provider-fallback notices, provider-error recap, recap
+    ;; segments) + thinking lines + error rows + body (per-form
+    ;; code/result pairs). Resume / live share the same flat layout.
+    ;;
+    ;; Spacing contract is enforced two layers up by the coalesce
+    ;; pass in `trace-render-entries`: any run of adjacent blank
+    ;; rows collapses to ONE, with the THINKING pad (`MARKER_THINKING`,
+    ;; `\u200B`) preserved so the dim thinking band paints cleanly.
+    ;; That guarantees max-1-blank between rendered sections and
+    ;; zero gap between the thinking band and the code (the
+    ;; thinking pad is the bottom \"band edge\"; the code chrome
+    ;; takes over immediately).
     (into (vec (concat header recap-lines thinking-body trailing-errors))
       body)))
 
@@ -3667,7 +3651,53 @@
                              (cached* k render!)
                              (render!))))]
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
-      (vec (mapcat iter-entry-fn visible-iterations)))))
+      ;; Coalesce ANY run of adjacent blank rows down to ONE —
+      ;; standardised 1-line-max margin between sections (user
+      ;; contract: max 1 blank between rendered things).
+      ;;
+      ;; Many sources emit a trailing blank: code-block outer
+      ;; margin, the bookend guard re-inserted by `ir->lines`,
+      ;; per-iteration leading iter-pad, recap top margin,
+      ;; combine-render-values separators. Without this pass two
+      ;; adjacent bubbles stack 2-3 blanks (each in a different
+      ;; paint band) against each other. The user only sees them
+      ;; as empty rows; the visual-band identity doesn't justify
+      ;; the extra height.
+      ;;
+      ;; Preserved kind: the THINKING pad (`MARKER_THINKING`,
+      ;; `\u200B`) which paints the dim band wrapping a thinking
+      ;; section. The test suite pins its presence in two places;
+      ;; visually it's also the only blank that the user reads as
+      ;; \"this row belongs to the thinking band\" rather than
+      ;; \"gap\".
+      (let [thinking-blank?
+            (fn [{:keys [^String line]}]
+              (and (string? line) (pos? (count line))
+                (= (.charAt line 0) (.charAt ^String thinking-marker 0))
+                (str/blank? (subs line 1))))
+            blank?
+            (fn [{:keys [^String line]}]
+              (let [body (if (and (string? line) (pos? (count line)))
+                           (subs line 1)
+                           (str line))]
+                (str/blank? body)))]
+        (loop [out         (transient [])
+               prev-blank? false
+               xs          (mapcat iter-entry-fn visible-iterations)]
+          (if (empty? xs)
+            (persistent! out)
+            (let [e   (first xs)
+                  bk? (blank? e)]
+              (cond
+                ;; Thinking band stays untouched.
+                (thinking-blank? e)
+                (recur (conj! out e) false (rest xs))
+
+                (and bk? prev-blank?)
+                (recur out true (rest xs))
+
+                :else
+                (recur (conj! out e) bk? (rest xs))))))))))
 
 (defn- queued-preview
   [text]
