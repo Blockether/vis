@@ -1234,6 +1234,24 @@
    values make streamed reasoning feel frozen, lower values waste work."
   80)
 
+(def ^:private scroll-anim-tick-ms
+  "Frame budget for smooth-scroll interpolation: when
+   `:messages-scroll-target` is set, the render loop wakes every N ms
+   to dispatch `:tick-scroll-anim` (steps `:messages-scroll` toward
+   target by one ease-out step) and repaint. 16ms = ~60fps, which is
+   the largest tick that still reads as continuous motion on the
+   terminal cell grid. Bigger ticks make the animation feel chunky;
+   smaller ticks burn CPU for no perceptual gain."
+  16)
+
+(defn- scroll-anim-active?
+  "True when `:messages-scroll-target` differs from `:messages-scroll`
+   AND animation hasn't snapped both fields together yet. The state
+   reducer (`state/clear-anim-when-settled`) drops the target key the
+   moment they match, so presence of the key alone is enough."
+  [db]
+  (some? (:messages-scroll-target db)))
+
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and
    only paints when `:render-version` advances, the terminal gets
@@ -1245,8 +1263,16 @@
          last-db nil last-layout nil last-hover nil
          was-blocked? false]
     (let [db @state/app-db]
+      ;; Tick scroll animation BEFORE acquiring draw-lock so the
+      ;; re-read inside the try/let below sees the freshly stepped
+      ;; `:messages-scroll` and the frame paints the new offset.
+      ;; The dispatch bumps `:render-version`; this iteration will
+      ;; then satisfy the `(not= last-v version)` check and the
+      ;; full-frame branch fires — no missed frames mid-anim.
+      (when (scroll-anim-active? db)
+        (state/dispatch [:tick-scroll-anim]))
       (when-not (:shutdown? db)
-        (let [version (long (or (:render-version db) 0))
+        (let [version (long (or (:render-version @state/app-db) 0))
               ;; tryLock so a dialog session (which holds the lock for
               ;; seconds) doesn't pin us. Time out fast and re-poll.
               got-lock? (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
@@ -1268,9 +1294,12 @@
                         rows     (.getRows size)
                         now-ms   (System/currentTimeMillis)
                         loading? (boolean (:loading? db))
-                        animate? (and loading?
-                                   (>= (- now-ms (long last-frame-ms))
-                                     spinner-tick-ms))
+                        scroll-anim? (scroll-anim-active? db)
+                        animate? (or
+                                   (and loading?
+                                     (>= (- now-ms (long last-frame-ms))
+                                       spinner-tick-ms))
+                                   scroll-anim?)
                         same-size? (and (= last-cols cols) (= last-rows rows))
                         ;; The slash-command suggestions popup is
                         ;; drawn JUST ABOVE the input box, which
@@ -1346,7 +1375,10 @@
                     loading? (boolean (:loading? @state/app-db))]
                 (when (= v-now version)
                   (try (.wait ^Object state/render-monitor
-                         (long (if loading? spinner-tick-ms 250)))
+                         (long (cond
+                                 (scroll-anim-active? @state/app-db) scroll-anim-tick-ms
+                                 loading? spinner-tick-ms
+                                 :else 250)))
                     (catch InterruptedException _ nil))))))
           (recur (if rendered? version last-v)
             (long (or new-cols last-cols))

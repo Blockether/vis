@@ -284,9 +284,27 @@
       (expect (= :observation (eng/classify-form-tag ":kw")))
       (expect (= :observation (eng/classify-form-tag ""))))
 
-    (it ":mutation for foundation filesystem write tools"
-      (expect (= :mutation (eng/classify-form-tag "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])")))
-      (expect (= :mutation (eng/classify-form-tag "(v/write {:path \"x\" :content \"b\"})"))))))
+    (it "extension tool heads default to :observation when no resolver is wired"
+      ;; Extension-owned heads like `v/patch` are NOT in the engine's
+      ;; core-mutation-heads. The 1-arity `classify-form-tag` (pure,
+      ;; no registry access) returns :observation. The integration
+      ;; layer in `loop.clj` passes a `head-tag-resolver` that hits
+      ;; `extension/op-tag`; with that resolver, the same head
+      ;; classifies as :mutation.
+      (expect (= :observation (eng/classify-form-tag "(v/patch [{:path \"x\"}])")))
+      (expect (= :mutation
+                (eng/classify-form-tag "(v/patch [{:path \"x\"}])"
+                  (fn [head] (when (= 'v/patch head) :mutation))))))
+
+    (it "resolver-supplied tag wins over the engine's core fallback"
+      ;; A resolver can also flip an engine-owned head, but in
+      ;; practice extensions only declare their own ops; this just
+      ;; documents the precedence rule.
+      (expect (= :observation
+                (eng/classify-form-tag "(spec-set! :K {:title \"x\"})"
+                  (fn [_] :observation))))
+      (expect (= :mutation
+                (eng/classify-form-tag "(spec-set! :K {:title \"x\"})")))))) 
 
 (defdescribe advance-iter-trailer-test
   (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}

@@ -72,6 +72,7 @@
    from this single flat layout. One layout path is enough."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]))
 
@@ -206,20 +207,13 @@
     (or (:silent? chunk)
       (= :vis/silent (:result chunk)))))
 
-(def ^:private structural-form-prefixes
-  "Top-level call prefixes whose RAW source row is engine-only chrome:
-   the channel renders a recap line for these instead of
-   showing the literal `(mutator …)` text. Keep in sync with
-   `render/top-level-form-kind` non-`:code` cases."
-  ["(set-session-title!"
-   "(done"
-   "(task-set!"
-   "(spec-set!"
-   "(fact-set!"])
-
-(defn- contains-structural-prefix?
-  [^String code]
-  (boolean (some #(str/includes? code %) structural-form-prefixes)))
+;; Engine-form detection ("is this form silent UI chrome?") delegates
+;; to `ctx-engine/engine-form-src?`. It edamame-parses the head symbol
+;; so reader meta / discard forms / tagged literals never trip it, and
+;; there is exactly ONE list of engine-form heads in the codebase
+;; (`engine-form-heads` in `ctx-engine`). The old string-prefix scan
+;; over raw source was a false-positive magnet (a `"(done x)"` inside
+;; a string would have matched).
 
 (defn- visible-code-segments?
   "True when the chunk has at least one `:code` segment that should
@@ -232,14 +226,15 @@
       (boolean (some #(= :code (:kind %)) segments))
       (let [code (str/trim (str (:code chunk)))]
         (and (not (str/blank? code))
-          (not (contains-structural-prefix? code)))))))
+          (not (ctx-engine/engine-form-src? code)))))))
 
 (defn- structurally-silent-chunk?
   "True for host-bookkeeping forms that should never appear in user traces:
-   session-title updates, answer-emission forms, and ctx mutators
-   (`task-set!`, `spec-set!`, `fact-set!`). They may still execute and
-   feed channel chrome / final answer, but the code/result row itself is
-   noise in both TUI and CLI trace views. Mixed blocks with visible code
+   session-title updates, answer-emission forms, ctx mutators
+   (`task-set!`, `spec-set!`, `fact-set!`), and engine-internal
+   probes (`introspect-*`). They may still execute and feed channel
+   chrome / final answer, but the code/result row itself is noise in
+   both TUI and CLI trace views. Mixed blocks with visible code
    segments are not silent; channels consume :render-segments to hide
    only the structural subforms."
   [chunk]
@@ -247,10 +242,10 @@
     (boolean
       (or (:vis/structurally-silent? chunk)
         (and (not (visible-code-segments? chunk))
-          (contains-structural-prefix? code))
+          (ctx-engine/engine-form-src? code))
         (and (= :vis/silent (:result chunk))
           (not (seq (:render-segments chunk)))
-          (contains-structural-prefix? code))))))
+          (ctx-engine/engine-form-src? code))))))
 
 (defn- title-recap
   [value]

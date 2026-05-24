@@ -7,6 +7,7 @@
    back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.ctx-engine :as ctx-engine]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.format :as fmt]
             [taoensso.telemere :as t])
@@ -86,16 +87,9 @@
               nil)))
     vec))
 
-(def ^:private structural-form-prefixes
-  ["(set-session-title!"
-   "(done"
-   "(task-set!"
-   "(spec-set!"
-   "(fact-set!"])
-
-(defn- contains-structural-prefix?
-  [^String code]
-  (boolean (some #(str/includes? code %) structural-form-prefixes)))
+;; Engine-form detection delegates to `ctx-engine/engine-form-src?` so
+;; we share one edamame-parsed head-symbol predicate with progress.clj.
+;; No string-prefix list to keep in sync.
 
 (defn- visible-code-segments?
   "True when an iteration block has at least one `:code` segment that
@@ -105,17 +99,18 @@
 
 (defn- structurally-silent-block?
   "True for host-bookkeeping forms that should never appear in user
-   traces: title updates, answer emission, and ctx mutators
-   (`task-set!`, `spec-set!`, `fact-set!`)."
+   traces: title updates, answer emission, ctx mutators (`task-set!`,
+   `spec-set!`, `fact-set!`), and engine-internal probes
+   (`introspect-*`)."
   [b]
-  (let [code    (str (:code b))]
+  (let [code (str (:code b))]
     (boolean
       (or (:vis/structurally-silent? b)
         (and (not (visible-code-segments? b))
-          (contains-structural-prefix? code))
+          (ctx-engine/engine-form-src? code))
         (and (= :vis/silent (:result b))
           (not (seq (:render-segments b)))
-          (contains-structural-prefix? code))))))
+          (ctx-engine/engine-form-src? code))))))
 
 (defn- form-result-kind
   "Mirror of `progress/form-result-kind` for restored sessions: a
@@ -133,13 +128,29 @@
 
 (defn- form-result-detail
   "Project tool-result envelope to the small detail map the TUI labels
-   consume. Returns nil for non-tool results."
-  [{:keys [result]}]
-  (when (extension/tool-result? result)
+   consume. Returns nil for non-tool results.
+
+   Restored forms persisted via `(def x (tool …))` shape have their
+   `:result` deref'd to the inner value before persistence (SCI def
+   semantics), so `tool-result?` returns false and the envelope path
+   below would never fire. Fall back to the channel slice: every
+   sink entry now carries `:symbol` / `:tag` (`write-sink-entries!`
+   stamps them from the originating `sym-entry`). Use the FIRST
+   successful entry's tag/symbol to label the bubble — same shape
+   the live path produces, just sourced from persistance."
+  [{:keys [result channel]}]
+  (cond
+    (extension/tool-result? result)
     (let [metadata (:metadata result)]
       (merge (select-keys result [:symbol :tag])
         (select-keys metadata [:spec :paths :hit-count :truncated-by
-                               :command :cwd :target])))))
+                               :command :cwd :target])))
+
+    (seq channel)
+    (let [first-ok (or (first (filter :success? channel)) (first channel))]
+      (cond-> {}
+        (:symbol first-ok) (assoc :op (:symbol first-ok))
+        (:tag first-ok)    (assoc :tag (:tag first-ok))))))
 
 (defn- runtime-ref?
   "True when `v` is a legacy persistence sentinel for a runtime-only value.
