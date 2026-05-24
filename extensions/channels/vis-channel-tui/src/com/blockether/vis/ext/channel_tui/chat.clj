@@ -9,7 +9,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.history-restore :as history-restore]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -142,45 +141,49 @@
         (select-keys metadata [:spec :paths :hit-count :truncated-by
                                :command :cwd :target])))))
 
+(defn- runtime-ref?
+  "True when `v` is a legacy persistence sentinel for a runtime-only value.
+   Cross-turn `(def ...)` rehydration is gone, but historical session
+   rows may still carry `{:vis/ref :expr}` payloads; render them as a
+   small static label instead of a misleading value."
+  [v]
+  (and (map? v) (= :expr (:vis/ref v))))
+
 (defn- form-result-render
   "Render the form's result for the trace bubble. Mirrors the live
-   progress `format-form-result` chokepoint but resolves restored
-   def values for runtime-ref placeholders."
-  [restored-values {:keys [result error channel code]}]
-  (let [restored (when (history-restore/runtime-ref? result)
-                   (history-restore/restored-def-result restored-values code))]
-    (cond
-      error nil
-      (seq channel)
-      ;; Per-form sink entries: walk each, surface pre-rendered IR on
-      ;; success, format the error map on failure. Sort by `:position`
-      ;; so racy futures land in canonical source order.
-      (extension/combine-render-values
-        (map (fn [{:keys [success? result error]}]
-               (if success?
-                 result
-                 (extension/default-error-ir
-                   {:success? false :result nil :info {} :error error})))
-          (sort-by :position channel)))
-      restored                         restored
-      (= :vis/answer result)           nil
-      (history-restore/runtime-ref? result)
-      "<runtime value; re-evaluate expression to restore>"
-      (extension/tool-result? result)
-      (extension/render-tool-result result)
-      :else                            (fmt/bounded-value-str result))))
+   progress `format-form-result` chokepoint. Legacy runtime-ref
+   sentinels render as a small label since cross-turn restore is
+   no longer supported."
+  [{:keys [result error channel]}]
+  (cond
+    error nil
+    (seq channel)
+    ;; Per-form sink entries: walk each, surface pre-rendered IR on
+    ;; success, format the error map on failure. Sort by `:position`
+    ;; so racy futures land in canonical source order.
+    (extension/combine-render-values
+      (map (fn [{:keys [success? result error]}]
+             (if success?
+               result
+               (extension/default-error-ir
+                 {:success? false :result nil :info {} :error error})))
+        (sort-by :position channel)))
+    (= :vis/answer result)           nil
+    (runtime-ref? result)            "<legacy runtime value; not restorable>"
+    (extension/tool-result? result)  (extension/render-tool-result result)
+    :else                            (fmt/bounded-value-str result)))
 
 (defn- block->form-record
   "Materialize one DB-iteration block into a `:forms` entry. The shape
    matches the live progress tracker's per-form map so the renderer
    uses one code path for live and resumed traces."
-  [restored-values block]
+  [block]
   {:code            (:code block)
    :comment         (:comment block)
    :render-segments (:render-segments block)
    :started-at-ms   nil
    :duration-ms     (or (:duration-ms block) 0)
-   :result-render   (form-result-render restored-values block)
+   :result-render   (form-result-render block)
    :result-kind     (form-result-kind block)
    :result-detail   (form-result-detail block)
    :error           (:error block)
@@ -195,7 +198,7 @@
    progress tracker produces — a map carrying `:thinking`, `:forms`,
    `:recaps`, and `:provider-fallbacks`. The renderer consumes both
    live and resumed traces through this single shape."
-  [restored-values {:keys [produced-answer? last-iteration-id]} it]
+  [{:keys [produced-answer? last-iteration-id]} it]
   ;; The persisted shape that drives a restored bubble is the
   ;; per-form `:forms` envelope vec on the iteration row (one entry
   ;; per top-level form the model wrote). The legacy code path
@@ -272,7 +275,7 @@
         visible     (into [] (keep-indexed (fn [idx b]
                                              (when-not (contains? elide-idxs idx) b)))
                       all-blocks)
-        forms       (mapv #(block->form-record restored-values %) visible)]
+        forms       (mapv block->form-record visible)]
     {:position           (when-let [p (:position it)] (dec (long p)))
      :thinking           (visible-thinking (:thinking it))
      :provider-fallbacks (:llm-routing-trace it)
@@ -400,13 +403,6 @@
   [session-id]
   (try
     (let [d               (vis/db-info)
-          restored-values (try
-                            (history-restore/restored-var-values d session-id)
-                            (catch Throwable e
-                              (t/log! {:level :warn :id ::restore-values-for-history-failed
-                                       :data  (exception->log-data e)
-                                       :msg   (str "Failed to read restored var values for history: " (ex-message e))})
-                              {}))
           turns           (vis/db-list-session-turns d session-id)]
       (into []
         (mapcat (fn [q]
@@ -463,7 +459,7 @@
                         ;; their assistant message but elide the
                         ;; answer-bearing form differently.
                         produced-answer? (not (str/blank? answer-md))
-                        trace (into [] (map (partial it->iteration-entry restored-values
+                        trace (into [] (map (partial it->iteration-entry
                                               {:produced-answer? produced-answer?
                                                :last-iteration-id last-iteration-id}))
                                 turn-iterations)

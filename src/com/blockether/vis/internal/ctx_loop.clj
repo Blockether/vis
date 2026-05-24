@@ -26,8 +26,10 @@
    Hook-emitted soft work items now live as hook-sourced tasks; the model
    satisfies them via `(task-set! id {:status :done :proof \"…\"})` and the
    engine reconciles at end-of-iter via `eng/reconcile-done-hook-tasks`."
-  (:require [com.blockether.vis.internal.ctx-engine :as eng]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.env-digest :as env-digest]
+            [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt :as prompt]
             [taoensso.telemere :as tel]))
 
@@ -342,6 +344,78 @@
     (cond-> history
       live (assoc live-turn live))))
 
+;; =============================================================================
+;; Per-form / per-iter / per-turn introspection
+;; —
+;; The prompt advertises introspect-iter / -form / -turn / -iter-heads /
+;; -turn-list as the lazy way to reach earlier evidence without bloating
+;; the trailer. They are now real, DB-backed bindings that read against
+;; `session_turn_iteration.forms` (the per-form envelope BLOB — the only
+;; canonical source for what every executed form returned).
+;;
+;; Scope grammar (matches the engine cursor):
+;;   t<N>            — turn N
+;;   t<N>/i<M>       — iteration M of turn N
+;;   t<N>/i<M>/f<K>  — form K (1-based) of iteration M of turn N
+;; =============================================================================
+
+(defn- parse-turn-scope [s]
+  (when (string? s)
+    (when-let [[_ n] (re-matches #"^t([1-9][0-9]*)$" s)]
+      (parse-long n))))
+
+(defn- parse-iter-scope [s]
+  (when (string? s)
+    (when-let [[_ n m] (re-matches #"^t([1-9][0-9]*)/i([1-9][0-9]*)$" s)]
+      {:turn (parse-long n) :iter (parse-long m)})))
+
+(defn- parse-form-scope [s]
+  (when (string? s)
+    (when-let [[_ n m k] (re-matches #"^t([1-9][0-9]*)/i([1-9][0-9]*)/f([1-9][0-9]*)$" s)]
+      {:turn (parse-long n) :iter (parse-long m) :form (parse-long k)})))
+
+(defn- one-line
+  "Compact `src` for the head-only views: trim, collapse internal
+   whitespace, cap to ~100 chars so a `turn-list` / `iter-heads` reply
+   stays scannable."
+  [src]
+  (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
+    (if (> (count s) 100) (str (subs s 0 100) "…") s)))
+
+(defn- iter-summary
+  "Compact `{:scope :iter :status :form-count :head}` description of an
+   iter, used by `introspect-iter-heads` and `introspect-turn`."
+  [turn-pos {:keys [position status forms]}]
+  (let [head (some-> forms first :src one-line)]
+    (cond-> {:scope     (str "t" turn-pos "/i" position)
+             :iter      position
+             :status    status
+             :form-count (count forms)}
+      head (assoc :head head))))
+
+(defn- turn-summary
+  "Top-level row for `introspect-turn-list`: one entry per turn."
+  [{:keys [position user-request status iteration-count]}]
+  (cond-> {:scope (str "t" position)
+           :turn  position
+           :status status
+           :iteration-count iteration-count}
+    user-request (assoc :user-request (one-line user-request))))
+
+(defn- turn-by-pos
+  "Resolve turn position to the persisted turn-soul map (or nil)."
+  [{:keys [db-info session-id]} turn-pos]
+  (when (and db-info session-id turn-pos)
+    (some #(when (= turn-pos (:position %)) %)
+      (persistance/db-list-session-turns db-info session-id))))
+
+(defn- iter-by-pos
+  "Resolve iter position to the persisted iteration map for `turn-pos`."
+  [env turn-pos iter-pos]
+  (when-let [turn (turn-by-pos env turn-pos)]
+    (some #(when (= iter-pos (:position %)) %)
+      (persistance/db-list-session-turn-iterations (:db-info env) (:id turn)))))
+
 (defn build-introspect-bindings
   "Return `{'symbol bare-fn}` for the introspect-* verbs the model calls.
    `history-loader` is a 0-arity thunk that returns the persisted history
@@ -350,7 +424,11 @@
 
    The live ctx-atom is folded in on every call so introspection on the
    IN-PROGRESS turn also works (otherwise the model could not query its
-   own just-defined specs from the next iter)."
+   own just-defined specs from the next iter).
+
+   Per-form / per-iter / per-turn verbs read `session_turn_iteration.forms`
+   directly via `persistance/db-list-session-turn-iterations` against the
+   env's `:db-info` + `:session-id` keys."
   [env history-loader]
   (let [history #(with-live-history env history-loader)]
     {'introspect-spec     (fn introspect-spec     [k]   (eng/introspect-spec (history) k))
@@ -359,9 +437,42 @@
      'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
      'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
                             (let [t (cond
-                                      (string? turn-key)
-                                      (when-let [[_ n] (re-matches #"^t([1-9][0-9]*)$" turn-key)]
-                                        (parse-long n))
+                                      (string? turn-key) (parse-turn-scope turn-key)
                                       (number? turn-key) (long turn-key)
                                       :else nil)]
-                              (when t (eng/introspect-ctx-at (history) t))))}))
+                              (when t (eng/introspect-ctx-at (history) t))))
+     'introspect-turn-list
+     (fn introspect-turn-list []
+       (mapv turn-summary
+         (persistance/db-list-session-turns (:db-info env) (:session-id env))))
+     'introspect-turn
+     (fn introspect-turn [scope]
+       (when-let [turn-pos (parse-turn-scope scope)]
+         (when-let [turn (turn-by-pos env turn-pos)]
+           (let [iters (persistance/db-list-session-turn-iterations
+                         (:db-info env) (:id turn))]
+             {:scope         scope
+              :turn          turn-pos
+              :user-request  (some-> (:user-request turn) one-line)
+              :status        (:status turn)
+              :iterations    (mapv (partial iter-summary turn-pos) iters)}))))
+     'introspect-iter-heads
+     (fn introspect-iter-heads [scope]
+       (when-let [turn-pos (parse-turn-scope scope)]
+         (when-let [turn (turn-by-pos env turn-pos)]
+           (let [iters (persistance/db-list-session-turn-iterations
+                         (:db-info env) (:id turn))]
+             (mapv (partial iter-summary turn-pos) iters)))))
+     'introspect-iter
+     (fn introspect-iter [scope]
+       (when-let [{:keys [turn iter]} (parse-iter-scope scope)]
+         (when-let [it (iter-by-pos env turn iter)]
+           {:scope  scope
+            :status (:status it)
+            :code   (:code it)
+            :forms  (vec (:forms it))})))
+     'introspect-form
+     (fn introspect-form [scope]
+       (when-let [{:keys [turn iter form]} (parse-form-scope scope)]
+         (when-let [it (iter-by-pos env turn iter)]
+           (nth (vec (:forms it)) (dec form) nil))))}))

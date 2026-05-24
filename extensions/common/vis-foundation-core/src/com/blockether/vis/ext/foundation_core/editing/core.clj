@@ -63,8 +63,8 @@
 ;;                             2000 by default; Cline uses 1000.
 ;;   `max-cat-window-bytes`  - hard ceiling on a single window's bytes.
 ;;                             Doubles as the persistence-blob ceiling:
-;;                             each call writes one Nippy blob to
-;;                             `definition_state.value`, bounded by this.
+;;                             each call's result is Nippy-frozen into the
+;;                             iteration's `forms` BLOB, bounded by this.
 ;;                             Not user-tunable; it is the storage contract.
 ;;
 ;; The earlier `max-line-length` per-line cap (2000 chars + `…<+N chars

@@ -116,146 +116,13 @@
     (sequential? v) (doall (map realize-value v))
     :else v))
 
-;; `DEF_HEADS_FOR_RESTORE` lives in `env.clj` (single source of truth
-;; shared by source extraction, dep-edge walking, and restore-time
-;; shape check via `env/parsed-def-form?`).
-
-(defn- extract-def-sources
-  "Parse `code` and return `{var-name-string -> per-form-pr-str}` for
-   every `(def NAME ...)` / `(defn NAME ...)` / ... shape it contains.
-   Walks `(do ...)` containers transparently so
-   `(do (def a 1) (def b 2))` produces both entries. Forms whose head
-   is not in `env/DEF_HEADS_FOR_RESTORE` or whose name is not a symbol are
-   ignored. Parse errors yield {} so the caller falls back to the
-   whole-iteration source.
-
-   Edamame preserves metadata; pr-str re-emits a round-trippable
-   form. Per-var precise source is what `db-restore-blocks` re-evals
-   when the stored result was `{:vis/ref :expr}` (functions, lazy
-   seqs, runtime objects), so granularity here is the difference
-   between restoring ONE var and accidentally re-running every
-   side-effecting def in the same iteration block."
-  [code]
-  (try
-    (let [forms (edamame/parse-string-all (or code "")
-                  {:all true
-                   :readers (fn [_tag] (fn [val] (list 'do val)))})
-          flatten-do (fn flat [f]
-                       (if (and (seq? f) (= 'do (first f)))
-                         (mapcat flat (rest f))
-                         [f]))
-          flat-forms (mapcat flatten-do forms)]
-      (reduce (fn [acc form]
-                (if (and (seq? form)
-                      (symbol? (first form))
-                      (contains? env/DEF_HEADS_FOR_RESTORE (first form))
-                      (symbol? (second form)))
-                  (assoc acc (name (second form)) (pr-str form))
-                  acc))
-        {} flat-forms))
-    (catch Throwable _ {})))
-
-(defn dep-edges-from-source
-  "Parse `iteration-code` and emit one raw dependency edge per
-   (free-symbol-in-init → def-name) reference. Walks every form whose
-   head is in `env/DEF_HEADS_FOR_RESTORE`; for each such form, collects
-   ALL symbol references in the init / fn-body subtree and emits
-   `{:upstream <ref-name> :downstream <def-name>}` edges.
-
-   Why source-walk and not the SCI resolve hook: SCI analyzes /
-   compiles forms before evaluating them, baking symbol-to-var
-   resolution into the AST. The runtime `resolve-symbol*` patch never
-   fires for symbols in an init body, so the only stable point at
-   which we can recover dep relationships is the source itself.
-
-   The output is intentionally permissive: it includes refs to core
-   ops (`inc`, `*`, `+`), to locals introduced by `let` / `fn`
-   parameter lists, and to macro symbols. The persistence layer
-   filters every edge against the existing-soul-name set in its
-   write transaction, so only refs that actually correspond to a
-   tracked user var land in `definition_dependency`. Self-references
-   (a recursive `defn` body using its own name) are dropped here
-   since they degenerate the topo sort on restore.
-
-   Parse errors yield [] — the iteration's eval already succeeded;
-   downstream dep tracking is best-effort, not load-bearing."
-  [iteration-code]
-  (try
-    (let [forms (edamame/parse-string-all (or iteration-code "")
-                  {:all true
-                   :readers (fn [_tag] (fn [val] (list 'do val)))})
-          flatten-do (fn flat [f]
-                       (if (and (seq? f) (= 'do (first f)))
-                         (mapcat flat (rest f))
-                         [f]))
-          flat-forms (mapcat flatten-do forms)]
-      (->> flat-forms
-        (mapcat (fn [form]
-                  (when (and (seq? form)
-                          (symbol? (first form))
-                          (contains? env/DEF_HEADS_FOR_RESTORE (first form))
-                          (symbol? (second form)))
-                    (let [def-name (name (second form))
-                          ;; init-and-body: everything after (HEAD NAME)
-                          ;; — includes optional docstring + arg vector
-                          ;; for defn, plain value for def. We do NOT
-                          ;; need to be precise about which subform is
-                          ;; init; the persistence-side filter against
-                          ;; the soul-name set discards everything
-                          ;; that is not a tracked var.
-                          init-and-body (drop 2 form)
-                          refs (->> (tree-seq coll? seq init-and-body)
-                                 (filter symbol?)
-                                 (map name)
-                                 set)]
-                      (->> refs
-                        (remove #(= % def-name))
-                        (map (fn [r]
-                               {:upstream r :downstream def-name})))))))
-        distinct
-        vec))
-    (catch Throwable _ [])))
-
-(defn def-sink->vars-snapshot
-  "Convert per-iteration SCI def-sink entries into the persistence
-   shape consumed by `definition_soul` / `definition_state` rows:
-   `[{:name :value :code :time-ms?} ...]`.
-
-   Replaces the legacy parse-source + walk-sandbox-locals path
-   (`extract-defining-name` / `extract-def-names` /
-   `restorable-var-snapshots`). Source-of-truth is the captured SCI
-   var (IDeref) plus its evaluated metadata — every def the model
-   evaluated lands here, regardless of nesting (`(do (def a …) …)`),
-   macro-expansion (`defn` / `defmacro` / `s/def`), or syntactic
-   shape.
-
-   `:code` per var is the SMALLEST `(def NAME ...)` form edamame can
-   recover from `iteration-code`. Restore re-evals that exact form
-   (and only that form) when the stored value is a function / lazy
-   seq / runtime object — functions round-trip correctly without
-   accidentally re-running sibling defs in the same iteration.
-   Sinks whose name does not match any parsed form (macro-expanded
-   shapes the parser cannot see) fall back to the whole-iteration
-   source.
-
-   `iteration-time-ms` is total eval time for this iteration; rides
-   along on every var row (iteration-scoped, not per-def)."
-  [def-sink iteration-code iteration-time-ms]
-  (let [src-by-name (extract-def-sources iteration-code)]
-    (->> def-sink
-      (keep (fn [{:keys [name var]}]
-              (when (and name var)
-                (let [raw          (try (deref var) (catch Throwable _ nil))
-                      realized     (realize-value raw)
-                      name-s       (str name)
-                      precise-code (or (get src-by-name name-s)
-                                     iteration-code)]
-                  (cond-> {:name  name-s
-                           :value realized
-                           :code  precise-code}
-                    iteration-time-ms
-                    (assoc :time-ms iteration-time-ms))))))
-      vec)))
+;; ---------------------------------------------------------------------------
+;; Per-iteration `(def ...)` discovery / dependency tracking was retired
+;; together with the `definition_*` sidecar tables and `restore-sandbox!`.
+;; SCI defs are intra-turn scratch; cross-turn references go through
+;; `:session/facts` and `introspect-form` / `introspect-iter` /
+;; `introspect-turn` (DB reads against `session_turn_iteration.forms`).
+;; ---------------------------------------------------------------------------
 
 (defn- format-exception-short [^Throwable t]
   {:class (.getName (class t))
@@ -624,16 +491,12 @@
         ;; var binding has unwound).
         channel-sink (atom [])
         sink-pos     (atom -1)
-        ;; Per-iteration sinks. `*def-sink-atom*`
-        ;; collects every (def …) the SCI sandbox runs (Phase 2).
-        ;; `*lru-atom*` stamps every successful symbol resolution with
-        ;; the current turn position (Phase 3). The engine reads both
-        ;; after eval; live-vars rendering and definition_state
-        ;; persistence consume them. Dependency edges (Phase 4b) come
-        ;; from source parsing post-eval, not from this hook — SCI
-        ;; analyzes references at compile time so the runtime resolve
-        ;; hook never sees init-body symbols.
-        def-sink     (env/fresh-sink-atom)
+        ;; Per-iteration LRU. `*lru-atom*` stamps every successful
+        ;; symbol resolution with the current turn position so the
+        ;; live-vars renderer knows which sandbox names are hot in
+        ;; this iteration. SCI defs are intra-turn scratch only —
+        ;; cross-turn def survival was retired with the definition_*
+        ;; sidecar tables; there is no def-sink anymore.
         lru          (env/fresh-lru-atom)
         turn-position (when env
                         (:turn-position (ctx-loop/read-turn-state env)))
@@ -720,7 +583,6 @@
                                 (binding [extension/*tool-event-sink* record-tool-event
                                           extension/*render-sink*         channel-sink
                                           extension/*sink-position*       sink-pos
-                                          env/*def-sink-atom*     def-sink
                                           env/*lru-atom*          lru
                                           env/*current-turn-position* turn-position]
                                   (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
@@ -732,7 +594,6 @@
                                         {:result v :forms [] :error nil}))))]
                             (assoc outcome
                               :channel @channel-sink
-                              :def-sink @def-sink
                               :lru     @lru))
                           (catch Throwable e
                             (reset! thrown e)
@@ -740,7 +601,6 @@
                             ;; eval-string+ threw outside per-form path).
                             {:result nil
                              :channel @channel-sink
-                             :def-sink @def-sink
                              :lru     @lru
                              :forms   []
                              :error   (try (extension/ex->op-error e {:form-source code})
@@ -771,7 +631,6 @@
                                (catch Throwable _ nil))
                              {:result nil
                               :channel @channel-sink
-                              :def-sink @def-sink
                               :lru     @lru
                               :error   (try (extension/ex->op-error e {:form-source code})
                                          (catch Throwable _
@@ -801,7 +660,6 @@
       (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil
          :channel @channel-sink
-         :def-sink @def-sink
          :lru     @lru
          :error   {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
          :timeout? true})
@@ -820,12 +678,6 @@
              :duration-ms execution-time)
       (:timeout? execution-result) (assoc :timeout? true)
       (not (:timeout? execution-result)) (assoc :timeout? false))))
-
-;; Mandatory-docstring contract is enforced in the SCI sandbox by
-;; `env/patched-eval-def`: `(def NAME "doc" VAL)` already
-;; binds `:doc` as var metadata at eval time. The legacy
-;; `extract-defining-name` + `attach-doc-meta!` post-eval source-parse
-;; path was redundant after Phase 2 and has been removed.
 
 (defn- execute-code
   "Run a single :code block through the SCI sandbox.
@@ -859,7 +711,6 @@
                          (env/push-eval-error! environment e)
                          {:result nil
                           :channel []
-                          :def-sink []
                           :lru {}
                           :error (try (extension/ex->op-error e {:form-source code})
                                    (catch Throwable _
@@ -2374,13 +2225,6 @@
                                     :role (:role result)
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)
-                                    ;; Per-block def-sink: every (def ...) the
-                                    ;; SCI sandbox evaluated in this block. The
-                                    ;; iteration writer concats sinks across
-                                    ;; blocks and drives definition_state from
-                                    ;; the result. Replaces the legacy
-                                    ;; parse-source path.
-                                    :def-sink (vec (:def-sink result))
                                     ;; Per-block resolve-symbol* LRU stamps:
                                     ;; symbol-name -> current-turn-pos for every
                                     ;; symbol the SCI hook saw resolve during
@@ -2898,115 +2742,20 @@
 ;; `restorable-var-snapshots`: post-eval parsers that walked the
 ;; iteration's block source for `(def NAME …)` shapes and then read
 ;; the sandbox locals to materialize values. The engine replaces that
-;; path with the SCI eval-def monkey-patch — every def the sandbox
-;; evaluates lands in `:def-sink`, and `def-sink->vars-snapshot` (above)
-;; produces the persistence shape directly.
-;; -----------------------------------------------------------------------------
-
-;; =============================================================================
-;; Auto-Archive
-;; =============================================================================
-
-(defn- system-var-sym?
-  "Local alias - the canonical predicate lives in `sci-env`. Kept here
-   so archive code reads cleanly without an extra namespace bounce on
-   every call."
-  [sym]
-  (env/system-var-sym? sym))
-
-(defn- archive-vars!
-  "Unmap `names` from the SCI sandbox namespace. Archive removes live
-   bindings only; persisted rows remain for automatic sandbox restore.
-
-   HARD GUARD: SYSTEM symbols can NEVER be archived - they are contract
-   surfaces the iteration loop re-binds every turn. Filtered out +
-   logged."
-  [sci-ctx names]
-  (let [raw-syms (keep (fn [n]
-                         (cond (symbol? n) n
-                           (string? n) (try (clojure.core/symbol n) (catch Throwable _ nil))
-                           :else       nil))
-                   names)
-        {system-syms true user-syms false} (group-by (comp boolean system-var-sym?) raw-syms)]
-    (when (seq system-syms)
-      (tel/log! {:level :info :id ::archive-system-symbol-refused
-                 :data {:requested (mapv str system-syms)}
-                 :msg "Refusing to archive SYSTEM symbols - ignoring those names"}))
-    (when (seq user-syms)
-      (try
-        (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
-          (fn [ns-map] (apply dissoc ns-map user-syms)))
-        (catch Throwable e
-          (tel/log! {:level :debug :id ::archive-vars-failed
-                     :data {:error (ex-message e) :syms (mapv str user-syms)}
-                     :msg "archive-vars! failed - skipping"}))))))
-
-(def ^:const HOT_SYMBOL_CAP
-  "Maximum live user-defined symbols targeted by RLM hot memory."
-  100)
-
-(def ^:const HOT_SYMBOL_ARCHIVE_TARGET
-  "Low-water mark after a final successful answer. Archiving down to 80
-   leaves headroom for the next turn instead of immediately bumping into
-   the hard cap again.
-
-   NB: this is SCI sandbox symbol ARCHIVAL (live-var eviction); the
-   on-disk row remains the source of truth for sandbox restore. It is
-   NOT related to CTX trailer compaction — CTX trailer is only ever
-   touched via model-owned `:trailer-drop` / `:trailer-summarize` in
-   `(done …)`. Engine has no auto-compaction."
-  80)
-
-(defn auto-archive-candidates
-  "Pure cap-based hot-memory archive selection. Counts every live
-   user-defined symbol toward the target, but only user symbols without a
-   docstring are eligible. Returns the least-recent eligible symbols needed
-   to reach `target-count`; if protected symbols alone exceed the target,
-   returns every eligible symbol and leaves diagnostics to the caller."
-  [sandbox-map initial-ns-keys var-registry target-count]
-  (let [recency-of (fn [sym]
-                     (if-let [ts (some-> (get var-registry sym) :created-at)]
-                       (cond (inst? ts) (inst-ms ts)
-                         (integer? ts) (long ts)
-                         :else Long/MAX_VALUE)
-                       Long/MAX_VALUE))
-        user-symbol? (fn [sym]
-                       (and (symbol? sym)
-                         (not (contains? initial-ns-keys sym))
-                         (not (env/system-var-sym? sym))))
-        live-user-syms (filterv user-symbol? (keys sandbox-map))
-        overflow (max 0 (- (count live-user-syms) (long target-count)))
-        eligible (->> live-user-syms
-                   (remove (fn [sym]
-                             (let [doc (:doc (meta (get sandbox-map sym)))]
-                               (and (string? doc) (not (str/blank? doc))))))
-                   (sort-by (fn [sym] [(long (recency-of sym)) (str sym)]))
-                   vec)]
-    (set (take overflow eligible))))
+;; ----------------------------------------------------------------------------
+;; Auto-archive was retired together with the `definition_*` sidecar
+;; tables: there is no cross-turn var registry to drive eviction off,
+;; and the SCI sandbox is fresh every turn anyway. `auto-archive-hot-
+;; symbols!` is a no-op stub kept so call sites compile while we sweep
+;; them out.
+;; ----------------------------------------------------------------------------
 
 (defn auto-archive-hot-symbols!
-  "Archive eligible live user symbols after a final successful answer.
-   Archive means removing bindings from the live SCI sandbox only; DB
-   rows remain the source of truth for automatic sandbox restore."
-  [{:keys [db-info session-id sci-ctx initial-ns-keys]}]
-  (when (and db-info session-id sci-ctx)
-    (try
-      (let [var-registry (persistance/db-latest-var-registry db-info session-id)
-            sandbox-map  (get-in @(:env sci-ctx) [:namespaces 'sandbox])
-            candidates   (auto-archive-candidates sandbox-map initial-ns-keys
-                           var-registry HOT_SYMBOL_ARCHIVE_TARGET)]
-        (when (seq candidates)
-          (tel/log! {:level :info :id ::auto-archive
-                     :data {:archived (mapv str candidates)
-                            :count (count candidates)
-                            :target HOT_SYMBOL_ARCHIVE_TARGET}
-                     :msg (str "Auto-archive: evicting " (count candidates)
-                            " hot symbols after final answer")})
-          (archive-vars! sci-ctx candidates)))
-      (catch Exception e
-        (tel/log! {:level :warn :id ::auto-archive-failed
-                   :data {:error (ex-message e)}
-                   :msg "Auto-archive failed - skipping"})))))
+  "Deprecated NOOP. Cross-turn def survival was removed when the
+   `definition_*` sidecar tables were dropped; the SCI sandbox starts
+   fresh each turn, so there is nothing to archive."
+  [_environment]
+  nil)
 
 ;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-turn! (inlined from former base)
@@ -3650,30 +3399,6 @@
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking blocks final-result]} iteration-result
                         block (first blocks)
-                        iteration-block-code (or (some-> block :code str/trim not-empty) "")
-                        iteration-time-ms (long (block-duration-ms block))
-                        vars-snapshot (def-sink->vars-snapshot
-                                        (vec (:def-sink block))
-                                        iteration-block-code
-                                        (when (pos? iteration-time-ms) iteration-time-ms))
-                        ;; Phase 4b: dependency edges from a post-eval
-                        ;; source walk of the iteration block. SCI's
-                        ;; analyzer bakes symbol resolution into the
-                        ;; AST at compile time so a runtime resolve
-                        ;; hook would not see init-body references;
-                        ;; we recover the graph from source instead.
-                        ;; The persistance layer filters every edge
-                        ;; against the existing-soul-name set inside
-                        ;; one transaction, so core ops, locals, and
-                        ;; cross-iteration upstreams (this iter's defn
-                        ;; depends on a prior iter's var) all sort
-                        ;; themselves out there.
-                        deps-snapshot (->> (dep-edges-from-source iteration-block-code)
-                                        (map (fn [{:keys [upstream downstream]}]
-                                               {:upstream-name upstream
-                                                :downstream-name downstream}))
-                                        distinct
-                                        vec)
                         ;; Phase 7: merge per-iteration `:lru` stamps
                         ;; (collected by the patched resolve-symbol*)
                         ;; into the long-lived per-env LRU map. The trailer's
@@ -3780,8 +3505,6 @@
                                                   :forms forms-vec
                                                   :duration-ms (long (or (envelope-duration-ms (:envelope first-block)) 0))
                                                   :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
-                                                  :vars vars-snapshot
-                                                  :dependencies deps-snapshot
                                                   :thinking thinking
                                                   :answer (when final-result (answer-markdown (:answer final-result)))
                                                   :llm-messages (:llm-messages iteration-result)
@@ -4949,7 +4672,15 @@
         ;; (D12 retired `:engine/pending-satisfies` along with
         ;; satisfy-hint!; hook-task satisfaction is plain `task-set!`.)
         ctx-loop-env             {:ctx-atom        ctx-atom
-                                  :turn-state-atom turn-state-atom}
+                                  :turn-state-atom turn-state-atom
+                                  ;; DB + session id ride on the same env
+                                  ;; map so `build-introspect-bindings`
+                                  ;; can hit `session_turn_iteration.forms`
+                                  ;; for the per-form / per-iter / per-turn
+                                  ;; introspection verbs without an extra
+                                  ;; closure capture.
+                                  :db-info         db-info
+                                  :session-id      session-id}
         ;; The current human turn text and engine context flow through ctx.
         ;; Introspect verbs reach archived entries + any past turn snapshot
         ;; via the soul/state chain. History loader is a thunk so the
@@ -5035,16 +4766,12 @@
               :active-extensions                 (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
-    ;; Restore persisted vars when resuming an existing session.
+    ;; Restore the CTX engine state when resuming. SCI defs do NOT
+    ;; persist across turns anymore (the `definition_*` sidecar
+    ;; tables were dropped); cross-turn memory rides on the
+    ;; per-turn CTX snapshot.
     (when resolved-session-id
-      (try
-        (env/restore-sandbox! sci-ctx db-info session-id)
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::restore-sandbox-failed
-                     :data {:error (ex-message t)
-                            :session-id session-id}
-                     :msg "Failed to restore sandbox from DB - starting empty"})))
-      ;; Restore the CTX engine state alongside the SCI sandbox. The latest
+      ;; The latest
       ;; session_turn_state.ctx (Nippy BLOB) carries specs/tasks/facts/trailer
       ;; from the last (done …). Cursor is iter-local so we don't restore it;
       ;; the renderer stamps a fresh one from the loop counters.
