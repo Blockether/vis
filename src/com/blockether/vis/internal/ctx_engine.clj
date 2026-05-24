@@ -435,13 +435,33 @@
                        stamped)]
         {:ctx (assoc-in ctx path cleared) :warnings [] :stamped? true}))))
 
+(def ^:private FACT_CONTENT_SOFT_LIMIT
+  "Per-fact `:content` size cap (chars of `pr-str`) above which a soft
+   warning fires. Facts ride into every prompt; large blobs belong in
+   the trailer or behind `(introspect-form …)`. 2 KB is roughly 500
+   tokens — enough headroom for a stable observation map, small enough
+   to keep a 20-fact session under ~10k tokens total."
+  2048)
+
 (defn- apply-fact-set! [ctx form-scope [fact-k partial-map]]
   (let [path     [:session/facts fact-k]
         existing (get-in ctx path)
         merged   (cond-> (merge existing partial-map)
                    (nil? existing) (assoc :born form-scope))
-        stamped  (stamp-or-clear-done-born merged form-scope fact-terminal?)]
-    {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true}))
+        stamped  (stamp-or-clear-done-born merged form-scope fact-terminal?)
+        content  (:content stamped)
+        size     (when (some? content)
+                   (try (count (pr-str content))
+                     (catch Throwable _ 0)))]
+    {:ctx       (assoc-in ctx path stamped)
+     :warnings  (if (and size (> size FACT_CONTENT_SOFT_LIMIT))
+                  [(warn :fact-content-too-large [fact-k]
+                     (str "fact " fact-k " :content is " size " chars ("
+                       "> " FACT_CONTENT_SOFT_LIMIT "); facts ride into every "
+                       "prompt — keep them small, or summarize and reference "
+                       "the original form via introspect-form."))]
+                  [])
+     :stamped?  true}))
 
 (defn- apply-req-add! [ctx _form-scope [spec-k req]]
   (let [path     [:session/specs spec-k :requirements]

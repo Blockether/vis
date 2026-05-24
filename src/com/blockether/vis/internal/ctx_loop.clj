@@ -347,22 +347,24 @@
 ;; =============================================================================
 ;; Per-form / per-iter / per-turn introspection
 ;; —
-;; The prompt advertises introspect-iter / -form / -turn / -iter-heads /
-;; -turn-list as the lazy way to reach earlier evidence without bloating
-;; the trailer. They are now real, DB-backed bindings that read against
-;; `session_turn_iteration.forms` (the per-form envelope BLOB — the only
-;; canonical source for what every executed form returned).
+;; Three drill layers, no overlap:
+;;
+;;   (introspect-turn-list)         — every turn in this session
+;;   (introspect-iter "t<N>/i<M>")  — full :forms vec for one iter
+;;   (introspect-form "t<N>/i<M>/f<K>") — one form envelope
+;;
+;; All DB-backed against `session_turn_iteration.forms` (the per-form
+;; envelope BLOB — single canonical source for what every executed
+;; form returned). The earlier `introspect-turn` / `introspect-iter-
+;; heads` verbs were retired: `introspect-iter` already returns the
+;; full forms vec (including heads), and `introspect-turn-list` covers
+;; the turn-level meta.
 ;;
 ;; Scope grammar (matches the engine cursor):
 ;;   t<N>            — turn N
 ;;   t<N>/i<M>       — iteration M of turn N
 ;;   t<N>/i<M>/f<K>  — form K (1-based) of iteration M of turn N
 ;; =============================================================================
-
-(defn- parse-turn-scope [s]
-  (when (string? s)
-    (when-let [[_ n] (re-matches #"^t([1-9][0-9]*)$" s)]
-      (parse-long n))))
 
 (defn- parse-iter-scope [s]
   (when (string? s)
@@ -376,22 +378,10 @@
 
 (defn- one-line
   "Compact `src` for the head-only views: trim, collapse internal
-   whitespace, cap to ~100 chars so a `turn-list` / `iter-heads` reply
-   stays scannable."
+   whitespace, cap to ~100 chars so a `turn-list` reply stays scannable."
   [src]
   (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
     (if (> (count s) 100) (str (subs s 0 100) "…") s)))
-
-(defn- iter-summary
-  "Compact `{:scope :iter :status :form-count :head}` description of an
-   iter, used by `introspect-iter-heads` and `introspect-turn`."
-  [turn-pos {:keys [position status forms]}]
-  (let [head (some-> forms first :src one-line)]
-    (cond-> {:scope     (str "t" turn-pos "/i" position)
-             :iter      position
-             :status    status
-             :form-count (count forms)}
-      head (assoc :head head))))
 
 (defn- turn-summary
   "Top-level row for `introspect-turn-list`: one entry per turn."
@@ -437,7 +427,9 @@
      'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
      'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
                             (let [t (cond
-                                      (string? turn-key) (parse-turn-scope turn-key)
+                                      (string? turn-key)
+                                      (when-let [[_ n] (re-matches #"^t([1-9][0-9]*)$" turn-key)]
+                                        (parse-long n))
                                       (number? turn-key) (long turn-key)
                                       :else nil)]
                               (when t (eng/introspect-ctx-at (history) t))))
@@ -445,24 +437,6 @@
      (fn introspect-turn-list []
        (mapv turn-summary
          (persistance/db-list-session-turns (:db-info env) (:session-id env))))
-     'introspect-turn
-     (fn introspect-turn [scope]
-       (when-let [turn-pos (parse-turn-scope scope)]
-         (when-let [turn (turn-by-pos env turn-pos)]
-           (let [iters (persistance/db-list-session-turn-iterations
-                         (:db-info env) (:id turn))]
-             {:scope         scope
-              :turn          turn-pos
-              :user-request  (some-> (:user-request turn) one-line)
-              :status        (:status turn)
-              :iterations    (mapv (partial iter-summary turn-pos) iters)}))))
-     'introspect-iter-heads
-     (fn introspect-iter-heads [scope]
-       (when-let [turn-pos (parse-turn-scope scope)]
-         (when-let [turn (turn-by-pos env turn-pos)]
-           (let [iters (persistance/db-list-session-turn-iterations
-                         (:db-info env) (:id turn))]
-             (mapv (partial iter-summary turn-pos) iters)))))
      'introspect-iter
      (fn introspect-iter [scope]
        (when-let [{:keys [turn iter]} (parse-iter-scope scope)]
