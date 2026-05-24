@@ -1,206 +1,359 @@
-# Trailer / def / context analysis
+# Trailer / def / context analysis — c8dc39b1 case study
 
-## Problem
+## Problem observed
 
-Vis currently mixes three separate roles in one prompt-facing trailer:
-
-1. Evidence for model: what was checked and what happened.
-2. Result snapshot: full tool results (`v/rg`, `v/cat`, `git/status`, etc.).
-3. Restore state: values captured by `(def ...)` for later history/session restore.
-
-This makes small later turns expensive. Conversation `c8dc39b1-faf0-451e-85ad-8cd054067229` showed this clearly: short messages like `siemanko` carried ~58k input tokens because old tool results stayed in `:session/trailer`.
-
-## Observed case
-
-Session: `c8dc39b1-faf0-451e-85ad-8cd054067229`
-
-Huge prompt source was not user text. It was rendered `;; ctx`, mostly `:session/trailer`.
+Conversation `c8dc39b1-faf0-451e-85ad-8cd054067229` showed trivial later
+turns (`siemanko`, `git status`) consuming 50–110k input tokens. The
+source was not user text. It was the rendered `;; ctx` block, dominated
+by `:session/trailer` pins created in turn 1.
 
 Before turn 5:
 
 - `;; ctx`: ~103k chars
-- `:session/trailer`: ~101.8k chars
+- `:session/trailer`: ~101.8k chars (~99% of ctx)
 - biggest pins:
   - `t1/i2`: ~26.7k chars, broad `(v/rg ...)`, `167` files
-  - `t1/i3`: ~68.3k chars, `(v/cat ".../render_ir.clj")`, file size `42036`
+  - `t1/i3`: ~68.3k chars, `(v/cat ".../render_ir.clj")`, file `42036` bytes
 
-Turn 3/4 `siema` had `iteration_count = 0` and burned no provider tokens. The large token row was turn 2 `git status` (`109720` input across 2 iters), caused by old trailer baggage.
+Per-turn input token figures:
 
-## Why `rg` did not disappear
+| turn | request    | status      | iters | input   | cached |
+| ---- | ---------- | ----------- | ----- | ------- | ------ |
+| 1    | TAGS.md…   | error       | 9     | 234 816 | 45 366 |
+| 2    | git status | done        | 2     | 109 720 | 0      |
+| 3    | siema      | interrupted | 0     | 0       | 0      |
+| 4    | siema      | interrupted | 0     | 0       | 0      |
+| 5    | siemanko   | done        | 1     | 58 958  | 0      |
+| 6    | zrób parę  | done        | 2     | 104 146 | 3 143  |
 
-Current stale-prune only drops old observation-only trailer pins after later mutation.
+Turns 3 and 4 burned zero provider tokens because the user interrupted
+before any provider call landed. Turns 5 and 6 paid the full trailer
+weight on every iter.
 
-`t1/i2` was not observation-only:
+## PART 1 — What the trailer is, mechanically
+
+The trailer is a vector under `(:session/trailer ctx)`. Each entry is a
+"pin" map `{:scope "tN/iM" :forms [...]}` summarising one iteration.
+
+### 1. Pin creation
+
+`advance-iter` (`src/com/blockether/vis/internal/ctx_engine.clj:935-972`)
+runs at every iteration end. It takes the form-results vec produced by
+`blocks->forms` / `block->envelope`
+(`ctx_engine.clj:1580-1622`, `1624-1633`), filters out forms whose
+`:src` starts with `(done`, and — if anything is left — conjs one
+`{:scope "tN/iM" :forms keepable}` onto `:session/trailer` (line
+967-969).
+
+**No size check. No dedup. No cap.**
+
+### 2. Where `:result` comes from — the def-deref
+
+`block->envelope` (`ctx_engine.clj:1580-1622`) starts from
+`raw-result (:result block)` — the value SCI returned for the form. For
+def-shaped forms (`def`, `defn`, `defmacro`, `defmulti`, `defonce`)
+matched by `def-form-src?` (`1527-1544`), it calls `deref-def-result`
+(`1546-1554`) on the SCI Var so the pin stores the **bound value**, not
+the Var reference. Then the result is walked through
+`realize-trailer-value` (`1556-1578`) which forces lazy seqs and
+re-derefs nested `IDeref`.
+
+Why this exists (engine comment 1531-1533): without the deref the
+trailer would render `#'sandbox/NAME`, the model would re-emit `NAME` in
+the next iter to inspect the value, and waste a whole iteration.
+
+Consequence: a `(def x (v/cat …))` over a 40k file plants the whole
+file (line-tuples and all) into the trailer pin.
+
+### 3. When something is pruned
+
+Only one prune ever runs: `prune-stale-observation-pins`
+(`ctx_engine.clj:906-921`), invoked from `advance-iter` line 958.
+
+Conditions:
+
+- the current iter contains at least one **mutation** form, AND
+- the old pin is observation-only — `observation-only-trailer-entry?`
+  (`901-904`) requires every form to be `:tag :observation`.
+
+If a pin has even one mutation form, it stays forever. And `(def …)` is
+classified as `:mutation` via `mutation-heads` (`1477-1497`) /
+`classify-form-tag` (`1499-1520`). So
+`(def x (v/rg …))` produces a mixed pin that never gets pruned.
+
+**No size GC, no LRU, no per-iter trailer budget.**
+
+The renderer is explicit about it: "No entry cap, no per-form payload
+cap" (`src/com/blockether/vis/internal/ctx_renderer.clj:300-301`).
+
+### 4. When the trailer hits the prompt
+
+At every turn boundary `render-block!`
+(`src/com/blockether/vis/internal/ctx_loop.clj:288+`) calls
+`render-ctx`, which feeds `:session/trailer` into `render-trailer-value`
+(`ctx_renderer.clj:299-311`). Walk path:
+
+`render-trailer-value` → `render-trailer-pin` (`265-273`) →
+`render-form-pin` → `presentation-form` (`256-263`).
+
+`presentation-form` drops only `:src` (rendered separately as a `;;`
+block). `:result` is "passed through UNTRUNCATED" (comment line
+260-261). Every pin's full value is zp-printed into the next system
+prompt verbatim.
+
+### 5. When the model owns deletion
+
+Only inside `(done {…})`. `apply-done` (`ctx_engine.clj:1366`) routes
+to:
+
+- `apply-trailer-drop` (`1163-1176`) — exact `:scope` match against
+  `tN/iM` pins or `tA/iX->tB/iY` summary keys
+- `apply-trailer-summarize` (`1178-1226`) — absorbs fully-contained
+  pins into one `{:scope-start :scope-end :summary :born}` entry
+
+Outside `(done …)` there is **no API for the model and no engine code**
+that shrinks the trailer.
+
+## PART 2 — Why c8dc39b1 blew up, turn by turn
+
+### Turn 1, iter 1 — title hook
+
+Trivial. Satisfied `:vis.foundation/session-title`. Pin `t1/i1` small.
+
+### Turn 1, iter 2 — broad `rg`
 
 ```clojure
 (task-set! :vis.foundation/session-title {:status :done :proof "t1/i1/f1"})
 (def ir-hits (v/rg {:any ["render-ir" "ir-render" ":ir " "defmethod render"]
-                    :paths ["."]
-                    :files-only? true}))
+                    :paths ["."] :files-only? true}))
 ir-hits
 ```
 
-`def` is tagged `:mutation`, so pin becomes mixed/mutation and is kept. Also result appeared twice:
+What landed in the pin:
 
-- result of `(def ir-hits ...)`
-- result of `ir-hits`
+- Form 2 `(def ir-hits …)` is `:mutation` (def). After
+  `deref-def-result`, `:result` holds the full 167-file vector.
+- Form 3 bare `ir-hits` is `:observation`. Its `:result` is **the same
+  167-file vector** again.
 
-## Why `v/cat` exploded
+Two copies of the same payload in one pin. Pin size ~26.7k chars.
 
-`block->envelope` intentionally derefs def results:
+Why prune did not remove it:
+`observation-only-trailer-entry?` (`ctx_engine.clj:901-904`) needs
+every form tagged `:observation`. Form 2 is `:mutation`, pin is mixed,
+the filter at `916-920` never selects it.
 
-```clojure
-(def ir-file (v/cat ".../render_ir.clj"))
-```
-
-Instead of rendering SCI var `#'sandbox/ir-file`, trailer renders bound value. This was done so model sees actual data immediately and does not waste another iter writing `ir-file`.
-
-That helps interaction, but when bound value is a full file, trailer receives full file data. Then every later prompt carries it until model explicitly emits `:trailer-drop` or `:trailer-summarize`.
-
-## Decision point
-
-Do not teach model to avoid `def` globally. `def` is useful:
-
-- names values for downstream forms
-- supports multi-step reasoning
-- feeds durable definition history
-- enables restore without rerunning user-written exploration manually
-
-Problem is not `def` itself. Problem is prompt trailer treating def value as full prompt payload.
-
-## Proposed architecture
-
-Split responsibilities:
-
-### 1. DB = full truth
-
-Persistence stores full data:
-
-- `definition_state.value`: full snapshot for `def` values
-- `session_turn_iteration.forms`: full per-form envelopes
-- raw prompt/response/code columns for forensics
-
-Restore should use DB snapshots for impure/tool values. Do not replay side-effectful expressions.
-
-Safe-ish to replay:
-
-- `defn`
-- maybe `defmacro`
-- small literal `def`
-- pure deterministic transforms
-
-Unsafe to replay:
-
-- `v/cat` (file may change)
-- `v/rg` (repo may change)
-- `git/status` (workspace mutates)
-- `git/commit!`, `git/push!` (side effects; never replay)
-- network/provider calls
-
-For `(def x (v/cat ...))`, restore from stored value, not from expression.
-
-### 2. Trailer = prompt index, not storage
-
-Prompt-facing trailer should render compact evidence and references, not full payloads.
-
-Small results can remain inline. Large/tool results should become summaries/refs.
-
-Example for `v/cat`:
+### Turn 1, iter 3 — full `v/cat`
 
 ```clojure
-{:scope "t1/i3/f1"
- :tag :mutation
- :src "(def ir-file (v/cat \".../render_ir.clj\"))"
- :result-ref {:scope "t1/i3/f1"
-              :kind :tool-result
-              :op :v/cat
-              :path "extensions/.../render_ir.clj"
-              :size 42036
-              :line-count 900
-              :preview "...first N chars..."
-              :full "use introspect-form"}}
+(def ir-file (v/cat "extensions/.../render_ir.clj"))
 ```
 
-Example for `v/rg`:
+`v/cat` default reads 2000 lines from line 1 with no caller-supplied
+limit. File: 42036 bytes. `block->envelope` derefs the Var,
+`realize-trailer-value` forces the `:lines` vec. Pin `t1/i3`: ~68.3k
+chars.
+
+### Turn 2 — `git status`
+
+Two iters. Each iter's provider call rebuilds `;; ctx` from scratch and
+includes `t1/i1` + `t1/i2` + `t1/i3` verbatim. Result: 109 720 input
+tokens for a tiny user question, almost all from the carried trailer.
+
+### Turns 3, 4 — `siema`
+
+`iteration_count = 0`. User interrupted before any provider call landed.
+No new pins, but also no `(done …)`, so no `:trailer-drop` ran. Trailer
+stays at ~101.8k chars across every subsequent prompt rebuild.
+
+### Turn 5 — `siemanko`
+
+~58k input tokens for one word. The persistent trailer rode in
+unchanged.
+
+### Turn 6 — `zrób parę v/ls`
+
+Same baseline + new pins on top. Model emitted
+`(done {:answer … :trailer-drop ["t6/i1"]})` to drop its own fresh pin,
+but the legacy `t1/i2` / `t1/i3` weight stayed because nobody dropped
+them.
+
+## PART 3 — Three roles conflated on one pin
+
+Take `t1/i2/f2` `(def ir-hits (v/rg …))`. One envelope, three roles:
+
+| role               | what it is                                                   | what the model needs in prompt           | where it should live                       |
+| ------------------ | ------------------------------------------------------------ | ---------------------------------------- | ------------------------------------------ |
+| evidence-for-model | "I ran `v/rg`, got 167 files."                               | `:src` + count + small sample (~200 ch)  | trailer pin (compact)                      |
+| result-snapshot    | the literal 167-element vector of paths                      | nothing by default; lazy-fetch on demand | `session_turn_iteration.forms` (DB) only   |
+| restore-state      | bound value of `ir-hits` for next iter / next resume         | nothing in prompt; SCI binding only      | `definition_state.value` (DB) → SCI intern |
+
+All three end up in the same `:result` slot today. That is the bug.
+
+## PART 4 — Fix options, smallest to largest
+
+### Option A — size-aware pin at creation (smallest change)
+
+**Touch:** `block->envelope`
+(`src/com/blockether/vis/internal/ctx_engine.clj:1580-1622`) or
+`advance-iter` (`935-972`).
+
+**Patch shape:** after `realize-trailer-value`, check
+`(count (pr-str result))`. When over a threshold (suggest **2 KB**),
+replace `:result` with
 
 ```clojure
-{:scope "t1/i2/f2"
- :tag :mutation
- :src "(def ir-hits (v/rg ...))"
- :result-ref {:scope "t1/i2/f2"
-              :kind :tool-result
-              :op :v/rg
-              :file-count 167
-              :query ["render-ir" "ir-render" ":ir " "defmethod render"]
-              :sample ["file1" "file2" "file3"]
-              :truncated? true
-              :full "use introspect-form"}}
+{:vis/result-ref true
+ :scope          scope
+ :vis.op         (:vis.op raw-result)
+ :preview        "first non-empty line of pr-str result"
+ :size           N
+ :full           "use introspect-form"}
 ```
 
-### 3. Introspection retrieves full data
+The full value stays in DB (`session_turn_iteration.forms[…].result`,
+already persisted today) and in an in-memory `:engine/form-results`
+cache so hook-task validators see the same data they see today.
 
-Model can request full stored result lazily:
+**Risk:** low.
 
-- `(introspect-form "t1/i3/f1")`
-- `(introspect-iter "t1/i3")`
-- `(introspect-var 'ir-file)` / equivalent future helper
+- Hook-task validation runs at end-of-iter against the live
+  `form-results` vec **before** `advance-iter` writes the pin, so the
+  existing validator flow is unaffected.
+- `trailer->form-results` (`ctx_loop.clj:275-286`) → `pass-validators`
+  (`ctx_engine.clj:744`) need a DB-or-cache fallback only for proofs
+  referencing scopes from earlier turns. Same fallback applies to
+  `classify-scope` lookups.
 
-Important: introspection should read DB/full stored envelopes, not prompt-rendered summaries.
+**User-visible:** prompts shrink immediately on large `v/cat` / `v/rg`.
+Model sees `:src` + `:vis.op` + summary; calls `(introspect-form …)` if
+it needs the body. The single biggest leverage point — would have
+prevented the entire c8dc39b1 explosion.
 
-### 4. Proofs/validators must not depend on prompt rendering
+### Option B — auto-summarize over budget (medium change)
 
-`derive-progression`, hook-task validation, and proof scope lookup should use full form-results from stored ctx/DB, not rendered trailer text.
+**Touch:** new compactor next to `apply-trailer-summarize`
+(`ctx_engine.clj:1178-1226`), called from `advance-iter` post-step.
 
-Prompt trailer may be lossy. Engine truth must remain lossless.
+**Patch shape:** if
+`(reduce + (map rendered-size (:session/trailer ctx))) > BUDGET`
+(suggest **20 KB**), auto-synthesise
+`{:scope-start :scope-end :summary :born}` over the oldest pins until
+under budget. Same shape as model-issued summaries — renderer untouched.
 
-## Policy sketch
+**Risk:** medium.
 
-When building prompt trailer:
+- `find-overlap-conflict` (`1153`) must run for auto-summaries too.
+- Tests for the `apply-done` summarize path must extend to the
+  auto-path.
+- Model-owned `(done {:trailer-summarize …})` semantics stay; the
+  engine simply runs the same pipeline opportunistically.
 
-1. Keep `:src`, `:scope`, `:tag`, `:error` inline.
-2. Inline `:result` only if small and safe.
-3. If result exceeds char/token threshold, replace with `:result-ref` summary.
-4. If result is known tool result, use op-aware summary (`:vis.op`).
-5. Deduplicate same value shown by `(def x ...)` and immediate `x` observation in same iter.
-6. Observation-only old pins may still be pruned, but mixed pins with giant results must also be compacted.
+**User-visible:** trailer asymptotes at a known size. Old pins become
+`:summary` strings; model calls `introspect-iter` / `introspect-form`
+for replay. Stops the 58k-token short-message regression entirely.
 
-Suggested default thresholds:
+### Option C — full DB-truth / trailer-index split (largest change)
+
+**Touch:** A + B + persistence layer
+(`session_turn_iteration.forms` already stores full envelopes but must
+become the **canonical** read source), restore path, hook-task validator
+pass (must read DB not trailer), `introspect-form` implementation
+(must hit DB).
+
+**Risk:** large.
+
+- `trailer->form-results` (`ctx_loop.clj:275-286`) becomes lossy.
+  Every consumer (`pass-validators`, `classify-scope`,
+  `derive-progression`) needs a DB-aware fallback.
+- Restore semantics must be formalised (Part 5).
+- Migration: existing sessions store fat trailers; renderer either
+  handles both shapes or a migration thins them at load time.
+
+**User-visible:** trailer becomes a compact index
+(`:src`, `:tag`, `:vis.op`, `:size`, `:preview`,
+`:full "use introspect-form"`). Full data lazy-loadable. Matches the
+target architecture.
+
+### Recommended path
+
+A first. It is a one-file, low-risk patch that eliminates 80% of the
+bloat without changing any semantics. B second to make the worst case
+bounded. C as the long-term clean-up once A + B have run in production
+long enough to validate the size thresholds.
+
+### Concrete thresholds (default)
 
 - inline scalar: always
-- inline map/vector: if rendered result <= ~2k chars
-- per iter trailer budget: ~8k chars
-- full ctx trailer budget: ~20k chars before forced compaction warning/task
+- inline map / vector: only if `pr-str` ≤ **2 KB**
+- per-iter result budget across all forms: **8 KB**
+- per-ctx trailer hard cap before auto-summary: **20 KB**
 
-## Safer model guidance
+(Numbers from the GLM-5.1 critique pass; tunable per session.)
 
-Model should still bind useful intermediate values with `def`, but should not rely on full values always appearing in prompt. If summary says `:full "use introspect-form"`, model should call introspection only when details are needed.
+## PART 5 — Restore semantics
 
-Avoid patterns that duplicate large data:
+Restore means rebuilding the SCI sandbox so that every name the model
+`def`-ned in earlier iters resolves to the same value on the next iter
+or after a process restart / session resume / fork.
 
-```clojure
-(def x (v/rg ...))
-x
-```
+### Case 1 — pure `(defn foo [x] (* x 2))`
 
-The renderer should dedupe this automatically, but model guidance can still say: bind once, inspect shape/count/slices, not full value.
+Deterministic, side-effect free. Restore replays the form through SCI →
+identical `#'sandbox/foo`. DB does not even need the bound value;
+source alone is enough. Always safe.
 
-Prefer:
+### Case 2 — impure `(def x (v/cat "deps.edn"))`
 
-```clojure
-(def hits (v/rg {...}))
-(select-keys hits [:file-count :truncated?])
-```
+Replay would re-execute `v/cat` against a possibly-changed file.
+Restore must **not** eval the RHS. Instead it interns the stored value
+from DB (`session_turn_iteration.forms[…].result`, the same value
+`realize-trailer-value` produced at original execution time). Source is
+kept for forensics only.
 
-For files:
+### Case 3 — cross-form `(def y (process x))` after Case 1 + Case 2
 
-```clojure
-(def f (v/read "path" {:offset 1 :limit 80}))
-```
+Forms restored in `(turn, iter, position)` order via `scope-compare`:
 
-or targeted reads over full `v/cat` when possible.
+1. Replay `(defn process …)` — pure, SCI binds `#'sandbox/process`.
+2. Replay `(def x …)` — skip RHS, intern stored DB value.
+3. Replay `(def y …)` — two valid strategies:
+   - **(a)** eval RHS: `process` is pure, `x` already bound to the
+     bit-identical DB value, so result is deterministic. "Free" if
+     serde is bit-faithful — which `realize-trailer-value`
+     (`ctx_engine.clj:1556-1578`) was added to guarantee.
+   - **(b)** skip RHS, intern stored `y`. Safer when `process` itself
+     is non-deterministic.
 
-## Main conclusion
+### What the engine cannot do today
 
-Trailer should not be storage. Trailer should be a compact prompt index.
+`def-form-src?` only recognises "this is some def". A real restore
+needs a `safe-to-replay?` classifier:
 
-Storage belongs in SQLite. Restore belongs to DB snapshots. Full forensic access belongs to introspection. Prompt only needs enough evidence and handles to ask for more.
+- `defn`, `defmacro` → **pure-by-shape**, safe to replay
+- `(def NAME (TOOL …))` where TOOL ∈ `mutation-heads` (e.g. `v/write`,
+  `v/patch`, `git/commit!`) → **never replay**
+- `(def NAME (READ-TOOL …))` where READ-TOOL ∈ {`v/cat`, `v/rg`,
+  `git/status`, `v/ls`, network-shaped reads} → **impure-read, intern
+  from DB**
+- `(def NAME <literal>)` or `(def NAME (pure-expr …))` → safe to replay
+
+`mutation-heads` (`ctx_engine.clj:1484-1497`) already covers most write
+tools. The "impure-read" tier is what is missing — `v/cat`, `v/rg`,
+`git/status` are reads of mutable state, not writes, but their results
+must not be reproduced from source.
+
+## Open questions
+
+1. Where does the `:engine/form-results` cache live? Per-session in
+   memory? Bounded? Or do we always round-trip through DB?
+2. Does Option A leak abstraction: should the renderer or the engine
+   own the size threshold?
+3. Restore must run before SCI executes the first form of the resumed
+   iter. Where does the restore pass attach? At `make-ctx-atom`
+   (`ctx_loop.clj:41-44`) or earlier in the session-open flow?
+4. Auto-summary in Option B needs a default summary text generator.
+   Reuse the `:vis.op` summary shape from Option A? Or run a small
+   prompt-side render per pin?
+5. Do we expose `safe-to-replay?` as engine surface so extensions can
+   register their own tool tier (read / mutation)?
