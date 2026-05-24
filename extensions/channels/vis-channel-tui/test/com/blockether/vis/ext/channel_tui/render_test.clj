@@ -14,6 +14,24 @@
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 (def ^:private assistant-meta-line @#'render/assistant-meta-line)
 
+(defn- with-raw-code-on*
+  "Enable `:vis/show-raw-code` for the duration of `body-thunk`,
+   restore the prior value. Test helper for layout / bubble shape
+   assertions that need the code rail visible — production default
+   is OFF (channel hides every `:code` row; only tool channel
+   previews + recap rows + the answer paint)."
+  [body-thunk]
+  (let [prev (vis/toggle-value :vis/show-raw-code)]
+    (vis/toggle-set-value! :vis/show-raw-code true)
+    (try (body-thunk)
+      (finally
+        (if (nil? prev)
+          (vis/toggle-reset-to-default! :vis/show-raw-code)
+          (vis/toggle-set-value! :vis/show-raw-code prev))))))
+
+(defmacro ^:private with-raw-code-on [& body]
+  `(with-raw-code-on* (fn [] ~@body)))
+
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
   [s]
@@ -49,6 +67,7 @@
 
 (defdescribe live-running-block-test
   (it "renders a block slot with no result as currently running with elapsed time"
+      (with-raw-code-on
     ;; The right-aligned `BLOCK N` / `ITERATION N` / `CODE N` header bands
     ;; were retired per user directive (see comments in render.clj). The
     ;; spinner now lives next to the form via the in-line `↻ <elapsed>`
@@ -62,10 +81,11 @@
       (expect (not-any? #(str/includes? % "ITERATION 1") lines))
       (expect (not-any? #(str/includes? % "CODE 1") lines))
       (expect (= p/MARKER_CODE (marker-of code-line)))
-      (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))))
+      (expect (= p/MARKER_CODE_STATUS (marker-of status-line))))))
 
   (it "renders mixed-block render segments as visible code plus title banner while hiding answer call"
-    (let [lines (format-iteration-entry {:iteration 0
+    (with-raw-code-on
+      (let [lines (format-iteration-entry {:iteration 0
                                          :forms [{:code (str "(def x 1)\n"
                                                           "(set-session-title! \"Mixed forms\")\n"
                                                           "(done [:ir [:p \"Done\"]])") :comment nil :render-segments [{:kind :code :source "(def x 1)"}
@@ -88,7 +108,7 @@
           body (str/join "\n" (map (comp strip-ansi body-of) lines))]
       (expect (str/includes? body "bold"))
       (expect (str/includes? body "result"))
-      (expect (not (str/includes? body ":ir")))))
+      (expect (not (str/includes? body ":ir"))))))
 
   (it "renders channel sink IR returned by a tool without EDN dumping"
     ;; Tool results carry their channel-render IR via `:result-render`.
@@ -123,9 +143,11 @@
                    :forms [{:code (str "(def r (v/ls \".\"))\n"
                                     "(select-keys r [:entry-count :file-count])")
                             :comment nil
+                            ;; With \":vis/show-raw-code\" OFF (default)
+                            ;; the channel hides ALL :code segments — no
+                            ;; per-segment :hidden? flag any more.
                             :render-segments [{:kind :code
-                                               :source "(def r (v/ls \".\"))"
-                                               :hidden? true}
+                                               :source "(def r (v/ls \".\"))"}
                                               {:kind :code
                                                :source "(select-keys r [:entry-count :file-count])"}]
                             :result-render ls-ir
@@ -135,11 +157,10 @@
                             :success? true :silent? false}]}
                   80 1 {})
           body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) lines))]
-      ;; Visible code: only the derived projection, no def wrap.
-      (expect (str/includes? body "(select-keys r [:entry-count :file-count])"))
+      ;; Neither raw code row paints; the bubble is just the LS
+      ;; preview (badge + body).
+      (expect (not (str/includes? body "(select-keys")))
       (expect (not (str/includes? body "(def r (v/ls")))
-      ;; LS preview shows through despite plain-value fence
-      ;; result.
       (expect (str/includes? body "LS"))
       (expect (str/includes? body ".gitignore"))))
 
@@ -161,6 +182,7 @@
       (expect (= p/MARKER_CODE_ERR (marker-of error-line)))))
 
   (it "puts success status on its own bottom line and keeps bottom padding"
+      (with-raw-code-on
     ;; Layout (post header-band removal):
     ;;   iteration-pad
     ;;   code-ok-pad             ← the trailing pad lives ABOVE result rows,
@@ -178,10 +200,11 @@
       (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
       (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))
       (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
-      (expect (not-any? #(str/includes? (or % "") "3") bodies))))
+      (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
 
   (it "pads displayed form comments by one column"
-    (let [lines (format-iteration-entry {:iteration 0
+    (with-raw-code-on
+      (let [lines (format-iteration-entry {:iteration 0
                                          :forms [{:code "(+ 1 2)" :comment ";; why this runs" :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 0 :success? nil :silent? false}]}
                   40 1 {})
           comment-line (first (filter #(str/includes? % ";; why this runs") lines))]
@@ -198,7 +221,7 @@
                   120 1 {})
           body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
       (expect (str/includes? body "RECAP  Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
-      (expect (str/includes? body "Exceptional status code: 429"))))
+      (expect (str/includes? body "Exceptional status code: 429")))))
 
   (it "formats same-provider retry notices as recap rows"
     (let [lines (format-iteration-entry
@@ -332,7 +355,8 @@
         (expect (not-any? pad? ln))))
 
     (it "answer with code-bearing trace reuses trace pad as outside margin"
-      (let [p   (render/format-answer-with-thinking-data*
+      (with-raw-code-on
+        (let [p   (render/format-answer-with-thinking-data*
                   ans [iter] 80 settings nil false nil)
             idx (index-of p "hello")
             ln  (:lines p)]
@@ -353,7 +377,7 @@
         (expect (some? idx))
         (expect (visually-blank? (nth ln (dec idx))))
         (expect (or (zero? (dec idx))
-                  (not (visually-blank? (nth ln (- idx 2))))))))))
+                  (not (visually-blank? (nth ln (- idx 2)))))))))))
 
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
@@ -419,7 +443,8 @@
       (expect (not (str/includes? body ":ir")))))
 
   (it "live progress renders every iteration instead of hiding history"
-    (let [mk-entry (fn [n]
+    (with-raw-code-on
+      (let [mk-entry (fn [n]
                      {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
           body     (strip-ansi
                      (render/progress->text
@@ -444,7 +469,7 @@
                    {:now-ms 1000 :turn-start-ms 0}))]
       (expect (not (str/includes? body "hidden while live")))
       (expect (str/includes? body "alpha"))
-      (expect (str/includes? body "beta"))))
+      (expect (str/includes? body "beta")))))
 
   (it "live progress previews huge thinking with the viewport-driven truncation"
     ;; The single-iteration truncation summary only fires when a
@@ -489,6 +514,7 @@
       (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "live progress always renders every iteration with no PROGRESS HISTORY toggle"
+      (with-raw-code-on
     ;; Per user directive: no collapsible iteration history. Every
     ;; iteration paints in place; the PROGRESS HISTORY summary band
     ;; is gone.
@@ -508,10 +534,11 @@
       (expect (not (str/includes? body "iterations hidden")))
       (expect (str/includes? body "(+ 0 1)"))
       (expect (str/includes? body "(+ 11 1)"))
-      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
+      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload))))))
 
   (it "toggles :vis/silent forms in live progress traces"
-    (let [progress {:iterations
+    (with-raw-code-on
+      (let [progress {:iterations
                     [{:forms [{:code "(set-session-title! \"Greeting\")"
                                :result-render ":vis/silent"
                                :result-kind :value
@@ -548,7 +575,7 @@
                           {:show-thinking true :show-iterations true}
                           {:now-ms 1000 :turn-start-ms 0})))]
       (expect (str/includes? body "ERROR x 11: Stream ended before terminal marker."))
-      (expect (= 1 (count (re-seq #"ERROR" body)))))))
+      (expect (= 1 (count (re-seq #"ERROR" body))))))))
 
 (defdescribe progress-streaming-perf-test
   (it "per-iteration cache keeps live-stream tick under 50 ms with 15 iterations"
@@ -628,6 +655,7 @@
 (defdescribe iteration-live-ordering-test
   (describe "ordered live progress events"
     (it "renders reasoning before code in the post-:events flat layout"
+      (with-raw-code-on
       ;; The pre-existing `:events`-driven interleaved variant was
       ;; removed when the runtime contract dropped `:events`. Resume /
       ;; live now share a flat layout: thinking first, then all code
@@ -641,9 +669,10 @@
             body  (strip-ansi (str/join "\n" (map body-of lines)))]
         (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
         (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
-        (expect (neg? (.indexOf body "2"))))))
+        (expect (neg? (.indexOf body "2")))))))
 
   (it "keeps thinking and code flush so the thinking→badge margin matches code→badge"
+      (with-raw-code-on
     ;; Parallel work (`equalize thinking→badge margin`) intentionally
     ;; collapsed the previous two-row pad block between thinking and
     ;; code so the visible breathing room is a SINGLE neutral row,
@@ -667,7 +696,7 @@
       ;; small handful of marker / pad rows between them (per parallel
       ;; layout work). Hard ceiling guards against a regression that
       ;; explodes the gap into a multi-row stripe.
-      (expect (<= (- code-idx alpha-idx) 5)))))
+      (expect (<= (- code-idx alpha-idx) 5))))))
 
 (defdescribe paint-styled-line-stacking-test
   ;; The Polish bug report: `> **Lącznie:**` inside a quote rendered
