@@ -114,7 +114,11 @@
         (expect (str/includes? out ":nope")))
 
       (it "still produces a balanced EDN body"
-        (let [body (str/replace-first out #"^;; ctx\n" "")]
+        ;; ;; ctx header + optional top-of-ctx summary banner (one or more
+        ;; ;; ⚠ ctx-summary: … lines) precede the bare-EDN body. Strip every
+        ;; leading `;; …` comment line, then assert the remainder is the
+        ;; bare-EDN map starting with `{` and ending with `}`.
+        (let [body (str/replace-first out #"\A(?:;;[^\n]*\n)+" "")]
           (expect (str/starts-with? body "{"))
           (expect (str/ends-with? body "}")))))))
 
@@ -127,6 +131,79 @@
       (it "renders at least one suggested action"
         (expect (re-find #":type :(prove-requirement|work-unblocked-todo|review-spec|review-task)"
                   out))))))
+
+(defdescribe render-blocking-banner-test
+  (describe "P1 fix-consistency actions render as `;; ⛔ BLOCKING` banner"
+    ;; Force a P1 action: flip an unsatisfied spec to :done so
+    ;; derive-next-actions emits a `:review-spec` with `:blocking? true`.
+    ;; The renderer must surface a `;; ⛔ BLOCKING action(s)` banner so
+    ;; the model cannot scan past the next-actions list and miss it.
+    (let [ctx (-> base-ctx
+                (assoc-in [:session/specs :auth :status] :done))
+          out (render ctx)]
+
+      (it "emits the BLOCKING banner before the next-actions vec"
+        (expect (str/includes? out ";; ⛔"))
+        (expect (str/includes? out "BLOCKING action(s)")))
+
+      (it "lists each blocking action's hint inline so the fix is one read away"
+        (expect (str/includes? out ":auth :done but"))
+        (expect (str/includes? out ";;   → ")))
+
+      (it "keeps the :blocking? flag on the rendered action entry"
+        (expect (str/includes? out ":blocking? true"))))))
+
+(defdescribe render-ctx-summary-banner-test
+  (describe "top-of-ctx summary banner counts warnings and blocking actions"
+    ;; The summary banner sits between `;; ctx` and the bare-EDN body.
+    ;; It exists so a model scanning the ctx fast knows up-front that the
+    ;; symbolic critic has something to say — even if the trailer is long
+    ;; and the next-actions section is far down.
+    (let [ctx (-> base-ctx
+                ;; dangling fact ref ⇒ warning
+                (assoc-in [:session/specs :auth :requirements 0 :facts] [:f1 :nope])
+                ;; spec :done with unproven req ⇒ blocking P1 action
+                (assoc-in [:session/specs :auth :status] :done))
+          out (render ctx)]
+
+      (it "emits a `;; ⚠ ctx-summary:` line just after `;; ctx`"
+        (expect (re-find #"\A;; ctx\n;; ⚠ ctx-summary:" out)))
+
+      (it "reports both warning and blocking counts"
+        (expect (str/includes? out "warning(s)"))
+        (expect (str/includes? out "blocking action(s)")))
+
+      (it "points the model at the actions section explicitly"
+        (expect (str/includes? out "read :session/next-actions first"))))
+
+    ;; Clean ctx (no warnings, no blocking actions) ⇒ no banner. Otherwise
+    ;; every prompt would carry it as cosmetic noise.
+    (let [clean-ctx (-> (eng/empty-ctx "clean")
+                      (assoc :session/scope {:turn 1 :iter 1 :next-form 1})
+                      (assoc :session/turn 1))
+          out (render clean-ctx)]
+      (it "omits the banner entirely when nothing is wrong"
+        (expect (not (str/includes? out "ctx-summary")))
+        (expect (not (str/includes? out "⛔")))))))
+
+(defdescribe render-next-actions-overflow-test
+  (describe "next-actions overflow surfaces the suppressed count"
+    ;; Engine now returns the FULL ranked list (cap removed from
+    ;; derive-next-actions). Renderer caps at NEXT_ACTIONS_BUDGET and
+    ;; appends a `;; N more action(s) suppressed` hint so the model sees
+    ;; the backlog pressure instead of a silently-truncated list.
+    (let [;; spawn many unblocked todo tasks so the engine emits > 5 actions
+          many-tasks (into {}
+                       (for [i (range 10)]
+                         [(keyword (str "todo-" i))
+                          {:title (str "todo-" i) :status :todo :born "t1/i1/f1"
+                           :specs {}}]))
+          ctx (-> base-ctx
+                (update :session/tasks merge many-tasks))
+          out (render ctx)]
+
+      (it "includes the `more action(s) suppressed` overflow hint"
+        (expect (str/includes? out "more action(s) suppressed"))))))
 
 (defdescribe render-trailer-src-verbatim-test
   (describe "trailer :src survives without quote-escape corruption"
