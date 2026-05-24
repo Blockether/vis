@@ -107,15 +107,6 @@
 (defn- truncate [s n]
   (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
-(defn- realize-value [v]
-  (cond
-    (instance? clojure.lang.IDeref v) @v
-    (map? v) (into {} (map (fn [[k vv]] [k (realize-value vv)])) v)
-    (vector? v) (mapv realize-value v)
-    (set? v) (set (map realize-value v))
-    (sequential? v) (doall (map realize-value v))
-    :else v))
-
 ;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired
 ;; together with the `definition_*` sidecar tables and `restore-sandbox!`.

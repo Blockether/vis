@@ -307,7 +307,7 @@
     ;; validates against `:choices`. Invalid entries are silently
     ;; skipped — the registered default stands.
     (vis/toggles-hydrate-from-config! {:toggles {:vis/reasoning-level :turbo
-                                                  :openai-codex/verbosity :loud}})
+                                                 :openai-codex/verbosity :loud}})
     (try
       (with-redefs [vis/load-config-raw (fn [] {})]
         (state/init!)
