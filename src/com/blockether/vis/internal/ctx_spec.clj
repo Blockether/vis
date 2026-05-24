@@ -84,19 +84,19 @@
   (s/with-gen
     (s/and string? #(re-matches scope-form-re %))
     #(gen/fmap (fn [[t i f]] (str "t" t "/i" i "/f" f))
-       (gen/tuple (pos-int-gen) (pos-int-gen) (pos-int-gen)))))
+               (gen/tuple (pos-int-gen) (pos-int-gen) (pos-int-gen)))))
 
 (s/def ::scope-iter
   (s/with-gen
     (s/and string? #(re-matches scope-iter-re %))
     #(gen/fmap (fn [[t i]] (str "t" t "/i" i))
-       (gen/tuple (pos-int-gen) (pos-int-gen)))))
+               (gen/tuple (pos-int-gen) (pos-int-gen)))))
 
 (s/def ::scope-turn
   (s/with-gen
     (s/and string? #(re-matches scope-turn-re %))
     #(gen/fmap (fn [t] (str "t" t))
-       (pos-int-gen))))
+               (pos-int-gen))))
 
 ;; =============================================================================
 ;; Entry keys (model-chosen keywords)
@@ -126,8 +126,8 @@
 
 (s/def ::fact
   (s/keys :req-un [::content ::born]
-    :opt-un [:session.fact/status
-             :session.fact/done-born]))
+          :opt-un [:session.fact/status
+                   :session.fact/done-born]))
 
 ;; Soft rules:
 ;;   - :status defaults to :active when omitted (engine assumes :active for legacy facts)
@@ -196,14 +196,14 @@
                    :session.task/specs
                    :session.task/status
                    ::born]
-    :opt-un [:session.task/depends-on
-             :session.task/done-born
-             :session.task/source
-             :session.task/hook-id
-             :session.task/importance
-             :session.task/validator-fn
-             :session.task/proof
-             :session.task/validated?]))
+          :opt-un [:session.task/depends-on
+                   :session.task/done-born
+                   :session.task/source
+                   :session.task/hook-id
+                   :session.task/importance
+                   :session.task/validator-fn
+                   :session.task/proof
+                   :session.task/validated?]))
 
 ;; Soft rules (engine-side validators; not enforced by spec):
 ;;   - :specs keys must point to existing keys in :session/specs
@@ -234,8 +234,8 @@
 (s/def :session.spec/requirement
   (s/keys :req-un [:session.requirement/id
                    :session.requirement/title]
-    :opt-un [:session.requirement/facts
-             :session.requirement/validator-fn]))
+          :opt-un [:session.requirement/facts
+                   :session.requirement/validator-fn]))
 
 (s/def :session.spec/requirements
   (s/coll-of :session.spec/requirement :kind vector? :min-count 1))
@@ -250,7 +250,7 @@
                    :session.spec/requirements
                    :session.spec/status
                    ::born]
-    :opt-un [:session.spec/done-born]))
+          :opt-un [:session.spec/done-born]))
 
 ;; Soft rules:
 ;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
@@ -272,14 +272,14 @@
 (s/def :session.trailer.form.error/data    map?)
 (s/def :session.trailer.form/error
   (s/keys :req-un [:session.trailer.form.error/message]
-    :opt-un [:session.trailer.form.error/data]))
+          :opt-un [:session.trailer.form.error/data]))
 
 (s/def ::trailer-form
   (s/keys :req-un [:session.trailer.form/scope
                    :session.trailer.form/tag
                    :session.trailer.form/src]
-    :opt-un [:session.trailer.form/result
-             :session.trailer.form/error]))
+          :opt-un [:session.trailer.form/result
+                   :session.trailer.form/error]))
 
 (s/def :session.trailer.pin/scope ::scope-iter)
 (s/def :session.trailer.pin/forms
@@ -308,7 +308,7 @@
 
 (s/def ::trailer-entry
   (s/or :pin     ::trailer-pin
-    :summary ::trailer-summary))
+        :summary ::trailer-summary))
 
 ;; =============================================================================
 ;; Workspace — engine-rendered. VCS-agnostic by design: the
@@ -362,8 +362,8 @@
 
 (s/def ::symbol-info
   (s/keys :req-un [:session.symbol/born]
-    :opt-un [:session.symbol/arglists
-             :session.symbol/doc]))
+          :opt-un [:session.symbol/arglists
+                   :session.symbol/doc]))
 
 ;; =============================================================================
 ;; Hints — RETIRED (D12)
@@ -432,7 +432,7 @@
                 :session/tasks
                 :session/facts
                 :session/trailer]
-    :opt [:session/env]))
+          :opt [:session/env]))
 
 ;; =============================================================================
 ;; Convenience: spec-keyed validators by subtree path

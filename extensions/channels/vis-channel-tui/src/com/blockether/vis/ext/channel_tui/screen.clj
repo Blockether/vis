@@ -604,7 +604,7 @@
    is NOT carried on the message map — it lives in workspace
    `:progress` and is painted directly by the bubble renderer; the
    document-rows projection only sees the static placeholder IR
-   (`\"Sending request to provider\u2026\"`). When the user drag-selects
+   (`\"Sending request to provider…\"`). When the user drag-selects
    across a live bubble, the document path therefore copies the
    placeholder instead of the visible trace. Falling back to the
    screen-cells path picks up exactly what's painted."
