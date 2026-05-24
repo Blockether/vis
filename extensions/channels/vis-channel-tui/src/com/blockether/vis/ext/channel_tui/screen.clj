@@ -598,6 +598,32 @@
              :width content-w
              :text visible}))))))
 
+(defn- selection-touches-pending-bubble?
+  "True when the selection range overlaps a bubble whose message map
+   is `:pending? true`. Live progress (thinking + iteration trace)
+   is NOT carried on the message map — it lives in workspace
+   `:progress` and is painted directly by the bubble renderer; the
+   document-rows projection only sees the static placeholder IR
+   (`\"Sending request to provider\u2026\"`). When the user drag-selects
+   across a live bubble, the document path therefore copies the
+   placeholder instead of the visible trace. Falling back to the
+   screen-cells path picks up exactly what's painted."
+  [messages layout selection]
+  (let [{:keys [start end]} (selection/normalize selection)
+        start-row (long (:row start))
+        end-row   (long (:row end))
+        offsets   (vec (:offsets layout))
+        heights   (vec (:heights layout))]
+    (boolean
+      (some
+        (fn [[idx message]]
+          (when (:pending? message)
+            (let [top    (long (or (get offsets idx) 0))
+                  bottom (long (or (get offsets (inc idx))
+                                 (+ top (long (or (get heights idx) 0)))))]
+              (and (<= top end-row) (>= (dec bottom) start-row)))))
+        (map-indexed vector messages)))))
+
 (defn- selected-transcript-text
   "Extract selected transcript text from virtual document rows, not only
    current screen cells. Used when mouse selection auto-scroll moves earlier
@@ -2247,7 +2273,23 @@
                                                  transcript-bubble-copy-regions))
                                screen-sel    (selection/document->screen-selection
                                                sel selection-viewport)
-                               payload       (if (= source :transcript)
+                               ;; Pending bubbles carry only the static
+                               ;; \"Sending request to provider…\"
+                               ;; placeholder on the message map; the
+                               ;; live trace (thinking + iteration
+                               ;; progress) is painted by the bubble
+                               ;; layer straight from workspace
+                               ;; `:progress`. When the user drag-selects
+                               ;; across a live bubble we have to fall
+                               ;; back to the SCREEN-cells path so the
+                               ;; copied payload matches what the user
+                               ;; sees — the document-rows projection
+                               ;; would otherwise leak the placeholder.
+                               pending-in-sel? (and (= source :transcript)
+                                                 (selection-touches-pending-bubble?
+                                                   (:messages db) (:layout db) sel))
+                               payload       (if (and (= source :transcript)
+                                                   (not pending-in-sel?))
                                                (selected-transcript-text
                                                  (:messages db)
                                                  (:layout db)
