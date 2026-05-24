@@ -3597,6 +3597,54 @@
       executing?  (str "Vis is running code (iter " n ")")
       :else       (str "Vis is working (iter " n ")"))))
 
+(defn- coalesce-bubble-blanks
+  "Collapse any run of adjacent blank rows down to ONE — standardised
+   1-line-max margin between sections (user contract: max 1 blank
+   between rendered things).
+
+   Sources of trailing blanks that stack: code-block outer margin,
+   the bookend guard re-inserted by `ir->lines`, per-iteration
+   leading iter-pad, recap top margin, combine-render-values
+   separators, answer-top margin, cancel block bottom. Without this
+   pass two adjacent bubbles stack 2-3 blanks (each in a different
+   paint band) against each other.
+
+   The THINKING pad (`MARKER_THINKING`, \u200B) is exempt: those
+   rows paint the dim band wrapping a thinking section and reading
+   them as \"gap\" collapses the band into a single line. The
+   test suite pins their presence too.
+
+   Use this at every bubble-assembly seam (trace stream, full
+   bubble payload) so live and restored paths share one contract."
+  [entries]
+  (let [thinking-blank?
+        (fn [{:keys [^String line]}]
+          (and (string? line) (pos? (count line))
+            (= (.charAt line 0) (.charAt ^String thinking-marker 0))
+            (str/blank? (subs line 1))))
+        blank?
+        (fn [{:keys [^String line]}]
+          (let [body (if (and (string? line) (pos? (count line)))
+                       (subs line 1)
+                       (str line))]
+            (str/blank? body)))]
+    (loop [out         (transient [])
+           prev-blank? false
+           xs          (seq entries)]
+      (if (nil? xs)
+        (persistent! out)
+        (let [e   (first xs)
+              bk? (blank? e)]
+          (cond
+            (thinking-blank? e)
+            (recur (conj! out e) false (next xs))
+
+            (and bk? prev-blank?)
+            (recur out true (next xs))
+
+            :else
+            (recur (conj! out e) bk? (next xs))))))))
+
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed
    assistant bubbles. Live progress and final/cancel rendering must call this
@@ -3651,53 +3699,7 @@
                              (cached* k render!)
                              (render!))))]
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
-      ;; Coalesce ANY run of adjacent blank rows down to ONE —
-      ;; standardised 1-line-max margin between sections (user
-      ;; contract: max 1 blank between rendered things).
-      ;;
-      ;; Many sources emit a trailing blank: code-block outer
-      ;; margin, the bookend guard re-inserted by `ir->lines`,
-      ;; per-iteration leading iter-pad, recap top margin,
-      ;; combine-render-values separators. Without this pass two
-      ;; adjacent bubbles stack 2-3 blanks (each in a different
-      ;; paint band) against each other. The user only sees them
-      ;; as empty rows; the visual-band identity doesn't justify
-      ;; the extra height.
-      ;;
-      ;; Preserved kind: the THINKING pad (`MARKER_THINKING`,
-      ;; `\u200B`) which paints the dim band wrapping a thinking
-      ;; section. The test suite pins its presence in two places;
-      ;; visually it's also the only blank that the user reads as
-      ;; \"this row belongs to the thinking band\" rather than
-      ;; \"gap\".
-      (let [thinking-blank?
-            (fn [{:keys [^String line]}]
-              (and (string? line) (pos? (count line))
-                (= (.charAt line 0) (.charAt ^String thinking-marker 0))
-                (str/blank? (subs line 1))))
-            blank?
-            (fn [{:keys [^String line]}]
-              (let [body (if (and (string? line) (pos? (count line)))
-                           (subs line 1)
-                           (str line))]
-                (str/blank? body)))]
-        (loop [out         (transient [])
-               prev-blank? false
-               xs          (mapcat iter-entry-fn visible-iterations)]
-          (if (empty? xs)
-            (persistent! out)
-            (let [e   (first xs)
-                  bk? (blank? e)]
-              (cond
-                ;; Thinking band stays untouched.
-                (thinking-blank? e)
-                (recur (conj! out e) false (rest xs))
-
-                (and bk? prev-blank?)
-                (recur out true (rest xs))
-
-                :else
-                (recur (conj! out e) bk? (rest xs))))))))))
+      (coalesce-bubble-blanks (mapcat iter-entry-fn visible-iterations)))))
 
 (defn- queued-preview
   [text]
@@ -3791,7 +3793,11 @@
                             (conj (conj trace-entries (line-entry ""))
                               (line-entry spinner-line))
                             [(line-entry "") (line-entry spinner-line)])
-         entries          (vec (concat base-entries queued-entries))]
+         ;; Coalesce across the whole bubble (trace + queued).
+         ;; Same exempt for THINKING pad rows; everything else
+         ;; collapses to one blank between bands.
+         entries          (vec (coalesce-bubble-blanks
+                                 (concat base-entries queued-entries)))]
      (entries->payload entries))))
 
 (defn progress->text
@@ -3896,7 +3902,14 @@
         trailer                 (if cancelled? cancel-block answer-block)
         entries                 (if has-trace?
                                   (vec (concat trace-entries trailer))
-                                  (vec trailer))]
+                                  (vec trailer))
+        ;; One more coalesce pass across the WHOLE bubble (trace +
+        ;; trailer). The trace half is already collapsed by
+        ;; `trace-render-entries`, but the seam between the last
+        ;; trace entry and the first trailer entry (answer-top
+        ;; margin / answer-pad / cancel block) can still stack
+        ;; blanks. Same exempt rule for THINKING pad rows.
+        entries                 (vec (coalesce-bubble-blanks entries))]
     (entries->payload entries)))
 
 (defn format-answer-with-thinking*
