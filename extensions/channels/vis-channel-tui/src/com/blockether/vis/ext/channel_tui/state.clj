@@ -1118,19 +1118,75 @@
   (fn [db _]
     (dissoc db :scroll-to-message-pending)))
 
+;; Smooth scroll: wheel and arrow-key events update `:messages-scroll-target`
+;; (where the user WANTS to be); the render loop ticks `:tick-scroll-anim`
+;; periodically to step `:messages-scroll` (where the user IS) toward target,
+;; producing animation across frames instead of a single jarring jump.
+;;
+;; Direct setters (`:set-scroll`, `:scroll-to-y`, `:scroll-to-message`) skip
+;; the target layer and snap both target + current to the same value, so
+;; scrollbar drag stays responsive and resume / search-jump don't fade-in.
+
+(defn- clear-anim-when-settled
+  "Drop `:messages-scroll-target` when target = current. Keeps the render
+   loop's `(scroll-anim-active? db)` check trivial: presence of the key
+   means animation is in progress."
+  [db]
+  (let [t (:messages-scroll-target db)
+        c (:messages-scroll db)]
+    (if (and (some? t) (= t c))
+      (dissoc db :messages-scroll-target)
+      db)))
+
 (reg-event-db :scroll-up
   (fn [db [_ amount total-h inner-h]]
-    (let [max-s (max 0 (- total-h inner-h))
-          cur   (or (:messages-scroll db) max-s)]
-      (assoc db :messages-scroll (max 0 (- cur amount))))))
+    (let [max-s   (max 0 (- total-h inner-h))
+          cur-t   (or (:messages-scroll-target db) (:messages-scroll db) max-s)
+          new-t   (max 0 (- cur-t amount))]
+      (clear-anim-when-settled
+        (assoc db :messages-scroll-target new-t)))))
 
 (reg-event-db :scroll-down
   (fn [db [_ amount total-h inner-h]]
     (let [max-s (max 0 (- total-h inner-h))
-          cur   (or (:messages-scroll db) max-s)]
-      (if (>= (+ cur amount) max-s)
-        (assoc db :messages-scroll nil)
-        (assoc db :messages-scroll (min max-s (+ cur amount)))))))
+          cur-t (or (:messages-scroll-target db) (:messages-scroll db) max-s)]
+      (if (>= (+ cur-t amount) max-s)
+        ;; Reached bottom: TARGET = nil (auto-bottom). Animation steps
+        ;; current toward `max-s` then snaps to nil at end.
+        (-> db
+          (assoc :messages-scroll-target max-s)
+          clear-anim-when-settled)
+        (clear-anim-when-settled
+          (assoc db :messages-scroll-target (min max-s (+ cur-t amount))))))))
+
+(defn- step-toward
+  "Compute one animation step from `cur` toward `target`.
+   Ease-out: bigger steps when far, smaller as we close in. Snaps when
+   within one row so the loop terminates cleanly."
+  ^long [^long cur ^long target]
+  (let [diff (- target cur)]
+    (cond
+      (zero? diff)        cur
+      (= 1 (Math/abs diff)) target
+      :else
+      (let [step (long (Math/max 1 (long (Math/ceil (* 0.35 (Math/abs diff))))))]
+        (if (pos? diff)
+          (Math/min target (+ cur step))
+          (Math/max target (- cur step)))))))
+
+(reg-event-db :tick-scroll-anim
+  ;; Render loop pulse: walk current scroll one ease-out step toward
+  ;; target. Idempotent when no animation is pending (target=current
+  ;; → key already dropped by `clear-anim-when-settled`).
+  (fn [db _]
+    (let [target (:messages-scroll-target db)]
+      (if (nil? target)
+        db
+        (let [cur     (long (or (:messages-scroll db) 0))
+              t-long  (long target)
+              new-cur (step-toward cur t-long)]
+          (clear-anim-when-settled
+            (assoc db :messages-scroll new-cur)))))))
 
 ;; Scrollbar mouse drag/click. Mirrors the thumb-positioning math in
 ;; `render/draw-messages-area!` so a click on the bar lands the thumb
@@ -1139,6 +1195,9 @@
 ;; in rows; `total-h`/`inner-h` are the layout sizes the render thread
 ;; published into app-db.
 (reg-event-db :scroll-to-y
+  ;; Scrollbar drag / track click: direct snap. Drag must follow the
+  ;; cursor 1:1, so we bypass the target-interpolation layer and snap
+  ;; both fields to the same value (animation would lag the thumb).
   (fn [db [_ mouse-y bar-top track-h total-h inner-h]]
     (if (or (<= total-h inner-h) (<= track-h 0))
       db
@@ -1147,8 +1206,11 @@
             relative   (- mouse-y bar-top)
             denom      (max 1 (- track-h thumb-h))
             fraction   (max 0.0 (min 1.0 (double (/ relative denom))))
-            new-scroll (long (Math/round (* fraction max-scroll)))]
-        (assoc db :messages-scroll (max 0 (min max-scroll new-scroll)))))))
+            new-scroll (max 0 (min max-scroll
+                                (long (Math/round (* fraction max-scroll)))))]
+        (-> db
+          (assoc :messages-scroll new-scroll)
+          (dissoc :messages-scroll-target))))))
 
 (defn- turn-extra-body
   [{:keys [settings]}]

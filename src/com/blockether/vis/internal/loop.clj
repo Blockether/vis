@@ -3482,11 +3482,29 @@
                                   fs))
                               [b]))
                           blocks)
+                        ;; Tag resolver: lift extension-declared
+                        ;; observation/mutation tag (`extension/op-tag`)
+                        ;; into `classify-form-tag` so extension tools
+                        ;; like `(v/patch …)`, `(git/commit! …)`, etc.
+                        ;; classify correctly without the engine
+                        ;; hard-coding their head symbol. The bare
+                        ;; symbol head is read at envelope-build time;
+                        ;; we map it to its `:alias/sym` keyword and
+                        ;; consult the registry. Unregistered ops fall
+                        ;; through to the engine's core mutation set.
+                        head-tag-resolver
+                        (fn [head-sym]
+                          (when head-sym
+                            (let [op-kw (try (keyword (str head-sym))
+                                          (catch Throwable _ nil))]
+                              (when (and op-kw (extension/registered-op? op-kw))
+                                (try (extension/op-tag op-kw)
+                                  (catch Throwable _ nil))))))
                         forms-vec   (if (seq expanded-blocks)
-                                      (ctx-engine/blocks->forms expanded-blocks cursor)
+                                      (ctx-engine/blocks->forms expanded-blocks cursor head-tag-resolver)
                                       [(ctx-engine/block->envelope
                                          {:code "" :error {:message "empty iteration"}}
-                                         1 cursor)])
+                                         1 cursor head-tag-resolver)])
                         fence-code  (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)

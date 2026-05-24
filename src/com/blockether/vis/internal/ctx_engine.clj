@@ -68,6 +68,7 @@
    via REPL-replayable scenarios."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [edamame.core :as edamame]
             [sci.core :as sci]))
 
 ;; =============================================================================
@@ -1494,50 +1495,117 @@
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================
 
-(def ^:private mutation-heads
-  "Whitelist of bare-symbol heads that classify a form as a :mutation. Anything
-   else defaults to :observation. Engine-owned forms (spec-set!, task-set!,
-   …), def/defn, and the model-driven control flip (set-session-title!)
-   are mutations. Tool extension ops declare their own tag through
-   `register-op!` and are looked up there; this set is only the fallback
-   when an op tag is not registered."
+(def ^:private head-edamame-opts
+  "Tag-tolerant edamame parse opts. Mirrors `env/validation-edamame-opts`
+   so a tagged-literal form (`#inst …`, `#some/tag …`) does not derail
+   head extraction. Reader macros expand to `(do val)` which is exactly
+   what we want — the head of an iter-top-level form is still detectable."
+  {:all true
+   :fn true
+   :regex true
+   :readers (fn [_tag] (fn [val] (list 'do val)))})
+
+(defn form-head-symbol
+  "Return the top-level head symbol of `src` (a Clojure source string)
+   or nil when `src` is not a call form. Uses edamame so reader meta,
+   discard forms (`#_`), comments, and tagged literals all behave the
+   same way they do during real evaluation. Used by `classify-form-tag`
+   and `engine-form-src?`; both must agree on what counts as the head,
+   so there is exactly one implementation.
+
+   Parse failure / non-list head / empty source → nil."
+  [src]
+  (try
+    (let [forms (edamame/parse-string-all (or src "") head-edamame-opts)
+          form  (first forms)]
+      (when (and (seq? form) (symbol? (first form)))
+        (first form)))
+    (catch Throwable _ nil)))
+
+(def ^:private core-mutation-heads
+  "Engine-owned bare-symbol heads that classify a form as `:mutation`.
+   These are the symbols the engine itself defines and recognises:
+
+     • SCI def-shape forms (sandbox state writes)
+     • CTX memory mutators (spec/task/fact + req/proof surface)
+     • Control flow (done, set-session-title!)
+     • Clojure native mutators that survive the sandbox
+       (reset!, swap!, alter-var-root)
+
+   Extension tools (`v/patch`, `v/write`, `git/commit!`, anything an
+   extension ships) are NOT here. Extensions declare their own
+   observation / mutation tag at registration time; the integration
+   layer reaches that tag through `extension/op-tag` and passes it to
+   `classify-form-tag` as an optional resolver. Keeping the core set
+   pure of `v/*` heads stops the engine from owning extension policy."
   '#{def defn defmacro defmulti defmethod
-     ;; Memory mutators
      spec-set! task-set! fact-set!
      req-add! req-update! req-remove!
      proof-add! proof-remove!
-     ;; Control / lifecycle
      done set-session-title!
-     ;; Common sandbox mutators (alias-prefixed forms route through the
-     ;; extension registry; bare names here cover unprefixed cases)
-     reset! swap! alter-var-root
-     ;; Foundation filesystem mutation tools. Inline tool tags normally
-     ;; classify these, but persisted source fallback must still mark
-     ;; stale-observation boundaries correctly.
-     v/patch v/write v/move v/delete v/delete-if-exists v/create-dirs v/copy})
+     reset! swap! alter-var-root})
+
+(def ^:private engine-form-heads
+  "Bare-symbol heads whose RAW source row is engine-only chrome (no
+   observable side effect, no answer payload). The UI hides these forms
+   from user-facing traces; the engine still evaluates them and their
+   return values still ride on the per-form envelope so the live ctx
+   surfaces what the model saw.
+
+   Strict subset of `core-mutation-heads`: every member is also a
+   mutation. `introspect-*` is treated separately by
+   `engine-form-src?` since it is an observation — silent UI but not a
+   mutation.
+
+   Single source of truth shared by `progress.clj` (live trace) and
+   `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
+  '#{set-session-title!
+     done
+     spec-set! task-set! fact-set!
+     req-add! req-update! req-remove!
+     proof-add! proof-remove!})
+
+(defn engine-form-src?
+  "True when `src` is a top-level call whose head names an engine-only
+   form: every member of `engine-form-heads`, plus the entire
+   `introspect-*` family (resolved by name prefix — every introspect
+   verb is engine-internal). False for plain SCI code, tool calls,
+   defs, observations.
+
+   This is the canonical predicate UI layers should use to decide
+   \"is this form silent chrome?\"; the legacy string-prefix scan over
+   the raw source was a false-positive magnet (a `\"(done x)\"` inside
+   a string would have matched)."
+  [src]
+  (when-let [sym (form-head-symbol src)]
+    (let [nm (name sym)]
+      (or (contains? engine-form-heads sym)
+        (str/starts-with? nm "introspect-")))))
 
 (defn classify-form-tag
-  "Classify a form-source string as :observation or :mutation. Engine
-   default: if the first top-level symbol head is in `mutation-heads`,
-   tag is :mutation; everything else is :observation. The integration
-   layer may override by consulting an op registry (`register-op!`)
-   before falling back to this classifier."
-  [src]
-  (let [s (some-> src str str/triml)
-        head (when (and s (str/starts-with? s "("))
-               (let [tail (subs s 1)
-                     space-or-paren (loop [i 0]
-                                      (cond
-                                        (>= i (count tail)) i
-                                        (Character/isWhitespace ^char (.charAt ^String tail i)) i
-                                        (= \( (.charAt ^String tail i))    i
-                                        (= \) (.charAt ^String tail i))    i
-                                        :else (recur (inc i))))]
-                 (subs tail 0 space-or-paren)))
-        sym (when (and head (seq head)) (symbol head))]
-    (if (and sym (contains? mutation-heads sym))
-      :mutation
-      :observation)))
+  "Classify a form-source string as `:observation` or `:mutation`.
+
+   1-arity: pure, engine-only. Returns `:mutation` when the head is a
+   member of `core-mutation-heads`; everything else is `:observation`.
+   Use this from contexts that have no access to the extension
+   registry (tests, pure tools).
+
+   2-arity: takes `head-tag-resolver`, an optional fn
+   `(fn [^Symbol head]) -> :mutation | :observation | nil`. The
+   resolver wins when it returns a non-nil tag; on nil the engine
+   falls back to `core-mutation-heads`. The integration layer in
+   `loop.clj` builds the resolver from `extension/op-tag` so every
+   extension-declared tool (`v/patch`, `git/commit!`, anything new an
+   extension ships) classifies correctly without the engine hard-
+   coding its symbol."
+  ([src] (classify-form-tag src nil))
+  ([src head-tag-resolver]
+   (let [sym (form-head-symbol src)]
+     (or (when (and sym head-tag-resolver)
+           (try (head-tag-resolver sym) (catch Throwable _ nil)))
+       (if (and sym (contains? core-mutation-heads sym))
+         :mutation
+         :observation)))))
 
 ;; =============================================================================
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
@@ -1598,32 +1666,40 @@
    the per-form channel-sink under `:channel`; carrying it onto the
    envelope lets the TUI replay paint the badge from the sink entry
    even after persistence + restore."
-  [block position cursor]
-  (let [src (or (:code block) (:src block) "")
-        scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
-        raw-result (:result block)
-        ;; `(def NAME …)` returns the SCI Var. `realize-trailer-value`
-        ;; already derefs any `IDeref` it encounters, so explicit
-        ;; def-shape detection is redundant: every form's result — Var,
-        ;; atom, lazy seq, plain data — lands as fully realised data
-        ;; in the trailer envelope, ready for prompt rendering and
-        ;; introspection.
-        result (realize-trailer-value raw-result)
-        channel (seq (:channel block))]
-    (cond-> {:scope scope
-             :tag   (classify-form-tag src)
-             :src   src}
-      (contains? block :result) (assoc :result result)
-      (some? (:error block))    (assoc :error  (:error block))
-      channel                   (assoc :channel (vec channel)))))
+  ([block position cursor]
+   (block->envelope block position cursor nil))
+  ([block position cursor head-tag-resolver]
+   (let [src (or (:code block) (:src block) "")
+         scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
+         raw-result (:result block)
+         ;; `(def NAME …)` returns the SCI Var. `realize-trailer-value`
+         ;; already derefs any `IDeref` it encounters, so explicit
+         ;; def-shape detection is redundant: every form's result — Var,
+         ;; atom, lazy seq, plain data — lands as fully realised data
+         ;; in the trailer envelope, ready for prompt rendering and
+         ;; introspection.
+         result (realize-trailer-value raw-result)
+         channel (seq (:channel block))]
+     (cond-> {:scope scope
+              :tag   (classify-form-tag src head-tag-resolver)
+              :src   src}
+       (contains? block :result) (assoc :result result)
+       (some? (:error block))    (assoc :error  (:error block))
+       channel                   (assoc :channel (vec channel))))))
 
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form
-   position by its index in the vec."
-  [blocks {:keys [turn iter]}]
-  (vec
-    (map-indexed
-      (fn [idx block]
-        (block->envelope block (inc idx) {:turn turn :iter iter}))
-      (or blocks []))))
+   position by its index in the vec.
+
+   3-arity passes `head-tag-resolver` (see `classify-form-tag`) through
+   to every `block->envelope` call so extension-declared mutation tools
+   (`v/patch`, `git/commit!`, anything registered via `register-op!`)
+   classify correctly without the engine hard-coding their symbol set."
+  ([blocks cursor] (blocks->forms blocks cursor nil))
+  ([blocks {:keys [turn iter]} head-tag-resolver]
+   (vec
+     (map-indexed
+       (fn [idx block]
+         (block->envelope block (inc idx) {:turn turn :iter iter} head-tag-resolver))
+       (or blocks [])))))

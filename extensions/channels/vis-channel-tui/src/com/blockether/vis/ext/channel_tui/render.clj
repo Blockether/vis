@@ -3026,6 +3026,35 @@
           (+ i run)
           (subvec remaining run))))))
 
+(def ^:private rate-limit-recovery-hint
+  "rate limit: wait, re-authenticate, or switch provider/model")
+
+(defn- rate-limit-reason?
+  [reason]
+  (boolean
+    (when-let [reason-name (some-> reason name)]
+      (str/includes? reason-name "rate-limit"))))
+
+(defn- rate-limit-text?
+  [s]
+  (boolean
+    (when-let [text (some-> s str str/lower-case)]
+      (or (str/includes? text "429")
+        (str/includes? text "rate limit")
+        (str/includes? text "rate-limit")))))
+
+(defn- rate-limit-notice?
+  [notice failed-provider why]
+  (or (= 429 (:status notice))
+    (= 429 (:status failed-provider))
+    (rate-limit-reason? (:reason notice))
+    (rate-limit-text? why)))
+
+(defn- append-rate-limit-hint
+  [s rate-limit?]
+  (cond-> s
+    rate-limit? (str " — " rate-limit-recovery-hint)))
+
 (defn- format-fallback-notice
   [{:keys [reason failed-provider new-provider] :as notice}]
   (let [event? (contains? notice :event/type)
@@ -3051,10 +3080,12 @@
         kind (if retry? "retry same provider" "provider fallback")
         delay (when (and retry? (:delay-ms notice))
                 (str ", retry in " (long (/ (long (:delay-ms notice)) 1000)) "s"))]
-    (str (if retry? "↻ " "↪ ") kind ": " from
-      (when to (str " → " to))
-      " — " why
-      delay)))
+    (append-rate-limit-hint
+      (str (if retry? "↻ " "↪ ") kind ": " from
+        (when to (str " → " to))
+        " — " why
+        delay)
+      (rate-limit-notice? notice failed-provider why))))
 
 (defn- fallback-recap
   [notice]
@@ -3075,7 +3106,11 @@
     (when (and (map? error) (or (:status data) (:body data) (:request-id data) (:request_id data)))
       (let [status (:status data)
             msg    (or (:message error) (some-> (:body data) str str/trim) (str (:type error)) "provider error")]
-        (str "Provider error" (when status (str " HTTP " status)) ": " msg)))))
+        (append-rate-limit-hint
+          (str "Provider error" (when status (str " HTTP " status)) ": " msg)
+          (or (= 429 status)
+            (rate-limit-text? msg)
+            (rate-limit-text? (:body data))))))))
 
 (defn- recap-kind-of
   "Tag a raw recap row with its kind by reading the leading badge
