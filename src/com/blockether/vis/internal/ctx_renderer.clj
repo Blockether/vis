@@ -44,7 +44,8 @@
       :session/next-actions […]}"
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.format :as fmt]))
+   [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.tokens :as tokens]))
 
 ;; =============================================================================
 ;; Knobs
@@ -72,40 +73,72 @@
 (def ^:private NEXT_ACTIONS_BUDGET 5)
 (def ^:private WIDTH 80)
 
-(def ^:private FACT_CONTENT_RENDER_LIMIT
-  "Per-fact `:content` size cap (chars of `pr-str`) above which the
-   renderer collapses :content into a `{:vis/preview :vis/size
-   :vis/full}` summary stub. Matches `FACT_CONTENT_SOFT_LIMIT` in
-   `ctx-engine` (which warns at write-time); the renderer here is the
-   prompt-side hard cap so a fat fact that slipped past the warning
-   does not ride into every prompt verbatim."
-  2048)
+;; ---------------------------------------------------------------------------
+;; Safe-guards
+;; ---------------------------------------------------------------------------
+;; Engine renders the prompt; engine measures size; engine clips the
+;; VIEW (not the data). Full payloads always survive in CTX + DB and
+;; remain reachable through `introspect-*` verbs. Three layers, same
+;; shape `{:vis/preview :vis/size :vis/full}`:
+;;
+;;   form-result    > FORM_RESULT_TOKEN_LIMIT  — single envelope
+;;                                                preview + introspect-form
+;;   fact-content   > FACT_CONTENT_TOKEN_LIMIT — single fact preview +
+;;                                                introspect-fact
+;;   trailer-total  (engine compaction)        — see ctx-engine
+;;
+;; Limits are tokens (jtokkit cl100k), not chars: provider budgets are
+;; tokenwise and char→token ratio swings 0.25–1 across English code vs
+;; chinese/cyrillic facts. Engine-side decisions need stable units.
+;;
+;; All limits sized for a typical 200k-token provider window:
+;;   form-result   2 000 tok   (~1% window)  — fits a mid-size source file
+;;   fact-content    800 tok   (~0.4% window) — facts are stable summaries,
+;;                                              not snapshots
+;;   preview         200 tok                  — first paragraph + size hint
 
-(def ^:private FACT_PREVIEW_CHARS
-  "Inline preview length when `:content` exceeds the render limit."
-  240)
+(def ^:private FORM_RESULT_TOKEN_LIMIT 2000)
+(def ^:private FACT_CONTENT_TOKEN_LIMIT 800)
+(def ^:private PREVIEW_TOKEN_LIMIT 200)
 
-(defn- fact-preview
-  "Truncated single-line `pr-str` of `content` for the summary stub."
-  [content]
-  (let [s (-> (pr-str content) (str/replace #"\s+" " ") str/trim)]
-    (if (> (count s) FACT_PREVIEW_CHARS)
-      (str (subs s 0 FACT_PREVIEW_CHARS) "…")
-      s)))
+(defn- preview-text
+  "Single-line `pr-str` of `v`, trimmed and capped to roughly
+   PREVIEW_TOKEN_LIMIT tokens. Hard char cap of 1200 stays as a safety
+   net for pathological 1-token-per-char inputs (CJK / cyrillic)."
+  [v]
+  (let [s         (-> (try (pr-str v) (catch Throwable _ ""))
+                    (str/replace #"\s+" " ")
+                    str/trim)
+        char-cap  1200
+        clipped   (if (> (count s) char-cap)
+                    (str (subs s 0 char-cap) "…")
+                    s)
+        toks      (tokens/count-tokens clipped)]
+    (if (> toks PREVIEW_TOKEN_LIMIT)
+      ;; second pass: pr-str length scales ~4 chars/token for code,
+      ;; so cut to PREVIEW_TOKEN_LIMIT*4 chars and re-mark elision
+      (let [target-chars (* PREVIEW_TOKEN_LIMIT 4)]
+        (str (subs clipped 0 (min (count clipped) target-chars)) "…"))
+      clipped)))
+
+(defn- ref-stub
+  "Build the `{:vis/preview :vis/size :vis/full}` safe-guard stub
+   shared by every clipped slot. `:full` is the bare introspect call
+   the model should emit to recover the value verbatim."
+  [v full-call]
+  {:vis/preview (preview-text v)
+   :vis/size    (tokens/count-pr-tokens v)
+   :vis/full    full-call})
 
 (defn- bound-fact-content
-  "Replace `(:content fact)` with a summary stub when its `pr-str` size
-   exceeds `FACT_CONTENT_RENDER_LIMIT`. Other keys pass through. The
-   stub directs the model at `introspect-fact` for the canonical value."
+  "Replace `(:content fact)` with a safe-guard stub when its token
+   weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass through.
+   Mirrors the engine's `:fact-content-too-large` write-time warning."
   [fact-k fact]
   (let [content (:content fact)]
-    (if (some? content)
-      (let [size (try (count (pr-str content)) (catch Throwable _ 0))]
-        (if (> size FACT_CONTENT_RENDER_LIMIT)
-          (assoc fact :content {:vis/preview (fact-preview content)
-                                :vis/size    size
-                                :vis/full    (str "(introspect-fact " fact-k ")")})
-          fact))
+    (if (and (some? content)
+          (> (tokens/count-pr-tokens content) FACT_CONTENT_TOKEN_LIMIT))
+      (assoc fact :content (ref-stub content (str "(introspect-fact " fact-k ")")))
       fact)))
 
 (defn- bound-facts
@@ -118,6 +151,24 @@
     (into (array-map)
       (map (fn [[k v]] [k (bound-fact-content k v)]))
       facts)))
+
+(defn- bound-form-result
+  "Replace `(:result form)` with a safe-guard stub when its token
+   weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error` / `:channel` /
+   `:src` / `:scope` / `:tag` pass through verbatim. The full result
+   stays on the envelope (CTX) and in DB (`session_turn_iteration.forms`)
+   so `(introspect-form \"<scope>\")` returns the original payload.
+
+   This is THE fix for the `c8dc39b1` / `1a9a61ee` trailer-bloat class:
+   `(def x (v/cat huge-file))` no longer rides into every later prompt
+   verbatim; the model sees the preview + handle."
+  [form]
+  (if (and (contains? form :result)
+        (> (tokens/count-pr-tokens (:result form)) FORM_RESULT_TOKEN_LIMIT))
+    (assoc form :result
+      (ref-stub (:result form)
+        (str "(introspect-form " (pr-str (:scope form)) ")")))
+    form))
 
 ;; =============================================================================
 ;; The single value printer
@@ -303,11 +354,15 @@
 (defn- presentation-form
   "Prompt-facing copy of one trailer form. `:src` is rendered separately
    as a verbatim block (see `src-lines-as-block`), so the map view drops
-   `:src` to avoid printing the same source twice; everything else
-   (notably `:result`) is passed through UNTRUNCATED. See the trailer
-   truncation note at the top of this file."
+   `:src` to avoid printing the same source twice. `:result` is passed
+   through `bound-form-result` so an oversized payload renders as the
+   `{:vis/preview :vis/size :vis/full}` safe-guard stub instead of
+   riding into every subsequent prompt verbatim. Other keys pass
+   through unchanged."
   [form]
-  (dissoc form :src))
+  (-> form
+    bound-form-result
+    (dissoc :src)))
 
 (defn- render-form-pin
   "Render one `:forms` entry: verbatim src block, then the form map with
