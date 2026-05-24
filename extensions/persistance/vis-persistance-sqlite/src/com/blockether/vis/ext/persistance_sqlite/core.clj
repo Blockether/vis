@@ -1202,23 +1202,41 @@
      form is the source code that produces it, not a materialized snapshot.
      Re-eval from :expr to reconstruct.
    - Functions, SCI vars -> `{:vis/ref :expr}`. Same reason.
-   - Plain scalars (strings, numbers, keywords, etc.) -> pass through."
-  ([v] (freeze-safe v 8))
+   - Plain scalars (strings, numbers, keywords, etc.) -> pass through
+     at ANY depth. The depth limit is a safety against runaway recursion
+     into self-referential collections; clipping scalars makes legitimate
+     data (the canonical IR a tool render produces, deeply nested under
+     forms-vec → channel → :result) lose its leaf text.
+
+   Default depth raised to 32 — the per-form channel sink writes a
+   canonical IR whose natural depth (forms → channel → :result → :ir →
+   block → inline → inline-child → leaf) already eats 7 levels; the old
+   depth-8 cap turned tool badges (`[:strong {} [:span {} \"LS\"]]`) into
+   `[:strong {} [:vis/ref :depth-exceeded ...]]` after persistance, and
+   restored bubbles painted no badge text."
+  ([v] (freeze-safe v 32))
   ([v depth]
    (cond
      (nil? v)                         nil
-     (zero? depth)                    {:vis/ref :depth-exceeded}
      (runtime-object? v)              {:vis/ref :expr}
      (instance? clojure.lang.LazySeq v) {:vis/ref :expr}
-     (map? v)                         (persistent!
-                                        (reduce-kv
-                                          (fn [m k val]
-                                            (assoc! m k (freeze-safe val (dec depth))))
-                                          (transient {})
-                                          v))
-     (vector? v)                      (mapv #(freeze-safe % (dec depth)) v)
-     (set? v)                         (into #{} (map #(freeze-safe % (dec depth))) v)
-     (list? v)                        (doall (map #(freeze-safe % (dec depth)) v))
+     (map? v)                         (if (zero? depth)
+                                        {:vis/ref :depth-exceeded}
+                                        (persistent!
+                                          (reduce-kv
+                                            (fn [m k val]
+                                              (assoc! m k (freeze-safe val (dec depth))))
+                                            (transient {})
+                                            v)))
+     (vector? v)                      (if (zero? depth)
+                                        {:vis/ref :depth-exceeded}
+                                        (mapv #(freeze-safe % (dec depth)) v))
+     (set? v)                         (if (zero? depth)
+                                        {:vis/ref :depth-exceeded}
+                                        (into #{} (map #(freeze-safe % (dec depth))) v))
+     (list? v)                        (if (zero? depth)
+                                        {:vis/ref :depth-exceeded}
+                                        (doall (map #(freeze-safe % (dec depth)) v)))
      (seq? v)                         {:vis/ref :expr}
      :else                            v)))
 
