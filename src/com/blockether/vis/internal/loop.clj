@@ -10,7 +10,7 @@
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
-   [com.blockether.vis.internal.summarization :as summarization]
+   [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
@@ -3255,7 +3255,7 @@
                     ;; `render-block!` builds the bare-EDN `;; ctx`
                     ;; block the model reads/writes against. Before
                     ;; handing it to the provider we wrap the call in
-                    ;; `summarization/ensure-prompt-under-budget!`: it
+                    ;; `safe-guards/ensure-prompt-under-budget!`: it
                     ;; renders once, measures total prompt tokens
                     ;; (jtokkit cl100k_base — approximation, ~10-30%
                     ;; margin), and if the prompt would cross the
@@ -3273,7 +3273,7 @@
                     ;; cascade exhausts itself the prompt ships
                     ;; over-budget and the provider's own error is
                     ;; the next signal.
-                    summary-render (summarization/ensure-prompt-under-budget!
+                    summary-render (safe-guards/ensure-prompt-under-budget!
                                      environment
                                      {:render-fn     (fn [env]
                                                        (ctx-loop/render-block!
