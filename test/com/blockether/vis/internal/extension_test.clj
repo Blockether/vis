@@ -147,4 +147,61 @@
         (expect (= [:ir {} [:p {} [:span {} "render-specific"]]]
                   (-> @channel first :result)))
         (finally
-          (extension/deregister-extension! "test.renderer"))))))
+          (extension/deregister-extension! "test.renderer")))))
+
+  ;; Channel entries must carry `:form-idx` so the rebuild path can
+  ;; partition the fence's render sink back onto per-form envelopes.
+  ;; Without it, a multi-form fence (\"three v/ls calls in three
+  ;; (def …) forms\") restores as one bubble whose first form glues
+  ;; the IR for every tool call and the rest restore blank.
+  (it "stamps `:form-idx` on every render sink entry from `*current-form-idx*`"
+    (let [entry (extension/symbol #'demo-symbol-fn
+                  {:symbol 'demo
+                   :tag :observation
+                   :render-fn (fn [_] [:ir {} [:p {} [:span {} "x"]]])})
+          ext   (extension/register-extension!
+                  {:ext/name "test.form-idx-stamp"
+                   :ext/kind "test"
+                   :ext/description "Tests form-idx stamping."
+                   :ext/sci {:ext.sci/ns 'test.form-idx-stamp
+                             :ext.sci/alias 'test.form-idx-stamp
+                             :ext.sci/symbols [entry]}})
+          channel (atom [])]
+      (try
+        ;; Simulate run-sci-code: ONE channel atom, per-form binding
+        ;; of *current-form-idx* across three sequential forms.
+        (binding [extension/*render-sink*   channel
+                  extension/*sink-position* (atom -1)]
+          (binding [extension/*current-form-idx* 0]
+            ((get (extension/wrap-extension ext {}) 'demo)))
+          (binding [extension/*current-form-idx* 1]
+            ((get (extension/wrap-extension ext {}) 'demo)))
+          (binding [extension/*current-form-idx* 2]
+            ((get (extension/wrap-extension ext {}) 'demo))))
+        (expect (= [0 1 2] (mapv :form-idx @channel)))
+        ;; And the entries still carry monotonic :position so multiple
+        ;; calls within ONE form remain orderable.
+        (expect (= [0 1 2] (mapv :position @channel)))
+        (finally
+          (extension/deregister-extension! "test.form-idx-stamp")))))
+
+  (it "does not stamp `:form-idx` when `*current-form-idx*` is unbound (back-compat with callers outside run-sci-code)"
+    (let [entry (extension/symbol #'demo-symbol-fn
+                  {:symbol 'demo
+                   :tag :observation
+                   :render-fn (fn [_] [:ir {} [:p {} [:span {} "x"]]])})
+          ext   (extension/register-extension!
+                  {:ext/name "test.form-idx-unbound"
+                   :ext/kind "test"
+                   :ext/description "Tests form-idx unbound path."
+                   :ext/sci {:ext.sci/ns 'test.form-idx-unbound
+                             :ext.sci/alias 'test.form-idx-unbound
+                             :ext.sci/symbols [entry]}})
+          channel (atom [])]
+      (try
+        (binding [extension/*render-sink*   channel
+                  extension/*sink-position* (atom -1)]
+          ((get (extension/wrap-extension ext {}) 'demo)))
+        (expect (not (contains? (first @channel) :form-idx)))
+        (finally
+          (extension/deregister-extension! "test.form-idx-unbound"))))))
