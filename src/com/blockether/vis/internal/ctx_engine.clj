@@ -1261,14 +1261,14 @@
          trailer)))
 
 ;; =============================================================================
-;; Auto-compaction — PURE helpers (call-site supplies summarizer side-effect)
+;; Auto-summarization — PURE helpers (call-site supplies summarizer side-effect)
 ;; =============================================================================
 ;;
 ;; Engine measures the trailer in tokens; when the rendered total
 ;; crosses a budget the integration layer (`loop.clj`) compacts the
 ;; oldest pins into one summary entry. The summary TEXT can come from
 ;; either a real companion LLM call (semantic) or a deterministic
-;; fallback (`dummy-compact-summary`). Either way the resulting stub
+;; fallback (`dummy-summary-text`). Either way the resulting stub
 ;; shape is identical — same `:scope-start :scope-end :summary :born`
 ;; the model already knows from `(done {:trailer-summarize …})`, plus
 ;; `:vis/auto?` / `:vis/summary-source` flags so the model can tell who
@@ -1277,7 +1277,7 @@
 ;; The engine NEVER calls a companion LLM directly — staying out of the
 ;; side-effect business keeps these helpers pure-test-friendly. The
 ;; integration layer threads the summarizer in via
-;; `compact-trailer-with-summarizer`.
+;; `summarize-trailer-with-companion`.
 
 (defn pin-tokens
   "Token weight of one trailer entry as it would render into the
@@ -1295,7 +1295,7 @@
   ^long [trailer]
   (reduce + 0 (map pin-tokens (or trailer []))))
 
-(defn pick-oldest-batch-for-compaction
+(defn pick-oldest-batch-for-summarization
   "Walk `trailer` oldest-first, accruing pins until dropping that prefix
    would bring `trailer-total-tokens` under `target-tokens`. Returns
    `{:batch <vec-of-oldest-pins> :kept <vec-of-survivors> :tokens-freed N}`
@@ -1333,7 +1333,7 @@
 (defn- batch-scope-range
   "Return `[scope-start scope-end]` covering a batch of pins. Works for
    forms pins (`:scope`) and existing summary stubs (`:scope-start` /
-   `:scope-end`) so recursive compaction stays consistent."
+   `:scope-end`) so recursive summarization stays consistent."
   [batch]
   (let [scopes (mapcat (fn [p]
                          (cond
@@ -1343,7 +1343,7 @@
                  batch)]
     [(first scopes) (last scopes)]))
 
-(defn dummy-compact-summary
+(defn dummy-summary-text
   "Deterministic fallback summary string when no companion LLM is
    available (unconfigured, timed out, errored). Carries enough
    anchors that the model can recover details via introspection."
@@ -1351,15 +1351,15 @@
   (let [n-iters (count batch)
         n-forms (reduce + 0 (map (fn [p] (count (:forms p []))) batch))
         [s e]   (batch-scope-range batch)]
-    (str "auto-compacted; " n-iters " iter(s), " n-forms
+    (str "auto-summarized; " n-iters " iter(s), " n-forms
       " form(s); reach details via (introspect-iter \"" s "\")"
       (when (not= s e) (str " … (introspect-iter \"" e "\")")) ".")))
 
-(defn make-compact-stub
-  "Build the summary stub for an oldest-batch compaction.
+(defn make-summary-stub
+  "Build the summary stub for an oldest-batch summarization.
    `summary-source` is `:companion-llm` (semantic) or `:engine-dummy`
    (deterministic). `summary-text` MUST be a non-blank string — callers
-   that lose the companion call fall back to `dummy-compact-summary`
+   that lose the companion call fall back to `dummy-summary-text`
    before reaching here."
   [batch summary-text summary-source born-scope]
   (let [[s e] (batch-scope-range batch)]
@@ -1370,24 +1370,24 @@
      :vis/auto?           true
      :vis/summary-source  summary-source}))
 
-(defn compact-trailer-with-summarizer
-  "Pure compaction step parameterised over a `summarizer-fn` callback.
+(defn summarize-trailer-with-companion
+  "Pure summarization step parameterised over a `summarizer-fn` callback.
 
    `ctx` is the engine ctx; `:session/trailer` is the only thing
    touched. `opts`:
-     :target-tokens      desired post-compaction trailer total
+     :target-tokens      desired post-summarization trailer total
      :born-scope         scope string stamped onto the new stub
      :summarizer-fn      `(fn [batch]) -> {:summary str :source kw}`
                           where :source is :companion-llm or :engine-dummy.
                           Must return synchronously; loop side handles
                           timeouts + cascade BEFORE invoking this fn.
-                          When nil the engine uses `dummy-compact-summary`.
+                          When nil the engine uses `dummy-summary-text`.
 
    Returns `{:ctx new-ctx :compacted? bool :tokens-freed N :batch-size K
              :scope-range [start end] :warnings vec}`."
   [ctx {:keys [target-tokens born-scope summarizer-fn]}]
   (let [trailer (or (:session/trailer ctx) [])
-        pick    (pick-oldest-batch-for-compaction trailer target-tokens)]
+        pick    (pick-oldest-batch-for-summarization trailer target-tokens)]
     (if-not pick
       {:ctx ctx :compacted? false}
       (let [{:keys [batch kept tokens-freed]} pick
@@ -1395,9 +1395,9 @@
             summarized (when summarizer-fn
                          (try (summarizer-fn batch) (catch Throwable _ nil)))
             summary    (or (:summary summarized)
-                         (dummy-compact-summary batch))
+                         (dummy-summary-text batch))
             source     (or (:source summarized) :engine-dummy)
-            stub       (make-compact-stub batch summary source born-scope)
+            stub       (make-summary-stub batch summary source born-scope)
             ;; preserve sort order: stub takes the oldest slot, kept pins
             ;; stay in their original order (already sorted oldest-first)
             new-trail  (vec (cons stub kept))]
@@ -1406,9 +1406,9 @@
          :tokens-freed tokens-freed
          :batch-size   (count batch)
          :scope-range  [scope-start scope-end]
-         :warnings     [(warn :trailer-auto-compacted
+         :warnings     [(warn :trailer-auto-summarized
                           [scope-start scope-end]
-                          (str "Trailer auto-compacted: " (count batch)
+                          (str "Trailer auto-summarized: " (count batch)
                             " oldest iter(s) (" scope-start
                             (when (not= scope-start scope-end)
                               (str " .. " scope-end))
