@@ -316,27 +316,14 @@
 (defdelegate db-retry-session-turn! [db-info session-turn-soul-id opts])
 (defdelegate db-list-session-turn-states [db-info session-turn-id])
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
-(defdelegate db-list-iteration-vars [db-info iteration-ref])
 
 ;; --- Full-text search ---
 (defdelegate db-search [db-info query opts])
 
-;; --- Var registry & history ---
-(defn db-latest-var-registry
-  ([db-info session-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info session-ref))
-  ([db-info session-ref opts] ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info session-ref opts)))
-
-(defdelegate db-var-history-index [db-info session-ref opts])
-(defdelegate db-var-history [db-info session-ref sym])
-(defdelegate db-var-history-timeline [db-info session-ref opts])
+;; --- Turn history (read-only projection) ---
 (defdelegate db-turn-history [db-info session-ref])
 
-;; --- Dependencies ---
-(defdelegate db-store-dependency! [db-info opts])
-(defdelegate db-list-dependencies [db-info session-state-id])
-
-;; --- Restore ---
-(defdelegate db-restore-blocks  [db-info session-id])
+;; --- CTX snapshots (per-turn :session/* state, Nippy in session_turn_state.ctx) ---
 (defdelegate db-load-latest-ctx [db-info session-id])
 (defdelegate db-load-ctx-history [db-info session-id])
 

@@ -12,7 +12,6 @@
      session_soul, session_state,
      session_turn_soul, session_turn_state,
      session_turn_iteration, llm_routing_event,
-     definition_soul, definition_state, definition_dependency,
      extension_aggregate,
      log
 
@@ -524,9 +523,7 @@
                       (:session-state-id entry) (assoc :session_state_id (->id (:session-state-id entry)))
                       (:session-turn-soul-id entry)         (assoc :session_turn_soul_id (->id (:session-turn-soul-id entry)))
                       (:session-turn-state-id entry)        (assoc :session_turn_state_id (->id (:session-turn-state-id entry)))
-                      (:iteration-id entry)          (assoc :session_turn_iteration_id (->id (:iteration-id entry)))
-                      (:definition-soul-id entry)    (assoc :definition_soul_id (->id (:definition-soul-id entry)))
-                      (:definition-state-id entry)   (assoc :definition_state_id (->id (:definition-state-id entry))))]})))))
+                      (:iteration-id entry)          (assoc :session_turn_iteration_id (->id (:iteration-id entry))))]})))))
 
 ;; =============================================================================
 ;; Workspace - trunk-native work units (PLAN.md §2-§4)
@@ -1156,24 +1153,6 @@
             (vec (reverse acc)))
           (vec (reverse acc)))))))
 
-(defn- latest-visible-definition-rows
-  "Given latest rows per definition soul, keep visible symbol rows on branch.
-   Child states shadow same-name rows inherited from ancestors."
-  [state-ids rows]
-  (let [state-rank (zipmap state-ids (range))
-        score      (fn [r]
-                     [(get state-rank (:session_state_id r) -1)
-                      (or (:version r) -1)
-                      (or (:created_at r) 0)])]
-    (vals
-      (reduce (fn [m r]
-                (let [prev (get m (:name r))]
-                  (if (or (nil? prev) (pos? (compare (score r) (score prev))))
-                    (assoc m (:name r) r)
-                    m)))
-        {}
-        rows))))
-
 ;; =============================================================================
 ;; SCI var serialization helpers
 ;;
@@ -1440,29 +1419,19 @@
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
-  "Store one iteration row + per-`(def ...)` definition_soul/definition_state
-   rows + optional definition_dependency edges. All writes go through
-   one SQLite transaction.
+  "Store one iteration row in a single SQLite transaction.
 
-   Args:
-     :vars         - [{:name :value :code :time-ms?}] per def the
-                     sandbox evaluated this iteration. Becomes one
-                     soul (find-or-create) + one new state version.
-     :dependencies - [{:upstream-name :downstream-name}] raw edges
-                     from the SCI resolve-hook. Filtered inside this
-                     transaction: only kept when BOTH names resolve
-                     to a soul in this `session_state` (either
-                     just-created from `:vars` or pre-existing from a
-                     prior iteration). Core ops like `inc` / `+` get
-                     dropped here. Duplicate edges are deduped before
-                     insert. Optional; omit for no-deps iterations.
+   Per-form payload travels on the iteration row's `forms` BLOB; there
+   is no per-`(def ...)` sidecar persistence. Cross-turn references go
+   through `:session/facts` and introspect-form / introspect-iter /
+   introspect-turn (DB reads against `session_turn_iteration.forms`).
 
    Returns the iteration UUID."
   ;; `:duration-ms` is consumed by `prepare-iteration-columns` and lands in
   ;; `eval_duration_ms`; kept off the outer :keys to stop clj-kondo's
   ;; unused-binding lint while staying documented here.
   [db-info {:keys [session-turn-id thinking answer llm-full-duration-ms
-                   vars dependencies error
+                   error
                    llm-routing cache-created-tokens
                    llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
@@ -1478,13 +1447,6 @@
               session-turn-state (when session-turn-soul-id-s
                                    (latest-session-turn-state tx-info session-turn-soul-id-s))
               session-turn-state-id-s (:id session-turn-state)
-              ;; Need session_state_id for definition_soul
-              session-state-id (when session-turn-state
-                                 (:session_state_id
-                                  (query-one! tx-info
-                                    {:select [:session_state_id]
-                                     :from   :session_turn_soul
-                                     :where  [:= :id session-turn-soul-id-s]})))
               ;; Compute position (1-indexed within this session_turn_state)
               ;; Next position is `MAX(position)+1` (monotonic and survives
               ;; row deletions), aliased as `:next_position` so the SQL
@@ -1561,81 +1523,6 @@
               (when-not (= "" thinking-s)
                 (reindex-search! tx-info "session_turn_iteration"
                   iteration-id-s "thinking_text" thinking-s))))
-          ;; 3. Vars -> definition_soul + definition_state (versioned).
-          (when session-state-id
-            (doseq [{:keys [name value code]} (or vars [])]
-              (when name
-                (let [name-s (str name)
-                      ;; Find-or-create by (state, name).
-                      existing (:id (query-one! tx-info
-                                      {:select [:id]
-                                       :from   :definition_soul
-                                       :where  [:and
-                                                [:= :session_state_id session-state-id]
-                                                [:= :name name-s]]}))
-                      soul-id (or existing
-                                (let [new-id (new-id)]
-                                  (execute! tx-info
-                                    {:insert-into :definition_soul
-                                     :values [{:id                    new-id
-                                               :session_state_id session-state-id
-                                               :name                  name-s
-                                               :created_at            now}]})
-                                  new-id))
-                      max-ver (or (:v (query-one! tx-info
-                                        {:select [[[:max :version] :v]]
-                                         :from   :definition_state
-                                         :where  [:= :definition_soul_id soul-id]}))
-                                -1)]
-                  (execute! tx-info
-                    {:insert-into :definition_state
-                     :values [{:id                            (new-id)
-                               :definition_soul_id            soul-id
-                               :session_turn_iteration_id iteration-id-s
-                               :version                       (inc max-ver)
-                               :expression                    code
-                               :value                         (->blob (freeze-safe value))
-                               :created_at                    now}]})))))
-          ;; 4. Dependencies -> definition_dependency. Filter to edges
-          ;; whose BOTH endpoints resolve to a soul in this
-          ;; session_state (either pre-existing from a prior
-          ;; iteration or just-written from this iteration's :vars).
-          ;; Core ops like `inc` / `+` get dropped at this step. The
-          ;; resolution happens inside the same tx so we do not race
-          ;; against concurrent writers.
-          (when (and session-state-id (seq dependencies))
-            (let [soul-rows (query! tx-info
-                              {:select [:id :name]
-                               :from   :definition_soul
-                               :where  [:= :session_state_id session-state-id]})
-                  by-name   (into {} (map (juxt :name :id)) soul-rows)
-                  ;; Pre-existing edges (so we do not double-insert
-                  ;; the same edge each iteration when a defn keeps
-                  ;; referencing the same upstream).
-                  existing  (set (map (juxt :downstream_definition_soul_id
-                                        :upstream_definition_soul_id)
-                                   (query! tx-info
-                                     {:select [:downstream_definition_soul_id
-                                               :upstream_definition_soul_id]
-                                      :from   :definition_dependency
-                                      :where  [:= :session_state_id session-state-id]})))]
-              (doseq [{:keys [upstream-name downstream-name]}
-                      (->> dependencies
-                        (filter (fn [{:keys [upstream-name downstream-name]}]
-                                  (and (contains? by-name upstream-name)
-                                    (contains? by-name downstream-name)
-                                    (not= upstream-name downstream-name))))
-                        distinct)]
-                (let [d-id (by-name downstream-name)
-                      u-id (by-name upstream-name)]
-                  (when-not (contains? existing [d-id u-id])
-                    (execute! tx-info
-                      {:insert-into :definition_dependency
-                       :values [{:id                            (new-id)
-                                 :session_state_id         session-state-id
-                                 :downstream_definition_soul_id d-id
-                                 :upstream_definition_soul_id   u-id
-                                 :created_at                    now}]}))))))
           iteration-id)))))
 
 ;; =============================================================================
@@ -1847,202 +1734,15 @@
              :order-by [[:position :asc]]}))))
     []))
 
-(defn db-list-iteration-vars [db-info iteration-id]
-  (if (and (ds db-info) iteration-id)
-    (let [iteration-id-s (->ref iteration-id)]
-      (mapv (fn [r]
-              {:name    (:name r)
-               :value   (<-blob (:value r))
-               :code    (:expr r)
-               :version (:version r)})
-        (query! db-info
-          {:select [:es.name [:est.value :value] [:est.expression :expr] :est.version]
-           :from   [[:definition_state :est]]
-           :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]]
-           :where  [:= :est.session_turn_iteration_id iteration-id-s]
-           :order-by [[:est.created_at :asc]]})))
-    []))
-
-#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
-(defn db-latest-var-registry
-  ([db-info session-id] (db-latest-var-registry db-info session-id {}))
-  ([db-info session-id _opts]
-   (if (and (ds db-info) session-id)
-     (let [state-ids (session-state-chain db-info session-id)]
-       (when (seq state-ids)
-         (into {}
-           (map (fn [r]
-                  [(symbol (:name r))
-                   {:value      (<-blob (:value r))
-                    :code       (:expr r)
-                    :version    (:version r)
-                    :session-turn-id   (->uuid (:session_turn_soul_id r))
-                    :created-at (->date (:created_at r))}]))
-           (latest-visible-definition-rows state-ids
-             (query! db-info
-               {:select [:es.name :es.session_state_id
-                         :est.value [:est.expression :expr] :est.version :est.created_at
-                         :qst.session_turn_soul_id]
-                :from   [[:definition_soul :es]]
-                :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
-                         [:session_turn_iteration :it]         [:= :it.id :est.session_turn_iteration_id]
-                         [:session_turn_state :qst]      [:= :qst.id :it.session_turn_state_id]]
-                :where  [:and
-                         [:in :es.session_state_id state-ids]
-                         [:= :est.version
-                          {:select [[[:max :version]]]
-                           :from   [[:definition_state :est2]]
-                           :where  [:= :est2.definition_soul_id :es.id]}]]})))))
-     {})))
-
-(defn- var-result-ref?
-  [v]
-  (and (map? v) (= :expr (:vis/ref v))))
-
-(defn- safe-defn-source?
-  [expr]
-  (boolean
-    (when (string? expr)
-      (re-find #"^\s*\((?:clojure.core/)?defn(?:-|\s)" expr))))
-
-(defn- var-kind
-  [value expr]
-  (cond
-    (safe-defn-source? expr) :fn
-    (var-result-ref? value)  :unavailable
-    :else                   :data))
-
-(defn- var-restorable?
-  [value expr]
-  (or (not (var-result-ref? value))
-    (safe-defn-source? expr)))
-
-(defn- row->var-info
-  [r]
-  (cond-> {:session-state-id (:session_state_id r)}
-    (:session_turn_soul_id r) (assoc :session-turn-id (->uuid (:session_turn_soul_id r)))
-    (:session_turn_iteration_id r)             (assoc :iteration-id (->uuid (:session_turn_iteration_id r)))
-    (:iteration_position r)       (assoc :iteration-position (:iteration_position r))))
-
-(defn- row->bindings-entry
-  [r]
-  (let [value (<-blob (:value r))]
-    (cond-> {:name        (symbol (:name r))
-             :version     (:version r)
-             :kind        (var-kind value (:expr r))
-             :restorable? (var-restorable? value (:expr r))
-             :created-at  (->date (:created_at r))
-             :info  (row->var-info r)}
-      (not (var-restorable? value (:expr r)))
-      (assoc :status :unavailable
-        :reason :unsafe-restore
-        :guidance "Recreate intentionally to persist a new version."))))
-
-(defn db-var-history-index
-  "Compact, value-free latest-version symbol index for a session branch.
-   Default limit is 200, newest definitions first. Values are intentionally
-   omitted; callers that know a symbol can request that symbol's history."
-  ([db-info session-id] (db-var-history-index db-info session-id {}))
-  ([db-info session-id {:keys [limit] :or {limit 200}}]
-   (if (and (ds db-info) session-id)
-     (let [state-ids (session-state-chain db-info session-id)]
-       (if (seq state-ids)
-         (mapv row->bindings-entry
-           (cond->> (sort-by (fn [r] [(- (or (:created_at r) 0)) (:name r)])
-                      (latest-visible-definition-rows state-ids
-                        (query! db-info
-                          {:select [:es.name :es.session_state_id
-                                    :est.version :est.value [:est.expression :expr] :est.created_at
-                                    [:est.session_turn_iteration_id :session_turn_iteration_id]
-                                    [:it.position :iteration_position]
-                                    :qst.session_turn_soul_id]
-                           :from   [[:definition_soul :es]]
-                           :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
-                                    [:session_turn_iteration :it] [:= :it.id :est.session_turn_iteration_id]
-                                    [:session_turn_state :qst] [:= :qst.id :it.session_turn_state_id]]
-                           :where  [:and
-                                    [:in :es.session_state_id state-ids]
-                                    [:= :est.version
-                                     {:select [[[:max :version]]]
-                                      :from   [[:definition_state :est2]]
-                                      :where  [:= :est2.definition_soul_id :es.id]}]]})))
-             (pos-int? limit) (take limit)))
-         []))
-     [])))
-
-(defn db-var-history [db-info session-id var-sym]
-  (if (and (ds db-info) session-id)
-    (let [state-ids  (session-state-chain db-info session-id)
-          state-rank (zipmap state-ids (range))]
-      (if (seq state-ids)
-        (mapv (fn [r]
-                (let [value (<-blob (:value r))]
-                  {:version    (:version r)
-                   :value      value
-                   :code       (:expr r)
-                   :kind       (var-kind value (:expr r))
-                   :restorable? (var-restorable? value (:expr r))
-                   :created-at (->date (:created_at r))
-                   :info (row->var-info r)}))
-          (sort-by (fn [r]
-                     [(get state-rank (:session_state_id r) Long/MAX_VALUE)
-                      (or (:version r) 0)
-                      (or (:created_at r) 0)])
-            (query! db-info
-              {:select [:est.version :est.value [:est.expression :expr] :est.created_at
-                        [:est.session_turn_iteration_id :session_turn_iteration_id]
-                        [:it.position :iteration_position]
-                        :es.session_state_id
-                        :qst.session_turn_soul_id]
-               :from   [[:definition_state :est]]
-               :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]
-                        [:session_turn_iteration :it] [:= :it.id :est.session_turn_iteration_id]
-                        [:session_turn_state :qst] [:= :qst.id :it.session_turn_state_id]]
-               :where  [:and
-                        [:in :es.session_state_id state-ids]
-                        [:= :es.name (str var-sym)]]})))
-        []))
-    []))
-
-#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
-(defn db-var-history-timeline
-  "Newest-first, value-free symbol-memory timeline. Definition/redefinition
-   events are persisted. Runtime archive/restore events are intentionally not
-   persisted yet; durable tombstones are future work."
-  ([db-info session-id] (db-var-history-timeline db-info session-id {}))
-  ([db-info session-id {:keys [limit order symbol]
-                        :or {limit 100 order :newest-first}}]
-   (if (and (ds db-info) session-id)
-     (let [state-ids (session-state-chain db-info session-id)]
-       (if (seq state-ids)
-         (let [direction (if (= :oldest-first order) :asc :desc)]
-           (mapv (fn [r]
-                   (let [value (<-blob (:value r))]
-                     {:event       (if (zero? (:version r)) :defined :redefined)
-                      :durability  :persisted
-                      :symbol      (clojure.core/symbol (:name r))
-                      :version     (:version r)
-                      :kind        (var-kind value (:expr r))
-                      :restorable? (var-restorable? value (:expr r))
-                      :at          (->date (:created_at r))
-                      :info  (row->var-info r)}))
-             (query! db-info
-               (cond-> {:select [:es.name :es.session_state_id
-                                 :est.version :est.value [:est.expression :expr] :est.created_at
-                                 [:est.session_turn_iteration_id :session_turn_iteration_id]
-                                 [:it.position :iteration_position]
-                                 :qst.session_turn_soul_id]
-                        :from   [[:definition_state :est]]
-                        :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]
-                                 [:session_turn_iteration :it] [:= :it.id :est.session_turn_iteration_id]
-                                 [:session_turn_state :qst] [:= :qst.id :it.session_turn_state_id]]
-                        :where  (cond-> [:and
-                                         [:in :es.session_state_id state-ids]]
-                                  symbol (conj [:= :es.name (str symbol)]))
-                        :order-by [[:est.created_at direction] [:es.name :asc] [:est.version direction]]}
-                 (pos-int? limit) (assoc :limit limit)))))
-         []))
-     [])))
+;; -----------------------------------------------------------------------------
+;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,
+;; `db-store-dependency!`, `db-list-dependencies`, `db-restore-blocks`,
+;; and `latest-visible-definition-rows` were retired together with the
+;; `definition_*` sidecar tables.
+;; Per-form payload lives on `session_turn_iteration.forms`; cross-turn
+;; references flow through `:session/facts` and `introspect-form` /
+;; `introspect-iter` / `introspect-turn` (DB reads against that BLOB).
+;; -----------------------------------------------------------------------------
 
 (defn db-turn-history
   "Per-turn history rows for a session. `:answer-markdown` is the raw
@@ -2311,42 +2011,7 @@
               :content next-content)))))))
 
 ;; =============================================================================
-;; Expression dependencies
-;; =============================================================================
-
-#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
-(defn db-store-dependency!
-  "Store an edge: downstream depends on upstream.
-   Both must be definition_souls in the same session_state."
-  [db-info {:keys [session-state-id downstream-soul-id upstream-soul-id]}]
-  (when (ds db-info)
-    (sqlite-write-tx! db-info
-      (fn [tx-info]
-        (let [id (new-id)]
-          (execute! tx-info
-            {:insert-into :definition_dependency
-             :values [{:id                            id
-                       :session_state_id         (->id session-state-id)
-                       :downstream_definition_soul_id (->id downstream-soul-id)
-                       :upstream_definition_soul_id   (->id upstream-soul-id)
-                       :created_at                    (now-ms)}]})
-          id)))))
-
-(defn db-list-dependencies
-  "List all dependency edges for a session_state."
-  [db-info session-state-id]
-  (when (ds db-info)
-    (mapv (fn [r]
-            {:id         (:id r)
-             :downstream (:downstream_definition_soul_id r)
-             :upstream   (:upstream_definition_soul_id r)})
-      (query! db-info
-        {:select [:id :downstream_definition_soul_id :upstream_definition_soul_id]
-         :from   :definition_dependency
-         :where  [:= :session_state_id (->id session-state-id)]}))))
-
-;; =============================================================================
-;; Restore - read all vars in topological order for sandbox reconstruction
+;; CTX snapshots (per-turn :session/* state)
 ;; =============================================================================
 
 (defn db-load-latest-ctx
@@ -2374,102 +2039,6 @@
                                             [:qts.version :desc]]
                                  :limit  1}))]
           (<-blob (:ctx row)))))))
-
-(defn db-restore-blocks
-  "Returns all var definition_souls with their LATEST definition_state
-   row, ordered topologically (dependencies before dependents).
-
-   Each entry:
-     {:soul-id     uuid-str
-      :name        string
-      :version     int                   ; latest version stored
-      :expr        string                ; precise (def NAME ...) source
-      :value       <thawed value or {:vis/ref :expr}>
-      :depends-on  [upstream-soul-id ...]
-      :depended-by [downstream-soul-id ...]}
-
-   Behavior on var redefinition: when iteration N writes a new version
-   of var A, a new definition_state row lands with version = (max + 1)
-   pointing at the existing soul. Sibling vars whose soul was NOT
-   touched in iteration N keep their previous latest version. Restore
-   reads MAX(version) per soul so the consumer always sees the freshest
-   source + value, and untouched vars carry forward unchanged.
-
-   Caller evals entries in order. For each entry, if `:value` is
-   `{:vis/ref :expr}`, re-eval `:expr` to reconstruct the value
-   (functions / lazy seqs / runtime objects). Dependency order is
-   guaranteed."
-  [db-info session-id]
-  (when (ds db-info)
-    (let [state-ids (session-state-chain db-info session-id)]
-      (when (seq state-ids)
-        ;; 1. All var souls with latest state
-        (let [rows (vec (latest-visible-definition-rows state-ids
-                          (query! db-info
-                            {:select [:es.id :es.name :es.session_state_id
-                                      :est.version [:est.expression :expr] :est.value
-                                      :est.created_at]
-                             :from   [[:definition_soul :es]]
-                             :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]]
-                             :where  [:and
-                                      [:in :es.session_state_id state-ids]
-                                      [:= :est.version
-                                       {:select [[[:max :version]]]
-                                        :from   [[:definition_state :est2]]
-                                        :where  [:= :est2.definition_soul_id :es.id]}]]})))
-              by-id (into {} (map (fn [r] [(:id r) r])) rows)
-              ;; 2. Dependencies
-              deps  (mapv (fn [r]
-                            {:id         (:id r)
-                             :downstream (:downstream_definition_soul_id r)
-                             :upstream   (:upstream_definition_soul_id r)})
-                      (query! db-info
-                        {:select [:id :downstream_definition_soul_id :upstream_definition_soul_id]
-                         :from   :definition_dependency
-                         :where  [:in :session_state_id state-ids]}))
-              ;; Build adjacency: soul-id -> {:depends-on #{} :depended-by #{}}
-              adj   (reduce (fn [m {:keys [downstream upstream]}]
-                              (-> m
-                                (update-in [downstream :depends-on] (fnil conj #{}) upstream)
-                                (update-in [upstream :depended-by] (fnil conj #{}) downstream)))
-                      {} deps)
-              ;; 3. Topological sort (Kahn's algorithm)
-              soul-ids  (set (keys by-id))
-              in-degree (reduce (fn [m id]
-                                  (assoc m id (count (filter soul-ids
-                                                       (get-in adj [id :depends-on])))))
-                          {} soul-ids)
-              sorted    (loop [queue  (into clojure.lang.PersistentQueue/EMPTY
-                                        (sort-by (fn [id] (:created_at (get by-id id)))
-                                          (filter #(zero? (get in-degree % 0)) soul-ids)))
-                               result []
-                               deg    in-degree]
-                          (if (empty? queue)
-                            result
-                            (let [id   (peek queue)
-                                  queue (pop queue)
-                                  result (conj result id)
-                                  downstream (filter soul-ids
-                                               (get-in adj [id :depended-by]))
-                                  deg (reduce (fn [d did]
-                                                (update d did dec))
-                                        deg downstream)
-                                  newly-ready (filter #(zero? (get deg %)) downstream)
-                                  queue (reduce conj queue
-                                          (sort-by (fn [id] (:created_at (get by-id id)))
-                                            newly-ready))]
-                              (recur queue result deg))))]
-          ;; 4. Build result
-          (mapv (fn [soul-id]
-                  (let [r (get by-id soul-id)]
-                    {:soul-id    soul-id
-                     :name       (:name r)
-                     :version    (:version r)
-                     :expr       (:expr r)
-                     :value      (<-blob (:value r))
-                     :depends-on (vec (filter soul-ids (get-in adj [soul-id :depends-on])))
-                     :depended-by (vec (filter soul-ids (get-in adj [soul-id :depended-by])))}))
-            sorted))))))
 
 ;; =============================================================================
 ;; Backend registration

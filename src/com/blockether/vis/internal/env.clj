@@ -16,105 +16,23 @@
    [clojure+.walk]
    [edamame.core :as edamame]
    [com.blockether.vis.internal.format :as fmt]
-   [com.blockether.vis.internal.persistance :as persistance]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
-   [sci.impl.evaluator]
    [sci.impl.resolve]
-   [sci.impl.types :as sci-types]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
-;; SCI impl monkey-patches
+;; SCI impl monkey-patch — runtime-resolution LRU only
 ;;
-;; SCI 0.12.51 ships no public hook for `def` evaluation. The engine
-;; contract needs to capture every def/defn/defmacro into a per-iteration
-;; sink so the engine can flush definition_state rows in one transaction at
-;; iteration-end (no post-eval source parsing). Docstrings are optional;
-;; context is explicit in `ctx`, not hidden in var docs.
-;;
-;; We `alter-var-root` `sci.impl.evaluator/eval-def` once at namespace
-;; load. The wrap is global (alter-var-root affects the whole JVM); the
-;; `*def-sink-atom*` dynamic var is the per-iteration boundary. When
-;; the engine binds it before `sci/eval-string+`, every def the model
-;; runs lands in the sink. When it's nil (e.g. tests evaluating SCI
-;; directly without engine context), the wrap is silent.
-;;
-;; `defonce` guards both the captured `original-eval-def` and the
-;; install action so namespace reload never wraps the wrap.
-;;
-;; Fragility note: `sci.impl.evaluator` is `^:no-doc`. The signature
-;; `[ctx bindings var-name init m]` has been stable from sci 0.8.41 →
-;; 0.12.51 (5 releases). Startup precondition asserts the var exists;
-;; if SCI ever refactors this fn, the first iteration aborts with
-;; `:vis.sci-patches/precondition-failed` instead of silently doing
-;; the wrong thing.
+;; Earlier revisions also patched `sci.impl.evaluator/eval-def` to
+;; capture every `(def ...)` into a per-iteration sink that flushed
+;; `definition_*` sidecar rows. That whole machinery is gone: SCI defs
+;; are intra-turn scratch only; cross-turn memory rides on
+;; `:session/facts` and the per-form `forms` BLOB on
+;; `session_turn_iteration`. The only remaining patch is
+;; `sci.impl.resolve/resolve-symbol*` (below) which stamps a per-iter
+;; LRU used by the live-vars renderer.
 ;; =============================================================================
-
-;; -----------------------------------------------------------------------------
-;; Per-iteration sink
-;; -----------------------------------------------------------------------------
-
-(def ^:dynamic *def-sink-atom*
-  "Per-iteration atom (or nil). When bound, the patched `eval-def`
-   appends `{:ns :name :init :meta :var}` for each def the SCI sandbox
-   executes. The engine reads it after `(sci/eval-string+ …)` returns
-   and flushes to definition_state rows in the iteration's transaction."
-  nil)
-
-(defn fresh-sink-atom
-  "Allocate a fresh empty atom suitable for binding to `*def-sink-atom*`.
-   Engine uses this at iteration start; reads `@sink` after eval."
-  []
-  (atom []))
-
-;; -----------------------------------------------------------------------------
-;; Patch: sci.impl.evaluator/eval-def
-;; -----------------------------------------------------------------------------
-
-(defonce precondition-checked!
-  ;; Side-effect bootstrap: verifies the patched fn exists with the
-  ;; expected shape before we touch it. Raises a structured exception at
-  ;; startup so a SCI bump that renames eval-def fails loud, not silent.
-  ;; Public defonce (not ^:private) so clj-kondo doesn't flag it as
-  ;; unused — these are run-once side effects, not callable APIs.
-  (let [v (resolve 'sci.impl.evaluator/eval-def)]
-    (when-not (and (var? v) (fn? @v))
-      (throw (ex-info "sci.impl.evaluator/eval-def missing or wrong shape"
-               {:type :vis.sci-patches/precondition-failed
-                :resolved v})))
-    :ok))
-
-(defonce ^:private original-eval-def
-  ;; Snapshot the unpatched fn ONCE. defonce ensures namespace reload
-  ;; does not capture the already-patched version (which would compound
-  ;; on every reload).
-  (var-get #'sci.impl.evaluator/eval-def))
-
-(defn- patched-eval-def
-  [ctx bindings var-name init m]
-  ;; SCI passes `m` (the metadata map) as an unevaluated Node — see
-  ;; sci.impl.evaluator/eval-def, which calls (types/eval m ctx bindings)
-  ;; on its first line. Materialize it for the def sink; do not require
-  ;; docstrings.
-  (let [m-val (sci-types/eval m ctx bindings)
-        v     (original-eval-def ctx bindings var-name init m)]
-    (when-let [sink *def-sink-atom*]
-      (swap! sink conj
-        {:ns   (some-> (:ns m-val) sci-types/getName str)
-         :name var-name
-         :init init
-         :meta m-val
-         :var  v}))
-    v))
-
-(defonce install-once!
-  ;; Side-effect bootstrap: alter-var-root replaces SCI's eval-def with
-  ;; the patched wrap. Public defonce so clj-kondo doesn't flag the
-  ;; load-time side effect as unused.
-  (do
-    (alter-var-root #'sci.impl.evaluator/eval-def (constantly patched-eval-def))
-    :installed))
 
 ;; -----------------------------------------------------------------------------
 ;; Patch: sci.impl.resolve/resolve-symbol* — runtime-resolution LRU
@@ -753,96 +671,24 @@
   (contains? SYSTEM_VAR_NAMES sym))
 
 ;; =============================================================================
-;; Restore helpers
-;; =============================================================================
-
-(def DEF_HEADS_FOR_RESTORE
-  "Canonical set of def-shaped heads the engine treats as safe to
-   re-evaluate on restore + extract per-var sources from. Single source
-   of truth: `loop/extract-def-sources`, `loop/dep-edges-from-source`,
-   and `restore-sandbox!` all read the SAME set so a stored
-   `:expression` that round-trips through the persistence path will
-   also round-trip on restore.
-
-   Class-producing heads (`defrecord` / `deftype` / `defprotocol` /
-   `gen-class` / `extend-type` / `extend-protocol` / `definterface` /
-   `reify`) are explicitly NOT here — they are refused at the sandbox
-   boundary by `validate-no-banned-defs!`, so they can never be
-   persisted in the first place."
-  '#{def defn defn- defmacro defonce defmulti
-     clojure.core/def clojure.core/defn clojure.core/defn-
-     clojure.core/defmacro clojure.core/defonce clojure.core/defmulti})
-
-(defn- parsed-def-form?
-  "True when `expr` (a string) parses as exactly one top-level form
-   whose head symbol is in `DEF_HEADS_FOR_RESTORE` and whose immediate
-   next element is a symbol (the var name). Replaces the legacy
-   regex-on-source heuristic with an actual edamame parse so prefix
-   metadata, whitespace, and comments cannot confuse the check.
-
-   Parse failures, empty strings, and non-string inputs all return
-   false. The caller falls back to :restored-via :unavailable, which
-   surfaces a clear refusal to the model instead of silently letting
-   an exotic form re-run on restore."
-  [expr]
-  (boolean
-    (when (string? expr)
-      (try
-        (let [forms (edamame/parse-string-all expr {:all true})]
-          (when (= 1 (count forms))
-            (let [form (first forms)]
-              (and (seq? form)
-                (symbol? (first form))
-                (contains? DEF_HEADS_FOR_RESTORE (first form))
-                (symbol? (second form))))))
-        (catch Throwable _ false)))))
-
-;; =============================================================================
-;; Sandbox restore - rebuild SCI bindings from DB
+;; Sandbox restore — NOOP since defs are intra-turn scratch
+;;
+;; Cross-turn rehydration of `(def ...)` values is gone. The SCI
+;; sandbox starts fresh every turn; cross-turn memory rides on
+;; `:session/facts` (model-driven) and the per-form `forms` BLOB on
+;; `session_turn_iteration` (introspect-form / -iter / -turn).
+;;
+;; A no-op stub is kept so call sites that still invoke restore
+;; degrade silently. They will be deleted in the next sweep.
 ;; =============================================================================
 
 (defn restore-sandbox!
-  "Restore all persisted vars into a SCI sandbox from the DB.
+  "Deprecated NOOP. Returns an empty vec.
 
-   Reads `db-restore-blocks` (topologically sorted) and for each entry:
-   - Data value (nippy-thawed) -> bind directly into the sandbox.
-   - Safe `defn` source with `{:vis/ref :expr}` -> eval the `defn` source.
-   - Other `{:vis/ref :expr}` values are unavailable and must be recreated
-     intentionally; restore never replays arbitrary effectful source.
-
-   Dependencies are guaranteed to appear first.
-
-   Returns a vec of {:name :restored-via (:data | :eval | :unavailable | :skip)
-                     :success? boolean ...}."
-  [sci-ctx db-info session-id]
-  (let [entries (persistance/db-restore-blocks db-info session-id)]
-    (mapv (fn [{:keys [name expr value]}]
-            (let [sym (symbol name)]
-              (try
-                (if (and (map? value) (= :expr (:vis/ref value)))
-                  (cond
-                    (or (nil? expr) (= expr ";; SYSTEM var"))
-                    {:name name :restored-via :skip :success? true}
-
-                    (parsed-def-form? expr)
-                    (do (sci/eval-string+ sci-ctx expr
-                          {:ns (sci/find-ns sci-ctx 'sandbox)})
-                      {:name name :restored-via :eval :success? true})
-
-                    :else
-                    {:name name
-                     :restored-via :unavailable
-                     :success? false
-                     :reason :unsafe-restore
-                     :guidance "Recreate intentionally to persist a restorable value."})
-                  ;; Data value -> bind directly
-                  (do (sci-update-binding! sci-ctx sym value)
-                    {:name name :restored-via :data :success? true}))
-                (catch Throwable e
-                  (tel/log! {:level :warn :id ::restore-failed
-                             :data {:name name :error (ex-message e)}}
-                    (str "Failed to restore " name))
-                  {:name name :restored-via :error :success? false
-                   :error (ex-message e)}))))
-      entries)))
+   Cross-turn def rehydration was removed when the `definition_*`
+   sidecar tables were dropped. SCI sandboxes are fresh per turn;
+   cross-turn references go through `:session/facts` and
+   `introspect-form` / `introspect-iter` / `introspect-turn`."
+  [_sci-ctx _db-info _session-id]
+  [])
 

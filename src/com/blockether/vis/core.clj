@@ -310,24 +310,12 @@
 ;; Iteration lifecycle
 (def db-store-iteration!                    persistance/db-store-iteration!)
 (def db-list-session-turn-iterations            persistance/db-list-session-turn-iterations)
-(def db-list-iteration-vars              persistance/db-list-iteration-vars)
 
 ;; Full-text search
 (def db-search                          persistance/db-search)
 
-;; Var registry & turn history
-(def db-latest-var-registry              persistance/db-latest-var-registry)
-(def db-var-history-index                persistance/db-var-history-index)
-(def db-var-history                      persistance/db-var-history)
-(def db-var-history-timeline             persistance/db-var-history-timeline)
+;; Turn history
 (def db-turn-history                     persistance/db-turn-history)
-
-;; Dependencies
-(def db-store-dependency!                   persistance/db-store-dependency!)
-(def db-list-dependencies                persistance/db-list-dependencies)
-
-;; Restore
-(def db-restore-blocks              persistance/db-restore-blocks)
 
 ;; Extension aggregate admin/read facade.
 ;; Writes go through ext-* helpers so extension_id is runtime-owned.
@@ -444,7 +432,6 @@
 (def SYSTEM_VAR_NAMES   env/SYSTEM_VAR_NAMES)
 (def system-var-sym?    env/system-var-sym?)
 (def create-sci-context env/create-sci-context)
-(def restore-sandbox!   env/restore-sandbox!)
 (def sci-update-binding! env/sci-update-binding!)
 (def bind-and-bump!     env/bind-and-bump!)
 
@@ -473,7 +460,6 @@
 (def sync-active-extension-symbols! lp/sync-active-extension-symbols!)
 
 ;; Auto-archive
-(def auto-archive-candidates       lp/auto-archive-candidates)
 (def auto-archive-hot-symbols!     lp/auto-archive-hot-symbols!)
 
 ;; Sessions
