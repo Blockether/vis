@@ -72,6 +72,53 @@
 (def ^:private NEXT_ACTIONS_BUDGET 5)
 (def ^:private WIDTH 80)
 
+(def ^:private FACT_CONTENT_RENDER_LIMIT
+  "Per-fact `:content` size cap (chars of `pr-str`) above which the
+   renderer collapses :content into a `{:vis/preview :vis/size
+   :vis/full}` summary stub. Matches `FACT_CONTENT_SOFT_LIMIT` in
+   `ctx-engine` (which warns at write-time); the renderer here is the
+   prompt-side hard cap so a fat fact that slipped past the warning
+   does not ride into every prompt verbatim."
+  2048)
+
+(def ^:private FACT_PREVIEW_CHARS
+  "Inline preview length when `:content` exceeds the render limit."
+  240)
+
+(defn- fact-preview
+  "Truncated single-line `pr-str` of `content` for the summary stub."
+  [content]
+  (let [s (-> (pr-str content) (str/replace #"\s+" " ") str/trim)]
+    (if (> (count s) FACT_PREVIEW_CHARS)
+      (str (subs s 0 FACT_PREVIEW_CHARS) "…")
+      s)))
+
+(defn- bound-fact-content
+  "Replace `(:content fact)` with a summary stub when its `pr-str` size
+   exceeds `FACT_CONTENT_RENDER_LIMIT`. Other keys pass through. The
+   stub directs the model at `introspect-fact` for the canonical value."
+  [fact-k fact]
+  (let [content (:content fact)]
+    (if (some? content)
+      (let [size (try (count (pr-str content)) (catch Throwable _ 0))]
+        (if (> size FACT_CONTENT_RENDER_LIMIT)
+          (assoc fact :content {:vis/preview (fact-preview content)
+                                :vis/size    size
+                                :vis/full    (str "(introspect-fact " fact-k ")")})
+          fact))
+      fact)))
+
+(defn- bound-facts
+  "Walk every fact entry in `facts` and apply `bound-fact-content`.
+   Preserves key order via `into (array-map)` so a session with many
+   facts renders deterministically."
+  [facts]
+  (if (empty? facts)
+    {}
+    (into (array-map)
+      (map (fn [[k v]] [k (bound-fact-content k v)]))
+      facts)))
+
 ;; =============================================================================
 ;; The single value printer
 ;; =============================================================================
@@ -369,7 +416,7 @@
       (render-section :session/tasks
         (zp ranked-tasks) tasks-tail)                             "\n\n"
       (render-section :session/facts
-        (zp (or (:session/facts ctx) {})) facts-tail)             "\n\n"
+        (zp (bound-facts (or (:session/facts ctx) {}))) facts-tail) "\n\n"
       (render-section :session/trailer
         (render-trailer-value (or (:session/trailer ctx) [])) nil) "\n\n"
       (render-section :session/next-actions
