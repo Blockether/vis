@@ -153,7 +153,7 @@
   (s/and
     (s/keys :req-un [:ext.sink/position :ext.sink/form
                      :ext.sink/success? :ext.sink/result :ext.sink/error]
-            :opt-un [:ext.sink/form-idx])
+      :opt-un [:ext.sink/form-idx])
     (fn [{:keys [success? result error]}]
       (if success?
         (and (render-value? result) (nil? error))

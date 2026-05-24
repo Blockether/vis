@@ -341,7 +341,7 @@
 
 (defonce ^{:doc "Sentinel that records whether the canonical internal toggles
           have been installed (idempotent)."
-          :clj-kondo/ignore [:clojure-lsp/unused-public-var :unused-private-var]}
+           :clj-kondo/ignore [:clojure-lsp/unused-public-var :unused-private-var]}
   host-toggles-installed?
   (do
     (register-toggle!

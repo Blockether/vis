@@ -67,48 +67,48 @@
 
 (defdescribe live-running-block-test
   (it "renders a block slot with no result as currently running with elapsed time"
-      (with-raw-code-on
+    (with-raw-code-on
     ;; The right-aligned `BLOCK N` / `ITERATION N` / `CODE N` header bands
     ;; were retired per user directive (see comments in render.clj). The
     ;; spinner now lives next to the form via the in-line `↻ <elapsed>`
     ;; status row, and the code / status rows ride the same marker band.
-    (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(Thread/sleep 1000)" :comment nil :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms 1000 :duration-ms 0 :success? nil :silent? false}]}
-                  40 1 {:now-ms 2500})
-          code-line (first (filter #(str/includes? % "Thread/sleep") lines))
-          status-line (first (filter #(str/includes? % "↻ 1.0s") lines))]
-      (expect (not-any? #(str/includes? % "BLOCK 1") lines))
-      (expect (not-any? #(str/includes? % "ITERATION 1") lines))
-      (expect (not-any? #(str/includes? % "CODE 1") lines))
-      (expect (= p/MARKER_CODE (marker-of code-line)))
-      (expect (= p/MARKER_CODE_STATUS (marker-of status-line))))))
+      (let [lines (format-iteration-entry {:iteration 0
+                                           :forms [{:code "(Thread/sleep 1000)" :comment nil :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms 1000 :duration-ms 0 :success? nil :silent? false}]}
+                    40 1 {:now-ms 2500})
+            code-line (first (filter #(str/includes? % "Thread/sleep") lines))
+            status-line (first (filter #(str/includes? % "↻ 1.0s") lines))]
+        (expect (not-any? #(str/includes? % "BLOCK 1") lines))
+        (expect (not-any? #(str/includes? % "ITERATION 1") lines))
+        (expect (not-any? #(str/includes? % "CODE 1") lines))
+        (expect (= p/MARKER_CODE (marker-of code-line)))
+        (expect (= p/MARKER_CODE_STATUS (marker-of status-line))))))
 
   (it "renders mixed-block render segments as visible code plus title banner while hiding answer call"
     (with-raw-code-on
       (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code (str "(def x 1)\n"
-                                                          "(set-session-title! \"Mixed forms\")\n"
-                                                          "(done [:ir [:p \"Done\"]])") :comment nil :render-segments [{:kind :code :source "(def x 1)"}
-                                                                                                                       {:kind :title :value "Mixed forms"}
-                                                                                                                       {:kind :answer-ref}] :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
-                  60 1 {})
-          body (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "(def x 1)"))
-      (expect (str/includes? body "TITLE  \"Mixed forms\""))
+                                           :forms [{:code (str "(def x 1)\n"
+                                                            "(set-session-title! \"Mixed forms\")\n"
+                                                            "(done [:ir [:p \"Done\"]])") :comment nil :render-segments [{:kind :code :source "(def x 1)"}
+                                                                                                                         {:kind :title :value "Mixed forms"}
+                                                                                                                         {:kind :answer-ref}] :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                    60 1 {})
+            body (str/join "\n" (map (comp strip-ansi body-of) lines))]
+        (expect (str/includes? body "(def x 1)"))
+        (expect (str/includes? body "TITLE  \"Mixed forms\""))
       ;; Render-segments path: the raw `(done …)` call form should not
       ;; leak — the renderer surfaces the answer reference instead.
-      (expect (not (str/includes? body "(done [:ir")))
-      (expect (not (str/includes? body "set-session-title!")))))
+        (expect (not (str/includes? body "(done [:ir")))
+        (expect (not (str/includes? body "set-session-title!")))))
 
-  (it "renders IR tool results without EDN dumping"
-    (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
-          lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
-                  60 1 {})
-          body (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "bold"))
-      (expect (str/includes? body "result"))
-      (expect (not (str/includes? body ":ir"))))))
+    (it "renders IR tool results without EDN dumping"
+      (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
+            lines (format-iteration-entry {:iteration 0
+                                           :forms [{:code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                    60 1 {})
+            body (str/join "\n" (map (comp strip-ansi body-of) lines))]
+        (expect (str/includes? body "bold"))
+        (expect (str/includes? body "result"))
+        (expect (not (str/includes? body ":ir"))))))
 
   (it "renders channel sink IR returned by a tool without EDN dumping"
     ;; Tool results carry their channel-render IR via `:result-render`.
@@ -182,7 +182,7 @@
       (expect (= p/MARKER_CODE_ERR (marker-of error-line)))))
 
   (it "puts success status on its own bottom line and keeps bottom padding"
-      (with-raw-code-on
+    (with-raw-code-on
     ;; Layout (post header-band removal):
     ;;   iteration-pad
     ;;   code-ok-pad             ← the trailing pad lives ABOVE result rows,
@@ -192,36 +192,36 @@
     ;;   iteration-pad
     ;; Plain `:value` form results no longer render — the trailing
     ;; result row is gone for non-tool forms per user directive.
-    (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
-                  40 1 {})
-          bodies (mapv (comp strip-ansi body-of) lines)
-          status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
-      (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
-      (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))
-      (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
-      (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
+      (let [lines (format-iteration-entry {:iteration 0
+                                           :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                    40 1 {})
+            bodies (mapv (comp strip-ansi body-of) lines)
+            status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
+        (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
+        (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))
+        (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
+        (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
 
   (it "pads displayed form comments by one column"
     (with-raw-code-on
       (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(+ 1 2)" :comment ";; why this runs" :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 0 :success? nil :silent? false}]}
-                  40 1 {})
-          comment-line (first (filter #(str/includes? % ";; why this runs") lines))]
-      (expect (= p/MARKER_THINKING (marker-of comment-line)))
-      (expect (str/starts-with? (body-of comment-line) " ;;")))))
+                                           :forms [{:code "(+ 1 2)" :comment ";; why this runs" :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 0 :success? nil :silent? false}]}
+                    40 1 {})
+            comment-line (first (filter #(str/includes? % ";; why this runs") lines))]
+        (expect (= p/MARKER_THINKING (marker-of comment-line)))
+        (expect (str/starts-with? (body-of comment-line) " ;;")))))
 
-(defdescribe provider-fallback-notice-test
-  (it "renders provider fallback recap lines above fallback details"
-    (let [lines (format-iteration-entry
-                  {:provider-fallbacks
-                   [{:failed-provider {:id :anthropic-coding-plan
-                                       :model "claude-opus-4-7"
-                                       :error "Exceptional status code: 429"}}]}
-                  120 1 {})
-          body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
-      (expect (str/includes? body "RECAP  Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
-      (expect (str/includes? body "Exceptional status code: 429")))))
+  (defdescribe provider-fallback-notice-test
+    (it "renders provider fallback recap lines above fallback details"
+      (let [lines (format-iteration-entry
+                    {:provider-fallbacks
+                     [{:failed-provider {:id :anthropic-coding-plan
+                                         :model "claude-opus-4-7"
+                                         :error "Exceptional status code: 429"}}]}
+                    120 1 {})
+            body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
+        (expect (str/includes? body "RECAP  Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
+        (expect (str/includes? body "Exceptional status code: 429")))))
 
   (it "formats same-provider retry notices as recap rows"
     (let [lines (format-iteration-entry
@@ -403,18 +403,18 @@
           (expect (visually-blank? (nth ln (dec idx))))
           (expect (or (nil? above) (not (apply = above))))))
 
-    (it "cancelled with non-empty answer renders the answer text once"
+      (it "cancelled with non-empty answer renders the answer text once"
       ;; `cancel-text` falls back to the answer text when the IR is
       ;; non-empty. Cancelled turns are flat system notes, so they use
       ;; only the outside margin, not answer-bg inside padding.
-      (let [p   (render/format-answer-with-thinking-data*
-                  ans [iter] 80 settings nil true nil)
-            idx (index-of p "hello")
-            ln  (:lines p)]
-        (expect (some? idx))
-        (expect (visually-blank? (nth ln (dec idx))))
-        (expect (or (zero? (dec idx))
-                  (not (visually-blank? (nth ln (- idx 2)))))))))))
+        (let [p   (render/format-answer-with-thinking-data*
+                    ans [iter] 80 settings nil true nil)
+              idx (index-of p "hello")
+              ln  (:lines p)]
+          (expect (some? idx))
+          (expect (visually-blank? (nth ln (dec idx))))
+          (expect (or (zero? (dec idx))
+                    (not (visually-blank? (nth ln (- idx 2)))))))))))
 
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
@@ -482,31 +482,31 @@
   (it "live progress renders every iteration instead of hiding history"
     (with-raw-code-on
       (let [mk-entry (fn [n]
-                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
-          body     (strip-ansi
-                     (render/progress->text
-                       {:iterations (mapv mk-entry (range 5))}
-                       80
-                       {:show-thinking true :show-iterations true}
-                       {:now-ms 1000 :turn-start-ms 0}))]
-      (expect (not (str/includes? body "hidden while live")))
-      (expect (str/includes? body "(+ 0 1)"))
-      (expect (str/includes? body "(+ 4 1)"))))
+                       {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
+            body     (strip-ansi
+                       (render/progress->text
+                         {:iterations (mapv mk-entry (range 5))}
+                         80
+                         {:show-thinking true :show-iterations true}
+                         {:now-ms 1000 :turn-start-ms 0}))]
+        (expect (not (str/includes? body "hidden while live")))
+        (expect (str/includes? body "(+ 0 1)"))
+        (expect (str/includes? body "(+ 4 1)"))))
 
-  (it "live progress renders bounded thinking chunks without hiding content"
+    (it "live progress renders bounded thinking chunks without hiding content"
     ;; Fixture passes real thinking content — the previous empty
     ;; `{:iterations [{}]}` shape could never have exercised any
     ;; thinking-rendering assertion (regression net for the bug where
     ;; this test was silently a no-op).
-    (let [body (strip-ansi
-                 (render/progress->text
-                   {:iterations [{:thinking "alpha\nbeta"}]}
-                   80
-                   {:show-thinking true :show-iterations true}
-                   {:now-ms 1000 :turn-start-ms 0}))]
-      (expect (not (str/includes? body "hidden while live")))
-      (expect (str/includes? body "alpha"))
-      (expect (str/includes? body "beta")))))
+      (let [body (strip-ansi
+                   (render/progress->text
+                     {:iterations [{:thinking "alpha\nbeta"}]}
+                     80
+                     {:show-thinking true :show-iterations true}
+                     {:now-ms 1000 :turn-start-ms 0}))]
+        (expect (not (str/includes? body "hidden while live")))
+        (expect (str/includes? body "alpha"))
+        (expect (str/includes? body "beta")))))
 
   (it "live progress previews huge thinking with the viewport-driven truncation"
     ;; The single-iteration truncation summary only fires when a
@@ -551,68 +551,68 @@
       (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "live progress always renders every iteration with no PROGRESS HISTORY toggle"
-      (with-raw-code-on
+    (with-raw-code-on
     ;; Per user directive: no collapsible iteration history. Every
     ;; iteration paints in place; the PROGRESS HISTORY summary band
     ;; is gone.
-    (let [mk-entry (fn [n]
-                     {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
-          payload   (render/progress->lines-data
-                      {:iterations (mapv mk-entry (range 12))}
-                      80
-                      {:show-thinking true
-                       :show-iterations true}
-                      {:now-ms            1000
-                       :turn-start-ms     0
-                       :session-id   "session"
-                       :detail-expansions {}})
-          body      (strip-ansi (:text payload))]
-      (expect (not (str/includes? body "PROGRESS HISTORY")))
-      (expect (not (str/includes? body "iterations hidden")))
-      (expect (str/includes? body "(+ 0 1)"))
-      (expect (str/includes? body "(+ 11 1)"))
-      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload))))))
+      (let [mk-entry (fn [n]
+                       {:forms [{:code (str "(+ " n " 1)") :comment nil :render-segments nil :result-render (str (inc n)) :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]})
+            payload   (render/progress->lines-data
+                        {:iterations (mapv mk-entry (range 12))}
+                        80
+                        {:show-thinking true
+                         :show-iterations true}
+                        {:now-ms            1000
+                         :turn-start-ms     0
+                         :session-id   "session"
+                         :detail-expansions {}})
+            body      (strip-ansi (:text payload))]
+        (expect (not (str/includes? body "PROGRESS HISTORY")))
+        (expect (not (str/includes? body "iterations hidden")))
+        (expect (str/includes? body "(+ 0 1)"))
+        (expect (str/includes? body "(+ 11 1)"))
+        (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload))))))
 
   (it "toggles :vis/silent forms in live progress traces"
     (with-raw-code-on
       (let [progress {:iterations
-                    [{:forms [{:code "(set-session-title! \"Greeting\")"
-                               :result-render ":vis/silent"
-                               :result-kind :value
-                               :duration-ms 1
-                               :success? true :silent? true}
-                              {:code "(+ 1 2)"
-                               :result-render "3"
-                               :result-kind :value
-                               :duration-ms 1
-                               :success? true :silent? false}]}]}
-          hidden-body (strip-ansi
-                        (render/progress->text progress 80
-                          {:show-thinking true :show-iterations true :show-silent false}
-                          {:now-ms 1000 :turn-start-ms 0}))
-          shown-body  (strip-ansi
-                        (render/progress->text progress 80
-                          {:show-thinking true :show-iterations true :show-silent true}
-                          {:now-ms 1000 :turn-start-ms 0}))]
-      (expect (not (str/includes? hidden-body "set-session-title!")))
-      (expect (str/includes? hidden-body "(+ 1 2)"))
-      (expect (str/includes? shown-body "set-session-title!"))
+                      [{:forms [{:code "(set-session-title! \"Greeting\")"
+                                 :result-render ":vis/silent"
+                                 :result-kind :value
+                                 :duration-ms 1
+                                 :success? true :silent? true}
+                                {:code "(+ 1 2)"
+                                 :result-render "3"
+                                 :result-kind :value
+                                 :duration-ms 1
+                                 :success? true :silent? false}]}]}
+            hidden-body (strip-ansi
+                          (render/progress->text progress 80
+                            {:show-thinking true :show-iterations true :show-silent false}
+                            {:now-ms 1000 :turn-start-ms 0}))
+            shown-body  (strip-ansi
+                          (render/progress->text progress 80
+                            {:show-thinking true :show-iterations true :show-silent true}
+                            {:now-ms 1000 :turn-start-ms 0}))]
+        (expect (not (str/includes? hidden-body "set-session-title!")))
+        (expect (str/includes? hidden-body "(+ 1 2)"))
+        (expect (str/includes? shown-body "set-session-title!"))
       ;; Plain `:value` result bodies (`:vis/silent`, `3`) are hidden
       ;; per user directive — only tool channel-render output paints.
-      (expect (not (str/includes? shown-body ":vis/silent"))))))
+        (expect (not (str/includes? shown-body ":vis/silent"))))))
 
-(defdescribe repeated-error-collapse-test
-  (it "squashes repeated identical provider errors into one counted row"
-    (render/invalidate-cache!)
-    (let [err {:message "Stream ended before terminal marker."
-               :data {:type :svar.core/stream-truncated}}
-          body (strip-ansi
-                 (:text (render/progress->lines-data
-                          {:iterations (vec (repeat 11 {:error err}))} 80
-                          {:show-thinking true :show-iterations true}
-                          {:now-ms 1000 :turn-start-ms 0})))]
-      (expect (str/includes? body "ERROR x 11: Stream ended before terminal marker."))
-      (expect (= 1 (count (re-seq #"ERROR" body))))))))
+  (defdescribe repeated-error-collapse-test
+    (it "squashes repeated identical provider errors into one counted row"
+      (render/invalidate-cache!)
+      (let [err {:message "Stream ended before terminal marker."
+                 :data {:type :svar.core/stream-truncated}}
+            body (strip-ansi
+                   (:text (render/progress->lines-data
+                            {:iterations (vec (repeat 11 {:error err}))} 80
+                            {:show-thinking true :show-iterations true}
+                            {:now-ms 1000 :turn-start-ms 0})))]
+        (expect (str/includes? body "ERROR x 11: Stream ended before terminal marker."))
+        (expect (= 1 (count (re-seq #"ERROR" body))))))))
 
 (defdescribe progress-streaming-perf-test
   (it "per-iteration cache keeps live-stream tick under 50 ms with 15 iterations"
@@ -698,18 +698,18 @@
       ;; live now share a flat layout: thinking first, then all code
       ;; blocks. Plain `:value` form results are hidden per user
       ;; directive, so only code (not `2`) follows the reasoning.
-      (let [lines (format-iteration-entry
-                    {:thinking "alpha\nbeta"
-                     :error nil
-                     :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
-                    60 1 {:show-header? true})
-            body  (strip-ansi (str/join "\n" (map body-of lines)))]
-        (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
-        (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
-        (expect (neg? (.indexOf body "2")))))))
+        (let [lines (format-iteration-entry
+                      {:thinking "alpha\nbeta"
+                       :error nil
+                       :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                      60 1 {:show-header? true})
+              body  (strip-ansi (str/join "\n" (map body-of lines)))]
+          (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
+          (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
+          (expect (neg? (.indexOf body "2")))))))
 
   (it "keeps thinking and code flush so the thinking→badge margin matches code→badge"
-      (with-raw-code-on
+    (with-raw-code-on
     ;; Parallel work (`equalize thinking→badge margin`) intentionally
     ;; collapsed the previous two-row pad block between thinking and
     ;; code so the visible breathing room is a SINGLE neutral row,
@@ -718,22 +718,22 @@
     ;; blank/marker row, code starts — so a future layout tweak that
     ;; re-introduces a stripe between them surfaces here, not in a
     ;; user-visible asymmetry report.
-    (let [lines (format-iteration-entry
-                  {:thinking "alpha"
-                   :error nil
-                   :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
-                  60 1 {:show-header? false :live-preview? true})
-          visible (mapv (comp strip-ansi body-of) lines)
-          alpha-idx (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
-          code-idx  (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))]
-      (expect (some? alpha-idx))
-      (expect (some? code-idx))
-      (expect (< alpha-idx code-idx))
+      (let [lines (format-iteration-entry
+                    {:thinking "alpha"
+                     :error nil
+                     :forms [{:code "(+ 1 1)" :comment nil :render-segments nil :result-render "2" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                    60 1 {:show-header? false :live-preview? true})
+            visible (mapv (comp strip-ansi body-of) lines)
+            alpha-idx (first (keep-indexed #(when (str/includes? %2 "alpha") %1) visible))
+            code-idx  (first (keep-indexed #(when (str/includes? %2 "(+ 1 1)") %1) visible))]
+        (expect (some? alpha-idx))
+        (expect (some? code-idx))
+        (expect (< alpha-idx code-idx))
       ;; Bound the gap: thinking and code should sit close, with a
       ;; small handful of marker / pad rows between them (per parallel
       ;; layout work). Hard ceiling guards against a regression that
       ;; explodes the gap into a multi-row stripe.
-      (expect (<= (- code-idx alpha-idx) 5))))))
+        (expect (<= (- code-idx alpha-idx) 5))))))
 
 (defdescribe paint-styled-line-stacking-test
   ;; The Polish bug report: `> **Lącznie:**` inside a quote rendered

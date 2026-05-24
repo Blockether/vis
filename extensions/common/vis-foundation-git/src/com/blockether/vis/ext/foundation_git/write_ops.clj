@@ -48,7 +48,7 @@
   [resource attempt]
   (let [from-fn  (when-let [f @ssh-passphrase-prompt-fn]
                    (try (f resource attempt)
-                        (catch Throwable _ nil)))
+                     (catch Throwable _ nil)))
         from-env (when (str/blank? from-fn)
                    (System/getenv "VIS_SSH_KEY_PASSPHRASE"))]
     (cond
