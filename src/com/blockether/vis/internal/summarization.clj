@@ -1,8 +1,8 @@
-(ns com.blockether.vis.internal.compaction
-  "Side-effect compaction wrappers around the pure engine helpers in
+(ns com.blockether.vis.internal.summarization
+  "Side-effect summarization wrappers around the pure engine helpers in
    `ctx-engine`. The engine owns SHAPE decisions
-   (`pick-oldest-batch-for-compaction`, `make-compact-stub`,
-   `compact-trailer-with-summarizer`); this namespace owns THREADING
+   (`pick-oldest-batch-for-summarization`, `make-summary-stub`,
+   `summarize-trailer-with-companion`); this namespace owns THREADING
    decisions: which companion model to call, with what timeout, what
    fallback if it fails.
 
@@ -17,7 +17,7 @@
      - opt-in override via `:vis/companion-provider` / `-model` in
        config.edn (TODO: not wired yet)
      - if neither matches OR companion call fails/times out → engine
-       dummy summary; no exception bubbles out. Compaction never
+       dummy summary; no exception bubbles out. Summarization never
        breaks the turn."
   (:require
    [clojure.string :as str]
@@ -82,7 +82,7 @@ ACTIVITY:
 ")
 
 (defn- batch->pretty
-  "Render one compaction batch into a deterministic plain-text body the
+  "Render one summarization batch into a deterministic plain-text body the
    companion LLM can summarise. Avoids EDN noise (key colons, braces)
    for tokens; keeps scopes + src + result/error labelled."
   [batch]
@@ -114,7 +114,7 @@ ACTIVITY:
 
 (def ^:private COMPANION_TIMEOUT_MS
   "Maximum wall time we wait for the companion LLM to produce a
-   compaction summary. The user accepted 15 seconds: at the high end
+   summarization summary. The user accepted 15 seconds: at the high end
    of what we can block a turn for, but companion models typically
    resolve in 1-3 s; the cushion only matters for cold start / queue."
   15000)
@@ -154,7 +154,7 @@ ACTIVITY:
                        (extract-first-text-block (svar/ask-code! router opts))
                        (catch Throwable t
                          (tel/log! {:level :debug
-                                    :id    ::companion-call-failed
+                                    :id    ::companion-summary-failed
                                     :data  {:provider (:provider comp)
                                             :model    (:model comp)
                                             :error    (ex-message t)}})
@@ -167,14 +167,14 @@ ACTIVITY:
 ;; Public API
 ;; =============================================================================
 
-(defn compact-trailer-now!
-  "Run one round of trailer compaction. Mutates `env`'s `:ctx-atom` in
+(defn summarize-trailer-now!
+  "Run one round of trailer summarization. Mutates `env`'s `:ctx-atom` in
    place. Pure decisions go through
-   `ctx-engine/compact-trailer-with-summarizer`; this fn wires in the
+   `ctx-engine/summarize-trailer-with-companion`; this fn wires in the
    companion summariser and the side-effect ctx-atom swap.
 
    `opts`:
-     :target-tokens   trailer-total target after compaction (caller
+     :target-tokens   trailer-total target after summarization (caller
                       typically sets this BELOW the budget so we leave
                       headroom for next iter)
      :born-scope      `tN/iM/fK` stamp on the new summary stub
@@ -182,7 +182,7 @@ ACTIVITY:
                       used to pick the companion model. Nil → engine
                       dummy summary.
 
-   Returns the same map `ctx-engine/compact-trailer-with-summarizer`
+   Returns the same map `ctx-engine/summarize-trailer-with-companion`
    returns, plus `:duration-ms`. Never throws."
   [{:keys [ctx-atom] :as env} {:keys [target-tokens born-scope main-provider]}]
   (if-not ctx-atom
@@ -193,7 +193,7 @@ ACTIVITY:
           result-box (atom nil)
           _          (swap! ctx-atom
                        (fn [ctx]
-                         (let [r (ctx-engine/compact-trailer-with-summarizer
+                         (let [r (ctx-engine/summarize-trailer-with-companion
                                    ctx
                                    {:target-tokens target-tokens
                                     :born-scope    born-scope
@@ -208,13 +208,13 @@ ACTIVITY:
                           :engine-dummy))]
       (when (:compacted? r)
         (tel/log! {:level :info
-                   :id    ::trailer-auto-compacted
+                   :id    ::trailer-auto-summarized
                    :data  {:scope-range  (:scope-range r)
                            :batch-size   (:batch-size r)
                            :tokens-freed (:tokens-freed r)
                            :source       source
                            :duration-ms  duration-ms}}
-          (str "Trailer auto-compacted: " (:batch-size r)
+          (str "Trailer auto-summarized: " (:batch-size r)
             " pin(s) freed ~" (:tokens-freed r) " tokens in "
             duration-ms "ms.")))
       (merge r {:duration-ms duration-ms :source source}))))
@@ -231,19 +231,19 @@ ACTIVITY:
    provider-native)."
   144000)
 
-(def ^:private MAX_COMPACTION_ROUNDS
-  "Hard cap on how many compaction round-trips a single render can
+(def ^:private MAX_SUMMARIZATION_ROUNDS
+  "Hard cap on how many summarization round-trips a single render can
    trigger. 3 rounds * 15s companion timeout = 45s worst case before
    we ship the prompt anyway. In practice rounds 2 and 3 hit dummy
    fallback after the first companion call satisfied (or didn't), so
    real-world latency is one network round-trip plus a few ms."
   3)
 
-(def ^:private COMPACTION_SAFETY_MARGIN_TOKENS
-  "Trailer compaction frees AT LEAST (delta + this) tokens so a single
+(def ^:private SUMMARIZATION_SAFETY_MARGIN_TOKENS
+  "Trailer summarization frees AT LEAST (delta + this) tokens so a single
    long-tail iteration's growth does not immediately push the prompt
    back over budget on the next turn. 4 000 tok keeps room for one
-   medium tool result before the next compaction has to run."
+   medium tool result before the next summarization has to run."
   4000)
 
 (defn- iter-ctx-msg
@@ -258,15 +258,15 @@ ACTIVITY:
    provider this iteration: stable system prompts + initial user
    message + per-iter ctx. Uses jtokkit cl100k_base — approximation
    only, ~10-30% margin per provider; precision is sufficient for
-   compaction triggers."
+   summarization triggers."
   [stable-msgs ctx-rendered]
   (+ (tokens/count-prompt-tokens (or stable-msgs []))
     (tokens/count-prompt-tokens [(iter-ctx-msg ctx-rendered)])))
 
 (defn ensure-prompt-under-budget!
   "Render the per-iter ctx; if the resulting prompt total exceeds
-   `:budget-tokens`, run trailer compaction round-trips until either
-   the prompt fits or `MAX_COMPACTION_ROUNDS` is hit. Returns:
+   `:budget-tokens`, run trailer summarization round-trips until either
+   the prompt fits or `MAX_SUMMARIZATION_ROUNDS` is hit. Returns:
 
      {:rendered     <ctx-string>            ; final rendered ctx
       :total-tokens <long>                   ; final estimated total
@@ -282,11 +282,11 @@ ACTIVITY:
      :main-provider  drives companion model selection.
      :born-scope     `tN/iM/fK` stamped onto auto-summary stubs.
 
-   Compaction policy: each round targets a trailer total small enough
+   Summarization policy: each round targets a trailer total small enough
    that the freed delta plus a safety margin brings the prompt under
-   budget. If compaction returns `:compacted? false` (already empty /
+   budget. If summarization returns `:compacted? false` (already empty /
    only one pin left), the loop exits early — trailer can't shrink any
-   further and the panic path / facts compaction (TODO) takes over.
+   further and the panic path / facts summarization (TODO) takes over.
 
    Never throws."
   [env {:keys [render-fn stable-msgs budget-tokens main-provider born-scope]
@@ -301,12 +301,12 @@ ACTIVITY:
         (<= total budget-tokens)
         {:rendered rendered :total-tokens total :over-budget? false :rounds rounds}
 
-        (>= round MAX_COMPACTION_ROUNDS)
+        (>= round MAX_SUMMARIZATION_ROUNDS)
         (do
-          (tel/log! {:level :warn :id ::compaction-rounds-exhausted
+          (tel/log! {:level :warn :id ::summarization-rounds-exhausted
                      :data {:total-tokens total :budget-tokens budget-tokens
                             :rounds       (count rounds)}}
-            (str "Compaction exhausted " MAX_COMPACTION_ROUNDS
+            (str "Summarization exhausted " MAX_SUMMARIZATION_ROUNDS
               " rounds; prompt still " total " tok (> " budget-tokens
               "). Sending anyway — provider may reject."))
           {:rendered rendered :total-tokens total :over-budget? true :rounds rounds})
@@ -320,18 +320,18 @@ ACTIVITY:
               ctx-atom-snap (some-> (:ctx-atom env) deref)
               trailer       (or (:session/trailer ctx-atom-snap) [])
               trailer-toks  (ctx-engine/trailer-total-tokens trailer)
-              required-drop (+ (- total budget-tokens) COMPACTION_SAFETY_MARGIN_TOKENS)
+              required-drop (+ (- total budget-tokens) SUMMARIZATION_SAFETY_MARGIN_TOKENS)
               target        (max 0 (- trailer-toks required-drop))
-              r             (compact-trailer-now! env
+              r             (summarize-trailer-now! env
                               {:target-tokens target
                                :born-scope    born-scope
                                :main-provider main-provider})]
           (if-not (:compacted? r)
             (do
-              (tel/log! {:level :warn :id ::compaction-cannot-shrink
+              (tel/log! {:level :warn :id ::summarization-cannot-shrink
                          :data {:total-tokens total :budget-tokens budget-tokens
                                 :trailer-tokens trailer-toks}}
-                "Trailer compaction returned no-op (one pin left or already empty). Stopping cascade.")
+                "Trailer summarization returned no-op (one pin left or already empty). Stopping cascade.")
               {:rendered     rendered
                :total-tokens total
                :over-budget? true

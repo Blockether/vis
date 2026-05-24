@@ -1,12 +1,12 @@
 (ns com.blockether.vis.internal.tokens
   "Approximate token counting for engine-side safe-guards and
-   compaction triggers.
+   summarization triggers.
 
    Uses jtokkit cl100k_base BPE — OpenAI GPT-4 family tokenizer.
    Margin vs other providers (Anthropic Claude, Z.AI GLM, OpenAI o200k):
    typically 10-30%. Good enough for budget decisions like \"this fact
    :content is too big to inline\" or \"trailer total exceeds 60k —
-   auto-compact\"; NOT precise enough for billing claims.
+   auto-summarise\"; NOT precise enough for billing claims.
 
    For exact provider-reported counts use `session_turn_iteration`'s
    `:input-tokens` / `:output-tokens` (post-response). This helper is
@@ -62,7 +62,7 @@
    to a provider. Sums `count-tokens` over each `:content` plus a small
    per-message overhead.
 
-   Used by the compaction trigger: before each provider call the engine
+   Used by the summarization trigger: before each provider call the engine
    measures the full prompt; if over budget it runs the cascade
    (trailer compact → facts compact → panic drop)."
   ^long [messages]

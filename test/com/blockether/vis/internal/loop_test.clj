@@ -448,16 +448,21 @@
       (expect (str/includes? text "vis providers auth")))))
 
 (defdescribe ask-code-idle-timeout-test
-  (it "uses a five-minute ask-code idle timeout by default"
-    (expect (= (* 5 60 1000) lp/ASK_CODE_IDLE_TIMEOUT_MS))
+  (it "uses a sixty-second TTFT timeout and three-minute idle timeout by default"
+    (expect (= (* 60 1000) lp/ASK_CODE_TTFT_TIMEOUT_MS))
+    (expect (= (* 3 60 1000) lp/ASK_CODE_IDLE_TIMEOUT_MS))
     (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
       (expect (= ::router router))
+      (expect (= lp/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
       (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
       ;; Semantic timeout is now auto-added by `with-default-ask-code-idle-timeout`
       ;; (default 4min, catches transport-alive-but-model-silent stalls).
       (expect (= lp/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
 
-  (it "preserves explicit ask-code idle timeout overrides"
+  (it "preserves explicit ask-code TTFT and idle timeout overrides"
+    (expect (= 77 (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms 77})))))
+    (expect (contains? (:opts (captured-ask-code-opts {:ttft-timeout-ms nil})) :ttft-timeout-ms))
+    (expect (nil? (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms nil})))))
     (expect (= 42 (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms 42})))))
     (expect (contains? (:opts (captured-ask-code-opts {:idle-timeout-ms nil})) :idle-timeout-ms))
     (expect (nil? (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms nil}))))))

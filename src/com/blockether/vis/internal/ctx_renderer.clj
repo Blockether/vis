@@ -85,7 +85,7 @@
 ;;                                                preview + introspect-form
 ;;   fact-content   > FACT_CONTENT_TOKEN_LIMIT — single fact preview +
 ;;                                                introspect-fact
-;;   trailer-total  (engine compaction)        — see ctx-engine
+;;   trailer-total  (engine summarization)        — see ctx-engine
 ;;
 ;; Limits are tokens (jtokkit cl100k), not chars: provider budgets are
 ;; tokenwise and char→token ratio swings 0.25–1 across English code vs
