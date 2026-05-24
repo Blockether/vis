@@ -108,26 +108,22 @@
     (contains? envelope :error)    (assoc :error (:error envelope))))
 
 (defn- enrich-iteration
-  "Attach `:blocks` and `:vars` to one iteration row.
+  "Attach `:blocks` to one iteration row.
 
-     `:blocks` - one entry per top-level form the iter executed, derived
-                from the iter's `:forms` envelope vec (the new canonical
-                shape on `session_turn_iteration.forms`).
-     `:vars`   - every `(def ...)` this iteration produced; reads from
-                the separate `definition_soul` / `definition_state`
-                facade. Each entry is `{:name :code :value :version}`.
+     `:blocks` - one entry per top-level form the iter executed,
+                derived from the iter's `:forms` envelope vec on
+                `session_turn_iteration.forms`. Cross-turn def
+                rehydration is gone, so there is no separate `:vars`
+                slice — every form lives on the iteration row.
 
-   Both reads degrade silently to `[]` so the renderer never
-   throws on a partial DB."
-  [db-info iter]
+   Degrades silently to `[]` so the renderer never throws on a
+   partial DB."
+  [_db-info iter]
   (let [forms  (or (:forms iter) [])
-        blocks (vec (map-indexed form-envelope->block forms))
-        vars   (try (vec (vis/db-list-iteration-vars db-info (:id iter)))
-                 (catch Throwable _ []))]
+        blocks (vec (map-indexed form-envelope->block forms))]
     (-> iter
       (update :thinking visible-thinking)
       (assoc :blocks blocks)
-      (assoc :vars   vars)
       (assoc :failure-count (count (filter :error blocks))))))
 
 (defn- build-turn
@@ -267,10 +263,10 @@
 
 (defn- result-summary
   "Bounded, data-first result preview for timeline/call rows. The full
-   values remain available where they were persisted (`:blocks`,
-   `:vars`, and `:calls :result`); this summary makes the timeline
-   useful without forcing callers to inspect provider/tool-specific
-   payloads."
+   values remain available where they were persisted (`:blocks` and
+   `:calls :result`); this summary makes the timeline useful without
+   forcing callers to inspect provider/tool-specific payloads."
+
   [result]
   (cond
     (runtime-ref? result)
@@ -349,18 +345,11 @@
 
 (defn- iteration-tool-calls
   [turn iteration]
-  (let [blocks-by-code (block-by-code iteration)
-        direct-calls   (keep (fn [block]
-                               (when (tool-result-envelope? (:result block))
-                                 (tool-call-row turn iteration block nil (:result block))))
-                         (:blocks iteration))
-        var-calls      (keep (fn [var-row]
-                               (when (tool-result-envelope? (:value var-row))
-                                 (tool-call-row turn iteration
-                                   (get blocks-by-code (:code var-row))
-                                   var-row
-                                   (:value var-row))))
-                         (:vars iteration))
+  (let [_blocks-by-code (block-by-code iteration)
+        direct-calls    (keep (fn [block]
+                                (when (tool-result-envelope? (:result block))
+                                  (tool-call-row turn iteration block nil (:result block))))
+                          (:blocks iteration))
         {:keys [order rows]}
         (reduce (fn [{:keys [order rows] :as acc} call]
                   (let [dedupe-key (or (:ref call)
@@ -370,7 +359,7 @@
                       {:order (conj order dedupe-key)
                        :rows  (assoc rows dedupe-key call)})))
           {:order [] :rows {}}
-          (concat direct-calls var-calls))]
+          direct-calls)]
     (mapv rows order)))
 
 (defn- transcript-calls
@@ -620,25 +609,6 @@
       (render-fenced "text" (str error))
       "\n")))
 
-(defn- render-vars
-  "Compact list of `(def ...)` rows produced by this iteration. One
-   bullet per var with the full code expression (newlines collapsed
-   via `one-line`) and the full `pr-str` of its value. Empty / nil ->
-   nothing emitted."
-  [vars]
-  (when (seq vars)
-    (str "_vars defined this iteration:_\n\n"
-      (str/join "\n"
-        (map (fn [{:keys [name code value version]}]
-               (str "- `" name "`"
-                 (when version (str " (v" version ")"))
-                 (when (and code (not (str/blank? code)))
-                   (str " - `" (one-line code) "`"))
-                 (when (some? value)
-                   (str " -> `" (pr-str value) "`"))))
-          vars))
-      "\n\n")))
-
 (defn- render-system-prompt
   "Collapsible `<details>` block carrying the full assembled system
    prompt for this iteration. `prev-system-prompt` is the system
@@ -883,7 +853,6 @@
             (:llm-system-prompt prev-iter)
             (:position prev-iter))
           (render-llm-messages (:llm-user-prompt iter))))
-      (render-vars (:vars iter))
       (cond
         (empty? blocks)
         "_No code blocks (LLM returned an empty response)._\n"

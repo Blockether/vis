@@ -3,7 +3,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.history-restore :as history-restore]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe rebuild-history-test)
@@ -208,15 +207,12 @@
         (expect (= :error (:result-kind f2)))
         (expect (some? (:error f2))))))
 
-  (it "rebuild-history shows restored def values when the def form returned a runtime var"
-    ;; `(def derived (subvec ...))` returns a SCI Var at the form level
-    ;; so the persisted envelope carries `{:vis/ref :expr}`. The actual
-    ;; value is stored separately as definition_state; resume uses that
-    ;; before falling back to the runtime-ref placeholder.
+  (it "rebuild-history renders legacy runtime-ref payloads as a non-restorable label"
+    ;; Historical sessions may still carry `{:vis/ref :expr}` from the
+    ;; old definition_state rebuild path. Cross-turn def rehydration
+    ;; is gone; render the sentinel as a small static label rather than
+    ;; pretending we can restore it.
     (with-redefs [vis/db-info (fn [] :db)
-                  history-restore/restored-var-values
-                  (fn [_db _cid]
-                    {"prompt-slice" ["alpha" "beta"]})
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -232,9 +228,7 @@
                                :result {:vis/ref :expr}}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             rendered (-> history second :traces first :forms first :result-render)]
-        (expect (str/includes? (str rendered) "alpha"))
-        (expect (str/includes? (str rendered) "beta"))
-        (expect (not (str/includes? (str rendered) "<runtime value"))))))
+        (expect (str/includes? (str rendered) "legacy runtime value")))))
 
   (it "render-answer throws on raw-string input (strict IR contract)"
     (expect

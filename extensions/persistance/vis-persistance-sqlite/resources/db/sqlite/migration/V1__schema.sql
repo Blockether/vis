@@ -9,18 +9,19 @@
 --
 --   session_soul (identity)
 --     └─ session_state (branch/fork; pinned to workspace 1:1)
---          ├─ session_turn_soul (user ask, branch-local)
---          │    └─ session_turn_state (one run/retry of the turn)
---          │         └─ session_turn_iteration (one LLM round-trip)
---          │              │
---          │              └─ code/result/error/duration_ms columns
---          │                   Executed form plus result/error timing live inline on
---          │                   the iteration row.
---          │
---          └─ definition_soul (branch-local var identities)
---               ├─ definition_state (var versions; each row points at the
---               │                    iteration that produced it)
---               └─ definition_dependency (var dep graph, soul-level)
+--          └─ session_turn_soul (user ask, branch-local)
+--               └─ session_turn_state (one run/retry of the turn)
+--                    └─ session_turn_iteration (one LLM round-trip)
+--                         │
+--                         └─ code / forms BLOB / result / error / duration_ms columns
+--                              Executed forms (per-form envelopes) live on
+--                              the iteration row. There is no per-var sidecar
+--                              table: SCI defs are intra-turn scratch only,
+--                              never persisted as cross-turn state.
+--                              Cross-turn memory rides on session_turn_state.ctx
+--                              (specs / tasks / facts / trailer) and on the
+--                              forms BLOB (forensic source-of-truth for
+--                              introspect-form / introspect-iter / introspect-turn).
 --
 -- Naming convention:
 --   *_soul   = immutable identity, branch-local
@@ -36,18 +37,20 @@
 --   user request
 --     -> session_turn_soul + session_turn_state
 --     -> session_turn_iteration(s)
---          each session_turn_iteration records executed code inline in
---          code/result/error/duration_ms and writes one
---          definition_soul + definition_state row per named var touched by
---          `(def ...)` / `(defn ...)`
+--          each session_turn_iteration records executed code in `code`,
+--          the per-form envelope vec in `forms` (BLOB), and result /
+--          error / duration_ms columns. SCI defs live ONLY for the
+--          duration of the SCI sandbox (intra-turn). No cross-turn
+--          var rehydration: the model reaches earlier forms via
+--          introspect-form / introspect-iter / introspect-turn (DB
+--          reads against the forms BLOB) or via :session/facts.
 --     -> session_turn_state done/error
 --     -> next turn (or branch/fork to new session_state)
 --
 -- Fork flow:
 --   session_state(v1)
 --        └─ fork -> session_state(v2, parent_state_id=v1)
---   Each fork keeps isolated branch-local session_turn_soul +
---   definition_soul identity.
+--   Each fork keeps isolated branch-local session_turn_soul identity.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
@@ -475,141 +478,11 @@ END;
 -- =============================================================================
 -- Definition soul - branch-local identity for persistent user vars.
 --
--- One row per var name in a session_state. Definitions include
--- normal vars and function vars, e.g. `(def x 42)` and
--- `(defn sum [a b] (+ a b))`.
---
--- Execution payload lives on session_turn_iteration. Var history
--- lives in definition_state: one versioned row per iteration that writes
--- the var. Dependency edges live in definition_dependency.
--- =============================================================================
-CREATE TABLE definition_soul (
-  id                     TEXT PRIMARY KEY NOT NULL,
-  session_state_id  TEXT NOT NULL
-                         REFERENCES session_state(id) ON DELETE CASCADE,
-
-  name                   TEXT NOT NULL CHECK (trim(name) <> ''),
-  created_at             INTEGER NOT NULL
-);
-
-CREATE UNIQUE INDEX uq_definition_soul_state_name
-  ON definition_soul(session_state_id, name);
-
-CREATE INDEX idx_definition_soul_state_created
-  ON definition_soul(session_state_id, created_at);
-
--- =============================================================================
--- Definition dependency - downstream depends on upstream (soul-level graph).
---
--- Direction:
---   upstream_definition_soul_id -> downstream_definition_soul_id
---
--- This table stores pure recalculation edges.
--- If edge (u -> d) exists, d must be recalculated when u changes.
--- =============================================================================
-CREATE TABLE definition_dependency (
-  id                             TEXT PRIMARY KEY NOT NULL,
-  session_state_id          TEXT NOT NULL
-                                 REFERENCES session_state(id) ON DELETE CASCADE,
-  downstream_definition_soul_id  TEXT NOT NULL
-                                 REFERENCES definition_soul(id) ON DELETE CASCADE,
-  upstream_definition_soul_id    TEXT NOT NULL
-                                 REFERENCES definition_soul(id) ON DELETE CASCADE,
-  created_at                     INTEGER NOT NULL,
-
-  CHECK (downstream_definition_soul_id <> upstream_definition_soul_id),
-  UNIQUE (downstream_definition_soul_id, upstream_definition_soul_id)
-);
-
-CREATE INDEX idx_def_dep_downstream
-  ON definition_dependency(downstream_definition_soul_id);
-
-CREATE INDEX idx_def_dep_upstream
-  ON definition_dependency(upstream_definition_soul_id);
-
-CREATE INDEX idx_def_dep_state
-  ON definition_dependency(session_state_id);
-
-CREATE TRIGGER trg_def_dep_same_state_ai
-BEFORE INSERT ON definition_dependency
-BEGIN
-  SELECT
-    CASE
-      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) IS NULL
-        OR (SELECT session_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id) IS NULL
-      THEN RAISE(ABORT, 'definition_dependency endpoint not found')
-      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
-           (SELECT session_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
-      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same session_state')
-      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.session_state_id
-      THEN RAISE(ABORT, 'definition_dependency session_state_id mismatch')
-    END;
-END;
-
-CREATE TRIGGER trg_def_dep_same_state_au
-BEFORE UPDATE ON definition_dependency
-BEGIN
-  SELECT
-    CASE
-      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
-           (SELECT session_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
-      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same session_state')
-      WHEN (SELECT session_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.session_state_id
-      THEN RAISE(ABORT, 'definition_dependency session_state_id mismatch')
-    END;
-END;
-
--- =============================================================================
--- Definition state - versioned durable state per var. Each row carries
--- the source form (the smallest `(def NAME …)` shape that introduced
--- this version) and the Nippy-frozen result value, freeze-safe so fn /
--- lazy-seq / runtime-object values land as `{:vis/ref :expr}` and the
--- caller re-evals `expression` to reconstitute them on restore.
--- =============================================================================
-CREATE TABLE definition_state (
-  id                              TEXT PRIMARY KEY NOT NULL,
-  definition_soul_id              TEXT NOT NULL
-                                  REFERENCES definition_soul(id) ON DELETE CASCADE,
-  session_turn_iteration_id  TEXT NOT NULL
-                                  REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
-
-  version                         INTEGER NOT NULL CHECK (version >= 0),
-
-  -- `expression` is the precise per-var source (e.g. "(def NAME ...)");
-  -- caller re-evals it on restore. Nullable for callers that only
-  -- want value persistence (no re-eval round-trip). NOT NULL would
-  -- enforce the restoration contract but breaks every direct-write
-  -- test fixture that skips the source-tracking step.
-  expression                      TEXT CHECK (expression IS NULL OR trim(expression) <> ''),
-
-  -- The var's Nippy-encoded value at this version. Lazy-seq / runtime-object
-  -- values land as `{:vis/ref :expr}` and the caller re-evals `expression`
-  -- to reconstitute them on restore.
-  value                           BLOB,
-  created_at                      INTEGER NOT NULL,
-
-  UNIQUE (definition_soul_id, version)
-);
-
-CREATE INDEX idx_definition_state_soul
-  ON definition_state(definition_soul_id, version);
-
-CREATE INDEX idx_definition_state_iteration
-  ON definition_state(session_turn_iteration_id);
-
--- First row for a definition_soul must start at version = 0.
-CREATE TRIGGER trg_definition_state_first_version_ai
-BEFORE INSERT ON definition_state
-BEGIN
-  SELECT CASE
-    WHEN NOT EXISTS (
-           SELECT 1
-           FROM definition_state es
-           WHERE es.definition_soul_id = NEW.definition_soul_id)
-         AND NEW.version <> 0
-    THEN RAISE(ABORT, 'first definition_state version must be 0')
-  END;
-END;
+-- Definitions (defs / defns) are intra-turn SCI scratch only. No
+-- definition_* sidecar tables: cross-turn references happen through
+-- :session/facts and introspect-form / introspect-iter / introspect-turn
+-- (DB reads against session_turn_iteration.forms). Restore re-evaluates
+-- nothing.
 
 -- =============================================================================
 -- Extension aggregate - extension-owned durable sidecar state.
@@ -754,10 +627,6 @@ CREATE TABLE log (
                          REFERENCES session_turn_state(id) ON DELETE CASCADE,
   session_turn_iteration_id           TEXT
                          REFERENCES session_turn_iteration(id) ON DELETE CASCADE,
-  definition_soul_id     TEXT
-                         REFERENCES definition_soul(id) ON DELETE CASCADE,
-  definition_state_id    TEXT
-                         REFERENCES definition_state(id) ON DELETE CASCADE,
 
   created_at             INTEGER NOT NULL
 );
@@ -791,16 +660,8 @@ CREATE INDEX idx_log_iteration
   ON log(session_turn_iteration_id, created_at)
   WHERE session_turn_iteration_id IS NOT NULL;
 
-CREATE INDEX idx_log_definition_soul
-  ON log(definition_soul_id, created_at)
-  WHERE definition_soul_id IS NOT NULL;
-
-CREATE INDEX idx_log_definition_state
-  ON log(definition_state_id, created_at)
-  WHERE definition_state_id IS NOT NULL;
-
 -- =============================================================================
--- FTS5 - full-text search over user requests + iteration code + definition state expression snapshots.
+-- FTS5 - full-text search over user requests + iteration code.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
   owner_table  UNINDEXED,
@@ -828,8 +689,6 @@ CREATE TRIGGER trg_session_turn_soul_ad AFTER DELETE ON session_turn_soul BEGIN
   DELETE FROM search WHERE owner_table='session_turn_soul' AND owner_id=old.id;
 END;
 
--- Definition state indexing
-
 -- Iteration code indexing
 CREATE TRIGGER trg_session_turn_iteration_ai AFTER INSERT ON session_turn_iteration BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
@@ -846,21 +705,4 @@ END;
 
 CREATE TRIGGER trg_session_turn_iteration_ad AFTER DELETE ON session_turn_iteration BEGIN
   DELETE FROM search WHERE owner_table='session_turn_iteration' AND owner_id=old.id AND field='code';
-END;
-
-CREATE TRIGGER trg_definition_state_ai AFTER INSERT ON definition_state BEGIN
-  INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'definition_state', new.id, 'expression', new.expression
-    WHERE new.expression IS NOT NULL AND new.expression <> '';
-END;
-
-CREATE TRIGGER trg_definition_state_au AFTER UPDATE ON definition_state BEGIN
-  DELETE FROM search WHERE owner_table='definition_state' AND owner_id=old.id;
-  INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'definition_state', new.id, 'expression', new.expression
-    WHERE new.expression IS NOT NULL AND new.expression <> '';
-END;
-
-CREATE TRIGGER trg_definition_state_ad AFTER DELETE ON definition_state BEGIN
-  DELETE FROM search WHERE owner_table='definition_state' AND owner_id=old.id;
 END;

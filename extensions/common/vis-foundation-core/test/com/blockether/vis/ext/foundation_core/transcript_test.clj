@@ -205,7 +205,7 @@
           (expect (= "gpt-4o"     (:model turn))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "carries thinking + vars + final answer on every iteration / turn"
+  (it "carries thinking + final answer on every iteration / turn"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid   (seed! s)
@@ -214,13 +214,9 @@
               iter  (first (:iterations turn))]
           ;; Reasoning trace surfaces verbatim on the iteration.
           (expect (= "Reasoning about arithmetic" (:thinking iter)))
-          ;; Per-iteration vars carry the (def ...) we persisted.
-          (let [vars (:vars iter)]
-            (expect (= 1 (count vars)))
-            (expect (= "x" (:name (first vars))))
-            (expect (= 42  (:value (first vars))))
-            (expect (str/includes? (:code (first vars)) "(def x 42)")))
-          ;; The final answer surfaces on the turn.
+          ;; Cross-turn `(def ...)` survival was retired; per-form payload
+          ;; lives on the iteration's :blocks vec instead. The final
+          ;; answer surfaces on the turn.
           (expect (= "42" (:answer turn))))
         (finally (vis/db-dispose-connection! s)))))
 
@@ -261,19 +257,22 @@
           (expect (true? (:returned-empty-code? iter))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "normalizes dialog, code blocks, and def-wrapped tool calls into transcript-level timelines"
+  (it "normalizes dialog, code blocks, and tool-call envelopes into transcript-level timelines"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid  (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
               turn (vis/db-store-session-turn! s {:parent-session-id cid
                                                   :user-request "run a tool"
                                                   :status :running})
-              code "(def out (v/tool \"echo hi\"))"
+              code "(v/tool \"echo hi\")"
               value (tool-result "echo hi")]
+          ;; Cross-turn def survival is gone; the iteration row carries
+          ;; the per-form envelope directly. tool-call detection now
+          ;; flows through the block's :result, not a separate :vars
+          ;; sidecar.
           (h/store-iteration! s {:session-turn-id turn
                                  :code code
-                                 :result {:vis/ref :expr}
-                                 :vars [{:name "out" :value value :code code}]
+                                 :result value
                                  :answer "done"
                                  :duration-ms 10})
           (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
@@ -286,37 +285,11 @@
                       (:dialog data)))
             (expect (= 1 (count (:calls data))))
             (expect (= :v/tool (:op call)))
-            (expect (= "out" (:var call)))
             (expect (= code (:code call)))
             (expect (= "echo hi" (:command call)))
             (expect (= 0 (get-in call [:result-summary :exit])))
             (expect (= (:parent-ref call) (:ref code-row)))
             (expect (= call tool-row))))
-        (finally (vis/db-dispose-connection! s)))))
-
-  (it "dedupes one visible tool call when a tool result is both the block result and a var binding"
-    (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid   (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
-              turn  (vis/db-store-session-turn! s {:parent-session-id cid
-                                                   :user-request "run a tool"
-                                                   :status :running})
-              code  "(def out (v/tool \"echo hi\"))"
-              value (tool-result "echo hi")]
-          (h/store-iteration! s {:session-turn-id turn
-                                 :code code
-                                 :result value
-                                 :vars [{:name "out" :value value :code code}]
-                                 :answer "done"
-                                 :duration-ms 10})
-          (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
-          (let [data  (transcript/transcript s cid)
-                calls (:calls data)]
-            (expect (= 1 (count calls)))
-            (expect (= [(:ref (first calls))]
-                      (->> calls (map :ref) distinct vec)))
-            (expect (= "out" (:var (first calls))))
-            (expect (= 1 (count (filter #(= :tool-call (:kind %)) (:timeline data)))))))
         (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------

@@ -1524,35 +1524,6 @@
 ;; into the canonical engine envelope shape
 ;; =============================================================================
 
-(defn- def-form-src?
-  "True when `src` opens with a `def` / `defn` / `defmacro` etc. head.
-   The model writes `(def NAME (v/cat …))` to bind tool results; SCI
-   returns the Var, which renders as `#'sandbox/NAME` in the trailer.
-   The model then re-emits NAME to inspect the actual value, wasting an
-   iter. Detect def shape here so `block->envelope` can deref the Var
-   and surface the realized value directly."
-  [src]
-  (let [s (some-> src str str/triml)]
-    (and s
-      (or (str/starts-with? s "(def ")
-        (str/starts-with? s "(def\n")
-        (str/starts-with? s "(def\t")
-        (str/starts-with? s "(defn ")
-        (str/starts-with? s "(defn-")
-        (str/starts-with? s "(defmacro ")
-        (str/starts-with? s "(defmulti ")
-        (str/starts-with? s "(defonce ")))))
-
-(defn- deref-def-result
-  "When `result` is the Var SCI returned from a `(def NAME …)` form,
-   deref it once so the trailer shows the bound VALUE instead of the
-   opaque `#'sandbox/NAME` reference. Non-Var results pass through
-   unchanged. Safe on nil / primitives / collections."
-  [result]
-  (if (instance? clojure.lang.IDeref result)
-    (try (deref result) (catch Throwable _ result))
-    result))
-
 (defn- realize-trailer-value
   "Force-realize lazy seqs / nested IDeref refs in `v` so the trailer
    carries DATA, not computations. Without this the freeze-safe path on
@@ -1611,8 +1582,13 @@
   (let [src (or (:code block) (:src block) "")
         scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
         raw-result (:result block)
-        result (cond-> raw-result (def-form-src? src) deref-def-result)
-        result (realize-trailer-value result)
+        ;; `(def NAME …)` returns the SCI Var. `realize-trailer-value`
+        ;; already derefs any `IDeref` it encounters, so explicit
+        ;; def-shape detection is redundant: every form's result — Var,
+        ;; atom, lazy seq, plain data — lands as fully realised data
+        ;; in the trailer envelope, ready for prompt rendering and
+        ;; introspection.
+        result (realize-trailer-value raw-result)
         channel (seq (:channel block))]
     (cond-> {:scope scope
              :tag   (classify-form-tag src)
