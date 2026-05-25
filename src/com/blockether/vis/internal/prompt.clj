@@ -172,6 +172,37 @@
           by flipping one fact `:superseded`. A ↔ B and B ↔ C does NOT
           imply A ↔ C; declare each pair explicitly.
 
+      Secondary consultation (parallel-safe via SCI futures):
+        (consult-fast     \"question\")    ; fast/cheap — sanity, format,
+                                            ; quick critique
+        (consult-balanced \"question\")    ; mid-range — cost/quality middle
+        (consult-deep     \"question\")    ; deep reasoning — hard
+                                            ; decomposition, novel problems
+        — engine embeds your current system prompt + user request +
+          a ctx snapshot INVISIBLY into the consultant call; the
+          secondary brain has enough context to answer without you
+          re-passing anything. Just write the specific question.
+        — returns the consultant's response string on success;
+          `{:error :consult-budget-exhausted}` / `:consult-recursion-cap`
+          / `:consult-error` map on bounded failure.
+        — budget: session cap (default 20); recursion depth = 2.
+
+        Parallelize INDEPENDENT consults via SCI `future`s. NOTE: `def`
+        does NOT destructure (only `let` does). Use either:
+          (let [f1 (future (consult-fast \"critique form A\"))
+                f2 (future (consult-fast \"critique form B\"))]
+            (def critiques [@f1 @f2]))
+        OR explicit single defs per future:
+          (def f1 (future (consult-fast \"…\")))
+          (def f2 (future (consult-balanced \"…\")))
+          (def c1 @f1)
+          (def c2 @f2)
+
+        Use for: Constitutional self-critique pre-done, validator-fn
+          sanity, hard-problem delegation, format/structure pre-emit.
+        DON'T use for: anything you can answer yourself (budget waste),
+          loops, re-asking same question (no cache).
+
       Reactive rules (forward-chained watchpoints):
         (rule-set! :K {:when [:on-fact-status :F :active] :message \"…\"})
         (rule-set! :K {:when [:on-task-status :T :done]   :message \"…\"})
