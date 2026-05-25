@@ -77,7 +77,7 @@ separate KG table.
 
 ---
 
-## Phase C — Contradiction detection ❌
+## Phase C — Contradiction detection ✅ LANDED
 
 **Goal.** When two `:active` facts have semantically opposing content
 (detector starts simple: `:K1` and `:K2` both `:active` and
@@ -150,7 +150,7 @@ zmienia content na coś z "md5", auto fact-set! :crypto-warning
 ALL referenced scopes must pass their own `:validator-fn`. Engine
 runs each, AND-s the result. Optional `:proof-rule {:type :and|:or}`
 for OR-composition. Modus ponens via cross-req composition deferred
-to V2 of this phase.
+to a follow-up iteration of this phase.
 
 **Paper.** Neural Theorem Provers (Rocktäschel & Riedel 2017); NTP
 shows proofs as DAG; LOGIC-LM symbolic reasoning stage; LLM-Modulo

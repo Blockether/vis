@@ -150,9 +150,18 @@
         (task-depends! :K [refs])   ; refs: bare key | [:task :K2] | [:spec :K] | [:fact :K]
         (spec-depends! :K [refs])   ; spec composition / inheritance via deps
         (fact-depends! :K [refs])   ; fact provenance (derived-from)
-        — dep-graph nodes are typed [:kind :K]; bare key = same-kind shorthand;
-          cycle reject is HARD across all three kinds.
-        (introspect-dep-graph)      ; live typed dep-graph map
+        — nodes are typed [:kind :K]; bare key = same-kind shorthand;
+          cycle reject is HARD across all three kinds. The full graph
+          is visible inline on each entity's `:depends-on` field in
+          rendered ctx — no separate introspection fn needed.
+
+      Contradictions (symmetric, not transitive):
+        (fact-contradicts!        :K1 :K2)   ; declare K1 ↔ K2
+        (fact-contradicts-remove! :K1 :K2)   ; lift the declaration
+        — engine writes the link symmetrically on both facts and emits
+          `;; ⚠ contradicting-facts` when BOTH stay `:active`. Resolve
+          by flipping one fact `:superseded`. A ↔ B and B ↔ C does NOT
+          imply A ↔ C; declare each pair explicitly.
 
       Introspection (lazy; reach evidence the live trailer dropped):
         (introspect-turn-list)
@@ -161,7 +170,6 @@
         (introspect-form          \"t<N>/i<M>/f<K>\")
         (introspect-spec / -task / -fact :K)
         (introspect-failed-proofs :K)         ; archived rejected proofs per task
-        (introspect-dep-graph)                 ; typed dep-graph map (Phase B)
         (introspect-archived      :tasks|:specs|:facts)
         (v/engine-symbol-doc / -source / -meta 'sym)
         (v/engine-symbol-apropos  \"pattern\")
