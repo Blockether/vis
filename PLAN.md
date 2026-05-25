@@ -467,15 +467,44 @@ consult fence can parallel `search/web` + `search/papers` calls).
 
 ### REQUIREMENTS
 
-#### R1 — `:ext.symbol/engine-scope` filter
+#### R1 — `:ext.symbol/engine-scope` filter + per-scope prompt assembly
 
-- Spec field on each extension symbol entry
-- Default `#{:main}`
+**Scope per symbol** (single source of truth, no cross-ext deps):
+
+- Spec field `:ext.symbol/engine-scope` on each symbol entry
+- Default `#{:main}` (backward compat — every existing symbol primary-only)
+- Conventional scope assignments:
+  - read-only file/search ops (`v/cat`, `v/ls`, `v/rg`): `#{:main :consult}`
+  - mutating ops (`v/patch`, `v/write`, `v/delete`): `#{:main}`
+  - research ops (`search/web`, `search/papers`): `#{:consult}`
+  - engine fns (spec-set!, task-set!, fact-set!, all mutators): `#{:main}`
+  - introspection (`introspect-*`): `#{:main}` (consult sees ctx via
+    embedded snapshot, not via fn calls)
 - Helper `(extension/ext-symbols-in-scope ext scope)` filters per scope
 - Primary SCI bindings build filters with `:main` scope
 - Consult mini-SCI bindings build filters with `:consult` scope
 - Test: an extension with mixed-scope symbols projects correctly into
-  each scope
+  each scope; an extension whose symbols are ALL `:main` contributes
+  nothing to consult
+
+**Per-scope prompt assembly** (extensions contribute to both system
+prompts independently):
+
+- New optional extension field `:ext/consult-prompt` (string-fn) —
+  consult system prompt section the extension provides
+- Engine builds:
+  - **primary system prompt** = `CORE_SYSTEM_PROMPT` + concat of every
+    active extension's `:ext/prompt` (existing path)
+  - **consult system prompt** = `CONSULT_BASE_PROMPT` + concat of every
+    active extension's `:ext/consult-prompt` IF present, else
+    auto-generated docs from `:ext.symbol/doc` of every symbol with
+    `:consult` in its scope
+- Auto-generated docs format mirrors primary's existing per-symbol
+  prompt rendering so the consult LLM gets the same shape
+- Test: extension with no `:ext/consult-prompt` but `:consult`-scope
+  symbols → engine auto-generates docs from `:ext.symbol/doc`;
+  extension with explicit `:ext/consult-prompt` overrides the auto-
+  generation
 
 #### R2 — Trailer pin filter
 
