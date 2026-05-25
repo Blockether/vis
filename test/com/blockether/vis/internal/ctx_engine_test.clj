@@ -927,22 +927,11 @@
         (let [g (:dep-graph idx)]
           (expect (= #{} (get g [:fact :F]))))))))
 
-(defdescribe introspect-dep-graph-test
-  (describe "introspect-dep-graph returns the typed graph from latest snapshot"
-    (let [snap {:session/turn 1
-                :session/scope {:turn 1 :iter 1 :next-form 1}
-                :session/specs {:S {:title "s" :born "t1/i1/f1"
-                                    :depends-on [[:fact :F]]}}
-                :session/tasks {:T {:title "t" :born "t1/i1/f1"
-                                    :depends-on [[:spec :S]]}}
-                :session/facts {:F {:content "f" :born "t1/i1/f1"}}}
-          graph (eng/introspect-dep-graph [[1 snap]])]
-      (it "carries every entity as a typed node"
-        (expect (= #{[:task :T] [:spec :S] [:fact :F]}
-                  (set (keys graph)))))
-      (it "carries the typed edges"
-        (expect (= #{[:fact :F]} (get graph [:spec :S])))
-        (expect (= #{[:spec :S]} (get graph [:task :T])))))))
+;; introspect-dep-graph removed: the typed dep-graph is visible inline
+;; on every entity's `:depends-on` field in rendered ctx, so a separate
+;; introspection fn was redundant surface. `build-indexes` still returns
+;; `:dep-graph` for engine internals (cycle detection, derive-warnings)
+;; — the test in build-indexes-dep-graph-typed-test covers that path.
 
 (defdescribe depends-on-dangling-warning-test
   (describe "typed :depends-on refs that point at nonexistent entities surface as warnings"
@@ -960,3 +949,133 @@
                         (and (= :depends-on-dangling (:code w))
                           (some #(= [:spec :ghost] %) (or (:anchor w) []))))
                   warns))))))
+
+;; =============================================================================
+;; Phase C: Contradiction detection on facts.
+;;
+;; `(fact-contradicts! :K1 :K2)` declares a SYMMETRIC, NON-TRANSITIVE link
+;; between two facts. The engine writes `:contradicts` on both sides so the
+;; warning surfaces regardless of read direction. When both facts stay
+;; `:active`, `derive-warnings` emits `:contradicting-facts`. Resolving a
+;; contradiction is the model's job (flip one to `:superseded`) — engine
+;; never auto-resolves.
+;; =============================================================================
+
+(defdescribe fact-contradicts-test
+  (describe "fact-contradicts! writes the link on both facts symmetrically"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"})
+                (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"}))
+          {ctx' :ctx :as out}
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-contradicts! [:f1 :f2])]
+
+      (it "writes :contradicts on the first fact"
+        (expect (= #{:f2} (get-in ctx' [:session/facts :f1 :contradicts]))))
+
+      (it "writes :contradicts on the second fact"
+        (expect (= #{:f1} (get-in ctx' [:session/facts :f2 :contradicts]))))
+
+      (it "stamped? true"
+        (expect (:stamped? out)))))
+
+  (describe "self-contradiction is rejected with a warning"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
+          {ctx' :ctx warnings :warnings :as out}
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-contradicts! [:f1 :f1])]
+      (it "stamped? false"
+        (expect (not (:stamped? out))))
+      (it "emits :fact-contradicts-self"
+        (expect (some #(= :fact-contradicts-self (:code %)) warnings)))
+      (it "leaves the fact untouched"
+        (expect (nil? (get-in ctx' [:session/facts :f1 :contradicts]))))))
+
+  (describe "missing-fact reference is rejected with a warning"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
+          {warnings :warnings :as out}
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-contradicts! [:f1 :ghost])]
+      (it "stamped? false"
+        (expect (not (:stamped? out))))
+      (it "emits :fact-contradicts-missing"
+        (expect (some #(= :fact-contradicts-missing (:code %)) warnings))))))
+
+(defdescribe fact-contradicts-remove-test
+  (describe "fact-contradicts-remove! removes the link on both sides"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"
+                                                :contradicts #{:f2}})
+                (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"
+                                                :contradicts #{:f1}}))
+          {ctx' :ctx}
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-contradicts-remove! [:f1 :f2])]
+      (it "drops :contradicts from the first fact"
+        (expect (nil? (get-in ctx' [:session/facts :f1 :contradicts]))))
+      (it "drops :contradicts from the second fact"
+        (expect (nil? (get-in ctx' [:session/facts :f2 :contradicts]))))))
+
+  (describe "remove is idempotent on a fresh ctx (no warning)"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"})
+                (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"}))
+          {warnings :warnings :as out}
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-contradicts-remove! [:f1 :f2])]
+      (it "stamped? true"
+        (expect (:stamped? out)))
+      (it "emits no warnings"
+        (expect (empty? warnings))))))
+
+(defdescribe contradicting-facts-warning-test
+  (describe "derive-warnings emits :contradicting-facts when both stay :active"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :f1] {:content "x" :status :active
+                                                :born "t1/i1/f1"
+                                                :contradicts #{:f2}})
+                (assoc-in [:session/facts :f2] {:content "y" :status :active
+                                                :born "t1/i1/f1"
+                                                :contradicts #{:f1}}))
+          warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
+      (it "fires exactly one warning per unordered pair"
+        (let [hits (filter #(= :contradicting-facts (:code %)) warns)]
+          (expect (= 1 (count hits)))))
+      (it "warning anchors carry both fact ids"
+        (let [w (first (filter #(= :contradicting-facts (:code %)) warns))]
+          (expect (= 2 (count (:anchor w))))
+          (expect (contains? (set (:anchor w)) :f1))
+          (expect (contains? (set (:anchor w)) :f2))))))
+
+  (describe "flipping one fact to :superseded silences the warning"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :f1] {:content "x" :status :active
+                                                :born "t1/i1/f1"
+                                                :contradicts #{:f2}})
+                (assoc-in [:session/facts :f2] {:content "y" :status :superseded
+                                                :born "t1/i1/f1"
+                                                :contradicts #{:f1}}))
+          warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
+      (it "no :contradicting-facts warning is emitted"
+        (expect (not-any? #(= :contradicting-facts (:code %)) warns))))))
+
+(defdescribe contradiction-is-not-transitive-test
+  (describe "A↔B and B↔C does NOT imply A↔C"
+    ;; Engine must NOT synthesize the closure. Each pair is its own
+    ;; explicit declaration; the model can be wrong about which pairs
+    ;; actually conflict, and silent transitive inference would force
+    ;; false positives.
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/facts :A] {:content "a" :status :active
+                                               :born "t1/i1/f1"
+                                               :contradicts #{:B}})
+                (assoc-in [:session/facts :B] {:content "b" :status :active
+                                               :born "t1/i1/f1"
+                                               :contradicts #{:A :C}})
+                (assoc-in [:session/facts :C] {:content "c" :status :active
+                                               :born "t1/i1/f1"
+                                               :contradicts #{:B}}))
+          warns (eng/derive-warnings ctx (eng/build-indexes ctx))
+          hits (filter #(= :contradicting-facts (:code %)) warns)
+          anchored-pairs (set (map (comp set :anchor) hits))]
+      (it "two warnings emitted (A↔B, B↔C)"
+        (expect (= 2 (count hits))))
+      (it "A↔C is NOT emitted"
+        (expect (not (contains? anchored-pairs #{:A :C})))))))
