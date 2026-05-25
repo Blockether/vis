@@ -348,3 +348,34 @@
 
       (it "empty next-actions renders as []"
         (expect (str/includes? out ":session/next-actions\n []"))))))
+
+(defdescribe render-cyclic-dep-graph-test
+  ;; Regression: switching sessions in the TUI hung because resumed
+  ;; ctx snapshots (predating the Phase B write-time cycle check) can
+  ;; carry `:depends-on` cycles in the dep-graph. `build-timeline`'s
+  ;; BFS re-enqueued nodes regardless of seen-state, so any cycle
+  ;; — even a 2-cycle through spec↔fact — spun forever and pegged a
+  ;; CPU. Diamond shapes also exploded the queue exponentially.
+  ;;
+  ;; The renderer must TERMINATE on any dep-graph it is handed, even
+  ;; one the live engine would refuse to write today.
+  (describe "cyclic dep-graph rendering"
+    (it "renders a spec↔fact cycle without hanging"
+      (let [ctx (-> (eng/empty-ctx "cyclic")
+                  (assoc-in [:session/tasks :T]
+                    {:title "t" :status :todo :depends-on [[:spec :A]]
+                     :born "t1/i1/f1"})
+                  (assoc-in [:session/specs :A]
+                    {:title "a" :status :active :depends-on [[:fact :F]]
+                     :requirements [] :born "t1/i1/f2"})
+                  (assoc-in [:session/facts :F]
+                    {:content "f" :status :active :depends-on [[:spec :A]]
+                     :born "t1/i1/f3"}))
+            ;; Render in a future with a hard deadline; pre-fix this
+            ;; loops forever and the future never completes.
+            fut (future (render ctx))
+            done? (try (deref fut 3000 ::timeout)
+                    (finally (future-cancel fut)))]
+        (expect (not (= ::timeout done?)))
+        (expect (string? done?))
+        (expect (str/includes? done? ":session/timeline"))))))

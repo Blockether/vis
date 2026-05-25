@@ -27,6 +27,7 @@
    satisfies them via `(task-set! id {:status :done :proof \"…\"})` and the
    engine reconciles at end-of-iter via `eng/reconcile-done-hook-tasks`."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.consult :as consult]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.env-digest :as env-digest]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -192,7 +193,13 @@
    'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
    'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))
    'rule-set!                (fn rule-set!                [k partial] (apply-and-record! env :rule-set!    [k partial]))
-   'rule-remove!             (fn rule-remove!             [k]         (apply-and-record! env :rule-remove! [k]))})
+   'rule-remove!             (fn rule-remove!             [k]         (apply-and-record! env :rule-remove! [k]))
+   ;; Phase H: secondary-model consultation. Engine embeds the
+   ;; primary system prompt + user request + ctx projection into the
+   ;; consultant call invisibly. Model just writes the question.
+   'consult-fast             (fn consult-fast      [q] (consult/consult! env :fast     q))
+   'consult-balanced         (fn consult-balanced  [q] (consult/consult! env :balanced q))
+   'consult-deep             (fn consult-deep      [q] (consult/consult! env :deep     q))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
