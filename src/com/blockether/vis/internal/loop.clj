@@ -4775,11 +4775,13 @@
                                                                                       :vis/coerced? true})
                                          trailer-drop      (when (map? value) (:trailer-drop value))
                                          trailer-summarize (when (map? value) (:trailer-summarize value))
+                                         archive           (when (map? value) (:archive value))
                                          done-env          {:ctx-atom        ctx-atom
                                                             :turn-state-atom turn-state-atom}]
                                      (ctx-loop/apply-done! done-env
                                        {:trailer-drop trailer-drop
-                                        :trailer-summarize trailer-summarize})
+                                        :trailer-summarize trailer-summarize
+                                        :archive archive})
                                      (reset! answer-atom
                                        {:value    value
                                         :position (:form-idx @turn-state-atom)})

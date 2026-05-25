@@ -59,9 +59,8 @@
                     (idx-of ":session/scope")
                     (idx-of ":session/workspace")
                     (idx-of ":session/symbols")
-                    (idx-of ":session/specs")
-                    (idx-of ":session/tasks")
-                    (idx-of ":session/facts")
+                    (idx-of ":session/timeline")
+                    (idx-of ":session/orphans")
                     (idx-of ":session/trailer")
                     (idx-of ":session/next-actions")))))
 
@@ -87,16 +86,21 @@
           (expect (= opens closes)))))))
 
 (defdescribe render-progression-test
-  (describe "progression annotations on specs"
+  ;; Phase G': progression is no longer a separate `;; progression :K`
+  ;; annotation line. It rides INSIDE the projected spec entry as
+  ;; `:progress "N/M (P%) state"` + `:missing [:rid …]`. The model reads
+  ;; the same signal but inside the EDN value instead of out-of-band.
+  (describe "progression embedded in projected spec"
     (let [out (render base-ctx)]
-      (it "emits `;; progression :auth N/M :state` line"
-        (expect (str/includes? out ";; progression :auth")))
+      (it "includes the projected :progress string for the spec"
+        (expect (str/includes? out ":progress"))
+        (expect (str/includes? out "1/2")))
 
-      (it "shows the partial state derived from the test ctx"
-        (expect (str/includes? out ":partial")))
+      (it "surfaces the partial state in human-readable form"
+        (expect (str/includes? out "partial")))
 
       (it "lists the missing requirement ids"
-        (expect (str/includes? out "missing [:r2]"))))))
+        (expect (str/includes? out ":missing [:r2]"))))))
 
 (defdescribe render-warnings-test
   (describe "inline warning annotations"
@@ -326,13 +330,18 @@
         (expect (str/includes? out "(def huge-result"))))))
 
 (defdescribe render-empty-subtrees-test
+  ;; Phase G': raw `:session/specs`, `:session/tasks`, `:session/facts`
+  ;; are no longer top-level rendered sections; the renderer projects
+  ;; them into `:session/timeline` (task-rooted) + `:session/orphans`.
+  ;; On a fresh ctx both should be empty.
   (describe "empty subtree rendering"
     (let [ctx (eng/empty-ctx "fresh")
           out (render ctx)]
-      (it "empty maps render as {}"
-        (expect (str/includes? out ":session/specs\n {}"))
-        (expect (str/includes? out ":session/tasks\n {}"))
-        (expect (str/includes? out ":session/facts\n {}")))
+      (it "empty projection emits :session/timeline as []"
+        (expect (str/includes? out ":session/timeline\n []")))
+
+      (it "empty projection emits :session/orphans as {}"
+        (expect (str/includes? out ":session/orphans\n {}")))
 
       (it "empty trailer renders as []"
         (expect (str/includes? out ":session/trailer\n []")))
