@@ -31,13 +31,13 @@ Pattern: Reflexion verbal reinforcement (Shinn NeurIPS 2023).
 # any session that flips a hook-task with a wrong proof scope works.
 # Easiest repro: ask for a deliverable that triggers session-title hook,
 # then submit a bogus :proof scope and re-read introspect-failed-proofs.
-./bin/vis run --provider openai-codex --model gpt-5.5 \
-  --message 'introspect-failed-proofs zwraca pustą listę dla świeżego tasku'
+./bin/vis --provider openai-codex --model gpt-5.5 \
+  'introspect-failed-proofs zwraca pustą listę dla świeżego tasku'
 ```
 
 ---
 
-## Phase B — Universal `:depends-on` + relations ❌ NEXT
+## Phase B — Universal `:depends-on` + relations ✅ LANDED
 
 **Goal.** Extend `:depends-on` from tasks-only to specs and facts.
 This subsumes the "knowledge-graph relations" idea: instead of a
@@ -66,9 +66,10 @@ separate KG table.
 
 **CLI verify.**
 ```bash
-./bin/vis run --provider openai-codex --model gpt-5.5 \
-  --message 'Zdefiniuj spec :auth z dwoma req, task :impl który zależy
-  od spec :auth, oraz fact :baseline zależny od task :impl. Pokaż graf.'
+./bin/vis --provider openai-codex --model gpt-5.5 \
+  'Zdefiniuj spec :auth z dwoma req, task :impl który zależy od spec :auth,
+   oraz fact :baseline zależny od task :impl. Pokaż graf via
+   (introspect-dep-graph).'
 # Expect: model emits (spec-set!) (task-set! :depends-on [:auth])
 # (fact-set! :baseline) (fact-depends! :baseline [:impl])
 # rendered ctx shows the chain; (introspect-dep-graph) returns it.
@@ -99,7 +100,7 @@ contradiction handling is a flagged open problem.
 
 **CLI verify.**
 ```bash
-./bin/vis run --message 'Najpierw fact-set! :db-engine sqlite, potem
+./bin/vis 'Najpierw fact-set! :db-engine sqlite, potem
 fact-set! :db-engine postgres, zadeklaruj kontradykcję. Pokaż ⚠.'
 ```
 
@@ -134,7 +135,7 @@ Soufflé bottom-up evaluation; ENVISIONS environment feedback loop.
 
 **CLI verify.**
 ```bash
-./bin/vis run --message 'Zdefiniuj rule :ban-bcrypt: gdy fact :crypto
+./bin/vis 'Zdefiniuj rule :ban-bcrypt: gdy fact :crypto
 zmienia content na coś z "md5", auto fact-set! :crypto-warning
 :active. Potem zaktualizuj fact :crypto. Pokaż że warning powstał.'
 ```
@@ -166,7 +167,7 @@ generate-test-critique with composable critics.
 
 **CLI verify.**
 ```bash
-./bin/vis run --message 'Spec :api-secure z jednym req :defense-in-depth.
+./bin/vis 'Spec :api-secure z jednym req :defense-in-depth.
 Stwórz dwa proof scopes: jeden testuje TLS, drugi testuje rate-limit.
 Połącz je proof-compose AND. Done re-validates oba.'
 ```
@@ -204,7 +205,7 @@ dependency.
 
 **CLI verify.**
 ```bash
-./bin/vis run --message 'Po 3 iteracjach v/rg / v/cat zapytaj
+./bin/vis 'Po 3 iteracjach v/rg / v/cat zapytaj
 (trailer-find {:src-matches "v/cat"}) i pokaż scope listę.'
 ```
 
@@ -232,7 +233,7 @@ decomposition, …) seeded as defaults but user/extension can extend.
 
 **CLI verify.**
 ```bash
-./bin/vis run --message 'Na początku tury zadeklaruj 3-modułową
+./bin/vis 'Na początku tury zadeklaruj 3-modułową
 strukturę rozumowania: decomposition → critical-thinking →
 step-by-step. Następnie rozwiąż problem komputujący FizzBuzz dla
 n=15. Pokaż że każdy moduł ma odpowiadającą formę.'
@@ -265,7 +266,7 @@ on episodic-memory text vs scalar feedback.
 
 **CLI verify.**
 ```bash
-./bin/vis run --message 'Stwórz spec z validatorem (= result 42).
+./bin/vis 'Stwórz spec z validatorem (= result 42).
 Wyemituj proof którego forma zwraca 7. Następnie pokaż archived-proof
 z polem :reflection.'
 ```
@@ -312,7 +313,7 @@ machinery (we're inference-only).
 
 **CLI verify.**
 ```bash
-./bin/vis run --message 'Zdefiniuj spec :code-quality z validatorem
+./bin/vis 'Zdefiniuj spec :code-quality z validatorem
 score-style (zwracającym :score 0..1 na podstawie liczby lint
 warnings). Pokaż :session/specs z progression score.'
 ```

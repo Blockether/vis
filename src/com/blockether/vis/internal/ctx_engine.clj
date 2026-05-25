@@ -16,7 +16,8 @@
    Public surface (all pure):
 
      (build-indexes ctx)
-       → {:req-index :proof-index :task-by-spec :fact-refs :dep-graph :rev-deps}
+       → {:req-index :proof-index :task-by-spec :fact-refs :dep-graph :rev-deps
+          :spec-status :task-status :fact-status :fact-refs}
 
      (classify-scope scope-form cursor form-results)
        → one of :ok :unknown :errored :future-form :future-iter :future-turn :malformed
@@ -176,8 +177,8 @@
       :task-by-spec {spec-id → #{task-id …}}
       :fact-refs    {fact-id → #{requirement-id …}}      ; which reqs cite this fact
       :spec-by-task {task-id → #{spec-id …}}              ; mirror of :session.task/specs keys
-      :dep-graph    {task-id → #{task-id …}}              ; depends-on edges
-      :rev-deps     {task-id → #{task-id …}}              ; reverse depends-on
+      :dep-graph    {[kind id] → #{[kind id] …}}          ; typed depends-on edges
+      :rev-deps     {[kind id] → #{[kind id] …}}          ; reverse depends-on
       :spec-status  {spec-id → status-keyword}
       :task-status  {task-id → status-keyword}
       :fact-status  {fact-id → status-keyword}}            ; :active when omitted
@@ -235,15 +236,48 @@
           {}
           req-index)
 
+        ;; ---------- Universal :depends-on (Phase B) ----------
+        ;; dep-graph nodes are typed refs `[:kind :K]` where :kind is
+        ;; one of #{:task :spec :fact}. Edges are sets of typed refs.
+        ;; Bare-key entries on a task / spec / fact `:depends-on` are
+        ;; treated as same-kind shorthand (`:K` on a task → `[:task :K]`).
+        ;; Engine internals + introspection always work in typed shape.
+        normalize-ref
+        (fn [default-kind ref]
+          (cond
+            (vector? ref)
+            (let [[kind k] ref]
+              (when (and (#{:task :spec :fact} kind) (some? k))
+                [kind k]))
+            (keyword? ref) [default-kind ref]
+            :else nil))
+        edges-from
+        (fn [kind partial-deps]
+          (into #{}
+            (keep (partial normalize-ref kind))
+            (or partial-deps [])))
         dep-graph
-        (into {}
-          (for [[task-id task] tasks]
-            [task-id (set (or (:depends-on task) []))]))
+        (as-> {} g
+          (reduce-kv
+            (fn [acc task-id task]
+              (assoc acc [:task task-id]
+                (edges-from :task (:depends-on task))))
+            g tasks)
+          (reduce-kv
+            (fn [acc spec-id spec]
+              (assoc acc [:spec spec-id]
+                (edges-from :spec (:depends-on spec))))
+            g specs)
+          (reduce-kv
+            (fn [acc fact-id fact]
+              (assoc acc [:fact fact-id]
+                (edges-from :fact (:depends-on fact))))
+            g facts))
 
         rev-deps
         (reduce-kv
-          (fn [acc task-id deps]
-            (reduce (fn [a d] (update a d (fnil conj #{}) task-id))
+          (fn [acc node deps]
+            (reduce (fn [a d] (update a d (fnil conj #{}) node))
               acc deps))
           {}
           dep-graph)
@@ -251,16 +285,16 @@
         spec-status (into {} (map (fn [[k v]] [k (:status v)])) specs)
         task-status (into {} (map (fn [[k v]] [k (:status v)])) tasks)
         fact-status (into {} (map (fn [[k v]] [k (or (:status v) :active)])) facts)]
-    {:req-index    req-index
-     :proof-index  proof-index
-     :task-by-spec task-by-spec
-     :spec-by-task spec-by-task
-     :fact-refs    fact-refs
-     :dep-graph    dep-graph
-     :rev-deps     rev-deps
-     :spec-status  spec-status
-     :task-status  task-status
-     :fact-status  fact-status}))
+    {:req-index       req-index
+     :proof-index     proof-index
+     :task-by-spec    task-by-spec
+     :spec-by-task    spec-by-task
+     :fact-refs       fact-refs
+     :dep-graph       dep-graph
+     :rev-deps        rev-deps
+     :spec-status     spec-status
+     :task-status     task-status
+     :fact-status     fact-status}))
 
 ;; =============================================================================
 ;; depends-on cycle detection — pure DFS, no recursion-on-recursion
@@ -378,21 +412,57 @@
   [code anchor message]
   {:code code :anchor anchor :message message})
 
+(defn- normalize-dep-ref
+  "Phase B helper: accept a `:depends-on` element and return a typed
+   `[:kind :K]` ref or nil when the input is malformed. Bare keys are
+   resolved to `default-kind`, matching the legacy task-only behaviour
+   for `(task-set! :T {:depends-on [:other-task]})`."
+  [default-kind ref]
+  (cond
+    (vector? ref)
+    (let [[kind k] ref]
+      (when (and (#{:task :spec :fact} kind) (some? k))
+        [kind k]))
+    (keyword? ref) [default-kind ref]
+    :else nil))
+
+(defn- new-cycle-on-node?
+  "Phase B generalization of `new-cycle?`. Would assigning `:depends-on`
+   `new-deps` to the typed node `[kind k]` introduce a cycle in the
+   unified dep-graph?"
+  [ctx kind k new-deps]
+  (let [normalized (into #{} (keep (partial normalize-dep-ref kind)) (or new-deps []))
+        dg (-> (build-indexes ctx)
+             :dep-graph
+             (assoc [kind k] normalized))]
+    (some? (depends-on-cycle? dg))))
+
 (defn- apply-spec-set! [ctx form-scope [spec-k partial-map]]
-  (let [path     [:session/specs spec-k]
-        existing (get-in ctx path)
-        merged   (cond-> (merge existing partial-map)
-                   (nil? existing) (assoc :born form-scope))
-        stamped  (stamp-or-clear-done-born merged form-scope spec-terminal?)]
-    {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true}))
+  (cond
+    ;; Hard reject cycle BEFORE writing :depends-on. Mirrors task-set!
+    ;; behaviour so cross-entity cycles are caught at write time.
+    (and (contains? partial-map :depends-on)
+      (new-cycle-on-node? ctx :spec spec-k (:depends-on partial-map)))
+    {:ctx ctx
+     :warnings [(warn :depends-on-cycle [:spec spec-k]
+                  (str "spec " spec-k " :depends-on " (:depends-on partial-map)
+                    " would introduce a cycle; write refused"))]
+     :stamped? false}
+
+    :else
+    (let [path     [:session/specs spec-k]
+          existing (get-in ctx path)
+          merged   (cond-> (merge existing partial-map)
+                     (nil? existing) (assoc :born form-scope))
+          stamped  (stamp-or-clear-done-born merged form-scope spec-terminal?)]
+      {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true})))
 
 (defn- new-cycle?
-  "Quick check: would adding deps to task introduce a cycle?"
+  "Legacy task-only cycle check. Phase B: delegates to the universal
+   `new-cycle-on-node?` so a task `:depends-on [:other-task]` still
+   normalizes via `[:task :other-task]`."
   [ctx task-k deps]
-  (let [dg (-> (build-indexes ctx)
-             :dep-graph
-             (assoc task-k (set deps)))]
-    (some? (depends-on-cycle? dg))))
+  (new-cycle-on-node? ctx :task task-k deps))
 
 (defn- apply-task-set! [ctx form-scope [task-k partial-map]]
   (let [path        [:session/tasks task-k]
@@ -446,24 +516,70 @@
   2048)
 
 (defn- apply-fact-set! [ctx form-scope [fact-k partial-map]]
-  (let [path     [:session/facts fact-k]
-        existing (get-in ctx path)
-        merged   (cond-> (merge existing partial-map)
-                   (nil? existing) (assoc :born form-scope))
-        stamped  (stamp-or-clear-done-born merged form-scope fact-terminal?)
-        content  (:content stamped)
-        size     (when (some? content)
-                   (try (count (pr-str content))
-                     (catch Throwable _ 0)))]
-    {:ctx       (assoc-in ctx path stamped)
-     :warnings  (if (and size (> size FACT_CONTENT_SOFT_LIMIT))
-                  [(warn :fact-content-too-large [fact-k]
-                     (str "fact " fact-k " :content is " size " chars ("
-                       "> " FACT_CONTENT_SOFT_LIMIT "); facts ride into every "
-                       "prompt — keep them small, or summarize and reference "
-                       "the original form via introspect-form."))]
-                  [])
-     :stamped?  true}))
+  (cond
+    (and (contains? partial-map :depends-on)
+      (new-cycle-on-node? ctx :fact fact-k (:depends-on partial-map)))
+    {:ctx ctx
+     :warnings [(warn :depends-on-cycle [:fact fact-k]
+                  (str "fact " fact-k " :depends-on " (:depends-on partial-map)
+                    " would introduce a cycle; write refused"))]
+     :stamped? false}
+
+    :else
+    (let [path     [:session/facts fact-k]
+          existing (get-in ctx path)
+          merged   (cond-> (merge existing partial-map)
+                     (nil? existing) (assoc :born form-scope))
+          stamped  (stamp-or-clear-done-born merged form-scope fact-terminal?)
+          content  (:content stamped)
+          size     (when (some? content)
+                     (try (count (pr-str content))
+                       (catch Throwable _ 0)))]
+      {:ctx       (assoc-in ctx path stamped)
+       :warnings  (if (and size (> size FACT_CONTENT_SOFT_LIMIT))
+                    [(warn :fact-content-too-large [fact-k]
+                       (str "fact " fact-k " :content is " size " chars ("
+                         "> " FACT_CONTENT_SOFT_LIMIT "); facts ride into every "
+                         "prompt — keep them small, or summarize and reference "
+                         "the original form via introspect-form."))]
+                    [])
+       :stamped?  true})))
+
+(defn- apply-depends!
+  "Phase B convenience mutator. `kind` is one of #{:task :spec :fact},
+   `k` is the entity id, `deps` is the new vec of dep refs (bare keys
+   shorthand for `kind`, or `[:kind :K]` cross-kind). Engine REPLACES
+   the existing `:depends-on` rather than merging — the model owns the
+   full vec each call.
+
+   Cycle check fires before write. Missing entity emits a soft warning
+   and writes anyway so the model can fix forward."
+  [ctx _form-scope [kind k deps]]
+  (let [subtree (case kind
+                  :task :session/tasks
+                  :spec :session/specs
+                  :fact :session/facts)
+        path    [subtree k]
+        exists? (some? (get-in ctx path))]
+    (cond
+      (not exists?)
+      {:ctx ctx
+       :warnings [(warn :depends-on-missing-entity [kind k]
+                    (str (name kind) " " k
+                      " does not exist; " (name kind) "-depends! ignored"))]
+       :stamped? false}
+
+      (new-cycle-on-node? ctx kind k deps)
+      {:ctx ctx
+       :warnings [(warn :depends-on-cycle [kind k]
+                    (str (name kind) " " k " :depends-on " deps
+                      " would introduce a cycle; write refused"))]
+       :stamped? false}
+
+      :else
+      {:ctx (assoc-in ctx (conj path :depends-on) (vec deps))
+       :warnings []
+       :stamped? true})))
 
 (defn- apply-req-add! [ctx _form-scope [spec-k req]]
   (let [path     [:session/specs spec-k :requirements]
@@ -577,6 +693,9 @@
       :spec-set!     (apply-spec-set!     ctx form-scope args)
       :task-set!     (apply-task-set!     ctx form-scope args)
       :fact-set!     (apply-fact-set!     ctx form-scope args)
+      :spec-depends! (apply-depends!      ctx form-scope (cons :spec args))
+      :task-depends! (apply-depends!      ctx form-scope (cons :task args))
+      :fact-depends! (apply-depends!      ctx form-scope (cons :fact args))
       :req-add!      (apply-req-add!      ctx form-scope args)
       :req-update!   (apply-req-update!   ctx form-scope args)
       :req-remove!   (apply-req-remove!   ctx form-scope args)
@@ -689,15 +808,37 @@
           (str "task " task-id " :specs refs nonexistent spec " sk))))))
 
 (defn- pass-task-depends-on-refs
-  "Invariant 5: task :depends-on keys must point to live tasks."
+  "Invariant 5: task :depends-on keys must point to live tasks.
+   Phase B: also runs the universal pass for spec/fact dep refs across
+   all three entity kinds. Each dangling ref is anchored under its
+   owning entity so the renderer can surface it inline."
   [ctx _indexes]
-  (let [tasks (or (:session/tasks ctx) {})]
+  (let [tasks (or (:session/tasks ctx) {})
+        specs (or (:session/specs ctx) {})
+        facts (or (:session/facts ctx) {})
+        subtree {:task tasks :spec specs :fact facts}
+        ref-exists?
+        (fn [[k kw]]
+          (some? (get (get subtree k) kw)))]
     (vec
-      (for [[task-id task] tasks
-            d (or (:depends-on task) [])
-            :when (nil? (get tasks d))]
-        (warn :task-dep-dangling [task-id d]
-          (str "task " task-id " :depends-on refs nonexistent task " d))))))
+      (concat
+        ;; legacy task-only dangling pass (bare-key refs only)
+        (for [[task-id task] tasks
+              d (or (:depends-on task) [])
+              :when (keyword? d)
+              :when (nil? (get tasks d))]
+          (warn :task-dep-dangling [task-id d]
+            (str "task " task-id " :depends-on refs nonexistent task " d)))
+        ;; universal pass: any typed [:kind :K] ref on any entity
+        (for [[default-kind subtree-map] [[:task tasks] [:spec specs] [:fact facts]]
+              [entity-id entity] subtree-map
+              raw-dep (or (:depends-on entity) [])
+              :let [ref (normalize-dep-ref default-kind raw-dep)]
+              :when (and ref (not (ref-exists? ref)))]
+          (warn :depends-on-dangling [default-kind entity-id ref]
+            (str (name default-kind) " " entity-id
+              " :depends-on refs nonexistent " (name (first ref))
+              " " (second ref))))))))
 
 (defn- pass-proof-req-refs
   "Invariant 7: every task proof :requirement must exist on the referenced
@@ -956,6 +1097,12 @@
    (let [{:keys [task-status dep-graph]} indexes
          specs (or (:session/specs ctx) {})
          tasks (or (:session/tasks ctx) {})
+         task-deps (fn [task-id]
+                     ;; Phase B: dep-graph is typed; project task-only
+                     ;; deps so task-ordering logic stays bare-key.
+                     (into #{}
+                       (keep (fn [[k id]] (when (= :task k) id)))
+                       (get dep-graph [:task task-id] #{})))
          consistency-actions
          (concat
            (for [[spec-id _] specs
@@ -975,7 +1122,7 @@
          todo-actions
          (for [[task-id task] tasks
                :when (= :todo (:status task))
-               :let [deps     (get dep-graph task-id #{})
+               :let [deps     (task-deps task-id)
                      deps-ok? (every? #(let [s (get task-status %)]
                                          (or (nil? s) (task-terminal? s)))
                                 deps)]
@@ -1707,6 +1854,23 @@
             (when-let [entry (get-in ctx [:session/specs k])]
               (assoc entry :as-of-turn turn)))
       (reverse snaps))))
+
+(defn derive-dep-graph
+  "Phase B public surface. Returns the unified dep-graph map keyed
+   by typed nodes `[:kind :K]` (kind ∈ #{:task :spec :fact}). Pure
+   over current ctx. Convenience over
+   `(:dep-graph (build-indexes ctx))` so the SCI introspect surface
+   doesn't need to know about indexes."
+  [ctx]
+  (:dep-graph (build-indexes ctx)))
+
+(defn introspect-dep-graph
+  "Latest snapshot's unified dep-graph (typed nodes). Returns the
+   same shape as `derive-dep-graph`. Nil when history is empty."
+  [history]
+  (let [snaps (snapshots-asc history)]
+    (when-let [[_turn ctx] (last snaps)]
+      (derive-dep-graph ctx))))
 
 (defn introspect-task
   [history k]

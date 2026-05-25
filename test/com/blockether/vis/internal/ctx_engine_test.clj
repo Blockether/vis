@@ -149,12 +149,12 @@
       (it ":fact-refs is the reverse of requirement :facts"
         (expect (= #{:r1} (get-in idx [:fact-refs :f1]))))
 
-      (it ":dep-graph captures :depends-on edges"
-        (expect (= #{:t1} (get-in idx [:dep-graph :t2])))
-        (expect (= #{} (get-in idx [:dep-graph :t1]))))
+      (it ":dep-graph captures :depends-on edges as typed refs"
+        (expect (= #{[:task :t1]} (get-in idx [:dep-graph [:task :t2]])))
+        (expect (= #{} (get-in idx [:dep-graph [:task :t1]]))))
 
-      (it ":rev-deps reverses the graph"
-        (expect (= #{:t2} (get-in idx [:rev-deps :t1]))))
+      (it ":rev-deps reverses the typed graph"
+        (expect (= #{[:task :t2]} (get-in idx [:rev-deps [:task :t1]]))))
 
       (it ":fact-status defaults to :active when omitted"
         (expect (= :active (get-in idx [:fact-status :f1]))))))
@@ -838,3 +838,125 @@
                           :session/scope {:turn 1 :iter 1 :next-form 1}
                           :session/tasks {:T (task-T [])}}]
           (expect (= [] (eng/introspect-failed-proofs [[1 empty-snap]] :T))))))))
+
+;; =============================================================================
+;; Phase B: Universal :depends-on across spec/task/fact entities.
+;;
+;; `:depends-on` becomes a first-class relation on every entity kind, not just
+;; tasks. Refs are either bare keys (same-kind shorthand) or typed `[:kind :K]`
+;; pairs. Cycle detection is unified across the three subtrees so a chain
+;; `task -> spec -> fact -> task` is hard-rejected at write time.
+;; =============================================================================
+
+(defdescribe universal-depends-on-test
+  (describe "spec-set! / fact-set! accept :depends-on like task-set!"
+    (it "spec :depends-on is preserved through apply-spec-set!"
+      (let [{ctx :ctx}
+            (eng/apply-mutator (eng/empty-ctx "t") "t1/i1/f1"
+              :spec-set! [:K {:title "x" :depends-on [:other :extra]}])]
+        (expect (= [:other :extra]
+                  (get-in ctx [:session/specs :K :depends-on])))))
+
+    (it "fact :depends-on is preserved through apply-fact-set!"
+      (let [{ctx :ctx}
+            (eng/apply-mutator (eng/empty-ctx "t") "t1/i1/f1"
+              :fact-set! [:K {:content "x" :depends-on [[:task :impl]]}])]
+        (expect (= [[:task :impl]]
+                  (get-in ctx [:session/facts :K :depends-on])))))
+
+    (it "spec-depends! / task-depends! / fact-depends! all write through"
+      (let [base (-> (eng/empty-ctx "t")
+                   (assoc-in [:session/specs :S] {:title "s" :born "t1/i1/f1"})
+                   (assoc-in [:session/tasks :T] {:title "t" :born "t1/i1/f1"})
+                   (assoc-in [:session/facts :F] {:content "f" :born "t1/i1/f1"}))
+            after-s (:ctx (eng/apply-mutator base "t1/i1/f1" :spec-depends! [:S [[:fact :F]]]))
+            after-t (:ctx (eng/apply-mutator after-s "t1/i1/f1" :task-depends! [:T [[:spec :S]]]))
+            after-f (:ctx (eng/apply-mutator after-t "t1/i1/f1" :fact-depends! [:F []]))]
+        (expect (= [[:fact :F]] (get-in after-f [:session/specs :S :depends-on])))
+        (expect (= [[:spec :S]] (get-in after-f [:session/tasks :T :depends-on])))
+        (expect (= []           (get-in after-f [:session/facts :F :depends-on])))))))
+
+(defdescribe cross-entity-cycle-rejection-test
+  (describe "spec→task→fact→spec cycle is hard-rejected at write time"
+    ;; Seed a chain that's already valid up to fact :F, then attempt to close
+    ;; the loop with a fact-depends! that points back to spec :S. The engine
+    ;; must refuse the write and emit :depends-on-cycle.
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/specs :S]
+                  {:title "s" :born "t1/i1/f1" :depends-on [[:task :T]]})
+                (assoc-in [:session/tasks :T]
+                  {:title "t" :born "t1/i1/f1" :depends-on [[:fact :F]]})
+                (assoc-in [:session/facts :F]
+                  {:content "f" :born "t1/i1/f1"}))
+          {ctx' :ctx warnings :warnings :as out}
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-depends! [:F [[:spec :S]]])]
+
+      (it "refuses the write (no :depends-on on :F)"
+        (expect (not (:stamped? out)))
+        (expect (nil? (get-in ctx' [:session/facts :F :depends-on]))))
+
+      (it "emits a :depends-on-cycle warning"
+        (expect (some #(= :depends-on-cycle (:code %)) warnings))))))
+
+(defdescribe build-indexes-dep-graph-typed-test
+  (describe "build-indexes derives the typed :dep-graph across all entity kinds"
+    ;; Phase B canonical shape: :dep-graph keys are typed `[:kind :K]`
+    ;; refs. Bare-key entries on `:depends-on` are normalized to
+    ;; same-kind typed refs at index-build time.
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/specs :S]
+                  {:title "s" :born "t1/i1/f1" :depends-on [[:fact :F]]})
+                (assoc-in [:session/tasks :T]
+                  {:title "t" :born "t1/i1/f1" :depends-on [[:spec :S]]})
+                (assoc-in [:session/facts :F]
+                  {:content "f" :born "t1/i1/f1"}))
+          idx (eng/build-indexes ctx)]
+
+      (it "indexes the typed dep-graph with each node present"
+        (let [g (:dep-graph idx)]
+          (expect (contains? g [:spec :S]))
+          (expect (contains? g [:task :T]))
+          (expect (contains? g [:fact :F]))))
+
+      (it "edges normalize bare and typed refs uniformly"
+        (let [g (:dep-graph idx)]
+          (expect (= #{[:fact :F]} (get g [:spec :S])))
+          (expect (= #{[:spec :S]} (get g [:task :T])))))
+
+      (it "empty-deps entity still appears as a node with an empty edge set"
+        (let [g (:dep-graph idx)]
+          (expect (= #{} (get g [:fact :F]))))))))
+
+(defdescribe introspect-dep-graph-test
+  (describe "introspect-dep-graph returns the typed graph from latest snapshot"
+    (let [snap {:session/turn 1
+                :session/scope {:turn 1 :iter 1 :next-form 1}
+                :session/specs {:S {:title "s" :born "t1/i1/f1"
+                                    :depends-on [[:fact :F]]}}
+                :session/tasks {:T {:title "t" :born "t1/i1/f1"
+                                    :depends-on [[:spec :S]]}}
+                :session/facts {:F {:content "f" :born "t1/i1/f1"}}}
+          graph (eng/introspect-dep-graph [[1 snap]])]
+      (it "carries every entity as a typed node"
+        (expect (= #{[:task :T] [:spec :S] [:fact :F]}
+                  (set (keys graph)))))
+      (it "carries the typed edges"
+        (expect (= #{[:fact :F]} (get graph [:spec :S])))
+        (expect (= #{[:spec :S]} (get graph [:task :T])))))))
+
+(defdescribe depends-on-dangling-warning-test
+  (describe "typed :depends-on refs that point at nonexistent entities surface as warnings"
+    ;; Engine-level invariant for Phase B: bare-key task→task dangling refs
+    ;; were already covered by `:task-dep-dangling`. The new typed pass adds
+    ;; cross-entity coverage so a missing `[:spec :ghost]` on any owner is
+    ;; flagged.
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/tasks :T]
+                  {:title "t" :born "t1/i1/f1" :depends-on [[:spec :ghost]]}))
+          idx (eng/build-indexes ctx)
+          warns (eng/derive-warnings ctx idx)]
+      (it "emits :depends-on-dangling pointing at the missing kind+key"
+        (expect (some (fn [w]
+                        (and (= :depends-on-dangling (:code w))
+                          (some #(= [:spec :ghost] %) (or (:anchor w) []))))
+                  warns))))))
