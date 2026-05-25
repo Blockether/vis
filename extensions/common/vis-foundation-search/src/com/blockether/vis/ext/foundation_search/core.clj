@@ -22,8 +22,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.xml :as xml]
-   [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension :as extension])
+   [com.blockether.vis.core :as vis])
   (:import
    (java.io ByteArrayInputStream)
    (java.net URI URLDecoder URLEncoder)
@@ -416,14 +415,6 @@
      :max-lines max-lines
      :max-bytes max-bytes}))
 
-(defn- temp-output-file!
-  [tool-name content]
-  (let [safe (str/replace tool-name #"[^A-Za-z0-9_-]" "_")
-        f    (io/file (System/getProperty "java.io.tmpdir")
-               (str "vis-search-" safe "-" (System/currentTimeMillis) ".txt"))]
-    (spit f content)
-    (.getAbsolutePath f)))
-
 (defn- mcp-result->text
   [result]
   (let [blocks (:content result)]
@@ -444,67 +435,74 @@
      :max-lines (min (positive-long (:max-lines opts) (:max-lines cfg))
                   (:max-lines cfg))}))
 
-(defn- search-badge
-  "Short badge keyed off the Exa MCP tool name. Falls back
-   to a plain `EXA` token for unknown tools so the renderer never
-   throws on shape drift."
-  [tool]
-  (case tool
-    "web_search_exa"       "search/web"
-    "get_code_context_exa" "search/code"
-    (str "search " (or tool "?"))))
+(defn- parse-exa-text
+  "Split Exa MCP's blob into a vec of per-result citation maps.
+   Exa returns plain markdown with this per-entry header pattern:
 
-(defn- channel-render-search
-  [result]
-  (let [{:keys [tool query text truncated? temp-file mcp-error?]} result
-        badge (cond mcp-error? "search error" :else (search-badge tool))
-        head  [:p {}
-               [:strong {} (str badge)]
-               [:span {} "  query="]
-               [:c {} (str query)]
-               (when truncated? [:span {} "  (truncated)"])]]
-    (cond-> [:ir {}
-             head
-             [:code {:lang "text"} (str text)]]
-      truncated?
-      (conj [:p {}
-             [:span {} "full output saved to "]
-             [:c {} (str temp-file)]]))))
+     Title: <title>
+     URL: <url>
+     Published: <iso8601 or empty>
+     Author: <author or N/A>
+     Highlights:
+     <markdown body>
 
-(defn- tool-success
-  [{:keys [tool-name op query args mcp endpoint limits]}]
-  (let [raw       (mcp-result->text mcp)
-        trunc     (truncate-text raw limits)
-        temp-file (when (:truncated? trunc) (temp-output-file! tool-name raw))
-        result    {:tool tool-name
-                   :query query
-                   :arguments args
-                   :endpoint (redact-endpoint endpoint)
-                   :text (:content trunc)
-                   :mcp-error? (= true (:isError mcp))
-                   :truncated? (:truncated? trunc)
-                   :truncation (dissoc trunc :content)}
-        result    (cond-> result temp-file (assoc :temp-file temp-file))]
-    (extension/success
-      {:result   result
-       :op       op
-       :metadata {:target {:kind :search-mcp
-                           :tool tool-name
-                           :query query
-                           :endpoint (redact-endpoint endpoint)}}})))
+     Title: <next entry>
+     ...
 
-(defn- tool-failure
-  [op tool-name query endpoint throwable]
-  (extension/failure
-    {:result    {:tool tool-name
-                 :query query
-                 :endpoint (when endpoint (redact-endpoint endpoint))}
-     :op        op
-     :metadata  {:target {:kind :search-mcp
-                          :tool tool-name
-                          :query query
-                          :endpoint (when endpoint (redact-endpoint endpoint))}}
-     :throwable throwable}))
+   Each entry becomes:
+     {:type    citation-type   ; :web | :code
+      :title   string
+      :url     string
+      :excerpt markdown string ; the Highlights body, vis renders commonmark
+      :published iso8601 string or nil
+      :authors string or nil
+      :source  :exa}"
+  [^String text citation-type]
+  (let [text (or text "")
+        ;; Split on the leading `Title: ` boundary (start of file OR a fresh
+        ;; entry after a blank line). Keep the prefix attached to each chunk.
+        chunks (->> (str/split (str "\n" text) #"\nTitle: ")
+                 rest)] ;; drop the empty pre-first-Title slice
+    (vec
+      (for [chunk chunks
+            :let [lines (str/split-lines chunk)
+                  title (str/trim (or (first lines) ""))
+                  rest-lines (rest lines)
+                  ;; Pull URL / Published / Author headers off the top
+                  hdr-line (fn [pfx] (some #(when (str/starts-with? % pfx)
+                                              (str/trim (subs % (count pfx))))
+                                       rest-lines))
+                  url (hdr-line "URL: ")
+                  published (hdr-line "Published: ")
+                  authors-raw (hdr-line "Author: ")
+                  authors (when (and authors-raw
+                                  (not (str/blank? authors-raw))
+                                  (not= "N/A" authors-raw))
+                            authors-raw)
+                  ;; Excerpt = everything from the line AFTER "Highlights:"
+                  ;; (or after the header bundle when no Highlights header)
+                  excerpt-lines
+                  (let [after-highlights
+                        (drop 1
+                          (drop-while
+                            #(not (or (= % "Highlights:")
+                                    (str/starts-with? % "Highlights:")))
+                            rest-lines))]
+                    (if (seq after-highlights)
+                      after-highlights
+                      ;; No Highlights line — drop the bare header lines
+                      ;; (URL / Published / Author / Code-Highlights label)
+                      ;; and keep the rest as the excerpt.
+                      (drop-while #(re-matches #"^(URL|Published|Author|Code/Highlights):.*" %)
+                        rest-lines)))
+                  excerpt (str/trim (str/join "\n" excerpt-lines))]]
+        (cond-> {:type    citation-type
+                 :title   title
+                 :url     (or url "")
+                 :excerpt excerpt
+                 :source  :exa}
+          published (assoc :published published)
+          authors   (assoc :authors authors))))))
 
 (defn- kw-get
   [m & ks]
@@ -524,49 +522,51 @@
   (cond-> {:query query}
     (kw-get opts :tokens-num :tokensNum) (assoc :tokensNum (kw-get opts :tokens-num :tokensNum))))
 
+(defn- call-exa!
+  "Common path for `web` + `code`: call MCP, parse text → citation vec.
+   Returns a vec of citation maps. On error returns a single error
+   citation so callers see the failure inline rather than throwing."
+  [tool-name args citation-type query]
+  (try
+    (let [{:keys [result]} (call-mcp-tool! tool-name args)
+          raw (mcp-result->text result)
+          text (:content (truncate-text raw (effective-limits {})))]
+      (parse-exa-text text citation-type))
+    (catch Throwable t
+      [{:type    citation-type
+        :title   (str "search failed: " query)
+        :url     ""
+        :excerpt (or (ex-message t) "")
+        :source  :exa
+        :error   true}])))
+
 (defn web
-  "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Returns a tool-result envelope; observed text lives at [:result :text]."
+  "Live web search. Returns a vec of citation maps shaped like:
+     {:type :web :title :url :excerpt :published? :authors? :source :exa}
+   `:excerpt` is markdown; the TUI renders commonmark.
+   Set `EXA_API_KEY` for higher rate limits.
+
+   Opts: :num-results :type :livecrawl :context-max-characters."
   ([query] (web query {}))
   ([query opts]
-   (let [query (str query)
-         opts  (or opts {})
-         args  (web-args query opts)
-         cfg   (effective-config)
-         ep    (endpoint cfg)]
-     (try
-       (let [{:keys [endpoint result]} (call-mcp-tool! "web_search_exa" args)]
-         (tool-success {:tool-name "web_search_exa"
-                        :op :search/web
-                        :label "Exa web search"
-                        :query query
-                        :args args
-                        :mcp result
-                        :endpoint endpoint
-                        :limits (effective-limits opts)}))
-       (catch Throwable t
-         (tool-failure :search/web "web_search_exa" query ep t))))))
+   (call-exa! "web_search_exa" (web-args (str query) (or opts {})) :web (str query))))
 
 (defn code
-  "Search code/docs through Exa MCP for API usage/examples. Returns a tool-result envelope; observed text lives at [:result :text]."
+  "Live code/docs search via Exa MCP (`get_code_context_exa`). De facto
+   indexes the public-web code surface — github repos, clojuredocs,
+   readthedocs, official API references, etc. Most public code is
+   github-hosted, so in practice this is \"github + docs\" results.
+   For github-only queries, narrow the query string (e.g.
+   `site:github.com X` or `<repo> X`).
+
+   Returns a vec of citation maps shaped like:
+     {:type :code :title :url :excerpt :source :exa}
+   `:excerpt` is markdown.
+
+   Opts: :tokens-num."
   ([query] (code query {}))
   ([query opts]
-   (let [query (str query)
-         opts  (or opts {})
-         args  (code-args query opts)
-         cfg   (effective-config)
-         ep    (endpoint cfg)]
-     (try
-       (let [{:keys [endpoint result]} (call-mcp-tool! "get_code_context_exa" args)]
-         (tool-success {:tool-name "get_code_context_exa"
-                        :op :search/code
-                        :label "Exa code context"
-                        :query query
-                        :args args
-                        :mcp result
-                        :endpoint endpoint
-                        :limits (effective-limits opts)}))
-       (catch Throwable t
-         (tool-failure :search/code "get_code_context_exa" query ep t))))))
+   (call-exa! "get_code_context_exa" (code-args (str query) (or opts {})) :code (str query))))
 
 ;; =============================================================================
 ;; arxiv papers (Atom feed)
@@ -662,13 +662,13 @@
 (def web-symbol
   (vis/symbol #'web
     {:tag :observation
-     :render-fn channel-render-search
+     :raw? true
      :engine-scope #{:consult}}))
 
 (def code-symbol
   (vis/symbol #'code
     {:tag :observation
-     :render-fn channel-render-search
+     :raw? true
      :engine-scope #{:consult}}))
 
 (def papers-symbol
