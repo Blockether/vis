@@ -363,8 +363,7 @@ Minimal required, plus optional engine-stamped audit:
  :preference  :fast|:balanced|:deep  ; engine-stamped from request
  :born        "tN"                   ; engine-stamped: turn declared
  :duration-ms long                   ; engine-stamped: consult wall time
- :truncated?  boolean?               ; engine-stamped only when caps hit
- :original-content-tokens int?}      ; engine-stamped only when truncated
+ :truncated?  boolean?}              ; engine-stamped only when caps hit
 
 ;; FAILURE
 {:consult-id  :research
@@ -413,9 +412,9 @@ cap**. When summed entries exceed cap, engine drops oldest entry
 ```
 
 On per-entry overflow: engine truncates `:content` at the preference
-cap with `... [N tokens truncated]` marker, stamps
-`:truncated? true :original-content-tokens N`. Citations beyond 15
-dropped + warned. Excerpts above 500 tokens truncated per citation.
+cap with `... [N tokens truncated]` marker inline and stamps
+`:truncated? true`. Citations beyond 15 dropped + warned. Excerpts
+above 500 tokens truncated per citation.
 
 #### Engine scope filter (`:ext.symbol/engine-scope`)
 
@@ -528,7 +527,8 @@ consult fence can parallel `search/web` + `search/papers` calls).
   cl100k_base); truncate to per-preference cap (1k / 4k / 12k tokens)
 - Token-count each `:excerpt`; truncate to 500-token cap per citation
 - Drop citations beyond index 15 + warn `:too-many-citations`
-- Stamp `:truncated? true :original-content-tokens N` when caps hit
+- Stamp `:truncated? true` when caps hit (content carries the truncation
+  marker inline; no need for separate metric)
 - Drop malformed citations (no `:type`, no `:url`/`:title`) + warn
 - When `:content` missing/blank: emit `:status :failed`
   `:error :malformed-answer`
