@@ -3704,12 +3704,14 @@
                             ;; scope. Hook-task rejections were already
                             ;; archived inside reconcile-done-hook-tasks!.
                             (ctx-loop/archive-failed-task-proofs! environment (or form-results-map {}))
-                            ;; Phase H async: drain :engine/pending-consults
+                            ;; drain :engine/pending-consults
                             ;; declared via (consult-request! …) inside
                             ;; this iter's fence. Each pending intent runs
-                            ;; in parallel; result lands as a fact under
-                            ;; :session/facts :consult/<id> visible to the
-                            ;; model in the NEXT iter.
+                            ;; in parallel on a side thread; each result
+                            ;; lands as a structured entry under
+                            ;; :session/consult-results visible to the
+                            ;; model in the NEXT iter. Done is refused
+                            ;; while pending consults exist (R4 gate).
                             (ctx-loop/process-pending-consults! environment))
                         reconcile-duration-ms (- (System/currentTimeMillis) reconcile-start-ms)
                         hook-tasks-post   (when ctx-atom-ref
@@ -4526,14 +4528,21 @@
       (sci/new-var sym val meta-map))))
 
 (defn- extension-namespace-bindings
+  ;; primary's SCI namespace gets ONLY symbols whose
+  ;; `:ext.symbol/engine-scope` contains `:main` (default for legacy
+  ;; symbols, so existing extensions keep working unchanged). Consult
+  ;; mini-SCI builds its own bindings via `wrap-extension ext env :consult`
+  ;; in the consult engine path.
   [environment ns-sym alias-sym active-exts]
   (let [ext-ns (sci/create-ns ns-sym)]
     (loop [remaining active-exts
            bindings  {}
            owners    {}]
       (if-let [ext (first remaining)]
-        (let [wrapped (extension/wrap-extension ext environment)
-              entry-by-sym (into {} (map (juxt :ext.symbol/symbol identity)) (extension/ext-symbols ext))
+        (let [wrapped (extension/wrap-extension ext environment :main)
+              entry-by-sym (into {}
+                             (map (juxt :ext.symbol/symbol identity))
+                             (extension/ext-symbols-in-scope ext :main))
               ns-bindings (into {}
                             (map (fn [[sym val]]
                                    [sym (sci-binding-var ext-ns sym val
@@ -4792,15 +4801,28 @@
                                          trailer-summarize (when (map? value) (:trailer-summarize value))
                                          archive           (when (map? value) (:archive value))
                                          done-env          {:ctx-atom        ctx-atom
-                                                            :turn-state-atom turn-state-atom}]
-                                     (ctx-loop/apply-done! done-env
-                                       {:trailer-drop trailer-drop
-                                        :trailer-summarize trailer-summarize
-                                        :archive archive})
-                                     (reset! answer-atom
-                                       {:value    value
-                                        :position (:form-idx @turn-state-atom)})
-                                     :vis/answer))
+                                                            :turn-state-atom turn-state-atom}
+                                         done-ret          (ctx-loop/apply-done! done-env
+                                                             {:trailer-drop trailer-drop
+                                                              :trailer-summarize trailer-summarize
+                                                              :archive archive})]
+                                     ;; Consult gate: when consults declared
+                                     ;; earlier in this iter are still pending,
+                                     ;; the engine refuses close. We surface the
+                                     ;; refusal as a value the model sees on the
+                                     ;; next iter (NOT :vis/answer); the loop
+                                     ;; forces a fresh iter so the primary can
+                                     ;; promote/dismiss the resolved trailer pin
+                                     ;; before retrying.
+                                     (if (:blocked? done-ret)
+                                       {:vis/done-blocked? true
+                                        :reason :pending-consults
+                                        :hint   "done refused: consults pending this iter; promote/dismiss the resolved trailer pin before retrying"}
+                                       (do
+                                         (reset! answer-atom
+                                           {:value    value
+                                            :position (:form-idx @turn-state-atom)})
+                                         :vis/answer))))
         ;; SCI binding for the session title:
         ;;   `(set-session-title! \"...\")` - writes the title through
         ;;                              to DB, syncs the in-memory

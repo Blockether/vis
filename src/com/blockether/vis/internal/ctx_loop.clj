@@ -28,6 +28,7 @@
    engine reconciles at end-of-iter via `eng/reconcile-done-hook-tasks`."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.consult :as consult]
+            [com.blockether.vis.internal.consult-engine :as consult-engine]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.env-digest :as env-digest]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -129,42 +130,23 @@
 ;; Mutator bindings
 ;; =============================================================================
 
-(defn- rule-fire-warning
-  [{:keys [rule message event]}]
-  {:code    :rule-fired
-   :anchor  [rule]
-   :message (str "rule " rule " fired on " (pr-str event)
-              " — " message)})
-
 (defn apply-and-record!
   "Call the engine mutator and swap! the result onto ctx-atom in one shot.
    Engine warnings land on `:engine/warnings` directly. Returns
    `:vis/silent` so the form result is hidden from the model's eval echo
    (the mutation effect is visible on next render).
 
-   Phase D: after the mutation commits, scan `:session/rules` for
-   reactive rules whose `:when` pattern matches the just-applied
-   transition (entity status change). Each fired rule emits a
-   `:rule-fired` soft warning carrying the rule's `:message`. v1 is
-   observation-only — no rule-driven mutation — so cycle protection
-   isn't needed yet.
-
-   Public so the loop can route foundation hook-task emissions (D12)
-   through the same write path the model uses."
+   Public so the loop can route foundation hook-task emissions through
+   the same write path the model uses."
   [{:keys [ctx-atom] :as env} mutator args]
-  (let [scope (synthesize-scope env)
-        before (some-> ctx-atom deref)]
+  (let [scope (synthesize-scope env)]
     (swap! ctx-atom
       (fn [c]
         (let [c+cursor (assoc c :session/scope (cursor-snapshot env))
               {:keys [ctx warnings stamped?]} (eng/apply-mutator c+cursor scope mutator args)
-              base (if stamped? ctx c)
-              fired (when (and stamped? before)
-                      (eng/detect-rule-fires before base))
-              fire-warns (map rule-fire-warning fired)
-              all-warns  (concat warnings fire-warns)]
+              base (if stamped? ctx c)]
           (cond-> base
-            (seq all-warns) (update :engine/warnings (fnil into []) all-warns)))))
+            (seq warnings) (update :engine/warnings (fnil into []) warnings)))))
     :vis/silent))
 
 (defn build-sci-bindings
@@ -192,16 +174,17 @@
    'proof-remove! (fn proof-remove! [task-k spec-k rid]    (apply-and-record! env :proof-remove! [task-k spec-k rid]))
    'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
    'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))
-   'rule-set!                (fn rule-set!                [k partial] (apply-and-record! env :rule-set!    [k partial]))
-   'rule-remove!             (fn rule-remove!             [k]         (apply-and-record! env :rule-remove! [k]))
-   ;; Phase H: secondary-model consultation (async cross-iter).
-   ;; The model DECLARES an intent; engine processes it between iters
-   ;; in parallel and materialises the result as a fact under
-   ;; :session/facts :consult/<id> in the NEXT iter. Embedded context
-   ;; (system prompt + user request + ctx snapshot) is invisible to
-   ;; the primary.
-   'consult-request!         (fn consult-request! [id preference question]
-                               (consult/request-consult! env id preference question))})
+   ;; Secondary-model consultation (async cross-iter). The model
+   ;; declares an intent; the engine processes it between iters in
+   ;; parallel and appends the resolved entry as a synthetic trailer
+   ;; pin in the next iter. Embedded context (system prompt + user
+   ;; request + ctx snapshot) is invisible to the primary.
+   'consult-request!         (fn consult-request! [id preference arg]
+                               (consult/request-consult! env id preference arg))
+   'consult-promote!         (fn consult-promote! [id fact-key]
+                               (consult/promote-consult! env id fact-key))
+   'consult-dismiss!         (fn consult-dismiss! [id]
+                               (consult/dismiss-consult! env id))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
@@ -220,45 +203,51 @@
       @ws)))
 
 (defn apply-done!
-  "Side-effecting wrapper around `eng/apply-done`. When the model's
-   `(done {…})` payload carries any of `:trailer-drop`, `:trailer-
-   summarize`, or `:archive`, stamp a fresh cursor, run the engine,
-   swap! the result onto ctx-atom, and append warnings to
-   `:engine/warnings`. No-op when none of those directives is present.
+  "Side-effecting wrapper around `eng/apply-done`.
 
-   Returns the intent map for logging."
+   Always invokes the engine so the consult gate runs even on bare
+   `(done {:answer \"…\"})`. When `:engine/pending-consults` is
+   non-empty the engine returns `:blocked? true` plus a
+   `:done-blocked-by-pending-consults` warning; `:blocked?` is
+   surfaced to the caller (answer-fn) so the loop refuses to ship
+   the answer and forces a fresh iter.
+
+   When the payload carries `:trailer-drop`, `:trailer-summarize`,
+   or `:archive`, the engine applies them as part of the same swap.
+
+   Returns the intent map plus `:blocked? true|false`."
   [{:keys [ctx-atom] :as env} {:keys [trailer-drop trailer-summarize archive]}]
-  (let [has-drops?     (seq trailer-drop)
-        has-summaries? (seq trailer-summarize)
-        has-archive?   (or (seq (:facts archive)) (seq (:specs archive)) (seq (:tasks archive)))
-        active?        (and ctx-atom (or has-drops? has-summaries? has-archive?))]
-    (when active?
-      (let [start-ms (System/nanoTime)
-            cursor   (cursor-snapshot env)
-            scope    (synthesize-scope env)
-            warns    (atom [])]
-        (swap! ctx-atom
-          (fn [c]
-            (let [c+cur (assoc c :session/scope cursor)
-                  {ctx' :ctx ws :warnings}
-                  (eng/apply-done c+cur scope
-                    {:trailer-drop trailer-drop
-                     :trailer-summarize trailer-summarize
-                     :archive archive})]
-              (reset! warns (vec ws))
-              (cond-> (dissoc ctx' :session/scope)
-                (seq ws) (update :engine/warnings (fnil into []) ws)))))
-        (tel/log! {:level :info :id ::apply-done
-                   :data {:trailer-drop trailer-drop
-                          :trailer-summarize trailer-summarize
-                          :archive archive
-                          :warnings @warns
-                          :duration-ms (/ (- (System/nanoTime) start-ms) 1e6)}}
-          "apply-done completed")))
+  (let [start-ms (System/nanoTime)
+        cursor   (cursor-snapshot env)
+        scope    (synthesize-scope env)
+        warns    (atom [])
+        blocked? (atom false)]
+    (when ctx-atom
+      (swap! ctx-atom
+        (fn [c]
+          (let [c+cur (assoc c :session/scope cursor)
+                {ctx' :ctx ws :warnings blocked :blocked?}
+                (eng/apply-done c+cur scope
+                  {:trailer-drop trailer-drop
+                   :trailer-summarize trailer-summarize
+                   :archive archive})]
+            (reset! warns (vec ws))
+            (reset! blocked? (boolean blocked))
+            (cond-> (dissoc ctx' :session/scope)
+              (seq ws) (update :engine/warnings (fnil into []) ws)))))
+      (tel/log! {:level :info :id ::apply-done
+                 :data {:trailer-drop trailer-drop
+                        :trailer-summarize trailer-summarize
+                        :archive archive
+                        :warnings @warns
+                        :blocked? @blocked?
+                        :duration-ms (/ (- (System/nanoTime) start-ms) 1e6)}}
+        "apply-done completed"))
     {:trailer-drop trailer-drop
      :trailer-summarize trailer-summarize
      :archive archive
-     :active? active?}))
+     :blocked? @blocked?
+     :warnings @warns}))
 
 (defn reconcile-done-hook-tasks!
   "Run `eng/reconcile-done-hook-tasks` against the live ctx atom; append
@@ -294,17 +283,33 @@
         "reconcile-done-hook-tasks completed"))))
 
 (defn process-pending-consults!
-  "Phase H async: drain `:engine/pending-consults` and run every intent
-   in parallel; materialise each result as a fact under
-   `:session/facts :consult/<id>` on the live ctx-atom. Called at
-   end-of-iter (after reconcile-done-hook-tasks!) so the consultants
-   have full ctx snapshot to embed and the model picks up the result
-   in the NEXT iter.
+  "Parallel runner. Drains `:engine/pending-consults` atomically,
+   spawns one future per intent dispatching to
+   `consult-engine/run-consult!`, awaits all futures, and appends each
+   resolved entry as a synthetic trailer pin on the current iter's
+   `:forms` (via `consult/append-resolution-pin!`).
 
-   No-op when ctx-atom is missing (defensive for partial test envs)."
+   Returns the vec of processed consult-ids (or nil when nothing was
+   pending). Called from the iter-end pass in `loop.clj`.
+
+   Test hook: env may carry `:consult-runner` `[env intent] → entry-map`
+   to override the default runner (used by integration tests).
+
+   Thread-isolation: each consult future sees only the request-time
+   ctx snapshot pinned on the intent map, never the live ctx-atom."
   [env]
-  (when (:ctx-atom env)
-    (consult/execute-pending! env)))
+  (when-let [ctx-atom (:ctx-atom env)]
+    (let [intents (consult/clear-pending! ctx-atom)]
+      (when (seq intents)
+        (let [runner   (or (:consult-runner env)
+                         consult-engine/run-consult!)
+              futures  (mapv (fn [intent]
+                               (future (runner env intent)))
+                         intents)
+              results  (mapv deref futures)]
+          (doseq [r results]
+            (consult/append-resolution-pin! ctx-atom r))
+          (mapv :consult-id results))))))
 
 (defn archive-failed-task-proofs!
   "Run `eng/archive-failed-task-proofs` against the live ctx atom: scans
