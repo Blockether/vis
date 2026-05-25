@@ -146,6 +146,15 @@
         (proof-add!    :task-K :spec-K {:requirement :proof})
         (proof-remove! :task-K :spec-K :req-id)
 
+        Proof composition (Phase E):
+          (proof-add! :task-K :spec-K
+            {:requirement :r1
+             :proof-compose [\"tN/iM/fK\" \"tN/iM/fL\"]
+             :proof-rule :and})         ; :and default | :or
+          — :and requires every sub-scope's validator-fn to pass; :or
+            requires at least one. Failed sub-scopes archive
+            individually so the model can swap only the broken one.
+
       Relations (universal :depends-on; cycle-checked across kinds):
         (task-depends! :K [refs])   ; refs: bare key | [:task :K2] | [:spec :K] | [:fact :K]
         (spec-depends! :K [refs])   ; spec composition / inheritance via deps
@@ -226,19 +235,36 @@
           CRITIQUE  read trailer + engine `;; ⚠` warnings; what's still
                     missing?
 
-        Form pattern by task shape:
-          single-step probe       → 1 form, observe result
-          multi-step derivation   → defs that COMPOSE (step2 references
-                                    step1's def)
-          search across unknowns  → spec-first, then probes attach as
-                                    proofs
+        NO ONE-SHOT. You have many iters. Each iter is a real round-trip
+        and you WILL see its result in the next iter's ctx. Stop trying
+        to finish the whole turn in iter 1. The loop is the point.
+
+        SHAPE OF AN ITER
+          single-step probe       → 1 form, observe, next iter decides
+          multi-step derivation   → defs that COMPOSE (iter N+1's def
+                                    references iter N's def)
+          search across unknowns  → spec-first, then narrow probes
+                                    attach as proofs across iters
           computation vs prose    → compute, don't narrate
 
-        Anti-pattern: ≥2 parallel exploratory defs in one fence whose
-        results do not compose into the next step. That is tool-rush —
-        pure pattern-matching with no symbolic anchor. Either compose
-        them, or split into iters and let iter 1's result reshape
-        iter 2's question.
+        HARD RULES
+          1. ≤1 heavy (def …) per iter. Heavy = wraps a tool call
+             (search / read / list / big group-by / frequencies) or a
+             value whose printed repr > ~2 kB.
+          2. Never two (def …) in one fence that run the same query
+             differing only by flags (e.g. :counts? vs :files-only?
+             vs :context). One call; derive the views locally in
+             (let …).
+          3. Use (let …) for intermediate work. Plant only the trimmed
+             summary with (def …). (def …) lives in :session/trailer
+             forever — no GC. Every future iter pays for it.
+          4. If you catch yourself thinking `let me prefetch everything
+             so I don't need iter 2` — STOP. That instinct bricks
+             sessions: one-shot iter 1 with parallel exploratory scans
+             can plant millions of trailer tokens and kill every
+             subsequent iter with context-overflow.
+          5. First touch of an unknown area = a tiny probe (small
+             limit, top-N lines). Look, then widen.
 
         Per-iter meta-check (before emitting next fence):
           monitor   making progress against open reqs?

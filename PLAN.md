@@ -148,7 +148,7 @@ zmienia content na coś z "md5", auto fact-set! :crypto-warning
 
 ---
 
-## Phase E — Proof composition ❌
+## Phase E — Proof composition ✅ LANDED
 
 **Goal.** Proof shape extended to support composition. Today:
 `{:requirement :r1 :proof "tN/iM/fK"}`. Add:

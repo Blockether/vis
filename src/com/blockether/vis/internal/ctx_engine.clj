@@ -203,9 +203,24 @@
             (reduce-kv
               (fn [a spec-id proofs]
                 (reduce
-                  (fn [a' {:keys [requirement proof]}]
-                    (update a' [spec-id requirement] (fnil conj [])
-                      {:task task-id :scope proof}))
+                  (fn [a' proof]
+                    ;; Phase E: compose-aware entries. :scope keeps the
+                    ;; legacy single-string view; :scopes carries the
+                    ;; full vec (1 element for singleton :proof, N for
+                    ;; :proof-compose). Downstream derive-progression /
+                    ;; pass-* helpers read `:scopes` so both shapes work.
+                    (let [scopes (cond
+                                   (vector? (:proof-compose proof))
+                                   (vec (or (:proof-compose proof) []))
+
+                                   (string? (:proof proof))
+                                   [(:proof proof)]
+
+                                   :else [])]
+                      (update a' [spec-id (:requirement proof)] (fnil conj [])
+                        {:task   task-id
+                         :scope  (first scopes)
+                         :scopes scopes})))
                   a
                   (or proofs [])))
               acc
@@ -325,17 +340,39 @@
 ;; derive-progression — per-spec proof coverage, deterministic
 ;; =============================================================================
 
+(defn proof-scopes
+  "Phase E helper. Return the vec of scope strings a proof entry
+   carries. Backward compat: a `:proof` singleton becomes `[scope]`;
+   a `:proof-compose [s1 s2 …]` returns the vec verbatim. Empty when
+   neither field is populated."
+  [proof]
+  (cond
+    (vector? (:proof-compose proof))
+    (vec (or (:proof-compose proof) []))
+
+    (string? (:proof proof))
+    [(:proof proof)]
+
+    :else []))
+
 (defn- proof-valid?
-  "Stub: a proof is 'valid' for progression accounting iff the proof scope
-   exists in form-results and the referenced requirement is present on the
-   spec. Validator-fn evaluation lives in a separate pass (T2) because it
-   needs SCI and bounded eval — those are non-pure and handled outside this
-   namespace. Progression here counts presence only; T2 narrows it later."
+  "Stub: a proof is 'valid' for progression accounting iff every scope
+   it carries exists in form-results and the referenced requirement is
+   present on the spec. Validator-fn evaluation lives in a separate
+   pass (T2) because it needs SCI and bounded eval — those are non-pure
+   and handled outside this namespace. Progression here counts presence
+   only; T2 narrows it later.
+
+   Phase E: a `:proof-compose` entry is valid for progression iff every
+   sub-scope is present in form-results (or form-results is nil —
+   optimistic). The validator pass later AND/OR's the result; here we
+   just need to know the proof reaches every form it claims."
   [proof req-index form-results]
-  (and (parse-scope-form (:scope proof))
-    (contains? req-index (:requirement-id proof))
-    (or (nil? form-results)                 ;; no form-results known yet → optimistic
-      (contains? form-results (:scope proof)))))
+  (let [scopes (or (:scopes proof) [])]
+    (and (every? parse-scope-form scopes)
+      (contains? req-index (:requirement-id proof))
+      (or (nil? form-results)
+        (every? #(contains? form-results %) scopes)))))
 
 (defn derive-progression
   "For each spec, count how many requirements have at least one proof entry
@@ -365,7 +402,9 @@
                                   :let [proofs (get proof-index [spec-id (:id req)])]
                                   :when (some (fn [p]
                                                 (proof-valid?
-                                                  {:scope (:scope p)
+                                                  {:scopes (or (:scopes p)
+                                                             (when (:scope p) [(:scope p)])
+                                                             [])
                                                    :requirement-id (:id req)}
                                                   req-index form-results))
                                           (or proofs []))]
@@ -811,16 +850,39 @@
         req-known  (when spec-known
                      (some #(= (:id %) (:requirement proof))
                        (get-in ctx [:session/specs spec-k :requirements])))
-        warns      (cond-> []
-                     (not spec-known)
-                     (conj (warn :proof-unknown-spec [task-k spec-k]
-                             (str "proof-add! refs unknown spec " spec-k)))
-                     (and spec-known (not req-known))
-                     (conj (warn :proof-unknown-req [task-k spec-k (:requirement proof)]
-                             (str "proof-add! refs unknown req " (:requirement proof)
-                               " on spec " spec-k))))]
+        ;; Phase E shape checks. :proof and :proof-compose are
+        ;; mutually exclusive in spirit; if both are present we keep
+        ;; both verbatim but warn. Empty :proof-compose is rejected
+        ;; (no scopes → vacuously true under :and). Unknown
+        ;; :proof-rule reverts to :and with a warning.
+        rule       (:proof-rule proof)
+        compose    (:proof-compose proof)
+        compose-shape-warns
+        (cond-> []
+          (and (some? compose) (not (vector? compose)))
+          (conj (warn :proof-compose-malformed [task-k spec-k]
+                  (str "proof-add! :proof-compose must be a vec of scope strings")))
+          (and (vector? compose) (empty? compose))
+          (conj (warn :proof-compose-empty [task-k spec-k]
+                  (str "proof-add! :proof-compose vec is empty; need ≥1 scope")))
+          (and (vector? compose) (some #(not (string? %)) compose))
+          (conj (warn :proof-compose-non-string [task-k spec-k]
+                  (str "proof-add! :proof-compose elements must be scope strings")))
+          (and (some? rule) (not (#{:and :or} rule)))
+          (conj (warn :proof-rule-unknown [task-k spec-k rule]
+                  (str "proof-add! :proof-rule " rule
+                    " unknown; only :and or :or supported — defaulting to :and"))))
+        warns      (concat compose-shape-warns
+                     (cond-> []
+                       (not spec-known)
+                       (conj (warn :proof-unknown-spec [task-k spec-k]
+                               (str "proof-add! refs unknown spec " spec-k)))
+                       (and spec-known (not req-known))
+                       (conj (warn :proof-unknown-req [task-k spec-k (:requirement proof)]
+                               (str "proof-add! refs unknown req " (:requirement proof)
+                                 " on spec " spec-k)))))]
     {:ctx (assoc-in ctx task-path (conj existing proof))
-     :warnings warns
+     :warnings (vec warns)
      :stamped? true}))
 
 (defn- apply-proof-remove! [ctx _form-scope [task-k spec-k rid]]
@@ -1069,15 +1131,56 @@
    readable without unbounded ctx growth across long sessions."
   10)
 
+(defn- evaluate-proof-scopes
+  "Phase E pure helper. Run the req's :validator-fn against every scope
+   the proof entry carries (handles both `:proof` and `:proof-compose`)
+   and combine results per `:proof-rule` (default `:and`).
+
+   Returns `{:ok? bool :failed [{:scope :reason :detail} …]}` where
+   :failed is empty on success. For `:and` failure means at least one
+   sub-scope rejected; :failed lists only the actual rejects. For
+   `:or` failure means ALL sub-scopes rejected; :failed lists every
+   sub-scope (the caller archives all of them).
+
+   Scopes whose classification is not `:ok` are skipped silently — the
+   scope-class pass already complained about those."
+  [src cursor form-results proof]
+  (let [scopes (proof-scopes proof)
+        rule   (or (:proof-rule proof) :and)
+        per    (for [s scopes
+                     :let [klass (classify-scope s cursor form-results)]
+                     :when (= klass :ok)
+                     :let [envelope (get form-results s)
+                           res (run-validator-fn src envelope)]]
+                 (assoc res :scope s))
+        results (vec per)
+        failed-results (filterv #(not (:ok? %)) results)
+        passed?  (case rule
+                   :or  (some :ok? results)
+                   ;; :and (default)
+                   (and (seq results) (every? :ok? results)))]
+    {:ok?    (boolean passed?)
+     :failed (mapv (fn [r] {:scope  (:scope r)
+                            :reason (:reason r)
+                            :detail (:detail r)})
+               (case rule
+                 :or  (if passed? [] results)
+                 ;; :and: archive only the actual rejects
+                 failed-results))}))
+
 (defn- find-failed-task-proofs
   "Pure helper: returns a vec of `{:task-id :spec-id :req-id :proof
    :reason :detail}` for every task-level :specs proof whose req has a
    :validator-fn that REJECTS the form result at the proof scope.
 
-   Skipped when `form-results` is nil (cannot judge without :result) or
-   when the proof scope is not classified `:ok` (the scope-class pass
-   complains separately). Used by both `pass-validators` (warnings) and
-   `archive-failed-proofs` (mutation)."
+   Phase E: a proof entry can carry `:proof-compose [s1 s2 …]` plus
+   `:proof-rule :and|:or`. Each FAILED sub-scope becomes its own
+   failure record so the archive captures individual rejections rather
+   than the whole composition.
+
+   Skipped when `form-results` is nil (cannot judge without :result).
+   Sub-scopes not classified `:ok` are skipped silently — the scope-
+   class pass complains separately."
   [ctx form-results]
   (if-not (map? form-results)
     []
@@ -1089,18 +1192,17 @@
               :let [spec (get-in ctx [:session/specs sk])
                     req  (some #(when (= (:id %) (:requirement proof)) %)
                            (:requirements spec))
-                    src  (:validator-fn req)
-                    klass (classify-scope (:proof proof) cursor form-results)]
-              :when (and req src (= klass :ok))
-              :let [envelope (get form-results (:proof proof))
-                    res (run-validator-fn src envelope)]
-              :when (not (:ok? res))]
+                    src  (:validator-fn req)]
+              :when (and req src)
+              :let [outcome (evaluate-proof-scopes src cursor form-results proof)]
+              :when (and (not (:ok? outcome)) (seq (:failed outcome)))
+              failure (:failed outcome)]
           {:task-id task-id
            :spec-id sk
            :req-id  (:requirement proof)
-           :proof   (:proof proof)
-           :reason  (:reason res)
-           :detail  (:detail res)})))))
+           :proof   (:scope failure)
+           :reason  (:reason failure)
+           :detail  (:detail failure)})))))
 
 (defn- pass-validators
   "Invariant 9: every task proof whose referenced requirement carries a
