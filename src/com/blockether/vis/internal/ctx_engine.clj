@@ -545,6 +545,64 @@
                     [])
        :stamped?  true})))
 
+(defn- apply-fact-contradicts!
+  "Phase C mutator. Declare a SYMMETRIC contradiction between two
+   facts: setting `:K1 ↔ :K2` writes `:contradicts #{:K2}` on K1 AND
+   `:contradicts #{:K1}` on K2. Engine never auto-resolves which fact
+   is correct — the soft warning fires when both stay `:active`, and
+   the model decides which to flip `:superseded`.
+
+   Not transitive. A ↔ B and B ↔ C does NOT imply A ↔ C; each pair
+   must be declared.
+
+   Self-contradiction (`:K1 :K1`) and unknown-fact references emit a
+   warning and skip the write."
+  [ctx _form-scope [a b]]
+  (let [facts (or (:session/facts ctx) {})]
+    (cond
+      (= a b)
+      {:ctx ctx
+       :warnings [(warn :fact-contradicts-self [a]
+                    (str "fact-contradicts! " a " " b
+                      " rejects self-contradiction"))]
+       :stamped? false}
+
+      (not (contains? facts a))
+      {:ctx ctx
+       :warnings [(warn :fact-contradicts-missing [a]
+                    (str "fact-contradicts! references missing fact " a))]
+       :stamped? false}
+
+      (not (contains? facts b))
+      {:ctx ctx
+       :warnings [(warn :fact-contradicts-missing [b]
+                    (str "fact-contradicts! references missing fact " b))]
+       :stamped? false}
+
+      :else
+      {:ctx (-> ctx
+              (update-in [:session/facts a :contradicts] (fnil conj #{}) b)
+              (update-in [:session/facts b :contradicts] (fnil conj #{}) a))
+       :warnings []
+       :stamped? true})))
+
+(defn- apply-fact-contradicts-remove!
+  "Phase C mutator. Symmetric remove of a contradiction declaration.
+   No-op when either side is missing the link — idempotent."
+  [ctx _form-scope [a b]]
+  (letfn [(drop-link [c k other]
+            (let [existing (get-in c [:session/facts k :contradicts])
+                  pruned   (disj (or existing #{}) other)]
+              (cond-> c
+                (and existing (empty? pruned))
+                (update-in [:session/facts k] dissoc :contradicts)
+
+                (and existing (seq pruned))
+                (assoc-in [:session/facts k :contradicts] pruned))))]
+    {:ctx       (-> ctx (drop-link a b) (drop-link b a))
+     :warnings  []
+     :stamped?  true}))
+
 (defn- apply-depends!
   "Phase B convenience mutator. `kind` is one of #{:task :spec :fact},
    `k` is the entity id, `deps` is the new vec of dep refs (bare keys
@@ -696,6 +754,8 @@
       :spec-depends! (apply-depends!      ctx form-scope (cons :spec args))
       :task-depends! (apply-depends!      ctx form-scope (cons :task args))
       :fact-depends! (apply-depends!      ctx form-scope (cons :fact args))
+      :fact-contradicts!        (apply-fact-contradicts!        ctx form-scope args)
+      :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
       :req-add!      (apply-req-add!      ctx form-scope args)
       :req-update!   (apply-req-update!   ctx form-scope args)
       :req-remove!   (apply-req-remove!   ctx form-scope args)
@@ -1033,6 +1093,26 @@
     (keep form-def-name)
     (:forms entry)))
 
+(defn- pass-contradicting-facts
+  "Phase C invariant. Two facts that declared symmetric `:contradicts`
+   AND remain `:active` simultaneously emit `:contradicting-facts`.
+   Predicate is explicit (not transitive). The lexicographically
+   smaller fact id is reported first so the warning is stable across
+   re-renders — emitting only once per unordered pair."
+  [ctx _indexes]
+  (let [facts (or (:session/facts ctx) {})
+        active? (fn [k] (= :active (or (:status (get facts k)) :active)))]
+    (vec
+      (for [[k entry] facts
+            other (or (:contradicts entry) [])
+            :when (and (contains? facts other)
+                    (active? k)
+                    (active? other)
+                    (neg? (compare (str k) (str other))))]
+        (warn :contradicting-facts [k other]
+          (str "fact " k " ↔ " other
+            " both :active — declare :superseded on one of them"))))))
+
 (defn- pass-rebind-loop
   "Surface advisory when the tail of `:session/trailer` repeats the same
    `(def NAME …)` binding `rebind-loop-threshold` times in a row. Rebinding
@@ -1063,6 +1143,7 @@
   ([ctx indexes] (derive-warnings ctx indexes nil))
   ([ctx indexes form-results]
    (->> (concat
+          (pass-contradicting-facts   ctx indexes)
           (pass-req-facts-refs        ctx indexes)
           (pass-task-specs-refs       ctx indexes)
           (pass-task-depends-on-refs  ctx indexes)
@@ -1854,23 +1935,6 @@
             (when-let [entry (get-in ctx [:session/specs k])]
               (assoc entry :as-of-turn turn)))
       (reverse snaps))))
-
-(defn derive-dep-graph
-  "Phase B public surface. Returns the unified dep-graph map keyed
-   by typed nodes `[:kind :K]` (kind ∈ #{:task :spec :fact}). Pure
-   over current ctx. Convenience over
-   `(:dep-graph (build-indexes ctx))` so the SCI introspect surface
-   doesn't need to know about indexes."
-  [ctx]
-  (:dep-graph (build-indexes ctx)))
-
-(defn introspect-dep-graph
-  "Latest snapshot's unified dep-graph (typed nodes). Returns the
-   same shape as `derive-dep-graph`. Nil when history is empty."
-  [history]
-  (let [snaps (snapshots-asc history)]
-    (when-let [[_turn ctx] (last snaps)]
-      (derive-dep-graph ctx))))
 
 (defn introspect-task
   [history k]

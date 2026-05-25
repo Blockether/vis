@@ -169,7 +169,9 @@
    'req-update!   (fn req-update!   [spec-k rid partial]   (apply-and-record! env :req-update!   [spec-k rid partial]))
    'req-remove!   (fn req-remove!   [spec-k rid]           (apply-and-record! env :req-remove!   [spec-k rid]))
    'proof-add!    (fn proof-add!    [task-k spec-k proof]  (apply-and-record! env :proof-add!    [task-k spec-k proof]))
-   'proof-remove! (fn proof-remove! [task-k spec-k rid]    (apply-and-record! env :proof-remove! [task-k spec-k rid]))})
+   'proof-remove! (fn proof-remove! [task-k spec-k rid]    (apply-and-record! env :proof-remove! [task-k spec-k rid]))
+   'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
+   'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
@@ -450,7 +452,6 @@
      'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
      'introspect-fact     (fn introspect-fact     [k]   (eng/introspect-fact (history) k))
      'introspect-failed-proofs (fn introspect-failed-proofs [k] (eng/introspect-failed-proofs (history) k))
-     'introspect-dep-graph (fn introspect-dep-graph [] (eng/introspect-dep-graph (history)))
      'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
      'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
                             (let [t (cond
