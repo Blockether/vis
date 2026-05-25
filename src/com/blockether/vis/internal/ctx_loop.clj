@@ -477,6 +477,7 @@
      'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
      'introspect-fact     (fn introspect-fact     [k]   (eng/introspect-fact (history) k))
      'introspect-failed-proofs (fn introspect-failed-proofs [k] (eng/introspect-failed-proofs (history) k))
+     'introspect-changes  (fn introspect-changes  [turn-key] (eng/introspect-changes (history) turn-key))
      'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
      'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
                             (let [t (cond

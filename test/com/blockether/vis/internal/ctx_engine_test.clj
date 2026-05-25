@@ -1324,3 +1324,87 @@
         (expect (= :open (get-in prog-partial [:S :state]))))
       (it "full form-results → spec :ready"
         (expect (= :ready (get-in prog-full [:S :state])))))))
+
+;; =============================================================================
+;; Phase L: introspect-changes — turn-to-turn delta over snapshots.
+;;
+;; Diff is a pure projection over the persisted snapshots
+;; (session_turn_state.ctx). Returns per-entity change records:
+;;   {:kind :spec|:task|:fact|:rule :K k :change <:added | :removed | vec>}
+;; Each per-field change is `[field before after]`.
+;; Trailer is intentionally excluded — model already reads it inline.
+;; =============================================================================
+
+(defdescribe diff-ctx-test
+  (describe "diff-ctx returns per-entity change records"
+    (let [before {:session/specs {:S {:title "switch to bcrypt" :status :doing
+                                      :born "t1/i1/f1"}}
+                  :session/tasks {:T {:title "impl" :status :todo
+                                      :born "t1/i1/f1"}}
+                  :session/facts {:F {:content "uses literal compare"
+                                      :status :active :born "t1/i1/f1"}}}
+          after  {:session/specs {:S {:title "switch to bcrypt" :status :done
+                                      :born "t1/i1/f1" :done-born "t2/i1/f2"}
+                                  :S2 {:title "new spec" :status :draft :born "t2/i1/f3"}}
+                  :session/tasks {:T {:title "impl" :status :doing
+                                      :born "t1/i1/f1"
+                                      :archived-proofs [{:proof "t2/i1/f1"}]}}
+                  :session/facts {:F {:content "uses bcrypt now"
+                                      :status :active :born "t1/i1/f1"}}}
+          diff (eng/diff-ctx before after)
+          by-key (group-by (juxt :kind :K) diff)]
+
+      (it "captures :added entities"
+        (let [[entry] (get by-key [:spec :S2])]
+          (expect (= :added (:change entry)))
+          (expect (= "new spec" (get-in entry [:after :title])))))
+
+      (it "captures :status transitions"
+        (let [[entry] (get by-key [:spec :S])
+              tuples  (:change entry)
+              status  (some (fn [[f b a]] (when (= f :status) [b a])) tuples)]
+          (expect (= [:doing :done] status))))
+
+      (it "captures :done-born stamping"
+        (let [[entry] (get by-key [:spec :S])
+              tuples  (:change entry)]
+          (expect (some #(= [:done-born nil "t2/i1/f2"] %) tuples))))
+
+      (it "captures rejected-proofs growth as a :rejected-proofs delta"
+        (let [[entry] (get by-key [:task :T])
+              tuples  (:change entry)]
+          (expect (some (fn [[f b a]]
+                          (and (= f :rejected-proofs) (= b 0) (= a 1)))
+                    tuples))))
+
+      (it "captures fact :content changes"
+        (let [[entry] (get by-key [:fact :F])
+              tuples  (:change entry)
+              ch (some (fn [[f b a]] (when (= f :content) [b a])) tuples)]
+          (expect (= ["uses literal compare" "uses bcrypt now"] ch)))))))
+
+(defdescribe introspect-changes-test
+  (describe "introspect-changes reads snapshots N-1 and N and diffs them"
+    (let [snap-1 {:session/specs {:S {:title "x" :status :doing :born "t1/i1/f1"}}}
+          snap-2 {:session/specs {:S {:title "x" :status :done :born "t1/i1/f1"
+                                      :done-born "t2/i1/f1"}}}
+          history [[1 snap-1] [2 snap-2]]
+          changes (eng/introspect-changes history "t2")]
+
+      (it "returns a vec of change records"
+        (expect (vector? changes))
+        (expect (pos? (count changes))))
+
+      (it "includes the :status flip from :doing to :done"
+        (let [[entry] (filter #(and (= :spec (:kind %)) (= :S (:K %))) changes)
+              tuples  (:change entry)]
+          (expect (some (fn [[f b a]]
+                          (and (= f :status) (= :doing b) (= :done a)))
+                    tuples)))))
+
+    (describe "returns nil when snapshot N or N-1 is missing"
+      (let [history [[1 {:session/specs {}}]]]
+        (it "nil when N doesn't exist"
+          (expect (nil? (eng/introspect-changes history "t5"))))
+        (it "nil when N-1 doesn't exist (e.g. turn 1)"
+          (expect (nil? (eng/introspect-changes history "t1"))))))))

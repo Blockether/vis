@@ -321,12 +321,12 @@ z polem :reflection.'
 
 ---
 
-## Phase I — Fact semantic search (Voyager) — DEFERRED
+## Phase I — Fact semantic search (Voyager) — DROPPED
 
-**Goal.** Per-fact embedding + `(fact-search "query")` cosine top-K.
-
-**Status.** DEFERRED in favour of FTS5 (Phase F). If FTS5 proves
-insufficient for semantic recall, reopen this phase; otherwise drop.
+**Status.** FTS5 (Phase F) covers semantic-ish recall via BM25 over
+the already-indexed iter code. Adding per-fact embedding +
+`(fact-search)` would multiply plumbing (embedding provider, cache,
+rebuild on fact-set!) without proportional gain. Closed.
 
 ---
 
@@ -337,7 +337,14 @@ are typed edges in the dep-graph; no separate triple store needed.
 
 ---
 
-## Phase K — Probabilistic validators ❌
+## Phase K — Probabilistic validators — DROPPED
+
+**Status.** Validators in the coding-agent use case are typically
+deterministic (regex match, file exists, test passes). Probabilistic
+surface ({:ok? bool :score double}) would add API + render complexity
+for a use case the model can already express with a boolean predicate
+on a score-bearing payload. Vis is inference-only — no gradient signal
+to consume the score either. Closed unless a concrete need emerges.
 
 **Goal.** Validators return `{:ok? bool :score 0..1 :reason}` instead
 of pure boolean. Engine accepts `:score ≥ threshold` (default 0.5,
@@ -409,3 +416,35 @@ For every phase:
 5. **Backlog hygiene.** Move phase from "❌ backlog" to
    "✅ LANDED `<commit>`" in this file; if dropped, mark "— DEFERRED"
    or "— DROPPED" with rationale.
+
+## Phase L — `(introspect-changes "tN")` turn delta ✅ LANDED
+
+**Goal.** Lazy delta projection over the persisted snapshots. The model
+asks `(introspect-changes "t5")` to get a vec of per-entity change
+records between end-of-turn-4 and end-of-turn-5 ctx snapshots.
+
+Shape per record:
+```
+{:kind  :spec|:task|:fact|:rule
+ :K     <entity-key>
+ :change :added                            ; new entity
+       | :removed                          ; entity dropped
+       | [[field before after] …]          ; field-level transitions
+       | [… [:rejected-proofs N M] …]      ; archived-proofs growth as count delta
+}
+```
+
+Tracked fields: `:status`, `:title`, `:content`, `:born`, `:done-born`,
+`:depends-on`, `:proof`, `:validator-fn`, `:hook-id`, `:importance`,
+`:source`, `:contradicts`, plus the derived `:rejected-proofs` count
+delta. Engine-internal `:validated?` is dropped from the diff surface.
+
+Trailer is intentionally NOT included in the diff — model already reads
+it inline; diffing 30-form pins per iter would saturate the response
+without adding signal.
+
+**Tests.**
+- `diff-ctx-test`: :added, :status flip, :done-born stamp,
+  rejected-proofs delta, fact :content change
+- `introspect-changes-test`: full snapshot path + nil when N or N-1
+  is missing
