@@ -524,7 +524,7 @@ consult fence can parallel `search/web` + `search/papers` calls).
 - Test: primary fence attempting `(future …)` raises
   `Unable to resolve symbol: future`; consult fence resolves it
 
-#### R4 — `consult-request!` async push + `await-consult` sync wait
+#### R4 — `consult-request!` async push + `await-consult!` sync wait
 
 **Async path — `consult-request!`:**
 
@@ -539,9 +539,9 @@ consult fence can parallel `search/web` + `search/papers` calls).
 - Budget check: when consult-budget-atom exhausted, warns + skips
   enqueue with `:consult-budget-exhausted` soft warning
 
-**Fetch path — `await-consult`:**
+**Fetch path — `await-consult!`:**
 
-- `(await-consult :id) → entry-map` reads the materialised entry from
+- `(await-consult! :id) → entry-map` reads the materialised entry from
   `:session/consult-results` and PINS the full map in `:session/trailer`
   as the form's `:result`
 - Same-iter as the `consult-request!` → returns
@@ -577,9 +577,9 @@ consult fence can parallel `search/web` + `search/papers` calls).
   the consult call; engine forces primary to integrate results
 
 - Test: declaring N intents fires N parallel futures; same-iter
-  await-consult returns :consult-not-resolved-yet; same-iter done
+  await-consult! returns :consult-not-resolved-yet; same-iter done
   rejected; iter-end blocks until remaining futures resolve; iter N+1
-  await-consult succeeds and pins trailer; done in iter N+1 succeeds
+  await-consult! succeeds and pins trailer; done in iter N+1 succeeds
   when no fresh pending consults
 
 #### R5 — Mini-SCI consult engine
@@ -659,7 +659,7 @@ consult fence can parallel `search/web` + `search/papers` calls).
   1. Copies `:content`, `:citations`, `:focus`, `:confidence` into a
      NEW fact under `:K`
   2. Removes the entry from `:session/consult-results`
-  3. **Scrubs the trailer pin** that landed when `(await-consult :id)`
+  3. **Scrubs the trailer pin** that landed when `(await-consult! :id)`
      ran (any iter — retroactive across the session's trailer)
 - `(consult-dismiss! :consult-id)`:
   1. Removes the entry from `:session/consult-results`
@@ -668,7 +668,7 @@ consult fence can parallel `search/web` + `search/papers` calls).
 
 **Trailer scrub mechanism:**
 
-- When `(await-consult :id)` pins in trailer, engine records the form
+- When `(await-consult! :id)` pins in trailer, engine records the form
   scope under `:engine/consult-trailer-scopes {:id #{"tN/iM/fK" …}}`
 - `consult-promote!` / `consult-dismiss!` read this map, remove every
   matching scope from `:session/trailer` (across iters), clean empty
@@ -780,34 +780,102 @@ before the phase is considered landed.
   eval. If model wants iteration, it issues another
   `consult-request!` in a later turn.
 
+### IMPLEMENTATION ORDER (handoff)
 
-**Goal.** Extend Phase A `:archived-proofs` entry with a natural-
-language `:reflection` field. On rejection, engine triggers a tiny
-LLM call (router with `:reasoning :minimal` budget) that produces a
-one-paragraph summary: "what was tried, why it failed, what to try
-next". Reflection is stored on the entry and surfaced in the
-rendered `;; rejected-proofs` line.
+Work the R's in this order. Each is its own commit; each must pass its
+own gate (per-R tests) plus the running global gates (full suite green,
+thread isolation, no-legacy when complete).
 
-Reflexion paper shows verbal summary > structured codes for
-semantic-gradient signal.
-
-**Paper.** Reflexion (Shinn NeurIPS 2023, arxiv 2303.11366), section
-on episodic-memory text vs scalar feedback.
-
-**Tests.**
-- `reflection-generation-test` — mock LLM client, archive entry gets
-  `:reflection` non-empty string
-- `reflection-budget-test` — fails open (no reflection field) when
-  LLM call times out or errors
-- `reflection-rendering-test` — `;; rejected-proofs` line includes
-  reflection prefix when present
-
-**CLI verify.**
-```bash
-./bin/vis 'Stwórz spec z validatorem (= result 42).
-Wyemituj proof którego forma zwraca 7. Następnie pokaż archived-proof
-z polem :reflection.'
 ```
+R0  PRE-CONDITION  consolidate scope-aware plumbing
+     | R1 (scope filter + per-scope prompts)
+     | R2 (trailer pin filter for :vis/silent)
+     | R3 (drop future from primary SCI)
+R4  CORE PUSH       consult-request! + await-consult! + done gate
+R5  CORE EXEC       consult-engine mini-SCI runner
+R6  CORE BATCH      process-pending-consults! parallel + iter-end await
+R7  VALIDATE        token caps + retry-to-fit
+R8  RENDER          :session/consult-results section + annotations
+R9  DECISION        consult-promote! / consult-dismiss! + trailer scrub
+R10 EXTENSION       search/web + search/papers (consult scope)
+R11 PROMPT          V2 update + CONSULT_BASE_PROMPT
+R12 INTEGRATION     end-to-end tests + CLI verify
+```
+
+A pre-condition R0 commit lands R1+R2+R3 together because they are
+minor independent changes that the rest of Phase H' depends on. After
+R0 the trailer is already cleaner, primary already has no `future`,
+and bindings are scope-aware — the new consult layer (R4+) plugs into
+this foundation.
+
+### GLOBAL GATES (must hold after every Phase H' commit)
+
+1. **All tests green.** `clojure -M:test` exits 0. Per-R unit suites
+   above listed under each requirement.
+2. **No-legacy gate.** `(consult-fast …)`, `(consult-balanced …)`,
+   `(consult-deep …)` MUST NOT resolve in primary SCI sandbox
+   anywhere after R4 commits. CI grep:
+   `rg "(consult-fast|consult-balanced|consult-deep)" src test` returns
+   only stripped references (e.g. dead-code comments removed). V2
+   prompt must NOT mention v1 names. `com.blockether.vis.internal.consult`
+   ns is rewritten or removed; no zombie sync API.
+3. **Thread isolation gate.** Side-thread consult execution MUST NOT
+   share mutable state with primary's eval thread. Only allowed
+   cross-boundary mutation: atomic swap that appends to
+   `:session/consult-results`. Test: while consult future is pending,
+   primary mutates ctx-atom via spec-set!; consult side does not see
+   the new spec in its embedded ctx snapshot (snapshot was taken at
+   request time).
+4. **Done gate enforcement.** `(done {…})` rejected when any consult
+   declared in the current iter is pending. Soft warning emitted via
+   `:engine/warnings`. Primary forced into a fresh iter to fetch +
+   decide. Test: same-iter `consult-request!` + `(done {…})` results
+   in done refusal + warning `:done-blocked-by-pending-consults`.
+5. **Same-iter await refusal.** `(await-consult! :id)` in the same iter
+   as the matching `(consult-request! :id …)` returns
+   `{:error :consult-not-resolved-yet}` instead of blocking. Test as
+   per R4.
+6. **Trailer scrub semantics.** `(consult-promote! :id :K)` and
+   `(consult-dismiss! :id)` retroactively remove the await-consult!
+   trailer pin for that id across any iters. Test: await in iter N,
+   promote in iter N+2; iter N's pin is gone in iter N+2's rendered ctx.
+7. **Token cap enforcement (retry-to-fit).** Engine NEVER truncates
+   consult `:content`. When over cap, re-prompts consult once with a
+   compression instruction. Test: mocked router returning oversized
+   first attempt + compliant second → entry lands with `:retries 1`;
+   mocked router returning oversized BOTH attempts → entry lands as
+   `:status :failed :error :exceeds-cap`.
+8. **Prompt cache check.** After R11 lands, run a 2-iter probe and
+   inspect `llm_cached_tokens` on iter 2. Cache hit ratio should not
+   drop > 30% vs baseline.
+9. **Token budget check.** Compare ctx render before/after Phase H'
+   on the SAME 6-turn session. Phase H' should be NEUTRAL or smaller
+   (because trailer pin filter drops engine mutators).
+10. **4Clojure regression.** No regression > 2pp pass rate vs baseline.
+    Likely improves on tasks where critique helps.
+11. **Real-model smoke run.** CLI verify (below) succeeds across two
+    providers minimum (anthropic-coding-plan + openai-codex).
+
+### CLI VERIFY (end-to-end)
+
+```bash
+./bin/vis --provider anthropic-coding-plan --model claude-sonnet-4-6 \
+  'Use consult-request! :reflexion :deep with focus ["verify 91% HumanEval
+   claim"] and a question about the Reflexion paper. In the next turn
+   await-consult! :reflexion, check :confidence, and consult-promote!
+   the result to fact :reflexion-paper. Then done with a summary.'
+```
+
+Expected:
+- Iter 1: `(consult-request! :reflexion :deep {:focus [‘91% claim’]
+  :question “…”})` → :vis/silent. `(done …)` REJECTED if attempted.
+- Iter 2: `:session/consult-results` carries `:reflexion`.
+  `(await-consult! :reflexion)` pins entry in trailer, returns map.
+  `(consult-promote! :reflexion :reflexion-paper)` scrubs trailer pin,
+  creates fact. `(done …)` succeeds.
+- Final `:session/facts` carries `:reflexion-paper` with content +
+  citations.
+- No `consult-fast/balanced/deep` ever appears in any iteration source.
 
 ---
 
