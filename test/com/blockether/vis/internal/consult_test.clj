@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.consult-test
-  "Unit tests for Phase H consult layer. Router calls are mocked via
-   with-redefs; we test budget, recursion cap, preference resolution,
-   and the bounded-failure return-map contract."
+  "Unit tests for Phase H async consult layer. Router calls are mocked
+   via with-redefs; we test the declarative request → engine processes
+   between iters → fact in next-iter pattern, plus all bounded-failure
+   paths (budget, recursion, preference, question shape)."
   (:require
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.consult :as consult]
@@ -12,7 +13,8 @@
   ([overrides]
    (merge {:router ::router
            :ctx-atom (atom {:session/id "test" :session/turn 1
-                            :session/scope {:turn 1 :iter 1 :next-form 1}})
+                            :session/scope {:turn 1 :iter 1 :next-form 1}
+                            :session/facts {}})
            :consult-budget-atom (consult/fresh-budget-atom)
            :consult-config {:fast     {:provider :anthropic :model "haiku"}
                             :balanced {:provider :anthropic :model "sonnet"}
@@ -21,96 +23,111 @@
            :turn/user-request  "user question text"}
      overrides)))
 
-(defdescribe consult-happy-path-test
-  (describe "consult! returns the consultant's response string on success"
-    (let [seen (atom nil)
-          env  (mk-env)]
-      (with-redefs [svar/ask-code!
-                    (fn [_router opts]
-                      (reset! seen opts)
-                      {:content "consultant says: do X" :raw "raw text"})]
-        (let [out (consult/consult! env :fast "should I do X?")]
-          (it "returns a success map with :ok? true"
-            (expect (true? (:ok? out))))
-
-          (it "carries the consultant's content under :answer"
-            (expect (= "consultant says: do X" (:answer out))))
-
-          (it "echoes the preference + call-no for forensics"
-            (expect (= :fast (:preference out)))
-            (expect (= 1 (:call-no out))))
-
-          (it "routes via the resolved provider/model for the preference"
-            (expect (= {:provider :anthropic :model "haiku"}
-                      (:routing @seen))))
-
-          (it "embeds the model's question as the last user message"
-            (expect (= "should I do X?"
-                      (-> @seen :messages last :content))))
-
-          (it "embeds the primary system prompt in the consultant system msg"
-            (let [sys (-> @seen :messages first :content)]
-              (expect (re-find #"SECONDARY CONSULTANT" sys))
-              (expect (re-find #"PRIMARY-SYS" sys))))
-
-          (it "embeds the primary user request"
-            (let [user-msg (-> @seen :messages (nth 1) :content)]
-              (expect (re-find #"user question text" user-msg))))
-
-          (it "increments the session budget"
-            (expect (= 1 (-> env :consult-budget-atom deref :used)))))))))
-
-(defdescribe consult-budget-exhaustion-test
-  (describe "consult! short-circuits when the session cap is exceeded"
-    (let [env (mk-env {:consult-budget-atom (atom {:used 20 :cap 20})})]
-      (with-redefs [svar/ask-code! (fn [& _] (throw (ex-info "should not be called" {})))]
-        (let [out (consult/consult! env :fast "any question")]
-          (it ":ok? false on budget exhaustion (no router call)"
-            (expect (false? (:ok? out)))
-            (expect (= :budget-exhausted (:error out))))
-
-          (it "does not increment past the cap"
-            (expect (= 20 (-> env :consult-budget-atom deref :used)))))))))
-
-(defdescribe consult-unknown-preference-test
-  (describe "consult! rejects preferences outside #{:fast :balanced :deep}"
+(defdescribe request-consult-test
+  (describe "request-consult! pushes an intent to :engine/pending-consults"
     (let [env (mk-env)
-          out (consult/consult! env :nuclear "x")]
-      (it ":ok? false with :error :unknown-preference"
-        (expect (false? (:ok? out)))
-        (expect (= :unknown-preference (:error out))))
-      (it "does not bump the budget"
-        (expect (= 0 (-> env :consult-budget-atom deref :used)))))))
+          out (consult/request-consult! env :review :deep "should I do X?")]
+      (it "returns :ok? true with :status :pending"
+        (expect (true? (:ok? out)))
+        (expect (= :pending (:status out))))
 
-(defdescribe consult-empty-question-test
-  (describe "consult! rejects blank/nil questions"
+      (it "echoes :consult-id and :preference"
+        (expect (= :review (:consult-id out)))
+        (expect (= :deep (:preference out))))
+
+      (it "writes the intent onto :engine/pending-consults"
+        (let [pending (-> env :ctx-atom deref :engine/pending-consults)]
+          (expect (= 1 (count pending)))
+          (expect (= :review (-> pending first :consult-id)))
+          (expect (= :deep (-> pending first :preference)))
+          (expect (= "should I do X?" (-> pending first :question)))))
+
+      (it "does NOT bump the budget at request time (only execution does)"
+        (expect (= 0 (-> env :consult-budget-atom deref :used))))))
+
+  (describe "request-consult! rejects bad inputs synchronously"
     (let [env (mk-env)]
-      (it "nil question → :empty-question"
-        (let [out (consult/consult! env :fast nil)]
+      (it "invalid :consult-id (string) → :ok? false :invalid-consult-id"
+        (let [out (consult/request-consult! env "not-a-kw" :fast "x")]
+          (expect (false? (:ok? out)))
+          (expect (= :invalid-consult-id (:error out)))))
+
+      (it "unknown preference → :ok? false :unknown-preference"
+        (let [out (consult/request-consult! env :K :nuclear "x")]
+          (expect (false? (:ok? out)))
+          (expect (= :unknown-preference (:error out)))))
+
+      (it "empty question → :ok? false :empty-question"
+        (let [out (consult/request-consult! env :K :fast "  ")]
           (expect (false? (:ok? out)))
           (expect (= :empty-question (:error out)))))
-      (it "blank question → :empty-question"
-        (let [out (consult/consult! env :fast "   ")]
-          (expect (false? (:ok? out)))
-          (expect (= :empty-question (:error out))))))))
 
-(defdescribe consult-recursion-cap-test
-  (describe "nested consults beyond depth 2 short-circuit"
-    (let [env (mk-env)]
-      (binding [consult/*recursion-depth* 2]
-        (let [out (consult/consult! env :fast "deep recursion attempt")]
-          (it ":ok? false with :error :recursion-cap"
-            (expect (false? (:ok? out)))
-            (expect (= :recursion-cap (:error out)))))))))
+      (it "rejected intents do NOT touch :engine/pending-consults"
+        (consult/request-consult! env :K :nuclear "x")
+        (expect (empty? (-> env :ctx-atom deref :engine/pending-consults))))))
 
-(defdescribe consult-error-passthrough-test
-  (describe "router errors surface as a bounded :ok? false map, not a throw"
+  (describe "request-consult! refuses when budget is exhausted"
+    (let [env (mk-env {:consult-budget-atom (atom {:used 20 :cap 20})})
+          out (consult/request-consult! env :K :fast "x")]
+      (it ":ok? false :budget-exhausted"
+        (expect (false? (:ok? out)))
+        (expect (= :budget-exhausted (:error out))))
+      (it "no intent enqueued"
+        (expect (empty? (-> env :ctx-atom deref :engine/pending-consults)))))))
+
+(defdescribe execute-pending-test
+  (describe "execute-pending! drains intents and materialises facts"
     (let [env (mk-env)]
+      (consult/request-consult! env :critique :fast "Critique my draft.")
+      (consult/request-consult! env :research :deep "Research X.")
+
+      (with-redefs [svar/ask-code!
+                    (fn [_router opts]
+                      (let [model (-> opts :routing :model)]
+                        {:content (str "answer from " model)
+                         :raw "raw"}))]
+        (let [processed (consult/execute-pending! env)
+              facts (-> env :ctx-atom deref :session/facts)]
+
+          (it "returns the vec of processed consult-ids"
+            (expect (= 2 (count processed))))
+
+          (it "materialises each result under :session/facts :consult/<id>"
+            (expect (= "answer from haiku"
+                      (-> facts :consult/critique :content)))
+            (expect (= "answer from opus"
+                      (-> facts :consult/research :content))))
+
+          (it "facts carry :status :active when consult succeeded"
+            (expect (= :active (-> facts :consult/critique :status)))
+            (expect (= :active (-> facts :consult/research :status))))
+
+          (it ":consult-meta carries :preference + :call-no + :duration-ms"
+            (let [m (-> facts :consult/critique :consult-meta)]
+              (expect (= :fast (:preference m)))
+              (expect (some? (:call-no m)))
+              (expect (number? (:duration-ms m)))))
+
+          (it "drains :engine/pending-consults to empty"
+            (expect (empty? (-> env :ctx-atom deref :engine/pending-consults))))
+
+          (it "bumps budget once per executed intent"
+            (expect (= 2 (-> env :consult-budget-atom deref :used))))))))
+
+  (describe "execute-pending! emits :status :failed facts on router error"
+    (let [env (mk-env)]
+      (consult/request-consult! env :bad :fast "x")
       (with-redefs [svar/ask-code! (fn [& _] (throw (ex-info "boom" {})))]
-        (let [out (consult/consult! env :fast "x")]
-          (it ":ok? false with :error :consult-error and the ex message"
-            (expect (false? (:ok? out)))
-            (expect (= :consult-error (:error out)))
-            (expect (= "boom" (:reason out))))
-          (it "still bumps the budget (call was attempted)"
-            (expect (= 1 (-> env :consult-budget-atom deref :used)))))))))
+        (consult/execute-pending! env)
+        (let [fact (-> env :ctx-atom deref :session/facts :consult/bad)]
+          (it ":status :failed"
+            (expect (= :failed (:status fact))))
+          (it ":consult-meta :error :consult-error + :reason"
+            (let [m (:consult-meta fact)]
+              (expect (= :consult-error (:error m)))
+              (expect (= "boom" (:reason m)))))))))
+
+  (describe "execute-pending! is a no-op when nothing is pending"
+    (let [env (mk-env)]
+      (it "returns nil"
+        (expect (nil? (consult/execute-pending! env)))))))

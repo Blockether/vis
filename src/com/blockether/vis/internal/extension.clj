@@ -635,6 +635,18 @@
 (s/def :ext.symbol/tag #{:observation :mutation})
 (s/def :ext.symbol/self-describing? boolean?)
 
+;; Phase H': which engine scopes can bind this symbol.
+;;   :main     primary model's SCI sandbox (default for everything that
+;;             existed before this field landed)
+;;   :consult  consultant tool-calling surface (Phase H' Model 2)
+;; A symbol may live in either / both. The engine filters bindings + tool
+;; defs by scope; primary cannot call a symbol scoped only to :consult and
+;; vice versa. Existing symbols default to #{:main} via
+;; `default-symbol-scope` in the bindings layer, so this field is OPTIONAL
+;; on the entry side.
+(s/def :ext.symbol/engine-scope
+  (s/and set? seq #(every? #{:main :consult} %)))
+
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
@@ -648,11 +660,12 @@
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn
           :ext.symbol/source
-          :ext.symbol/render-error-fn]))
+          :ext.symbol/render-error-fn
+          :ext.symbol/engine-scope]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc]
-    :opt [:ext.symbol/source]))
+    :opt [:ext.symbol/source :ext.symbol/engine-scope]))
 
 (s/def ::symbol-entry
   (s/or :fn  ::fn-symbol-entry
@@ -1031,6 +1044,33 @@
 (defn ext-symbols
   [ext]
   (vec (or (get-in ext [:ext/sci :ext.sci/symbols]) [])))
+
+(def ^:private DEFAULT_SYMBOL_SCOPE
+  "Phase H': scope every legacy symbol lives in when the entry omits
+   `:ext.symbol/engine-scope`. Keeps backward compat — nothing changes
+   for the primary model unless an extension opts a symbol into
+   `:consult` explicitly."
+  #{:main})
+
+(defn ext-symbol-scope
+  "Phase H': read `:ext.symbol/engine-scope` off a single symbol entry,
+   falling back to `DEFAULT_SYMBOL_SCOPE`. Always returns a non-empty
+   set of scope keywords."
+  [sym-entry]
+  (let [declared (:ext.symbol/engine-scope sym-entry)]
+    (cond
+      (and (set? declared) (seq declared)) declared
+      :else DEFAULT_SYMBOL_SCOPE)))
+
+(defn ext-symbols-in-scope
+  "Phase H': filter the extension's `:ext.sci/symbols` vec to entries
+   that include `scope` (one of `#{:main :consult}`) in their
+   `:ext.symbol/engine-scope`. Used by the loop to wire primary's SCI
+   bindings (`:main`) and the consult tool-definition surface
+   (`:consult`) from a single registry."
+  [ext scope]
+  (filterv (fn [e] (contains? (ext-symbol-scope e) scope))
+    (ext-symbols ext)))
 
 (defn ext-classes
   [ext]

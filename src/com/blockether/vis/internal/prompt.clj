@@ -172,67 +172,82 @@
           by flipping one fact `:superseded`. A ↔ B and B ↔ C does NOT
           imply A ↔ C; declare each pair explicitly.
 
-      Secondary consultation (parallel-safe via SCI futures):
-        (consult-fast     \"question\")    ; fast/cheap — sanity, format,
-                                            ; quick critique
-        (consult-balanced \"question\")    ; mid-range — cost/quality middle
-        (consult-deep     \"question\")    ; deep reasoning — hard
-                                            ; decomposition, novel problems
+      Secondary consultation (async; cross-iter):
+        (consult-request! :id :preference \"question\")
+        — :id is a keyword YOU pick for tracking (e.g. :critique,
+          :research, :sanity)
+        — :preference ∈ #{:fast :balanced :deep}
+        — :fast      quick critique / sanity / format check
+        — :balanced  mid-range cost/quality middle
+        — :deep      hard reasoning, novel decomposition, expert review
 
-      RETURN SHAPE  (always a map; never a bare string)
-        {:ok? bool :answer string? :preference kw :call-no int
-         :duration-ms long :error? kw :reason? string}
-        — on :ok? true, read `:answer` (consultant's text).
-        — on :ok? false, inspect `:error` (one of #{:budget-exhausted
-          :recursion-cap :unknown-preference :empty-question
-          :consult-error :router-missing}) + `:reason`. Proceed without
-          secondary input.
+      ASYNC SEMANTICS  (cross-iter, never blocks this iter)
+        1. Iter N: you emit (consult-request! :K :preference \"q\").
+           Returns immediately:
+             {:ok? true :consult-id :K :preference :preference :status :pending}
+        2. Iter N ends. Engine runs ALL pending intents in parallel
+           between iters; embeds primary system prompt + user request +
+           ctx snapshot into each consultant call invisibly.
+        3. Iter N+1: result is a fact in :session/facts under
+             :consult/<id>
+           Shape:
+             :consult/:K {:content \"…answer…\" :status :active
+                          :born \"tN/iM/fK\"
+                          :consult-meta {:preference :deep :call-no 3
+                                         :duration-ms 18432}}
+           On failure:
+             :consult/:K {:status :failed :born \"…\"
+                          :consult-meta {:error :consult-error
+                                         :reason \"…\"}}
 
-      CONSULT EFFECT
-        Engine NEVER evaluates `:answer` as code, NEVER auto-adds
-        facts/tasks, NEVER mutates ctx. The string lands in your iter
-        scope; YOU choose:
-          - read + discard (one-shot critique, scratch)
-          - persist as fact:
-              (def out (consult-balanced \"…\"))
-              (when (:ok? out)
-                (fact-set! :K {:content (:answer out) :status :active})
-                (fact-depends! :K [refs]))
-          - use as input to your own reasoning (no copy needed)
-          - copy code suggestions into the next fence YOURSELF
-            (consult never emits runnable code into the sandbox)
+      WHY ASYNC  (vs blocking the iter on secondary LLM)
+        — your iter completes immediately; primary tokens not billed
+          while consultant thinks
+        — multiple consults run in parallel (engine spawns one future
+          per intent) so wall time ≈ max(durations), not sum
+        — result is a DURABLE fact; future iters can reference it via
+          :consult/<id> without re-asking
 
-      CONSULT DATA INPUT
+      DATA INPUT
         Ambient (auto-embedded; never re-pass):
           • primary system prompt
           • primary user request
           • current ctx snapshot (specs/tasks/facts/trailer)
-        Specific data (model concatenates as needed):
+        Specific data (you concatenate into the question text):
           (def file (v/cat \"path\"))
-          (consult-fast (str \"Review this:\n\" (:content file)))
-        DON'T pass refs (consultant can't dereference your defs across
-        calls). DO pass concrete strings/maps/edn.
+          (consult-request! :review :balanced
+            (str \"Review this auth code:\n\" (:content file)))
+        DON'T pass refs (consultant can't deref your defs across calls).
+        DO pass concrete strings/maps/edn.
 
-      Engine embeds the consultant context INVISIBLY — you cannot read
-      it back, it never lands in the trailer.
+      CONSULT EFFECT
+        Engine NEVER evaluates :content as code, NEVER auto-adds
+        downstream facts/tasks. The fact lands at iter N+1 boundary;
+        YOU decide:
+          — read :content and discard (one-shot critique)
+          — keep as :active fact for future iters
+          — supersede via (fact-set! :consult/:K {:status :superseded})
+          — copy code suggestions into your OWN fence (consult never
+            emits runnable code into the sandbox)
 
-      Budget: session cap (default 20); recursion depth = 2.
+      BUDGET
+        Session cap default 20 consult intents. Hard fail above with
+        :ok? false :error :budget-exhausted on (consult-request! …).
+        Recursion depth = 2 (a consult triggered FROM a consult itself
+        cannot trigger more).
 
-      Parallelize INDEPENDENT consults via SCI `future`s. NOTE: `def`
-      does NOT destructure (only `let` does):
-        (let [f1 (future (consult-fast \"critique form A\"))
-              f2 (future (consult-fast \"critique form B\"))]
-          (def critiques [@f1 @f2]))
-      OR explicit single defs per future:
-        (def f1 (future (consult-fast \"…\")))
-        (def f2 (future (consult-balanced \"…\")))
-        (def c1 @f1)
-        (def c2 @f2)
-
-      Use for: Constitutional self-critique pre-done, validator-fn
-        sanity, hard-problem delegation, format/structure pre-emit.
-      DON'T use for: anything you can answer yourself (budget waste),
-        loops, re-asking same question (no cache).
+      USE FOR
+        — background research that can wait one iter
+        — expert delegation when stuck (:deep)
+        — critique of in-progress work BEFORE you commit big direction
+          changes
+        — sanity on validator-fn source you just wrote
+      DON'T USE FOR
+        — anything you can answer yourself (budget waste)
+        — same-iter Constitutional check (use REFINE loop instead;
+          consult result lands NEXT iter)
+        — re-asking the same question (no cache; previous fact still
+          there — reference it)
 
       Reactive rules (forward-chained watchpoints):
         (rule-set! :K {:when [:on-fact-status :F :active] :message \"…\"})
