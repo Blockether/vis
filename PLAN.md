@@ -289,11 +289,11 @@ n=15. Pokaż że każdy moduł ma odpowiadającą formę.'
 
 ---
 
-## Phase H — Secondary-model consultation (consult-fast/balanced/deep) ✅ LANDED v1
+## Phase H — Secondary-model consultation — SUPERSEDED
 
-**Status.** v1 (sync, blocking, no scope, no structured output) landed at
-`1d9677ba` and reworked to always-map return at `ece24f3c`. Superseded
-by Phase H' below — v1 will be removed when Phase H' lands.
+**Status.** v1 sync `consult-fast/balanced/deep` landed at `1d9677ba`,
+reworked to always-map at `ece24f3c`. SUPERSEDED by Phase H' — the v1
+bindings are REMOVED (no legacy).
 
 ## Phase H' — Async cross-iter consult mini-engine + scope-aware bindings ⏳ NEXT
 
@@ -487,24 +487,24 @@ consult fence can parallel `search/web` + `search/papers` calls).
   each scope; an extension whose symbols are ALL `:main` contributes
   nothing to consult
 
-**Per-scope prompt assembly** (extensions contribute to both system
-prompts independently):
+**Per-scope prompt assembly** (different prompts for primary vs consult):
 
-- New optional extension field `:ext/consult-prompt` (string-fn) —
-  consult system prompt section the extension provides
 - Engine builds:
   - **primary system prompt** = `CORE_SYSTEM_PROMPT` + concat of every
-    active extension's `:ext/prompt` (existing path)
-  - **consult system prompt** = `CONSULT_BASE_PROMPT` + concat of every
-    active extension's `:ext/consult-prompt` IF present, else
-    auto-generated docs from `:ext.symbol/doc` of every symbol with
-    `:consult` in its scope
-- Auto-generated docs format mirrors primary's existing per-symbol
-  prompt rendering so the consult LLM gets the same shape
-- Test: extension with no `:ext/consult-prompt` but `:consult`-scope
-  symbols → engine auto-generates docs from `:ext.symbol/doc`;
-  extension with explicit `:ext/consult-prompt` overrides the auto-
-  generation
+    active extension's `:ext/prompt` (existing path; unchanged)
+  - **consult system prompt** = `CONSULT_BASE_PROMPT` (NEW, short,
+    dedicated to research+synthesis) + auto-generated docs from
+    `:ext.symbol/doc` of every symbol with `:consult` in its scope
+- Consult system prompt deliberately drops:
+  - the primary `CORE_SYSTEM_PROMPT` (engine FSM, spec/task/fact docs,
+    consult own docs — all irrelevant to a single-iter research call)
+  - any `:ext/prompt` from extensions (those are for primary)
+- Consult LLM sees ONLY: consult role + cap rules + answer schema +
+  available symbol docs (auto-gen). Different mental model = different
+  prompt.
+- Test: rendered consult system prompt does NOT contain any text from
+  `CORE_SYSTEM_PROMPT` (e.g. "TURN LIFECYCLE", "spec-set!", "REASON"
+  must NOT appear); does contain consult-base headers + symbol docs
 
 #### R2 — Trailer pin filter
 
@@ -524,19 +524,47 @@ prompts independently):
 - Test: primary fence attempting `(future …)` raises
   `Unable to resolve symbol: future`; consult fence resolves it
 
-#### R4 — `consult-request!` async push
+#### R4 — `consult-request!` async push + `await-consult` sync wait
 
-- New mutator binding in primary SCI scope
+**Async path — `consult-request!`:**
+
+- Mutator binding in primary SCI scope (`:main`)
 - Accepts `(consult-request! :id :preference "question")` OR
   `(consult-request! :id :preference {:focus […] :question "…"})`
-- Pushes intent map to `:engine/pending-consults` on ctx-atom
+- Registers intent under `:engine/pending-consults` on ctx-atom AND
+  **fires a future immediately** on a side thread (consult-engine/run)
 - Returns `:vis/silent` (NOT a string — to keep it OUT of trailer)
-- Synchronously validates id/preference/question; rejects with soft warning
-  via `:engine/warnings` when invalid (no intent enqueued)
+- Synchronously validates id/preference/question; rejects with soft
+  warning via `:engine/warnings` when invalid (no intent enqueued)
 - Budget check: when consult-budget-atom exhausted, warns + skips
   enqueue with `:consult-budget-exhausted` soft warning
-- Test: declaring N intents pushes N entries; bad inputs warn but
-  don't enqueue
+
+**Sync path — `await-consult`:**
+
+- `(await-consult :id) → entry-map` blocks until the named consult
+  finishes, returns the materialised entry map directly
+- If consult already done by call time, returns immediately
+- If consult never declared (no matching intent), returns
+  `{:error :unknown-consult-id}` synchronously
+- Result also lands in `:session/consult-results` (single source of
+  truth — sync and async paths share the storage)
+- Hard timeout = same 60s wall as consult-engine's internal timeout
+- Primary CAN'T accidentally lose the result by awaiting too late —
+  consult-results persist for the GC TTL window
+
+**Iter-boundary contract:**
+
+- consult-request! IMMEDIATELY fires the future; primary can choose to
+  await within the same iter or let it run
+- At iter end, engine awaits ALL unresolved futures (block primary's
+  iter N+1 start until all consults resolve or time out)
+- Primary therefore NEVER "loses" a consult — even if no await, iter N+1
+  sees the result in `:session/consult-results`
+
+- Test: declaring N intents fires N parallel futures; await-consult
+  blocks until that intent's future resolves; iter-end blocks until
+  remaining futures resolve; results visible in next iter regardless
+  of await pattern
 
 #### R5 — Mini-SCI consult engine
 
@@ -670,17 +698,33 @@ before the phase is considered landed.
     -n com.blockether.vis.internal.ctx-renderer-test
     -n com.blockether.vis.internal.ctx-loop-test
     -n com.blockether.vis.internal.prompt-test`
-2. **Real-model smoke run** (CLI verify above) succeeds across two
+2. **Thread isolation gate.** During an active consult execution:
+   - primary's ctx-atom value MUST NOT mutate from consult side
+   - consult's mini-SCI ctx MUST be on a different thread than
+     primary's eval thread (assert via Thread/currentThread identity)
+   - the ONLY allowed cross-boundary write is the atomic swap that
+     appends to `:session/consult-results` AFTER the future resolves
+   - Test: while consult future is pending, mutate primary ctx-atom
+     via spec-set! and verify consult side does not observe it; after
+     consult resolves, verify the materialisation path swapped
+     atomically into the same primary ctx-atom
+3. **Real-model smoke run** (CLI verify above) succeeds across two
    providers (anthropic + openai-codex minimum).
-3. **4Clojure regression** does not regress > 2pp pass rate vs baseline
+4. **4Clojure regression** does not regress > 2pp pass rate vs baseline
    (likely improves on tasks where critique helps).
-4. **Prompt cache check.** After landing, run a 2-iter probe and
+5. **Prompt cache check.** After landing, run a 2-iter probe and
    inspect `llm_cached_tokens` on iter 2. Cache hit ratio should not
    drop > 30% vs baseline — V2 prompt changes are additive, not
    structural.
-5. **Token budget on a typical turn.** Compare ctx render before/after
+6. **Token budget on a typical turn.** Compare ctx render before/after
    Phase H' on the SAME 6-turn session. Phase H' should be NEUTRAL or
    smaller (because trailer pin filter drops engine mutators).
+7. **No-legacy gate.** After landing:
+   - `(consult-fast …)`, `(consult-balanced …)`, `(consult-deep …)`
+     MUST NOT resolve in primary SCI sandbox (no v1 surface remains)
+   - V2 prompt MUST NOT mention `consult-fast/balanced/deep`
+   - `com.blockether.vis.internal.consult` ns is REMOVED or fully
+     rewritten (no zombie sync API)
 
 ### NON-GOALS (explicit)
 
