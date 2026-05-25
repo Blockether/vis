@@ -319,3 +319,74 @@
       (it ":task-done-validator-fail warning on :engine/warnings"
         (expect (some #(= :task-done-validator-fail (:code %))
                   (-> env :ctx-atom deref :engine/warnings)))))))
+
+;; =============================================================================
+;; Phase F: trailer-find — FTS5 query → ranked iteration scopes.
+;;
+;; Composition test only — the actual SQLite FTS5 semantics live in the
+;; persistance suite. Here we wire mocked db-search + db-list-* and assert
+;; that trailer-find joins the hits with turn positions and applies the
+;; declared filters.
+;; =============================================================================
+
+(defdescribe trailer-find-test
+  (describe "trailer-find composes db-search hits into iter scopes"
+    (let [history-loader (constantly [])
+          bindings (cl/build-introspect-bindings
+                     {:db-info ::db :session-id "S"}
+                     history-loader)
+          trailer-find (get bindings 'trailer-find)]
+      (it "is exposed under the 'trailer-find binding"
+        (expect (some? trailer-find)))
+
+      (it "returns nil/empty when :src-matches is blank or missing"
+        (with-redefs [com.blockether.vis.internal.persistance/db-search
+                      (constantly [])]
+          (expect (nil? (trailer-find nil)))
+          (expect (nil? (trailer-find {:src-matches ""}))))))
+
+    (let [;; mock 2 turns × 2 iters; an FTS5 hit on iter-2 of turn-1
+          turns [{:id "soul-1" :position 1}
+                 {:id "soul-2" :position 2}]
+          iters-by-soul {"soul-1" [{:id "it-1a" :position 1}
+                                   {:id "it-1b" :position 2}]
+                         "soul-2" [{:id "it-2a" :position 1}]}
+          bindings (cl/build-introspect-bindings
+                     {:db-info ::db :session-id "S"}
+                     (constantly []))
+          trailer-find (get bindings 'trailer-find)]
+
+      (it "joins owner-id to a turn+iter position and emits the tN/iM scope"
+        (with-redefs [com.blockether.vis.internal.persistance/db-search
+                      (fn [_db q _opts]
+                        (when (= q "v/rg")
+                          [{:owner-table "session_turn_iteration"
+                            :owner-id    "it-1b"
+                            :field       "code"
+                            :snippet     "(v/rg […])"
+                            :rank        -1.234}]))
+                      com.blockether.vis.internal.persistance/db-list-session-turns
+                      (constantly turns)
+                      com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                      (fn [_db soul-id] (get iters-by-soul soul-id))]
+          (let [hits (trailer-find {:src-matches "v/rg" :limit 20})]
+            (expect (= 1 (count hits)))
+            (expect (= "t1/i2" (:scope (first hits))))
+            (expect (= "(v/rg […])" (:preview (first hits)))))))
+
+      (it ":scope-after filters out hits at or before the cursor"
+        (with-redefs [com.blockether.vis.internal.persistance/db-search
+                      (constantly
+                        [{:owner-table "session_turn_iteration"
+                          :owner-id    "it-1a" :field "code"
+                          :snippet "old hit" :rank -2.0}
+                         {:owner-table "session_turn_iteration"
+                          :owner-id    "it-2a" :field "code"
+                          :snippet "new hit" :rank -3.0}])
+                      com.blockether.vis.internal.persistance/db-list-session-turns
+                      (constantly turns)
+                      com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                      (fn [_db soul-id] (get iters-by-soul soul-id))]
+          (let [hits (trailer-find {:src-matches "x" :scope-after "t1/i1"})]
+            ;; t1/i1 itself filtered; t2/i1 kept (turn>cursor.turn)
+            (expect (= ["t2/i1"] (mapv :scope hits)))))))))

@@ -180,7 +180,7 @@ Połącz je proof-compose AND. Done re-validates oba.'
 
 ---
 
-## Phase F — Trailer FTS index ❌
+## Phase F — Trailer FTS index ✅ LANDED
 
 **Goal.** New SCI fn `(trailer-find {…filter})` over the existing
 SQLite `search` FTS5 virtual table. The `search` table already
