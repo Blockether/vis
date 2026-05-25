@@ -43,7 +43,11 @@
         ;; iterations with worked-example code; cap guards against drift.
         ;; Bumped 8000 → 9000 after the v/rg sweep added context/regex/
         ;; output-mode idioms + the v/cat :range arity doc.
-        (expect (< (count prompt) 9000)))))
+        ;; Bumped 9000 → 12000 after the STRATEGIES section landed:
+        ;; good-only iter-composition recipes (probe → widen, locate
+        ;; → open, single-scan-many-views, multi-edit-one-call) plus
+        ;; HARD RULES against one-shot fences that brick the trailer.
+        (expect (< (count prompt) 12000)))))
 
   (it "contributes only the workspace block through ctx now"
     ;; `:session/env` (host / project / extensions digest) moved to
