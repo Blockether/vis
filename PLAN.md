@@ -363,17 +363,18 @@ Minimal required, plus optional engine-stamped audit:
  :preference  :fast|:balanced|:deep  ; engine-stamped from request
  :born        "tN"                   ; engine-stamped: turn declared
  :duration-ms long                   ; engine-stamped: consult wall time
- :truncated?  boolean?}              ; engine-stamped only when caps hit
+ :retries     0|1}                   ; audit; 0 = fit first try, 1 = needed compress retry
 
 ;; FAILURE
 {:consult-id  :research
  :status      :failed
- :error       :timeout|:provider-error|:malformed-answer|:budget-exhausted
+ :error       :timeout|:provider-error|:malformed-answer|:budget-exhausted|:exceeds-cap
  :reason      string                 ; human explanation
  :focus       [string ...]?          ; preserved from request
  :preference  :deep
  :born        "tN"
- :duration-ms long}
+ :duration-ms long
+ :retries     int?}                  ; only when :error :exceeds-cap
 ```
 
 #### Citation min schema
@@ -411,10 +412,26 @@ cap**. When summed entries exceed cap, engine drops oldest entry
 ;; ⚠ consult-results overflow: dropped :K to fit 50 000-tok budget
 ```
 
-On per-entry overflow: engine truncates `:content` at the preference
-cap with `... [N tokens truncated]` marker inline and stamps
-`:truncated? true`. Citations beyond 15 dropped + warned. Excerpts
-above 500 tokens truncated per citation.
+On per-entry overflow: engine **never truncates**. Instead it
+re-prompts the consult LLM in the same side thread (same SCI ctx) with
+a compression instruction:
+
+```
+"Your previous answer was N tokens; the cap for :<preference> is M.
+Compress to fit — keep the most-cited findings, drop tangents and
+adjectives. Re-emit (answer {…})."
+```
+
+Max retries = 1 (so worst case = 2 LLM calls per consult intent).
+If the second attempt still overflows, the entry lands as
+`:status :failed :error :exceeds-cap`. Primary then decides whether
+to re-issue with a narrower `:focus` or different `:preference`.
+
+Citations beyond 15 dropped + warned (NOT retried — the consult LLM
+had N citations and the engine slices the tail; not worth re-prompting
+for citation count alone). Excerpts above 500 tokens behave the same
+way: drop tail of the excerpt with no marker (excerpts are abstracts;
+a sliced abstract is still useful).
 
 #### Engine scope filter (`:ext.symbol/engine-scope`)
 
@@ -520,20 +537,27 @@ consult fence can parallel `search/web` + `search/papers` calls).
 - Test: 3 intents declared in one turn run in parallel; wall time
   ≈ max(durations); all 3 entries land on results vec
 
-#### R7 — Engine-side validation + truncation
+#### R7 — Engine-side validation + retry-to-fit
 
 - After consult-engine returns its raw map, validate against schema
-- Token-count `:content` via `internal/tokens.clj` (jtokkit
-  cl100k_base); truncate to per-preference cap (1k / 4k / 12k tokens)
-- Token-count each `:excerpt`; truncate to 500-token cap per citation
-- Drop citations beyond index 15 + warn `:too-many-citations`
-- Stamp `:truncated? true` when caps hit (content carries the truncation
-  marker inline; no need for separate metric)
+- Token-count `:content` via `internal/tokens.clj` (jtokkit cl100k_base)
+- If `:content` exceeds preference cap (1k / 4k / 12k tokens),
+  RE-PROMPT consult in the same side thread + same SCI ctx with a
+  compression instruction ("your N tokens > cap M; compress…")
+- Max retries = 1 (worst case 2 LLM calls per consult intent)
+- After retry attempt: if still over cap, emit `:status :failed`
+  `:error :exceeds-cap` `:reason "...attempt sizes..."` `:retries 1`
+- Successful entry stamps `:retries 0` (fit first try) or `:retries 1`
+- Citations beyond index 15: tail dropped + soft warn `:too-many-citations`
+  (no retry for this — not worth a round trip for citation count)
+- Excerpts above 500 tokens: tail-clipped per citation (excerpts ARE
+  abstracts; a sliced abstract still useful, no marker needed)
 - Drop malformed citations (no `:type`, no `:url`/`:title`) + warn
 - When `:content` missing/blank: emit `:status :failed`
   `:error :malformed-answer`
-- Test: oversized content gets truncated with token-marker; malformed
-  entry becomes failed with reason
+- Test: oversized content triggers retry; second-attempt fit lands
+  as :active :retries 1; second-attempt overflow lands as
+  :failed :exceeds-cap; malformed citations dropped + warned
 
 #### R8 — `:session/consult-results` ctx section
 
