@@ -146,6 +146,14 @@
         (proof-add!    :task-K :spec-K {:requirement :proof})
         (proof-remove! :task-K :spec-K :req-id)
 
+      Relations (universal :depends-on; cycle-checked across kinds):
+        (task-depends! :K [refs])   ; refs: bare key | [:task :K2] | [:spec :K] | [:fact :K]
+        (spec-depends! :K [refs])   ; spec composition / inheritance via deps
+        (fact-depends! :K [refs])   ; fact provenance (derived-from)
+        — dep-graph nodes are typed [:kind :K]; bare key = same-kind shorthand;
+          cycle reject is HARD across all three kinds.
+        (introspect-dep-graph)      ; live typed dep-graph map
+
       Introspection (lazy; reach evidence the live trailer dropped):
         (introspect-turn-list)
         (introspect-ctx-at        \"t<N>\")
@@ -153,6 +161,7 @@
         (introspect-form          \"t<N>/i<M>/f<K>\")
         (introspect-spec / -task / -fact :K)
         (introspect-failed-proofs :K)         ; archived rejected proofs per task
+        (introspect-dep-graph)                 ; typed dep-graph map (Phase B)
         (introspect-archived      :tasks|:specs|:facts)
         (v/engine-symbol-doc / -source / -meta 'sym)
         (v/engine-symbol-apropos  \"pattern\")

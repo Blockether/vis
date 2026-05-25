@@ -49,6 +49,7 @@
           bindings (cl/build-sci-bindings env)]
       (it "exposes every engine mutator (D12: no satisfy-hint!)"
         (expect (= #{'spec-set! 'task-set! 'fact-set!
+                     'spec-depends! 'task-depends! 'fact-depends!
                      'req-add! 'req-update! 'req-remove!
                      'proof-add! 'proof-remove!}
                   (set (keys bindings)))))
