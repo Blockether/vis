@@ -494,6 +494,62 @@
             :status (:status it)
             :code   (:code it)
             :forms  (vec (:forms it))})))
+     'trailer-find
+     ;; Phase F: SQLite FTS5 search over indexed iteration `code`
+     ;; (the whole fence body). Returns iteration scopes ranked by
+     ;; FTS5 BM25 so the model can pull `(introspect-iter scope)`
+     ;; for full forms when it spots a relevant hit.
+     ;;
+     ;; Opts:
+     ;;   :src-matches    FTS5 MATCH query string (required; bare
+     ;;                   tokens are AND-ed, supports prefix `foo*`,
+     ;;                   `"foo OR bar"`, etc.)
+     ;;   :scope-after    "tN/iM" post-filter (only hits strictly
+     ;;                   after this scope are returned)
+     ;;   :limit          int, default 20
+     ;;
+     ;; Returns: vec of `{:scope :preview :rank}` sorted best-first.
+     (fn trailer-find [opts]
+       (let [{:keys [src-matches scope-after limit]} (or opts {})]
+         (when (and (string? src-matches) (not (str/blank? src-matches)))
+           (let [hits   (persistance/db-search (:db-info env) src-matches
+                          {:owner-table "session_turn_iteration"
+                           :field       "code"
+                           :limit       (max 1 (long (or limit 20)))})
+                 turns  (or (persistance/db-list-session-turns
+                              (:db-info env) (:session-id env)) [])
+                 turn-by-soul   (into {} (map (juxt :id :position)) turns)
+                 ;; cache iter rows per turn so a multi-hit query does
+                 ;; not refetch the same iteration list.
+                 turn-iter-rows (atom {})
+                 iter-rows-for  (fn [turn-soul-id]
+                                  (or (get @turn-iter-rows turn-soul-id)
+                                    (let [rows (persistance/db-list-session-turn-iterations
+                                                 (:db-info env) turn-soul-id)]
+                                      (swap! turn-iter-rows assoc turn-soul-id rows)
+                                      rows)))
+                 scope-cursor    (when (string? scope-after)
+                                   (parse-iter-scope scope-after))
+                 strictly-after? (fn [{:keys [turn iter]}]
+                                   (or (nil? scope-cursor)
+                                     (> turn (:turn scope-cursor))
+                                     (and (= turn (:turn scope-cursor))
+                                       (> iter (:iter scope-cursor)))))]
+             (vec
+               (for [{:keys [owner-id snippet rank]} hits
+                     :let [iter-row (some (fn [t]
+                                            (some #(when (= owner-id (:id %)) [t %])
+                                              (iter-rows-for (:id t))))
+                                      turns)
+                           [turn-row iter] iter-row
+                           turn-pos (turn-by-soul (:id turn-row))
+                           iter-pos (:position iter)
+                           scope    (when (and turn-pos iter-pos)
+                                      {:turn turn-pos :iter iter-pos})]
+                     :when (and scope (strictly-after? scope))]
+                 {:scope   (str "t" (:turn scope) "/i" (:iter scope))
+                  :preview snippet
+                  :rank    rank}))))))
      'introspect-form
      (fn introspect-form [scope]
        (when-let [{:keys [turn iter form]} (parse-form-scope scope)]

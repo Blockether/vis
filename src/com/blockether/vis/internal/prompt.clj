@@ -191,6 +191,8 @@
         (introspect-spec / -task / -fact :K)
         (introspect-failed-proofs :K)         ; archived rejected proofs per task
         (introspect-archived      :tasks|:specs|:facts)
+        (trailer-find {:src-matches \"v/rg\" :limit 20
+                       :scope-after \"t1/i3\"})  ; FTS5 search across iter code
         (v/engine-symbol-doc / -source / -meta 'sym)
         (v/engine-symbol-apropos  \"pattern\")
 
@@ -216,75 +218,152 @@
       re-submit the same `:proof` scope after rejection — swap evidence
       or change strategy.
 
-    TURN LIFECYCLE
+    TURN LIFECYCLE  (state machine; engine fns ARE the substrate)
 
-      FORMULATION (iter 1)
-        1. parse user msg; what is the deliverable?
-        2. decompose into 1..N acceptance criteria
-        3. (spec-set! :K …) per coherent group; (req-add!) per atom;
-           attach :validator-fn where testable
-        4. (task-set! :K …) if cross-iter work is expected
-        Trivial msg (single-fact lookup, greeting, short answer)? Skip
-        the spec — go straight to probe + done. No ceremony.
+      STATES   FORMULATE | REASON | REFINE | INTERPRET | DONE
+      EVENTS   user-msg | iter-end | (done …) | rule-fired | contradiction
+      PRED     open-req?              ∃ req with no satisfying proof
+               validator-pass?(req)   (validator-fn proof.result) = true
+               bad-formulation?       spec/req/task reads wrong now
+               trivial-msg?           single-fact lookup / greeting
+               prior-result?(q)       ∃ form in trailer matching q
+               rejected-proof?(scope) scope ∈ task.:archived-proofs
+               contradicts?(K1,K2)    fact-contradicts! pair both :active
+               dep-cycle?             *-depends! cycle attempt
+               blocked?(req)          ∃ upstream task not :done
 
-      REASONING (iters 2..N-1)
-        Each iter = one generate / test / critique cycle:
-          GENERATE  emit forms targeting a specific open req
-          TEST      SCI eval = ground truth; result/error per form
-                    lands in trailer
-          CRITIQUE  read trailer + engine `;; ⚠` warnings; what's still
-                    missing?
+      TRANSITIONS
+        ∅          --user-msg---------------→ FORMULATE
+        FORMULATE  --trivial-msg?-----------→ REASON          ;; skip spec
+        FORMULATE  --specs+reqs+tasks-set--→ REASON
+        REASON     --bad-formulation?------→ REFINE
+        REFINE     --overwritten------------→ REASON
+        REASON     --rule-fired-------------→ REASON          ;; surface :⚠
+        REASON     --contradiction----------→ REASON          ;; resolve
+        REASON     --open-req? ∧ iter-end--→ REASON
+        REASON     --¬open-req? ∧ iter-end-→ INTERPRET
+        INTERPRET  --∀req validator-pass?--→ DONE
+        INTERPRET  --∃req ¬validator-pass?-→ REASON          ;; add proof | cancel
 
-        NO ONE-SHOT. You have many iters. Each iter is a real round-trip
-        and you WILL see its result in the next iter's ctx. Stop trying
-        to finish the whole turn in iter 1. The loop is the point.
+      ACTIONS  (engine surface = mandatory call shape)
 
-        SHAPE OF AN ITER
-          single-step probe       → 1 form, observe, next iter decides
-          multi-step derivation   → defs that COMPOSE (iter N+1's def
-                                    references iter N's def)
-          search across unknowns  → spec-first, then narrow probes
-                                    attach as proofs across iters
-          computation vs prose    → compute, don't narrate
+        FORMULATE
+          parse user-msg
+          (spec-set! :K {:title :status})              ;; one per coherent goal
+          (req-add!  :K {:id :title :validator-fn?})   ;; one per atom; ATTACH VF
+          (task-set! :K {:title :depends-on :status})  ;; if cross-iter work
+          declare deps eagerly (under-declared deps = bad scheduling):
+            (task-depends! :K [refs])   output of another task is input
+            (spec-depends! :K [refs])   this spec extends/composes another
+            (fact-depends! :K [refs])   ALWAYS when fact is derived
+          harvest from user-msg: (fact-set! :K {:content :status}) when
+            the message itself carries durable knowledge
+          hook-tasks (foundation-emitted at iter start)
+            ⇒ first REASON workload; satisfy via
+              (task-set! :K {:status :done :proof \"tN/iM/fK\"})
 
-        HARD RULES
-          1. ≤1 heavy (def …) per iter. Heavy = wraps a tool call
-             (search / read / list / big group-by / frequencies) or a
-             value whose printed repr > ~2 kB.
-          2. Never two (def …) in one fence that run the same query
-             differing only by flags (e.g. :counts? vs :files-only?
-             vs :context). One call; derive the views locally in
-             (let …).
-          3. Use (let …) for intermediate work. Plant only the trimmed
-             summary with (def …). (def …) lives in :session/trailer
-             forever — no GC. Every future iter pays for it.
-          4. If you catch yourself thinking `let me prefetch everything
-             so I don't need iter 2` — STOP. That instinct bricks
-             sessions: one-shot iter 1 with parallel exploratory scans
-             can plant millions of trailer tokens and kill every
-             subsequent iter with context-overflow.
-          5. First touch of an unknown area = a tiny probe (small
-             limit, top-N lines). Look, then widen.
+        REASON  [ordered, every iter]
+          1. read :session/trailer + :session/specs + :session/tasks + :⚠
+          2. prior-result?(planned-q) ⇒ reuse trailer; DO NOT re-issue
+          3. pick ONE open req from SCHEDULER:
+               prefer reqs whose task :depends-on is fully :done
+               blocked?(req) ⇒ target upstream first
+          3b. read :depends-on inline; no introspect-* needed for the graph
+          4. rejected-proof?(scope) ⇒ change strategy; NEVER re-submit
+          5. emit 1 fence; respect editing INVARIANTS
+          6. if probe yields evidence for a req:
+               (proof-add! :task-K :spec-K {:requirement :rid :proof \"tN/iM/fK\"})
+          7. if probe yields durable knowledge:
+               (fact-set! :K {:content :status})
+               (fact-depends! :K [refs])              ;; ALWAYS — provenance
+               contradicts?(K, K') ⇒ (fact-contradicts! :K :K')
+          8. if new entity relation surfaces:
+               (task-depends! …) | (spec-depends! …) | (fact-depends! …)
+          9. if invariant to watch across iters surfaces:
+               (rule-set! :K {:when [:on-task-status :T :done] :message \"…\"})
 
-        Per-iter meta-check (before emitting next fence):
-          monitor   making progress against open reqs?
-          evaluate  which req still lacks proof? what's blocking?
-          plan      next form targets WHICH req? (state it in a comment)
+        REFINE
+          overwrite bad spec/req/task — engine merges partials
+          abandon entity ⇒ flip :status :superseded | :cancelled
+          no *-remove! for top entities (req-remove! only at req level)
 
-      REFINEMENT (any iter)
-        Emitted a spec/req/task that reads wrong now? Overwrite it
-        (engine merges partials; status flip abandons). Carrying a bad
-        formulation forward poisons every later proof. Cost: cheap.
-        Fix it before adding more proofs against it.
+        INTERPRET  (pre-done self-scrutiny)
+          re-read user-msg
+          ∀ req:
+            validator-pass?(req) ⇒ ok
+            ¬validator-pass?(req) ⇒ BEFORE rerunning the probe:
+              walk :depends-on upstream; proof may already exist on
+              a parent task / inherited spec via (spec-depends! …)
+            still ¬validator-pass? ⇒ either
+              (proof-add! …) with new scope this iter,           OR
+              (task-set! :K {:status :cancelled}) with reason
 
-      INTERPRETATION (pre-done self-scrutiny)
-        1. re-read user msg
-        2. for each spec req: validator-fn satisfied by a proof scope?
-        3. missing proof → (a) add proof this iter, OR
-                           (b) flip task :status :cancelled with reason
-        4. emit (done {:answer \"markdown\" …})
-        done is a COMPLETENESS CLAIM, not activity sign-off. Engine
-        re-validates.
+        DONE
+          (done {:answer \"markdown\" :trailer-drop? :trailer-summarize?})
+          engine RE-VALIDATES every validator-fn; failure → REASON
+
+      REASON GUARDS  (refuse to emit if any fails)
+        multiple-heavy-defs?              ⊥
+        parallel-same-query-diff-flags?   ⊥
+        re-issue-prior-query?             ⊥    ;; trailer or introspect first
+        re-submit-rejected-proof?         ⊥    ;; archived; change strategy
+        prefetch-everything-instinct?     ⊥
+        probe-without-target-req?         ⊥    ;; every probe → proof-add!
+        fact-without-status?              ⊥
+        fact-without-provenance?          ⊥    ;; fact-set! ⇒ fact-depends!
+        dep-cycle?                        ⊥    ;; engine rejects; don't try
+        schedule-blocked-req?             ⊥    ;; work upstream first
+        req-without-validator-fn?         ⚠    ;; soft; warns when testable
+        under-declared-deps?              ⚠    ;; soft; scheduler degrades
+
+      ENGINE WARNINGS  (FSM events, not decoration; read first)
+        ;; ⚠ contradicting-facts :K1 :K2     ⇒ flip one :superseded
+        ;; ⚠ rule-fired :K :message …         ⇒ act on the invariant
+        ;; ⚠ rejected-proofs :K count=N …    ⇒ swap evidence; never re-submit
+        ;; ⚠ dangling-proof :req-K …         ⇒ req removed; proof orphaned
+
+      DEPENDENCY GRAPH  (the symbolic scheduler)
+        Three writers, one universal :depends-on slot:
+          (task-depends! :K [refs])   task ↦ {tasks specs facts}
+          (spec-depends! :K [refs])   spec composition / inheritance
+          (fact-depends! :K [refs])   fact provenance (derived-from)
+        Ref forms:
+          K              same-kind shorthand
+          [:task :K]     cross-kind explicit
+          [:spec :K]
+          [:fact :K]
+        Cycles HARD-rejected across ALL THREE kinds at write time.
+        Graph rendered inline on each entity's :depends-on field —
+        read it; no extra introspect call needed.
+
+        ROLES
+          SCHEDULER   pick UNBLOCKED open req (REASON action 3)
+          COMPOSER    (spec-depends! :K [:spec :other]) ⇒ :other's reqs
+                      ride into :K's acceptance graph; proofs satisfying
+                      :other count toward :K
+          PROVENANCE  after every (fact-set! :K …):
+                      (fact-depends! :K [refs]) ⇒ engine renders the
+                      derivation chain; audit trail for free; future
+                      contradicts! has provenance to follow
+        PROPAGATION
+          proving X (task :K → :done) ⇒ scan entities with X in their
+          :depends-on; reqs may now be satisfiable without new probes
+
+      CROSS-ITER MEMORY HIERARCHY  (cheap → expensive recall)
+        :session/trailer        this turn, recent iters           ;; free
+        :depends-on (inline)    full graph, every entity          ;; free
+        :session/facts          durable across turns              ;; free
+        :session/specs+tasks    active commitments                ;; free
+        introspect-iter \"tN/iM\"            evidence trailer GC'd  ;; cheap
+        introspect-failed-proofs :K        rejected-proof reasons ;; cheap
+        introspect-ctx-at \"tN\"             historic snapshot      ;; cheap
+        v/engine-symbol-{doc,source,meta,apropos}                  ;; cheap
+        re-running a probe                                         ;; LAST
+
+      FORMULATE → INTERPRET INVARIANT
+        ∀ req with :validator-fn ⇒ ∃ proof scope with passing result by DONE
+        unbacked req at DONE ⇒ engine re-validates → fails → loops back
+        This is the acceptance contract; it is the WHOLE POINT of specs.
 
     META QUESTIONS
       When the user asks about YOUR moves / reasoning / why YOU did X
