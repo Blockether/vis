@@ -31,7 +31,7 @@
 --
 -- Position columns (1-based int) live alongside UUID PKs at every
 -- level. UUIDs are the join key; position is the public/agent-
--- facing identifier (see PLAN.md §2.9, §2.10).
+-- facing identifier.
 --
 -- Flow per turn:
 --   user request
@@ -108,12 +108,12 @@ CREATE TABLE workspace (
 
   commit_id            TEXT,              -- repo HEAD sha at worktree creation
 
-  -- PLAN.md §1: human-friendly label that overrides the default
+  -- Human-friendly label that overrides the default
   -- (session.title / branch name) in the TUI strip + Telegram
   -- switcher. NULL falls back to the heuristic. Set via
   -- `/workspace label "…"` / `workspace/set-label!`.
   label                TEXT,
-  -- PLAN.md §1: monotonic timestamp of the last `workspace/focus!`.
+  -- Monotonic timestamp of the last `workspace/focus!`.
   -- Drives TUI strip ordering (most-recent first) and tab restore
   -- (`workspace/last-focused`). NULL falls back to `created_at`.
   last_focused_at_ms   INTEGER,
@@ -133,7 +133,7 @@ CREATE INDEX idx_workspace_repo_state
   ON workspace(repo_id, state);
 
 -- =============================================================================
--- repo_focus — PLAN.md §1: per-repo last-active workspace pointer.
+-- repo_focus — per-repo last-active workspace pointer.
 -- One row per repo; updated by `workspace/focus!`. The TUI uses this to
 -- restore the active tab across restarts; the Telegram switcher uses it
 -- as the default landing for `/workspace switch` without an argument.
@@ -163,8 +163,8 @@ CREATE TABLE session_state (
   llm_root_model        TEXT,
   created_at            INTEGER NOT NULL,
 
-  -- PLAN.md §7: when this session_state is the engine-spawned
-  -- merge-resolve sub-session, this column points at the parent
+  -- When this session_state is the engine-spawned merge-resolve
+  -- sub-session, this column points at the parent
   -- session_state that initiated the merge. The sub-session's
   -- prompt + permitted op set are gated on the column being
   -- non-NULL; completion deletes the sub-session and the
@@ -176,10 +176,10 @@ CREATE TABLE session_state (
   UNIQUE (session_soul_id, version)
 );
 
--- PLAN.md §12 step 10: the 1:1 workspace-session_state invariant is
--- partial. A merge-resolve sub-session pins to its parent's workspace
--- (§7.1) so the conflict state in the worktree index is visible to
--- both sessions. We DON'T want that to violate the UNIQUE: the
+-- The 1:1 workspace-session_state invariant is partial. A
+-- merge-resolve sub-session pins to its parent's workspace so the
+-- conflict state in the worktree index is visible to both sessions.
+-- We DON'T want that to violate the UNIQUE: the
 -- constraint applies only to rows where merge_resolve_parent_id IS
 -- NULL (i.e. the canonical session_state of a workspace). Resolve
 -- sub-session rows can coexist on the same workspace_id.

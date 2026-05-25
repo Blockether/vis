@@ -1646,7 +1646,7 @@
       (expect (string/includes? joined "(def x 1)")))))
 
 (defdescribe tool-envelope-test
-  (it "tool wrappers return the required contract keys (PLAN §2.1 envelope)"
+  (it "tool wrappers return the required contract keys"
     (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
           cat-tool (private-fn "cat-tool")
           out (cat-tool path)
@@ -1665,14 +1665,14 @@
       (expect (not (contains? out :markdown)))
       (expect (nil? (:error out)))))
 
-  (it "tool failure envelope carries structured :error per PLAN §2.1"
+  (it "tool failure envelope carries structured :error"
     (let [cat-symbol (private-fn "cat-symbol")
           on-error   (:ext.symbol/on-error-fn cat-symbol)
           out        (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
       (expect (false? (:success? out)))
       (expect (nil? (:result out)))
-      ;; Per PLAN §2.7 / §7.3.4: :trace is a preformatted string,
-      ;; first line carries the underlying class name.
+      ;; :trace is a preformatted string; first line carries the
+      ;; underlying class name.
       (expect (string? (get-in out [:error :trace])))
       (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
       (expect (not (contains? out :markdown))))))

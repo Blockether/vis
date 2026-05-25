@@ -69,8 +69,8 @@
 
 (defn store-session!
   "Test wrapper for `vis/db-store-session!` that injects a fresh trunk
-   workspace per call (PLAN.md decision 1 — session_state.workspace_id
-   is NOT NULL, 1:1 with workspace). Calls
+   workspace per call (session_state.workspace_id is NOT NULL, 1:1
+   with workspace). Calls
    `vis/workspace-ensure-trunk!` against the live vis repo when no
    `:workspace-id` was supplied.
 

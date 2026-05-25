@@ -499,9 +499,8 @@
   "Create a fresh `:tui` session.
 
    Optional opts map (second arity):
-     :workspace-id  pre-spawned workspace to pin the new session to
-                    (PLAN.md decision 1, decision 6). Omit and a
-                    trunk workspace is auto-minted by
+     :workspace-id  pre-spawned workspace to pin the new session to.
+                    Omit and a trunk workspace is auto-minted by
                     `create-environment`.
 
    Returns `{:id session-id :history []}`."

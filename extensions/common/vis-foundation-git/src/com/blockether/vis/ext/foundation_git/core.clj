@@ -4,7 +4,7 @@
    Ships three observation tools: `git/diff`, `git/status`,
    `git/log`. All three are read-only, JGit-backed, and run inside the
    currently bound workspace root (channels rebind `*workspace-root*`
-   per turn, PLAN.md §5).
+   per turn).
 
    The extension activates only when the active workspace root is inside
    a git repo. No host `git` binary is required for observation tools."

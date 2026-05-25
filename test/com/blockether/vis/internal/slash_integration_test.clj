@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.slash-integration-test
-  "PLAN.md section 12 step 7 — engine loop integration of slash dispatch.
+  "Engine loop integration of slash dispatch.
 
    Asserts that `run-turn!` short-circuits the LLM round-trip when
    the user message resolves to a registered slash, persists a

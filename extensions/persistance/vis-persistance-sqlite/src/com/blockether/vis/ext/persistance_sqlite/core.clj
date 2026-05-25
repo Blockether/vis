@@ -526,7 +526,7 @@
                       (:iteration-id entry)          (assoc :session_turn_iteration_id (->id (:iteration-id entry))))]})))))
 
 ;; =============================================================================
-;; Workspace - trunk-native work units (PLAN.md §2-§4)
+;; Workspace - trunk-native work units
 ;; =============================================================================
 
 (defn- row->workspace
@@ -549,8 +549,8 @@
       (:commit_id row)           (assoc :commit-id (:commit_id row))
       (:merged_at row)           (assoc :merged-at (->date (:merged_at row)))
       (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row)))
-      ;; PLAN.md §1 additions — surfaced for the workspace facade's
-      ;; label/focus helpers. NULL columns are skipped so callers can
+      ;; Surfaced for the workspace facade's label/focus helpers.
+      ;; NULL columns are skipped so callers can
       ;; treat absence as "fall back to default" (label → session.title;
       ;; last-focused → created_at).
       (:label row)               (assoc :label (:label row))
@@ -609,10 +609,9 @@
                :where  [:= :id id]})))))))
 
 (defn db-workspace-update-commit-id!
-  "Set `commit_id` on `workspace-id` (PLAN.md §4.5). Called by
-   `workspace/commit!` after a fresh commit lands on the worktree
-   so callers see the new HEAD without re-running `git rev-parse`.
-   Returns the updated record."
+  "Set `commit_id` on `workspace-id`. Called by `workspace/commit!`
+   after a fresh commit lands on the worktree so callers see the new
+   HEAD without re-running `git rev-parse`. Returns the updated record."
   [db-info workspace-id commit-id]
   (when (and (ds db-info) workspace-id)
     (let [id (->ref workspace-id)]
@@ -628,9 +627,8 @@
                :where  [:= :id id]})))))))
 
 (defn db-workspace-update-label!
-  "Set the human-friendly `:label` override (PLAN.md §1). Pass nil to
-   clear the label and fall back to the heuristic. Returns the updated
-   record."
+  "Set the human-friendly `:label` override. Pass nil to clear the
+   label and fall back to the heuristic. Returns the updated record."
   [db-info workspace-id label]
   (when (and (ds db-info) workspace-id)
     (let [id (->ref workspace-id)]
@@ -647,7 +645,7 @@
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by
-   `workspace/focus!` (PLAN.md §1, §6). Returns the updated record."
+   `workspace/focus!`. Returns the updated record."
   [db-info workspace-id]
   (when (and (ds db-info) workspace-id)
     (let [id  (->ref workspace-id)
@@ -665,7 +663,7 @@
 
 (defn db-repo-focus-get
   "Return the `workspace_id` currently pinned as the focus pointer for
-   `repo-id` (PLAN.md §1). Nil when no entry exists yet."
+   `repo-id`. Nil when no entry exists yet."
   [db-info repo-id]
   (when (and (ds db-info) repo-id)
     (some-> (query-one! db-info
@@ -677,7 +675,7 @@
 
 (defn db-repo-focus-set!
   "Upsert the per-repo focus pointer to `workspace-id`. Updates
-   `updated_at_ms` to now. Returns the new pointer map (PLAN.md §1)."
+   `updated_at_ms` to now. Returns the new pointer map."
   [db-info repo-id workspace-id]
   (when (and (ds db-info) repo-id workspace-id)
     (let [ws-id (->ref workspace-id)
@@ -757,8 +755,8 @@
            :order-by [[:version :desc]]})))))
 
 (defn db-session-state-spawn-merge-resolve!
-  "Create a merge-resolve sub-session pinned to the parent's workspace
-   (PLAN.md §7). The new `session_state` row:
+  "Create a merge-resolve sub-session pinned to the parent's workspace.
+   The new `session_state` row:
      - Shares `session_soul_id` with the parent (sub-session is a
        continuation, not a fresh soul).
      - Pins to the SAME `workspace_id` as the parent (the trunk-side
@@ -839,9 +837,9 @@
    Returns the session-soul UUID.
 
    Required opt: `:workspace-id` — session_state.workspace_id is NOT NULL
-   after V1, enforcing the 1:1 invariant (PLAN.md §1 decision 1). The
-   caller (loop/create-environment) calls `workspace/ensure-trunk!` to
-   mint a trunk workspace before invoking this fn.
+   after V1, enforcing the 1:1 invariant. The caller
+   (loop/create-environment) calls `workspace/ensure-trunk!` to mint a
+   trunk workspace before invoking this fn.
 
    Session identity and LLM root defaults are first-class columns:
      session_soul.channel / external_id
@@ -1089,9 +1087,9 @@
    Returns the new state UUID.
 
    Required opt: `:workspace-id` — every session_state must be pinned to
-   exactly one workspace (1:1, PLAN.md decision 1). Callers (screen
-   handlers, cli) call `workspace/spawn-branch!` or
-   `workspace/ensure-trunk!` first and pass the returned id here."
+   exactly one workspace. Callers (screen handlers, cli) call
+   `workspace/spawn-branch!` or `workspace/ensure-trunk!` first and pass
+   the returned id here."
   [db-info session-id {:keys [system-prompt provider model title workspace-id]}]
   (when-not workspace-id
     (throw (ex-info "db-fork-session! requires :workspace-id (1:1 invariant)"

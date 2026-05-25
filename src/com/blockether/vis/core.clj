@@ -96,7 +96,7 @@
 (def toggle-add-listener!       toggles/add-listener!)
 
 ;; =============================================================================
-;; Workspace (PLAN.md §3)
+;; Workspace
 ;; =============================================================================
 (def workspace-cwd               workspace/cwd)
 (def workspace-root              workspace/workspace-root)
@@ -122,7 +122,7 @@
 (def workspace-register-hook!    workspace/register-hook!)
 
 ;; =============================================================================
-;; Slash commands (PLAN.md §3 — declarative `:ext/slash-commands`)
+;; Slash commands (declarative `:ext/slash-commands`)
 ;; =============================================================================
 (def active-slashes              slash/active-slashes)
 (def registered-slashes          slash/registered-slashes)

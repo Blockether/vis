@@ -39,8 +39,8 @@
                                                 {:kind :answer-ref}]}))))))
 
 (defdescribe bot-menu-test
-  ;; PLAN.md §12 step 9: the Telegram bot menu is now derived from
-  ;; `vis/registered-slashes` filtered by `:slash/availability-fn`
+  ;; The Telegram bot menu is derived from `vis/registered-slashes`
+  ;; filtered by `:slash/availability-fn`
   ;; accepting `:telegram` (+ `:slash/hidden? false`). The exact set
   ;; depends on which extensions are registered at test runtime;
   ;; we assert presence + ordering of the Telegram-private specs

@@ -78,9 +78,9 @@
   (vh/title-or-placeholder (:title db)))
 
 (def ^:private active-workspace-states
-  "PLAN.md decision 12 — header strip shows live workspaces only.
-   Merged + discarded rows stay in DB for transcript references but
-   never appear in any list, panel, or overlay."
+  "Header strip shows live workspaces only. Merged + discarded rows
+   stay in DB for transcript references but never appear in any list,
+   panel, or overlay."
   #{:active :merging})
 
 (defn- workspace-strip-visible?
@@ -96,10 +96,9 @@
 (defn- workspace-entries
   "Return entries to render in the centre strip, ALWAYS non-empty.
 
-   Each entry represents a workspace (1:1 with its session under
-   PLAN.md decision 1); the active entry's label tracks the session
-   title (the state layer updates it on `:set-title`). Entries are
-   filtered to PLAN.md decision 12 — finished (merged + discarded)
+   Each entry represents a workspace (1:1 with its session); the
+   active entry's label tracks the session title (the state layer
+   updates it on `:set-title`). Finished (merged + discarded)
    workspaces never reach the strip. When the app-db has not yet
    initialised its workspace list — fresh boot, first paint, or
    stand-alone draw in tests — we synthesise a single active entry

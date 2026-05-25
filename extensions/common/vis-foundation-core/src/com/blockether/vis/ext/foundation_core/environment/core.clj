@@ -50,7 +50,7 @@
   (atom {:key nil :value nil}))
 
 (defn- canonical-cwd ^String []
-  ;; Production: channel rebinds *workspace-root* per turn (PLAN.md §5).
+  ;; Production: channel rebinds *workspace-root* per turn.
   ;; The try/catch covers REPL / test paths where no binding exists.
   (try
     (.getCanonicalPath (workspace/cwd))

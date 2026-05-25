@@ -211,7 +211,7 @@
                 (expect (= :ff-failed (:status ff)))
                 (expect (some? (:reason ff)))
                 ;; Workspace stays in :merging so the engine can hand off
-                ;; to start-merge-resolve! (PLAN.md §7).
+                ;; to start-merge-resolve!.
                 (expect (= :merging
                           (:state (ws/get store (:id workspace)))))))
             (finally (delete-tree! base))))))))

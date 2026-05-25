@@ -88,8 +88,8 @@
                     (:type (ex-data e))))))))
 
   (it "slash path collisions across extensions are rejected at register-extension! time"
-    ;; PLAN.md §3: the union of `:ext/slash-commands` across all
-    ;; registered extensions must contain unique `[parent name]`
+    ;; The union of `:ext/slash-commands` across all registered
+    ;; extensions must contain unique `[parent name]`
     ;; paths. A second extension that declares the same path as an
     ;; already-registered extension is refused. Hot reload of the
     ;; SAME extension id is still allowed because its prior entry is
