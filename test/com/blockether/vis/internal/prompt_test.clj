@@ -22,10 +22,8 @@
 
 (defdescribe prompt-core-test
   (it "documents engine-owned forms as bare, not extension tools"
-    ;; CORE_SYSTEM_PROMPT was cavemaned + symbolised (50% token cut). The
-    ;; old wording \"Engine-owned control forms are bare symbols\" was
-    ;; replaced by the terser \"ENGINE FNS (bare symbols — never namespace-
-    ;; qualify)\" section header. Pin the new shape.
+    ;; CORE_SYSTEM_PROMPT pins: bare-symbol ENGINE FNS section.
+    ;; Engine fns are emitted without namespace qualification.
     (let [text (prompt/build-system-prompt {})]
       (expect (str/includes? text "bare symbols"))
       (expect (str/includes? text "never namespace-qualify"))
