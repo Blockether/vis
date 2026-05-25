@@ -3703,7 +3703,14 @@
                             ;; and avoid re-submitting the same rejected
                             ;; scope. Hook-task rejections were already
                             ;; archived inside reconcile-done-hook-tasks!.
-                            (ctx-loop/archive-failed-task-proofs! environment (or form-results-map {})))
+                            (ctx-loop/archive-failed-task-proofs! environment (or form-results-map {}))
+                            ;; Phase H async: drain :engine/pending-consults
+                            ;; declared via (consult-request! …) inside
+                            ;; this iter's fence. Each pending intent runs
+                            ;; in parallel; result lands as a fact under
+                            ;; :session/facts :consult/<id> visible to the
+                            ;; model in the NEXT iter.
+                            (ctx-loop/process-pending-consults! environment))
                         reconcile-duration-ms (- (System/currentTimeMillis) reconcile-start-ms)
                         hook-tasks-post   (when ctx-atom-ref
                                             (into {}

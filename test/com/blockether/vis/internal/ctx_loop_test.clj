@@ -47,14 +47,14 @@
   (describe "SCI bindings build"
     (let [env (mk-env)
           bindings (cl/build-sci-bindings env)]
-      (it "exposes every engine mutator (D12: no satisfy-hint!) plus consult-* (Phase H)"
+      (it "exposes every engine mutator (D12: no satisfy-hint!) plus consult-request! (Phase H async)"
         (expect (= #{'spec-set! 'task-set! 'fact-set!
                      'spec-depends! 'task-depends! 'fact-depends!
                      'fact-contradicts! 'fact-contradicts-remove!
                      'rule-set! 'rule-remove!
                      'req-add! 'req-update! 'req-remove!
                      'proof-add! 'proof-remove!
-                     'consult-fast 'consult-balanced 'consult-deep}
+                     'consult-request!}
                   (set (keys bindings)))))
 
       (it "each binding is a callable function"

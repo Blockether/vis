@@ -194,12 +194,14 @@
    'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))
    'rule-set!                (fn rule-set!                [k partial] (apply-and-record! env :rule-set!    [k partial]))
    'rule-remove!             (fn rule-remove!             [k]         (apply-and-record! env :rule-remove! [k]))
-   ;; Phase H: secondary-model consultation. Engine embeds the
-   ;; primary system prompt + user request + ctx projection into the
-   ;; consultant call invisibly. Model just writes the question.
-   'consult-fast             (fn consult-fast      [q] (consult/consult! env :fast     q))
-   'consult-balanced         (fn consult-balanced  [q] (consult/consult! env :balanced q))
-   'consult-deep             (fn consult-deep      [q] (consult/consult! env :deep     q))})
+   ;; Phase H: secondary-model consultation (async cross-iter).
+   ;; The model DECLARES an intent; engine processes it between iters
+   ;; in parallel and materialises the result as a fact under
+   ;; :session/facts :consult/<id> in the NEXT iter. Embedded context
+   ;; (system prompt + user request + ctx snapshot) is invisible to
+   ;; the primary.
+   'consult-request!         (fn consult-request! [id preference question]
+                               (consult/request-consult! env id preference question))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
@@ -290,6 +292,19 @@
                         :warnings @warns-acc
                         :duration-ms (- (System/currentTimeMillis) start-ms)}}
         "reconcile-done-hook-tasks completed"))))
+
+(defn process-pending-consults!
+  "Phase H async: drain `:engine/pending-consults` and run every intent
+   in parallel; materialise each result as a fact under
+   `:session/facts :consult/<id>` on the live ctx-atom. Called at
+   end-of-iter (after reconcile-done-hook-tasks!) so the consultants
+   have full ctx snapshot to embed and the model picks up the result
+   in the NEXT iter.
+
+   No-op when ctx-atom is missing (defensive for partial test envs)."
+  [env]
+  (when (:ctx-atom env)
+    (consult/execute-pending! env)))
 
 (defn archive-failed-task-proofs!
   "Run `eng/archive-failed-task-proofs` against the live ctx atom: scans
