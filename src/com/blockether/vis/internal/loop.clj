@@ -3687,7 +3687,15 @@
                               "CTX iter-end: trailer pinned; about to reconcile hook-tasks"))
                         reconcile-start-ms (System/currentTimeMillis)
                         _ (when ctx-atom-ref
-                            (ctx-loop/reconcile-done-hook-tasks! environment (or form-results-map {})))
+                            (ctx-loop/reconcile-done-hook-tasks! environment (or form-results-map {}))
+                            ;; Regular task proofs that fail their req's
+                            ;; validator-fn get archived into the task's
+                            ;; `:archived-proofs` vec so the model can
+                            ;; `(introspect-failed-proofs :K)` next iter
+                            ;; and avoid re-submitting the same rejected
+                            ;; scope. Hook-task rejections were already
+                            ;; archived inside reconcile-done-hook-tasks!.
+                            (ctx-loop/archive-failed-task-proofs! environment (or form-results-map {})))
                         reconcile-duration-ms (- (System/currentTimeMillis) reconcile-start-ms)
                         hook-tasks-post   (when ctx-atom-ref
                                             (into {}

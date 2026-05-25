@@ -254,6 +254,28 @@
                         :duration-ms (- (System/currentTimeMillis) start-ms)}}
         "reconcile-done-hook-tasks completed"))))
 
+(defn archive-failed-task-proofs!
+  "Run `eng/archive-failed-task-proofs` against the live ctx atom: scans
+   regular task-level proofs whose `:validator-fn` rejects the form
+   result, and appends a rejection entry to the task's
+   `:archived-proofs` vec. The proof itself stays in `:specs` — model
+   owns regular-task lifecycle. Idempotent within an iter.
+
+   Companion to `reconcile-done-hook-tasks!` which handles HOOK-source
+   tasks (engine reverts those). Call this after reconcile so the two
+   archive paths see a consistent ctx.
+
+   No-op when ctx-atom is missing (defensive for partial test envs)."
+  [{:keys [ctx-atom] :as env} form-results-map]
+  (when ctx-atom
+    (let [cursor (cursor-snapshot env)]
+      (swap! ctx-atom
+        (fn [c]
+          (-> c
+            (assoc :session/scope cursor)
+            (eng/archive-failed-task-proofs form-results-map)
+            (dissoc :session/scope)))))))
+
 (defn stamp-cursor
   "Return a ctx map with both `:session/turn` and `:session/scope` synced
    from the loop's running counters. Render path + every engine derivation
@@ -424,6 +446,7 @@
     {'introspect-spec     (fn introspect-spec     [k]   (eng/introspect-spec (history) k))
      'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
      'introspect-fact     (fn introspect-fact     [k]   (eng/introspect-fact (history) k))
+     'introspect-failed-proofs (fn introspect-failed-proofs [k] (eng/introspect-failed-proofs (history) k))
      'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
      'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
                             (let [t (cond

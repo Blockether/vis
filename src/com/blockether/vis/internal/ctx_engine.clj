@@ -763,14 +763,22 @@
            (str "task " task-id " proof " (:proof proof)
              " classified " klass " relative to cursor")))))))
 
-(defn- pass-validators
-  "Invariant 9: every task proof whose referenced requirement carries a
-   `:validator-fn` source string must pass that validator against the form
-   result at the proof scope. The engine evals the source in a bounded SCI
-   sandbox (50ms timeout). Skipped when `form-results` is nil (we cannot
-   judge without seeing the form's :result), or when the proof scope is
-   not classified `:ok` (the scope-class pass already complained)."
-  [ctx _indexes form-results]
+(def ^:private ARCHIVED_PROOFS_CAP_PER_TASK
+  "Cap on `:archived-proofs` vec length per task. Older entries are dropped
+   first when the cap is exceeded. 10 keeps recent rejection history
+   readable without unbounded ctx growth across long sessions."
+  10)
+
+(defn- find-failed-task-proofs
+  "Pure helper: returns a vec of `{:task-id :spec-id :req-id :proof
+   :reason :detail}` for every task-level :specs proof whose req has a
+   :validator-fn that REJECTS the form result at the proof scope.
+
+   Skipped when `form-results` is nil (cannot judge without :result) or
+   when the proof scope is not classified `:ok` (the scope-class pass
+   complains separately). Used by both `pass-validators` (warnings) and
+   `archive-failed-proofs` (mutation)."
+  [ctx form-results]
   (if-not (map? form-results)
     []
     (let [cursor (:session/scope ctx)]
@@ -787,12 +795,80 @@
               :let [envelope (get form-results (:proof proof))
                     res (run-validator-fn src envelope)]
               :when (not (:ok? res))]
+          {:task-id task-id
+           :spec-id sk
+           :req-id  (:requirement proof)
+           :proof   (:proof proof)
+           :reason  (:reason res)
+           :detail  (:detail res)})))))
+
+(defn- pass-validators
+  "Invariant 9: every task proof whose referenced requirement carries a
+   `:validator-fn` source string must pass that validator against the form
+   result at the proof scope. The engine evals the source in a bounded SCI
+   sandbox (50ms timeout). Skipped when `form-results` is nil (we cannot
+   judge without seeing the form's :result), or when the proof scope is
+   not classified `:ok` (the scope-class pass already complained)."
+  [ctx _indexes form-results]
+  (mapv (fn [{:keys [task-id spec-id req-id proof reason detail]}]
           (warn :proof-validator-fail
-            [task-id sk (:requirement proof) (:reason res)]
-            (str "proof " (:proof proof) " fails validator on req "
-              (:requirement proof) " / spec " sk
-              " (" (:reason res)
-              (when-let [d (:detail res)] (str ": " (pr-str d))) ")")))))))
+            [task-id spec-id req-id reason]
+            (str "proof " proof " fails validator on req "
+              req-id " / spec " spec-id
+              " (" reason
+              (when detail (str ": " (pr-str detail))) ")")))
+    (find-failed-task-proofs ctx form-results)))
+
+(defn- archive-entry
+  "Build the entry shape stored under `:archived-proofs`."
+  [{:keys [spec-id req-id proof reason detail]} rejected-at rejected-by]
+  (cond-> {:proof       proof
+           :rejected-by rejected-by
+           :rejected-at rejected-at}
+    spec-id    (assoc :spec spec-id)
+    req-id     (assoc :requirement req-id)
+    reason     (assoc :reason (if (keyword? reason) reason (str reason)))
+    detail     (assoc :detail (pr-str detail))))
+
+(defn- append-archived-proof
+  "Append `entry` to `existing` (vec of archive entries) capped at
+   ARCHIVED_PROOFS_CAP_PER_TASK. Dedupes against an entry with the same
+   `:proof` + `:rejected-at` + `:reason` so a single iter cannot stamp
+   the same rejection twice. Drops oldest entries first on overflow."
+  [existing entry]
+  (let [existing (vec (or existing []))
+        dup?     (some #(and (= (:proof %)       (:proof entry))
+                          (= (:rejected-at %) (:rejected-at entry))
+                          (= (:reason %)      (:reason entry)))
+                   existing)]
+    (if dup?
+      existing
+      (let [appended (conj existing entry)
+            overflow (- (count appended) ARCHIVED_PROOFS_CAP_PER_TASK)]
+        (if (pos? overflow)
+          (vec (drop overflow appended))
+          appended)))))
+
+(defn archive-failed-task-proofs
+  "End-of-iter mutator. Scans task-level proofs; for every one whose
+   :validator-fn rejects the form-result, appends a rejection entry to
+   the task's `:archived-proofs` vec. The proof itself is NOT removed
+   from `:specs` — model owns the regular-task lifecycle. The model
+   sees the archive next iter and decides whether to swap the proof or
+   change strategy.
+
+   Returns updated ctx. Idempotent within an iter (dedupe by
+   :proof + :rejected-at + :reason). Pure."
+  [ctx form-results]
+  (let [failures   (find-failed-task-proofs ctx form-results)
+        s          (:session/scope ctx)
+        rejected-at (str "t" (:turn s) "/i" (:iter s))]
+    (reduce (fn [c failure]
+              (let [entry (archive-entry failure rejected-at :proof-validator-fail)]
+                (update-in c
+                  [:session/tasks (:task-id failure) :archived-proofs]
+                  append-archived-proof entry)))
+      ctx failures)))
 
 (def ^:private rebind-loop-threshold
   "Number of consecutive trailer pins binding the same def-name that
@@ -1459,12 +1535,27 @@
 ;; map, returns `{:ctx ctx' :warnings […]}`.
 
 (defn- revert-done-hook-task
-  "Flip a hook-task back to :todo, drop the un-validated :proof and the
-   engine-stamped :done-born. Returns the partially-rebuilt task map."
-  [task]
-  (-> task
-    (assoc :status :todo)
-    (dissoc :done-born :proof)))
+  "Flip a hook-task back to :todo, archive the rejected `:proof` into
+   `:archived-proofs`, then drop the un-validated `:proof` and the
+   engine-stamped `:done-born`. `archive-meta` carries
+   `{:rejected-by :reason :detail :rejected-at}` so the archive entry
+   captures WHY the proof was rejected, not just THAT it was. Returns
+   the rebuilt task map."
+  [task archive-meta]
+  (let [proof    (:proof task)
+        entry    (when (and proof archive-meta)
+                   (archive-entry
+                     {:proof   proof
+                      :reason  (:reason archive-meta)
+                      :detail  (:detail archive-meta)}
+                     (:rejected-at archive-meta)
+                     (:rejected-by archive-meta)))
+        archived (cond-> (vec (or (:archived-proofs task) []))
+                   entry (append-archived-proof entry))]
+    (cond-> task
+      true       (assoc :status :todo)
+      (seq archived) (assoc :archived-proofs archived)
+      true       (dissoc :done-born :proof))))
 
 (defn reconcile-done-hook-tasks
   "Validate every hook-task that landed at `:status :done` this turn.
@@ -1479,8 +1570,9 @@
    `apply-task-set!` on any non-:done transition so re-entry to :done
    triggers a fresh validation pass."
   [ctx form-results-map]
-  (let [cursor (:session/scope ctx)
-        tasks  (or (:session/tasks ctx) {})
+  (let [cursor      (:session/scope ctx)
+        rejected-at (str "t" (:turn cursor) "/i" (:iter cursor))
+        tasks       (or (:session/tasks ctx) {})
         per-task
         (for [[tk task] tasks
               :when (and (= :hook (:source task))
@@ -1492,11 +1584,15 @@
                 (cond
                   (or (nil? proof) (not (string? proof)))
                   {:revert? true
+                   :archive {:rejected-by :task-done-no-proof :rejected-at rejected-at
+                             :reason :missing-proof}
                    :warn (warn :task-done-no-proof [tk]
                            (str "task " tk " :status :done lacks :proof scope; reverting to :todo"))}
 
                   (malformed-scope? proof)
                   {:revert? true
+                   :archive {:rejected-by :task-done-proof-malformed :rejected-at rejected-at
+                             :reason :malformed-scope}
                    :warn (warn :task-done-proof-malformed [tk proof]
                            (str "task " tk " :proof " proof
                              " is not a valid tN/iM/fK form-scope; reverting to :todo"))}
@@ -1506,18 +1602,24 @@
                     (cond
                       (#{:future-form :future-iter :future-turn} klass)
                       {:revert? true
+                       :archive {:rejected-by :task-done-proof-future :rejected-at rejected-at
+                                 :reason klass}
                        :warn (warn :task-done-proof-future [tk proof klass]
                                (str "task " tk " :proof " proof
                                  " is " (name klass) " relative to cursor; reverting to :todo"))}
 
                       (= klass :errored)
                       {:revert? true
+                       :archive {:rejected-by :task-done-proof-errored :rejected-at rejected-at
+                                 :reason :form-errored}
                        :warn (warn :task-done-proof-errored [tk proof]
                                (str "task " tk " :proof " proof
                                  " form errored; reverting to :todo"))}
 
                       (or (= klass :unknown) (nil? (get form-results-map proof)))
                       {:revert? true
+                       :archive {:rejected-by :task-done-proof-unknown :rejected-at rejected-at
+                                 :reason :no-form-result}
                        :warn (warn :task-done-proof-unknown [tk proof]
                                (str "task " tk " :proof " proof
                                  " has no captured form result; reverting to :todo"))}
@@ -1528,6 +1630,8 @@
                         (if (:ok? res)
                           {:revert? false}
                           {:revert? true
+                           :archive {:rejected-by :task-done-validator-fail :rejected-at rejected-at
+                                     :reason (:reason res) :detail (:detail res)}
                            :warn (warn :task-done-validator-fail
                                    [tk proof (:reason res)]
                                    (str "task " tk " :status :done at " proof
@@ -1539,8 +1643,9 @@
         passes   (filter (fn [[_ {:keys [revert?]}]] (not revert?)) per-task)
         ctx'     (-> ctx
                    (as-> c
-                     (reduce (fn [acc [tk _]]
-                               (update-in acc [:session/tasks tk] revert-done-hook-task))
+                     (reduce (fn [acc [tk {:keys [archive]}]]
+                               (update-in acc [:session/tasks tk]
+                                 revert-done-hook-task archive))
                        c reverts))
                    (as-> c
                      (reduce (fn [acc [tk _]]
@@ -1609,6 +1714,19 @@
     (some (fn [[turn ctx]]
             (when-let [entry (get-in ctx [:session/tasks k])]
               (assoc entry :as-of-turn turn)))
+      (reverse snaps))))
+
+(defn introspect-failed-proofs
+  "Return the `:archived-proofs` vec for task `k` from the latest snapshot
+   in which it exists. Each entry: `{:proof :rejected-by :rejected-at
+   :reason? :detail? :spec? :requirement?}`. Empty vec when the task
+   exists but has no archived rejections. Nil when the task was never
+   present in any snapshot."
+  [history k]
+  (let [snaps (snapshots-asc history)]
+    (some (fn [[_ ctx]]
+            (when-let [entry (get-in ctx [:session/tasks k])]
+              (vec (or (:archived-proofs entry) []))))
       (reverse snaps))))
 
 (defn introspect-fact

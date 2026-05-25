@@ -148,13 +148,14 @@
 
       Introspection (lazy; reach evidence the live trailer dropped):
         (introspect-turn-list)
-        (introspect-ctx-at   \"t<N>\")
-        (introspect-iter     \"t<N>/i<M>\")
-        (introspect-form     \"t<N>/i<M>/f<K>\")
+        (introspect-ctx-at        \"t<N>\")
+        (introspect-iter          \"t<N>/i<M>\")
+        (introspect-form          \"t<N>/i<M>/f<K>\")
         (introspect-spec / -task / -fact :K)
-        (introspect-archived :tasks|:specs|:facts)
+        (introspect-failed-proofs :K)         ; archived rejected proofs per task
+        (introspect-archived      :tasks|:specs|:facts)
         (v/engine-symbol-doc / -source / -meta 'sym)
-        (v/engine-symbol-apropos \"pattern\")
+        (v/engine-symbol-apropos  \"pattern\")
 
       Control:
         (done {:answer :trailer-drop? :trailer-summarize?})
@@ -170,6 +171,13 @@
       :validator-fn is an SCI fn source string. Without it, a proof is
       a declaration, not a verification. Always attach one when the req
       has a testable result.
+
+      Failed validators archive the rejected proof on the task's
+      `:archived-proofs` vec. The renderer anchors a `;; rejected-proofs
+      :K count=N latest=… reason=…` line under the offending task, and
+      `(introspect-failed-proofs :K)` returns the full archive. Never
+      re-submit the same `:proof` scope after rejection — swap evidence
+      or change strategy.
 
     TURN LIFECYCLE
 
