@@ -637,14 +637,38 @@ consult fence can parallel `search/web` + `search/papers` calls).
 - Test: render shows new section with each entry compact; GC drops
   entries past TTL; oversized sum drops oldest entry
 
-#### R9 — `consult-promote!` / `consult-dismiss!`
+#### R9 — `consult-promote!` / `consult-dismiss!` + trailer scrub
 
-- `(consult-promote! :consult-id :fact-K)` copies `:content`,
-  `:citations`, `:focus`, `:confidence` into a NEW fact under `:K`,
-  removes the entry from `:session/consult-results`
-- `(consult-dismiss! :consult-id)` removes entry without promotion
-- Both return `:vis/silent` (do NOT pin in trailer)
-- Test: promote creates fact with merged map; dismiss removes
+- `(consult-promote! :consult-id :fact-K)`:
+  1. Copies `:content`, `:citations`, `:focus`, `:confidence` into a
+     NEW fact under `:K`
+  2. Removes the entry from `:session/consult-results`
+  3. **Scrubs the trailer pin** that landed when `(await-consult :id)`
+     ran (any iter — retroactive across the session's trailer)
+- `(consult-dismiss! :consult-id)`:
+  1. Removes the entry from `:session/consult-results`
+  2. **Scrubs the trailer pin** for that consult-id
+- Both mutators return `:vis/silent` themselves (do NOT pin in trailer)
+
+**Trailer scrub mechanism:**
+
+- When `(await-consult :id)` pins in trailer, engine records the form
+  scope under `:engine/consult-trailer-scopes {:id #{"tN/iM/fK" …}}`
+- `consult-promote!` / `consult-dismiss!` read this map, remove every
+  matching scope from `:session/trailer` (across iters), clean empty
+  iter entries (where all forms got scrubbed), and drop the
+  `:engine/consult-trailer-scopes` entry for that id
+- Rationale: once primary has DECIDED on a consult (promote or
+  dismiss), the trailer pin is redundant — promoted data lives in
+  `:session/facts` (canonical); dismissed data was rejected (noise).
+  Keeps trailer tight after the decision.
+- If primary never decides, the await pin lives in trailer normally
+  until natural trailer-summarize / GC
+
+- Test: await pin scrubbed after promote (no trace in `:session/trailer`);
+  await pin scrubbed after dismiss; scrub works retroactively across
+  iters (await in iter N, promote in iter N+2 still scrubs N's pin);
+  empty iter entries dropped after scrub
 
 #### R10 — `search/*` extension (renamed from `exa/`)
 
