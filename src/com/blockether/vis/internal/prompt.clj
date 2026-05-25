@@ -178,30 +178,61 @@
         (consult-balanced \"question\")    ; mid-range — cost/quality middle
         (consult-deep     \"question\")    ; deep reasoning — hard
                                             ; decomposition, novel problems
-        — engine embeds your current system prompt + user request +
-          a ctx snapshot INVISIBLY into the consultant call; the
-          secondary brain has enough context to answer without you
-          re-passing anything. Just write the specific question.
-        — returns the consultant's response string on success;
-          `{:error :consult-budget-exhausted}` / `:consult-recursion-cap`
-          / `:consult-error` map on bounded failure.
-        — budget: session cap (default 20); recursion depth = 2.
 
-        Parallelize INDEPENDENT consults via SCI `future`s. NOTE: `def`
-        does NOT destructure (only `let` does). Use either:
-          (let [f1 (future (consult-fast \"critique form A\"))
-                f2 (future (consult-fast \"critique form B\"))]
-            (def critiques [@f1 @f2]))
-        OR explicit single defs per future:
-          (def f1 (future (consult-fast \"…\")))
-          (def f2 (future (consult-balanced \"…\")))
-          (def c1 @f1)
-          (def c2 @f2)
+      RETURN SHAPE  (always a map; never a bare string)
+        {:ok? bool :answer string? :preference kw :call-no int
+         :duration-ms long :error? kw :reason? string}
+        — on :ok? true, read `:answer` (consultant's text).
+        — on :ok? false, inspect `:error` (one of #{:budget-exhausted
+          :recursion-cap :unknown-preference :empty-question
+          :consult-error :router-missing}) + `:reason`. Proceed without
+          secondary input.
 
-        Use for: Constitutional self-critique pre-done, validator-fn
-          sanity, hard-problem delegation, format/structure pre-emit.
-        DON'T use for: anything you can answer yourself (budget waste),
-          loops, re-asking same question (no cache).
+      CONSULT EFFECT
+        Engine NEVER evaluates `:answer` as code, NEVER auto-adds
+        facts/tasks, NEVER mutates ctx. The string lands in your iter
+        scope; YOU choose:
+          - read + discard (one-shot critique, scratch)
+          - persist as fact:
+              (def out (consult-balanced \"…\"))
+              (when (:ok? out)
+                (fact-set! :K {:content (:answer out) :status :active})
+                (fact-depends! :K [refs]))
+          - use as input to your own reasoning (no copy needed)
+          - copy code suggestions into the next fence YOURSELF
+            (consult never emits runnable code into the sandbox)
+
+      CONSULT DATA INPUT
+        Ambient (auto-embedded; never re-pass):
+          • primary system prompt
+          • primary user request
+          • current ctx snapshot (specs/tasks/facts/trailer)
+        Specific data (model concatenates as needed):
+          (def file (v/cat \"path\"))
+          (consult-fast (str \"Review this:\n\" (:content file)))
+        DON'T pass refs (consultant can't dereference your defs across
+        calls). DO pass concrete strings/maps/edn.
+
+      Engine embeds the consultant context INVISIBLY — you cannot read
+      it back, it never lands in the trailer.
+
+      Budget: session cap (default 20); recursion depth = 2.
+
+      Parallelize INDEPENDENT consults via SCI `future`s. NOTE: `def`
+      does NOT destructure (only `let` does):
+        (let [f1 (future (consult-fast \"critique form A\"))
+              f2 (future (consult-fast \"critique form B\"))]
+          (def critiques [@f1 @f2]))
+      OR explicit single defs per future:
+        (def f1 (future (consult-fast \"…\")))
+        (def f2 (future (consult-balanced \"…\")))
+        (def c1 @f1)
+        (def c2 @f2)
+
+      Use for: Constitutional self-critique pre-done, validator-fn
+        sanity, hard-problem delegation, format/structure pre-emit.
+      DON'T use for: anything you can answer yourself (budget waste),
+        loops, re-asking same question (no cache).
 
       Reactive rules (forward-chained watchpoints):
         (rule-set! :K {:when [:on-fact-status :F :active] :message \"…\"})

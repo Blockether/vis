@@ -30,8 +30,15 @@
                       (reset! seen opts)
                       {:content "consultant says: do X" :raw "raw text"})]
         (let [out (consult/consult! env :fast "should I do X?")]
-          (it "returns the consultant's content string"
-            (expect (= "consultant says: do X" out)))
+          (it "returns a success map with :ok? true"
+            (expect (true? (:ok? out))))
+
+          (it "carries the consultant's content under :answer"
+            (expect (= "consultant says: do X" (:answer out))))
+
+          (it "echoes the preference + call-no for forensics"
+            (expect (= :fast (:preference out)))
+            (expect (= 1 (:call-no out))))
 
           (it "routes via the resolved provider/model for the preference"
             (expect (= {:provider :anthropic :model "haiku"}
@@ -58,9 +65,9 @@
     (let [env (mk-env {:consult-budget-atom (atom {:used 20 :cap 20})})]
       (with-redefs [svar/ask-code! (fn [& _] (throw (ex-info "should not be called" {})))]
         (let [out (consult/consult! env :fast "any question")]
-          (it "returns an error map (does not call the router)"
-            (expect (map? out))
-            (expect (= :consult-budget-exhausted (:error out))))
+          (it ":ok? false on budget exhaustion (no router call)"
+            (expect (false? (:ok? out)))
+            (expect (= :budget-exhausted (:error out))))
 
           (it "does not increment past the cap"
             (expect (= 20 (-> env :consult-budget-atom deref :used)))))))))
@@ -69,35 +76,40 @@
   (describe "consult! rejects preferences outside #{:fast :balanced :deep}"
     (let [env (mk-env)
           out (consult/consult! env :nuclear "x")]
-      (it "returns :consult-unknown-preference"
-        (expect (= :consult-unknown-preference (:error out))))
+      (it ":ok? false with :error :unknown-preference"
+        (expect (false? (:ok? out)))
+        (expect (= :unknown-preference (:error out))))
       (it "does not bump the budget"
         (expect (= 0 (-> env :consult-budget-atom deref :used)))))))
 
 (defdescribe consult-empty-question-test
   (describe "consult! rejects blank/nil questions"
     (let [env (mk-env)]
-      (it "nil question → :consult-empty-question"
-        (expect (= :consult-empty-question
-                  (:error (consult/consult! env :fast nil)))))
-      (it "blank question → :consult-empty-question"
-        (expect (= :consult-empty-question
-                  (:error (consult/consult! env :fast "   "))))))))
+      (it "nil question → :empty-question"
+        (let [out (consult/consult! env :fast nil)]
+          (expect (false? (:ok? out)))
+          (expect (= :empty-question (:error out)))))
+      (it "blank question → :empty-question"
+        (let [out (consult/consult! env :fast "   ")]
+          (expect (false? (:ok? out)))
+          (expect (= :empty-question (:error out))))))))
 
 (defdescribe consult-recursion-cap-test
   (describe "nested consults beyond depth 2 short-circuit"
     (let [env (mk-env)]
       (binding [consult/*recursion-depth* 2]
         (let [out (consult/consult! env :fast "deep recursion attempt")]
-          (it "returns :consult-recursion-cap"
-            (expect (= :consult-recursion-cap (:error out)))))))))
+          (it ":ok? false with :error :recursion-cap"
+            (expect (false? (:ok? out)))
+            (expect (= :recursion-cap (:error out)))))))))
 
 (defdescribe consult-error-passthrough-test
-  (describe "router errors surface as a bounded error map, not a throw"
+  (describe "router errors surface as a bounded :ok? false map, not a throw"
     (let [env (mk-env)]
       (with-redefs [svar/ask-code! (fn [& _] (throw (ex-info "boom" {})))]
         (let [out (consult/consult! env :fast "x")]
-          (it "returns :consult-error with the ex message"
+          (it ":ok? false with :error :consult-error and the ex message"
+            (expect (false? (:ok? out)))
             (expect (= :consult-error (:error out)))
             (expect (= "boom" (:reason out))))
           (it "still bumps the budget (call was attempted)"
