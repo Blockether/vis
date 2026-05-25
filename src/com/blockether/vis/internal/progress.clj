@@ -177,8 +177,8 @@
           (map (fn [{:keys [success? result error]}]
                  (if success?
                    result
-                   ;; Per PLAN §2.1: build the envelope shape the
-                   ;; default error formatter expects.
+                   ;; Build the envelope shape the default error
+                   ;; formatter expects.
                    (extension/default-error-ir
                      {:success? false :error error})))
             (sort-by :position channel-entries)))

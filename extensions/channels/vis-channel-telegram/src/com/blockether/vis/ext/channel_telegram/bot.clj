@@ -103,7 +103,7 @@
 
 (defn- bot-menu-commands
   "Build the Telegram bot's `setMyCommands` payload from the engine
-   slash registry (PLAN.md §12 step 9). Only top-level slashes
+   slash registry. Only top-level slashes
    surface; Telegram's bot menu cannot render nested commands.
    Filtered by `:slash/availability-fn` so TUI-only entries don't
    leak into the Telegram menu; specs marked `:slash/hidden? true`
@@ -1002,7 +1002,7 @@
       (if (seq markdown) markdown "No persisted turns to export yet."))))
 
 ;; ----------------------------------------------------------------------------
-;; Slash dispatch (PLAN.md §12 step 9 — K9 cutover)
+;; Slash dispatch
 ;;
 ;; The hand-rolled `parse-command` + `handle-command!` slash tree is
 ;; GONE. Every Telegram slash now lives as a declarative entry on the
@@ -1401,7 +1401,7 @@
     :cmd/run-fn #'telegram-restart-command}])
 
 ;; ----------------------------------------------------------------------------
-;; Telegram-private slash specs (PLAN.md §12 step 9, K9 cutover)
+;; Telegram-private slash specs
 ;;
 ;; Each entry is a declarative `:slash/*` spec routed through the
 ;; engine slash registry. Run-fns delegate to the existing

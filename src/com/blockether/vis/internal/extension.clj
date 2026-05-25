@@ -343,7 +343,7 @@
 
 (defn normalize-trace
   "Convert a Throwable's stack into the preformatted, babashka-style
-   single-string `::op.error/trace` per PLAN §2.7. First line is
+   single-string `::op.error/trace`. First line is
    `<ClassName>: <message>` (matches babashka error-handler header);
    subsequent lines are filtered frames (one per line, `class/method
    - file:line`).
@@ -365,7 +365,7 @@
     (str/join "\n" (cons header frames))))
 
 (defn normalize-error
-  "Build a structured `:error` map from a Throwable per PLAN §2.1.
+  "Build a structured `:error` map from a Throwable.
    Required `:message`; optional `:trace` (preformatted string
    including header + frames). `:hint` and `:block` are tool/engine-
    supplied via `merge-into-metadata` style updates after
@@ -439,8 +439,7 @@
   (and (tool-result? envelope) (false? (:success? envelope))))
 
 (defn ex->op-error
-  "Convert an arbitrary `Throwable` to a structured `:error` map
-   per PLAN.md §2.1 + §2.6.
+  "Convert an arbitrary `Throwable` to a structured `:error` map.
 
    Output shape:
      {:message <one-line headline, required>
@@ -845,7 +844,7 @@
   (s/map-of channel-slot? (s/coll-of ::channel-contribution :kind vector?)))
 
 ;; ----------------------------------------------------------------------------
-;; Slash commands (PLAN.md §3)
+;; Slash commands
 ;;
 ;; Declarative cross-channel slash surface, mirroring `:ext/hooks` /
 ;; `:ext/channel-contributions`. NO global atom, NO `register-slash!`.
@@ -2333,7 +2332,7 @@
   [ext]
   (let [ext    (extension ext)
         ns-sym (:ext/name ext)]
-    ;; PLAN.md §3: slash paths must be unique across the union of
+    ;; Slash paths must be unique across the union of
     ;; `:ext/slash-commands` from every active extension. Reject
     ;; registration when this extension declares a `[parent name]`
     ;; that any OTHER currently-registered extension already owns
@@ -2391,10 +2390,10 @@
     (dispatch-persistance! (:ext/persistance ext))
     (theme/register-themes! (:ext/theme ext))
     ;; Auto-register op metadata for every symbol that declared a
-    ;; `:tag` on its `vis/symbol` opts (PLAN.md sandbox-sym hygiene
-    ;; follow-up). Removes the per-extension `doseq + register-op!`
-    ;; boilerplate; the tag lives INLINE on the symbol entry where
-    ;; the rest of the SCI surface (doc, arglists, render-fn) lives.
+    ;; `:tag` on its `vis/symbol` opts. Removes the per-extension
+    ;; `doseq + register-op!` boilerplate; the tag lives INLINE on the
+    ;; symbol entry where the rest of the SCI surface (doc, arglists,
+    ;; render-fn) lives.
     (doseq [sym-entry (ext-symbols ext)
             :let [tag (:ext.symbol/tag sym-entry)]
             :when tag]
@@ -2563,9 +2562,8 @@
 
 (defn tool-result-symbol-entry
   [tool-result]
-  ;; Per PLAN §2.1, `:tool` and `:extension` blobs live under
-  ;; `:metadata` on the new flat envelope (they were inside
-  ;; `:info` on the old shape).
+  ;; `:tool` and `:extension` blobs live under `:metadata` on the flat
+  ;; envelope (they were inside `:info` on the original shape).
   (let [ext-name (get-in tool-result [:metadata :extension :name])
         sym      (get-in tool-result [:metadata :tool :symbol])]
     (when (and ext-name sym)
@@ -2579,11 +2577,10 @@
    line) out of an `:error` map for the engine's default error
    formatters. Defensive: never throws inside a renderer.
 
-   Per PLAN §2.1 the new structured error has `:message :trace :hint
-   :block`. The `:type` historical field is no longer carried; the
-   underlying exception class name appears as the prefix of the
-   preformatted `:trace` first line
-   (e.g. `clojure.lang.ArityException: ...`)."
+   The structured error has `:message :trace :hint :block`. The
+   `:type` historical field is no longer carried; the underlying
+   exception class name appears as the prefix of the preformatted
+   `:trace` first line (e.g. `clojure.lang.ArityException: ...`)."
   [error]
   (let [type-from-trace (fn [trace]
                           (when-let [first-line (some-> trace
@@ -2727,8 +2724,8 @@
 
 (def op-tags
   "Closed set of operation tags a tool can declare. The two values
-   map to the observation/mutation half of the OODA loop — see
-   PLAN.md §2.1. The prior granular enum collapses into these two:
+   map to the observation/mutation half of the OODA loop. The prior
+   granular enum collapses into these two:
 
      :observation   reads state without changing it — cat,
                            ls, exists?, locators, rg, env

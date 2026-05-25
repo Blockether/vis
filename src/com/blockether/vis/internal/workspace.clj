@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.workspace
   "Git worktree-backed workspaces, DB-pinned to session_state 1:1.
 
-   See PLAN.md §3 for the public API. Trunk-kind workspaces have no
-   materialised worktree directory (root = repo_root); branch-kind
-   workspaces live under ~/.vis/workspaces/<repo-id>/<workspace-id>/.
+   Trunk-kind workspaces have no materialised worktree directory
+   (root = repo_root); branch-kind workspaces live under
+   ~/.vis/workspaces/<repo-id>/<workspace-id>/.
 
    Vis never mutates JVM user.dir. Channels rebind *workspace-root*
    per turn from the active workspace; tools resolve paths via
@@ -50,7 +50,7 @@
 
 (defn cwd
   "Resolve the current workspace cwd. In production the channel
-   wrapper binds `*workspace-root*` per turn (PLAN.md §5), so the
+   wrapper binds `*workspace-root*` per turn, so the
    process-cwd fallback only fires from REPL / test / one-off CLI
    paths that have no session context. Production tool callers never
    see the fallback because the env carries `:workspace/root` from
@@ -114,7 +114,7 @@
 (defn- discover-repo-root
   "Discover the enclosing git repo root from the JVM cwd via JGit
    `FileRepositoryBuilder`. Throws a user-actionable error when no
-   repo is found (PLAN.md decision 14)."
+   repo is found."
   []
   (try
     (let [builder (doto (FileRepositoryBuilder.)
@@ -139,7 +139,7 @@
     (catch Throwable _ nil)))
 
 (defn detect-trunk-branch
-  "Discover the repo's default trunk branch (PLAN.md section 2). Order:
+  "Discover the repo's default trunk branch. Order:
      1. `origin/HEAD` symbolic-ref — most reliable, follows the
         repo's published default (set via `git remote set-head origin
         --auto` or by clone).
@@ -193,7 +193,7 @@
    own nested `.git/` deeper in the tree which is left intact). REPLACEs
    files in `dst`. Never reads or writes outside either tree.
 
-   PLAN.md §4.4 — branch-kind workspaces inherit trunk's dirty,
+   Branch-kind workspaces inherit trunk's dirty,
    untracked, and gitignored state so `npm install` / `clojure -P`
    artefacts are reused verbatim. Does NOT delete files present in
    `dst` but absent from `src`; the worktree was just minted via
@@ -275,7 +275,7 @@
 (defonce ^:private hooks (atom {:on-spawn [] :on-apply [] :on-discard []}))
 
 ;; -----------------------------------------------------------------------------
-;; Per-repo locking (PLAN.md §4.7)
+;; Per-repo locking
 ;; -----------------------------------------------------------------------------
 ;;
 ;; Git operations that mutate refs / worktrees / the index must NOT run
@@ -338,8 +338,8 @@
 
 (defn list-finished
   "Merged + discarded workspaces for `repo-id`, newest first.
-   Finished workspaces are invisible in the TUI strip (PLAN.md
-   decision 12) but remain queryable for transcript references."
+   Finished workspaces are invisible in the TUI strip but remain
+   queryable for transcript references."
   [db-info repo-id]
   (p/db-workspace-list-by-repo db-info repo-id #{:merged :discarded}))
 
@@ -350,14 +350,13 @@
   (p/db-workspace-for-session db-info session-state-id))
 
 ;; -----------------------------------------------------------------------------
-;; Label + focus + hydration (PLAN.md §4.3, §6)
+;; Label + focus + hydration
 ;; -----------------------------------------------------------------------------
 
 (defn set-label!
   "Set the workspace's human-friendly `:label`. Empty string / nil
    clears the label and reverts to the default heuristic
-   (`display-label`). Returns the updated workspace record.
-   PLAN.md §1 + §6."
+   (`display-label`). Returns the updated workspace record."
   [db-info {:keys [workspace-id label]}]
   (let [trimmed (some-> label str clojure.string/trim not-empty)]
     (p/db-workspace-update-label! db-info workspace-id trimmed)))
@@ -423,7 +422,7 @@
   "Like `list-active` but each entry is the `{:workspace :session-state}`
    pair already hydrated. Sorted by `last_focused_at_ms` DESC NULLS
    LAST, then `created_at` DESC. Drives the TUI strip + Telegram
-   switcher (PLAN.md §9, §10)."
+   switcher."
   [db-info repo-id]
   (let [rows (list-active db-info repo-id)
         ;; Compare by [recency-bucket created-at] descending. NULLS
@@ -445,8 +444,8 @@
    `:vcs/dirty?`). Future Mercurial / Jujutsu detectors fork this fn
    (or dispatch on a `:vcs/kind` discriminator at the call site) and
    emit the same `:vcs/*` core keys; the engine reads VCS-agnostic.
-   On error: `:workspace/error`. PLAN.md §12 step 4 — the legacy
-   `:git/*` aliases are GONE."
+   On error: `:workspace/error`. The previous `:git/*` aliases are
+   GONE; callers read VCS-agnostic `:vcs/*` keys."
   [db-info workspace-id]
   (when-let [ws (get db-info workspace-id)]
     (let [root (:root ws)]
@@ -488,9 +487,9 @@
   [db-info {:keys [session-state-id]}]
   (or (for-session db-info session-state-id)
     (let [repo-root (discover-repo-root)
-          ;; PLAN.md §2: pin trunk-kind workspace to the repo's
-          ;; published default (origin/HEAD → main → master → current)
-          ;; instead of whatever branch the user happens to be on.
+          ;; Pin trunk-kind workspace to the repo's published default
+          ;; (origin/HEAD → main → master → current) instead of whatever
+          ;; branch the user happens to be on.
           branch    (detect-trunk-branch repo-root)
           ws (p/db-workspace-insert! db-info
                {:repo-id   (repo-id-for repo-root)
@@ -507,14 +506,13 @@
 (defn spawn-branch!
   "Spawn a new branch-kind workspace. Branch name (`vis/<short-id>`)
    and worktree path (`~/.vis/workspaces/<repo>/<id>/`) are both
-   auto-minted (PLAN.md decision 15) - callers never pass them.
+   auto-minted by the engine - callers never pass them.
 
    After `git worktree add HEAD`, the worktree is mirrored from the
    trunk root via `mirror-tree!` so the new branch inherits the
    trunk's dirty tracked edits, untracked files, AND gitignored
    artefacts (`node_modules/`, `target/`, `.env`, ...). The branch
    `just works` without re-running `npm install` / `clojure -P`.
-   PLAN.md §4.4.
 
    Opts:
      :from              - workspace map to fork from; nil = derive from
@@ -562,7 +560,7 @@
    `{:status :nothing-to-commit :workspace ws}` (no throw) when the
    index has no diff vs HEAD. On success, bumps `workspace.commit_id`
    to the new HEAD and returns
-   `{:status :ok :sha :message :branch :workspace}`. PLAN.md §4.3."
+   `{:status :ok :sha :message :branch :workspace}`."
   [db-info {:keys [workspace-id message]}]
   (let [ws  (get db-info workspace-id)
         msg (or (some-> message str str/trim not-empty) "vis workspace commit")]
@@ -592,8 +590,8 @@
                 {:status :ok :sha sha :message msg :branch branch :workspace done}))))))))
 
 (defn ff-apply!
-  "Fast-forward merge `workspace-id`'s branch onto the repo's trunk
-   (PLAN.md §4.5). Refuses trunk-kind.
+  "Fast-forward merge `workspace-id`'s branch onto the repo's trunk.
+   Refuses trunk-kind.
 
    Sequence (under `with-repo-lock`):
      1. transition workspace state :active|:merging → :merging
@@ -681,7 +679,7 @@
    merge-resolve handoff. JGit's status object groups every conflict
    under one bucket without distinguishing the porcelain UU/AA/DD
    codes; callers that need the per-path state machinery should
-   read `Status.getConflictingStageState` instead. PLAN.md section 7."
+   read `Status.getConflictingStageState` instead."
   [repo-root]
   (try
     (with-open [git (open-git repo-root)]
@@ -693,7 +691,6 @@
 
 (defn start-merge-resolve!
   "Bootstrap a merge-resolve sub-session for an `:ff-failed` workspace.
-   PLAN.md §7.1.
 
    1. Take the per-repo lock so no other Vis process touches refs
       while we mutate the trunk worktree's index.
@@ -774,9 +771,9 @@
                             :workspace ws
                             :trunk trunk
                             :merge merge-result}]
-                ;; PLAN.md section 7.3: emit `:session/merge-resolve-started`
-                ;; so channels render the overlay (TUI badge,
-                ;; Telegram pinned status message). Lazy resolve to
+                ;; Emit `:session/merge-resolve-started` so channels
+                ;; render the overlay (TUI badge, Telegram pinned
+                ;; status message). Lazy resolve to
                 ;; avoid a hard dep on the channel-events ns from
                 ;; the workspace module.
                 (when channel-id

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation-git.merge-ops
-  "Merge-resolve SCI op family (PLAN.md section 7.2).
+  "Merge-resolve SCI op family.
 
    Lives under the `git/` alias alongside the rest of the JGit
    observation surface (`git/diff`, `git/status`, `git/log`, ...):
@@ -13,8 +13,7 @@
 
    Operations run against `(workspace/cwd)` via JGit (`Git/open`).
    The merge-resolve sub-session pins to the parent workspace whose
-   `:root` is the conflicting tree (PLAN.md section 7.1 made trunk
-   the merge target).
+   `:root` is the conflicting tree (trunk is the merge target).
 
    All git access goes through JGit — no `sh/sh` shell-outs. Read-only
    `(mr/status)` is safe to call as an introspection probe regardless

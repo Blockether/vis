@@ -1437,8 +1437,8 @@
         (System/exit 1))
 
       :else
-      (let [;; PLAN.md decision 1 — fork = new session_state = new
-            ;; workspace pin (1:1). Mint a fresh trunk for the fork.
+      (let [;; Fork = new session_state = new workspace pin (1:1).
+            ;; Mint a fresh trunk for the fork.
             ws-id     (:id (workspace/ensure-trunk! d {}))
             opts      (cond-> {:workspace-id ws-id}
                         (and title (not (str/blank? title)))

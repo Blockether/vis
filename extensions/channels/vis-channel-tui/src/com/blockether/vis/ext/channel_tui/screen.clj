@@ -289,8 +289,8 @@
     nil))
 
 (defn- slash-spec->menu-command
-  "Adapt a declarative slash spec (PLAN.md §3) into the legacy
-   menu-command shape `command_suggest.clj` consumes. Only TOP-LEVEL
+  "Adapt a declarative slash spec into the legacy menu-command shape
+   `command_suggest.clj` consumes. Only TOP-LEVEL
    slashes (`:slash/parent []`) get a palette entry; nested commands
    stay typed-only (the engine's `slash/dispatch` does longest-prefix
    resolution regardless of palette discoverability)."
@@ -1977,9 +1977,9 @@
                                       (= :fork (:action choice))
                                       (if-let [current-id (current-session-id)]
                                         (let [db (vis/db-info)
-                                            ;; PLAN.md decision 1 — each fork gets its own
-                                            ;; workspace pin (1:1). The simplest version
-                                            ;; mints a fresh trunk for the new state.
+                                            ;; Each fork gets its own workspace pin (1:1).
+                                            ;; The simplest version mints a fresh trunk for
+                                            ;; the new state.
                                               ws-id (try (:id (vis/workspace-ensure-trunk! db {}))
                                                       (catch Throwable _ nil))
                                               fork-state-id (try (vis/db-fork-session! db current-id
@@ -2563,8 +2563,8 @@
                    (let [{:keys [action state workspace-index]} (input/handle-key key (:input db))]
                      (state/dispatch [:update-input state])
                      (let [run-command!
-                         ;; PLAN.md §12 step 8 (K8): the extension-contributed
-                         ;; `:tui.slot/commands` slot is GONE; dispatchable
+                         ;; The extension-contributed `:tui.slot/commands`
+                         ;; slot is GONE; dispatchable
                          ;; command maps are either built-in palette ids
                          ;; (`:new-session`, `:fork-session`, ...) or typed
                          ;; slash suggestions from `vis/registered-slashes`.
@@ -2592,8 +2592,8 @@
                                      :new-session
                                      (switch-session! {:action :new})
 
-                                   ;; PLAN.md §12 step 8 (K6): workspace ops
-                                   ;; (`:workspace`, `:apply-workspace-to-trunk`,
+                                   ;; Workspace ops (`:workspace`,
+                                   ;; `:apply-workspace-to-trunk`,
                                    ;; `:discard-workspace-{soft,hard}`) live as
                                    ;; typed slash commands now. No bespoke
                                    ;; Ctrl+K palette case here.

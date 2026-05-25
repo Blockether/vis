@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation-git.merge-ops-test
-  "PLAN.md section 12 step 10 follow-up -- merge-resolve helper fns.
+  "Merge-resolve helper fns.
 
    The host-side Clojure fns under test are aliased as `mr/` in this
    namespace for brevity; SCI-side they surface under the `git/`

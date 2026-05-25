@@ -478,7 +478,7 @@
           (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------
-;; § 5.1: No UUID leaks in user/LLM-facing surfaces (PLAN.md § 2.9 + § 2.10).
+;; No UUID leaks in user/LLM-facing surfaces.
 ;;
 ;; Channels render `position`, never `:id`. UUIDs are programmatic-only.
 ;; This test pins the rule against the markdown transcript renderer; sister
@@ -505,7 +505,7 @@
           (expect (str/includes? out "Turn"))
           ;; The hard rule: no UUIDs leak into agent/user-facing output.
           ;; If this fails, find the renderer site rendering :id (UUID)
-          ;; instead of :position (int) per PLAN.md § 2.9.
+          ;; instead of :position (int).
           (when (uuid-leak? out)
             (println "UUID LEAK in transcript:")
             (println (subs out 0 (min 400 (count out))))

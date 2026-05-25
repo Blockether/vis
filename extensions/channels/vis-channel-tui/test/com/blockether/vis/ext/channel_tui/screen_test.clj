@@ -251,8 +251,8 @@
 
 (defdescribe slash-menu-test
   (it "slash-spec->menu-command adapts a slash spec into the legacy menu shape"
-    ;; PLAN.md §12 step 8: declarative slash specs feed the TUI palette
-    ;; through an adapter. `:id` is `(keyword "slash" name)` so the
+    ;; Declarative slash specs feed the TUI palette through an
+    ;; adapter. `:id` is `(keyword "slash" name)` so the
     ;; `run-command!` dispatcher can detect a slash entry by its
     ;; namespace and resubmit through the engine slash registry.
     (let [adapted (slash-spec->menu-command
