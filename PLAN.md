@@ -289,7 +289,7 @@ n=15. Pokaż że każdy moduł ma odpowiadającą formę.'
 
 ---
 
-## Phase H — Verbal reflection on archive entries ❌
+## Phase H — Secondary-model consultation (consult-fast/balanced/deep) ✅ LANDED
 
 **Goal.** Extend Phase A `:archived-proofs` entry with a natural-
 language `:reflection` field. On rejection, engine triggers a tiny

@@ -514,39 +514,56 @@
         roots (task-roots live-tasks dep-graph)
         seen-spec  (atom #{})
         seen-fact  (atom #{})
+        ;; Per-visit dedupe atoms. The dep-graph CAN cycle when ctx
+        ;; snapshots predate the Phase B write-time cycle check, and
+        ;; even acyclic diamond shapes re-enqueue the same node
+        ;; through multiple inbound edges. Without an enqueue-time
+        ;; seen check, the BFS loops forever on cycles and explodes
+        ;; exponentially on diamonds. The seen-spec / seen-fact atoms
+        ;; up in the closure dedupe ACROSS roots (so a node hit by
+        ;; two roots is rendered once); these per-visit `enqueued`
+        ;; sets dedupe WITHIN one root walk so we never push the same
+        ;; node onto the queue twice.
         visit
         (fn [task-k]
-          (loop [queue [[:task task-k]]
-                 specs-out []
-                 facts-out []]
-            (if (empty? queue)
-              {:specs specs-out :facts facts-out}
-              (let [[kind k :as node] (peek queue)
-                    rest             (pop queue)
-                    edges            (get dep-graph node #{})
-                    spec-here        (and (= :spec kind)
-                                       (alive? (get specs k))
-                                       (not (@seen-spec k))
-                                       k)
-                    fact-here        (and (= :fact kind)
-                                       (alive? (get facts k))
-                                       (not (@seen-fact k))
-                                       k)]
-                (when spec-here (swap! seen-spec conj spec-here))
-                (when fact-here (swap! seen-fact conj fact-here))
-                (recur (into rest
-                         (filter (fn [[kind' k']]
-                                   (case kind'
-                                     :spec (and (contains? specs k') (alive? (get specs k')))
-                                     :fact (and (contains? facts k') (alive? (get facts k')))
-                                     :task false)))
-                         edges)
-                  (cond-> specs-out
-                    spec-here (conj (second (project-spec progression
-                                              [spec-here (get specs spec-here)]))))
-                  (cond-> facts-out
-                    fact-here (conj (second (project-fact
-                                              [fact-here (get facts fact-here)])))))))))]
+          (let [enq-spec (atom #{})
+                enq-fact (atom #{})
+                enqueue? (fn [[kind' k']]
+                           (case kind'
+                             :spec (and (contains? specs k')
+                                     (alive? (get specs k'))
+                                     (not (@enq-spec k'))
+                                     (do (swap! enq-spec conj k') true))
+                             :fact (and (contains? facts k')
+                                     (alive? (get facts k'))
+                                     (not (@enq-fact k'))
+                                     (do (swap! enq-fact conj k') true))
+                             :task false))]
+            (loop [queue [[:task task-k]]
+                   specs-out []
+                   facts-out []]
+              (if (empty? queue)
+                {:specs specs-out :facts facts-out}
+                (let [[kind k :as node] (peek queue)
+                      rest             (pop queue)
+                      edges            (get dep-graph node #{})
+                      spec-here        (and (= :spec kind)
+                                         (alive? (get specs k))
+                                         (not (@seen-spec k))
+                                         k)
+                      fact-here        (and (= :fact kind)
+                                         (alive? (get facts k))
+                                         (not (@seen-fact k))
+                                         k)]
+                  (when spec-here (swap! seen-spec conj spec-here))
+                  (when fact-here (swap! seen-fact conj fact-here))
+                  (recur (into rest (filter enqueue?) edges)
+                    (cond-> specs-out
+                      spec-here (conj (second (project-spec progression
+                                                [spec-here (get specs spec-here)]))))
+                    (cond-> facts-out
+                      fact-here (conj (second (project-fact
+                                                [fact-here (get facts fact-here)]))))))))))]
     (vec
       (for [root roots
             :let [task (get live-tasks root)

@@ -12,6 +12,7 @@
    [com.blockether.svar.internal.util :as util]
    [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.config :as config]
+   [com.blockether.vis.internal.consult :as consult]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
@@ -2920,7 +2921,14 @@
                       ;; unresponsive" symptom the user hit in session
                       ;; 11d4f817.
                       cancel-token (assoc :cancel-token cancel-token)
-                      cancel-atom  (assoc :cancel-atom  cancel-atom))
+                      cancel-atom  (assoc :cancel-atom  cancel-atom)
+                      ;; Phase H: per-turn context surfaced for the
+                      ;; (consult-* …) SCI fns. Engine embeds these
+                      ;; into the consultant call so the primary model
+                      ;; never re-passes them — they are state, not
+                      ;; bindings.
+                      true (assoc :turn/user-request user-request
+                             :turn/system-prompt system-prompt))
         resolved-model (resolve-effective-model (:router environment))
         effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
@@ -4907,7 +4915,15 @@
               :answer-atom                       answer-atom
               :session-title-atom           session-title-atom
               :extensions                        (atom [])
-              :active-extensions                 (atom []))]
+              :active-extensions                 (atom [])
+              ;; Phase H: secondary-model consultation. Per-session
+              ;; budget atom + the :consult map from vis config (or
+              ;; nil → consult fallback to its DEFAULT_PREFERENCE_MAP).
+              ;; The consult layer reads ctx-atom directly when it
+              ;; needs to render a projection for the consultant.
+              :consult-config                    (some-> (config/load-config-raw)
+                                                   :consult)
+              :consult-budget-atom               (consult/fresh-budget-atom))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
     ;; Restore the CTX engine state when resuming. SCI defs do NOT
