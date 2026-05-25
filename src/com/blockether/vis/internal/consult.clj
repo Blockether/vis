@@ -117,31 +117,53 @@
       (or (some-> result :content) (some-> result :raw) ""))))
 
 (defn consult!
-  "Public entry. Engine-owned. Returns the consultant's response string
-   on success; `{:error <kw> :reason <string>}` map on bounded failure
-   (budget exhausted, unknown preference, provider error). Never throws
-   for normal failure paths — the model can read the map and recover."
+  "Public entry. Engine-owned. ALWAYS returns a map so the model has a
+   single uniform shape to destructure — no mixed string/map returns,
+   no per-call `(map? out)` guards.
+
+   Shape:
+     {:ok?       bool       ; success?
+      :answer    string?    ; consultant's reply (only when :ok? true)
+      :preference kw         ; what was asked
+      :call-no   int         ; this session's call number (1-based)
+      :duration-ms long      ; round-trip wall time
+      :error?    kw         ; one of #{:budget-exhausted :recursion-cap
+                            ;          :unknown-preference :empty-question
+                            ;          :consult-error :router-missing}
+      :reason?   string}    ; human-readable error explanation
+
+   On :ok? true — `:answer` is the consultant's text. Anything else
+   means consult did not produce usable output; check `:error` +
+   `:reason` and proceed without secondary input."
   [env preference question]
   (cond
     (>= *recursion-depth* MAX_RECURSION_DEPTH)
-    {:error :consult-recursion-cap
+    {:ok?    false
+     :preference preference
+     :error  :recursion-cap
      :reason (str "consult recursion depth " *recursion-depth*
                " ≥ cap " MAX_RECURSION_DEPTH)}
 
     (budget-exhausted? env)
-    {:error :consult-budget-exhausted
+    {:ok?    false
+     :preference preference
+     :error  :budget-exhausted
      :reason (str "session consult budget exhausted at "
                (some-> (:consult-budget-atom env) deref :used)
                "/" (or (some-> (:consult-budget-atom env) deref :cap)
                      DEFAULT_CONSULT_BUDGET))}
 
     (not (#{:fast :balanced :deep} preference))
-    {:error :consult-unknown-preference
+    {:ok?    false
+     :preference preference
+     :error  :unknown-preference
      :reason (str "preference " preference
                " not in #{:fast :balanced :deep}")}
 
     (or (not (string? question)) (str/blank? question))
-    {:error :consult-empty-question
+    {:ok?    false
+     :preference preference
+     :error  :empty-question
      :reason "consult question must be a non-blank string"}
 
     :else
@@ -158,17 +180,26 @@
                               :duration-ms duration
                               :response-len (count (str response))}}
               "consult succeeded")
-            response)
+            {:ok?         true
+             :answer      response
+             :preference  preference
+             :call-no     call-no
+             :duration-ms duration})
           (catch Throwable t
-            (tel/log! {:level :warn :id ::consult-failed
-                       :data {:preference preference
-                              :call-no call-no
-                              :duration-ms (- (System/currentTimeMillis) started)
-                              :ex-class (.getName (class t))
-                              :ex-msg (ex-message t)}}
-              "consult failed")
-            {:error  :consult-error
-             :reason (ex-message t)}))))))
+            (let [duration (- (System/currentTimeMillis) started)]
+              (tel/log! {:level :warn :id ::consult-failed
+                         :data {:preference preference
+                                :call-no call-no
+                                :duration-ms duration
+                                :ex-class (.getName (class t))
+                                :ex-msg (ex-message t)}}
+                "consult failed")
+              {:ok?         false
+               :preference  preference
+               :call-no     call-no
+               :duration-ms duration
+               :error       :consult-error
+               :reason      (ex-message t)})))))))
 
 (defn fresh-budget-atom
   ([] (fresh-budget-atom DEFAULT_CONSULT_BUDGET))
