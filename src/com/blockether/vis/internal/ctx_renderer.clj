@@ -288,6 +288,31 @@
             (str " :validated? " (boolean (:validated? t))))))
       unresolved)))
 
+(defn- archived-proofs-annotation-lines
+  "One `;; rejected-proofs …` line per task carrying a non-empty
+   `:archived-proofs` vec. Surfaces validator rejections the engine
+   stamped at end-of-iter so the model sees the history without an
+   explicit `(introspect-failed-proofs :K)` call. Includes the count
+   and the most-recent rejection's `:reason` + `:proof` so a single
+   line carries enough signal to decide whether to swap the proof or
+   change strategy."
+  [tasks indent]
+  (let [with-archive (->> tasks
+                       (filter (fn [[_ t]] (seq (:archived-proofs t))))
+                       (sort-by task-sort-key))]
+    (mapv
+      (fn [[k t]]
+        (let [archive (:archived-proofs t)
+              latest  (peek archive)
+              n       (count archive)
+              reason  (some-> (:reason latest) (str))]
+          (str (pad indent) ";; rejected-proofs " (zp k)
+            "  count=" n
+            "  latest=" (pr-str (:proof latest))
+            (when reason (str "  reason=" reason))
+            "  — (introspect-failed-proofs " (pr-str k) ")")))
+      with-archive)))
+
 ;; ---------------------------------------------------------------------------
 ;; Trailer pins — render :src verbatim, NOT as a Clojure-escaped string.
 ;;
@@ -436,11 +461,14 @@
                         prog-entries 1)
         ranked-tasks  (rank-tasks (or (:session/tasks ctx) {}))
         hook-lines    (hook-task-annotation-lines (or (:session/tasks ctx) {}) 1)
+        archive-lines (archived-proofs-annotation-lines (or (:session/tasks ctx) {}) 1)
         tasks-tail-w  (section-annotations (get by-sub :session/tasks []) [] 1)
+        extras-text   (let [ls (concat hook-lines archive-lines)]
+                        (when (seq ls) (str/join "\n" ls)))
         tasks-tail    (cond
-                        (and tasks-tail-w (seq hook-lines))
-                        (str tasks-tail-w "\n" (str/join "\n" hook-lines))
-                        (seq hook-lines) (str/join "\n" hook-lines)
+                        (and tasks-tail-w extras-text)
+                        (str tasks-tail-w "\n" extras-text)
+                        extras-text extras-text
                         :else tasks-tail-w)
         facts-tail    (section-annotations (get by-sub :session/facts []) [] 1)
         other-tail    (section-annotations (get by-sub :other []) [] 1)]

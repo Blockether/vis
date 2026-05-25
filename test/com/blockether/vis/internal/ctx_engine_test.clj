@@ -304,7 +304,7 @@
                 (eng/classify-form-tag "(spec-set! :K {:title \"x\"})"
                   (fn [_] :observation))))
       (expect (= :mutation
-                (eng/classify-form-tag "(spec-set! :K {:title \"x\"})")))))) 
+                (eng/classify-form-tag "(spec-set! :K {:title \"x\"})"))))))
 
 (defdescribe advance-iter-trailer-test
   (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
@@ -634,3 +634,207 @@
         (expect (= 1 (:next-form (:session/scope advanced))))
         (expect (= 1 (count (:session/trailer advanced))))
         (expect (= {} (:session/tasks advanced)))))))
+
+;; =============================================================================
+;; Failed-proof archive (Phase A: introspect-failed-proofs)
+;;
+;; When a task-level proof references a req carrying a :validator-fn, and
+;; that validator REJECTS the form result at the proof scope, the engine's
+;; `archive-failed-task-proofs` records the rejection on the task's
+;; `:archived-proofs` vec. The :specs entry stays — model owns regular
+;; task lifecycle — but the failure is now introspectable next iter so
+;; the model can swap evidence or change strategy instead of re-emitting
+;; the same rejected scope.
+;;
+;; For HOOK-source tasks, the existing `reconcile-done-hook-tasks` reverts
+;; the task to :todo and now also stamps :archived-proofs with the same
+;; entry shape.
+;; =============================================================================
+
+(defdescribe archive-failed-task-proofs-test
+  (describe "regular task proof rejected by validator → archive entry"
+    (let [;; spec :K with req :r1 whose validator demands :result = 42
+          spec-K {:title "answer"
+                  :requirements [{:id :r1 :title "answer must be 42"
+                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
+                  :status :doing
+                  :born "t1/i1/f1"}
+          task-K {:title "compute answer"
+                  :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
+                  :status :doing
+                  :born "t2/i1/f1"}
+          ctx {:session/turn 2
+               :session/scope {:turn 2 :iter 2 :next-form 1}
+               :session/specs {:K spec-K}
+               :session/tasks {:T task-K}}
+          ;; form-result at the proof scope returned 7, NOT 42 → validator rejects
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation
+                                    :src "(+ 1 6)" :result 7}}
+          ctx' (eng/archive-failed-task-proofs ctx form-results)
+          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
+
+      (it "emits one archive entry"
+        (expect (= 1 (count archive))))
+
+      (it "captures the rejected proof scope + req + spec identifiers"
+        (let [e (first archive)]
+          (expect (= "t2/i1/f1" (:proof e)))
+          (expect (= :K          (:spec e)))
+          (expect (= :r1         (:requirement e)))))
+
+      (it "captures the rejection cause as :proof-validator-fail"
+        (expect (= :proof-validator-fail (:rejected-by (first archive)))))
+
+      (it "stamps the rejection at the CURRENT iter scope, not the proof scope"
+        ;; cursor sits at t2/i2; the proof scope was t2/i1. The archive
+        ;; records WHEN the rejection happened, not where the proof points.
+        (expect (= "t2/i2" (:rejected-at (first archive)))))
+
+      (it "does NOT remove the :specs proof entry — model owns the lifecycle"
+        ;; The model can still see the proof in :specs and decide to
+        ;; (proof-remove!) + (proof-add!) a different scope. Engine only
+        ;; stamps history.
+        (expect (= [{:requirement :r1 :proof "t2/i1/f1"}]
+                  (get-in ctx' [:session/tasks :T :specs :K]))))))
+
+  (describe "validator passes → no archive entry"
+    (let [spec-K {:title "answer"
+                  :requirements [{:id :r1 :title "answer must be 42"
+                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
+                  :status :doing :born "t1/i1/f1"}
+          task-K {:title "compute" :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
+                  :status :doing :born "t2/i1/f1"}
+          ctx {:session/turn 2 :session/scope {:turn 2 :iter 2 :next-form 1}
+               :session/specs {:K spec-K} :session/tasks {:T task-K}}
+          ;; form-result actually equals 42 → validator passes
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation
+                                    :src "(* 6 7)" :result 42}}
+          ctx' (eng/archive-failed-task-proofs ctx form-results)]
+      (it "leaves :archived-proofs empty (or nil)"
+        (expect (empty? (get-in ctx' [:session/tasks :T :archived-proofs]))))))
+
+  (describe "idempotent within an iter (dedupe by proof+rejected-at+reason)"
+    (let [spec-K {:title "answer"
+                  :requirements [{:id :r1 :title "must be 42"
+                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
+                  :status :doing :born "t1/i1/f1"}
+          task-K {:title "compute" :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
+                  :status :doing :born "t2/i1/f1"}
+          ctx {:session/turn 2 :session/scope {:turn 2 :iter 2 :next-form 1}
+               :session/specs {:K spec-K} :session/tasks {:T task-K}}
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation
+                                    :src "(+ 1 6)" :result 7}}
+          ;; run TWICE in the same iter — second run must be a no-op
+          ctx-1 (eng/archive-failed-task-proofs ctx form-results)
+          ctx-2 (eng/archive-failed-task-proofs ctx-1 form-results)]
+      (it "does not append a duplicate entry"
+        (expect (= 1 (count (get-in ctx-2 [:session/tasks :T :archived-proofs]))))))))
+
+(defdescribe archived-proofs-cap-test
+  (describe "archive vec is capped at ARCHIVED_PROOFS_CAP_PER_TASK"
+    ;; Simulate many failed iters by manually seeding 11 archive entries
+    ;; (each stamped at a unique :rejected-at so dedupe lets them through),
+    ;; then run one more archiving pass; oldest must be dropped.
+    (let [seeded (vec (for [i (range 11)]
+                        {:proof (str "t1/i" i "/f1")
+                         :spec :K :requirement :r1
+                         :rejected-by :proof-validator-fail
+                         :rejected-at (str "t1/i" i)
+                         :reason :predicate-false}))
+          spec-K {:title "answer"
+                  :requirements [{:id :r1 :title "must be 42"
+                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
+                  :status :doing :born "t1/i1/f1"}
+          ;; 12th rejection arrives this iter
+          task-K {:title "compute"
+                  :specs {:K [{:requirement :r1 :proof "t2/i9/f1"}]}
+                  :status :doing
+                  :archived-proofs seeded
+                  :born "t2/i1/f1"}
+          ctx {:session/turn 2 :session/scope {:turn 2 :iter 9 :next-form 2}
+               :session/specs {:K spec-K} :session/tasks {:T task-K}}
+          form-results {"t2/i9/f1" {:scope "t2/i9/f1" :tag :observation
+                                    :src "(+ 1 6)" :result 7}}
+          archive (get-in (eng/archive-failed-task-proofs ctx form-results)
+                    [:session/tasks :T :archived-proofs])]
+
+      (it "caps the vec at 10 entries"
+        (expect (= 10 (count archive))))
+
+      (it "drops the OLDEST entry first (FIFO)"
+        ;; the entry stamped at "t1/i0" must be gone
+        (expect (not (some #(= "t1/i0" (:rejected-at %)) archive))))
+
+      (it "keeps the newly-archived rejection"
+        ;; the new entry is at the current cursor t2/i9
+        (expect (some #(= "t2/i9" (:rejected-at %)) archive))))))
+
+(defdescribe reconcile-hook-task-archives-on-revert-test
+  (describe "hook-task reverted by reconcile gets :archived-proofs stamped"
+    (let [task-K {:title "set title" :source :hook
+                  :hook-id :vis.foundation/session-title
+                  :status :done
+                  :proof "t1/i1/f1"
+                  :done-born "t1/i1/f1"
+                  :validator-fn "(fn [{:keys [result]}] (= result :title-set))"
+                  :born "t1/i1/f1"}
+          ctx {:session/turn 1 :session/scope {:turn 1 :iter 2 :next-form 1}
+               :session/tasks {:T task-K}}
+          ;; form-result :nope ≠ :title-set → validator rejects
+          form-results {"t1/i1/f1" {:scope "t1/i1/f1" :tag :mutation
+                                    :src "(set-session-title! \"x\")"
+                                    :result :nope}}
+          {ctx' :ctx warnings :warnings}
+          (eng/reconcile-done-hook-tasks ctx form-results)
+          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
+
+      (it "reverts :status :done back to :todo"
+        (expect (= :todo (get-in ctx' [:session/tasks :T :status]))))
+
+      (it "writes one archive entry capturing the rejected proof"
+        (expect (= 1 (count archive)))
+        (expect (= "t1/i1/f1" (:proof (first archive)))))
+
+      (it "tags the rejection cause as :task-done-validator-fail"
+        (expect (= :task-done-validator-fail (:rejected-by (first archive)))))
+
+      (it "drops :proof from the task body but keeps the archive"
+        (expect (nil? (get-in ctx' [:session/tasks :T :proof])))
+        (expect (seq archive)))
+
+      (it "still emits a soft warning so the model sees the revert"
+        (expect (some #(= :task-done-validator-fail (:code %)) warnings))))))
+
+(defdescribe introspect-failed-proofs-test
+  (describe "introspect-failed-proofs returns the archive from the latest snapshot"
+    (let [task-T (fn [archive]
+                   {:title "compute"
+                    :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
+                    :status :doing
+                    :archived-proofs archive
+                    :born "t2/i1/f1"})
+          snap-1 {:session/turn 1
+                  :session/scope {:turn 1 :iter 1 :next-form 1}
+                  :session/tasks {:T (task-T [])}}
+          snap-2 {:session/turn 2
+                  :session/scope {:turn 2 :iter 2 :next-form 1}
+                  :session/tasks {:T (task-T [{:proof "t2/i1/f1" :spec :K
+                                               :requirement :r1
+                                               :rejected-by :proof-validator-fail
+                                               :rejected-at "t2/i2"
+                                               :reason :predicate-false}])}}
+          history [[1 snap-1] [2 snap-2]]]
+
+      (it "returns the most-recent archive vec"
+        (let [archive (eng/introspect-failed-proofs history :T)]
+          (expect (= 1 (count archive)))
+          (expect (= "t2/i1/f1" (:proof (first archive))))))
+
+      (it "returns nil when the task was never present in any snapshot"
+        (expect (nil? (eng/introspect-failed-proofs history :missing))))
+
+      (it "returns empty vec when the task exists but has no archive"
+        (let [empty-snap {:session/turn 1
+                          :session/scope {:turn 1 :iter 1 :next-form 1}
+                          :session/tasks {:T (task-T [])}}]
+          (expect (= [] (eng/introspect-failed-proofs [[1 empty-snap]] :T))))))))
