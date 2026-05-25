@@ -1,26 +1,47 @@
 (ns com.blockether.vis.internal.consult
-  "Phase H — secondary-model consultation via SCI bindings.
+  "Phase H — secondary-model consultation via async cross-iter requests.
 
-   Three semantically-named SCI fns the model calls from inside a fence:
+   Model declares an INTENT inside a fence:
 
-     (consult-fast     \"question\")    ; haiku-class — quick critique, sanity
-     (consult-balanced \"question\")    ; sonnet-class — mid-range
-     (consult-deep     \"question\")    ; opus-class — hard reasoning
+     (consult-request! :review :deep \"hard question…\")
+     ;; → {:consult-id :review :preference :deep :status :pending}
 
-   The engine RESOLVES preference → concrete provider+model via the
-   user-editable `:consult` map in `~/.vis/config.edn`. The model never
-   sees provider/model names — just the 3 fns. Provider availability
-   changes do not break agent code.
+   Iter completes WITHOUT blocking. Engine processes pending consults
+   between iters (in parallel where multiple). Result materialises as
+   a fact in the NEXT iter under the `:consult/<id>` namespaced key:
 
-   Consult calls RUN IN PARALLEL when wrapped in SCI `future`s. Engine
-   embeds the current system prompt + user request + ctx snapshot
-   into the consultant call invisibly so the secondary brain has
-   enough context to answer; primary model never has to re-pass them
-   and never sees them as raw values that could leak into the trailer.
+     ;; iter N+1, model sees in ctx:
+     :session/facts {:consult/:review
+                     {:content \"…consultant's answer…\"
+                      :status :active
+                      :consult-meta {:preference :deep
+                                     :call-no 3
+                                     :duration-ms 18432}
+                      :born \"tN/iM/fK\"}}
 
-   Budget: per-session cap (default 20). Hard fail above cap with
-   `{:error :consult-budget-exhausted}`. Recursion depth = 2 (consult
-   can spawn consult once; that second-level consult cannot recurse)."
+   On failure the fact lands with :status :failed and :consult-meta
+   carrying :error + :reason.
+
+   Preferences (semantic, never provider/model names):
+     :fast      haiku-class — quick critique, sanity, format check
+     :balanced  sonnet-class — mid-range cost/quality
+     :deep      opus-class — hard reasoning, novel decomposition
+
+   Engine maps preference → provider+model via `~/.vis/config.edn`
+   `:consult` block. Model never sees the mapping; it just picks
+   the semantic preference.
+
+   The consultant call embeds INVISIBLY:
+     - primary system prompt (CORE + addendum)
+     - primary user request (turn message)
+     - current ctx snapshot (specs/tasks/facts/trailer)
+
+   So the secondary brain has enough context to answer without the
+   primary re-passing it. Embedded context never lands in the trailer
+   because it's engine state, not SCI bindings.
+
+   Budget: per-session cap (default 20). Recursion depth = 2 (a consult
+   spawned BY another consult counts; a third level fails fast)."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
@@ -28,21 +49,16 @@
 
 (def ^:private DEFAULT_CONSULT_BUDGET 20)
 (def ^:private MAX_RECURSION_DEPTH 2)
-(def ^:private CONSULT_TIMEOUT_MS 30000)
+(def ^:private CONSULT_TIMEOUT_MS 60000)
 (def ^:private CONSULT_TTFT_MS    30000)
 (def ^:private CONSULT_IDLE_MS    20000)
 
 (def ^:private DEFAULT_PREFERENCE_MAP
-  "Fallback mapping when `~/.vis/config.edn` has no `:consult` block.
-   Picks the most universally-available model class per preference."
   {:fast     {:provider :anthropic-coding-plan :model "claude-haiku-4-5"}
    :balanced {:provider :anthropic-coding-plan :model "claude-sonnet-4-6"}
    :deep     {:provider :anthropic-coding-plan :model "claude-opus-4-6"}})
 
-(def ^:dynamic *recursion-depth*
-  "Per-thread depth counter so a consult triggered FROM inside another
-   consult does not blow stack. Hard cap = `MAX_RECURSION_DEPTH`."
-  0)
+(def ^:dynamic *recursion-depth* 0)
 
 (defn- resolve-preference
   [env preference]
@@ -62,10 +78,6 @@
       (>= (or used 0) cap))))
 
 (defn- ctx-snapshot-text
-  "Best-effort textual snapshot of the live ctx for embedding in the
-   consultant's context block. pr-str's the ctx-atom value without
-   engine-ephemeral keys. Returns empty string when no ctx-atom is
-   present (e.g. in tests)."
   [env]
   (try
     (when-let [ctx-atom (:ctx-atom env)]
@@ -76,9 +88,6 @@
     (catch Throwable _ "")))
 
 (defn- build-consultant-messages
-  "Build the consultant's message vec. Primary system prompt + user
-   request + a ctx snapshot are embedded; the model's question is the
-   tail. Model NEVER sees these messages."
   [env question]
   (let [primary-system (or (:turn/system-prompt env) "")
         primary-user   (or (:turn/user-request env) "")
@@ -97,7 +106,6 @@
      {:role "user"      :content question}]))
 
 (defn- call-consultant!
-  "Synchronous router call; returns string content or throws."
   [env preference messages]
   (let [{:keys [provider model]} (resolve-preference env preference)
         router  (:router env)]
@@ -116,90 +124,148 @@
           result (svar/ask-code! router opts)]
       (or (some-> result :content) (some-> result :raw) ""))))
 
-(defn consult!
-  "Public entry. Engine-owned. ALWAYS returns a map so the model has a
-   single uniform shape to destructure — no mixed string/map returns,
-   no per-call `(map? out)` guards.
+;; =============================================================================
+;; ASYNC API
+;; =============================================================================
+;;
+;; consult-request! writes an INTENT into :engine/pending-consults.
+;; The loop's end-of-iter pass calls execute-pending! which drains the
+;; vec, fires each consult (potentially in parallel via future), and
+;; materialises results as `:consult/<id>` facts on the live ctx-atom.
 
-   Shape:
-     {:ok?       bool       ; success?
-      :answer    string?    ; consultant's reply (only when :ok? true)
-      :preference kw         ; what was asked
-      :call-no   int         ; this session's call number (1-based)
-      :duration-ms long      ; round-trip wall time
-      :error?    kw         ; one of #{:budget-exhausted :recursion-cap
-                            ;          :unknown-preference :empty-question
-                            ;          :consult-error :router-missing}
-      :reason?   string}    ; human-readable error explanation
+(defn request-consult!
+  "Declare an async consult intent. Pure-data wrt return value —
+   pushes an entry onto `:engine/pending-consults` on the ctx-atom
+   and returns a tiny ack map. Engine fulfils between iters.
 
-   On :ok? true — `:answer` is the consultant's text. Anything else
-   means consult did not produce usable output; check `:error` +
-   `:reason` and proceed without secondary input."
-  [env preference question]
+   Validates preference + question shape SYNCHRONOUSLY so the model
+   knows immediately on bad input. Returns:
+
+     {:ok? true  :consult-id :K :preference :deep :status :pending}
+     {:ok? false :consult-id :K? :error <kw> :reason <string>}
+
+   On :ok? false the intent is NOT enqueued; nothing happens between
+   iters. The model can read the map and recover."
+  [env consult-id preference question]
   (cond
-    (>= *recursion-depth* MAX_RECURSION_DEPTH)
+    (not (keyword? consult-id))
     {:ok?    false
-     :preference preference
-     :error  :recursion-cap
-     :reason (str "consult recursion depth " *recursion-depth*
-               " ≥ cap " MAX_RECURSION_DEPTH)}
-
-    (budget-exhausted? env)
-    {:ok?    false
-     :preference preference
-     :error  :budget-exhausted
-     :reason (str "session consult budget exhausted at "
-               (some-> (:consult-budget-atom env) deref :used)
-               "/" (or (some-> (:consult-budget-atom env) deref :cap)
-                     DEFAULT_CONSULT_BUDGET))}
+     :error  :invalid-consult-id
+     :reason (str "consult-id must be a keyword; got " (type consult-id))}
 
     (not (#{:fast :balanced :deep} preference))
-    {:ok?    false
-     :preference preference
-     :error  :unknown-preference
-     :reason (str "preference " preference
-               " not in #{:fast :balanced :deep}")}
+    {:ok?        false
+     :consult-id consult-id
+     :error      :unknown-preference
+     :reason     (str "preference " preference
+                   " not in #{:fast :balanced :deep}")}
 
     (or (not (string? question)) (str/blank? question))
-    {:ok?    false
-     :preference preference
-     :error  :empty-question
-     :reason "consult question must be a non-blank string"}
+    {:ok?        false
+     :consult-id consult-id
+     :error      :empty-question
+     :reason     "consult question must be a non-blank string"}
+
+    (budget-exhausted? env)
+    {:ok?        false
+     :consult-id consult-id
+     :error      :budget-exhausted
+     :reason     (str "session consult budget exhausted at "
+                   (some-> (:consult-budget-atom env) deref :used)
+                   "/" (or (some-> (:consult-budget-atom env) deref :cap)
+                         DEFAULT_CONSULT_BUDGET))}
 
     :else
-    (binding [*recursion-depth* (inc *recursion-depth*)]
-      (let [call-no (bump-budget! env)
-            started (System/currentTimeMillis)]
+    (let [intent {:consult-id consult-id
+                  :preference preference
+                  :question   question
+                  :born       (or (:current-form-scope env) "tN/iM/f?")}]
+      (when-let [ctx-atom (:ctx-atom env)]
+        (swap! ctx-atom
+          (fn [c] (update c :engine/pending-consults (fnil conj []) intent))))
+      {:ok?        true
+       :consult-id consult-id
+       :preference preference
+       :status     :pending})))
+
+(defn- execute-one!
+  "Run ONE pending intent. Returns a fact-shaped map ready to be
+   `assoc`'d under `:consult/<id>` on `:session/facts`. Internal."
+  [env {:keys [consult-id preference question born]}]
+  (binding [*recursion-depth* (inc *recursion-depth*)]
+    (let [started (System/currentTimeMillis)
+          call-no (bump-budget! env)]
+      (if (>= *recursion-depth* (inc MAX_RECURSION_DEPTH))
+        {:status  :failed
+         :born    born
+         :consult-meta {:preference preference
+                        :call-no call-no
+                        :error :recursion-cap
+                        :reason (str "recursion depth >= cap " MAX_RECURSION_DEPTH)}}
         (try
           (let [messages (build-consultant-messages env question)
                 response (call-consultant! env preference messages)
                 duration (- (System/currentTimeMillis) started)]
             (tel/log! {:level :info :id ::consult-ok
-                       :data {:preference preference
+                       :data {:consult-id consult-id
+                              :preference preference
                               :call-no call-no
                               :duration-ms duration
                               :response-len (count (str response))}}
-              "consult succeeded")
-            {:ok?         true
-             :answer      response
-             :preference  preference
-             :call-no     call-no
-             :duration-ms duration})
+              "consult executed")
+            {:content (str response)
+             :status  :active
+             :born    born
+             :consult-meta {:preference preference
+                            :call-no call-no
+                            :duration-ms duration}})
           (catch Throwable t
             (let [duration (- (System/currentTimeMillis) started)]
               (tel/log! {:level :warn :id ::consult-failed
-                         :data {:preference preference
+                         :data {:consult-id consult-id
+                                :preference preference
                                 :call-no call-no
                                 :duration-ms duration
                                 :ex-class (.getName (class t))
                                 :ex-msg (ex-message t)}}
                 "consult failed")
-              {:ok?         false
-               :preference  preference
-               :call-no     call-no
-               :duration-ms duration
-               :error       :consult-error
-               :reason      (ex-message t)})))))))
+              {:status  :failed
+               :born    born
+               :consult-meta {:preference preference
+                              :call-no call-no
+                              :duration-ms duration
+                              :error :consult-error
+                              :reason (ex-message t)}})))))))
+
+(defn execute-pending!
+  "Drain `:engine/pending-consults` and run every intent in PARALLEL
+   (one future per intent). Materialise each result as a fact under
+   `:session/facts :consult/<id>` on the live ctx-atom. Called from
+   the iteration loop's end-of-iter pass.
+
+   Pure-ish: side effects are the ctx-atom swap + the LLM calls.
+   Returns the vec of consult-ids that were processed."
+  [env]
+  (when-let [ctx-atom (:ctx-atom env)]
+    (let [intents (or (:engine/pending-consults @ctx-atom) [])]
+      (when (seq intents)
+        ;; spawn futures in parallel
+        (let [futures (mapv (fn [i] [i (future (execute-one! env i))])
+                        intents)
+              ;; await all (these are SHORT — bounded by CONSULT_TIMEOUT_MS)
+              results (mapv (fn [[intent f]] [intent @f]) futures)]
+          (swap! ctx-atom
+            (fn [c]
+              (-> c
+                (assoc :engine/pending-consults [])
+                (update :session/facts
+                  (fn [facts]
+                    (reduce (fn [acc [{:keys [consult-id]} result]]
+                              (assoc acc
+                                (keyword "consult" (name consult-id))
+                                result))
+                      (or facts {}) results))))))
+          (mapv (comp :consult-id first) results))))))
 
 (defn fresh-budget-atom
   ([] (fresh-budget-atom DEFAULT_CONSULT_BUDGET))
