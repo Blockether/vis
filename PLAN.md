@@ -414,18 +414,26 @@ cap**. When summed entries exceed cap, engine drops oldest entry
 
 On per-entry overflow: engine **never truncates**. Instead it
 re-prompts the consult LLM in the same side thread (same SCI ctx) with
-a compression instruction:
+a compression instruction carrying THREE explicit numbers:
 
 ```
-"Your previous answer was N tokens; the cap for :<preference> is M.
-Compress to fit — keep the most-cited findings, drop tangents and
-adjectives. Re-emit (answer {…})."
+"Your previous answer was N tokens; cap for :<preference> is M tokens
+ (over by X tokens, X = N - M). Compress :content to fit within M.
+ Keep most-cited findings and critical citations; drop tangents,
+ adjectives, repetition. Same :focus / :citations spirit, tighter prose.
+ Re-emit (answer {…})."
 ```
+
+- N = actual token count of consult's `:content` (jtokkit cl100k_base)
+- M = cap for the consult's preference (1000 / 4000 / 12000)
+- X = N - M, the explicit overage so the model can SIZE THE CUT
 
 Max retries = 1 (so worst case = 2 LLM calls per consult intent).
 If the second attempt still overflows, the entry lands as
-`:status :failed :error :exceeds-cap`. Primary then decides whether
-to re-issue with a narrower `:focus` or different `:preference`.
+`:status :failed :error :exceeds-cap` with `:reason` listing both
+attempt sizes: `"first N1 / cap M / second N2 / cap M (still over)"`.
+Primary then decides whether to re-issue with a narrower `:focus` or
+different `:preference`.
 
 Citations beyond 15 dropped + warned (NOT retried — the consult LLM
 had N citations and the engine slices the tail; not worth re-prompting
@@ -615,11 +623,14 @@ consult fence can parallel `search/web` + `search/papers` calls).
 - After consult-engine returns its raw map, validate against schema
 - Token-count `:content` via `internal/tokens.clj` (jtokkit cl100k_base)
 - If `:content` exceeds preference cap (1k / 4k / 12k tokens),
-  RE-PROMPT consult in the same side thread + same SCI ctx with a
-  compression instruction ("your N tokens > cap M; compress…")
+  RE-PROMPT consult in the same side thread + same SCI ctx. The
+  re-prompt text carries THREE numbers: N (actual tokens), M (cap),
+  X = N - M (overage). Engine constructs the re-prompt; consult LLM
+  just sees the message.
 - Max retries = 1 (worst case 2 LLM calls per consult intent)
 - After retry attempt: if still over cap, emit `:status :failed`
-  `:error :exceeds-cap` `:reason "...attempt sizes..."` `:retries 1`
+  `:error :exceeds-cap` `:reason "first N1 / cap M / second N2"`
+  `:retries 1`
 - Successful entry stamps `:retries 0` (fit first try) or `:retries 1`
 - Citations beyond index 15: tail dropped + soft warn `:too-many-citations`
   (no retry for this — not worth a round trip for citation count)
