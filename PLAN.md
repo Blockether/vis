@@ -289,7 +289,360 @@ n=15. Pokaż że każdy moduł ma odpowiadającą formę.'
 
 ---
 
-## Phase H — Secondary-model consultation (consult-fast/balanced/deep) ✅ LANDED
+## Phase H — Secondary-model consultation (consult-fast/balanced/deep) ✅ LANDED v1
+
+**Status.** v1 (sync, blocking, no scope, no structured output) landed at
+`1d9677ba` and reworked to always-map return at `ece24f3c`. Superseded
+by Phase H' below — v1 will be removed when Phase H' lands.
+
+## Phase H' — Async cross-iter consult mini-engine + scope-aware bindings ⏳ NEXT
+
+### GOAL
+
+Replace the sync, primary-blocking consult-fast/balanced/deep surface
+with an ASYNC cross-iter request/result protocol. Consult becomes a
+separate **single-iter mini-SCI engine** running on a side thread with
+a DIFFERENT set of SCI bindings than primary (scope-aware). Primary
+declares an intent inside its fence; engine fires every pending intent
+in parallel between turns; results materialise as a NEW dedicated ctx
+section `:session/consult-results` (NOT in trailer). Primary decides
+what to do with each result.
+
+Motivation:
+- Sync consult-* blocked the primary fence on a slow secondary LLM
+  call. Async cross-iter removes that block.
+- Multiple consults per primary turn run in parallel without futures.
+- Consult's reasoning is structurally separated from primary's: own
+  mini-SCI, own bindings, no shared ctx mutation.
+- Trailer becomes pure observation log (engine mutators don't pin).
+
+### SPEC
+
+#### Consult lifecycle
+
+```
+[Primary turn T iter N]
+  (consult-request! :research :deep
+    {:focus    ["q1" "q2"]
+     :question "...prose question..."})
+  ;; → {:ok? true :consult-id :research :status :pending}
+  ;; pure-data effect on env: pushes intent to :engine/pending-consults
+  ;; primary fence completes without blocking
+
+[End of turn T — engine processes pending consults]
+  spawn ONE future per intent (parallel)
+  each future:
+    1. fresh mini-SCI ctx, consult-scope bindings ONLY
+    2. build consultant messages: system + user question + ctx snapshot
+    3. single LLM call → single fence → single SCI eval
+    4. capture (answer {...}) emission
+  await all futures (timeout 60s/intent)
+  materialise each result onto :session/consult-results vec
+
+[Primary turn T+1 iter 0]
+  ctx renders :session/consult-results with new entries from T
+  primary reads, decides:
+    - (consult-promote! :research :K)   ; copy as fact :K, drop entry
+    - (consult-dismiss! :research)      ; drop entry without promoting
+    - ignore (auto-archived after 3 turns)
+```
+
+#### Entry shape (consult-result)
+
+Minimal required, plus optional engine-stamped audit:
+
+```
+;; SUCCESS
+{:consult-id  :research              ; primary's identifier (kw)
+ :status      :active                ; engine-set
+ :content     string                 ; consultant's prose synthesis (REQUIRED)
+ :citations   [{:type :paper :url string? :title string? :excerpt string?}]
+ :confidence  :high|:medium|:low
+ :focus       [string ...]?          ; vec of focus points from request (preserved)
+ :focus-met?  [boolean ...]?         ; vec aligned to :focus order; consultant assessment
+ :preference  :fast|:balanced|:deep  ; engine-stamped from request
+ :born        "tN"                   ; engine-stamped: turn declared
+ :duration-ms long                   ; engine-stamped: consult wall time
+ :truncated?  boolean?               ; engine-stamped only when caps hit
+ :original-content-tokens int?}      ; engine-stamped only when truncated
+
+;; FAILURE
+{:consult-id  :research
+ :status      :failed
+ :error       :timeout|:provider-error|:malformed-answer|:budget-exhausted
+ :reason      string                 ; human explanation
+ :focus       [string ...]?          ; preserved from request
+ :preference  :deep
+ :born        "tN"
+ :duration-ms long}
+```
+
+#### Citation min schema
+
+```
+{:type :paper|:web|:code|:doc       ; REQUIRED
+ :url?     string?                    ; either :url
+ :title?   string?                    ; OR :title required
+ :excerpt? string?                    ; max 500 chars}
+```
+
+Engine drops malformed entries + warns (`:malformed-citation N dropped`).
+
+#### Token caps (per preference)
+
+Measured via `internal/tokens.clj` (jtokkit cl100k_base). Chars cap
+is a fiction — LLMs bill on tokens, primary's ctx is bounded by
+tokens, so all caps live in token units.
+
+| Preference | `:content` token cap | Use case |
+|---|---|---|
+| `:fast`     |  1 000 tokens | quick critique, sanity, 1–3 sentence reply |
+| `:balanced` |  4 000 tokens | solid analysis, several paragraphs |
+| `:deep`     | 12 000 tokens | full research synthesis with citations |
+
+Per citation:
+- `:excerpt` max **500 tokens** (~one paper abstract)
+- max **15 citations** per consult
+
+Safety belt on `:session/consult-results` SUM: **50 000 tokens hard
+cap**. When summed entries exceed cap, engine drops oldest entry
+(FIFO) regardless of 3-turn TTL and emits a renderer warning:
+
+```
+;; ⚠ consult-results overflow: dropped :K to fit 50 000-tok budget
+```
+
+On per-entry overflow: engine truncates `:content` at the preference
+cap with `... [N tokens truncated]` marker, stamps
+`:truncated? true :original-content-tokens N`. Citations beyond 15
+dropped + warned. Excerpts above 500 tokens truncated per citation.
+
+#### Engine scope filter (`:ext.symbol/engine-scope`)
+
+Every extension symbol gains an OPTIONAL field:
+
+```
+{:ext.symbol/symbol 'v/patch
+ :ext.symbol/engine-scope #{:main}}        ; primary only
+
+{:ext.symbol/symbol 'search/web
+ :ext.symbol/engine-scope #{:consult}}     ; consult only
+
+{:ext.symbol/symbol 'v/cat
+ :ext.symbol/engine-scope #{:main :consult}} ; both (read-only ops)
+```
+
+Default when field missing: `#{:main}` (backward compat).
+
+#### Trailer pin rule (NEW)
+
+A form is pinned in `:session/trailer` IFF its result is **NOT**
+`:vis/silent` AND it's not `(done …)`. Engine mutators that return
+`:vis/silent` (spec/task/fact/proof/req/depends/contradicts/rule/
+consult-request/promote/dismiss) DISAPPEAR from the trailer entirely
+(no `:src`, no `:result`, no entry). Their effect is visible only via
+ctx mutations (new specs/tasks/facts/results in the next iter).
+
+#### `future` available ONLY in consult SCI
+
+Primary's SCI sandbox no longer binds `future` / `future?` / `deref`
+/ `realized?`. Consult's mini-SCI sandbox binds them (so a single
+consult fence can parallel `search/web` + `search/papers` calls).
+
+### REQUIREMENTS
+
+#### R1 — `:ext.symbol/engine-scope` filter
+
+- Spec field on each extension symbol entry
+- Default `#{:main}`
+- Helper `(extension/ext-symbols-in-scope ext scope)` filters per scope
+- Primary SCI bindings build filters with `:main` scope
+- Consult mini-SCI bindings build filters with `:consult` scope
+- Test: an extension with mixed-scope symbols projects correctly into
+  each scope
+
+#### R2 — Trailer pin filter
+
+- `advance-iter` in `ctx-engine` checks each candidate form's `:result`
+- Forms with `:result :vis/silent` are dropped before the pin lands
+- Existing `(done …)` exclusion stays; `:vis/silent` filter is
+  additional, not replacement
+- Engine-internal warnings: NONE — silent drop is the intended behaviour
+- Test: a fence containing `(spec-set!)`, `(task-set!)`, `(v/cat)`
+  pins ONLY the `v/cat` form in the trailer
+
+#### R3 — `future` scope restriction
+
+- `env/create-sci-context` for primary scope excludes `future`,
+  `future?`, `realized?`, `deref` from the sandbox bindings
+- Consult mini-SCI ctx INCLUDES them
+- Test: primary fence attempting `(future …)` raises
+  `Unable to resolve symbol: future`; consult fence resolves it
+
+#### R4 — `consult-request!` async push
+
+- New mutator binding in primary SCI scope
+- Accepts `(consult-request! :id :preference "question")` OR
+  `(consult-request! :id :preference {:focus […] :question "…"})`
+- Pushes intent map to `:engine/pending-consults` on ctx-atom
+- Returns `:vis/silent` (NOT a string — to keep it OUT of trailer)
+- Synchronously validates id/preference/question; rejects with soft warning
+  via `:engine/warnings` when invalid (no intent enqueued)
+- Budget check: when consult-budget-atom exhausted, warns + skips
+  enqueue with `:consult-budget-exhausted` soft warning
+- Test: declaring N intents pushes N entries; bad inputs warn but
+  don't enqueue
+
+#### R5 — Mini-SCI consult engine
+
+- New ns `com.blockether.vis.internal.consult-engine`
+- `(run-consult! parent-env intent) → entry-map`
+  - builds fresh SCI ctx with consult-scope bindings
+  - includes `search/*` + `future` + minimal `clojure.core`
+  - builds consultant messages: system + USER (focus + question +
+    ctx snapshot text) — NO primary system prompt
+  - calls router with preference → provider+model from
+    `:consult-config` (or `DEFAULT_PREFERENCE_MAP`)
+  - parses returned fence, eval'es ONCE on side thread
+  - captures `(answer {…})` emission via side-thread atom
+  - returns the structured entry map
+- Bounded: 60s hard wall via existing svar timeouts
+- Test: mocked router returns canonical fence; engine eval'es; entry
+  map carries `:content`, `:citations`, `:confidence`, `:focus-met?`
+
+#### R6 — `process-pending-consults!` parallel runner
+
+- Replaces existing v1 impl in `ctx-loop`
+- Reads `:engine/pending-consults`, drains the vec
+- For each intent: spawn `(future (consult-engine/run-consult! env intent))`
+- Await all (default 60s each via consult-engine's internal timeout)
+- Materialise each result onto `:session/consult-results` (append vec)
+- Clear `:engine/pending-consults` atomically with the materialisation
+- Test: 3 intents declared in one turn run in parallel; wall time
+  ≈ max(durations); all 3 entries land on results vec
+
+#### R7 — Engine-side validation + truncation
+
+- After consult-engine returns its raw map, validate against schema
+- Token-count `:content` via `internal/tokens.clj` (jtokkit
+  cl100k_base); truncate to per-preference cap (1k / 4k / 12k tokens)
+- Token-count each `:excerpt`; truncate to 500-token cap per citation
+- Drop citations beyond index 15 + warn `:too-many-citations`
+- Stamp `:truncated? true :original-content-tokens N` when caps hit
+- Drop malformed citations (no `:type`, no `:url`/`:title`) + warn
+- When `:content` missing/blank: emit `:status :failed`
+  `:error :malformed-answer`
+- Test: oversized content gets truncated with token-marker; malformed
+  entry becomes failed with reason
+
+#### R8 — `:session/consult-results` ctx section
+
+- New top-level ctx section, vec of entry maps
+- Engine appends at consult processing time
+- Renderer emits as new section between `:session/trailer` and
+  `:session/next-actions`
+- Compact preview annotation per entry (similar style to
+  `;; rejected-proofs`):
+  ```
+  ;; consult-results (3 entries; 18.4k / 50k tokens)
+  ;;   :research :high — Reflexion (arxiv 2303.11366)
+  ;;   :critique :medium — 2 issues found
+  ;;   :review-A :failed (:timeout)
+  ```
+- GC: entries older than 3 turns dropped at turn boundary; primary
+  can dismiss/promote earlier
+- Safety belt: if summed token count exceeds 50 000, drop oldest
+  entry FIFO + warn `;; ⚠ consult-results overflow: dropped :K`
+- Test: render shows new section with each entry compact; GC drops
+  entries past TTL; oversized sum drops oldest entry
+
+#### R9 — `consult-promote!` / `consult-dismiss!`
+
+- `(consult-promote! :consult-id :fact-K)` copies `:content`,
+  `:citations`, `:focus`, `:confidence` into a NEW fact under `:K`,
+  removes the entry from `:session/consult-results`
+- `(consult-dismiss! :consult-id)` removes entry without promotion
+- Both return `:vis/silent` (do NOT pin in trailer)
+- Test: promote creates fact with merged map; dismiss removes
+
+#### R10 — `search/*` extension (renamed from `exa/`)
+
+- New extension namespace `search/` with scope `#{:consult}`
+- `(search/web query)` — wraps existing exa.ai web search
+- `(search/papers query)` — direct arxiv API (Atom XML parse to maps)
+- `(search/code query)` — future, deferred
+- Each search fn returns vec of `{:title :url :excerpt :source …}`
+  maps so consultant can stitch them into `:citations` easily
+- Existing `exa/*` symbols REMOVED from `:main` scope (breaking)
+- Test: arxiv API returns parseable Atom; search/papers translates to
+  citation-friendly maps; symbols not visible in primary's SCI
+
+#### R11 — V2 prompt update
+
+- DROP `consult-fast/balanced/deep` sync section
+- DROP `future` from documented primary SCI symbols
+- ADD `consult-request!` async section with `:focus` array semantics
+- ADD minimal entry schema docs
+- ADD `consult-promote!` / `consult-dismiss!` docs
+- ADD `:session/consult-results` to MEMORY LAYERS
+- ADD note: trailer no longer pins engine mutators (silent results)
+- Test: prompt-core test pins the new shape (consult-request! mentioned,
+  consult-fast NOT mentioned)
+
+#### R12 — Tests + CLI verify
+
+- Engine unit tests per R1-R10 above
+- ctx-loop integration test: N consults in one turn → N entries in
+  results next turn
+- CLI verify:
+  ```bash
+  ./bin/vis --provider anthropic-coding-plan --model claude-sonnet-4-6 \
+    'Use consult-request! to research the Reflexion paper. In the next
+     turn read the result and promote it to a fact called :reflexion-paper.'
+  ```
+  Expect: at iter 1 model emits `(consult-request! :reflexion :deep
+  {:focus [‘91% claim’] :question “…”})`; at iter 2+ model sees
+  `:session/consult-results` and `(consult-promote! :reflexion
+  :reflexion-paper)`; final `:session/facts` carries the promoted fact.
+
+### GATES (verification protocol)
+
+Each requirement R1–R12 has its own lazytest spec(s) that must pass
+before the phase is considered landed.
+
+1. **Unit tests pass.**
+   `clojure -M:test -n com.blockether.vis.internal.consult-engine-test
+    -n com.blockether.vis.internal.consult-test
+    -n com.blockether.vis.internal.ctx-engine-test
+    -n com.blockether.vis.internal.ctx-renderer-test
+    -n com.blockether.vis.internal.ctx-loop-test
+    -n com.blockether.vis.internal.prompt-test`
+2. **Real-model smoke run** (CLI verify above) succeeds across two
+   providers (anthropic + openai-codex minimum).
+3. **4Clojure regression** does not regress > 2pp pass rate vs baseline
+   (likely improves on tasks where critique helps).
+4. **Prompt cache check.** After landing, run a 2-iter probe and
+   inspect `llm_cached_tokens` on iter 2. Cache hit ratio should not
+   drop > 30% vs baseline — V2 prompt changes are additive, not
+   structural.
+5. **Token budget on a typical turn.** Compare ctx render before/after
+   Phase H' on the SAME 6-turn session. Phase H' should be NEUTRAL or
+   smaller (because trailer pin filter drops engine mutators).
+
+### NON-GOALS (explicit)
+
+- NOT a sub-agent. Consult has no persistent ctx, no own iter loop
+  across turns, no DB writes for consult state. One-shot eval per
+  request.
+- NOT provider tool-calling. We do NOT use Anthropic/OpenAI native
+  `tools` parameter. Consult uses our own SCI-bindings sandbox.
+- NOT a fix-on-promotion. `consult-promote!` copies data as a fact;
+  it does NOT auto-add proofs, auto-set tasks, or otherwise mutate
+  primary's symbolic state beyond the named fact.
+- NOT multi-iter consult. Each consult is ONE LLM call + ONE SCI
+  eval. If model wants iteration, it issues another
+  `consult-request!` in a later turn.
+
 
 **Goal.** Extend Phase A `:archived-proofs` entry with a natural-
 language `:reflection` field. On rejection, engine triggers a tiny
