@@ -1079,3 +1079,121 @@
         (expect (= 2 (count hits))))
       (it "A↔C is NOT emitted"
         (expect (not (contains? anchored-pairs #{:A :C})))))))
+
+;; =============================================================================
+;; Phase D: Reactive rules (forward-chained watchpoints).
+;;
+;; `(rule-set! :K {:when [...] :message "..."})` declares a rule. The engine
+;; fires the rule the moment a matching state transition lands, emitting
+;; `:rule-fired` on `:engine/warnings`. v1 is observation-only: no rule-
+;; driven mutation. Cycle protection deferred to v2.
+;; =============================================================================
+
+(defdescribe rule-set-test
+  (describe "rule-set! stores rules under :session/rules"
+    (let [ctx (eng/empty-ctx "t")
+          {ctx' :ctx :as out}
+          (eng/apply-mutator ctx "t1/i1/f1" :rule-set!
+            [:my-rule {:when [:on-fact-status :F :active]
+                       :message "F came alive"}])]
+
+      (it "stamped? true"
+        (expect (:stamped? out)))
+
+      (it "writes the rule under :session/rules"
+        (expect (= [:on-fact-status :F :active]
+                  (get-in ctx' [:session/rules :my-rule :when]))))
+
+      (it "defaults :status to :active"
+        (expect (= :active (get-in ctx' [:session/rules :my-rule :status]))))
+
+      (it "stamps :born from the form scope"
+        (expect (= "t1/i1/f1" (get-in ctx' [:session/rules :my-rule :born]))))))
+
+  (describe "malformed :when is rejected with a warning"
+    (let [ctx (eng/empty-ctx "t")
+          {warnings :warnings :as out}
+          (eng/apply-mutator ctx "t1/i1/f1" :rule-set!
+            [:bad {:when [:on-fact-meowed :F :active] :message "x"}])]
+      (it "stamped? false"
+        (expect (not (:stamped? out))))
+      (it "emits :rule-when-invalid"
+        (expect (some #(= :rule-when-invalid (:code %)) warnings))))))
+
+(defdescribe rule-remove-test
+  (describe "rule-remove! drops a rule entirely"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/rules :R]
+                  {:when [:on-fact-status :F :active]
+                   :message "x" :status :active :born "t1/i1/f1"}))
+          {ctx' :ctx :as out}
+          (eng/apply-mutator ctx "t1/i2/f1" :rule-remove! [:R])]
+      (it "stamped? true"
+        (expect (:stamped? out)))
+      (it "removes the rule"
+        (expect (not (contains? (:session/rules ctx') :R)))))))
+
+(defdescribe detect-rule-fires-test
+  (describe "detect-rule-fires returns matched rules for a status transition"
+    ;; Engine-pure detection: given before and after ctx, surface every
+    ;; rule whose pattern matched. The loop's apply-and-record! consumes
+    ;; this and emits soft warnings.
+    (let [before (-> (eng/empty-ctx "t")
+                   (assoc-in [:session/facts :F]
+                     {:content "x" :status :superseded :born "t1/i1/f1"})
+                   (assoc-in [:session/rules :R]
+                     {:when [:on-fact-status :F :active]
+                      :message "F awakens" :status :active}))
+          after (assoc-in before [:session/facts :F :status] :active)
+          fires (eng/detect-rule-fires before after)]
+
+      (it "fires exactly once for the matching transition"
+        (expect (= 1 (count fires))))
+
+      (it "carries the rule key + message + matched event"
+        (let [f (first fires)]
+          (expect (= :R (:rule f)))
+          (expect (= "F awakens" (:message f)))
+          (expect (= [:on-fact-status :F :active] (:event f)))))))
+
+  (describe "no fires when status didn't change"
+    (let [before (-> (eng/empty-ctx "t")
+                   (assoc-in [:session/facts :F]
+                     {:content "x" :status :active :born "t1/i1/f1"})
+                   (assoc-in [:session/rules :R]
+                     {:when [:on-fact-status :F :active]
+                      :message "x" :status :active}))
+          after  before]
+      (it "fires nothing"
+        (expect (empty? (eng/detect-rule-fires before after))))))
+
+  (describe ":disabled rules do not fire"
+    (let [before (-> (eng/empty-ctx "t")
+                   (assoc-in [:session/facts :F]
+                     {:content "x" :status :superseded :born "t1/i1/f1"})
+                   (assoc-in [:session/rules :R]
+                     {:when [:on-fact-status :F :active]
+                      :message "x" :status :disabled}))
+          after (assoc-in before [:session/facts :F :status] :active)]
+      (it "fires nothing"
+        (expect (empty? (eng/detect-rule-fires before after))))))
+
+  (describe "task and spec status triggers also fire"
+    (let [before (-> (eng/empty-ctx "t")
+                   (assoc-in [:session/tasks :T] {:status :todo :born "t1/i1/f1"})
+                   (assoc-in [:session/specs :S] {:status :draft :born "t1/i1/f1"})
+                   (assoc-in [:session/rules :Rt]
+                     {:when [:on-task-status :T :done]
+                      :message "T done" :status :active})
+                   (assoc-in [:session/rules :Rs]
+                     {:when [:on-spec-status :S :done]
+                      :message "S done" :status :active}))
+          after  (-> before
+                   (assoc-in [:session/tasks :T :status] :done)
+                   (assoc-in [:session/specs :S :status] :done))
+          fires (eng/detect-rule-fires before after)]
+      (it "fires both rules"
+        (expect (= 2 (count fires))))
+      (it "covers both kinds"
+        (let [hit (set (map :rule fires))]
+          (expect (= #{:Rt :Rs} hit)))))))

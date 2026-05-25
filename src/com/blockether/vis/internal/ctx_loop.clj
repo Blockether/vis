@@ -128,23 +128,42 @@
 ;; Mutator bindings
 ;; =============================================================================
 
+(defn- rule-fire-warning
+  [{:keys [rule message event]}]
+  {:code    :rule-fired
+   :anchor  [rule]
+   :message (str "rule " rule " fired on " (pr-str event)
+              " — " message)})
+
 (defn apply-and-record!
   "Call the engine mutator and swap! the result onto ctx-atom in one shot.
    Engine warnings land on `:engine/warnings` directly. Returns
    `:vis/silent` so the form result is hidden from the model's eval echo
    (the mutation effect is visible on next render).
 
+   Phase D: after the mutation commits, scan `:session/rules` for
+   reactive rules whose `:when` pattern matches the just-applied
+   transition (entity status change). Each fired rule emits a
+   `:rule-fired` soft warning carrying the rule's `:message`. v1 is
+   observation-only — no rule-driven mutation — so cycle protection
+   isn't needed yet.
+
    Public so the loop can route foundation hook-task emissions (D12)
    through the same write path the model uses."
   [{:keys [ctx-atom] :as env} mutator args]
-  (let [scope (synthesize-scope env)]
+  (let [scope (synthesize-scope env)
+        before (some-> ctx-atom deref)]
     (swap! ctx-atom
       (fn [c]
         (let [c+cursor (assoc c :session/scope (cursor-snapshot env))
               {:keys [ctx warnings stamped?]} (eng/apply-mutator c+cursor scope mutator args)
-              base (if stamped? ctx c)]
+              base (if stamped? ctx c)
+              fired (when (and stamped? before)
+                      (eng/detect-rule-fires before base))
+              fire-warns (map rule-fire-warning fired)
+              all-warns  (concat warnings fire-warns)]
           (cond-> base
-            (seq warnings) (update :engine/warnings (fnil into []) warnings)))))
+            (seq all-warns) (update :engine/warnings (fnil into []) all-warns)))))
     :vis/silent))
 
 (defn build-sci-bindings
@@ -171,7 +190,9 @@
    'proof-add!    (fn proof-add!    [task-k spec-k proof]  (apply-and-record! env :proof-add!    [task-k spec-k proof]))
    'proof-remove! (fn proof-remove! [task-k spec-k rid]    (apply-and-record! env :proof-remove! [task-k spec-k rid]))
    'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
-   'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))})
+   'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))
+   'rule-set!                (fn rule-set!                [k partial] (apply-and-record! env :rule-set!    [k partial]))
+   'rule-remove!             (fn rule-remove!             [k]         (apply-and-record! env :rule-remove! [k]))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop

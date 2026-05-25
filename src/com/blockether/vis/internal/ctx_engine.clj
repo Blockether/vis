@@ -545,6 +545,103 @@
                     [])
        :stamped?  true})))
 
+(def ^:private RULE_WHEN_PATTERNS
+  "Supported `:when` event patterns for Phase D rules. Each is a 2- or
+   3-element vector starting with an event kind keyword. The engine
+   compares the rule's `:when` shape against the just-applied mutation
+   and fires when it matches.
+
+     [:on-fact-status :F :active]    — fact :F transitioned to status
+     [:on-fact-status :F :superseded]
+     [:on-task-status :T :done]      — task :T transitioned to status
+     [:on-task-status :T :doing]
+     [:on-task-status :T :todo]
+     [:on-task-status :T :cancelled]
+     [:on-spec-status :S :done]
+     [:on-spec-status :S :draft]
+     [:on-spec-status :S :doing]
+
+   v1 surface is observation-only: a matched rule emits a soft warning
+   carrying the rule's `:message`. Mutating rules are a follow-up."
+  #{:on-fact-status :on-task-status :on-spec-status})
+
+(defn- apply-rule-set!
+  "Phase D mutator. Declare or update a reactive rule.
+
+     (rule-set! :K {:when [:on-fact-status :F :active]
+                    :message \"fact :F just became :active\"
+                    :status :active})
+
+   v1: :when must be a 3-element vector with the kind keyword first;
+   :message is the natural-language signal the engine emits as a soft
+   warning when the rule fires. :status defaults to :active."
+  [ctx form-scope [rule-k partial-map]]
+  (let [when-pat (:when partial-map)
+        kind     (when (vector? when-pat) (first when-pat))]
+    (cond
+      (or (not (vector? when-pat))
+        (not= 3 (count when-pat))
+        (not (contains? RULE_WHEN_PATTERNS kind)))
+      {:ctx ctx
+       :warnings [(warn :rule-when-invalid [rule-k when-pat]
+                    (str "rule " rule-k " :when " (pr-str when-pat)
+                      " is malformed; supported kinds: "
+                      (sort RULE_WHEN_PATTERNS)))]
+       :stamped? false}
+
+      :else
+      (let [path     [:session/rules rule-k]
+            existing (get-in ctx path)
+            merged   (cond-> (merge {:status :active} existing partial-map)
+                       (nil? existing) (assoc :born form-scope))]
+        {:ctx (assoc-in ctx path merged) :warnings [] :stamped? true}))))
+
+(defn- apply-rule-remove!
+  "Phase D mutator. Drop a rule entirely."
+  [ctx _form-scope [rule-k]]
+  (let [exists? (some? (get-in ctx [:session/rules rule-k]))]
+    {:ctx       (cond-> ctx exists? (update :session/rules dissoc rule-k))
+     :warnings  []
+     :stamped?  exists?}))
+
+(defn- entity-status-after [ctx kind k]
+  (case kind
+    :fact (or (get-in ctx [:session/facts k :status]) :active)
+    :task (get-in ctx [:session/tasks k :status])
+    :spec (get-in ctx [:session/specs k :status])
+    nil))
+
+(defn- entity-status-before [before-ctx kind k]
+  (entity-status-after before-ctx kind k))
+
+(defn detect-rule-fires
+  "Phase D pure detector. Given the ctx BEFORE and AFTER a mutator,
+   return a vec of `{:rule rule-k :message :event}` entries for every
+   `:active` rule whose `:when` pattern matched the transition. v1 only
+   inspects entity-status transitions (#{:on-fact-status :on-task-status
+   :on-spec-status}). Pure."
+  [before-ctx after-ctx]
+  (let [rules (or (:session/rules after-ctx) {})
+        kind->subtree {:fact :session/facts :task :session/tasks :spec :session/specs}
+        status-changed?
+        (fn [kind k expected]
+          (let [before (entity-status-before before-ctx kind k)
+                after  (entity-status-after  after-ctx  kind k)]
+            (and (not= before after) (= after expected))))]
+    (vec
+      (for [[rule-k rule] rules
+            :when (= :active (or (:status rule) :active))
+            :let [[kind+suffix entity-k expected] (:when rule)]
+            :when (and entity-k expected
+                    (case kind+suffix
+                      :on-fact-status (status-changed? :fact entity-k expected)
+                      :on-task-status (status-changed? :task entity-k expected)
+                      :on-spec-status (status-changed? :spec entity-k expected)
+                      false))]
+        {:rule    rule-k
+         :message (or (:message rule) "rule fired")
+         :event   (:when rule)}))))
+
 (defn- apply-fact-contradicts!
   "Phase C mutator. Declare a SYMMETRIC contradiction between two
    facts: setting `:K1 ↔ :K2` writes `:contradicts #{:K2}` on K1 AND
@@ -756,6 +853,8 @@
       :fact-depends! (apply-depends!      ctx form-scope (cons :fact args))
       :fact-contradicts!        (apply-fact-contradicts!        ctx form-scope args)
       :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
+      :rule-set!                (apply-rule-set!                ctx form-scope args)
+      :rule-remove!             (apply-rule-remove!             ctx form-scope args)
       :req-add!      (apply-req-add!      ctx form-scope args)
       :req-update!   (apply-req-update!   ctx form-scope args)
       :req-remove!   (apply-req-remove!   ctx form-scope args)

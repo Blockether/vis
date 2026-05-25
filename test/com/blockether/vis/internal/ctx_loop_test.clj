@@ -51,6 +51,7 @@
         (expect (= #{'spec-set! 'task-set! 'fact-set!
                      'spec-depends! 'task-depends! 'fact-depends!
                      'fact-contradicts! 'fact-contradicts-remove!
+                     'rule-set! 'rule-remove!
                      'req-add! 'req-update! 'req-remove!
                      'proof-add! 'proof-remove!}
                   (set (keys bindings)))))

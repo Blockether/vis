@@ -106,7 +106,13 @@ fact-set! :db-engine postgres, zadeklaruj kontradykcję. Pokaż ⚠.'
 
 ---
 
-## Phase D — Reactive triggers (forward chaining) ❌
+## Phase D — Reactive triggers (forward chaining) ✅ LANDED (v1)
+
+**v1 status.** Observation-only watchpoints. Rule fires emit
+`:rule-fired` soft warnings carrying the declared `:message`. Rule-
+driven MUTATIONS deferred to v2; cycle protection then becomes
+mandatory (max reentrancy depth, e.g. 3, with `;; ⚠ rule-cycle`).
+
 
 **Goal.** Engine fires user-declared rules on state change, not just
 at hook tick. Three triggers:

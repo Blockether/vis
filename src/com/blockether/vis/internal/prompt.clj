@@ -163,6 +163,17 @@
           by flipping one fact `:superseded`. A ↔ B and B ↔ C does NOT
           imply A ↔ C; declare each pair explicitly.
 
+      Reactive rules (forward-chained watchpoints):
+        (rule-set! :K {:when [:on-fact-status :F :active] :message \"…\"})
+        (rule-set! :K {:when [:on-task-status :T :done]   :message \"…\"})
+        (rule-set! :K {:when [:on-spec-status :S :done]   :message \"…\"})
+        (rule-remove! :K)
+        — a rule fires the moment an entity transitions into the
+          declared status; engine emits `;; ⚠ rule-fired :K … :message`
+          on that turn. v1 is observation-only — the rule does not
+          itself mutate ctx. Use rules to surface invariants you want
+          flagged across iters without re-reading the whole trailer.
+
       Introspection (lazy; reach evidence the live trailer dropped):
         (introspect-turn-list)
         (introspect-ctx-at        \"t<N>\")
