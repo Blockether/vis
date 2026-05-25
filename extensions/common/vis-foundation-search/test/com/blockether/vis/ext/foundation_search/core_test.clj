@@ -95,6 +95,107 @@
              :body (str "{\"jsonrpc\":\"2.0\",\"id\":" (pr-str id)
                      ",\"result\":" (pr-str result) "}")}))))))
 
+;; ---------------------------------------------------------------------------
+;; web / code — shape parity tests
+;; ---------------------------------------------------------------------------
+
+(def ^:private SAMPLE_EXA_TEXT
+  ;; Two entries matching Exa MCP's actual reply format.
+  "Title: metosin/malli
+URL: https://github.com/metosin/malli
+Published: 2019-05-17T19:21:51.000Z
+Author: N/A
+Highlights:
+# Repository: metosin/malli
+High-performance data-driven data specification library for Clojure/Script.
+- Stars: 1710
+
+Title: clojure.spec.alpha
+URL: https://clojuredocs.org/clojure.spec.alpha
+Published: 2018-01-01T00:00:00.000Z
+Author: Rich Hickey
+Highlights:
+## Spec
+The spec library specifies the structure of data.")
+
+(defn- mock-mcp
+  "Replace the private `call-mcp-tool!` so tests bypass the JSON-RPC
+   wire format entirely — cleaner than stitching fake JSON."
+  [text]
+  (fn [_tool _args]
+    {:endpoint "https://stub/mcp"
+     :result   {:content [{:type "text" :text text}]}}))
+
+(defdescribe web-shape-test
+  (describe "search/web returns a vec of citation maps with the canonical shape"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_TEXT)]
+      (let [results (search/web "clojure malli" {:num-results 2})]
+
+        (it "vec of two entries"
+          (expect (= 2 (count results))))
+
+        (it "every entry has :type :web :title :url :excerpt :source"
+          (doseq [e results]
+            (expect (= :web (:type e)))
+            (expect (string? (:title e)))
+            (expect (string? (:url e)))
+            (expect (string? (:excerpt e)))
+            (expect (= :exa (:source e)))))
+
+        (it "first entry preserves title + url + markdown excerpt"
+          (let [e (first results)]
+            (expect (= "metosin/malli" (:title e)))
+            (expect (= "https://github.com/metosin/malli" (:url e)))
+            (expect (clojure.string/includes? (:excerpt e) "# Repository"))))
+
+        (it "non-N/A authors carried through; N/A is stripped"
+          (expect (nil? (:authors (first results))))
+          (expect (= "Rich Hickey" (:authors (second results)))))
+
+        (it ":published preserved"
+          (expect (= "2019-05-17T19:21:51.000Z" (:published (first results)))))
+
+        (it "NO tool-envelope keys (no :result :success? :metadata :symbol :tag)"
+          (let [e (first results)]
+            (doseq [k [:result :success? :metadata :symbol :tag :error]]
+              (expect (not (contains? e k))))))))))
+
+(defdescribe code-shape-test
+  (describe "search/code mirrors search/web with :type :code"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_TEXT)]
+      (let [results (search/code "clojure spec" {:tokens-num 200})]
+        (it ":type :code on every entry"
+          (doseq [e results]
+            (expect (= :code (:type e)))))
+        (it "shape parity with web / papers"
+          (doseq [e results]
+            (expect (string? (:title e)))
+            (expect (string? (:url e)))
+            (expect (string? (:excerpt e)))))))))
+
+(defdescribe shape-parity-test
+  (describe "all three search/* fns return vec of citation maps with the same canonical shape"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_TEXT)
+                  http/get (fn [_url _opts] {:status 200 :body SAMPLE_ATOM})]
+      (let [w (first (search/web "x" {}))
+            c (first (search/code "x" {}))
+            p (first (search/papers "x" {}))
+            base-keys #{:type :title :url :excerpt :source}]
+        (it ":type is set on every result"
+          (expect (#{:web} (:type w)))
+          (expect (#{:code} (:type c)))
+          (expect (#{:paper} (:type p))))
+        (it "every entry has the canonical key set"
+          (doseq [e [w c p]]
+            (expect (every? #(contains? e %) base-keys))))
+        (it ":source is `:exa` for web/code, `:arxiv` for papers"
+          (expect (= :exa (:source w)))
+          (expect (= :exa (:source c)))
+          (expect (= :arxiv (:source p))))))))
+
 (defdescribe engine-scope-test
   (describe "every search/* symbol is :consult-only"
     (it "search/web carries #{:consult}"
