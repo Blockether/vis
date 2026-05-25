@@ -2187,6 +2187,87 @@
               (assoc entry :as-of-turn turn)))
       (reverse snaps))))
 
+(defn- entity-change-summary
+  "Pure: given a `before` and `after` snapshot of a single entity
+   (`{:status :born :depends-on :title :content :archived-proofs …}`),
+   return a vec of `[field before-val after-val]` rows for fields that
+   actually changed. Engine-internal flags (`:validated?`) are dropped."
+  [before after]
+  (let [tracked [:status :title :content :born :done-born :depends-on
+                 :proof :validator-fn :hook-id :importance :source
+                 :contradicts]
+        rejected-before (count (or (:archived-proofs before) []))
+        rejected-after  (count (or (:archived-proofs after) []))
+        rejected-delta  (- rejected-after rejected-before)
+        base (vec
+               (for [f tracked
+                     :let [b (get before f) a (get after f)]
+                     :when (not= b a)]
+                 [f b a]))]
+    (cond-> base
+      (pos? rejected-delta)
+      (conj [:rejected-proofs rejected-before rejected-after]))))
+
+(defn- diff-subtree
+  "Compare two snapshots' entries under `subtree-key` (e.g.
+   `:session/specs`). Returns a vec of change records:
+     {:kind :spec|:task|:fact :K :K
+      :change :added | :removed | [[field b a] …]}"
+  [before after subtree-key kind]
+  (let [bm (or (get before subtree-key) {})
+        am (or (get after subtree-key) {})
+        all-keys (sort (into #{} (concat (keys bm) (keys am))))]
+    (vec
+      (for [k all-keys
+            :let [b (get bm k) a (get am k)]
+            :when (not= b a)]
+        (cond
+          (nil? b) {:kind kind :K k :change :added :after a}
+          (nil? a) {:kind kind :K k :change :removed :before b}
+          :else    (let [fields (entity-change-summary b a)]
+                     (when (seq fields)
+                       {:kind kind :K k :change fields})))))))
+
+(defn diff-ctx
+  "Pure: return a vec of change records between two ctx snapshots.
+   Each record: `{:kind ∈ #{:spec :task :fact :rule} :K :change …}`.
+   `:change` is one of `:added` | `:removed` | vec of `[field before
+   after]` tuples. Engine-internal fields (`:validated?`) are skipped.
+   Trailer diffs are intentionally NOT included — trailer is ephemeral;
+   model already reads it inline."
+  [before after]
+  (vec
+    (concat
+      (remove nil? (diff-subtree before after :session/specs :spec))
+      (remove nil? (diff-subtree before after :session/tasks :task))
+      (remove nil? (diff-subtree before after :session/facts :fact))
+      (remove nil? (diff-subtree before after :session/rules :rule)))))
+
+(defn introspect-changes
+  "Lazy turn-delta introspection. `scope` is a turn key (`\"tN\"`); the
+   engine fetches snapshots N-1 and N from history and returns the
+   diff. Returns nil when N is missing or N-1 doesn't exist (e.g. on
+   turn 1).
+
+   Each entry: `{:kind :spec|:task|:fact|:rule :K k :change …}`
+   where `:change` is `:added`, `:removed`, or a vec of `[field b a]`
+   field-level transitions (status flip, born stamp, deps reshape,
+   archived-proofs delta, …)."
+  [history turn-key]
+  (let [snaps (snapshots-asc history)
+        n     (cond
+                (string? turn-key)
+                (when-let [[_ s] (re-matches #"^t([1-9][0-9]*)$" turn-key)]
+                  (parse-long s))
+                (number? turn-key) (long turn-key)
+                :else nil)
+        snap-at (fn [t] (some (fn [[k v]] (when (= k t) v)) snaps))]
+    (when n
+      (let [after  (snap-at n)
+            before (snap-at (dec n))]
+        (when (and after before)
+          (diff-ctx before after))))))
+
 (defn introspect-task
   [history k]
   (let [snaps (snapshots-asc history)]

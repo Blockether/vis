@@ -190,6 +190,7 @@
         (introspect-form          \"t<N>/i<M>/f<K>\")
         (introspect-spec / -task / -fact :K)
         (introspect-failed-proofs :K)         ; archived rejected proofs per task
+        (introspect-changes       \"t<N>\")    ; delta vec between turn N-1 and N
         (introspect-archived      :tasks|:specs|:facts)
         (trailer-find {:src-matches \"v/rg\" :limit 20
                        :scope-after \"t1/i3\"})  ; FTS5 search across iter code
