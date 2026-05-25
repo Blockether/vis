@@ -539,32 +539,48 @@ consult fence can parallel `search/web` + `search/papers` calls).
 - Budget check: when consult-budget-atom exhausted, warns + skips
   enqueue with `:consult-budget-exhausted` soft warning
 
-**Sync path — `await-consult`:**
+**Fetch path — `await-consult`:**
 
-- `(await-consult :id) → entry-map` blocks until the named consult
-  finishes, returns the materialised entry map directly
-- If consult already done by call time, returns immediately
-- If consult never declared (no matching intent), returns
-  `{:error :unknown-consult-id}` synchronously
-- Result also lands in `:session/consult-results` (single source of
-  truth — sync and async paths share the storage)
-- Hard timeout = same 60s wall as consult-engine's internal timeout
-- Primary CAN'T accidentally lose the result by awaiting too late —
-  consult-results persist for the GC TTL window
+- `(await-consult :id) → entry-map` reads the materialised entry from
+  `:session/consult-results` and PINS the full map in `:session/trailer`
+  as the form's `:result`
+- Same-iter as the `consult-request!` → returns
+  `{:error :consult-not-resolved-yet :reason "..."}` because engine
+  awaits unresolved futures at iter boundary, not mid-iter. Primary
+  MUST split declaration and fetch across iters.
+- Unknown id (never declared) → `{:error :unknown-consult-id}`
+- Entry already promoted/dismissed → `{:error :consult-already-resolved}`
+- Successful fetch: same map shape as `:session/consult-results` entry;
+  trailer pin scope tracked under `:engine/consult-trailer-scopes`
+  for later scrub on promote/dismiss
 
 **Iter-boundary contract:**
 
-- consult-request! IMMEDIATELY fires the future; primary can choose to
-  await within the same iter or let it run
-- At iter end, engine awaits ALL unresolved futures (block primary's
-  iter N+1 start until all consults resolve or time out)
-- Primary therefore NEVER "loses" a consult — even if no await, iter N+1
-  sees the result in `:session/consult-results`
+- consult-request! IMMEDIATELY fires the future on a side thread
+- At iter end, engine **awaits all unresolved futures** (block primary's
+  iter N+1 start until all consults resolve or hit 60s/each timeout)
+- Iter N+1 ALWAYS sees consults declared in iter N as materialised in
+  `:session/consult-results`
+- Primary therefore never "loses" a consult — fetch is always available
+  the iter after declaration
 
-- Test: declaring N intents fires N parallel futures; await-consult
-  blocks until that intent's future resolves; iter-end blocks until
-  remaining futures resolve; results visible in next iter regardless
-  of await pattern
+**Done gate:**
+
+- `(done {…})` REJECTED when any consult declared in the current iter
+  is still pending (i.e. `(seq (:engine/pending-consults ctx))` > 0
+  measured at done-form eval time)
+- Engine refuses the done emission and emits soft warning:
+  `;; ⚠ done blocked: <N> consult(s) pending this iter (:K, :K2);
+   await/decide before close`
+- Primary MUST issue a fresh iter to fetch + decide before retrying done
+- Rationale: closing a turn while research is still mid-flight wastes
+  the consult call; engine forces primary to integrate results
+
+- Test: declaring N intents fires N parallel futures; same-iter
+  await-consult returns :consult-not-resolved-yet; same-iter done
+  rejected; iter-end blocks until remaining futures resolve; iter N+1
+  await-consult succeeds and pins trailer; done in iter N+1 succeeds
+  when no fresh pending consults
 
 #### R5 — Mini-SCI consult engine
 
