@@ -139,7 +139,10 @@
         (expect (= :rl (get-in idx [:req-index :r2 :spec]))))
 
       (it ":proof-index keyed by [spec-id req-id]"
-        (expect (= [{:task :t1 :scope "t2/i1/f1"}]
+        ;; Phase E: entries now carry :scopes (vec) alongside the
+        ;; legacy :scope (first sub-scope) so derive-progression can
+        ;; reason about both singleton and compose proofs uniformly.
+        (expect (= [{:task :t1 :scope "t2/i1/f1" :scopes ["t2/i1/f1"]}]
                   (get-in idx [:proof-index [:rl :r1]])))
         (expect (nil? (get-in idx [:proof-index [:rl :r2]]))))
 
@@ -1197,3 +1200,127 @@
       (it "covers both kinds"
         (let [hit (set (map :rule fires))]
           (expect (= #{:Rt :Rs} hit)))))))
+
+;; =============================================================================
+;; Phase E: Proof composition.
+;;
+;; Proof entries can carry `:proof-compose [s1 s2 …]` plus `:proof-rule
+;; :and|:or`. The validator pass evaluates each sub-scope and combines the
+;; results. Failed sub-scopes archive individually so the model can swap
+;; only the broken evidence without rebuilding the whole composition.
+;; =============================================================================
+
+(defn- with-spec-req-validator [ctx spec-k req-id src]
+  (-> ctx
+    (assoc-in [:session/specs spec-k]
+      {:title "s" :born "t1/i1/f1" :status :doing
+       :requirements [{:id req-id :title "r" :validator-fn src}]})))
+
+(defn- with-compose-proof [ctx task-k spec-k req-id scopes rule]
+  (assoc-in ctx [:session/tasks task-k]
+    {:title "t" :born "t1/i1/f1" :status :doing
+     :specs {spec-k [(cond-> {:requirement req-id :proof-compose scopes}
+                       rule (assoc :proof-rule rule))]}}))
+
+(defdescribe proof-compose-and-test
+  (describe ":and composition passes when EVERY sub-scope's validator passes"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
+                (with-spec-req-validator :S :r1
+                  "(fn [{:keys [result]}] (true? result))")
+                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :and))
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}
+                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result true}}
+          ctx' (eng/archive-failed-task-proofs ctx form-results)]
+      (it "writes no archive entry — both passed"
+        (expect (empty? (get-in ctx' [:session/tasks :T :archived-proofs]))))))
+
+  (describe ":and composition archives ONLY the failed sub-scope"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
+                (with-spec-req-validator :S :r1
+                  "(fn [{:keys [result]}] (true? result))")
+                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :and))
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}
+                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result false}}
+          ctx' (eng/archive-failed-task-proofs ctx form-results)
+          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
+
+      (it "archives exactly one entry (the rejected scope)"
+        (expect (= 1 (count archive))))
+
+      (it "captures the failing sub-scope, not the whole compose"
+        (let [e (first archive)]
+          (expect (= "t2/i1/f2" (:proof e)))
+          (expect (= :r1 (:requirement e))))))))
+
+(defdescribe proof-compose-or-test
+  (describe ":or composition passes when AT LEAST ONE sub-scope passes"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
+                (with-spec-req-validator :S :r1
+                  "(fn [{:keys [result]}] (true? result))")
+                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :or))
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result false}
+                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result true}}
+          ctx' (eng/archive-failed-task-proofs ctx form-results)]
+      (it "writes no archive entry — one passed"
+        (expect (empty? (get-in ctx' [:session/tasks :T :archived-proofs]))))))
+
+  (describe ":or composition archives ALL sub-scopes when none pass"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
+                (with-spec-req-validator :S :r1
+                  "(fn [{:keys [result]}] (true? result))")
+                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :or))
+          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result false}
+                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result false}}
+          ctx' (eng/archive-failed-task-proofs ctx form-results)
+          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
+      (it "archives every sub-scope"
+        (expect (= 2 (count archive))))
+      (it "covers both failing scopes"
+        (let [scopes (set (map :proof archive))]
+          (expect (= #{"t2/i1/f1" "t2/i1/f2"} scopes)))))))
+
+(defdescribe proof-compose-schema-test
+  (describe "apply-proof-add! validates compose shape at write time"
+    (let [base (-> (eng/empty-ctx "t")
+                 (with-spec-req-validator :S :r1 "(fn [_] true)")
+                 (assoc-in [:session/tasks :T]
+                   {:title "t" :born "t1/i1/f1" :status :doing}))]
+      (it "rejects empty :proof-compose with :proof-compose-empty"
+        (let [{warnings :warnings}
+              (eng/apply-mutator base "t1/i2/f1" :proof-add!
+                [:T :S {:requirement :r1 :proof-compose []}])]
+          (expect (some #(= :proof-compose-empty (:code %)) warnings))))
+
+      (it "rejects non-string sub-scopes with :proof-compose-non-string"
+        (let [{warnings :warnings}
+              (eng/apply-mutator base "t1/i2/f1" :proof-add!
+                [:T :S {:requirement :r1 :proof-compose [:not-a-string]}])]
+          (expect (some #(= :proof-compose-non-string (:code %)) warnings))))
+
+      (it "warns on unknown :proof-rule with :proof-rule-unknown"
+        (let [{warnings :warnings}
+              (eng/apply-mutator base "t1/i2/f1" :proof-add!
+                [:T :S {:requirement :r1 :proof-compose ["t1/i1/f1"]
+                        :proof-rule :xor}])]
+          (expect (some #(= :proof-rule-unknown (:code %)) warnings)))))))
+
+(defdescribe proof-compose-progression-test
+  (describe "progression counts compose proofs as proven only when every sub-scope is reachable"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
+                (with-spec-req-validator :S :r1 "(fn [_] true)")
+                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :and))
+          ;; only one of the two compose scopes is in form-results
+          partial-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}}
+          full-results    {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}
+                           "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result true}}
+          prog-partial (eng/derive-progression ctx (eng/build-indexes ctx) partial-results)
+          prog-full    (eng/derive-progression ctx (eng/build-indexes ctx) full-results)]
+      (it "partial form-results → spec still :open"
+        (expect (= :open (get-in prog-partial [:S :state]))))
+      (it "full form-results → spec :ready"
+        (expect (= :ready (get-in prog-full [:S :state])))))))
