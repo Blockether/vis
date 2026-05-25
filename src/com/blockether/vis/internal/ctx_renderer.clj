@@ -44,6 +44,7 @@
       :session/next-actions […]}"
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.tokens :as tokens]))
@@ -406,6 +407,197 @@
       (str/join "\n" (map #(render-trailer-pin % 1) trailer))
       "\n ]")))
 
+(defn- pct-string [ratio]
+  (cond
+    (nil? ratio) "0%"
+    :else (str (Math/round (* 100.0 (double ratio))) "%")))
+
+(defn- project-fact
+  "LLM-facing projection of a fact. Drops engine-internal flags; keeps
+   `:content`, `:status`, `:born`, `:depends-on`, `:contradicts` (vec).
+   Raw shape stays in storage; `(introspect-fact :K)` returns it."
+  [[k f]]
+  [k (cond-> {:status (or (:status f) :active)}
+       (some? (:content f))      (assoc :content (:content f))
+       (:born f)                 (assoc :born (:born f))
+       (seq (:depends-on f))     (assoc :depends-on (:depends-on f))
+       (seq (:contradicts f))    (assoc :contradicts (vec (sort (:contradicts f)))))])
+
+(defn- project-spec
+  "LLM-facing projection of a spec. Drops `:validator-fn` source from
+   each requirement (engine remembers; `(introspect-spec :K)` returns).
+   Adds derived: `:progress`, `:missing`, `:validators`. Reqs become
+   flat `{:req-id {:title}}` map."
+  [progression [k s]]
+  (let [reqs (or (:requirements s) [])
+        p    (get progression k)]
+    [k (cond-> {:title (:title s) :status (or (:status s) :draft)}
+         (:born s)                 (assoc :born (:born s))
+         (:done-born s)            (assoc :done-born (:done-born s))
+         (seq (:depends-on s))     (assoc :depends-on (:depends-on s))
+         (seq reqs)                (assoc :reqs
+                                     (into {}
+                                       (for [r reqs]
+                                         [(:id r) {:title (:title r)}])))
+         (some? p)                 (assoc :progress
+                                     (str (:proven p) "/" (:total p)
+                                       " (" (pct-string (:ratio p)) ") "
+                                       (name (:state p))))
+         (some? p)                 (assoc :missing (vec (sort (:missing p))))
+         (seq reqs)                (assoc :validators
+                                     (str (count (filter :validator-fn reqs))
+                                       "/" (count reqs))))]))
+
+(defn- task-proof-shape
+  "Flat proof view per task: `{:spec/req <scope-or-compose>}`. Compose
+   proofs surface as the full sub-scope vec under the qualified key."
+  [t]
+  (into {}
+    (for [[spec-k proof-vec] (or (:specs t) {})
+          proof              proof-vec
+          :let [k (keyword (name spec-k) (name (:requirement proof)))]]
+      [k (cond
+           (vector? (:proof-compose proof))
+           (vec (:proof-compose proof))
+           (string? (:proof proof))
+           (:proof proof)
+           :else nil)])))
+
+(defn- project-task
+  "LLM-facing projection of a task. Drops `:validated?`, drops the raw
+   `:archived-proofs` vec (replaced by `:rejected-count`), flattens
+   `:specs {spec-K [proofs]}` to `:proofs {:spec/:req scope}`."
+  [[k t]]
+  (let [proofs (task-proof-shape t)
+        rejected (count (or (:archived-proofs t) []))]
+    [k (cond-> {:title (:title t) :status (or (:status t) :todo)}
+         (:born t)                 (assoc :born (:born t))
+         (:done-born t)            (assoc :done-born (:done-born t))
+         (:source t)               (assoc :source (:source t))
+         (:hook-id t)              (assoc :hook-id (:hook-id t))
+         (:importance t)           (assoc :importance (:importance t))
+         (seq (:depends-on t))     (assoc :depends-on (:depends-on t))
+         (seq proofs)              (assoc :proofs proofs)
+         (pos? rejected)           (assoc :rejected-count rejected))]))
+
+(defn- alive?
+  "Entity is `alive` (rendered in timeline/orphans) when not archived.
+   Archived entities go to introspect-archived; live ctx hides them."
+  [entity]
+  (not= :archived (:status entity)))
+
+(defn- task-roots
+  "Tasks that no OTHER task points at via :depends-on. They head the
+   timeline; their dep tree expands beneath."
+  [tasks dep-graph]
+  (let [referenced (reduce-kv
+                     (fn [acc [kind _] edges]
+                       (cond-> acc
+                         (= kind :task)
+                         (into (keep (fn [[k id]] (when (= :task k) id)))
+                           edges)))
+                     #{} dep-graph)]
+    (vec (sort (remove #(contains? referenced %) (keys tasks))))))
+
+(defn- build-timeline
+  "Walk each task root through the typed dep-graph collecting the
+   spec/fact refs it reaches (BFS, dedupe across roots). Returns a vec
+   of timeline entries shaped:
+     {:task :K :title :status :born :depends-on :proofs :rejected-count
+      :specs [{projected-spec}] :facts [{projected-fact}]}
+   Tasks whose status is :archived are skipped."
+  [ctx dep-graph progression]
+  (let [tasks (or (:session/tasks ctx) {})
+        specs (or (:session/specs ctx) {})
+        facts (or (:session/facts ctx) {})
+        live-tasks (into {} (filter #(alive? (val %)) tasks))
+        roots (task-roots live-tasks dep-graph)
+        seen-spec  (atom #{})
+        seen-fact  (atom #{})
+        visit
+        (fn [task-k]
+          (loop [queue [[:task task-k]]
+                 specs-out []
+                 facts-out []]
+            (if (empty? queue)
+              {:specs specs-out :facts facts-out}
+              (let [[kind k :as node] (peek queue)
+                    rest             (pop queue)
+                    edges            (get dep-graph node #{})
+                    spec-here        (and (= :spec kind)
+                                       (alive? (get specs k))
+                                       (not (@seen-spec k))
+                                       k)
+                    fact-here        (and (= :fact kind)
+                                       (alive? (get facts k))
+                                       (not (@seen-fact k))
+                                       k)]
+                (when spec-here (swap! seen-spec conj spec-here))
+                (when fact-here (swap! seen-fact conj fact-here))
+                (recur (into rest
+                         (filter (fn [[kind' k']]
+                                   (case kind'
+                                     :spec (and (contains? specs k') (alive? (get specs k')))
+                                     :fact (and (contains? facts k') (alive? (get facts k')))
+                                     :task false)))
+                         edges)
+                  (cond-> specs-out
+                    spec-here (conj (second (project-spec progression
+                                              [spec-here (get specs spec-here)]))))
+                  (cond-> facts-out
+                    fact-here (conj (second (project-fact
+                                              [fact-here (get facts fact-here)])))))))))]
+    (vec
+      (for [root roots
+            :let [task (get live-tasks root)
+                  {:keys [specs facts]} (visit root)]]
+        (let [[_ projected] (project-task [root task])]
+          (cond-> projected
+            (seq specs) (assoc :specs (vec specs))
+            (seq facts) (assoc :facts (vec facts))
+            true        (assoc :task root)))))))
+
+(defn- build-orphans
+  "Entities (live, non-archived) NOT pulled into any task tree. Returns
+   `{:facts {} :specs {} :tasks {}}`. Tasks here are roots without any
+   connected specs/facts AND themselves point at nothing."
+  [ctx timeline _dep-graph progression]
+  ;; project-* puts the key in position 0 of each returned pair; the
+  ;; timeline `:specs` / `:facts` keep that shape, so we walk them as
+  ;; map entries to collect the visible keys.
+  (let [in-timeline-spec (set (mapcat #(map first (or (:specs %) [])) timeline))
+        in-timeline-fact (set (mapcat #(map first (or (:facts %) [])) timeline))
+        in-timeline-task (set (map :task timeline))
+        live-facts (filter (fn [[_ f]] (alive? f)) (or (:session/facts ctx) {}))
+        live-specs (filter (fn [[_ s]] (alive? s)) (or (:session/specs ctx) {}))
+        live-tasks (filter (fn [[_ t]] (alive? t)) (or (:session/tasks ctx) {}))
+        orphan-fact? (fn [[k _]] (not (contains? in-timeline-fact k)))
+        orphan-spec? (fn [[k _]] (not (contains? in-timeline-spec k)))
+        orphan-task? (fn [[k _]] (not (contains? in-timeline-task k)))]
+    {:facts (into {} (map (fn [pair] (let [[k v] (project-fact pair)] [k v])))
+              (filter orphan-fact? live-facts))
+     :specs (into {} (map (fn [pair] (let [[k v] (project-spec progression pair)] [k v])))
+              (filter orphan-spec? live-specs))
+     :tasks (into {} (map (fn [pair] (let [[k v] (project-task pair)] [k v])))
+              (filter orphan-task? live-tasks))}))
+
+(defn- render-timeline-value
+  "Render :session/timeline. Vec of task-rooted entries, each carrying
+   inline projected specs/facts."
+  [timeline]
+  (if (empty? timeline)
+    "[]"
+    (zp (vec timeline))))
+
+(defn- render-orphans-value
+  "Render :session/orphans. One map with three sub-maps."
+  [{:keys [facts specs tasks]}]
+  (let [m (cond-> {}
+            (seq facts) (assoc :facts facts)
+            (seq specs) (assoc :specs specs)
+            (seq tasks) (assoc :tasks tasks))]
+    (if (empty? m) "{}" (zp m))))
+
 (defn- render-next-actions-value
   "Next-actions vec capped to NEXT_ACTIONS_BUDGET with an overflow hint.
    When the head of the list carries `:blocking? true` (priority 1 fix-
@@ -454,24 +646,20 @@
                           (when (and (pos? warn-n) (pos? blocking-n)) ", ")
                           (when (pos? blocking-n) (str blocking-n " blocking action(s)"))
                           " — read :session/next-actions first\n"))
+        ;; Phase G': projection over raw entities. Storage stays full-
+        ;; fidelity in :session/{specs,tasks,facts}; the renderer
+        ;; rebuilds a coherent task-rooted timeline + orphans for the
+        ;; LLM. introspect-* fns still return raw shape for full audit.
+        dep-graph     (or (:dep-graph (eng/build-indexes ctx)) {})
+        timeline      (build-timeline ctx dep-graph (or progression {}))
+        orphans       (build-orphans ctx timeline dep-graph (or progression {}))
         by-sub        (anchors-by-subtree ctx warnings*)
-        prog-entries  (vec (or progression {}))
-        specs-tail    (section-annotations
-                        (get by-sub :session/specs [])
-                        prog-entries 1)
-        ranked-tasks  (rank-tasks (or (:session/tasks ctx) {}))
-        hook-lines    (hook-task-annotation-lines (or (:session/tasks ctx) {}) 1)
-        archive-lines (archived-proofs-annotation-lines (or (:session/tasks ctx) {}) 1)
-        tasks-tail-w  (section-annotations (get by-sub :session/tasks []) [] 1)
-        extras-text   (let [ls (concat hook-lines archive-lines)]
-                        (when (seq ls) (str/join "\n" ls)))
-        tasks-tail    (cond
-                        (and tasks-tail-w extras-text)
-                        (str tasks-tail-w "\n" extras-text)
-                        extras-text extras-text
-                        :else tasks-tail-w)
-        facts-tail    (section-annotations (get by-sub :session/facts []) [] 1)
-        other-tail    (section-annotations (get by-sub :other []) [] 1)]
+        other-tail    (section-annotations
+                        (concat (get by-sub :session/specs [])
+                          (get by-sub :session/tasks [])
+                          (get by-sub :session/facts [])
+                          (get by-sub :other []))
+                        [] 1)]
     (str
       ";; ctx\n"
       banner
@@ -485,12 +673,10 @@
         (str (render-section :session/env (zp env-block) nil) "\n\n"))
       (render-section :session/symbols
         (zp (or (:session/symbols ctx) {})) nil)                  "\n\n"
-      (render-section :session/specs
-        (zp (or (:session/specs ctx) {})) specs-tail)             "\n\n"
-      (render-section :session/tasks
-        (zp ranked-tasks) tasks-tail)                             "\n\n"
-      (render-section :session/facts
-        (zp (bound-facts (or (:session/facts ctx) {}))) facts-tail) "\n\n"
+      (render-section :session/timeline
+        (render-timeline-value timeline) nil)                     "\n\n"
+      (render-section :session/orphans
+        (render-orphans-value orphans) nil)                       "\n\n"
       (render-section :session/trailer
         (render-trailer-value (or (:session/trailer ctx) [])) nil) "\n\n"
       (render-section :session/next-actions

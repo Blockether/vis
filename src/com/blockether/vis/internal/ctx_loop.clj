@@ -212,16 +212,17 @@
 
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`. When the model's
-   `(done {…})` payload carries `:trailer-drop` or `:trailer-summarize`,
-   stamp a fresh cursor, run the engine, swap! the result onto ctx-atom,
-   and append any conflict warnings to `:engine/warnings`. No-op when
-   neither directive is present — keeps the call site flat.
+   `(done {…})` payload carries any of `:trailer-drop`, `:trailer-
+   summarize`, or `:archive`, stamp a fresh cursor, run the engine,
+   swap! the result onto ctx-atom, and append warnings to
+   `:engine/warnings`. No-op when none of those directives is present.
 
-   Returns the dropped/summarised intent map for logging."
-  [{:keys [ctx-atom] :as env} {:keys [trailer-drop trailer-summarize]}]
+   Returns the intent map for logging."
+  [{:keys [ctx-atom] :as env} {:keys [trailer-drop trailer-summarize archive]}]
   (let [has-drops?     (seq trailer-drop)
         has-summaries? (seq trailer-summarize)
-        active?        (and ctx-atom (or has-drops? has-summaries?))]
+        has-archive?   (or (seq (:facts archive)) (seq (:specs archive)) (seq (:tasks archive)))
+        active?        (and ctx-atom (or has-drops? has-summaries? has-archive?))]
     (when active?
       (let [start-ms (System/nanoTime)
             cursor   (cursor-snapshot env)
@@ -233,18 +234,21 @@
                   {ctx' :ctx ws :warnings}
                   (eng/apply-done c+cur scope
                     {:trailer-drop trailer-drop
-                     :trailer-summarize trailer-summarize})]
+                     :trailer-summarize trailer-summarize
+                     :archive archive})]
               (reset! warns (vec ws))
               (cond-> (dissoc ctx' :session/scope)
                 (seq ws) (update :engine/warnings (fnil into []) ws)))))
         (tel/log! {:level :info :id ::apply-done
                    :data {:trailer-drop trailer-drop
                           :trailer-summarize trailer-summarize
+                          :archive archive
                           :warnings @warns
                           :duration-ms (/ (- (System/nanoTime) start-ms) 1e6)}}
           "apply-done completed")))
     {:trailer-drop trailer-drop
      :trailer-summarize trailer-summarize
+     :archive archive
      :active? active?}))
 
 (defn reconcile-done-hook-tasks!

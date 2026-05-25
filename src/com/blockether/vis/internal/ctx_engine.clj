@@ -425,9 +425,9 @@
 ;; Status terminal predicates + done-born stamping
 ;; =============================================================================
 
-(def ^:private spec-terminal? #{:done :cancelled})
-(def ^:private task-terminal? #{:done :cancelled})
-(def ^:private fact-terminal? #{:superseded})
+(def ^:private spec-terminal? #{:done :cancelled :archived})
+(def ^:private task-terminal? #{:done :cancelled :archived})
+(def ^:private fact-terminal? #{:superseded :archived})
 
 (defn- stamp-or-clear-done-born
   "Pure helper: if status is terminal and :done-born absent, stamp it; if
@@ -2083,13 +2083,58 @@
         warns    (vec (keep (fn [[_ {:keys [warn]}]] warn) reverts))]
     {:ctx ctx' :warnings warns}))
 
-(defn apply-done
-  "Process a `(done {…})` form against the ctx trailer. Returns
-   `{:ctx :warnings}`. The :answer field is NOT handled here — the loop owns
-   sending it back to the channel. Engine only touches trailer + persistence.
+(defn- apply-bulk-archive
+  "Phase H': bulk-archive encje wymienione w `(done {:archive {...}})`.
+   `archive-map` keys: `:facts :specs :tasks` → vec of entity keys. Each
+   listed entity gets its `:status` flipped to `:archived` (new terminal
+   status; cleanly distinct from `:done` / `:cancelled` / `:superseded`).
+   Missing entities emit a soft warning and skip.
 
-   `args` is the map `{:answer? :trailer-drop? :trailer-summarize?}`."
-  [ctx form-scope {:keys [trailer-drop trailer-summarize]}]
+   Snapshots keep the raw entity; `introspect-archived :kind` returns
+   them. Live ctx GC removes archived entries at the next turn boundary
+   without waiting for TTL.
+
+   Returns `{:ctx :warnings}`."
+  [ctx archive-map]
+  (let [{:keys [facts specs tasks]} (or archive-map {})
+        kind->subtree {:fact :session/facts :spec :session/specs :task :session/tasks}
+        attempts (concat
+                   (for [k (or facts [])]  [:fact k])
+                   (for [k (or specs [])]  [:spec k])
+                   (for [k (or tasks [])]  [:task k]))
+        outcomes (for [[kind k] attempts]
+                   (let [subtree (kind->subtree kind)
+                         exists? (some? (get-in ctx [subtree k]))]
+                     {:kind kind :k k :subtree subtree :exists? exists?}))
+        ctx'     (reduce (fn [acc {:keys [k subtree exists?]}]
+                           (cond-> acc
+                             exists? (assoc-in [subtree k :status] :archived)))
+                   ctx outcomes)
+        warns    (vec (for [{:keys [kind k exists?]} outcomes
+                            :when (not exists?)]
+                        (warn :done-archive-missing-entity [kind k]
+                          (str (name kind) " " k
+                            " listed in (done {:archive …}) does not exist"))))]
+    {:ctx ctx' :warnings warns}))
+
+(defn apply-done
+  "Process a `(done {…})` form against the ctx trailer + entity archive.
+   Returns `{:ctx :warnings}`. The :answer field is NOT handled here —
+   the loop owns sending it back to the channel. Engine only touches
+   trailer + entity status here.
+
+   `args` map keys:
+     :answer?             markdown payload (handled by loop, not engine)
+     :trailer-drop?       vec of `tN/iM` scopes to drop verbatim
+     :trailer-summarize?  vec of `{:scope-start :scope-end :summary}` pins
+     :archive?            `{:facts […] :specs […] :tasks […]}` bulk-flip
+                          to `:archived` terminal; snapshots keep raw,
+                          introspect-archived returns them.
+
+   Granular fact/spec/task-archive! mutators do NOT exist — bulk archive
+   only via (done {:archive …}). That keeps the close-of-turn the single
+   authoritative place to retire commitments."
+  [ctx form-scope {:keys [trailer-drop trailer-summarize archive]}]
   (let [start  (or (:session/trailer ctx) [])
         after-drop (apply-trailer-drop start (or trailer-drop []))
         {:keys [trailer warnings]} (apply-trailer-summarize
@@ -2105,9 +2150,14 @@
         conflict-warns (for [k conflict-keys]
                          (warn :done-drop-summarize-conflict [k]
                            (str "scope " k " appears in both :trailer-drop and"
-                             " :trailer-summarize; drop ignored, summary applied")))]
-    {:ctx (assoc ctx :session/trailer sorted)
-     :warnings (vec (concat conflict-warns warnings))}))
+                             " :trailer-summarize; drop ignored, summary applied")))
+        ctx-with-trailer (assoc ctx :session/trailer sorted)
+        {ctx-archived :ctx archive-warns :warnings}
+        (if (map? archive)
+          (apply-bulk-archive ctx-with-trailer archive)
+          {:ctx ctx-with-trailer :warnings []})]
+    {:ctx ctx-archived
+     :warnings (vec (concat conflict-warns warnings archive-warns))}))
 
 ;; =============================================================================
 ;; History introspection — pure fns over a {turn-n → ctx-snapshot} map

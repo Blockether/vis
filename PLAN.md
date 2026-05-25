@@ -217,7 +217,49 @@ dependency.
 
 ---
 
-## Phase G — Self-Discover reasoning structure ❌
+## Phase G — Self-Discover reasoning structure — DROPPED
+
+**Status.** Dropped after design review. Vis prompt already carries a
+full FSM (TURN LIFECYCLE: STATES / EVENTS / PRED / TRANSITIONS /
+ACTIONS) plus a deterministic `:session/next-actions` scheduler.
+Self-Discover stage 1 ("pick reasoning structure") would duplicate
+what the FSM + scheduler already declare. Skipped.
+
+## Phase G' — Coherent projection (timeline + orphans) ✅ LANDED
+
+**Goal.** Render-time projection layer that replaces the raw
+`:session/{specs,tasks,facts}` maps with a task-rooted timeline and
+an orphans bucket. Storage (`session_turn_state.ctx` snapshots, the
+live ctx atom, `introspect-*`) keeps full raw fidelity.
+
+Per-entity drops in projection:
+  - `:validator-fn` source on each req (engine still runs it;
+    `(introspect-spec :K)` returns raw)
+  - `:archived-proofs` full vec on tasks (replaced by `:rejected-count`)
+  - `:validated?` flag on tasks (engine-internal)
+
+Per-entity derived in projection:
+  - `:progress "N/M (P%) state"`, `:missing [...]`, `:validators "N/M"`
+    on specs
+  - flat `:proofs {:spec/req scope}` on tasks (drops nested `:specs`
+    map shape)
+
+Timeline ordering: task roots = tasks with no inbound task-dep.
+Not priority-driven; topological by the model's declared dep graph.
+Each root expands its connected specs+facts (BFS, deduped across
+roots). Live-only — archived entities are excluded.
+
+## Phase H' — Done bulk archive + `:status :archived` ✅ LANDED
+
+**Goal.** `:archived` becomes a new terminal status across
+fact/spec/task. `(done {:archive {:facts […] :specs […] :tasks […]}})`
+bulk-flips listed entities to `:archived`. Engine GC removes them at
+the next turn boundary (skips TTL wait). Snapshots keep raw;
+`(introspect-archived :tasks|:specs|:facts)` returns them.
+
+No granular `(fact-archive! …)` mutators — bulk via done is the only
+surface, keeping end-of-turn as the single authoritative close.
+
 
 **Goal.** Model declares reasoning structure for the turn on iter 1
 via `(reasoning-structure-set! {:modules […]})`. Engine renders
