@@ -162,6 +162,9 @@
   {'spec-set!     (fn spec-set!     [k partial]            (apply-and-record! env :spec-set!     [k partial]))
    'task-set!     (fn task-set!     [k partial]            (apply-and-record! env :task-set!     [k partial]))
    'fact-set!     (fn fact-set!     [k partial]            (apply-and-record! env :fact-set!     [k partial]))
+   'spec-depends! (fn spec-depends! [k deps]               (apply-and-record! env :spec-depends! [k deps]))
+   'task-depends! (fn task-depends! [k deps]               (apply-and-record! env :task-depends! [k deps]))
+   'fact-depends! (fn fact-depends! [k deps]               (apply-and-record! env :fact-depends! [k deps]))
    'req-add!      (fn req-add!      [spec-k req]           (apply-and-record! env :req-add!      [spec-k req]))
    'req-update!   (fn req-update!   [spec-k rid partial]   (apply-and-record! env :req-update!   [spec-k rid partial]))
    'req-remove!   (fn req-remove!   [spec-k rid]           (apply-and-record! env :req-remove!   [spec-k rid]))
@@ -447,6 +450,7 @@
      'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
      'introspect-fact     (fn introspect-fact     [k]   (eng/introspect-fact (history) k))
      'introspect-failed-proofs (fn introspect-failed-proofs [k] (eng/introspect-failed-proofs (history) k))
+     'introspect-dep-graph (fn introspect-dep-graph [] (eng/introspect-dep-graph (history)))
      'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
      'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
                             (let [t (cond
