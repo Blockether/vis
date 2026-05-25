@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.env-test
   (:require
    [com.blockether.vis.internal.env :as env]
-   [lazytest.core :refer [defdescribe expect it]]
+   [lazytest.core :refer [defdescribe describe expect it]]
    [sci.core :as sci]
    [sci.impl.evaluator]
    [sci.impl.resolve]))
@@ -156,3 +156,37 @@
         (expect (= :vis/banned-def-head (:type (ex-data e))))))
     ;; Strings are not parsed as code — they pass through.
     (expect (nil? (env/validate-no-banned-defs! "(def s \"d\" \"defrecord-in-a-string\")")))))
+
+;; ---------------------------------------------------------------------------
+;; `future` lives in `:consult` scope only.
+;; ---------------------------------------------------------------------------
+
+(defn- eval-in [{:keys [sci-ctx sandbox-ns]} src]
+  (try
+    {:ok? true :val (:val (sci/eval-string+ sci-ctx src {:ns sandbox-ns}))}
+    (catch Throwable t {:ok? false :err (.getMessage t)})))
+
+(defdescribe create-sci-context-scope-test
+  (describe ":main scope (default) does NOT bind future / realized? / deref-of-future"
+    (let [ctx (env/create-sci-context {})]
+      (it ":scope is :main on the returned map"
+        (expect (= :main (:scope ctx))))
+      (it "`future` is unresolvable in primary SCI"
+        (let [r (eval-in ctx "(future 1)")]
+          (expect (false? (:ok? r)))
+          (expect (re-find #"future" (str (:err r))))))
+      (it "`realized?` is unresolvable in primary SCI"
+        (let [r (eval-in ctx "(realized? (atom 1))")]
+          (expect (false? (:ok? r)))))))
+
+  (describe ":consult scope binds future + realized? for parallel research"
+    (let [ctx (env/create-sci-context {} :consult)]
+      (it ":scope is :consult on the returned map"
+        (expect (= :consult (:scope ctx))))
+      (it "`future` resolves and a `deref` returns its value"
+        (let [r (eval-in ctx "(deref (future (+ 1 2)))")]
+          (expect (:ok? r))
+          (expect (= 3 (:val r)))))
+      (it "`realized?` resolves"
+        (let [r (eval-in ctx "(realized? (future 1))")]
+          (expect (:ok? r)))))))

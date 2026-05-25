@@ -23,9 +23,9 @@
    [java.nio.file Paths]
    [java.util.function Function]
    [org.eclipse.jgit.api Git ListBranchCommand$ListMode
-                         ResetCommand$ResetType RebaseCommand$Operation
-                         RebaseCommand$InteractiveHandler
-                         RebaseResult]
+    ResetCommand$ResetType RebaseCommand$Operation
+    RebaseCommand$InteractiveHandler
+    RebaseResult]
    [org.eclipse.jgit.lib ObjectId Repository]
    [org.eclipse.jgit.transport RefSpec SshSessionFactory UsernamePasswordCredentialsProvider]
    [org.eclipse.jgit.transport.sshd KeyPasswordProvider SshdSessionFactory SshdSessionFactoryBuilder]))
@@ -583,7 +583,7 @@
 (defn- rebase-result->map
   [^RebaseResult result]
   (let [status (.getStatus result)
-          new-head (.getCurrentCommit result)]
+        new-head (.getCurrentCommit result)]
     {:status            (.name status)
      :successful?       (.isSuccessful status)
      :conflicts         (when-let [cs (.getConflicts result)] (vec cs))

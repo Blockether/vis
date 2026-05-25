@@ -166,6 +166,54 @@
           (expect (= ["t1/i1" "t2/i1" "t3/i1"] order)))))))
 
 ;; =============================================================================
+;; done gate: refuse close while consults are pending
+;; =============================================================================
+
+(defdescribe done-pending-consult-gate-test
+  (describe "done is REFUSED when :engine/pending-consults is non-empty"
+    (let [ctx (-> (eng/empty-ctx)
+                (assoc :engine/pending-consults
+                  [{:consult-id :review :preference :deep
+                    :focus ["x"] :question "q" :born "t1/i1/f1"}
+                   {:consult-id :critique :preference :fast
+                    :focus [] :question "q2" :born "t1/i1/f2"}]))
+          {:keys [ctx' blocked? warnings]
+           :or {ctx' nil}
+           :as result}
+          (eng/apply-done ctx "t1/i1/f9" {:archive {:tasks [:something]}})]
+
+      (it ":blocked? true on the returned map"
+        (expect (true? (:blocked? result))))
+
+      (it "ctx is returned UNCHANGED — no archive applied"
+        (expect (= ctx (:ctx result))))
+
+      (it "warning :done-blocked-by-pending-consults emitted"
+        (expect (some #(= :done-blocked-by-pending-consults (:code %))
+                  warnings)))
+
+      (it "warning anchor carries every blocking consult-id"
+        (let [w (first (filter #(= :done-blocked-by-pending-consults (:code %))
+                         warnings))]
+          (expect (= [:review :critique] (:anchor w)))))))
+
+  (describe "done proceeds normally when no consults are pending"
+    (let [ctx (eng/empty-ctx)
+          result (eng/apply-done ctx "t1/i1/f9" {})]
+      (it "no :blocked? flag"
+        (expect (not (:blocked? result))))
+      (it "ctx returned (apply-done-impl ran)"
+        (expect (some? (:ctx result))))))
+
+  (describe "done-pending-consult-blockers returns the vec of pending ids"
+    (it "non-empty pending => vec of ids"
+      (let [ctx {:engine/pending-consults
+                 [{:consult-id :K1} {:consult-id :K2}]}]
+        (expect (= [:K1 :K2] (eng/done-pending-consult-blockers ctx)))))
+    (it "empty pending => empty vec"
+      (expect (empty? (eng/done-pending-consult-blockers {}))))))
+
+;; =============================================================================
 ;; validator-fn compile + run
 ;; =============================================================================
 

@@ -1,0 +1,2 @@
+{foundation-search
+ {:nses [com.blockether.vis.ext.foundation-search.core]}}
