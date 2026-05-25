@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.slash-test
-  "Slash dispatch tests (PLAN.md §3).
+  "Slash dispatch tests.
 
    Slash specs are declarative — every test builds a tiny env map
    containing an `:extensions` atom of extension records whose

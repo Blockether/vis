@@ -7,17 +7,17 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe voice-input-test
-  (it "registers /voice as a declarative slash command (PLAN.md §3, K10)"
-    ;; K10 migration: the TUI-only `:tui.slot/commands` contribution
-    ;; has been replaced by a declarative `:ext/slash-commands` entry
+  (it "registers /voice as a declarative slash command"
+    ;; The TUI-only `:tui.slot/commands` contribution has been
+    ;; replaced by a declarative `:ext/slash-commands` entry
     ;; whose availability spans BOTH TUI and Telegram. One
     ;; registration, every channel renders the same surface via the
     ;; engine slash dispatch.
     (let [slashes (:ext/slash-commands core/voice-extension)]
       (expect (some #(= "voice" (:slash/name %)) slashes))
       (let [voice-slash (first (filter #(= "voice" (:slash/name %)) slashes))]
-        ;; PLAN.md §12 step 9 follow-up: voice-ext /voice is now TUI-only;
-        ;; the Telegram /voice (with inline-keyboard mode picker) is
+        ;; voice-ext /voice is TUI-only; the Telegram /voice (with
+        ;; inline-keyboard mode picker) is
         ;; registered separately by vis-channel-telegram. Per-channel
         ;; partitioning is what lets both extensions own the same
         ;; slash path without colliding at register time.

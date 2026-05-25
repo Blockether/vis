@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-ctx-test
-  "PLAN.md §12 step 6 — `:session/workspace` CTX block render."
+  "`:session/workspace` CTX block render."
   (:require
    [clojure.java.io :as io]
    [clojure.java.shell :as sh]

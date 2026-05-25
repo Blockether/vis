@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-slashes
-  "Declarative `/workspace …` slash tree (PLAN.md §3 + §5 + §6).
+  "Declarative `/workspace …` slash tree.
 
    Surface registered on `vis-foundation-core`'s
    `:ext/slash-commands` vec. Engine aggregates declarative slash
@@ -48,7 +48,7 @@
   (merge {:slash/status :error :slash/title msg} extras))
 
 ;; =============================================================================
-;; Handlers (one per command in PLAN §5)
+;; Handlers (one per command)
 ;; =============================================================================
 
 (defn- handle-new
@@ -61,7 +61,7 @@
       (nil? state-id)
       (err "Cannot spawn workspace: no active session")
 
-      ;; PLAN §5: refuse `new` from a branch-kind session. Avoids the
+      ;; Refuse `new` from a branch-kind session. Avoids the
       ;; fork-from-branch ambiguity; user must apply / discard /
       ;; switch first.
       (and current (= :branch (:kind current)))
@@ -247,7 +247,7 @@
 
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest
-   via `:ext/slash-commands`. Path layout follows PLAN §5."
+   via `:ext/slash-commands`."
   [{:slash/name   "workspace"
     :slash/doc    "Workspace operations (see subcommands)."
     :slash/usage  "/workspace <new|commit|apply|discard|list|switch|label> …"

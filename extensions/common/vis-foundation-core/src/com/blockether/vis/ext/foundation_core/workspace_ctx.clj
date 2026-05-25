@@ -1,12 +1,12 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-ctx
-  "Pre-turn `:session/workspace` CTX block (PLAN.md section 8 — canonical
-   `:vcs/*` shape; legacy `:git/*` aliases were KILLED in step 4).
+  "Pre-turn `:session/workspace` CTX block. Canonical `:vcs/*` shape;
+   the `:git/*` aliases were retired.
 
    The model reads `:session/workspace` to know what workspace is
    focused, what trunk it FFs onto, and which commits are ahead. The
    block is stamped once per turn at engine start; ctx_renderer
    serialises it into the prompt verbatim. Stale renders must not
-   recompute on every iter -- see PLAN section 8 'stamping rules'.
+   recompute on every iter.
 
    `render-block` is a pure projection from a hydrated
    `{:workspace ... :session-state ...}` pair plus optional VCS facts
@@ -157,7 +157,7 @@
 
 (defn render-block
   "Project a hydrated `{:workspace :session-state}` pair into the
-   canonical `:session/workspace` CTX map (PLAN.md section 8).
+   canonical `:session/workspace` CTX map.
 
    Returns `{:vcs/kind :none}` when `workspace` is nil -- matches the
    engine's `empty-ctx`.

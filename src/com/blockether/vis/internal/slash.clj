@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.slash
-  "Channel-agnostic slash dispatch (PLAN.md section 3).
+  "Channel-agnostic slash dispatch.
 
    Slashes are DECLARATIVE: every extension carries `:ext/slash-commands`
    on its manifest; the engine derives the active slash set by walking
@@ -47,7 +47,7 @@
    `ctx-loop/apply-and-record!` so a slash leaves the same kind of
    trace on `:session/*` that a model-emitted `(spec-set! ...)` / etc.
    would have. Validation, hook-task dedup, FSM safety all flow the
-   same way. PLAN.md section 12 step 7."
+   same way."
 
   (:require
    [clojure.string :as str]

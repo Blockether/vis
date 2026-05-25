@@ -1439,8 +1439,8 @@
    binds the engine contract to its own theme vocabulary.
 
    Tags collapsed from 8 (read/search/edit/create/delete/move/
-   shell/meta) to 2 (observation/mutation) per PLAN.md §2.1. The
-   TUI keeps its 8 color roles for visual richness; renderers can
+   shell/meta) to 2 (observation/mutation). The TUI keeps its 8 color
+   roles for visual richness; renderers can
    look at `:op` (the symbol) for finer-grained painting if
    needed, but the canonical mapping below uses just the tag."
   [op-tag]
@@ -1465,7 +1465,7 @@
 
 (defn- meta->color-role
   "Resolve a color role from a meta map carrying `:tag`. Single
-   source of truth: the engine-derived tag (PLAN §2.1, 2-value enum)."
+   source of truth: the engine-derived tag (2-value enum)."
   [m]
   (op-tag->color-role (:tag m)))
 
@@ -2654,10 +2654,9 @@
 
 (defn- detail-id-suffix
   ;; User-facing badge displayed at the right edge of disclosure rows.
-  ;; Per PLAN §2.8 + §2.9 + §2.10 + §5.1:
   ;;   - Render positions (ints), never UUIDs.
   ;;   - Format: `[turn 7 · iteration 3 · block 0 · tool · v/patch]`
-  ;;   - Lowercase level words, dot separator (·) per PLAN §2.10.
+  ;;   - Lowercase level words, dot separator (·).
   ;;   - Optional :role and :op-symbol segments after the positions.
   ;;   - No abbreviations: "iteration" not "iter".
   ^String [{:keys [turn-position iteration-number block-number

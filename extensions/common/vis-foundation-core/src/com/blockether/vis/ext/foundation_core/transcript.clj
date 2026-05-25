@@ -761,8 +761,8 @@
 
 (defn- prompt-report-heading
   [data report-title]
-  ;; Per PLAN §2.9 + §5.1: header NEVER prints the session UUID.
-  ;; Title is the user-facing identifier; UUID stays programmatic-only
+  ;; Header NEVER prints the session UUID. Title is the user-facing
+  ;; identifier; UUID stays programmatic-only
   ;; (introspection callers read `:id` directly from the data map).
   (let [{:keys [channel provider model created-at]} (:session data)
         session-title (get-in data [:session :title])]
@@ -876,8 +876,8 @@
    {:keys [position user-request status prior-outcome provider model
            iteration-count failure-count
            iterations tokens cost-usd answer]}]
-  ;; Per PLAN §2.9 + §5.1: render `position` (int), never `:id` (uuid).
-  ;; UUID stays in introspection responses for programmatic callers,
+  ;; Render `position` (int), never `:id` (uuid). UUID stays in
+  ;; introspection responses for programmatic callers,
   ;; never in user/LLM-facing surfaces.
   (str
     "### Turn " (or position "?") "\n"

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-slashes-test
-  "PLAN.md §12 step 6 — declarative `/workspace …` slash tree.
+  "Declarative `/workspace …` slash tree.
 
    Tests live at the unit level: build a registry env containing
    foundation-core's slash specs, then dispatch through the engine's

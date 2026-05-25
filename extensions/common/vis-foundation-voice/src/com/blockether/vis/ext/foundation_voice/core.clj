@@ -622,9 +622,9 @@
   (voice-asr-call! 'ensure-model!))
 
 (defn- voice-toggle-recording!
-  "Slash run-fn body for `/voice` (PLAN.md §12 step 6, K10).
-   Resolves the input ns lazily so the host doesn't pay the audio
-   stack cost until the user actually triggers voice."
+  "Slash run-fn body for `/voice`. Resolves the input ns lazily so the
+   host doesn't pay the audio stack cost until the user actually
+   triggers voice."
   [ctx]
   (let [toggle (or (requiring-resolve 'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
                  (throw (ex-info "Voice input namespace did not expose toggle-recording!"
@@ -717,15 +717,12 @@
                                      {:name "all" :kind :flag :type :boolean
                                       :doc "Download/check both voice models."}]
                           :cmd/run-fn #'voice-models-download-command}]}]}]
-     ;; PLAN.md §12 step 6 (K10): declarative slash registration
-     ;; replaces the TUI-only `:ext/channel-contributions
-     ;; {:tui.slot/commands [...]}` slot. ONE registration, both TUI
-     ;; and Telegram channels render the same surface via the engine
-     ;; slash registry. Until step 8 wires the TUI keybind through
-     ;; `slash-dispatch`, Ctrl+B keeps no-opping at the TUI layer
-     ;; (the slash itself is fully live in the registry).
-     ;; PLAN.md §12 step 9 follow-up: the TUI variant of /voice
-     ;; toggles recording via input/toggle-recording!. The Telegram
+     ;; Declarative slash registration replaces the TUI-only
+     ;; `:ext/channel-contributions {:tui.slot/commands [...]}` slot.
+     ;; ONE registration, both TUI and Telegram channels render the
+     ;; same surface via the engine slash registry. The TUI variant
+     ;; of /voice toggles recording via input/toggle-recording!. The
+     ;; Telegram
      ;; channel has different /voice semantics (mode picker + inline
      ;; keyboard) and registers its own /voice spec on
      ;; vis-channel-telegram. K10's 'one registration both channels'

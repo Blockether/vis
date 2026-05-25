@@ -1423,10 +1423,10 @@
    hook id, suitable for direct fold onto `:session/tasks`.
 
    Returns `{:id <kw> :task <task-map> :emit {:specs :tasks :facts}}`
-   or nil. The `:emit` key carries optional secondary CTX writes
-   (PLAN.md section 12 step 7 follow-up): each entry under
-   `:emit/specs` / `:emit/tasks` / `:emit/facts` flows through
-   `ctx-loop/apply-and-record!` exactly like a model-emitted mutator.
+   or nil. The `:emit` key carries optional secondary CTX writes:
+   each entry under `:emit/specs` / `:emit/tasks` / `:emit/facts`
+   flows through `ctx-loop/apply-and-record!` exactly like a model-
+   emitted mutator.
    Hooks may also return ONLY `{:emit ...}` to seed specs/tasks/facts
    without registering a hook-task themselves -- in that case both
    `:title` and `:validator-fn` may be absent and `:task` returns nil.
@@ -1578,7 +1578,7 @@
 
 (defn- eval-block-role
   "Block role for the outer lifecycle event — one of the four values
-   in the iteration-block role enum (PLAN.md §1.3):
+   in the iteration-block role enum:
      :answer    the model's final answer to the user
      :tool      any SCI evaluation (tool call OR raw user code)
      :nudge     system-emitted reminders / diagnostics
@@ -3232,9 +3232,9 @@
                                     iteration-hints))
                     _ (doseq [{:keys [id task]} (or folded-hits [])]
                         (ctx-loop/apply-and-record! environment :task-set! [id task]))
-                    ;; Hook :emit payload (PLAN.md §12 step 7 follow-up):
-                    ;; route secondary `:specs / :tasks / :facts` writes
-                    ;; from every hit through `apply-and-record!` so a
+                    ;; Hook :emit payload: route secondary `:specs /
+                    ;; :tasks / :facts` writes from every hit through
+                    ;; `apply-and-record!` so a
                     ;; hook can seed CTX in the same way a slash's
                     ;; `:slash/specs` / `:slash/tasks` / `:slash/facts`
                     ;; envelope does. Hooks that returned ONLY an :emit
@@ -3818,8 +3818,7 @@
 
 (defn- slash-ctx-for-env
   "Build the slash dispatch ctx from a turn env. Pure data; carries
-   the channel/session/workspace coordinates the slash handlers read.
-   PLAN.md sections 3 + 11."
+   the channel/session/workspace coordinates the slash handlers read."
   [env user-request]
   (let [db-info  (:db-info env)
         state-id (when db-info
@@ -3880,7 +3879,7 @@
    `(spec-set! ...)` / `(task-set! ...)` / `(fact-set! ...)` would.
    Engine FSM checks, dedup, and validator-fn satisfaction all run
    identically; warnings land on `:engine/warnings` for the next
-   render pass. PLAN.md section 12 step 7."
+   render pass."
   [env slash-result]
   (let [result (:result slash-result)]
     (when (map? result)
@@ -4040,8 +4039,8 @@
    persists it on the `session_turn_state` row. The next turn's
    `<system_state>` digest reads it.
 
-   PLAN.md §12 step 7: BEFORE the LLM round-trip, every turn is
-   passed through `slash/dispatch`. When the user-message resolves
+   BEFORE the LLM round-trip, every turn is passed through
+   `slash/dispatch`. When the user-message resolves
    to a registered slash, the turn is fully handled by a synthetic
    iteration (`tag :user-slash`) and the LLM is never called. The
    transcript still shows the user message + the slash envelope."
@@ -4149,8 +4148,8 @@
                                      (env/sci-update-binding! sci-ctx sym val)))
           ;; Workspace pin lives on the env itself (set in create-environment).
           ;; Opts may carry namespaced `:workspace/*` overrides for unusual
-          ;; per-turn cases; the legacy bare `:workspace` key was removed
-          ;; (PLAN.md §5 — pure :workspace/* keys, never a bare :workspace).
+          ;; per-turn cases; the bare `:workspace` key is not accepted
+          ;; (only :workspace/* namespaced keys flow through).
           ;; turn-state-atom already lives on env (one atom for all
           ;; per-turn cursor + id fields); no re-assoc needed.
           workspace-overrides    (select-keys opts [:workspace/root :workspace/id
@@ -4718,7 +4717,7 @@
         ;; with `:active-extensions`, so this snapshot is just metadata.
         system-prompt            (prompt/build-system-prompt {})
         resolved-session-id (persistance/db-resolve-session-id db-info session)
-        ;; Workspace pin (1:1 with session_state, PLAN.md decision 1):
+        ;; Workspace pin (1:1 with session_state):
         ;;   - resuming a session       → derive workspace from its latest state
         ;;   - brand-new session        → mint a trunk workspace, pass its id
         ;;                                into db-store-session! below
@@ -4916,7 +4915,7 @@
                      :db-info                           db-info}
               ;; Workspace info attached at env-build time so the extension
               ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
-              ;; root the very first time it fires (PLAN.md §5).
+              ;; root the very first time it fires.
               active-workspace
               (assoc :workspace        active-workspace
                 :workspace/id     (:id active-workspace)
@@ -5007,11 +5006,10 @@
   ^{:doc "In-process env cache.
 
    Keyed by `java.util.UUID` session-soul-id. Under the 1:1 session ↔
-   workspace invariant (PLAN.md decision 1) this key is isomorphic to
-   `(:workspace/id env)` — one cache entry = one session = one
-   workspace = one SCI sandbox lineage. Lookups normalize incoming
-   strings to UUID via `cache-key` so legacy string-id callers keep
-   working during the UUID sweep."}
+   workspace invariant this key is isomorphic to `(:workspace/id env)`
+   — one cache entry = one session = one workspace = one SCI sandbox
+   lineage. Lookups normalize incoming strings to UUID via `cache-key`
+   so legacy string-id callers keep working during the UUID sweep."}
   cache (atom {}))
 
 (defn- cache-key
@@ -5118,9 +5116,9 @@
    Opts (all optional):
      :title         display title
      :external-id   channel-specific external id
-     :workspace-id  pre-spawned workspace to pin the new session to
-                    (1:1, PLAN.md decision 1). When omitted, a trunk
-                    workspace is auto-minted in create-environment."
+     :workspace-id  pre-spawned workspace to pin the new session to.
+                    When omitted, a trunk workspace is auto-minted in
+                    create-environment."
   ([channel] (create! channel nil))
   ([channel {:keys [title external-id workspace-id]}]
    (let [env  (open-env! nil (cond-> {:channel     channel

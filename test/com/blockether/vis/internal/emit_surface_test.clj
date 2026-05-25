@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.emit-surface-test
-  "PLAN.md section 12 step 7 follow-up: extensions can emit
-   :session/specs / :session/tasks / :session/facts from both
+  "Extensions can emit :session/specs / :session/tasks /
+   :session/facts from both
    hooks and SCI tool symbols, NOT just slashes. Each emit routes
    through ctx-loop/apply-and-record! so the engine FSM checks,
    dedup, and validator-fn satisfaction stay identical to a model-
