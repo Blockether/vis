@@ -1,75 +1,74 @@
 (ns com.blockether.vis.internal.consult
-  "Phase H — secondary-model consultation via async cross-iter requests.
+  "Secondary-model consultation as an async cross-iter request/result
+   protocol.
 
-   Model declares an INTENT inside a fence:
+   STORAGE
+     Resolved consult entries land on `:session/trailer` as synthetic
+     form pins at iter end. The trailer IS the home for the entry
+     until the model promotes it (→ fact) or dismisses it.
 
-     (consult-request! :review :deep \"hard question…\")
-     ;; → {:consult-id :review :preference :deep :status :pending}
+     Pin shape (appended to the iter's `:forms` vec after the model's
+     own forms):
+       {:scope       \"tN/iM/c-K\"
+        :tag         :consult
+        :consult-id  :K
+        :src         \"(consult-resolved :K)\"
+        :result      <entry-map>}
 
-   Iter completes WITHOUT blocking. Engine processes pending consults
-   between iters (in parallel where multiple). Result materialises as
-   a fact in the NEXT iter under the `:consult/<id>` namespaced key:
+     The renderer surfaces it like any other observation. The model
+     reads `:result` to inspect `:content`/`:citations`/`:confidence`
+     and decides what to do.
 
-     ;; iter N+1, model sees in ctx:
-     :session/facts {:consult/:review
-                     {:content \"…consultant's answer…\"
-                      :status :active
-                      :consult-meta {:preference :deep
-                                     :call-no 3
-                                     :duration-ms 18432}
-                      :born \"tN/iM/fK\"}}
+   PRIMARY SURFACE
+     `(consult-request! :id :pref {:focus [...] :question \"…\"})`
+       → :vis/silent. Pushes intent + ctx-snapshot onto
+         `:engine/pending-consults`. Engine fires a side-thread future.
+     `(consult-promote! :id :fact-key)`
+       → :vis/silent. Finds the resolved trailer pin by :consult-id,
+         copies its :result into a new fact under :fact-key, scrubs
+         the trailer pin.
+     `(consult-dismiss! :id)`
+       → :vis/silent. Scrubs the trailer pin without promoting.
 
-   On failure the fact lands with :status :failed and :consult-meta
-   carrying :error + :reason.
-
-   Preferences (semantic, never provider/model names):
-     :fast      haiku-class — quick critique, sanity, format check
-     :balanced  sonnet-class — mid-range cost/quality
-     :deep      opus-class — hard reasoning, novel decomposition
-
-   Engine maps preference → provider+model via `~/.vis/config.edn`
-   `:consult` block. Model never sees the mapping; it just picks
-   the semantic preference.
-
-   The consultant call embeds INVISIBLY:
-     - primary system prompt (CORE + addendum)
-     - primary user request (turn message)
-     - current ctx snapshot (specs/tasks/facts/trailer)
-
-   So the secondary brain has enough context to answer without the
-   primary re-passing it. Embedded context never lands in the trailer
-   because it's engine state, not SCI bindings.
-
-   Budget: per-session cap (default 20). Recursion depth = 2 (a consult
-   spawned BY another consult counts; a third level fails fast)."
+   Done gate refuses close while `:engine/pending-consults` is
+   non-empty."
   (:require
-   [clojure.string :as str]
-   [com.blockether.svar.core :as svar]
-   [taoensso.telemere :as tel]))
+   [clojure.string :as str]))
 
-(def ^:private DEFAULT_CONSULT_BUDGET 20)
-(def ^:private MAX_RECURSION_DEPTH 2)
-(def ^:private CONSULT_TIMEOUT_MS 60000)
-(def ^:private CONSULT_TTFT_MS    30000)
-(def ^:private CONSULT_IDLE_MS    20000)
+;; =============================================================================
+;; Constants
+;; =============================================================================
 
-(def ^:private DEFAULT_PREFERENCE_MAP
+(def DEFAULT_CONSULT_BUDGET 20)
+
+(def DEFAULT_PREFERENCE_MAP
+  "Default semantic preference → provider+model. Operators override
+   via `~/.vis/config.edn` `:consult` block (env carries the resolved
+   map under `:consult-config`)."
   {:fast     {:provider :anthropic-coding-plan :model "claude-haiku-4-5"}
    :balanced {:provider :anthropic-coding-plan :model "claude-sonnet-4-6"}
    :deep     {:provider :anthropic-coding-plan :model "claude-opus-4-6"}})
 
-(def ^:dynamic *recursion-depth* 0)
+(def TOKEN_CAPS
+  "Per-preference `:content` token cap (jtokkit cl100k_base). Engine
+   re-prompts the consult LLM once when the answer overflows."
+  {:fast      1000
+   :balanced  4000
+   :deep     12000})
 
-(defn- resolve-preference
-  [env preference]
-  (let [config (or (:consult-config env) DEFAULT_PREFERENCE_MAP)]
-    (get config preference)))
+(def MAX_EXCERPT_TOKENS 500)
+(def MAX_CITATIONS      15)
 
-(defn- bump-budget!
-  [env]
-  (when-let [atm (:consult-budget-atom env)]
-    (swap! atm update :used (fnil inc 0))
-    (:used @atm)))
+;; =============================================================================
+;; Internal helpers
+;; =============================================================================
+
+(defn- warn!
+  "Append a soft warning to `:engine/warnings` on the ctx-atom."
+  [env code message & {:as extra}]
+  (when-let [ctx-atom (:ctx-atom env)]
+    (swap! ctx-atom update :engine/warnings (fnil conj [])
+      (merge {:code code :message message} extra))))
 
 (defn- budget-exhausted? [env]
   (when-let [atm (:consult-budget-atom env)]
@@ -77,196 +76,288 @@
           cap (or cap DEFAULT_CONSULT_BUDGET)]
       (>= (or used 0) cap))))
 
-(defn- ctx-snapshot-text
-  [env]
-  (try
-    (when-let [ctx-atom (:ctx-atom env)]
-      (let [c @ctx-atom]
-        (pr-str (select-keys c [:session/id :session/turn :session/scope
-                                :session/specs :session/tasks :session/facts
-                                :session/trailer]))))
-    (catch Throwable _ "")))
-
-(defn- build-consultant-messages
-  [env question]
-  (let [primary-system (or (:turn/system-prompt env) "")
-        primary-user   (or (:turn/user-request env) "")
-        ctx-text       (or (ctx-snapshot-text env) "")
-        consultant-system
-        (str "You are a SECONDARY CONSULTANT being queried by a primary\n"
-          "agent operating the Vis neurosymbolic engine. Answer the\n"
-          "primary agent's question concisely and concretely. Do NOT\n"
-          "try to satisfy the user yourself — the primary owns the\n"
-          "final answer; you provide one focused input.\n\n"
-          "PRIMARY AGENT'S SYSTEM RULES (read for context):\n"
-          primary-system)]
-    [{:role "system"    :content consultant-system}
-     {:role "user"      :content (str "PRIMARY USER MESSAGE:\n" primary-user)}
-     {:role "assistant" :content (str "Current ctx snapshot:\n" ctx-text)}
-     {:role "user"      :content question}]))
-
-(defn- call-consultant!
-  [env preference messages]
-  (let [{:keys [provider model]} (resolve-preference env preference)
-        router  (:router env)]
-    (when-not (and router provider model)
-      (throw (ex-info "consult-router-or-model-missing"
-               {:type :consult/router-missing
-                :preference preference})))
-    (let [opts {:lang     "clojure"
-                :messages messages
-                :routing  {:provider provider :model model}
-                :timeout-ms CONSULT_TIMEOUT_MS
-                :ttft-timeout-ms CONSULT_TTFT_MS
-                :idle-timeout-ms CONSULT_IDLE_MS
-                :reasoning :minimal
-                :preserved-thinking? false}
-          result (svar/ask-code! router opts)]
-      (or (some-> result :content) (some-> result :raw) ""))))
-
-;; =============================================================================
-;; ASYNC API
-;; =============================================================================
-;;
-;; consult-request! writes an INTENT into :engine/pending-consults.
-;; The loop's end-of-iter pass calls execute-pending! which drains the
-;; vec, fires each consult (potentially in parallel via future), and
-;; materialises results as `:consult/<id>` facts on the live ctx-atom.
-
-(defn request-consult!
-  "Declare an async consult intent. Pure-data wrt return value —
-   pushes an entry onto `:engine/pending-consults` on the ctx-atom
-   and returns a tiny ack map. Engine fulfils between iters.
-
-   Validates preference + question shape SYNCHRONOUSLY so the model
-   knows immediately on bad input. Returns:
-
-     {:ok? true  :consult-id :K :preference :deep :status :pending}
-     {:ok? false :consult-id :K? :error <kw> :reason <string>}
-
-   On :ok? false the intent is NOT enqueued; nothing happens between
-   iters. The model can read the map and recover."
-  [env consult-id preference question]
-  (cond
-    (not (keyword? consult-id))
-    {:ok?    false
-     :error  :invalid-consult-id
-     :reason (str "consult-id must be a keyword; got " (type consult-id))}
-
-    (not (#{:fast :balanced :deep} preference))
-    {:ok?        false
-     :consult-id consult-id
-     :error      :unknown-preference
-     :reason     (str "preference " preference
-                   " not in #{:fast :balanced :deep}")}
-
-    (or (not (string? question)) (str/blank? question))
-    {:ok?        false
-     :consult-id consult-id
-     :error      :empty-question
-     :reason     "consult question must be a non-blank string"}
-
-    (budget-exhausted? env)
-    {:ok?        false
-     :consult-id consult-id
-     :error      :budget-exhausted
-     :reason     (str "session consult budget exhausted at "
-                   (some-> (:consult-budget-atom env) deref :used)
-                   "/" (or (some-> (:consult-budget-atom env) deref :cap)
-                         DEFAULT_CONSULT_BUDGET))}
-
-    :else
-    (let [intent {:consult-id consult-id
-                  :preference preference
-                  :question   question
-                  :born       (or (:current-form-scope env) "tN/iM/f?")}]
-      (when-let [ctx-atom (:ctx-atom env)]
-        (swap! ctx-atom
-          (fn [c] (update c :engine/pending-consults (fnil conj []) intent))))
-      {:ok?        true
-       :consult-id consult-id
-       :preference preference
-       :status     :pending})))
-
-(defn- execute-one!
-  "Run ONE pending intent. Returns a fact-shaped map ready to be
-   `assoc`'d under `:consult/<id>` on `:session/facts`. Internal."
-  [env {:keys [consult-id preference question born]}]
-  (binding [*recursion-depth* (inc *recursion-depth*)]
-    (let [started (System/currentTimeMillis)
-          call-no (bump-budget! env)]
-      (if (>= *recursion-depth* (inc MAX_RECURSION_DEPTH))
-        {:status  :failed
-         :born    born
-         :consult-meta {:preference preference
-                        :call-no call-no
-                        :error :recursion-cap
-                        :reason (str "recursion depth >= cap " MAX_RECURSION_DEPTH)}}
-        (try
-          (let [messages (build-consultant-messages env question)
-                response (call-consultant! env preference messages)
-                duration (- (System/currentTimeMillis) started)]
-            (tel/log! {:level :info :id ::consult-ok
-                       :data {:consult-id consult-id
-                              :preference preference
-                              :call-no call-no
-                              :duration-ms duration
-                              :response-len (count (str response))}}
-              "consult executed")
-            {:content (str response)
-             :status  :active
-             :born    born
-             :consult-meta {:preference preference
-                            :call-no call-no
-                            :duration-ms duration}})
-          (catch Throwable t
-            (let [duration (- (System/currentTimeMillis) started)]
-              (tel/log! {:level :warn :id ::consult-failed
-                         :data {:consult-id consult-id
-                                :preference preference
-                                :call-no call-no
-                                :duration-ms duration
-                                :ex-class (.getName (class t))
-                                :ex-msg (ex-message t)}}
-                "consult failed")
-              {:status  :failed
-               :born    born
-               :consult-meta {:preference preference
-                              :call-no call-no
-                              :duration-ms duration
-                              :error :consult-error
-                              :reason (ex-message t)}})))))))
-
-(defn execute-pending!
-  "Drain `:engine/pending-consults` and run every intent in PARALLEL
-   (one future per intent). Materialise each result as a fact under
-   `:session/facts :consult/<id>` on the live ctx-atom. Called from
-   the iteration loop's end-of-iter pass.
-
-   Pure-ish: side effects are the ctx-atom swap + the LLM calls.
-   Returns the vec of consult-ids that were processed."
-  [env]
-  (when-let [ctx-atom (:ctx-atom env)]
-    (let [intents (or (:engine/pending-consults @ctx-atom) [])]
-      (when (seq intents)
-        ;; spawn futures in parallel
-        (let [futures (mapv (fn [i] [i (future (execute-one! env i))])
-                        intents)
-              ;; await all (these are SHORT — bounded by CONSULT_TIMEOUT_MS)
-              results (mapv (fn [[intent f]] [intent @f]) futures)]
-          (swap! ctx-atom
-            (fn [c]
-              (-> c
-                (assoc :engine/pending-consults [])
-                (update :session/facts
-                  (fn [facts]
-                    (reduce (fn [acc [{:keys [consult-id]} result]]
-                              (assoc acc
-                                (keyword "consult" (name consult-id))
-                                result))
-                      (or facts {}) results))))))
-          (mapv (comp :consult-id first) results))))))
-
 (defn fresh-budget-atom
   ([] (fresh-budget-atom DEFAULT_CONSULT_BUDGET))
   ([cap] (atom {:used 0 :cap cap})))
+
+(defn- current-scope [env]
+  (or (:current-form-scope env) "tN/iM/f?"))
+
+(defn- valid-request?
+  "Accepted shape is a map carrying a non-blank `:question` and an
+   optional `:focus` vec of strings."
+  [arg]
+  (and (map? arg)
+    (let [{:keys [focus question]} arg]
+      (and (string? question)
+        (not (str/blank? question))
+        (or (nil? focus)
+          (and (vector? focus) (every? string? focus)))))))
+
+;; =============================================================================
+;; consult-request! — async push
+;; =============================================================================
+
+(defn request-consult!
+  "Declare an async consult intent. Returns `:vis/silent`.
+
+   Signature:
+     (consult-request! :id :preference {:focus [...] :question \"…\"})
+
+   `:focus` OPTIONAL; when present a vec of strings.
+   `:question` REQUIRED non-blank string.
+
+   The engine pins the ctx snapshot onto the intent at request time
+   so a later mutation between request and future-eval is invisible
+   to the consult side."
+  [env consult-id preference arg]
+  (cond
+    (not (keyword? consult-id))
+    (warn! env :consult-invalid-id
+      (str "consult-id must be a keyword; got " (pr-str consult-id)))
+
+    (not (#{:fast :balanced :deep} preference))
+    (warn! env :consult-unknown-preference
+      (str "preference " (pr-str preference) " not in #{:fast :balanced :deep}")
+      :anchor [consult-id])
+
+    (not (valid-request? arg))
+    (warn! env :consult-invalid-request
+      (str "consult request must be a map of "
+        "{:focus [string*] :question non-blank-string}; got "
+        (pr-str arg))
+      :anchor [consult-id])
+
+    (budget-exhausted? env)
+    (warn! env :consult-budget-exhausted
+      (str "session consult budget exhausted at "
+        (some-> (:consult-budget-atom env) deref :used)
+        "/" (or (some-> (:consult-budget-atom env) deref :cap)
+              DEFAULT_CONSULT_BUDGET))
+      :anchor [consult-id])
+
+    :else
+    (let [{:keys [focus question]} arg
+          snapshot (try
+                     (when-let [ctx-atom (:ctx-atom env)]
+                       (let [c @ctx-atom]
+                         (pr-str
+                           (select-keys c
+                             [:session/id :session/turn :session/scope
+                              :session/specs :session/tasks :session/facts
+                              :session/trailer]))))
+                     (catch Throwable _ ""))
+          intent {:consult-id consult-id
+                  :preference preference
+                  :focus      (vec (or focus []))
+                  :question   question
+                  :born       (current-scope env)
+                  :ctx-snapshot snapshot}]
+      (when-let [ctx-atom (:ctx-atom env)]
+        (swap! ctx-atom
+          (fn [c]
+            (update c :engine/pending-consults (fnil conj []) intent))))
+      (when-let [fire (:consult-fire env)]
+        (fire env intent))))
+  :vis/silent)
+
+;; =============================================================================
+;; Trailer pin synthesis + lookup
+;; =============================================================================
+;;
+;; Resolved entries land on `:session/trailer` as synthetic form pins.
+;; The trailer is the home until the model promotes/dismisses.
+
+(defn- consult-pin?
+  "True when a trailer form is a synthetic consult-resolution pin."
+  [form]
+  (= :consult (:tag form)))
+
+(defn find-trailer-consult-pin
+  "Walk `:session/trailer` and return the LAST consult pin whose
+   `:consult-id` matches `id`, or nil. Last-wins so a re-issued
+   consult sees its fresh resolution."
+  [ctx id]
+  (let [matches (for [iter-pin (or (:session/trailer ctx) [])
+                      form     (or (:forms iter-pin) [])
+                      :when (and (consult-pin? form)
+                              (= id (:consult-id form)))]
+                  form)]
+    (last matches)))
+
+(defn append-resolution-pin!
+  "Append a synthetic consult-resolution pin to the current iter's
+   trailer entry. The pin renders inline with the model's own forms
+   so the model reads :result directly.
+
+   Pin scope follows the convention `tN/iM/c-K` (`c-` prefix, `K` =
+   id name). Uses the LATEST iter in the trailer; when the trailer
+   is empty, synthesizes a fresh pin entry.
+
+   Idempotent on `:consult-id`: if a pin for the same id already
+   exists in the latest iter entry, it is REPLACED rather than
+   duplicated."
+  [ctx-atom entry]
+  (swap! ctx-atom
+    (fn [c]
+      (let [id (:consult-id entry)
+            trailer (vec (or (:session/trailer c) []))
+            cursor  (:session/scope c)
+            iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
+            pin-form {:scope       (str iter-scope "/c-" (name id))
+                      :tag         :consult
+                      :consult-id  id
+                      :src         (str "(consult-resolved " id ")")
+                      :result      entry}
+            ;; Find/create the iter pin entry to append into.
+            [idx existing]
+            (loop [i (dec (count trailer))]
+              (if (neg? i)
+                [nil nil]
+                (let [pin (nth trailer i)]
+                  (if (and (= iter-scope (:scope pin))
+                        (contains? pin :forms))
+                    [i pin]
+                    (recur (dec i))))))
+            trailer'
+            (cond
+              ;; Replace within existing iter entry
+              existing
+              (let [forms (vec (or (:forms existing) []))
+                    forms-without (vec (remove
+                                         #(and (consult-pin? %)
+                                            (= id (:consult-id %)))
+                                         forms))
+                    forms+ (conj forms-without pin-form)]
+                (assoc trailer idx (assoc existing :forms forms+)))
+
+              ;; No iter entry yet — append a new one
+              :else
+              (conj trailer {:scope iter-scope :forms [pin-form]}))]
+        (assoc c :session/trailer trailer')))))
+
+(defn- scrub-trailer-pin!
+  "Remove every trailer pin whose `:consult-id` matches `id`. Walks
+   the entire trailer (cross-iter) and cleans empty iter entries.
+   Both `consult-promote!` and `consult-dismiss!` use this."
+  [ctx-atom id]
+  (swap! ctx-atom
+    (fn [c]
+      (let [trailer (or (:session/trailer c) [])
+            trailer'
+            (->> trailer
+              (mapv (fn [pin]
+                      (if-let [forms (:forms pin)]
+                        (let [forms' (vec
+                                       (remove
+                                         #(and (consult-pin? %)
+                                            (= id (:consult-id %)))
+                                         forms))]
+                          (if (empty? forms')
+                            ::drop
+                            (assoc pin :forms forms')))
+                        pin)))
+              (remove #(= ::drop %))
+              vec)]
+        (assoc c :session/trailer trailer')))))
+
+;; =============================================================================
+;; consult-promote! / consult-dismiss!
+;; =============================================================================
+
+(defn promote-consult!
+  "Find the resolved consult trailer pin for `:consult-id`, copy its
+   :content + :citations + :focus + :confidence into a new fact under
+   `:fact-key`, and scrub the trailer pin (cross-iter).
+
+   Returns `:vis/silent`. Warnings:
+     :consult-invalid-id       consult-id not a keyword
+     :consult-invalid-fact-key fact-key not a keyword
+     :consult-unknown-id       no resolved pin found
+     :consult-promote-failed   pin found but :status :failed"
+  [env consult-id fact-key]
+  (cond
+    (not (keyword? consult-id))
+    (warn! env :consult-invalid-id
+      (str "consult-id must be a keyword; got " (pr-str consult-id)))
+
+    (not (keyword? fact-key))
+    (warn! env :consult-invalid-fact-key
+      (str "fact-key must be a keyword; got " (pr-str fact-key))
+      :anchor [consult-id])
+
+    :else
+    (let [ctx (some-> (:ctx-atom env) deref)
+          pin (find-trailer-consult-pin ctx consult-id)
+          entry (:result pin)]
+      (cond
+        (nil? pin)
+        (warn! env :consult-unknown-id
+          (str "no resolved consult-pin found for " consult-id
+            "; was it declared and resolved? Pending consults block done.")
+          :anchor [consult-id])
+
+        (= :failed (:status entry))
+        (warn! env :consult-promote-failed
+          (str "cannot promote failed consult " consult-id
+            "; dismiss it or re-issue with narrower :focus")
+          :anchor [consult-id])
+
+        :else
+        (when-let [ctx-atom (:ctx-atom env)]
+          (swap! ctx-atom
+            (fn [c]
+              (let [fact {:content    (:content entry)
+                          :citations  (:citations entry)
+                          :focus      (:focus entry)
+                          :confidence (:confidence entry)
+                          :status     :active
+                          :source     :consult
+                          :born       (current-scope env)}]
+                (assoc-in c [:session/facts fact-key] fact))))
+          (scrub-trailer-pin! ctx-atom consult-id)))))
+  :vis/silent)
+
+(defn dismiss-consult!
+  "Scrub the resolved consult trailer pin for `:consult-id` without
+   promoting. Returns `:vis/silent`."
+  [env consult-id]
+  (cond
+    (not (keyword? consult-id))
+    (warn! env :consult-invalid-id
+      (str "consult-id must be a keyword; got " (pr-str consult-id)))
+
+    :else
+    (let [ctx (some-> (:ctx-atom env) deref)
+          pin (find-trailer-consult-pin ctx consult-id)]
+      (cond
+        (nil? pin)
+        (warn! env :consult-unknown-id
+          (str "no resolved consult-pin found for " consult-id)
+          :anchor [consult-id])
+
+        :else
+        (when-let [ctx-atom (:ctx-atom env)]
+          (scrub-trailer-pin! ctx-atom consult-id)))))
+  :vis/silent)
+
+;; =============================================================================
+;; Pending-consult helpers (used by the parallel runner + done gate)
+;; =============================================================================
+
+(defn pending-consult-ids
+  "Vec of consult-ids currently enqueued. Used by the done gate to
+   refuse close while research is in flight."
+  [ctx]
+  (mapv :consult-id (or (:engine/pending-consults ctx) [])))
+
+(defn clear-pending!
+  "Atomically drain `:engine/pending-consults` and return the drained
+   intents. Called by the parallel runner before spawning futures."
+  [ctx-atom]
+  (let [drained (atom [])]
+    (swap! ctx-atom
+      (fn [c]
+        (reset! drained (or (:engine/pending-consults c) []))
+        (assoc c :engine/pending-consults [])))
+    @drained))
