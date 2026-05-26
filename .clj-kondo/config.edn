@@ -1,7 +1,11 @@
 ;; Project-level clj-kondo config.
 {:lint-as
  {lazytest.core/defdescribe clojure.test/deftest
-  lazytest.core/around-each clojure.core/fn}
+  lazytest.core/around-each clojure.core/fn
+  ;; `vis/validator-fn` is an authoring sugar over `(fn arglist body)`.
+  ;; Same arglist semantics; tell kondo to lint it as a plain fn so
+  ;; destructured bindings in the body resolve.
+  com.blockether.vis.core/validator-fn clojure.core/fn}
 
  :hooks
  {:analyze-call
