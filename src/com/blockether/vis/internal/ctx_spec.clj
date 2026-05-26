@@ -180,7 +180,17 @@
 (s/def :session.task/source       #{:user :hook :engine})
 (s/def :session.task/hook-id      keyword?)
 (s/def :session.task/importance   #{:info :warn :critical})
-(s/def :session.task/validator-fn string?)
+;; `:validator-fn` accepts any of three shapes (see
+;; `ctx-engine/resolve-validator`):
+;;   - plain `fn?` value             (in-memory only)
+;;   - `{:fn <fn> :src "…"}` map       (host-defined, persist-safe)
+;;   - SCI source string             (model-emitted)
+;; Pure spec check stays loose; structural validity is enforced by
+;; `ctx-engine/validator-fn?`.
+(s/def :session.task/validator-fn
+  (s/or :fn      fn?
+    :map     (s/keys :opt-un [::validator-fn-fn ::validator-fn-src])
+    :src     string?))
 (s/def :session.task/proof        ::scope-form)
 ;; Engine-stamped `:validated? true` once `reconcile-done-hook-tasks`
 ;; runs the task's `:validator-fn` against the form envelope at `:proof`
@@ -227,7 +237,11 @@
 
 (s/def :session.requirement/id           keyword?)
 (s/def :session.requirement/title        string?)
-(s/def :session.requirement/validator-fn string?)
+;; Same shape contract as `:session.task/validator-fn`.
+(s/def :session.requirement/validator-fn
+  (s/or :fn      fn?
+    :map     map?
+    :src     string?))
 (s/def :session.requirement/facts
   (s/coll-of ::entry-key :kind vector?))
 

@@ -444,15 +444,33 @@
         :activity nil))
 
     :form-result
-    (let [silent? (or (structurally-silent-chunk? chunk)
-                    (and (not (:error chunk))
-                      (= :vis/answer (:result chunk))
-                      (not (visible-code-segments? chunk))))]
+    (let [silent?       (or (structurally-silent-chunk? chunk)
+                          (and (not (:error chunk))
+                            (= :vis/answer (:result chunk))
+                            (not (visible-code-segments? chunk))))
+          ;; Done-blocked refusal lands as a form result whose value
+          ;; is `{:vis/done-blocked? true :reason :pending-consults}`.
+          ;; Surface as a synthetic CONSULT recap so the channel
+          ;; renders an inline banner explaining the refusal.
+          done-blocked? (and (map? (:result chunk))
+                          (:vis/done-blocked? (:result chunk)))
+          entry-with-recap
+          (if-not done-blocked?
+            entry
+            (let [pending (mapv :id (:pending-consults entry))
+                  banner  (str "CONSULT  done refused — "
+                            (count pending) " consult"
+                            (when (not= 1 (count pending)) "s")
+                            " pending"
+                            (when (seq pending)
+                              (str ": " (clojure.string/join ", "
+                                          (map str pending)))))]
+              (update entry :recaps (fnil conj []) banner)))]
       (if silent?
-        (assoc (hide-form-slot entry (:position chunk)
+        (assoc (hide-form-slot entry-with-recap (:position chunk)
                  (render-segment-recaps (:render-segments chunk)))
           :activity nil)
-        (let [entry'      (unhide-form-slot entry (:position chunk))
+        (let [entry'      (unhide-form-slot entry-with-recap (:position chunk))
               display-idx (display-form-idx entry' (:position chunk))
               prev-form   (get (:forms entry') display-idx)]
           (assoc (assoc-form entry' display-idx
@@ -497,14 +515,31 @@
       :error    (:error chunk)
       :done?    true)
 
+    :consult-requested
+    ;; Async consult kicked off on a side thread. Track on
+    ;; `:pending-consults` until a `:consult-resolved` for the same
+    ;; `:id` lands, then drop. Channels render a pending pill from
+    ;; this vec; resolved entries live on `:consults`.
+    (update entry :pending-consults (fnil conj [])
+      {:id         (:id chunk)
+       :preference (:preference chunk)
+       :focus      (:focus chunk)
+       :question   (:question chunk)
+       :scope      (:scope chunk)})
+
     :consult-resolved
     ;; Async consult resolved between iters. We accumulate resolutions
     ;; on `:consults` so the channel renders them as a distinct lane,
-    ;; not interleaved with the model's own form-result rows.
+    ;; not interleaved with the model's own form-result rows. Drop the
+    ;; matching pending entry (by `:id`) since it's now a resolution.
     (let [resolution {:id     (:id chunk)
                       :scope  (:scope chunk)
                       :result (:result chunk)}]
-      (update entry :consults (fnil conj []) resolution))
+      (-> entry
+        (update :consults (fnil conj []) resolution)
+        (update :pending-consults
+          (fn [pending]
+            (vec (remove #(= (:id %) (:id chunk)) (or pending [])))))))
 
     ;; Unknown / missing :phase - leave the entry as-is.
     entry))

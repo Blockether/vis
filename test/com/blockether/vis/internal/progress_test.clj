@@ -131,3 +131,61 @@
         (expect (= #{1 3} iters))
         (expect (= [:K1] (map :id (:consults (first (filter #(= 1 (:iteration %)) timeline))))))
         (expect (= [:K2] (map :id (:consults (first (filter #(= 3 (:iteration %)) timeline))))))))))
+
+(defdescribe consult-pending-tracker-test
+  (it ":consult-requested chunks accumulate on :pending-consults"
+    (let [tracker (progress/make-progress-tracker)
+          on (:on-chunk tracker)]
+      (on {:phase :consult-requested :iteration-count 2 :id :reflexion
+           :preference :deep :focus ["91% claim"] :question "Verify."
+           :scope "t1/i2/c-reflexion"})
+      (on {:phase :consult-requested :iteration-count 2 :id :critique
+           :preference :fast :focus [] :question "Critique my draft."
+           :scope "t1/i2/c-critique"})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (= 2 (count (:pending-consults entry))))
+        (expect (= #{:reflexion :critique}
+                  (set (map :id (:pending-consults entry))))))))
+
+  (it ":consult-resolved clears the matching :pending-consults entry"
+    (let [tracker (progress/make-progress-tracker)
+          on (:on-chunk tracker)]
+      (on {:phase :consult-requested :iteration-count 2 :id :K
+           :preference :fast :scope "t1/i2/c-K"})
+      (on {:phase :consult-requested :iteration-count 2 :id :K2
+           :preference :deep :scope "t1/i2/c-K2"})
+      (on {:phase :consult-resolved :iteration-count 2 :id :K
+           :scope "t1/i2/c-K"
+           :result {:id :K :status :active :content "x"}})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (= 1 (count (:consults entry))))
+        (expect (= :K (-> entry :consults first :id)))
+        (expect (= [:K2] (map :id (:pending-consults entry))))))))
+
+(defdescribe done-blocked-banner-test
+  (it "form-result carrying :vis/done-blocked? appends a CONSULT recap banner"
+    (let [tracker (progress/make-progress-tracker)
+          on (:on-chunk tracker)]
+      (on {:phase :consult-requested :iteration-count 1 :id :K
+           :preference :deep :scope "t1/i1/c-K"})
+      (on {:phase :form-result :iteration-count 1 :position 0
+           :code "(done {:answer \"x\"})"
+           :result {:vis/done-blocked? true
+                    :reason :pending-consults
+                    :hint "..."}})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (some #(clojure.string/starts-with? % "CONSULT  done refused")
+                  (:recaps entry)))
+        (expect (clojure.string/includes?
+                  (some #(when (clojure.string/starts-with? % "CONSULT  done refused") %)
+                    (:recaps entry))
+                  ":K")))))
+
+  (it "banner only fires for done-blocked result, not regular form results"
+    (let [tracker (progress/make-progress-tracker)
+          on (:on-chunk tracker)]
+      (on {:phase :form-result :iteration-count 1 :position 0
+           :code "(v/cat \"x\")"
+           :result "alpha\nbeta"})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (empty? (or (:recaps entry) [])))))))

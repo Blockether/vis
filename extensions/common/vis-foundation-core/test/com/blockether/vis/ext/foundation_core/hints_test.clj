@@ -80,21 +80,54 @@
                                        :iteration it}))))))
 
 (defdescribe title-validator-fn-test
-  ;; The validator-fn is a SCI source string the engine compiles and
-  ;; evaluates against a form envelope at end-of-iter.
+  ;; The validator is purely structural: it pattern-matches on the
+  ;; engine-supplied `:form` (parsed sexp) and ignores `:src`. A proof
+  ;; scope whose source didn't parse leaves `:form` nil and fails closed
+  ;; — string-includes? was a false-positive magnet.
   (let [pred (eval (read-string hints/TITLE_VALIDATOR_FN_SRC))]
-    (it "passes when src calls set-session-title!"
-      (expect (true? (boolean (pred {:src "(set-session-title! \"Auth refactor\")"
+    (it "passes when :form is a real (set-session-title! \"…\") call"
+      (expect (true? (boolean (pred {:form '(set-session-title! "Auth refactor")
                                      :result :vis/silent})))))
 
-    (it "fails when src does not call set-session-title!"
-      (expect (false? (boolean (pred {:src "(v/cat \"README.md\")" :result :ok})))))
+    (it "namespace-qualified head still passes (matches by name only)"
+      (expect (true? (boolean (pred {:form '(vis/set-session-title! "X")
+                                     :result :vis/silent})))))
+
+    (it "fails when :form points at a different head"
+      (expect (false? (boolean (pred {:form '(v/cat "README.md")
+                                      :result :ok})))))
+
+    (it "fails when :form is missing the title arg"
+      (expect (false? (boolean (pred {:form '(set-session-title!)})))))
+
+    (it "fails when title arg is a blank string"
+      (expect (false? (boolean (pred {:form '(set-session-title! "")})))))
+
+    (it "fails when title arg is non-string"
+      (expect (false? (boolean (pred {:form '(set-session-title! 42)})))))
+
+    (it "FALSE POSITIVE GUARD: comment carrying the symbol does NOT pass"
+      ;; Regression: the legacy string-includes? validator passed on
+      ;; `(v/cat ...)  ;; remember to set-session-title!` because the
+      ;; literal substring was present. With `:form` matching, the
+      ;; head is `v/cat` and the validator fails as expected.
+      (expect (false? (boolean (pred {:form '(v/cat "README.md")
+                                      :result :ok})))))
+
+    (it "FALSE POSITIVE GUARD: string literal carrying the symbol does NOT pass"
+      (expect (false? (boolean (pred {:form '(println "called set-session-title! before")})))))
 
     (it "fails when the proof form errored"
-      (expect (false? (boolean (pred {:src "(set-session-title! \"x\")"
+      (expect (false? (boolean (pred {:form '(set-session-title! "x")
                                       :error {:message "boom"}})))))
 
-    (it "fails on missing :src"
+    (it "fails closed when :form is missing (parse failure)"
+      ;; No string fallback. An unparseable proof scope is a broken
+      ;; proof; we refuse to pretend a substring check substitutes
+      ;; for an AST match.
+      (expect (false? (boolean (pred {:src "(set-session-title! \"x\")"})))))
+
+    (it "fails on empty envelope"
       (expect (false? (boolean (pred {:result :ok})))))))
 
 (defdescribe context-pressure-hint-test
@@ -126,23 +159,39 @@
 
 (defdescribe context-pressure-validator-fn-test
   (let [pred (eval (read-string hints/CONTEXT_PRESSURE_VALIDATOR_FN_SRC))]
-    (it "passes on a (done …) form"
-      (expect (true? (boolean (pred {:src "(done {:answer \"x\"})" :result :vis/answer})))))
-
-    (it "passes on a (done …) call that drops trailer scopes"
-      (expect (true? (boolean (pred {:src "(done {:answer \"x\" :trailer-drop [\"t1/i1\"]})"
+    (it "passes on bare (done) form (turn converges either way)"
+      (expect (true? (boolean (pred {:form '(done)
                                      :result :vis/answer})))))
 
-    (it "passes when src mentions :trailer-summarize"
-      (expect (true? (boolean (pred {:src "(done {:answer \"x\" :trailer-summarize [{:scope-start \"t1/i1\" :scope-end \"t1/i2\" :summary \"explored\"}]})"
+    (it "passes on (done {:answer …})"
+      (expect (true? (boolean (pred {:form '(done {:answer "x"})
                                      :result :vis/answer})))))
+
+    (it "passes on (done … :trailer-drop …)"
+      (expect (true? (boolean (pred {:form '(done {:answer "x" :trailer-drop ["t1/i1"]})
+                                     :result :vis/answer})))))
+
+    (it "passes on (done … :trailer-summarize …)"
+      (expect (true? (boolean (pred {:form '(done {:answer "x" :trailer-summarize [{:scope-start "t1/i1" :scope-end "t1/i2" :summary "explored"}]})
+                                     :result :vis/answer})))))
+
+    (it "FALSE POSITIVE GUARD: comment carrying `:trailer-drop` does NOT pass"
+      (expect (false? (boolean (pred {:form '(v/cat "README.md")
+                                      :result :ok})))))
+
+    (it "FALSE POSITIVE GUARD: string literal carrying `done` does NOT pass"
+      (expect (false? (boolean (pred {:form '(println "will done shortly")})))))
 
     (it "fails on unrelated form"
-      (expect (false? (boolean (pred {:src "(v/ls \".\")" :result :ok})))))
+      (expect (false? (boolean (pred {:form '(v/ls ".")
+                                      :result :ok})))))
 
     (it "fails when proof form errored"
-      (expect (false? (boolean (pred {:src "(done {:answer \"x\"})"
-                                      :error {:message "boom"}})))))))
+      (expect (false? (boolean (pred {:form '(done {:answer "x"})
+                                      :error {:message "boom"}})))))
+
+    (it "fails closed when :form is missing"
+      (expect (false? (boolean (pred {:src "(done)"})))))))
 
 (defdescribe hooks-registration-test
   (it "foundation ships only the two iteration-start soft hooks"

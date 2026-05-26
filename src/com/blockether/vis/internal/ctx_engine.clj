@@ -834,11 +834,24 @@
 ;; =============================================================================
 ;;
 ;; Defined BEFORE derive-warnings because the T2 validator pass consumes it.
-;; We don't want a hard dep on the full Vis sandbox here. validator-fn source
-;; strings are tiny pure expressions: `(fn [{:keys [result error scope src]}]
-;; (…))`. A minimal SCI ctx with core arithmetic / set / coll predicates is
-;; enough. The compile result is cached by source hash; eval has a coarse
-;; timeout via future + future-cancel to guard against infinite loops.
+;; Validator-fn dispatch — three shapes supported:
+;;
+;;   1. Plain `fn?` value (host-defined, in-memory only).
+;;      Called directly under a timeout, no SCI eval. Fastest path.
+;;
+;;   2. Map `{:fn <fn> :src \"…\"}` (host-defined, persist-safe).
+;;      Runtime prefers `:fn`; after freeze/thaw the fn slot collapses
+;;      to a `{:vis/ref :expr}` marker so the dispatcher falls through
+;;      to `:src` and compiles via SCI. Authoring helper:
+;;      `vis/validator-fn` macro (see `com.blockether.vis.core`).
+;;
+;;   3. String (model-emitted from inside the SCI sandbox — the only
+;;      shape the model can produce). Compiled via SCI once and cached.
+;;
+;; The compile result is cached by source string; the eval path uses a
+;; coarse timeout (future + future-cancel) to guard against infinite
+;; loops. The minimal SCI ctx (core arithmetic / set / coll predicates)
+;; is plenty — validators are tiny predicates over the per-form envelope.
 
 (def ^:private validator-cache
   ;; {source-string → {:fn compiled-fn} or {:error msg}}
@@ -869,13 +882,50 @@
       (swap! validator-cache assoc src entry)
       entry)))
 
+(defn resolve-validator
+  "Return `{:fn <callable>}` or `{:error <msg>}` for any of the three
+   supported `:validator-fn` shapes (plain fn, dual map, source string).
+   `nil` is a structural error — callers should already have refused
+   to register the task. Pure (apart from the SCI compile cache)."
+  [v]
+  (cond
+    (nil? v)
+    {:error "validator-fn is nil"}
+
+    (fn? v)
+    {:fn v}
+
+    (map? v)
+    (cond
+      (fn? (:fn v))         {:fn (:fn v)}
+      (string? (:src v))    (compile-validator-fn (:src v))
+      :else                 {:error (str "validator-fn map must carry :fn or :src; got "
+                                      (pr-str (keys v)))})
+
+    (string? v)
+    (compile-validator-fn v)
+
+    :else
+    {:error (str "unsupported validator-fn type: " (pr-str (type v)))}))
+
+(defn validator-fn?
+  "True when `v` is a structurally-valid `:validator-fn` slot value
+   (any of the three accepted shapes). Used by spec checks +
+   pre-write guards instead of the old hardcoded `(string? v)`."
+  [v]
+  (or (fn? v)
+    (and (map? v) (or (fn? (:fn v)) (string? (:src v))))
+    (string? v)))
+
 (defn run-validator-fn
-  "Run a compiled validator with a 50ms timeout. Returns
-     {:ok? bool :reason :timed-out|:threw|:falsy|:ok :detail …}
-   When src failed to compile, returns {:ok? false :reason :compile-error :detail …}."
-  ([src form-result-map] (run-validator-fn src form-result-map 50))
-  ([src form-result-map timeout-ms]
-   (let [entry (compile-validator-fn src)]
+  "Run a validator (any of: plain fn, dual `{:fn :src}` map, source string)
+   with a 50ms timeout. Returns
+     {:ok? bool :reason :timed-out|:threw|:falsy|:ok|:compile-error :detail …}
+   When the validator failed to resolve (nil / wrong type / bad source),
+   returns `{:ok? false :reason :compile-error :detail <msg>}`."
+  ([validator form-result-map] (run-validator-fn validator form-result-map 50))
+  ([validator form-result-map timeout-ms]
+   (let [entry (resolve-validator validator)]
      (cond
        (:error entry)
        {:ok? false :reason :compile-error :detail (:error entry)}
@@ -1914,7 +1964,7 @@
         (for [[tk task] tasks
               :when (and (= :hook (:source task))
                       (= :done (:status task))
-                      (string? (:validator-fn task))
+                      (validator-fn? (:validator-fn task))
                       (not (:validated? task)))]
           (let [proof (:proof task)
                 outcome
@@ -2293,6 +2343,22 @@
    :regex true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
+(defn parse-form
+  "Parse `src` into a top-level Clojure form via edamame, using the
+   same tag-tolerant opts as `form-head-symbol`. Returns the FIRST
+   parsed form (sexp / scalar) or nil on parse failure / empty source.
+
+   Single source of truth for any \"give me the actual form structure,
+   not a string\" consumer (validator-fns, structural matchers,
+   audit logs). String-matching the raw `:src` is fragile —
+   comments / strings / nested calls can carry the target symbol
+   without the form actually invoking it; pattern-matching on the
+   parsed sexp eliminates that whole class of false positives."
+  [src]
+  (try
+    (first (edamame/parse-string-all (or src "") head-edamame-opts))
+    (catch Throwable _ nil)))
+
 (defn form-head-symbol
   "Return the top-level head symbol of `src` (a Clojure source string)
    or nil when `src` is not a call form. Uses edamame so reader meta,
@@ -2303,12 +2369,9 @@
 
    Parse failure / non-list head / empty source → nil."
   [src]
-  (try
-    (let [forms (edamame/parse-string-all (or src "") head-edamame-opts)
-          form  (first forms)]
-      (when (and (seq? form) (symbol? (first form)))
-        (first form)))
-    (catch Throwable _ nil)))
+  (let [form (parse-form src)]
+    (when (and (seq? form) (symbol? (first form)))
+      (first form))))
 
 (def ^:private core-mutation-heads
   "Engine-owned bare-symbol heads that classify a form as `:mutation`.
@@ -2429,13 +2492,18 @@
    1-based position and the engine cursor into the per-form envelope
    shape:
 
-     {:scope :tag :src :result :error :channel}
+     {:scope :tag :src :form :result :error :channel}
 
-   `:src` carries the form's source text; `:tag` is derived from the
-   source via `classify-form-tag`. `:result` is included only when the
-   block has one (engine convention: drop on default/nil). `:error` is
-   included only when the block errored. `:channel` is included only
-   when the form actually called one or more extension tools.
+   `:src` carries the form's source text; `:form` carries the same
+   text PARSED via edamame so validator-fns / structural matchers can
+   pattern-match on the actual sexp instead of `(includes? src \"...\")`-
+   shaped string regexes (a comment or string literal carrying the
+   target symbol would have produced false positives). Parse failure
+   leaves `:form` absent. `:tag` is derived from the source via
+   `classify-form-tag`. `:result` is included only when the block has
+   one (engine convention: drop on default/nil). `:error` is included
+   only when the block errored. `:channel` is included only when the
+   form actually called one or more extension tools.
 
    For `(def NAME …)` forms the raw SCI return is the Var; deref it once
    so the trailer carries the bound value directly. Every result is also
@@ -2467,10 +2535,12 @@
          ;; in the trailer envelope, ready for prompt rendering and
          ;; introspection.
          result (realize-trailer-value raw-result)
-         channel (seq (:channel block))]
+         channel (seq (:channel block))
+         parsed-form (parse-form src)]
      (cond-> {:scope scope
               :tag   (classify-form-tag src head-tag-resolver)
               :src   src}
+       (some? parsed-form)       (assoc :form parsed-form)
        (contains? block :result) (assoc :result result)
        (some? (:error block))    (assoc :error  (:error block))
        channel                   (assoc :channel (vec channel))))))

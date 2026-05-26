@@ -3101,17 +3101,32 @@
       (str "Provider: " text))))
 
 (defn- consult-recap
-  "Project a single consult-resolution entry into a recap string. The
-   `recap-entries` pipeline prepends `CONSULT  ` to the string so the
-   painter picks the consult kind from `recap-kinds`.
+  "Project a single resolved consult entry into a multi-line recap
+   body. The first line is the CONSULT-tagged header (id + confidence
+   + first citation title). Subsequent lines carry the prose synthesis
+   (markdown content) and a citation list. The painter applies the
+   CONSULT badge to the head row; continuation rows fall through to
+   the neutral recap paint (dialog-hint, bold + italic).
 
-   Active entries: `CONSULT  :id :confidence — <citation-title or content-head>`
-   Failed entries: `CONSULT  :id :failed (:error-kw)`"
+   Active entries:
+     CONSULT  :id :confidence — <citation-title or content-head>
+     <markdown body>
+     Citations:
+       • type :title :url
+       ...
+
+   Failed entries:
+     CONSULT  :id :failed (:error-kw)
+     <:reason text>"
   [{:keys [id result]}]
   (let [entry result]
     (case (:status entry)
       :failed
-      (str "CONSULT  " id " :failed (" (:error entry) ")")
+      (let [head   (str "CONSULT  " id " :failed (" (:error entry) ")")
+            reason (some-> entry :reason str)]
+        (if (str/blank? reason)
+          head
+          (str head "\n" reason)))
 
       :active
       (let [confidence (or (:confidence entry) :medium)
@@ -3120,10 +3135,43 @@
             tag        (or (some-> first-cite :title)
                          (some-> first-cite :url)
                          (when (string? content)
-                           (str/trim (subs content 0 (min 80 (count content))))))]
-        (str "CONSULT  " id " " confidence " — " tag))
+                           (str/trim (subs content 0 (min 80 (count content))))))
+            head       (str "CONSULT  " id " " confidence " — " tag)
+            body       (when (and (string? content) (not (str/blank? content)))
+                         (str/trim content))
+            citations  (vec (or (:citations entry) []))
+            citation-lines
+            (when (seq citations)
+              (str "Citations:\n"
+                (str/join "\n"
+                  (map (fn [c]
+                         (let [t (or (:title c) (:url c) "?")
+                               u (when (and (:title c) (:url c)) (:url c))]
+                           (str "  • " (name (or (:type c) :web)) " " t
+                             (when u (str " — " u)))))
+                    citations))))]
+        (cond-> head
+          body           (str "\n" body)
+          citation-lines (str "\n" citation-lines)))
 
       (str "CONSULT  " id " " (:status entry)))))
+
+(defn- pending-consult-recap
+  "Project a pending consult intent into a CONSULT-prefixed recap string.
+   Body carries the spinner glyph + preference + the focus head OR the
+   question head as a hint about what's being researched on the side
+   thread."
+  [{:keys [id preference focus question]}]
+  (let [focus-head (when (seq focus)
+                     (str/trim (subs (str (first focus))
+                                 0 (min 60 (count (str (first focus)))))))
+        question-head (when (and (str/blank? (str focus-head))
+                              (string? question))
+                        (str/trim (subs question
+                                    0 (min 60 (count question)))))
+        hint        (or focus-head question-head "")]
+    (str "CONSULT  " id " " preference " ⟳ pending"
+      (when (seq hint) (str " — " hint)))))
 
 (defn- provider-error-recap
   [error]
@@ -3260,7 +3308,7 @@
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
-  (let [{:keys [thinking content-stream forms recaps consults provider-fallbacks error repeat-count]} entry
+  (let [{:keys [thinking content-stream forms recaps consults pending-consults provider-fallbacks error repeat-count]} entry
         ;; Stream provider content alongside reasoning so the bubble
         ;; keeps painting between reasoning end and parsed-form render.
         ;; Once response-parse :done fires, :content-stream is dropped
@@ -3286,6 +3334,7 @@
         raw-recap-lines (recap-entries line-entry
                           (cond-> (vec (or recaps []))
                             (seq provider-fallbacks) (into (map fallback-recap provider-fallbacks))
+                            (seq pending-consults) (into (map pending-consult-recap pending-consults))
                             (seq consults) (into (map consult-recap consults))
                             (provider-error-recap error) (conj (provider-error-recap error)))
                           fill-w)
