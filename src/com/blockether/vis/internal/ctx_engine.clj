@@ -2090,15 +2090,14 @@
 
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer + entity archive.
-   Returns `{:ctx :warnings}` plus, when refused by a gate (consult or
-   missing-title), `:blocked? true`. The :answer field IS handled here
-   in Phase F: when present + non-blank, the engine auto-writes a
-   `:turn-N-answer` fact under `:session/facts` carrying a one-line
-   `:summary` and the full `:body`. Next turn's `;; ctx` EDN block
-   surfaces that fact inside the cached prefix, so cross-turn answer
-   reference is free — the model reads
-   `(introspect-fact :turn-N-answer)` instead of vis re-sending
-   `previous-turn-context-block` (deprecated).
+   Returns `{:ctx :warnings}` plus, when refused by the consult gate,
+   `:blocked? true`. The :answer field IS handled here in Phase F: when
+   present + non-blank, the engine auto-writes a `:turn-N-answer` fact
+   under `:session/facts` carrying a one-line `:summary` and the full
+   `:body`. Next turn's `;; ctx` EDN block surfaces that fact inside
+   the cached prefix, so cross-turn answer reference is free — the
+   model reads `(introspect-fact :turn-N-answer)` instead of vis
+   re-sending `previous-turn-context-block` (deprecated).
 
    `args` map keys:
      :answer            markdown payload (Phase F: auto-fact + loop ships to channel)
@@ -2115,29 +2114,20 @@
    only via (done {:archive …}). Close-of-turn is the single
    authoritative place to retire commitments.
 
-   Gates (any single one refuses close):
+   Consult gate: when `:engine/pending-consults` is non-empty,
+   `(done …)` is REFUSED. The engine returns the ctx unchanged plus
+   `:blocked? true` and a `:done-blocked-by-pending-consults`
+   warning. The integration layer must suppress answer shipping and
+   force a fresh iter so the primary can promote/dismiss + retry.
 
-   - **Consult gate**: when `:engine/pending-consults` is non-empty,
-     `(done …)` is REFUSED with
-     `:done-blocked-by-pending-consults`. Promote/dismiss the pending
-     consult on the next iter before retrying.
-
-   - **Missing-title gate (Phase D)**: on turn 1, `(done …)` is REFUSED
-     when `:session/title` is blank. The model must emit
-     `(set-session-title! \"...\")` before close. Skipped on turn
-     ≥2 because title can be set retroactively. Gate is silent (no
-     warn) when `:session/skip-title-gate?` is true — lets the host
-     opt out for test fixtures or single-shot CLI runs."
-  [ctx form-scope {:keys [answer answer-summary session-title skip-title-gate?
-                          trailer-drop trailer-summarize archive]}]
-  (let [blockers   (done-pending-consult-blockers ctx)
-        turn-pos   (long (or (:session/turn ctx) 0))
-        title-str  (some-> session-title str clojure.string/trim)
-        title-missing? (and (not (true? skip-title-gate?))
-                         (= 1 turn-pos)
-                         (or (nil? title-str) (clojure.string/blank? title-str)))]
-    (cond
-      (seq blockers)
+   The title-missing gate (Phase D) is enforced by the integration
+   layer (ctx-loop / vis loop) where the live session-title atom is
+   reachable. Keeping it outside this pure engine fn lets the unit
+   tests construct ctxs with `:session/turn 1` (the `empty-ctx`
+   default) without the gate firing."
+  [ctx form-scope {:keys [answer answer-summary trailer-drop trailer-summarize archive]}]
+  (let [blockers (done-pending-consult-blockers ctx)]
+    (if (seq blockers)
       {:ctx      ctx
        :blocked? true
        :warnings [(warn :done-blocked-by-pending-consults blockers
@@ -2145,17 +2135,6 @@
                       " consult(s) pending this iter ("
                       (clojure.string/join ", " (map str blockers))
                       "); await + promote/dismiss before close"))]}
-
-      title-missing?
-      {:ctx      ctx
-       :blocked? true
-       :warnings [(warn :done-blocked-by-missing-title []
-                    (str "done refused: session title is blank on turn 1. "
-                      "Emit `(set-session-title! \"3-7-word noun phrase\")` as "
-                      "a top-level form before `(done ...)`. The title labels "
-                      "the session in the channel UI and indexes it in history."))]}
-
-      :else
       (apply-done-impl ctx form-scope
         {:answer answer
          :answer-summary answer-summary

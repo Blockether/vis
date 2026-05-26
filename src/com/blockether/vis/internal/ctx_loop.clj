@@ -202,55 +202,106 @@
           (assoc c :engine/warnings [])))
       @ws)))
 
+(defn- title-gate-warning
+  "Phase D: integration-layer title-gate. Pure helper.
+
+   Returns a warning map when `(done ...)` should be REFUSED, or nil
+   to proceed. Fires when ALL hold:
+     - enforce? is truthy (opt-in flag the host sets when it cares
+       about a labelled session — e.g. interactive TUI),
+     - turn-pos == 1 (only enforcement point; later turns can re-tag
+       retroactively without a hard refusal),
+     - session-title is nil/blank.
+
+   Opt-IN design (NOT opt-out): unit tests + one-shot CLI runs don't
+   need a title and never enable the gate. The interactive loop path
+   sets `:enforce-title-gate? true` when wiring `apply-done!`.
+
+   Kept in ctx-loop, not the engine, so `eng/apply-done` stays pure
+   and `empty-ctx` (which seeds `:session/turn 1`) never trips the gate."
+  [turn-pos session-title enforce?]
+  (let [title-str (some-> session-title str clojure.string/trim)
+        missing?  (and (true? enforce?)
+                    (= 1 (long (or turn-pos 0)))
+                    (or (nil? title-str) (clojure.string/blank? title-str)))]
+    (when missing?
+      {:code    :done-blocked-by-missing-title
+       :anchor  []
+       :message (str "done refused: session title is blank on turn 1. "
+                  "Emit `(set-session-title! \"3-7-word noun phrase\")` as "
+                  "a top-level form before `(done ...)`. The title labels "
+                  "the session in the channel UI and indexes it in history.")})))
+
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`.
 
-   Always invokes the engine so the consult gate runs even on bare
-   `(done {:answer \"…\"})`. When `:engine/pending-consults` is
-   non-empty the engine returns `:blocked? true` plus a
-   `:done-blocked-by-pending-consults` warning; `:blocked?` is
-   surfaced to the caller (answer-fn) so the loop refuses to ship
-   the answer and forces a fresh iter.
+   Two gates fire here:
+
+   - Consult gate (engine-internal): when `:engine/pending-consults`
+     is non-empty, `eng/apply-done` returns `:blocked? true` plus a
+     `:done-blocked-by-pending-consults` warning. Promote/dismiss
+     the pending consult on the next iter before retrying.
+
+   - Title gate (Phase D, integration-layer): on turn 1 the loop
+     refuses to ship the answer until the model has set a session
+     title. The engine is NOT called when this gate fires - the
+     loop returns `:blocked? true` + `:done-blocked-by-missing-title`
+     warning directly. Skipped when `:skip-title-gate?` true.
 
    When the payload carries `:trailer-drop`, `:trailer-summarize`,
    or `:archive`, the engine applies them as part of the same swap.
 
    Returns the intent map plus `:blocked? true|false`."
   [{:keys [ctx-atom] :as env} {:keys [answer answer-summary
-                                      session-title skip-title-gate?
+                                      session-title enforce-title-gate?
                                       trailer-drop trailer-summarize archive]}]
-  (let [start-ms (System/nanoTime)
-        cursor   (cursor-snapshot env)
-        scope    (synthesize-scope env)
-        warns    (atom [])
-        blocked? (atom false)]
-    (when ctx-atom
-      (swap! ctx-atom
-        (fn [c]
-          (let [c+cur (assoc c :session/scope cursor)
-                {ctx' :ctx ws :warnings blocked :blocked?}
-                (eng/apply-done c+cur scope
-                  {:answer answer
-                   :answer-summary answer-summary
-                   :session-title session-title
-                   :skip-title-gate? skip-title-gate?
-                   :trailer-drop trailer-drop
-                   :trailer-summarize trailer-summarize
-                   :archive archive})]
-            (reset! warns (vec ws))
-            (reset! blocked? (boolean blocked))
-            (cond-> (dissoc ctx' :session/scope)
-              (seq ws) (update :engine/warnings (fnil into []) ws)))))
-      (tel/log! {:level :info :id ::apply-done
-                 :data {:answer-present?   (boolean (not (clojure.string/blank? (str answer))))
-                        :answer-summary?   (boolean (not (clojure.string/blank? (str answer-summary))))
-                        :trailer-drop      trailer-drop
-                        :trailer-summarize trailer-summarize
-                        :archive           archive
-                        :warnings          @warns
-                        :blocked?          @blocked?
-                        :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
-        "apply-done completed"))
+  (let [start-ms   (System/nanoTime)
+        cursor     (cursor-snapshot env)
+        scope      (synthesize-scope env)
+        warns      (atom [])
+        blocked?   (atom false)
+        ctx-now    (when ctx-atom @ctx-atom)
+        title-warn (title-gate-warning (:session/turn ctx-now)
+                     session-title enforce-title-gate?)]
+    (cond
+      ;; Phase D title-gate short-circuits BEFORE the engine swap so
+      ;; auto-fact + trailer mutations are not applied for a refused close.
+      title-warn
+      (do
+        (reset! warns [title-warn])
+        (reset! blocked? true)
+        (when ctx-atom
+          (swap! ctx-atom update :engine/warnings (fnil conj []) title-warn))
+        (tel/log! {:level :warn :id ::apply-done-title-blocked
+                   :data {:turn (:session/turn ctx-now)}}
+          "apply-done blocked by missing title"))
+
+      ctx-atom
+      (do
+        (swap! ctx-atom
+          (fn [c]
+            (let [c+cur (assoc c :session/scope cursor)
+                  {ctx' :ctx ws :warnings blocked :blocked?}
+                  (eng/apply-done c+cur scope
+                    {:answer answer
+                     :answer-summary answer-summary
+                     :trailer-drop trailer-drop
+                     :trailer-summarize trailer-summarize
+                     :archive archive})]
+              (reset! warns (vec ws))
+              (reset! blocked? (boolean blocked))
+              (cond-> (dissoc ctx' :session/scope)
+                (seq ws) (update :engine/warnings (fnil into []) ws)))))
+        (tel/log! {:level :info :id ::apply-done
+                   :data {:answer-present?   (boolean (not (clojure.string/blank? (str answer))))
+                          :answer-summary?   (boolean (not (clojure.string/blank? (str answer-summary))))
+                          :trailer-drop      trailer-drop
+                          :trailer-summarize trailer-summarize
+                          :archive           archive
+                          :warnings          @warns
+                          :blocked?          @blocked?
+                          :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
+          "apply-done completed")))
     {:answer answer
      :answer-summary answer-summary
      :trailer-drop trailer-drop
