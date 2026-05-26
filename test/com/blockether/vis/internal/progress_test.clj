@@ -99,3 +99,35 @@
           on     (:on-chunk tracker)]
       (on {:phase :reasoning :thinking "orphan"})
       (expect (= [] ((:get-timeline tracker)))))))
+
+(defdescribe consult-resolved-tracker-test
+  (it ":phase :consult-resolved chunks accumulate on the entry's :consults vec"
+    (let [tracker (progress/make-progress-tracker)
+          on (:on-chunk tracker)]
+      (on {:phase :consult-resolved :iteration-count 2 :id :reflexion
+           :scope "t1/i2/c-reflexion"
+           :result {:id :reflexion :status :active
+                    :content "Reflexion synthesis text."
+                    :confidence :high
+                    :citations [{:type :paper :url "u" :title "Reflexion"}]}})
+      (on {:phase :consult-resolved :iteration-count 2 :id :critique
+           :scope "t1/i2/c-critique"
+           :result {:id :critique :status :failed :error :timeout}})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (= 2 (count (:consults entry))))
+        (expect (= #{:reflexion :critique} (set (map :id (:consults entry))))))))
+
+  (it "consult resolutions on different iters land on their own entries"
+    (let [tracker (progress/make-progress-tracker)
+          on (:on-chunk tracker)]
+      (on {:phase :consult-resolved :iteration-count 1 :id :K1
+           :scope "t1/i1/c-K1"
+           :result {:id :K1 :status :active :content "x"}})
+      (on {:phase :consult-resolved :iteration-count 3 :id :K2
+           :scope "t1/i3/c-K2"
+           :result {:id :K2 :status :active :content "y"}})
+      (let [timeline ((:get-timeline tracker))
+            iters    (set (map :iteration timeline))]
+        (expect (= #{1 3} iters))
+        (expect (= [:K1] (map :id (:consults (first (filter #(= 1 (:iteration %)) timeline))))))
+        (expect (= [:K2] (map :id (:consults (first (filter #(= 3 (:iteration %)) timeline))))))))))
