@@ -200,7 +200,7 @@
            engine forces you to integrate before close.
         3. Iter N+1: each resolved consult lands as a synthetic
            trailer pin you read directly under :session/trailer:
-             {:scope \"tN/iM/c-K\" :tag :consult :consult-id :K
+             {:scope \"tN/iM/c-K\" :tag :consult :id :K
               :src \"(consult-resolved :K)\"
               :result <entry-map>}
            Inspect :result inline; no fetch fn needed. Decide:
@@ -214,7 +214,7 @@
         entry map carried by the trailer pin's :result.
 
       ENTRY SHAPE (the pin's :result)
-        {:consult-id :K :status :active|:failed
+        {:id :K :status :active|:failed
          :content    \"prose synthesis\"          ; :active only
          :citations  [{:type :paper|:web|:code|:doc
                        :url \"…\" :title \"…\"

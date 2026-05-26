@@ -157,7 +157,7 @@
       (sci/eval-string+ sci-ctx fence-src {:ns sandbox-ns})
       (catch Throwable t
         (tel/log! {:level :warn :id ::consult-eval-error
-                   :data {:consult-id (:consult-id intent)
+                   :data {:id (:id intent)
                           :ex-class (.getName (class t))
                           :ex-msg (ex-message t)}}
           "consult fence eval threw")))
@@ -181,12 +181,12 @@
      - {:ok? true  :payload <map>}        the consult's (done {…}) payload
      - {:ok? false :failure <entry-map>}  a populated failure entry"
   [env intent messages]
-  (let [{:keys [consult-id preference focus]} intent
+  (let [{id :id :keys [preference focus]} intent
         routing (resolve-routing env preference)
         started (System/currentTimeMillis)
         finish  (fn [err reason]
                   {:ok? false
-                   :failure {:consult-id consult-id
+                   :failure {:id id
                              :status :failed
                              :error err
                              :reason reason
@@ -232,7 +232,7 @@
                :started started}))))
       (catch Throwable t
         (tel/log! {:level :warn :id ::consult-failed
-                   :data {:consult-id consult-id
+                   :data {:id id
                           :preference preference
                           :ex-class (.getName (class t))
                           :ex-msg (ex-message t)}}
@@ -254,10 +254,10 @@
 (defn- build-entry-from-payload
   "assemble the success entry map."
   [intent payload started retries]
-  (let [{:keys [consult-id preference focus]} intent
+  (let [{id :id :keys [preference focus]} intent
         [citations dropped] (coerce-citations (:citations payload))
         duration (- (System/currentTimeMillis) started)
-        base {:consult-id consult-id
+        base {:id id
               :status     :active
               :content    (:content payload)
               :citations  citations
@@ -287,13 +287,13 @@
    Failure paths return `:status :failed :error <kw> :reason <string>`
    so the renderer  can surface them in the compact preview."
   [env intent]
-  (let [{:keys [consult-id preference focus]} intent
+  (let [{id :id :keys [preference focus]} intent
         started (System/currentTimeMillis)
         routing (resolve-routing env preference)
         runner-thread (.getName (Thread/currentThread))]
     (cond
       (nil? routing)
-      {:consult-id consult-id
+      {:id id
        :status :failed
        :error :consult-router-missing
        :reason (str "no provider/model resolved for preference "
@@ -307,7 +307,7 @@
       (let [cap        (get consult/TOKEN_CAPS preference)
             initial-msgs (build-messages env intent)]
         (tel/log! {:level :debug :id ::consult-start
-                   :data {:consult-id consult-id :preference preference
+                   :data {:id id :preference preference
                           :provider (:provider routing) :model (:model routing)
                           :thread runner-thread}}
           "consult run starting")
@@ -346,7 +346,7 @@
                         (build-entry-from-payload intent payload2 started 1)
 
                         :else
-                        {:consult-id consult-id
+                        {:id id
                          :status :failed
                          :error :exceeds-cap
                          :reason (str "first " n1 " / cap " cap

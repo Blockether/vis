@@ -361,14 +361,14 @@
 
 (defn- consult-pin-summary-line
   "One-line preview header for a synthetic consult-resolution pin.
-   Reads :consult-id + :result keys (the entry map) and emits a
+   Reads :id + :result keys (the entry map) and emits a
    compact ;; consult line so the model scans resolved consults
    without parsing the full pr-str entry.
 
    Active entries:  ;; consult :K :high — <citation-title or content-head>
    Failed entries:  ;; consult :K :failed (:timeout)"
   [form indent]
-  (let [id     (:consult-id form)
+  (let [id     (:id form)
         entry  (or (:result form) {})
         status (:status entry)]
     (case status
