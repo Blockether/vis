@@ -1151,8 +1151,8 @@
                       {:on-update (fn [timeline chunk]
                                     (try (on-tracker-update! token chat-id timeline chunk)
                                       (catch Exception _ nil)))})
-         opts       (cond-> {:cancel-atom (vis/cancellation-atom turn-token)
-                             :hooks       {:on-chunk (:on-chunk tracker)}}
+         opts       (cond-> {:cancel-token turn-token
+                             :hooks        {:on-chunk (:on-chunk tracker)}}
                       (turn-reasoning-default settings)
                       (assoc :reasoning-default (turn-reasoning-default settings))
 

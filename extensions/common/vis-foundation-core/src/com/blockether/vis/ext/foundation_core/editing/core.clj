@@ -683,6 +683,10 @@
      :truncated? @truncated?}))
 
 (defn- list-files
+  ;; Internal helper — always called with a real map (or nil).
+  ;; The dual kwargs/map calling convention lives on the public
+  ;; `ls-tool` wrapper; this stays positional to keep nil-forwarding
+  ;; trivial.
   ([path] (list-files path nil))
   ([path opts]
    (let [{:keys [depth limit hidden? respect-gitignore? files-only? dirs-only?]
@@ -1892,17 +1896,21 @@
      (filter #(= :file (:type %)) (:entries r))
    no `tree-seq` walk needed.
 
-   `(v/ls path)` reads with defaults; `(v/ls path opts)` accepts:
-     {:depth N            — max recursion depth (default 10)
-      :limit N            — stop after N entries (default 3000;
-                            sets :truncated? true)
-      :files-only? B      — emit only file entries (no directories)
-      :dirs-only?  B      — emit only directory entries
-      :hidden? B          — include dotfiles / dotdirs (default false)
-      :respect-gitignore? B  default true}"
-  ([path]
-   (ls-tool path nil))
-  ([path opts]
+   `(v/ls path)` reads with defaults. Opts can be supplied either as
+   a trailing map OR as inline kwargs — BOTH calling conventions
+   work and are equivalent (Clojure 1.11+ kwargs auto-coercion):
+     (v/ls path {:depth 2 :files-only? true})   ;; map form
+     (v/ls path :depth 2 :files-only? true)     ;; kwargs form
+
+   Recognised opts (any combination):
+     :depth N            — max recursion depth (default 10)
+     :limit N            — stop after N entries (default 3000;
+                           sets :truncated? true)
+     :files-only? B      — emit only file entries (no directories)
+     :dirs-only?  B      — emit only directory entries
+     :hidden? B          — include dotfiles / dotdirs (default false)
+     :respect-gitignore? B  default true"
+  ([path & {:as opts}]
    (let [listing (list-files path opts)
          result  (assoc listing :vis.op :v/ls)]
      (tool-success
@@ -1925,7 +1933,12 @@
    optional context); `:files-only? true` returns just distinct paths;
    `:counts? true` returns per-file match counts.
 
-   Spec map:
+   Spec accepts BOTH calling conventions (Clojure 1.11+ kwargs
+   auto-coercion):
+     (v/rg {:any [\"a\"] :paths [\"src\"]})    ;; map form
+     (v/rg :any [\"a\"] :paths [\"src\"])      ;; kwargs form
+
+   Recognised keys:
      {:all [\"a\" \"b\"]      — AND: every needle on same line
       :any [\"a\" \"b\"]      — OR: at least one needle on a line
       :paths [\"src\"]        — search roots (default [\".\"])
@@ -1947,72 +1960,86 @@
      content     (:mode :content)     {:hits [...]  :hit-count N  ...}
      files-only? (:mode :files-only)  {:files [...] :file-count N ...}
      counts?     (:mode :counts)      {:counts [...] :file-count N ...}"
-  ([spec]
-   (let [{:keys [paths include exclude files-only? counts? regex?
-                 before-ctx after-ctx limit] :as coerced} (coerce-rg-spec spec)
-         out (grep-files spec)
-         mode (cond files-only? :files-only
-                counts?     :counts
-                :else       :content)
-         shared {:vis.op       :v/rg
-                 :mode         mode
-                 :truncated-by (:truncated-by out)
-                 :spec         spec
-                 :paths        paths
-                 :limit        limit
-                 :regex?       regex?}
-         result (case mode
-                  :content
-                  (let [hits (vec (:hits out))]
-                    (assoc shared
-                      :hits hits
-                      :hit-count (count hits)
-                      :first-hit (when (pos? (count hits))
-                                   (let [{:keys [path line]} (nth hits 0)]
-                                     (str path ":" line)))
-                      :context (cond-> {}
-                                 (pos? before-ctx) (assoc :before before-ctx)
-                                 (pos? after-ctx)  (assoc :after  after-ctx))))
-                  :files-only
-                  (let [files (vec (:files out))]
-                    (assoc shared
-                      :files files
-                      :file-count (count files)))
-                  :counts
-                  (let [counts (vec (:counts out))]
-                    (assoc shared
-                      :counts counts
-                      :file-count (count counts)
-                      :total-matches (reduce + 0 (map :count counts)))))]
-     (tool-success
-       {:op :v/rg
-        :path (if (= 1 (count paths))
-                (first paths)
-                ".")
-        :kind :dir
-        :result result
-        :metadata (cond-> {:spec spec
-                           :query-op (:op coerced)
-                           :paths paths
-                           :include include
-                           :exclude exclude
-                           :mode mode
-                           :truncated-by (:truncated-by out)}
-                    (= mode :content)
-                    (assoc :hit-count (:hit-count result))
-                    (= mode :files-only)
-                    (assoc :file-count (:file-count result))
-                    (= mode :counts)
-                    (assoc :file-count (:file-count result)
-                      :total-matches (:total-matches result)))
-        :presentation (case mode
-                        :content    {:kind :search-hits :row-keys [:path :line :text]}
-                        :files-only {:kind :search-files}
-                        :counts     {:kind :search-counts})})))
-  ([_spec _opts]
-   (throw (ex-info "v/rg takes exactly one spec map: {:all [\"literal\"] :paths [\"src\"] :include [\"**/*.clj\"]}. Use :any for OR. No query+opts shorthand."
-            {:type :ext.foundation.editing/invalid-rg-arity
-             :expected '([spec-map])}))))
+  [& args]
+  ;; Accept either a single spec map OR inline kwargs. Manual dispatch
+  ;; (instead of `& {:as spec}`) so that malformed input — a stray
+  ;; positional string, an odd-length rest seq — routes through one
+  ;; clean `:invalid-rg-spec` error instead of Clojure's raw
+  ;; "No value supplied for key" destructure exception.
+  (let [spec (cond
+               (and (= 1 (count args)) (map? (first args)))
+               (first args)
+
+               (and (even? (count args)) (every? keyword? (take-nth 2 args)))
+               (apply hash-map args)
+
+               :else
+               (throw (ex-info
+                        "v/rg takes either a single spec map or inline kwargs (e.g. (v/rg :any [\"x\"] :paths [\"src\"]))."
+                        {:type :ext.foundation.editing/invalid-rg-arity
+                         :expected '([spec-map] [& kwargs])
+                         :got args})))
+        {:keys [paths include exclude files-only? counts? regex?
+                before-ctx after-ctx limit] :as coerced} (coerce-rg-spec spec)
+        out (grep-files spec)
+        mode (cond files-only? :files-only
+               counts?     :counts
+               :else       :content)
+        shared {:vis.op       :v/rg
+                :mode         mode
+                :truncated-by (:truncated-by out)
+                :spec         spec
+                :paths        paths
+                :limit        limit
+                :regex?       regex?}
+        result (case mode
+                 :content
+                 (let [hits (vec (:hits out))]
+                   (assoc shared
+                     :hits hits
+                     :hit-count (count hits)
+                     :first-hit (when (pos? (count hits))
+                                  (let [{:keys [path line]} (nth hits 0)]
+                                    (str path ":" line)))
+                     :context (cond-> {}
+                                (pos? before-ctx) (assoc :before before-ctx)
+                                (pos? after-ctx)  (assoc :after  after-ctx))))
+                 :files-only
+                 (let [files (vec (:files out))]
+                   (assoc shared
+                     :files files
+                     :file-count (count files)))
+                 :counts
+                 (let [counts (vec (:counts out))]
+                   (assoc shared
+                     :counts counts
+                     :file-count (count counts)
+                     :total-matches (reduce + 0 (map :count counts)))))]
+    (tool-success
+      {:op :v/rg
+       :path (if (= 1 (count paths))
+               (first paths)
+               ".")
+       :kind :dir
+       :result result
+       :metadata (cond-> {:spec spec
+                          :query-op (:op coerced)
+                          :paths paths
+                          :include include
+                          :exclude exclude
+                          :mode mode
+                          :truncated-by (:truncated-by out)}
+                   (= mode :content)
+                   (assoc :hit-count (:hit-count result))
+                   (= mode :files-only)
+                   (assoc :file-count (:file-count result))
+                   (= mode :counts)
+                   (assoc :file-count (:file-count result)
+                     :total-matches (:total-matches result)))
+       :presentation (case mode
+                       :content    {:kind :search-hits :row-keys [:path :line :text]}
+                       :files-only {:kind :search-files}
+                       :counts     {:kind :search-counts})})))
 
 (def ^:private patch-diff-context-lines 3)
 (def ^:private patch-diff-max-render-lines 240)
@@ -2205,17 +2232,21 @@
 (defn- write-tool
   "Whole-file write: create a new file OR overwrite an existing one.
 
-   (v/write {:path P :content S})                       create-or-overwrite
-   (v/write {:path P :content S :overwrite? false})     fail if file exists
-   (v/write {:path P :content S :expected-mtime MS})    staleness guard
-   (v/write {:path P :content S :expected-size  BYTES}) staleness guard
+   Args accept BOTH calling conventions (Clojure 1.11+ kwargs
+   auto-coercion); both forms below are equivalent:
+     (v/write {:path P :content S})
+     (v/write :path P :content S)
+
+     (v/write {:path P :content S :overwrite? false})     fail if file exists
+     (v/write {:path P :content S :expected-mtime MS})    staleness guard
+     (v/write {:path P :content S :expected-size  BYTES}) staleness guard
 
    Returns the same per-file summary shape as `v/patch` (so the model
    reads `:diff`, `:changed?`, etc. with one mental model). `:op` is
    `:add` for new files and `:update` for overwrites. Failures land in
    the structured error envelope as `;; ! data {:reason …}` — no
    try/catch needed."
-  [args]
+  [& {:as args}]
   (let [result (write-safe args)]
     (if (:success? result)
       (let [plan (:plan result)
@@ -2270,10 +2301,13 @@
 
 (defn- copy-tool
   "Copy path. Returns the canonical `v/*` map shape — `(:src r)` /
-   `(:dest r)` / `(:path r)` (alias for dest)."
-  ([src dest]
-   (copy-tool src dest nil))
-  ([src dest opts]
+   `(:dest r)` / `(:path r)` (alias for dest).
+
+   Opts accept BOTH calling conventions (Clojure 1.11+ kwargs
+   auto-coercion):
+     (v/copy src dest {:overwrite? true})
+     (v/copy src dest :overwrite? true)"
+  ([src dest & {:as opts}]
    (let [out (copy-safe src dest opts)]
      (tool-success
        {:op :v/copy
@@ -2289,10 +2323,12 @@
 
 (defn- move-tool
   "Move/rename path. Returns the canonical `v/*` map shape —
-   `(:src r)` / `(:dest r)` / `(:path r)` (alias for dest)."
-  ([src dest]
-   (move-tool src dest nil))
-  ([src dest opts]
+   `(:src r)` / `(:dest r)` / `(:path r)` (alias for dest).
+
+   Opts accept BOTH calling conventions:
+     (v/move src dest {:overwrite? true})
+     (v/move src dest :overwrite? true)"
+  ([src dest & {:as opts}]
    (let [out (move-safe src dest opts)]
      (tool-success
        {:op :v/move
@@ -2735,7 +2771,11 @@
      "  file was rewritten between read and patch."
      ""
      "  (v/ls path)             — FLAT recursive entry list. Default :depth 10,"
-     "  :limit 3000. opts: {:depth N :limit N :files-only? B :dirs-only? B"
+     "  :limit 3000. Opts accept BOTH map and kwargs forms (Clojure 1.11+"
+     "  kwargs auto-coercion):"
+     "    (v/ls \"src\" {:depth 2 :files-only? true})    ;; map form"
+     "    (v/ls \"src\" :depth 2 :files-only? true)      ;; kwargs form"
+     "  Recognised opts: {:depth N :limit N :files-only? B :dirs-only? B"
      "  :hidden? B :respect-gitignore? B}. result: {:vis.op :v/ls :path"
      "  :entries [{:path :type :size}...] :entry-count :file-count :dir-count"
      "  :truncated?}. Paths are workspace-relative — feed them straight to"
@@ -2744,9 +2784,13 @@
      "    (filter #(= :file (:type %)) (:entries r))"
      "  No tree-seq walk required."
      ""
+     "  v/rg accepts BOTH map and kwargs forms (Clojure 1.11+ auto-coercion):"
      "  (v/rg {:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]})"
+     "  (v/rg :any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"])"
      "  (v/rg {:all [\"defn\" \"foo\"] :paths [\"src\"]})"
      "  Exactly one of :all/:any required. Literal substrings by default;"
+     "  v/write also accepts both forms: (v/write {:path P :content S}) or"
+     "  (v/write :path P :content S). Same for v/copy / v/move opts."
      "  `|` is a pipe character. All collection fields are vectors. Unknown keys"
      "  throw."
      ""
@@ -2891,7 +2935,7 @@
      ""
      "  R-FIRE             ;; no def"
      "    (v/patch […])"
-     "    (v/move {:from A :to B})"
+     "    (v/move src dest)             ;; or (v/move src dest :overwrite? true)"
      "    (v/delete P)"
      ""
      "  R-LOOK             ;; no def — trailer carries result to next iter"

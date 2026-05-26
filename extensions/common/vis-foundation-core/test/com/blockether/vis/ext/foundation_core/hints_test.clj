@@ -5,17 +5,33 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe title-hint-test
-  (it "emits a :critical hook-task when the session title is blank (regardless of turn position)"
-    (doseq [tp [1 2 5 10 17 100]]
+  (it "emits a :critical hook-task when the title is blank AND we're on a cadence tick (iter 0 of turn 1 or every Nth turn)"
+    (doseq [tp [1 hints/TITLE_REFRESH_TURN_PERIOD
+                (* 2 hints/TITLE_REFRESH_TURN_PERIOD)
+                (* 5 hints/TITLE_REFRESH_TURN_PERIOD)]]
       (let [n (hints/title-hint {:session-title nil
-                                 :title-refresh? false
+                                 :title-refresh? true
                                  :turn-position tp
-                                 :iteration 1})]
+                                 :iteration 0})]
         (expect (= :critical (:importance n)))
         (expect (string? (:validator-fn n)))
         (expect (str/includes? (:title n) "session title"))
         (expect (str/includes? (:title n) "set-session-title!"))
         (expect (str/includes? (:title n) "task-set! :vis.foundation/session-title")))))
+
+  (it "stays silent on blank title at non-cadence turns even when refresh is flagged"
+    (doseq [tp [2 3 4 5 6 7 8 9 11 19 21 99]]
+      (expect (nil? (hints/title-hint {:session-title nil
+                                       :title-refresh? true
+                                       :turn-position tp
+                                       :iteration 0})))))
+
+  (it "stays silent on blank title when host did NOT flag :title-refresh? (mid-turn iterations)"
+    (doseq [tp [1 10 20]]
+      (expect (nil? (hints/title-hint {:session-title nil
+                                       :title-refresh? false
+                                       :turn-position tp
+                                       :iteration 3})))))
 
   (it "fires on turn 1 (first turn) when host flags :title-refresh?"
     (let [n (hints/title-hint {:session-title "Refactor auth flow"
@@ -47,10 +63,11 @@
                                        :turn-position tp
                                        :iteration 1})))))
 
-  (it "stays silent on cadence turn when host did not flag :title-refresh?"
+  (it "stays silent on cadence turn when host did not flag :title-refresh? (set OR blank)"
     (doseq [tp [1 hints/TITLE_REFRESH_TURN_PERIOD
-                (* 2 hints/TITLE_REFRESH_TURN_PERIOD)]]
-      (expect (nil? (hints/title-hint {:session-title "Stable"
+                (* 2 hints/TITLE_REFRESH_TURN_PERIOD)]
+            title ["Stable" nil ""]]
+      (expect (nil? (hints/title-hint {:session-title title
                                        :title-refresh? false
                                        :turn-position tp
                                        :iteration 1})))))
@@ -143,8 +160,8 @@
 
   (it "title hook returns hook-task shape with :title + :validator-fn + :importance"
     (let [h (some #(when (= :vis.foundation/session-title (:id %)) %) hints/hooks)
-          hit ((:fn h) {:session-title nil :title-refresh? false
-                        :turn-position 1 :iteration 1})]
+          hit ((:fn h) {:session-title nil :title-refresh? true
+                        :turn-position 1 :iteration 0})]
       (expect (string? (:title hit)))
       (expect (string? (:validator-fn hit)))
       (expect (= :critical (:importance hit)))))

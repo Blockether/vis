@@ -537,39 +537,43 @@
   "Send a user request through the shared sessions cache. Blocking.
    Returns `{:answer [:ir ...]}` or `{:error str}`.
 
-   `opts` may contain:
-     :on-chunk          - fn receiving phased chunks `{:phase :iteration ...}`. Phases:
-                          `:reasoning` (LLM streaming), `:form-result` (one form done),
-                          `:iteration-final` (iteration complete), `:iteration-error`
-                          (iteration aborted). See `progress/make-progress-tracker`
-                          for accumulating chunks into a timeline.
-                          on every streaming chunk from the RLM. The TUI uses this
-                          to project a live per-iteration progress timeline into
-                          the assistant placeholder bubble.
-     :cancel-token      - cancellation handle from `vis/cancellation-token`.
-                          Calling `vis/cancel!` on the token flips the
-                          cooperative flag (iteration loop notices on the
-                          next boundary) AND fires every registered
-                          `on-cancel!` callback (SCI worker future,
-                          provider HTTP client, voice recorder), so
-                          unresponsive SCI hangs are killed straight from
-                          the TUI input thread without waiting for the
-                          eval timeout.
-     :cancel-atom       - (deprecated) cooperative atom. New callers pass
-                          `:cancel-token` instead; the atom path is kept
-                          for legacy SDK consumers.
-     :reasoning-default - base reasoning effort (`:quick`, `:balanced`, `:deep`)
-                          forwarded to `vis/send!` for reasoning-capable models.
-     :extra-body        - provider-specific request-body overrides forwarded to
-                          `vis/send!` unchanged.
-     :turn-features     - per-turn feature flags consumed by extension prompts."
+   `opts` map:
+     :on-chunk          fn receiving phased chunks; phases include
+                        `:reasoning`, `:form-start`, `:form-result`,
+                        `:consult-resolved`, `:iteration-final`,
+                        `:iteration-error`. The TUI feeds these into
+                        `progress/make-progress-tracker` to paint a
+                        live per-iteration timeline in the placeholder
+                        bubble.
+     :cancel-token      cancellation handle from `vis/cancellation-token`.
+                        `(vis/cancel! token)` flips the cooperative flag
+                        AND fires every registered `on-cancel!` callback
+                        (SCI worker future, provider HTTP client, voice
+                        recorder) so unresponsive SCI hangs die straight
+                        from the input thread without waiting for the
+                        eval timeout.
+     :reasoning-default base reasoning effort (`:quick` | `:balanced`
+                        | `:deep`) for reasoning-capable models. The
+                        engine may bump within the turn; this is the
+                        starting level. Per-user setting in Telegram.
+     :extra-body        provider-specific HTTP request-body overrides.
+                        Used by the engine for `:max_tokens` bump-on-
+                        retry; callers can override custom provider
+                        params (anthropic headers, openai temperature,
+                        etc).
+     :turn-features     per-turn feature flag map
+                        (e.g. `{:voice-response? true}`) consumed by
+                        extension `:ext/prompt` callbacks. Tells the
+                        prompt assembler about transient user intents
+                        (voice-mode reply length, etc).
+     :workspace         workspace pin overrides for unusual per-turn
+                        cases."
   ([session text] (turn! session text {}))
-  ([{:keys [id]} text {:keys [on-chunk cancel-token cancel-atom reasoning-default extra-body turn-features workspace]}]
+  ([{:keys [id]} text {:keys [on-chunk cancel-token reasoning-default extra-body turn-features workspace]}]
    (try
      (let [send-opts (cond-> {}
                        on-chunk          (assoc :hooks {:on-chunk on-chunk})
                        cancel-token      (assoc :cancel-token cancel-token)
-                       cancel-atom       (assoc :cancel-atom cancel-atom)
                        reasoning-default (assoc :reasoning-default reasoning-default)
                        extra-body        (assoc :extra-body extra-body)
                        turn-features     (assoc :turn/features turn-features)

@@ -289,27 +289,44 @@
    resolved entry as a synthetic trailer pin on the current iter's
    `:forms` (via `consult/append-resolution-pin!`).
 
-   Returns the vec of processed consult-ids (or nil when nothing was
-   pending). Called from the iter-end pass in `loop.clj`.
+   Returns the vec of processed ids (or nil when nothing was pending).
+   Called from the iter-end pass in `loop.clj`.
+
+   Optional `on-chunk` callback: when supplied, fires a `:phase
+   :consult-resolved` chunk per resolved consult so channels (TUI,
+   Telegram) can render the result inline in the iter transcript.
+   The chunk carries the entry map as `:result` plus the synthetic
+   pin scope as `:scope`.
 
    Test hook: env may carry `:consult-runner` `[env intent] → entry-map`
    to override the default runner (used by integration tests).
 
    Thread-isolation: each consult future sees only the request-time
    ctx snapshot pinned on the intent map, never the live ctx-atom."
-  [env]
-  (when-let [ctx-atom (:ctx-atom env)]
-    (let [intents (consult/clear-pending! ctx-atom)]
-      (when (seq intents)
-        (let [runner   (or (:consult-runner env)
-                         consult-engine/run-consult!)
-              futures  (mapv (fn [intent]
-                               (future (runner env intent)))
-                         intents)
-              results  (mapv deref futures)]
-          (doseq [r results]
-            (consult/append-resolution-pin! ctx-atom r))
-          (mapv :id results))))))
+  ([env] (process-pending-consults! env nil))
+  ([env on-chunk]
+   (when-let [ctx-atom (:ctx-atom env)]
+     (let [intents (consult/clear-pending! ctx-atom)]
+       (when (seq intents)
+         (let [runner   (or (:consult-runner env)
+                          consult-engine/run-consult!)
+               futures  (mapv (fn [intent]
+                                (future (runner env intent)))
+                          intents)
+               results  (mapv deref futures)]
+           (doseq [r results]
+             (consult/append-resolution-pin! ctx-atom r)
+             (when on-chunk
+               (let [cursor (-> ctx-atom deref :session/scope)
+                     id-name (name (:id r))
+                     scope   (str "t" (:turn cursor) "/i" (:iter cursor)
+                               "/c-" id-name)]
+                 (on-chunk {:phase   :consult-resolved
+                            :scope   scope
+                            :id      (:id r)
+                            :tag     :consult
+                            :result  r}))))
+           (mapv :id results)))))))
 
 (defn archive-failed-task-proofs!
   "Run `eng/archive-failed-task-proofs` against the live ctx atom: scans
