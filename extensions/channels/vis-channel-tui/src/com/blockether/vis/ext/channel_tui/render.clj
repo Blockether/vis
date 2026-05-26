@@ -3967,8 +3967,11 @@
                                   (let [line (:line entry)]
                                     (or (= "" line)
                                       (= iteration-pad-marker line))))
+        recap-entry?            (fn [entry]
+                                  (= :recap (get-in entry [:meta :kind])))
         answer-top-margin       (when-not (and has-trace?
-                                            (neutral-margin-entry? (peek trace-entries)))
+                                            (or (neutral-margin-entry? (peek trace-entries))
+                                              (recap-entry? (peek trace-entries))))
                                   (line-entry ""))
         cancel-block            (vec (concat
                                        (when answer-top-margin [answer-top-margin])

@@ -11,7 +11,7 @@
      own forms):
        {:scope       \"tN/iM/c-K\"
         :tag         :consult
-        :consult-id  :K
+        :id  :K
         :src         \"(consult-resolved :K)\"
         :result      <entry-map>}
 
@@ -24,7 +24,7 @@
        → :vis/silent. Pushes intent + ctx-snapshot onto
          `:engine/pending-consults`. Engine fires a side-thread future.
      `(consult-promote! :id :fact-key)`
-       → :vis/silent. Finds the resolved trailer pin by :consult-id,
+       → :vis/silent. Finds the resolved trailer pin by :id,
          copies its :result into a new fact under :fact-key, scrubs
          the trailer pin.
      `(consult-dismiss! :id)`
@@ -147,7 +147,7 @@
                               :session/specs :session/tasks :session/facts
                               :session/trailer]))))
                      (catch Throwable _ ""))
-          intent {:consult-id consult-id
+          intent {:id consult-id
                   :preference preference
                   :focus      (vec (or focus []))
                   :question   question
@@ -175,13 +175,13 @@
 
 (defn find-trailer-consult-pin
   "Walk `:session/trailer` and return the LAST consult pin whose
-   `:consult-id` matches `id`, or nil. Last-wins so a re-issued
+   `:id` matches `id`, or nil. Last-wins so a re-issued
    consult sees its fresh resolution."
   [ctx id]
   (let [matches (for [iter-pin (or (:session/trailer ctx) [])
                       form     (or (:forms iter-pin) [])
                       :when (and (consult-pin? form)
-                              (= id (:consult-id form)))]
+                              (= id (:id form)))]
                   form)]
     (last matches)))
 
@@ -194,19 +194,19 @@
    id name). Uses the LATEST iter in the trailer; when the trailer
    is empty, synthesizes a fresh pin entry.
 
-   Idempotent on `:consult-id`: if a pin for the same id already
+   Idempotent on `:id`: if a pin for the same id already
    exists in the latest iter entry, it is REPLACED rather than
    duplicated."
   [ctx-atom entry]
   (swap! ctx-atom
     (fn [c]
-      (let [id (:consult-id entry)
+      (let [id (:id entry)
             trailer (vec (or (:session/trailer c) []))
             cursor  (:session/scope c)
             iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
             pin-form {:scope       (str iter-scope "/c-" (name id))
                       :tag         :consult
-                      :consult-id  id
+                      :id  id
                       :src         (str "(consult-resolved " id ")")
                       :result      entry}
             ;; Find/create the iter pin entry to append into.
@@ -226,7 +226,7 @@
               (let [forms (vec (or (:forms existing) []))
                     forms-without (vec (remove
                                          #(and (consult-pin? %)
-                                            (= id (:consult-id %)))
+                                            (= id (:id %)))
                                          forms))
                     forms+ (conj forms-without pin-form)]
                 (assoc trailer idx (assoc existing :forms forms+)))
@@ -237,7 +237,7 @@
         (assoc c :session/trailer trailer')))))
 
 (defn- scrub-trailer-pin!
-  "Remove every trailer pin whose `:consult-id` matches `id`. Walks
+  "Remove every trailer pin whose `:id` matches `id`. Walks
    the entire trailer (cross-iter) and cleans empty iter entries.
    Both `consult-promote!` and `consult-dismiss!` use this."
   [ctx-atom id]
@@ -251,7 +251,7 @@
                         (let [forms' (vec
                                        (remove
                                          #(and (consult-pin? %)
-                                            (= id (:consult-id %)))
+                                            (= id (:id %)))
                                          forms))]
                           (if (empty? forms')
                             ::drop
@@ -266,7 +266,7 @@
 ;; =============================================================================
 
 (defn promote-consult!
-  "Find the resolved consult trailer pin for `:consult-id`, copy its
+  "Find the resolved consult trailer pin for `:id`, copy its
    :content + :citations + :focus + :confidence into a new fact under
    `:fact-key`, and scrub the trailer pin (cross-iter).
 
@@ -319,7 +319,7 @@
   :vis/silent)
 
 (defn dismiss-consult!
-  "Scrub the resolved consult trailer pin for `:consult-id` without
+  "Scrub the resolved consult trailer pin for `:id` without
    promoting. Returns `:vis/silent`."
   [env consult-id]
   (cond
@@ -349,7 +349,7 @@
   "Vec of consult-ids currently enqueued. Used by the done gate to
    refuse close while research is in flight."
   [ctx]
-  (mapv :consult-id (or (:engine/pending-consults ctx) [])))
+  (mapv :id (or (:engine/pending-consults ctx) [])))
 
 (defn clear-pending!
   "Atomically drain `:engine/pending-consults` and return the drained

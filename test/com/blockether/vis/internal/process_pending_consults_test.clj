@@ -29,9 +29,9 @@
   [{:keys [sleep-ms]}]
   (fn [_env intent]
     (when sleep-ms (Thread/sleep ^long sleep-ms))
-    {:consult-id  (:consult-id intent)
+    {:id  (:id intent)
      :status      :active
-     :content     (str "answer for " (:consult-id intent))
+     :content     (str "answer for " (:id intent))
      :citations   []
      :confidence  :medium
      :focus       (:focus intent)
@@ -68,7 +68,7 @@
 
         (it "trailer carries one synthetic consult pin per intent"
           (expect (= 3 (count pins)))
-          (expect (= #{:K1 :K2 :K3} (set (map :consult-id pins)))))
+          (expect (= #{:K1 :K2 :K3} (set (map :id pins)))))
 
         (it ":engine/pending-consults drained to empty"
           (expect (empty? (:engine/pending-consults ctx))))
@@ -116,7 +116,7 @@
               [:session/facts :after] {:content "POST-enqueue mutation"
                                        :status :active})
           processed (cl/process-pending-consults! env)
-          pin (first (filter #(= :K (:consult-id %))
+          pin (first (filter #(= :K (:id %))
                        (trailer-consult-pins @(:ctx-atom env))))
           seen (-> pin :result :saw-snapshot)]
 
@@ -145,7 +145,7 @@
     (let [env (assoc (mk-env)
                 :consult-runner
                 (fn [_env intent]
-                  {:consult-id (:consult-id intent)
+                  {:id (:id intent)
                    :status :failed
                    :error :provider-error
                    :reason "stub error"
