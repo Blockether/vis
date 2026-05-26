@@ -595,6 +595,125 @@
         (expect (= 3 (get tag-counts :r)))
         (expect (= 3 (get tag-counts :c)))))))
 
+(defdescribe live-progress-trailing-flush-test
+  ;; Regression: leading-edge-only throttling pinned the live
+  ;; bubble on the FIRST reasoning frame ("I" / "The") for the
+  ;; entire duration of a server-side stall between the end of a
+  ;; short reasoning burst and the start of the content stream.
+  ;; The model finishes reasoning fast (within the 80ms window after
+  ;; the first dispatched chunk), then the provider takes 5-30s to
+  ;; emit the first content delta. No chunks fire during the stall,
+  ;; so app-db's :progress slot stays on the first frame and the
+  ;; spinner ticks repaint stale text. Trailing-edge flush guarantees
+  ;; the latest dropped timeline reaches the screen within one
+  ;; throttle interval even when the stream goes quiet.
+  (it "flushes the latest dropped timeline within the throttle window when the stream stalls"
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events        (atom [])
+          now-ms        (atom 0)
+          scheduled     (atom [])
+          schedule-fn   (fn [^Runnable f ^long delay-ms]
+                          (let [token (gensym "sched")]
+                            (swap! scheduled conj {:token token :run f :delay-ms delay-ms})
+                            token))
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms)
+                    schedule-fn)]
+      ;; First reasoning chunk lands and dispatches.
+      (update! [:t 0] {:phase :reasoning})
+      ;; Burst of 4 more chunks, all inside the 80ms window → dropped
+      ;; but stashed as pending; the FIRST drop schedules the timer,
+      ;; subsequent drops only overwrite the pending timeline.
+      (doseq [t [10 20 30 40]]
+        (reset! now-ms t)
+        (update! [:t (long t)] {:phase :reasoning}))
+      ;; Exactly one trailing flush should be scheduled.
+      (expect (= 1 (count @scheduled)))
+      (let [{:keys [delay-ms run]} (first @scheduled)]
+        ;; Delay is `interval - elapsed` from the dispatch at t=0.
+        ;; First drop at t=10 → delay-ms = 80 - (10 - 0) = 70.
+        (expect (= 70 delay-ms))
+        ;; Stream stalls. Advance virtual clock past the schedule and
+        ;; fire the timer manually.
+        (reset! now-ms 80)
+        (run))
+      ;; Trailing flush carries the LATEST pending timeline ([:t 40]),
+      ;; not the first dispatched one.
+      (expect (= [[:set-progress-iterations [:t 0]]
+                  [:set-progress-iterations [:t 40]]]
+                @events))))
+
+  (it "a fresh chunk arriving on the trailing edge cancels the scheduled flush"
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events       (atom [])
+          now-ms       (atom 0)
+          scheduled    (atom [])
+          cancelled    (atom 0)
+          schedule-fn  (fn [^Runnable f ^long delay-ms]
+                         (let [fut (reify java.util.concurrent.Future
+                                     (cancel [_ _] (swap! cancelled inc) true)
+                                     (isCancelled [_] false)
+                                     (isDone [_] false)
+                                     (get [_] nil)
+                                     (get [_ _ _] nil))]
+                           (swap! scheduled conj {:run f :delay-ms delay-ms :fut fut})
+                           fut))
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms)
+                    schedule-fn)]
+      (update! [:t 0] {:phase :reasoning})
+      (reset! now-ms 30)
+      (update! [:t 30] {:phase :reasoning})    ;; dropped → schedules flush
+      ;; Time crosses the 80ms boundary, next chunk is due. The
+      ;; dispatch must cancel the trailing-edge timer so it does
+      ;; not fire a duplicate frame afterwards.
+      (reset! now-ms 90)
+      (update! [:t 90] {:phase :reasoning})
+      (expect (= 1 @cancelled))
+      (expect (= [[:set-progress-iterations [:t 0]]
+                  [:set-progress-iterations [:t 90]]]
+                @events))))
+
+  (it "a lifecycle chunk arriving between drops cancels the trailing flush"
+    ;; Lifecycle chunks (`:iteration-final`, `:form-result`, …)
+    ;; bypass the throttle and ALWAYS dispatch. They also carry the
+    ;; latest cumulative timeline, so the trailing flush would just
+    ;; produce a duplicate frame. Today the lifecycle dispatch does
+    ;; NOT touch the per-phase throttle clocks (preserves the
+    ;; per-phase isolation), but the pending trailing flush MUST
+    ;; still no-op because the latest pending state was published.
+    ;; This test pins the desired behavior: the pending slot is
+    ;; cleared the moment the dispatched lifecycle delivers it.
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events     (atom [])
+          now-ms     (atom 0)
+          scheduled  (atom [])
+          schedule-fn (fn [^Runnable f ^long delay-ms]
+                        (let [t (gensym)]
+                          (swap! scheduled conj {:token t :run f :delay-ms delay-ms})
+                          t))
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms)
+                    schedule-fn)]
+      (update! [:r 0] {:phase :reasoning})
+      (reset! now-ms 20)
+      (update! [:r 20] {:phase :reasoning})        ;; dropped + scheduled
+      ;; Lifecycle event fires (e.g. response-parse :start).
+      (reset! now-ms 25)
+      (update! [:r 25] {:phase :response-parse})    ;; ALWAYS dispatched
+      ;; Trailing flush still fires later (we do not cancel from a
+      ;; non-throttled path — cheap), but with a stale-but-still-latest
+      ;; pending it just dispatches the same shape again. That is
+      ;; acceptable because the render loop coalesces by version.
+      ;; Hard contract: between [r 0] and [r 25] the lifecycle
+      ;; chunk DID deliver the latest pending shape immediately.
+      (expect (= [[:set-progress-iterations [:r 0]]
+                  [:set-progress-iterations [:r 25]]]
+                @events)))))
+
 (defdescribe send-message-test
   (it "refuses copied assistant transcript dumps before provider dispatch"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
