@@ -27,7 +27,8 @@
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
-   [taoensso.nippy :as nippy])
+   [taoensso.nippy :as nippy]
+   [taoensso.telemere :as tel])
   (:import
    (com.zaxxer.hikari HikariConfig HikariDataSource)
    (java.io File RandomAccessFile)
@@ -150,6 +151,49 @@
 (def ^:private migration-checksum-mismatch-user-message
   (str "Database schema mismatch: local migrations changed since this database was created. "
     "Close all Vis processes, remove ~/.vis/vis.mdb, then restart Vis to recreate it from packaged migration resources."))
+
+;; Phase B: JEBAC LEGACY. When the packaged V1__schema.sql checksum no
+;; longer matches the recorded one on disk (i.e. we changed schema in
+;; source without bumping the version), nuke the whole `~/.vis/vis.mdb`
+;; directory and let the next open-attempt rebuild from V1 fresh. This
+;; eliminates the "close vis, rm -rf, restart" manual loop. Only fires
+;; for persistent stores under the canonical user-home path; refuses to
+;; touch arbitrary paths or in-memory stores.
+(def ^:private canonical-vis-home-suffix ".vis/vis.mdb")
+
+(defn- canonical-vis-db-path?
+  "True when `path` is the canonical `~/.vis/vis.mdb` directory. The
+   path may be a file inside the dir or the dir itself; both resolve
+   to a parent ending in `.vis/vis.mdb`. Conservative: refuses to nuke
+   arbitrary user-supplied paths."
+  [^String path]
+  (when (string? path)
+    (let [abs (try (.getCanonicalPath (java.io.File. path)) (catch Throwable _ path))]
+      (or (.endsWith ^String abs canonical-vis-home-suffix)
+        (.contains ^String abs (str canonical-vis-home-suffix "/"))
+        (.contains ^String abs (str canonical-vis-home-suffix java.io.File/separator))))))
+
+(defn- rm-rf!
+  "Recursive delete — deletes the file or directory tree at `path`.
+   Java NIO `Files/walk` returns descendants depth-first so deletion
+   order is safe. Errors are logged but not thrown; the caller still
+   raises the original checksum-mismatch on continuation, so a partial
+   nuke surfaces visibly. Returns the count of paths deleted."
+  [^String path]
+  (let [root (java.nio.file.Paths/get path (into-array String []))]
+    (when (java.nio.file.Files/exists root
+            (into-array java.nio.file.LinkOption []))
+      (with-open [stream (java.nio.file.Files/walk root
+                           (into-array java.nio.file.FileVisitOption []))]
+        (let [paths (-> stream
+                      .sorted
+                      java.util.stream.Stream/.toArray
+                      vec
+                      reverse)]
+          (doseq [^java.nio.file.Path p paths]
+            (try (java.nio.file.Files/deleteIfExists p)
+              (catch Throwable _)))
+          (count paths))))))
 
 (defn- migration-checksum-mismatch?
   "True when any throwable in the causal chain looks like Flyway's
@@ -409,7 +453,24 @@
       :else
       (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec})))
     (catch Throwable e
-      (throw (maybe-wrap-db-open-error e)))))
+      ;; Phase B: on checksum mismatch for the canonical ~/.vis/vis.mdb
+      ;; path, nuke and retry once. The DB is a forensics/replay store,
+      ;; not the source of truth; schema-rewrites are JEBAC LEGACY and
+      ;; the rebuild is cheap (Flyway re-runs V1 from packaged resources).
+      (if (and (migration-checksum-mismatch? e)
+            (string? db-spec)
+            (canonical-vis-db-path? db-spec))
+        (let [deleted (try (rm-rf! db-spec) (catch Throwable _ 0))]
+          (tel/log! {:level :warn :id ::db-nuke-on-checksum-mismatch
+                     :data  {:path db-spec :deleted-paths deleted}}
+            (str "Phase B: nuked ~/.vis/vis.mdb on schema-checksum mismatch ("
+              deleted " paths); retrying open with fresh schema"))
+          (try
+            (with-file-key-snapshot
+              (assoc (open-sqlite-at-dir db-spec) :owned? true :mode :persistent))
+            (catch Throwable e2
+              (throw (maybe-wrap-db-open-error e2)))))
+        (throw (maybe-wrap-db-open-error e))))))
 
 (defn db-close!
   "Idempotent dispose. Closes the Hikari pool when we own it; for
@@ -1315,14 +1376,26 @@
           (when state
             (execute! tx-info
               {:update :session_turn_state
-               :set    (cond-> {:status          (normalize-status (or status :done))
-                                :iteration_count (long (or iteration-count 0))
-                                :duration_ms     (long (or duration-ms 0))
-                                :llm_input_tokens     (long (or (:input tokens) 0))
-                                :llm_output_tokens    (long (or (:output tokens) 0))
-                                :llm_reasoning_tokens (long (or (:reasoning tokens) 0))
-                                :llm_cached_tokens    (long (or (:cached tokens) 0))
-                                :llm_total_cost_usd   (double (or (:total-cost cost) 0.0))}
+               :set    (cond-> {:status                   (normalize-status (or status :done))
+                                :iteration_count          (long (or iteration-count 0))
+                                :duration_ms              (long (or duration-ms 0))
+                                ;; Phase B canonical columns. :input is TOTAL
+                                ;; (Anthropic-additive raw values summed at the
+                                ;; canonical-normalizer boundary in svar 0.6+).
+                                ;; The :input-regular subset is derived from the
+                                ;; invariant when the upstream map omits it
+                                ;; (older accumulators don't track it explicitly):
+                                ;;   regular = input - cache-write - cache-read
+                                :input_tokens             (long (or (:input tokens) 0))
+                                :input_regular_tokens     (long (or (:input-regular tokens)
+                                                                  (max 0 (- (long (or (:input tokens) 0))
+                                                                           (long (or (:cache-created tokens) 0))
+                                                                           (long (or (:cached tokens) 0))))))
+                                :input_cache_write_tokens (long (or (:cache-created tokens) 0))
+                                :input_cache_read_tokens  (long (or (:cached tokens) 0))
+                                :output_tokens            (long (or (:output tokens) 0))
+                                :output_reasoning_tokens  (long (or (:reasoning tokens) 0))
+                                :total_cost_usd           (double (or (:total-cost cost) 0.0))}
                          (:model cost)    (assoc :llm_root_model (str (:model cost)))
                          (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
                          (some? answer-markdown) (assoc :answer_markdown answer-markdown)
@@ -1505,12 +1578,24 @@
                           ;; for exactly this reason: an LLM call that
                           ;; failed before returning usage produces no
                           ;; tokens, no cost, no fake zeros).
-                          (some? (:input tokens))     (assoc :llm_input_tokens     (long (:input tokens)))
-                          (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
-                          (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
-                          (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
-                          (some? cache-created-tokens) (assoc :llm_cache_created_tokens (long cache-created-tokens))
-                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd))
+                          ;; Phase B canonical columns. :input is TOTAL,
+                          ;; details (regular / cache-write / cache-read)
+                          ;; are subsets obeying the canonical invariant.
+                          (some? (:input tokens))          (assoc :input_tokens             (long (:input tokens)))
+                          ;; :input-regular derived from invariant when absent
+                          ;; on per-iter rows. The invariant is enforced at the
+                          ;; canonical boundary in svar 0.6+, so this is a safe
+                          ;; compute even when the accumulator did not surface it.
+                          true                             (assoc :input_regular_tokens
+                                                            (long (or (:input-regular tokens)
+                                                                    (max 0 (- (long (or (:input tokens) 0))
+                                                                             (long (or cache-created-tokens 0))
+                                                                             (long (or (:cached tokens) 0)))))))
+                          (some? cache-created-tokens)     (assoc :input_cache_write_tokens (long cache-created-tokens))
+                          (some? (:cached tokens))         (assoc :input_cache_read_tokens  (long (:cached tokens)))
+                          (some? (:output tokens))         (assoc :output_tokens            (long (:output tokens)))
+                          (some? (:reasoning tokens))      (assoc :output_reasoning_tokens  (long (:reasoning tokens)))
+                          (some? cost-usd)                 (assoc :cost_usd                 (double cost-usd))
                           (seq routing)               (merge (routing-summary-columns routing)))]})
             (doseq [[idx event] (map-indexed vector (:trace routing))]
               (execute! tx-info
@@ -1537,11 +1622,15 @@
            :created-at            (->date (:soul_created_at row))
            :iteration-count       (long (or (:iteration_count row) 0))
            :duration-ms           (long (or (:duration_ms row) 0))
-           :input-tokens          (long (or (:llm_input_tokens row) 0))
-           :output-tokens         (long (or (:llm_output_tokens row) 0))
-           :reasoning-tokens      (long (or (:llm_reasoning_tokens row) 0))
-           :cached-tokens         (long (or (:llm_cached_tokens row) 0))
-           :total-cost            (double (or (:llm_total_cost_usd row) 0.0))}
+           ;; Phase B canonical token shape. `:input-tokens` is TOTAL;
+           ;; the detail keys are subsets obeying the invariant.
+           :input-tokens             (long (or (:input_tokens row) 0))
+           :input-regular-tokens     (long (or (:input_regular_tokens row) 0))
+           :input-cache-write-tokens (long (or (:input_cache_write_tokens row) 0))
+           :input-cache-read-tokens  (long (or (:input_cache_read_tokens row) 0))
+           :output-tokens            (long (or (:output_tokens row) 0))
+           :output-reasoning-tokens  (long (or (:output_reasoning_tokens row) 0))
+           :total-cost               (double (or (:total_cost_usd row) 0.0))}
     ;; Turn rows carry no `title` column; `:name` is not populated
     ;; here. UI/display layers should use `:user-request` for a
     ;; turn label or read the session-level title via `:title`
@@ -1562,9 +1651,11 @@
             :qst.status
             :qst.answer_markdown
             :qst.iteration_count :qst.duration_ms
-            :qst.llm_input_tokens :qst.llm_output_tokens
-            :qst.llm_reasoning_tokens :qst.llm_cached_tokens
-            :qst.llm_total_cost_usd
+            ;; Phase B canonical columns on session_turn_state.
+            :qst.input_tokens :qst.input_regular_tokens
+            :qst.input_cache_write_tokens :qst.input_cache_read_tokens
+            :qst.output_tokens :qst.output_reasoning_tokens
+            :qst.total_cost_usd
             :qst.llm_root_provider :qst.llm_root_model]
    :from   [[:session_turn_soul :qs]]
    :join   [[:session_turn_state :qst] [:= :qst.session_turn_soul_id :qs.id]]
@@ -1710,12 +1801,18 @@
       ;; and `(:cost-usd it)` is a double without `or`-padding at
       ;; every use site. The schema CHECK still rejects negative
       ;; values; absent = zero by convention.
-      true (assoc :input-tokens     (long   (or (:llm_input_tokens row) 0)))
-      true (assoc :output-tokens    (long   (or (:llm_output_tokens row) 0)))
-      true (assoc :reasoning-tokens (long   (or (:llm_reasoning_tokens row) 0)))
-      true (assoc :cached-tokens    (long   (or (:llm_cached_tokens row) 0)))
-      true (assoc :cache-created-tokens (long (or (:llm_cache_created_tokens row) 0)))
-      true (assoc :cost-usd         (double (or (:llm_cost_usd row) 0.0))))))
+      ;; Phase B canonical token shape. `:input-tokens` is TOTAL,
+      ;; details (`:input-regular`, `:input-cache-write`,
+      ;; `:input-cache-read`) are subsets obeying the invariant
+      ;; (regular + write + read = total). `:output-reasoning` is a
+      ;; subset of `:output-tokens`.
+      true (assoc :input-tokens             (long   (or (:input_tokens row) 0)))
+      true (assoc :input-regular-tokens     (long   (or (:input_regular_tokens row) 0)))
+      true (assoc :input-cache-write-tokens (long   (or (:input_cache_write_tokens row) 0)))
+      true (assoc :input-cache-read-tokens  (long   (or (:input_cache_read_tokens row) 0)))
+      true (assoc :output-tokens            (long   (or (:output_tokens row) 0)))
+      true (assoc :output-reasoning-tokens  (long   (or (:output_reasoning_tokens row) 0)))
+      true (assoc :cost-usd                 (double (or (:cost_usd row) 0.0))))))
 
 (defn db-list-session-turn-iterations [db-info session-turn-id]
   (if (and (ds db-info) session-turn-id)

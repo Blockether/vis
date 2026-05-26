@@ -472,6 +472,15 @@
                 1 {:turn 1 :iter 1})]
       (expect (= 3 (:result env)))))
 
+  (it "carries duration from the loop block envelope for restored TUI footers"
+    (let [env (eng/block->envelope {:code "(v/patch [])"
+                                    :result :ok
+                                    :envelope {:started-at-ms 1000
+                                               :finished-at-ms 1012}}
+                1 {:turn 24 :iter 1})]
+      (expect (= "t24/i1/f1" (:scope env)))
+      (expect (= 12 (:duration-ms env)))))
+
   (it "survives a Var that throws on deref (cell broken at runtime)"
     ;; Defensive: deref-def-result must never bubble an exception. We pass
     ;; through the raw Var so the channel can still render a placeholder.

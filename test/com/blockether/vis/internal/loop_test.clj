@@ -564,6 +564,30 @@
         (finally
           (lp/dispose-environment! env)))))
 
+  (it "recovers malformed done answers with trailer-summarize tail"
+    (let [recover (var-get #'lp/raw-response->direct-answer-source)
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          answer (str "## Spowiedź + blocker\n\n"
+                   "Reguła: przy „znajdź gdzie X siedzi w kodzie\" — LS first.\n\n"
+                   "Które?")
+          bad-src (str "(done {:answer \"## Spowiedź + blocker\\n\\n"
+                    "Reguła: przy „znajdź gdzie X siedzi w kodzie\" — LS first.\\n\\n"
+                    "Które?\"\n"
+                    "       :trailer-summarize [{:scope-start \"t7/i4\"\n"
+                    "                            :scope-end \"t7/i15\"\n"
+                    "                            :summary \"Investigation: no tui code here.\"}]})")
+          recovered (recover (str "```clojure\n" bad-src "\n```"))
+          parsed (parse-forms recovered)
+          form (:form (first (:forms parsed)))
+          payload (second form)]
+      (expect (some? (:parse-error (parse-forms bad-src))))
+      (expect (nil? (:parse-error parsed)))
+      (expect (= answer (:answer payload)))
+      (expect (= [{:scope-start "t7/i4"
+                   :scope-end "t7/i15"
+                   :summary "Investigation: no tui code here."}]
+                (:trailer-summarize payload)))))
+
   (it "auto-repairs stray close delimiters before eval"
     (let [parsed ((var-get #'lp/parse-top-level-forms) "(def x 1))")]
       (expect (nil? (:parse-error parsed)))
