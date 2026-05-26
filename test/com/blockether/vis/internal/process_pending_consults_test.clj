@@ -145,7 +145,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defdescribe on-chunk-emission-test
-  (describe "process-pending-consults! fires one :consult-resolved chunk per intent"
+  (describe "process-pending-consults! fires :consult-requested then :consult-resolved per intent"
     (let [env (assoc (mk-env) :consult-runner (stub-runner {}))
           chunks (atom [])
           on-chunk (fn [c] (swap! chunks conj c))]
@@ -153,21 +153,37 @@
       (consult/request-consult! env :K2 :deep {:question "q2"})
       (cl/process-pending-consults! env on-chunk)
 
-      (it "one chunk per resolved intent"
-        (expect (= 2 (count @chunks))))
+      (let [requested (filterv #(= :consult-requested (:phase %)) @chunks)
+            resolved  (filterv #(= :consult-resolved  (:phase %)) @chunks)]
 
-      (it "chunk :phase is :consult-resolved"
-        (doseq [c @chunks]
-          (expect (= :consult-resolved (:phase c)))))
+        (it "one :consult-requested per intent"
+          (expect (= 2 (count requested)))
+          (expect (= #{:K1 :K2} (set (map :id requested)))))
 
-      (it "chunk carries :id + :tag :consult + :scope + :result + :iteration-count"
-        (let [ids (set (map :id @chunks))]
-          (expect (= #{:K1 :K2} ids)))
-        (doseq [c @chunks]
-          (expect (= :consult (:tag c)))
-          (expect (re-matches #"t\d+/i\d+/c-.*" (:scope c)))
-          (expect (integer? (:iteration-count c)))
-          (expect (= :active (-> c :result :status)))))))
+        (it "one :consult-resolved per intent"
+          (expect (= 2 (count resolved)))
+          (expect (= #{:K1 :K2} (set (map :id resolved)))))
+
+        (it ":consult-requested fires BEFORE matching :consult-resolved"
+          (let [k1-req-idx (.indexOf @chunks (first (filter #(and (= :consult-requested (:phase %))
+                                                               (= :K1 (:id %))) @chunks)))
+                k1-res-idx (.indexOf @chunks (first (filter #(and (= :consult-resolved (:phase %))
+                                                               (= :K1 (:id %))) @chunks)))]
+            (expect (< k1-req-idx k1-res-idx))))
+
+        (it ":consult-requested carries :preference + :focus + :question"
+          (let [k1-req (first (filter #(and (= :consult-requested (:phase %))
+                                         (= :K1 (:id %))) @chunks))]
+            (expect (= :fast (:preference k1-req)))
+            (expect (= "q1" (:question k1-req)))
+            (expect (vector? (:focus k1-req)))))
+
+        (it ":consult-resolved carries :id + :tag :consult + :scope + :result + :iteration-count"
+          (doseq [c resolved]
+            (expect (= :consult (:tag c)))
+            (expect (re-matches #"t\d+/i\d+/c-.*" (:scope c)))
+            (expect (integer? (:iteration-count c)))
+            (expect (= :active (-> c :result :status))))))))
 
   (describe "omitting on-chunk is fine (1-arity path)"
     (let [env (assoc (mk-env) :consult-runner (stub-runner {}))]

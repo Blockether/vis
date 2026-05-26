@@ -308,6 +308,22 @@
    (when-let [ctx-atom (:ctx-atom env)]
      (let [intents (consult/clear-pending! ctx-atom)]
        (when (seq intents)
+         ;; Emit `:phase :consult-requested` per intent BEFORE we fire
+         ;; futures so channels can render a pending pill while the
+         ;; side-thread call is in flight.
+         (when on-chunk
+           (let [cursor (-> ctx-atom deref :session/scope)
+                 iter   (:iter cursor)
+                 turn   (:turn cursor)]
+             (doseq [intent intents]
+               (on-chunk {:phase           :consult-requested
+                          :iteration-count iter
+                          :id              (:id intent)
+                          :preference      (:preference intent)
+                          :focus           (:focus intent)
+                          :question        (:question intent)
+                          :scope           (str "t" turn "/i" iter
+                                             "/c-" (name (:id intent)))}))))
          (let [runner   (or (:consult-runner env)
                           consult-engine/run-consult!)
                futures  (mapv (fn [intent]
