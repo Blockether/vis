@@ -3704,15 +3704,16 @@
                             ;; scope. Hook-task rejections were already
                             ;; archived inside reconcile-done-hook-tasks!.
                             (ctx-loop/archive-failed-task-proofs! environment (or form-results-map {}))
-                            ;; drain :engine/pending-consults
-                            ;; declared via (consult-request! …) inside
-                            ;; this iter's fence. Each pending intent runs
-                            ;; in parallel on a side thread; each result
-                            ;; lands as a structured entry under
-                            ;; :session/consult-results visible to the
-                            ;; model in the NEXT iter. Done is refused
-                            ;; while pending consults exist (R4 gate).
-                            (ctx-loop/process-pending-consults! environment))
+                            ;; Drain :engine/pending-consults declared
+                            ;; via (consult-request! …) inside this
+                            ;; iter's fence. Each pending intent runs
+                            ;; in parallel on a side thread; each
+                            ;; result lands as a synthetic trailer pin
+                            ;; on the current iter and fires a
+                            ;; :phase :consult-resolved chunk for the
+                            ;; channel. Done is refused while pending
+                            ;; consults exist.
+                            (ctx-loop/process-pending-consults! environment on-chunk))
                         reconcile-duration-ms (- (System/currentTimeMillis) reconcile-start-ms)
                         hook-tasks-post   (when ctx-atom-ref
                                             (into {}
@@ -4074,7 +4075,7 @@
   [env messages opts]
   (let [{:keys [spec model
                 max-context-tokens
-                system-prompt debug? hooks cancel-atom cancel-token eval-timeout-ms
+                system-prompt debug? hooks cancel-token eval-timeout-ms
                 reasoning-default routing extra-body]
          :or   {debug? false}} opts]
     (when-not (:db-info env)
@@ -4087,17 +4088,13 @@
         {:type     :vis/invalid-eval-timeout
          :got      eval-timeout-ms
          :got-type (type eval-timeout-ms)}))
-    (let [;; Prefer a full cancellation TOKEN (carries the cooperative
-          ;; flag AND the on-cancel! callback registry that hard-cancels
-          ;; SCI / provider futures). Legacy callers that only ship a
-          ;; raw atom keep working: synthesize a token wrapping that atom
-          ;; so the downstream API stays uniform. New callers create the
-          ;; token via `cancellation/cancellation-token` and pass it as
-          ;; `:cancel-token`.
+    (let [;; Cancellation TOKEN carries the cooperative flag AND the
+          ;; on-cancel! callback registry that hard-cancels SCI /
+          ;; provider futures. Callers create one via
+          ;; `cancellation/cancellation-token` and pass it as
+          ;; `:cancel-token`. The derived atom is the lower-level
+          ;; primitive every poll site checks.
           cancel-token           (or cancel-token
-                                   (when cancel-atom
-                                     {::cancellation/flag      cancel-atom
-                                      ::cancellation/callbacks (atom [])})
                                    (cancellation/cancellation-token))
           cancel-atom            (cancellation/cancellation-atom cancel-token)
           ;; `user-request` = ONLY the current turn's user message.
