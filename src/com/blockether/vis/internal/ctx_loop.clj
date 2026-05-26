@@ -318,14 +318,15 @@
              (consult/append-resolution-pin! ctx-atom r)
              (when on-chunk
                (let [cursor (-> ctx-atom deref :session/scope)
+                     iter    (:iter cursor)
                      id-name (name (:id r))
-                     scope   (str "t" (:turn cursor) "/i" (:iter cursor)
-                               "/c-" id-name)]
-                 (on-chunk {:phase   :consult-resolved
-                            :scope   scope
-                            :id      (:id r)
-                            :tag     :consult
-                            :result  r}))))
+                     scope   (str "t" (:turn cursor) "/i" iter "/c-" id-name)]
+                 (on-chunk {:phase           :consult-resolved
+                            :iteration-count iter
+                            :scope           scope
+                            :id              (:id r)
+                            :tag             :consult
+                            :result          r}))))
            (mapv :id results)))))))
 
 (defn archive-failed-task-proofs!
