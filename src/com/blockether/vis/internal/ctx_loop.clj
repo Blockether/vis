@@ -253,6 +253,7 @@
 
    Returns the intent map plus `:blocked? true|false`."
   [{:keys [ctx-atom] :as env} {:keys [answer answer-summary
+                                      user-request turn-summary
                                       session-title enforce-title-gate?
                                       trailer-drop trailer-summarize archive]}]
   (let [start-ms   (System/nanoTime)
@@ -283,11 +284,13 @@
             (let [c+cur (assoc c :session/scope cursor)
                   {ctx' :ctx ws :warnings blocked :blocked?}
                   (eng/apply-done c+cur scope
-                    {:answer answer
+                    {:answer         answer
                      :answer-summary answer-summary
-                     :trailer-drop trailer-drop
+                     :user-request   user-request
+                     :turn-summary   turn-summary
+                     :trailer-drop   trailer-drop
                      :trailer-summarize trailer-summarize
-                     :archive archive})]
+                     :archive        archive})]
               (reset! warns (vec ws))
               (reset! blocked? (boolean blocked))
               (cond-> (dissoc ctx' :session/scope)
