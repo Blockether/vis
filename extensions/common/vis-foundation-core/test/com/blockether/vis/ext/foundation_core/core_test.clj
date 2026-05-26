@@ -47,7 +47,9 @@
         ;; good-only iter-composition recipes (probe → widen, locate
         ;; → open, single-scan-many-views, multi-edit-one-call) plus
         ;; HARD RULES against one-shot fences that brick the trailer.
-        (expect (< (count prompt) 12000)))))
+        ;; Bumped 12000 → 13000 after the kwargs/map dual calling
+        ;; convention examples landed on v/ls + v/rg docstrings.
+        (expect (< (count prompt) 13000)))))
 
   (it "contributes only the workspace block through ctx now"
     ;; `:session/env` (host / project / extensions digest) moved to

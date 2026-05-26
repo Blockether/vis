@@ -140,6 +140,41 @@
 ;; failure propagation: failed entries land as trailer pins too
 ;; ---------------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------------
+;; on-chunk emission: each resolved consult fires :phase :consult-resolved
+;; ---------------------------------------------------------------------------
+
+(defdescribe on-chunk-emission-test
+  (describe "process-pending-consults! fires one :consult-resolved chunk per intent"
+    (let [env (assoc (mk-env) :consult-runner (stub-runner {}))
+          chunks (atom [])
+          on-chunk (fn [c] (swap! chunks conj c))]
+      (consult/request-consult! env :K1 :fast {:question "q1"})
+      (consult/request-consult! env :K2 :deep {:question "q2"})
+      (cl/process-pending-consults! env on-chunk)
+
+      (it "one chunk per resolved intent"
+        (expect (= 2 (count @chunks))))
+
+      (it "chunk :phase is :consult-resolved"
+        (doseq [c @chunks]
+          (expect (= :consult-resolved (:phase c)))))
+
+      (it "chunk carries :id + :tag :consult + :scope + :result"
+        (let [ids (set (map :id @chunks))]
+          (expect (= #{:K1 :K2} ids)))
+        (doseq [c @chunks]
+          (expect (= :consult (:tag c)))
+          (expect (re-matches #"t\d+/i\d+/c-.*" (:scope c)))
+          (expect (= :active (-> c :result :status)))))))
+
+  (describe "omitting on-chunk is fine (1-arity path)"
+    (let [env (assoc (mk-env) :consult-runner (stub-runner {}))]
+      (consult/request-consult! env :K :fast {:question "q"})
+      (it "runs without errors and still appends pin"
+        (expect (= [:K] (cl/process-pending-consults! env)))
+        (expect (= 1 (count (trailer-consult-pins @(:ctx-atom env)))))))))
+
 (defdescribe failed-runner-propagation-test
   (describe "a runner that returns :status :failed lands the pin"
     (let [env (assoc (mk-env)

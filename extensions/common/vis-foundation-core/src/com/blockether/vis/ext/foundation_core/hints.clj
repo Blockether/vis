@@ -55,10 +55,20 @@
            (clojure.string/includes? src \":trailer-drop\"))))")
 
 (def ^:const TITLE_REFRESH_TURN_PERIOD
-  "Turn cadence at which `title-hint` re-asks the model to refresh
-   the session title when it is already set. The hint fires on
-   iteration 0 of turn 1 (first turn of the session), then on
-   iteration 0 of every Nth turn after that (10, 20, 30, ...).
+  "Turn cadence at which `title-hint` fires. BOTH branches —
+   blank-title (`:critical`) and refresh-tick (`:info`) — are now
+   gated by this cadence; the hint surfaces on iteration 0 of
+   turn 1 (first turn of the session), then on iteration 0 of
+   every Nth turn after that (10, 20, 30, ...).
+
+   Why blank-title is also cadence-gated now:
+   the earlier rule fired `:critical` every iteration whenever the
+   title was blank. If the model failed the validator once (wrong
+   proof scope) the task reverted to `:todo`, the hint re-fired
+   every iter, and `progress.clj` emitted one `Title — …` recap
+   row per `(set-session-title! …)` call. Cadence-gating keeps
+   the recap to at most one nudge per cadence tick — quiet inside
+   any single turn, quiet on turns 2–9, etc.
 
    Why turn-cadence instead of iteration-cadence:
    the previous iteration-mod-12 rule never fired across a string of
@@ -105,20 +115,28 @@
                              (retained for callers that probe the fn,
                               no longer used for cadence)
 
-   Two branches now, no iteration-mod cadence:
-     blank-title  : always hint (a missing title is its own case)
-     refresh-tick : fires when the host flagged `:title-refresh?` AND
-                    `turn-position` is the first turn or a multiple of
-                    `TITLE_REFRESH_TURN_PERIOD`."
+   Two branches, both cadence-gated:
+     blank-title  : `:critical` — fires when title is blank AND the
+                    host flagged `:title-refresh?` AND `turn-position`
+                    is the first turn or a multiple of
+                    `TITLE_REFRESH_TURN_PERIOD`. Quiet on intermediate
+                    iterations and intermediate turns.
+     refresh-tick : `:info` — fires when title is set AND the host
+                    flagged `:title-refresh?` AND the same cadence
+                    predicate holds. Otherwise nil."
+
   [{:keys [session-title title-refresh? turn-position]}]
-  (let [blank? (or (nil? session-title) (str/blank? session-title))]
+  (let [blank?  (or (nil? session-title) (str/blank? session-title))
+        cadence (and title-refresh? (turn-cadence-tick? turn-position))]
     (cond
-      ;; Blank title is a real gap, not a soft suggestion. The title
-      ;; is the only label the sidebar / persisted session row
-      ;; carries; without it the session is anonymous. :high
-      ;; makes the model actually call `(set-session-title! ...)`
-      ;; instead of skipping the hint as low-priority advisory noise.
-      blank?
+      ;; Blank title is a real gap, but we no longer scream every
+      ;; iteration. Gate by cadence + iter-0 refresh flag so the
+      ;; nudge lands once per cadence tick (turn 1, 10, 20, …) and
+      ;; the model is free to skip it on noisy intermediate turns
+      ;; without the renderer racking up duplicate `Title — …`
+      ;; recap rows. `:critical` keeps the priority loud when the
+      ;; nudge actually fires.
+      (and blank? cadence)
       {:importance   :critical
        :validator-fn TITLE_VALIDATOR_FN_SRC
        :title (str "Set the session title via bare `(set-session-title! \"...\")` "
@@ -131,7 +149,7 @@
       ;; Periodic refresh stays :info — the existing title already labels
       ;; the session; this branch only hints when focus may have
       ;; shifted, and is fine to skip.
-      (and title-refresh? (turn-cadence-tick? turn-position))
+      (and (not blank?) cadence)
       {:importance   :info
        :validator-fn TITLE_VALIDATOR_FN_SRC
        :title (str "Refresh title if focus has shifted. "
