@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.foundation-core.hints-test
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-core.hints :as hints]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -14,7 +15,7 @@
                                  :turn-position tp
                                  :iteration 0})]
         (expect (= :critical (:importance n)))
-        (expect (string? (:validator-fn n)))
+        (expect (vis/validator-fn? (:validator-fn n)))
         (expect (str/includes? (:title n) "session title"))
         (expect (str/includes? (:title n) "set-session-title!"))
         (expect (str/includes? (:title n) "task-set! :vis.foundation/session-title")))))
@@ -39,7 +40,7 @@
                                :turn-position 1
                                :iteration 1})]
       (expect (= :info (:importance n)))
-      (expect (string? (:validator-fn n)))
+      (expect (vis/validator-fn? (:validator-fn n)))
       (expect (str/includes? (:title n) "Refactor auth flow"))
       (expect (str/includes? (:title n) "set-session-title!"))
       (expect (str/includes? (:title n) "1 turn(s)"))))
@@ -83,8 +84,10 @@
   ;; The validator is purely structural: it pattern-matches on the
   ;; engine-supplied `:form` (parsed sexp) and ignores `:src`. A proof
   ;; scope whose source didn't parse leaves `:form` nil and fails closed
-  ;; — string-includes? was a false-positive magnet.
-  (let [pred (eval (read-string hints/TITLE_VALIDATOR_FN_SRC))]
+  ;; — string-includes? was a false-positive magnet. We exercise the
+  ;; HOST fn (`:fn` slot, the runtime fast path); a separate test below
+  ;; round-trips through `:src` to confirm the SCI fallback also works.
+  (let [pred (:fn hints/TITLE_VALIDATOR)]
     (it "passes when :form is a real (set-session-title! \"…\") call"
       (expect (true? (boolean (pred {:form '(set-session-title! "Auth refactor")
                                      :result :vis/silent})))))
@@ -142,7 +145,7 @@
           n     (hints/context-pressure-hint {:input-tokens used
                                               :context-limit limit})]
       (expect (= :warn (:importance n)))
-      (expect (string? (:validator-fn n)))
+      (expect (vis/validator-fn? (:validator-fn n)))
       (expect (str/includes? (:title n) "Converge now"))))
 
   (it "fires for 100k/200k (the z.ai GLM sweet-spot boundary)"
@@ -157,8 +160,21 @@
     (expect (nil? (hints/context-pressure-hint {:input-tokens 0 :context-limit 200000})))
     (expect (nil? (hints/context-pressure-hint {:input-tokens 50000 :context-limit 0})))))
 
+(defdescribe title-validator-src-roundtrip-test
+  ;; Persistence safety: the same SCI source string must compile and
+  ;; behave identically to the host fn. This proves that a thawed
+  ;; session (where `:fn` was lost to nippy + replaced by a runtime-ref
+  ;; marker) still validates correctly via `:src`.
+  (let [pred (eval (read-string (:src hints/TITLE_VALIDATOR)))]
+    (it "src-compiled validator passes on a real set-session-title! call"
+      (expect (true? (boolean (pred {:form '(set-session-title! "Auth refactor")})))))
+    (it "src-compiled validator fails on wrong head"
+      (expect (false? (boolean (pred {:form '(v/cat "x")})))))
+    (it "src-compiled validator fails on blank title"
+      (expect (false? (boolean (pred {:form '(set-session-title! "")})))))))
+
 (defdescribe context-pressure-validator-fn-test
-  (let [pred (eval (read-string hints/CONTEXT_PRESSURE_VALIDATOR_FN_SRC))]
+  (let [pred (:fn hints/CONTEXT_PRESSURE_VALIDATOR)]
     (it "passes on bare (done) form (turn converges either way)"
       (expect (true? (boolean (pred {:form '(done)
                                      :result :vis/answer})))))
@@ -212,7 +228,12 @@
           hit ((:fn h) {:session-title nil :title-refresh? true
                         :turn-position 1 :iteration 0})]
       (expect (string? (:title hit)))
-      (expect (string? (:validator-fn hit)))
+      ;; `:validator-fn` is now the dual `{:fn :src}` map (vis/validator-fn
+      ;; macro output) instead of the old SCI source string. The engine
+      ;; accepts any of fn / map / string via `vis/validator-fn?`.
+      (expect (vis/validator-fn? (:validator-fn hit)))
+      (expect (fn? (:fn (:validator-fn hit))))
+      (expect (string? (:src (:validator-fn hit))))
       (expect (= :critical (:importance hit)))))
 
   (it "hooks return nil when their underlying condition is absent"

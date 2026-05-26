@@ -185,12 +185,14 @@
 ;;   - plain `fn?` value             (in-memory only)
 ;;   - `{:fn <fn> :src "…"}` map       (host-defined, persist-safe)
 ;;   - SCI source string             (model-emitted)
-;; Pure spec check stays loose; structural validity is enforced by
+;; Spec is predicate-only (no `s/or` branching) and pins the generator
+;; to the string shape — `s/or` would try to generate from `fn?`,
+;; which has no built-in generator and blows up the round-trip
+;; property tests. Structural validity is enforced by
 ;; `ctx-engine/validator-fn?`.
 (s/def :session.task/validator-fn
-  (s/or :fn      fn?
-    :map     (s/keys :opt-un [::validator-fn-fn ::validator-fn-src])
-    :src     string?))
+  (s/with-gen (some-fn fn? map? string?)
+    #(gen/fmap (fn [_] "(fn [_] true)") (gen/return nil))))
 (s/def :session.task/proof        ::scope-form)
 ;; Engine-stamped `:validated? true` once `reconcile-done-hook-tasks`
 ;; runs the task's `:validator-fn` against the form envelope at `:proof`
@@ -237,11 +239,11 @@
 
 (s/def :session.requirement/id           keyword?)
 (s/def :session.requirement/title        string?)
-;; Same shape contract as `:session.task/validator-fn`.
+;; Same shape contract as `:session.task/validator-fn`. Generator
+;; pinned to a string sample for the same reason — see comment there.
 (s/def :session.requirement/validator-fn
-  (s/or :fn      fn?
-    :map     map?
-    :src     string?))
+  (s/with-gen (some-fn fn? map? string?)
+    #(gen/fmap (fn [_] "(fn [_] true)") (gen/return nil))))
 (s/def :session.requirement/facts
   (s/coll-of ::entry-key :kind vector?))
 
