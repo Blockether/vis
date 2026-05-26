@@ -160,12 +160,13 @@
         (doseq [c @chunks]
           (expect (= :consult-resolved (:phase c)))))
 
-      (it "chunk carries :id + :tag :consult + :scope + :result"
+      (it "chunk carries :id + :tag :consult + :scope + :result + :iteration-count"
         (let [ids (set (map :id @chunks))]
           (expect (= #{:K1 :K2} ids)))
         (doseq [c @chunks]
           (expect (= :consult (:tag c)))
           (expect (re-matches #"t\d+/i\d+/c-.*" (:scope c)))
+          (expect (integer? (:iteration-count c)))
           (expect (= :active (-> c :result :status)))))))
 
   (describe "omitting on-chunk is fine (1-arity path)"

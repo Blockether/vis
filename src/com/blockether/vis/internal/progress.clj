@@ -497,6 +497,15 @@
       :error    (:error chunk)
       :done?    true)
 
+    :consult-resolved
+    ;; Async consult resolved between iters. We accumulate resolutions
+    ;; on `:consults` so the channel renders them as a distinct lane,
+    ;; not interleaved with the model's own form-result rows.
+    (let [resolution {:id     (:id chunk)
+                      :scope  (:scope chunk)
+                      :result (:result chunk)}]
+      (update entry :consults (fnil conj []) resolution))
+
     ;; Unknown / missing :phase - leave the entry as-is.
     entry))
 

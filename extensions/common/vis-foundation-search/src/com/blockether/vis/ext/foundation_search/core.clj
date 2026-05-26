@@ -10,6 +10,27 @@
    inside the consult mini-SCI sandbox. Primary cannot bind them in
    its own fence; research routes through `(consult-request! …)`.
 
+   Output shape — parity with the rest of the `:tag :observation`
+   tool surface (v/cat, v/ls, v/rg). Every search fn returns the
+   canonical tool envelope; SCI sees the unwrapped `:result` map:
+
+     {:vis.op       :search/web|:search/code|:search/papers
+      :query        \"…\"
+      :citations    [{:type :title :url :excerpt :source …} …]
+      :citation-count N
+      :truncated?   B
+      :source       :exa|:arxiv
+      :endpoint     \"…REDACTED…\"   ;; web/code only
+      :error?       true               ;; only on failure
+      :error        {:message … …}}    ;; only on failure
+
+   `:excerpt` is Markdown; the channel renderer parses it through
+   `vis/markdown->ir` so the TUI / Telegram / web channels render
+   commonmark blocks (headings, lists, code fences) instead of dumping
+   the raw blob. Errors are still surfaced inline as a single citation
+   with `:error true` AND on the envelope's `:error` slot so failures
+   stay visible no matter which lens the consumer reads.
+
    Exa MCP: the public endpoint supports basic unauthenticated use;
    set `EXA_API_KEY` (or `EXA_MCP_API_KEY`) for higher limits. The
    key is never logged or surfaced; the endpoint shown in results is
@@ -22,7 +43,8 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.xml :as xml]
-   [com.blockether.vis.core :as vis])
+   [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.extension :as extension])
   (:import
    (java.io ByteArrayInputStream)
    (java.net URI URLDecoder URLEncoder)
@@ -522,34 +544,120 @@
   (cond-> {:query query}
     (kw-get opts :tokens-num :tokensNum) (assoc :tokensNum (kw-get opts :tokens-num :tokensNum))))
 
+;; ----------------------------------------------------------------------------
+;; Envelope helpers
+;;
+;; Every search/* fn returns a tool envelope so the channel layer
+;; (TUI / Telegram / web) gets a structured payload AND a custom
+;; render-fn that paints citation cards instead of dumping the raw
+;; markdown blob. SCI itself sees the unwrapped `:result` map.
+;; ----------------------------------------------------------------------------
+
+(defn- search-result-payload
+  "Canonical SCI-facing :result map for a successful search call."
+  [{:keys [op query citations source endpoint truncated?]}]
+  (cond-> {:vis.op         op
+           :query          (str query)
+           :citations      (vec citations)
+           :citation-count (count citations)
+           :truncated?     (boolean truncated?)
+           :source         source}
+    endpoint (assoc :endpoint endpoint)))
+
+(defn- search-success
+  "Wrap a successful search call in the canonical tool envelope so it
+   travels through `invoke-symbol-wrapper` the same way v/* tools do."
+  [{:keys [op tool query citations source endpoint truncated?]}]
+  (let [payload (search-result-payload
+                  {:op op :query query :citations citations
+                   :source source :endpoint endpoint :truncated? truncated?})]
+    (extension/success
+      {:result   payload
+       :op       op
+       :metadata (cond-> {:tool           (str tool)
+                          :source         source
+                          :citation-count (:citation-count payload)
+                          :truncated?     (:truncated? payload)
+                          :query          (str query)}
+                   endpoint (assoc :endpoint endpoint))})))
+
+(defn- search-failure
+  "Failure envelope. Carries a single error-flagged citation on
+   `:result` so consult / model code that already destructures
+   `(:citations r)` still sees the failure, AND a structured
+   `:error` map so the channel renderer paints the fail card
+   from the envelope side."
+  [{:keys [op tool query source endpoint citation-type ^Throwable throwable]}]
+  (let [msg          (or (some-> throwable ex-message) "search failed")
+        error-entry  (cond-> {:type    citation-type
+                              :title   (str "search failed: " query)
+                              :url     ""
+                              :excerpt msg
+                              :source  source
+                              :error   true}
+                       (some-> throwable ex-data :type)
+                       (assoc :error-type (-> throwable ex-data :type)))
+        payload      (-> (search-result-payload
+                           {:op op :query query :citations [error-entry]
+                            :source source :endpoint endpoint :truncated? false})
+                       (assoc :error? true))]
+    (extension/failure
+      {:result   payload
+       :op       op
+       :metadata (cond-> {:tool           (str tool)
+                          :source         source
+                          :citation-count 1
+                          :error?         true
+                          :query          (str query)}
+                   endpoint (assoc :endpoint endpoint))
+       :error    {:message msg
+                  :reason  (or (some-> throwable ex-data :type) :search/call-failed)
+                  :query   (str query)
+                  :source  source}})))
+
 (defn- call-exa!
-  "Common path for `web` + `code`: call MCP, parse text → citation vec.
-   Returns a vec of citation maps. On error returns a single error
-   citation so callers see the failure inline rather than throwing."
-  [tool-name args citation-type query]
+  "Common path for `web` + `code`: call MCP, parse text → envelope.
+   Returns an `extension/success` (or `extension/failure`) envelope
+   so the wrapper produces channel-renderable structured output.
+
+   `op` is the public op kw (`:search/web` / `:search/code`).
+   `tool-name` is the Exa MCP tool string (`\"web_search_exa\"` etc.)."
+  [op tool-name args citation-type query]
   (try
-    (let [{:keys [result]} (call-mcp-tool! tool-name args)
-          raw (mcp-result->text result)
-          text (:content (truncate-text raw (effective-limits {})))]
-      (parse-exa-text text citation-type))
+    (let [{:keys [endpoint result]} (call-mcp-tool! tool-name args)
+          raw          (mcp-result->text result)
+          {:keys [content truncated?]} (truncate-text raw (effective-limits {}))
+          citations    (parse-exa-text content citation-type)
+          redacted-ep  (some-> endpoint redact-endpoint)]
+      (search-success
+        {:op op :tool tool-name :query query :citations citations
+         :source :exa :endpoint redacted-ep :truncated? truncated?}))
     (catch Throwable t
-      [{:type    citation-type
-        :title   (str "search failed: " query)
-        :url     ""
-        :excerpt (or (ex-message t) "")
-        :source  :exa
-        :error   true}])))
+      (search-failure
+        {:op op :tool tool-name :query query :source :exa
+         :citation-type citation-type :throwable t}))))
 
 (defn web
-  "Live web search. Returns a vec of citation maps shaped like:
-     {:type :web :title :url :excerpt :published? :authors? :source :exa}
-   `:excerpt` is markdown; the TUI renders commonmark.
+  "Live web search via Exa MCP. Returns the canonical tool envelope;
+   SCI sees the unwrapped `:result` map:
+     {:vis.op :search/web :query :citations [{:type :web :title :url
+      :excerpt :published? :authors? :source :exa} …]
+      :citation-count :truncated? :endpoint :source}
+
+   `:excerpt` is markdown; the channel renderer parses it through
+   `vis/markdown->ir` so commonmark blocks (headings, lists, code
+   fences) render natively in the TUI / Telegram / web channels.
    Set `EXA_API_KEY` for higher rate limits.
 
-   Opts: :num-results :type :livecrawl :context-max-characters."
+   Opts (kwargs OR map; both accepted by SCI 1.11+ kwargs coercion):
+     :num-results            — number of results to fetch
+     :type                   — :auto | :fast | :deep
+     :livecrawl              — :fallback | :preferred
+     :context-max-characters — cap per-result content size"
   ([query] (web query {}))
   ([query opts]
-   (call-exa! "web_search_exa" (web-args (str query) (or opts {})) :web (str query))))
+   (call-exa! :search/web "web_search_exa" (web-args (str query) (or opts {}))
+     :web (str query))))
 
 (defn code
   "Live code/docs search via Exa MCP (`get_code_context_exa`). De facto
@@ -559,14 +667,17 @@
    For github-only queries, narrow the query string (e.g.
    `site:github.com X` or `<repo> X`).
 
-   Returns a vec of citation maps shaped like:
-     {:type :code :title :url :excerpt :source :exa}
-   `:excerpt` is markdown.
+   Returns the canonical tool envelope; SCI sees:
+     {:vis.op :search/code :query :citations [{:type :code :title :url
+      :excerpt :source :exa} …] :citation-count :truncated? :endpoint
+      :source}
+   `:excerpt` is markdown (commonmark-rendered by the channel layer).
 
    Opts: :tokens-num."
   ([query] (code query {}))
   ([query opts]
-   (call-exa! "get_code_context_exa" (code-args (str query) (or opts {})) :code (str query))))
+   (call-exa! :search/code "get_code_context_exa" (code-args (str query) (or opts {}))
+     :code (str query))))
 
 ;; =============================================================================
 ;; arxiv papers (Atom feed)
@@ -615,8 +726,14 @@
         :error true}])))
 
 (defn papers
-  "arxiv paper search. Returns a vec of citation-shaped maps
-   `{:type :paper :title :url :excerpt :authors :published :source}`.
+  "arxiv paper search. Returns the canonical tool envelope; SCI sees:
+     {:vis.op :search/papers :query :citations [{:type :paper :title
+      :url :excerpt :authors :published :source :arxiv} …]
+      :citation-count :truncated? :source}
+
+   `:excerpt` is the arxiv abstract (plain text — still rendered
+   through commonmark by the channel layer, which is a no-op for
+   non-markdown content).
 
    Opts:
      :max-results  N    default 10
@@ -645,15 +762,125 @@
              body-bytes (cond
                           (string? body) (.getBytes ^String body StandardCharsets/UTF_8)
                           (bytes? body) body
-                          :else (.getBytes (str body) StandardCharsets/UTF_8))]
-         (parse-arxiv-atom body-bytes))
+                          :else (.getBytes (str body) StandardCharsets/UTF_8))
+             citations (parse-arxiv-atom body-bytes)]
+         (search-success
+           {:op :search/papers :tool "arxiv" :query query
+            :citations citations :source :arxiv
+            :endpoint url :truncated? false}))
        (catch Throwable t
-         [{:type :paper
-           :title (str "arxiv request failed: " query)
-           :url url
-           :excerpt (or (ex-message t) "")
-           :source :arxiv
-           :error true}])))))
+         (search-failure
+           {:op :search/papers :tool "arxiv" :query query
+            :source :arxiv :endpoint url
+            :citation-type :paper :throwable t}))))))
+
+;; =============================================================================
+;; Channel IR renderer
+;;
+;; Same structural-output story as the v/* tools: a small IR tree the
+;; TUI / Telegram / web channels render directly. Each citation is a
+;; \"card\" block:
+;;
+;;   **N.** [title](url)
+;;   _meta-line_                ;; published / authors when present
+;;   <parsed-markdown excerpt>  ;; commonmark blocks spliced in
+;;
+;; Errors show one card with a loud failure badge.
+;; =============================================================================
+
+(defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
+(defn- ir-p [& parts]
+  (into [:p {}] (map ir-inline (filter some? parts))))
+(defn- ir-strong [s] [:strong {} (str s)])
+(defn- ir-em [s] [:em {} (str s)])
+(defn- ir-link [url label]
+  [:a {:href (str url)} (str (or label url))])
+(defn- ir-hr [] [:hr {}])
+
+(defn- non-blank-str
+  [x]
+  (let [s (cond
+            (nil? x)     nil
+            (keyword? x) (name x)
+            :else        (str x))]
+    (when (and s (not (str/blank? s))) s)))
+
+(defn- citation-meta-line
+  "Build the italic meta-line text. Empty string when no metadata."
+  [{:keys [published authors source url]}]
+  (->> [(when-let [s (non-blank-str source)]    s)
+        (when-let [s (non-blank-str published)] (str "published " s))
+        (when-let [s (non-blank-str authors)]   (str "by " s))
+        (when-let [s (non-blank-str url)]       s)]
+    (remove nil?)
+    (str/join " · ")))
+
+(defn- markdown-body-blocks
+  "Parse `excerpt` markdown into IR blocks. Strips the outer `[:ir attrs ...]`
+   wrapper so the blocks splice cleanly into our card. Blank input → nil."
+  [excerpt]
+  (when-let [ex (and (string? excerpt) (not-empty (str/trim excerpt)))]
+    (try
+      (let [parsed (vis/markdown->ir ex)]
+        ;; markdown->ir always returns `[:ir {} & blocks]`; drop the
+        ;; tag + attrs and keep the body so we can interleave with
+        ;; our headline/meta paragraphs.
+        (when (vector? parsed)
+          (let [body (drop 2 parsed)]
+            (seq (vec body)))))
+      (catch Throwable _
+        ;; Fall back to a fenced code block on parse failure so the
+        ;; excerpt is still readable and the failure surfaces visibly.
+        [[:code {} ex]]))))
+
+(defn- citation-card
+  "Render one citation as a sequence of IR blocks."
+  [idx {:keys [title url error] :as citation}]
+  (let [headline (cond
+                   error      (ir-p (ir-strong (str (inc idx) ". "))
+                                (ir-strong "⚠ ") (or title "failure"))
+                   (str/blank? url)
+                   (ir-p (ir-strong (str (inc idx) ". ")) (or title "(no title)"))
+                   :else
+                   (ir-p (ir-strong (str (inc idx) ". "))
+                     (ir-link url (or title url))))
+        meta-txt (citation-meta-line citation)
+        meta-blk (when (and (not error) (seq meta-txt))
+                   (ir-p (ir-em meta-txt)))
+        body     (markdown-body-blocks (:excerpt citation))]
+    (cond-> [headline]
+      meta-blk         (conj meta-blk)
+      (seq body)       (into body))))
+
+(defn- search-badge-label
+  [op]
+  (case op
+    :search/web    "SEARCH WEB"
+    :search/code   "SEARCH CODE"
+    :search/papers "SEARCH PAPERS"
+    "SEARCH"))
+
+(defn channel-render-search
+  "Build canonical IR for a search result. Reads the structured
+   `:result` map (`{:vis.op :query :citations …}`) directly — no
+   markdown round-trip on the result blob itself."
+  [{op :vis.op :keys [query citations citation-count truncated? source endpoint error?]}]
+  (let [head (ir-p (ir-strong (search-badge-label op))
+               "  " [:c {} (or query "")]
+               "  " (str (or citation-count (count citations)) " citation"
+                      (when (not= 1 (or citation-count (count citations))) "s"))
+               (when truncated? "  (truncated)")
+               (when error?     "  ⚠ failed")
+               (when source     (str "  source=" (name source)))
+               (when endpoint   (str "  ep=" endpoint)))
+        cards (->> citations
+                (map-indexed citation-card)
+                (interpose [(ir-hr)])
+                (mapcat identity)
+                vec)
+        blocks (cond-> [head]
+                 (seq cards) (into cards))]
+    (into [:ir {}] (filter some? blocks))))
 
 ;; =============================================================================
 ;; Symbol entries (all `:consult`-scope)
@@ -661,20 +888,20 @@
 
 (def web-symbol
   (vis/symbol #'web
-    {:tag :observation
-     :raw? true
+    {:tag          :observation
+     :render-fn    channel-render-search
      :engine-scope #{:consult}}))
 
 (def code-symbol
   (vis/symbol #'code
-    {:tag :observation
-     :raw? true
+    {:tag          :observation
+     :render-fn    channel-render-search
      :engine-scope #{:consult}}))
 
 (def papers-symbol
   (vis/symbol #'papers
-    {:tag :observation
-     :raw? true
+    {:tag          :observation
+     :render-fn    channel-render-search
      :engine-scope #{:consult}}))
 
 (def search-symbols

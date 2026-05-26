@@ -960,7 +960,7 @@
    Declared near `recap-marker` because the paint dispatch (which
    reads it) lives in the same paint loop, hundreds of lines above
    the recap row builders."
-  #{"TITLE" "TASK" "SPEC" "FACT" "RECAP"})
+  #{"TITLE" "TASK" "SPEC" "FACT" "RECAP" "CONSULT"})
 
 (def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
 (def ^:private code-pad-marker   p/MARKER_CODE_PAD)
@@ -1868,11 +1868,12 @@
                     (let [raw         (subs line 1)
                           recap-kind  (:recap-kind meta)
                           kind-fg     (case recap-kind
-                                        :task   t/tool-color-edit
-                                        :spec   t/tool-color-meta
-                                        :fact   t/tool-color-read
-                                        :title  t/md-h1-fg
-                                        :recap  t/dialog-hint-key
+                                        :task    t/tool-color-edit
+                                        :spec    t/tool-color-meta
+                                        :fact    t/tool-color-read
+                                        :title   t/md-h1-fg
+                                        :recap   t/dialog-hint-key
+                                        :consult t/tool-color-search
                                         t/dialog-hint)
                           trimmed     (str/triml raw)
                           parts       (str/split trimmed #"\s+" 2)
@@ -3099,6 +3100,31 @@
       :else
       (str "Provider: " text))))
 
+(defn- consult-recap
+  "Project a single consult-resolution entry into a recap string. The
+   `recap-entries` pipeline prepends `CONSULT  ` to the string so the
+   painter picks the consult kind from `recap-kinds`.
+
+   Active entries: `CONSULT  :id :confidence — <citation-title or content-head>`
+   Failed entries: `CONSULT  :id :failed (:error-kw)`"
+  [{:keys [id result]}]
+  (let [entry result]
+    (case (:status entry)
+      :failed
+      (str "CONSULT  " id " :failed (" (:error entry) ")")
+
+      :active
+      (let [confidence (or (:confidence entry) :medium)
+            first-cite (first (:citations entry))
+            content    (or (:content entry) "")
+            tag        (or (some-> first-cite :title)
+                         (some-> first-cite :url)
+                         (when (string? content)
+                           (str/trim (subs content 0 (min 80 (count content))))))]
+        (str "CONSULT  " id " " confidence " — " tag))
+
+      (str "CONSULT  " id " " (:status entry)))))
+
 (defn- provider-error-recap
   [error]
   (let [data (:data error)]
@@ -3234,7 +3260,7 @@
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
-  (let [{:keys [thinking content-stream forms recaps provider-fallbacks error repeat-count]} entry
+  (let [{:keys [thinking content-stream forms recaps consults provider-fallbacks error repeat-count]} entry
         ;; Stream provider content alongside reasoning so the bubble
         ;; keeps painting between reasoning end and parsed-form render.
         ;; Once response-parse :done fires, :content-stream is dropped
@@ -3260,6 +3286,7 @@
         raw-recap-lines (recap-entries line-entry
                           (cond-> (vec (or recaps []))
                             (seq provider-fallbacks) (into (map fallback-recap provider-fallbacks))
+                            (seq consults) (into (map consult-recap consults))
                             (provider-error-recap error) (conj (provider-error-recap error)))
                           fill-w)
         recap-lines (if (seq raw-recap-lines)
