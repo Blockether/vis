@@ -4901,9 +4901,13 @@
                                          trailer-drop      (when (map? value) (:trailer-drop value))
                                          trailer-summarize (when (map? value) (:trailer-summarize value))
                                          archive           (when (map? value) (:archive value))
-                                         ;; Phase F: extract :answer + optional :answer-summary so the
-                                         ;; engine can write a :turn-N-answer fact under :session/facts.
-                                         ;; Next turn's ;; ctx EDN block surfaces that fact inside the
+                                         ;; Phase F (redesigned): extract :answer + optional
+                                         ;; :answer-summary + free-form :turn-summary so the engine can
+                                         ;; write a compact `:turn-N-summary` fact under :session/facts.
+                                         ;; The fact carries question + 1-paragraph answer synopsis +
+                                         ;; entity ids born/done this turn (NOT the full answer body;
+                                         ;; that ships separately via the answer channel + DB column).
+                                         ;; Next turn's ;; ctx EDN block surfaces this fact inside the
                                          ;; cached prefix — replaces the previous-turn-context user-message
                                          ;; rebuild that assemble-initial-messages used to inject.
                                          answer-text       (cond
@@ -4912,6 +4916,11 @@
                                                              (string? value) value
                                                              :else nil)
                                          answer-summary    (when (map? value) (:answer-summary value))
+                                         turn-summary      (when (map? value) (:turn-summary value))
+                                         ;; Question = the user request that opened this turn. Pulled
+                                         ;; from the live turn-state so the fact carries the prompt
+                                         ;; verbatim for cross-turn lookup.
+                                         user-request      (some-> turn-state-atom deref :user-request)
                                          done-env          {:ctx-atom        ctx-atom
                                                             :turn-state-atom turn-state-atom}
                                          ;; Phase D: title-gate. Read live title from the closed-over
@@ -4920,18 +4929,20 @@
                                          ;; set-session-title! earlier in the same fence).
                                          current-title   (some-> session-title-atom deref str str/trim not-empty)
                                          done-ret          (ctx-loop/apply-done! done-env
-                                                             {:answer answer-text
+                                                             {:answer         answer-text
                                                               :answer-summary answer-summary
-                                                              :session-title current-title
+                                                              :turn-summary   turn-summary
+                                                              :user-request   user-request
+                                                              :session-title  current-title
                                                               ;; Phase D: opt-in title-gate (closed-over flag from
                                                               ;; create-environment opts). Interactive channels
                                                               ;; (TUI) want the gate so the session gets a label
                                                               ;; before close; CLI / SDK callers may not have a UI
                                                               ;; to label, so default off.
                                                               :enforce-title-gate? enforce-title-gate?
-                                                              :trailer-drop trailer-drop
+                                                              :trailer-drop      trailer-drop
                                                               :trailer-summarize trailer-summarize
-                                                              :archive archive})]
+                                                              :archive           archive})]
                                      ;; Consult gate: when consults declared
                                      ;; earlier in this iter are still pending,
                                      ;; the engine refuses close. We surface the

@@ -2125,7 +2125,8 @@
    reachable. Keeping it outside this pure engine fn lets the unit
    tests construct ctxs with `:session/turn 1` (the `empty-ctx`
    default) without the gate firing."
-  [ctx form-scope {:keys [answer answer-summary trailer-drop trailer-summarize archive]}]
+  [ctx form-scope {:keys [answer answer-summary user-request turn-summary
+                          trailer-drop trailer-summarize archive]}]
   (let [blockers (done-pending-consult-blockers ctx)]
     (if (seq blockers)
       {:ctx      ctx
@@ -2136,11 +2137,13 @@
                       (clojure.string/join ", " (map str blockers))
                       "); await + promote/dismiss before close"))]}
       (apply-done-impl ctx form-scope
-        {:answer answer
+        {:answer         answer
          :answer-summary answer-summary
-         :trailer-drop trailer-drop
+         :user-request   user-request
+         :turn-summary   turn-summary
+         :trailer-drop   trailer-drop
          :trailer-summarize trailer-summarize
-         :archive archive}))))
+         :archive        archive}))))
 
 (defn- first-paragraph-summary
   "Phase F fallback: when the model didn't emit `:answer-summary`,
@@ -2158,48 +2161,120 @@
         (str (subs para 0 277) "…")
         para))))
 
-(defn- auto-fact-for-answer
-  "Phase F: build the :turn-N-answer fact entity from the model's
-   (done {:answer ... :answer-summary?}) payload. Returns nil when no
-   answer text is present (e.g. cancelled turn). The fact carries:
-     :summary  one-line synopsis (model-supplied or auto-extracted)
-     :body     full :answer markdown for forensics / introspect
-     :status   :active  — surfaces in ;; ctx :session/facts section
-     :scope    tN string — born scope = current turn position
-     :source   :done-auto
-   The fact-id key shape :turn-N-answer keeps the namespace
-   predictable so the model can (introspect-fact :turn-3-answer)
-   directly without dictionary lookup."
-  [ctx form-scope answer answer-summary]
-  (let [answer-str (some-> answer str clojure.string/trim)]
-    (when (and answer-str (not (clojure.string/blank? answer-str)))
-      (let [turn-pos (or (:session/turn ctx) 0)
-            fact-id  (keyword (str "turn-" turn-pos "-answer"))
-            summary  (or (some-> answer-summary str clojure.string/trim not-empty)
-                       (first-paragraph-summary answer-str))]
-        [fact-id {:summary summary
-                  :body    answer-str
-                  :status  :active
-                  :scope   (str "t" turn-pos)
-                  :source  :done-auto
-                  :born    form-scope}]))))
+(defn- entity-ids-born-in-turn
+  "Scan a ctx subtree (`:session/facts` / `:session/specs` / `:session/tasks`)
+   and return the ids whose `:born` field marks them as having been
+   created during turn `turn-pos`. The scope language is `tN/iM[/fK]`,
+   so we match the leading `tN/` prefix verbatim.
+
+   Pure projection; engine state is read-only. Returns a vec for
+   stable EDN ordering inside the auto-fact."
+  [ctx subtree-key turn-pos]
+  (let [prefix (str "t" turn-pos "/")
+        m     (get ctx subtree-key)]
+    (vec
+      (for [[k v] (or m {})
+            :let [born (some-> (:born v) str)]
+            :when (and born (or (= born (str "t" turn-pos))
+                              (clojure.string/starts-with? born prefix)))]
+        k))))
+
+(defn- task-ids-touched-in-turn
+  "Tasks `:done` / `:archived` whose `:done-born` lands in this turn,
+   regardless of when the task was born. Captures the cross-turn case
+   `task-set! ... :status :open` in turn 3, `task-set! ... :status :done`
+   in turn 5 — the close-of-turn-5 summary should list it as touched."
+  [ctx turn-pos]
+  (let [prefix (str "t" turn-pos "/")
+        tasks  (get ctx :session/tasks)]
+    (vec
+      (for [[k v] (or tasks {})
+            :let [done-born (some-> (:done-born v) str)]
+            :when (and done-born (or (= done-born (str "t" turn-pos))
+                                   (clojure.string/starts-with? done-born prefix)))]
+        k))))
+
+(defn- auto-fact-for-turn-summary
+  "Phase F (redesigned): build the `:turn-N-summary` fact — a compact
+   recap of the just-closed turn for cross-turn reference inside the
+   cached `;; ctx` EDN prefix. The full :answer markdown is NOT stored
+   here (ships via the answer channel + `session_turn_state.answer_markdown`
+   column); the fact is the model's lookup index, not the artefact.
+
+   Auto-derived skeleton:
+     :question        the user request that started the turn
+     :answer          one-paragraph synopsis (model :answer-summary or
+                      first paragraph of :answer, capped at 280 chars)
+     :facts-born      vec of fact ids created in this turn
+     :specs-born      vec of spec ids created in this turn
+     :tasks-touched   vec of task ids whose done-born landed this turn
+     :status          :active     — surfaces in :session/facts
+     :scope           tN string   — born scope = current turn
+     :source          :done-auto
+
+   Model-extendable: any extra keys from `model-summary` (the value
+   the model passes as `(done {:turn-summary {...}})`) merge into the
+   fact. Reserved keys (`:status :source :scope :born`) cannot be
+   overridden — the engine owns them.
+
+   Returns `[fact-id fact-value]` or nil when there is nothing to record
+   (no answer text AND no entities born this turn — a fully silent
+   close-of-turn, e.g. cancelled)."
+  [ctx form-scope {:keys [user-request answer answer-summary model-summary]}]
+  (let [turn-pos      (or (:session/turn ctx) 0)
+        answer-str    (some-> answer str clojure.string/trim not-empty)
+        question      (some-> user-request str clojure.string/trim not-empty)
+        synopsis      (or (some-> answer-summary str clojure.string/trim not-empty)
+                        (some-> answer-str first-paragraph-summary))
+        facts-born    (entity-ids-born-in-turn ctx :session/facts turn-pos)
+        specs-born    (entity-ids-born-in-turn ctx :session/specs turn-pos)
+        tasks-touched (task-ids-touched-in-turn ctx turn-pos)
+        ;; A summary is worth recording when EITHER the user actually got
+        ;; an answer OR meaningful work landed (entities born this turn).
+        meaningful?   (or (some? answer-str)
+                        (seq facts-born)
+                        (seq specs-born)
+                        (seq tasks-touched))
+        reserved      #{:status :source :scope :born}
+        model-extras  (when (map? model-summary)
+                        (into {} (remove (fn [[k _]] (contains? reserved k)) model-summary)))
+        fact-id       (keyword (str "turn-" turn-pos "-summary"))
+        base          (cond-> {:status :active
+                               :scope  (str "t" turn-pos)
+                               :source :done-auto
+                               :born   form-scope}
+                        question       (assoc :question question)
+                        synopsis       (assoc :answer synopsis)
+                        (seq facts-born)    (assoc :facts-born facts-born)
+                        (seq specs-born)    (assoc :specs-born specs-born)
+                        (seq tasks-touched) (assoc :tasks-touched tasks-touched))]
+    (when meaningful?
+      [fact-id (merge model-extras base)])))
 
 (defn- apply-done-impl
   "– the un-gated core of `apply-done`. Pulled out so the
    gate can short-circuit cleanly; callers must use `apply-done`."
-  [ctx form-scope {:keys [answer answer-summary trailer-drop trailer-summarize archive]}]
+  [ctx form-scope {:keys [answer answer-summary user-request turn-summary
+                          trailer-drop trailer-summarize archive]}]
   (let [start  (or (:session/trailer ctx) [])
         after-drop (apply-trailer-drop start (or trailer-drop []))
         {:keys [trailer warnings]} (apply-trailer-summarize
                                      after-drop
                                      (or trailer-summarize [])
                                      form-scope)
-        ;; Phase F: auto-fact for the answer. Persisted on
-        ;; `:session/facts` so the next turn's `;; ctx` EDN block
-        ;; carries it inside the cached prefix — replaces the
-        ;; previous-turn-context user-message rebuild that
-        ;; assemble-initial-messages used to inject every turn.
-        auto-fact-entry (auto-fact-for-answer ctx form-scope answer answer-summary)
+        ;; Phase F (redesigned): compact `:turn-N-summary` fact. Carries
+        ;; question + 1-paragraph answer synopsis + entity ids born/done
+        ;; this turn. The full :answer markdown is NOT stored here
+        ;; (ships via answer channel + DB answer_markdown column);
+        ;; this fact is the cross-turn lookup index that rides inside
+        ;; the cached ;; ctx EDN prefix. Optional `:turn-summary` arg
+        ;; from the model adds free-form fields (action list,
+        ;; what-we-did narrative) merged onto the auto skeleton.
+        auto-fact-entry (auto-fact-for-turn-summary ctx form-scope
+                          {:user-request   user-request
+                           :answer         answer
+                           :answer-summary answer-summary
+                           :model-summary  turn-summary})
         sorted (sort-trailer trailer)
         ;; flag scopes appearing in both drop AND summarize as a soft warn
         drop-set (set (or trailer-drop []))
