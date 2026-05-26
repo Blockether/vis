@@ -36,9 +36,9 @@
     (shape-fn intent)))
 
 (defn- stub-success [intent]
-  {:consult-id (:consult-id intent)
+  {:id (:id intent)
    :status :active
-   :content (str "synthesis for " (:consult-id intent))
+   :content (str "synthesis for " (:id intent))
    :citations [{:type :paper :url "https://arxiv.org/abs/2303.11366"
                 :title "Reflexion"}]
    :confidence :high
@@ -72,7 +72,7 @@
 
       (let [ctx @(:ctx-atom env)
             pins (vec (trailer-consult-pins ctx))
-            ids (set (map :consult-id pins))]
+            ids (set (map :id pins))]
 
         (it "all 3 consult ids materialised as trailer pins"
           (expect (= 3 (count pins)))
@@ -125,7 +125,7 @@
           (expect (= :consult (:source fact)))))
 
       (it "trailer pin scrubbed (no more :reflexion in trailer)"
-        (expect (empty? (filter #(= :reflexion (:consult-id %))
+        (expect (empty? (filter #(= :reflexion (:id %))
                           (trailer-consult-pins ctx-final))))))))
 
 ;; ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@
           ctx-final @(:ctx-atom env)]
 
       (it "trailer pin scrubbed"
-        (expect (empty? (filter #(= :research (:consult-id %))
+        (expect (empty? (filter #(= :research (:id %))
                           (trailer-consult-pins ctx-final))))))
 
     (it "no fact created"
@@ -151,7 +151,7 @@
   (describe "promote on failed entry refuses + warns"
     (let [env (mk-env {:consult-runner
                        (fn [_env intent]
-                         {:consult-id (:consult-id intent)
+                         {:id (:id intent)
                           :status :failed :error :timeout
                           :reason "30s ttft"
                           :focus (:focus intent)

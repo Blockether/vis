@@ -309,7 +309,7 @@
               results  (mapv deref futures)]
           (doseq [r results]
             (consult/append-resolution-pin! ctx-atom r))
-          (mapv :consult-id results))))))
+          (mapv :id results))))))
 
 (defn archive-failed-task-proofs!
   "Run `eng/archive-failed-task-proofs` against the live ctx atom: scans

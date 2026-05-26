@@ -2036,7 +2036,7 @@
    Pure; the integration layer decides whether to short-circuit answer
    shipping based on this value."
   [ctx]
-  (mapv :consult-id (or (:engine/pending-consults ctx) [])))
+  (mapv :id (or (:engine/pending-consults ctx) [])))
 
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer + entity archive.

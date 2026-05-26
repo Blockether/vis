@@ -173,9 +173,9 @@
   (describe "done is REFUSED when :engine/pending-consults is non-empty"
     (let [ctx (-> (eng/empty-ctx)
                 (assoc :engine/pending-consults
-                  [{:consult-id :review :preference :deep
+                  [{:id :review :preference :deep
                     :focus ["x"] :question "q" :born "t1/i1/f1"}
-                   {:consult-id :critique :preference :fast
+                   {:id :critique :preference :fast
                     :focus [] :question "q2" :born "t1/i1/f2"}]))
           {:keys [ctx' blocked? warnings]
            :or {ctx' nil}
@@ -208,7 +208,7 @@
   (describe "done-pending-consult-blockers returns the vec of pending ids"
     (it "non-empty pending => vec of ids"
       (let [ctx {:engine/pending-consults
-                 [{:consult-id :K1} {:consult-id :K2}]}]
+                 [{:id :K1} {:id :K2}]}]
         (expect (= [:K1 :K2] (eng/done-pending-consult-blockers ctx)))))
     (it "empty pending => empty vec"
       (expect (empty? (eng/done-pending-consult-blockers {}))))))

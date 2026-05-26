@@ -24,7 +24,7 @@
 (defn- mk-intent
   ([] (mk-intent {}))
   ([overrides]
-   (merge {:consult-id :review
+   (merge {:id :review
            :preference :deep
            :focus ["verify claim X"]
            :question "Summarize the paper's evidence."
@@ -68,9 +68,9 @@
           (it ":focus-met? vec preserved"
             (expect (= [true] (:focus-met? entry))))
 
-          (it ":preference + :consult-id + :focus stamped from the intent"
+          (it ":preference + :id + :focus stamped from the intent"
             (expect (= :deep (:preference entry)))
-            (expect (= :review (:consult-id entry)))
+            (expect (= :review (:id entry)))
             (expect (= ["verify claim X"] (:focus entry))))
 
           (it ":duration-ms is a non-negative long"

@@ -47,7 +47,7 @@
       (it "intent enqueued under :engine/pending-consults"
         (let [pending (-> env :ctx-atom deref :engine/pending-consults)]
           (expect (= 1 (count pending)))
-          (expect (= :research (-> pending first :consult-id)))
+          (expect (= :research (-> pending first :id)))
           (expect (= :balanced (-> pending first :preference)))
           (expect (= "Verify both claims." (-> pending first :question)))
           (expect (= ["fact A" "fact B"] (-> pending first :focus)))))
@@ -77,7 +77,7 @@
         (expect (empty? (-> env :ctx-atom deref :engine/pending-consults))))))
 
   (describe "validation routes via :engine/warnings"
-    (it "invalid :consult-id → :consult-invalid-id"
+    (it "invalid :id → :consult-invalid-id"
       (let [env (mk-env)]
         (consult/request-consult! env "not-a-kw" :fast {:question "q"})
         (expect (some #(= :consult-invalid-id (:code %)) (warnings-of env)))
@@ -125,37 +125,37 @@
 (defdescribe trailer-pin-test
   (describe "append-resolution-pin! appends a synthetic pin to the current iter"
     (let [env (mk-env)
-          _ (seed-pin! env {:consult-id :K :status :active :content "x"})
+          _ (seed-pin! env {:id :K :status :active :content "x"})
           ctx @(:ctx-atom env)
           iter-pin (first (:session/trailer ctx))
           form (first (:forms iter-pin))]
       (it "iter entry created under tN/iM"
         (expect (= "t1/i1" (:scope iter-pin))))
-      (it ":tag :consult, :consult-id stamped"
+      (it ":tag :consult, :id stamped"
         (expect (= :consult (:tag form)))
-        (expect (= :K (:consult-id form))))
+        (expect (= :K (:id form))))
       (it ":result carries the entry map"
         (expect (= "x" (-> form :result :content))))))
 
   (describe "find-trailer-consult-pin returns the pin by id"
     (let [env (mk-env)
-          _ (seed-pin! env {:consult-id :A :status :active :content "a"})
-          _ (seed-pin! env {:consult-id :B :status :active :content "b"})
+          _ (seed-pin! env {:id :A :status :active :content "a"})
+          _ (seed-pin! env {:id :B :status :active :content "b"})
           ctx @(:ctx-atom env)]
       (it "finds A"
-        (expect (= :A (:consult-id (consult/find-trailer-consult-pin ctx :A)))))
+        (expect (= :A (:id (consult/find-trailer-consult-pin ctx :A)))))
       (it "finds B"
-        (expect (= :B (:consult-id (consult/find-trailer-consult-pin ctx :B)))))
+        (expect (= :B (:id (consult/find-trailer-consult-pin ctx :B)))))
       (it "nil for unknown id"
         (expect (nil? (consult/find-trailer-consult-pin ctx :unknown))))))
 
   (describe "re-issuing a consult REPLACES the pin (no duplicate)"
     (let [env (mk-env)
-          _ (seed-pin! env {:consult-id :K :status :active :content "first"})
-          _ (seed-pin! env {:consult-id :K :status :active :content "second"})
+          _ (seed-pin! env {:id :K :status :active :content "first"})
+          _ (seed-pin! env {:id :K :status :active :content "second"})
           ctx @(:ctx-atom env)
           forms (-> ctx :session/trailer first :forms)
-          consult-forms (filter #(= :K (:consult-id %)) forms)]
+          consult-forms (filter #(= :K (:id %)) forms)]
       (it "only one pin for :K"
         (expect (= 1 (count consult-forms))))
       (it "pin carries the latest :result"
@@ -168,7 +168,7 @@
 (defdescribe promote-test
   (describe "promote copies pin → fact, scrubs trailer"
     (let [env (mk-env)
-          _ (seed-pin! env {:consult-id :review :status :active
+          _ (seed-pin! env {:id :review :status :active
                             :content "synthesis"
                             :citations [{:type :paper :url "u" :title "t"}]
                             :focus ["x"] :confidence :high
@@ -198,7 +198,7 @@
 
   (describe "promote on :failed pin refuses + warns"
     (let [env (mk-env)
-          _ (seed-pin! env {:consult-id :K :status :failed
+          _ (seed-pin! env {:id :K :status :failed
                             :error :timeout :reason "30s"})
           _ (consult/promote-consult! env :K :K-fact)]
       (it ":consult-promote-failed warning"
@@ -208,7 +208,7 @@
 
   (describe "cross-iter scrub: promote in iter N+1 removes pin landed in iter N"
     (let [env (mk-env)
-          _ (seed-pin! env {:consult-id :K :status :active :content "x"})
+          _ (seed-pin! env {:id :K :status :active :content "x"})
           ;; simulate iter bump
           _ (swap! (:ctx-atom env) assoc :session/scope
               {:turn 1 :iter 2 :next-form 1})
@@ -228,7 +228,7 @@
 (defdescribe dismiss-test
   (describe "dismiss scrubs trailer pin without promoting"
     (let [env (mk-env)
-          _ (seed-pin! env {:consult-id :research :status :active :content "x"})
+          _ (seed-pin! env {:id :research :status :active :content "x"})
           ret (consult/dismiss-consult! env :research)]
       (it "returns :vis/silent"
         (expect (= :vis/silent ret)))
@@ -272,6 +272,6 @@
           _ (consult/request-consult! env :K2 :deep {:question "q2"})
           drained (consult/clear-pending! (:ctx-atom env))]
       (it "drained vec has both intents"
-        (expect (= [:K1 :K2] (mapv :consult-id drained))))
+        (expect (= [:K1 :K2] (mapv :id drained))))
       (it ":engine/pending-consults is empty after drain"
         (expect (empty? (-> env :ctx-atom deref :engine/pending-consults)))))))

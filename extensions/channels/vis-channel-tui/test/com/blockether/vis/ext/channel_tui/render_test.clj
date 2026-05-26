@@ -383,6 +383,18 @@
         (expect (visually-blank? (nth ln 0)))
         (expect (not-any? pad? ln))))
 
+    (it "recap-only trace leaves one blank row before the answer text"
+      (let [p          (render/format-answer-with-thinking-data*
+                         ans [{:recaps ["Title — \"Wyjaśnienie rozmiaru kontekstu\""]}]
+                         80 settings nil false nil)
+            ln         (:lines p)
+            recap-idx  (index-of p "RECAP  Title")
+            answer-idx (index-of p "hello")]
+        (expect (some? recap-idx))
+        (expect (some? answer-idx))
+        (expect (= 2 (- answer-idx recap-idx)))
+        (expect (visually-blank? (nth ln (inc recap-idx))))))
+
     (it "answer with code-bearing trace keeps band edges + a terminal-bg gap between trace and answer"
       ;; Spacing contract enforced by `coalesce-bubble-blanks`:
       ;; different marker families paint distinct visual bands
