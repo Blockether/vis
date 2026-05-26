@@ -4767,10 +4767,17 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id]}]
+  [router {:keys [db session channel external-id title workspace-id
+                  enforce-title-gate?]}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
-  (let [depth-atom               (atom 0)
+  (let [;; Phase D: closed-over flag captured here so the deeply-nested
+        ;; SCI (done ...) handler in answer-fn can pass it to
+        ;; `ctx-loop/apply-done!` without threading `environment`
+        ;; through every closure layer. Opt-IN: tests + SDK callers
+        ;; default off; interactive TUI sets this true when wiring.
+        enforce-title-gate? (boolean enforce-title-gate?)
+        depth-atom               (atom 0)
         db-info                  (persistance/db-create-connection! db)
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
@@ -4916,6 +4923,12 @@
                                                              {:answer answer-text
                                                               :answer-summary answer-summary
                                                               :session-title current-title
+                                                              ;; Phase D: opt-in title-gate (closed-over flag from
+                                                              ;; create-environment opts). Interactive channels
+                                                              ;; (TUI) want the gate so the session gets a label
+                                                              ;; before close; CLI / SDK callers may not have a UI
+                                                              ;; to label, so default off.
+                                                              :enforce-title-gate? enforce-title-gate?
                                                               :trailer-drop trailer-drop
                                                               :trailer-summarize trailer-summarize
                                                               :archive archive})]
@@ -5203,7 +5216,13 @@
   [id {:keys [channel external-id title workspace-id]}]
   (let [router (get-router)
         env    (create-environment router
-                 (cond-> {:db (config/resolve-db-spec)}
+                 ;; Phase D: interactive sessions (TUI, telegram, etc.) flow
+                 ;; through `open-env!` and want the title-gate so the channel
+                 ;; UI always has a label. CLI one-shots (`vis ask ...`) call
+                 ;; `create-environment` directly without this opt so the gate
+                 ;; stays off there.
+                 (cond-> {:db                  (config/resolve-db-spec)
+                          :enforce-title-gate? true}
                    id          (assoc :session id)
                    channel     (assoc :channel channel)
                    external-id (assoc :external-id external-id)
