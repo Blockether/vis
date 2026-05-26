@@ -359,15 +359,62 @@
     bound-form-result
     (dissoc :src)))
 
-(defn- render-form-pin
-  "Render one `:forms` entry: verbatim src block, then the form map with
-   `:src` stripped (since the block carries the source unescaped)."
+(defn- consult-pin-summary-line
+  "One-line preview header for a synthetic consult-resolution pin.
+   Reads :consult-id + :result keys (the entry map) and emits a
+   compact ;; consult line so the model scans resolved consults
+   without parsing the full pr-str entry.
+
+   Active entries:  ;; consult :K :high — <citation-title or content-head>
+   Failed entries:  ;; consult :K :failed (:timeout)"
+  [form indent]
+  (let [id     (:consult-id form)
+        entry  (or (:result form) {})
+        status (:status entry)]
+    (case status
+      :failed
+      (str (pad indent) ";; consult " id " :failed (" (:error entry) ")")
+
+      :active
+      (let [confidence (or (:confidence entry) :medium)
+            first-cite (first (:citations entry))
+            content    (or (:content entry) "")
+            tag        (or (some-> first-cite :title)
+                         (some-> first-cite :url)
+                         (when (string? content)
+                           (subs content 0 (min 60 (count content)))))]
+        (str (pad indent) ";; consult " id " " confidence " — " tag))
+
+      (str (pad indent) ";; consult " id " " status))))
+
+(defn- consult-pin?
+  [form]
+  (= :consult (:tag form)))
+
+(defn- render-consult-form-pin
+  "Render a synthetic consult-resolution pin with a leading one-line
+   summary, then the projected entry map. Drops the synthetic `:src`
+   `(consult-resolved :K)` line — it isn't real model-emitted source."
   [form indent]
   (let [no-src    (presentation-form form)
         map-text  (zp no-src)
         map-line  (str (pad indent) (indent-rest map-text indent))]
-    (str (src-lines-as-block (:scope form) (:tag form) (:src form) indent)
-      "\n" map-line)))
+    (str (consult-pin-summary-line form indent) "\n" map-line)))
+
+(defn- render-form-pin
+  "Render one `:forms` entry: verbatim src block, then the form map with
+   `:src` stripped (since the block carries the source unescaped).
+
+   Consult-resolution pins (`:tag :consult`) get a one-line summary
+   preview instead of the synthetic `(consult-resolved :K)` src block."
+  [form indent]
+  (if (consult-pin? form)
+    (render-consult-form-pin form indent)
+    (let [no-src    (presentation-form form)
+          map-text  (zp no-src)
+          map-line  (str (pad indent) (indent-rest map-text indent))]
+      (str (src-lines-as-block (:scope form) (:tag form) (:src form) indent)
+        "\n" map-line))))
 
 (defn- render-trailer-pin
   "Render one top-level trailer entry. Summary pins (carry `:summary`) zp
