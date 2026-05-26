@@ -1432,23 +1432,6 @@
 
 ;; ---------------------------------------------------------------------------
 
-(defn- op-tag->color-role
-  "Channel-local mapping from the engine `:observation | :mutation` value to a
-   TUI color role. Editing extensions emit `:tag` ONLY — they
-   don't decide colors. This is the single point where the TUI
-   binds the engine contract to its own theme vocabulary.
-
-   Tags collapsed from 8 (read/search/edit/create/delete/move/
-   shell/meta) to 2 (observation/mutation). The TUI keeps its 8 color
-   roles for visual richness; renderers can
-   look at `:op` (the symbol) for finer-grained painting if
-   needed, but the canonical mapping below uses just the tag."
-  [op-tag]
-  (case op-tag
-    :observation :tool-color/read
-    :mutation    :tool-color/edit
-    nil))
-
 (defn- tool-color-role->fg
   [role]
   (case role
@@ -1462,12 +1445,6 @@
     :tool-color/shell t/tool-color-shell
     :tool-color/meta t/tool-color-meta
     nil))
-
-(defn- meta->color-role
-  "Resolve a color role from a meta map carrying `:tag`. Single
-   source of truth: the engine-derived tag (2-value enum)."
-  [m]
-  (op-tag->color-role (:tag m)))
 
 (defn- silent-form-count
   [message]
@@ -2752,29 +2729,6 @@
       sort
       vec)))
 
-(defn- tool-detail-badge
-  "Compose the short summary line painted on tool-result rows.
-   Label = OBSERVATION/MUTATION (derived from `:tag`); suffix =
-   op-name. No per-op badge field anywhere."
-  [detail]
-  (when-let [tag (some-> detail :tag)]
-    (let [label (case tag
-                  :observation "OBSERVATION"
-                  :mutation    "MUTATION"
-                  nil)
-          op    (:op detail)]
-      (when label
-        (str label (when (and op (not (#{:all :any} op)))
-                     (str " " (name op))))))))
-
-(defn- self-describing-tool-result?
-  "Whether the op's body output speaks for itself (shell output,
-   search hits, file listings) so the channel SHOULD skip the
-   redundant badge row. Declared by the extension via
-   `extension/register-op!` `:self-describing?`."
-  [detail]
-  (true? (:self-describing? detail)))
-
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
   [{:keys [marker max-w summary hidden-entries collapsed? session-id node-id color-role]
     :as detail-ctx}]
@@ -3452,8 +3406,8 @@
                      [(line-entry (str code-err-pad-marker ""))])))))
         form-lines
         (fn [form block-number]
-          (let [{:keys [code comment render-segments result-render result-kind result-detail
-                        error duration-ms started-at-ms success?]} form
+          (let [{:keys [code comment render-segments result-render result-kind
+                        error duration-ms started-at-ms success? scope]} form
                 has-status?   (some? success?)
                 is-error?     (and has-status? (not success?))
                 duration-str  (vis/format-duration duration-ms)
@@ -3471,9 +3425,6 @@
                                 (str (if success? "✓" "✗")
                                   (when duration-str (str " " duration-str)))
                                 (str "↻ " running-str))
-                status-line   (let [s-marker code-status-marker
-                                    pl       (max 0 (- fill-w (count status-text) 1))]
-                                (line-entry (str s-marker (repeat-str \space pl) status-text " ")))
                 c-marker      (cond
                                 (not has-status?) code-marker
                                 success?          code-ok-marker
@@ -3527,7 +3478,6 @@
                 inline-error-message-lines (when error
                                              (mapv #(line-entry (str c-marker %))
                                                (wrap-text (form-error-headline error) fill-w)))
-                tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
                 ;; Per user directive: only tool calls show a result
                 ;; pane (the channel-render-fn output — "what the tool
@@ -3538,28 +3488,43 @@
                                 result-text
                                 (not (str/blank? (str result-text))))
                 result-lines  (when show-result?
-                                (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
-                                      detail-entries (maybe-collapse-raw-text-block
+                                (let [detail-entries (maybe-collapse-raw-text-block
                                                        {:session-id      session-id
                                                         :detail-expansions   detail-expansions
                                                         :session-turn-id session-turn-id
                                                         :iteration-number    iteration-number
                                                         :block-number        block-number
                                                         :kind                :result
-                                                        :summary             (or tool-badge "RESULT")
-                                                        :color-role          color-role
+                                                        :summary             (let [head (some-> code str str/split-lines first str/trim)
+                                                                                   head (when (seq head)
+                                                                                          (if (> (count head) 80)
+                                                                                            (str (subs head 0 77) "...")
+                                                                                            head))
+                                                                                   status-sym (cond (not has-status?) "↻"
+                                                                                                success?          "✓"
+                                                                                                :else             "✗")
+                                                                                   right-bits (remove str/blank? [status-sym duration-str])]
+                                                                               (str (or head "FORM")
+                                                                                 (when (seq right-bits)
+                                                                                   (str "  " (str/join " " right-bits)))))
+                                                        :color-role          nil
                                                         :summary-marker      md-summary-marker
                                                         :body-marker         r-marker
                                                         :raw-text            result-text
-                                                        :max-w               fill-w})
-                                      badge-entry     (when (and tool-badge
-                                                              (not (self-describing-tool-result? result-detail)))
-                                                        {:line (str md-summary-marker tool-badge)
-                                                         :meta {:kind :tool-badge
-                                                                :color-role color-role}})]
-                                  (vec (concat
-                                         (when badge-entry [badge-entry])
-                                         detail-entries))))
+                                                        :max-w               fill-w})]
+                                  (vec detail-entries)))
+                footer-entry  (line-entry
+                                ;; Footer: LEFT = scope (e.g. "t24/i1/f1"),
+                                ;; RIGHT = status-symbol + duration (e.g. "✓  12ms").
+                                (let [status-sym  (cond (not has-status?) "↻"
+                                                    success?          "✓"
+                                                    :else             "✗")
+                                      left-text   (or scope "")
+                                      right-text  (if has-status?
+                                                    (str/join "  " (remove str/blank? [status-sym duration-str]))
+                                                    status-text)
+                                      pad         (max 1 (- fill-w (count left-text) (count right-text) 1))]
+                                  (str c-pad " " left-text (repeat-str \space pad) right-text " ")))
                 hide-code-chrome? (and (str/blank? code-text) (not is-error?))
                 code-block    (cond
                                 hide-code-chrome?
@@ -3572,7 +3537,8 @@
                                 (vec (concat
                                        (when (seq title-lines) [(line-entry "")])
                                        title-lines
-                                       (when (seq title-lines) [(line-entry "")])))
+                                       (when (seq title-lines) [(line-entry "")])
+                                       [footer-entry]))
 
                                 :else
                                 (vec (concat
@@ -3595,8 +3561,9 @@
                                        [(line-entry (str c-pad ""))]
                                        c-lines
                                        (when (seq inline-error-message-lines) inline-error-message-lines)
-                                       (when status-line [status-line])
-                                       [(line-entry (str c-pad ""))])))
+                                       ;; 1-row top margin between code body and footer.
+                                       [(line-entry (str c-pad ""))]
+                                       [footer-entry])))
                 ;; Blank terminal-bg row between the code chrome
                 ;; and the result pane. Without it the code-block's
                 ;; trailing `c-pad` row (which paints code-block bg)
@@ -3608,7 +3575,9 @@
                 result-margin (when (and (seq result-lines)
                                       (not (str/blank? code-text)))
                                 [(line-entry (str iteration-pad-marker ""))])]
-            (vec (concat code-block result-margin result-lines))))
+            (vec (concat code-block
+                   result-margin
+                   result-lines))))
         grouped
         (when (seq forms)
           (let [code+result-lines

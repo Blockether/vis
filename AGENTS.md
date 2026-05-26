@@ -28,9 +28,3 @@ nohup ./bin/dev nrepl > .nrepl.log 2>&1 &
 
 Persistent DB lives at `$HOME/.vis/vis.mdb/vis.db`. Use `--db :memory`
 for throw-away sessions.
-
-## Forensics
-
-DB-level recipes and token breakdowns live in `ANALYSIS.md`; consult
-that file directly when investigating prompt-size or trailer-bloat
-regressions instead of duplicating the queries here.

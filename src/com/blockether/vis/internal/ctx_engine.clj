@@ -2090,31 +2090,54 @@
 
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer + entity archive.
-   Returns `{:ctx :warnings}` plus, when refused by the consult gate,
-   `:blocked? true`. The :answer field is NOT handled here — the loop
-   owns sending it back to the channel. Engine only touches trailer +
-   entity status here.
+   Returns `{:ctx :warnings}` plus, when refused by a gate (consult or
+   missing-title), `:blocked? true`. The :answer field IS handled here
+   in Phase F: when present + non-blank, the engine auto-writes a
+   `:turn-N-answer` fact under `:session/facts` carrying a one-line
+   `:summary` and the full `:body`. Next turn's `;; ctx` EDN block
+   surfaces that fact inside the cached prefix, so cross-turn answer
+   reference is free — the model reads
+   `(introspect-fact :turn-N-answer)` instead of vis re-sending
+   `previous-turn-context-block` (deprecated).
 
    `args` map keys:
-     :answer?             markdown payload (handled by loop, not engine)
-     :trailer-drop?       vec of `tN/iM` scopes to drop verbatim
-     :trailer-summarize?  vec of `{:scope-start :scope-end :summary}` pins
-     :archive?            `{:facts […] :specs […] :tasks […]}` bulk-flip
-                          to `:archived` terminal; snapshots keep raw,
-                          introspect-archived returns them.
+     :answer            markdown payload (Phase F: auto-fact + loop ships to channel)
+     :answer-summary    optional one-line summary the model emits; falls
+                        back to the first non-blank paragraph of :answer
+                        when omitted.
+     :trailer-drop?     vec of `tN/iM` scopes to drop verbatim
+     :trailer-summarize? vec of `{:scope-start :scope-end :summary}` pins
+     :archive?          `{:facts […] :specs […] :tasks […]}` bulk-flip
+                        to `:archived` terminal; snapshots keep raw,
+                        introspect-archived returns them.
 
    Granular fact/spec/task-archive! mutators do NOT exist — bulk archive
    only via (done {:archive …}). Close-of-turn is the single
    authoritative place to retire commitments.
 
-   Consult gate: when `:engine/pending-consults` is non-empty,
-   `(done …)` is REFUSED. The engine returns the ctx unchanged plus
-   `:blocked? true` and a `:done-blocked-by-pending-consults`
-   warning. The integration layer must suppress answer shipping and
-   force a fresh iter so the primary can promote/dismiss + retry."
-  [ctx form-scope {:keys [trailer-drop trailer-summarize archive]}]
-  (let [blockers (done-pending-consult-blockers ctx)]
-    (if (seq blockers)
+   Gates (any single one refuses close):
+
+   - **Consult gate**: when `:engine/pending-consults` is non-empty,
+     `(done …)` is REFUSED with
+     `:done-blocked-by-pending-consults`. Promote/dismiss the pending
+     consult on the next iter before retrying.
+
+   - **Missing-title gate (Phase D)**: on turn 1, `(done …)` is REFUSED
+     when `:session/title` is blank. The model must emit
+     `(set-session-title! \"...\")` before close. Skipped on turn
+     ≥2 because title can be set retroactively. Gate is silent (no
+     warn) when `:session/skip-title-gate?` is true — lets the host
+     opt out for test fixtures or single-shot CLI runs."
+  [ctx form-scope {:keys [answer answer-summary session-title skip-title-gate?
+                          trailer-drop trailer-summarize archive]}]
+  (let [blockers   (done-pending-consult-blockers ctx)
+        turn-pos   (long (or (:session/turn ctx) 0))
+        title-str  (some-> session-title str clojure.string/trim)
+        title-missing? (and (not (true? skip-title-gate?))
+                         (= 1 turn-pos)
+                         (or (nil? title-str) (clojure.string/blank? title-str)))]
+    (cond
+      (seq blockers)
       {:ctx      ctx
        :blocked? true
        :warnings [(warn :done-blocked-by-pending-consults blockers
@@ -2122,21 +2145,82 @@
                       " consult(s) pending this iter ("
                       (clojure.string/join ", " (map str blockers))
                       "); await + promote/dismiss before close"))]}
+
+      title-missing?
+      {:ctx      ctx
+       :blocked? true
+       :warnings [(warn :done-blocked-by-missing-title []
+                    (str "done refused: session title is blank on turn 1. "
+                      "Emit `(set-session-title! \"3-7-word noun phrase\")` as "
+                      "a top-level form before `(done ...)`. The title labels "
+                      "the session in the channel UI and indexes it in history."))]}
+
+      :else
       (apply-done-impl ctx form-scope
-        {:trailer-drop trailer-drop
+        {:answer answer
+         :answer-summary answer-summary
+         :trailer-drop trailer-drop
          :trailer-summarize trailer-summarize
          :archive archive}))))
+
+(defn- first-paragraph-summary
+  "Phase F fallback: when the model didn't emit `:answer-summary`,
+   take the first non-blank paragraph (up to ~280 chars) as the
+   auto-fact summary. Better than nothing; nudges the model to emit
+   explicit summaries since the auto extraction is necessarily lossy."
+  [^String answer]
+  (when (and answer (not (clojure.string/blank? answer)))
+    (let [trimmed     (clojure.string/trim answer)
+          first-blank (or (clojure.string/index-of trimmed "\n\n")
+                        (clojure.string/index-of trimmed "\r\n\r\n")
+                        (count trimmed))
+          para        (subs trimmed 0 first-blank)]
+      (if (> (count para) 280)
+        (str (subs para 0 277) "…")
+        para))))
+
+(defn- auto-fact-for-answer
+  "Phase F: build the :turn-N-answer fact entity from the model's
+   (done {:answer ... :answer-summary?}) payload. Returns nil when no
+   answer text is present (e.g. cancelled turn). The fact carries:
+     :summary  one-line synopsis (model-supplied or auto-extracted)
+     :body     full :answer markdown for forensics / introspect
+     :status   :active  — surfaces in ;; ctx :session/facts section
+     :scope    tN string — born scope = current turn position
+     :source   :done-auto
+   The fact-id key shape :turn-N-answer keeps the namespace
+   predictable so the model can (introspect-fact :turn-3-answer)
+   directly without dictionary lookup."
+  [ctx form-scope answer answer-summary]
+  (let [answer-str (some-> answer str clojure.string/trim)]
+    (when (and answer-str (not (clojure.string/blank? answer-str)))
+      (let [turn-pos (or (:session/turn ctx) 0)
+            fact-id  (keyword (str "turn-" turn-pos "-answer"))
+            summary  (or (some-> answer-summary str clojure.string/trim not-empty)
+                       (first-paragraph-summary answer-str))]
+        [fact-id {:summary summary
+                  :body    answer-str
+                  :status  :active
+                  :scope   (str "t" turn-pos)
+                  :source  :done-auto
+                  :born    form-scope}]))))
 
 (defn- apply-done-impl
   "– the un-gated core of `apply-done`. Pulled out so the
    gate can short-circuit cleanly; callers must use `apply-done`."
-  [ctx form-scope {:keys [trailer-drop trailer-summarize archive]}]
+  [ctx form-scope {:keys [answer answer-summary trailer-drop trailer-summarize archive]}]
   (let [start  (or (:session/trailer ctx) [])
         after-drop (apply-trailer-drop start (or trailer-drop []))
         {:keys [trailer warnings]} (apply-trailer-summarize
                                      after-drop
                                      (or trailer-summarize [])
                                      form-scope)
+        ;; Phase F: auto-fact for the answer. Persisted on
+        ;; `:session/facts` so the next turn's `;; ctx` EDN block
+        ;; carries it inside the cached prefix — replaces the
+        ;; previous-turn-context user-message rebuild that
+        ;; assemble-initial-messages used to inject every turn.
+        auto-fact-entry (auto-fact-for-answer ctx form-scope answer answer-summary)
         sorted (sort-trailer trailer)
         ;; flag scopes appearing in both drop AND summarize as a soft warn
         drop-set (set (or trailer-drop []))
@@ -2147,7 +2231,10 @@
                          (warn :done-drop-summarize-conflict [k]
                            (str "scope " k " appears in both :trailer-drop and"
                              " :trailer-summarize; drop ignored, summary applied")))
-        ctx-with-trailer (assoc ctx :session/trailer sorted)
+        ctx-with-trailer (cond-> (assoc ctx :session/trailer sorted)
+                           auto-fact-entry
+                           (assoc-in [:session/facts (first auto-fact-entry)]
+                             (second auto-fact-entry)))
         {ctx-archived :ctx archive-warns :warnings}
         (if (map? archive)
           (apply-bulk-archive ctx-with-trailer archive)
@@ -2492,7 +2579,7 @@
    1-based position and the engine cursor into the per-form envelope
    shape:
 
-     {:scope :tag :src :form :result :error :channel}
+     {:scope :tag :src :form :duration-ms :result :error :channel}
 
    `:src` carries the form's source text; `:form` carries the same
    text PARSED via edamame so validator-fns / structural matchers can
@@ -2503,7 +2590,9 @@
    `classify-form-tag`. `:result` is included only when the block has
    one (engine convention: drop on default/nil). `:error` is included
    only when the block errored. `:channel` is included only when the
-   form actually called one or more extension tools.
+   form actually called one or more extension tools. `:duration-ms` is
+   derived from the loop's block envelope so persisted TUI replays keep
+   the same per-form footer timing as live progress bubbles.
 
    For `(def NAME …)` forms the raw SCI return is the Var; deref it once
    so the trailer carries the bound value directly. Every result is also
@@ -2536,11 +2625,17 @@
          ;; introspection.
          result (realize-trailer-value raw-result)
          channel (seq (:channel block))
-         parsed-form (parse-form src)]
+         parsed-form (parse-form src)
+         duration-ms (when-let [envelope (:envelope block)]
+                       (when (and (nat-int? (:started-at-ms envelope))
+                               (nat-int? (:finished-at-ms envelope)))
+                         (max 0 (- (long (:finished-at-ms envelope))
+                                  (long (:started-at-ms envelope))))))]
      (cond-> {:scope scope
               :tag   (classify-form-tag src head-tag-resolver)
               :src   src}
        (some? parsed-form)       (assoc :form parsed-form)
+       (some? duration-ms)       (assoc :duration-ms duration-ms)
        (contains? block :result) (assoc :result result)
        (some? (:error block))    (assoc :error  (:error block))
        channel                   (assoc :channel (vec channel))))))
@@ -2552,8 +2647,9 @@
 
    3-arity passes `head-tag-resolver` (see `classify-form-tag`) through
    to every `block->envelope` call so extension-declared mutation tools
-   (`v/patch`, `git/commit!`, anything registered via `register-op!`)
-   classify correctly without the engine hard-coding their symbol set."
+   (`v/patch`, `git/commit!`, any symbol with inline `:tag` on its
+   `vis/symbol` entry) classify correctly without the engine
+   hard-coding their symbol set."
   ([blocks cursor] (blocks->forms blocks cursor nil))
   ([blocks {:keys [turn iter]} head-tag-resolver]
    (vec

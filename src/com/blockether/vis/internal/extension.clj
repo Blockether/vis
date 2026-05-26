@@ -83,7 +83,7 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-(declare op-tag op-tags registered-op? register-op! tool-call-name)
+(declare op-tag op-tags op-keyword->tag tool-call-name)
 
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
@@ -626,13 +626,11 @@
 ;; envelope only. When absent, the engine uses `default-error-ir`.
 (s/def :ext.symbol/render-error-fn fn?)
 
-;; Op classification carried INLINE on the symbol entry. Replaces the
-;; previous out-of-band `(vis/register-op! :alias/sym {:tag ...})`
-;; per-symbol dance — every observed tool now declares its tag right
-;; on `vis/symbol`'s opts map, and `register-extension!` walks the
-;; symbol vec to populate the op registry automatically.
+;; Op classification carried INLINE on the symbol entry — every
+;; observed tool declares its tag right on `vis/symbol`'s opts map,
+;; and `register-extension!` walks the symbol vec to populate the
+;; op-keyword -> tag index automatically.
 (s/def :ext.symbol/tag #{:observation :mutation})
-(s/def :ext.symbol/self-describing? boolean?)
 
 ;; which engine scopes can bind this symbol.
 ;;   :main     primary model's SCI sandbox (default for everything that
@@ -654,7 +652,7 @@
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists]
     :opt [:ext.symbol/raw?
-          :ext.symbol/tag :ext.symbol/self-describing?
+          :ext.symbol/tag
           :ext.symbol/render-fn
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn
@@ -1214,11 +1212,10 @@
    channel renderer; raw helpers do not render. Used by both the
    var-based public API and the test-friendly direct-args form below.
 
-   Opts may carry `:tag :observation | :mutation` and the optional
-   `:self-describing?` flag. When present, `register-extension!` walks
-   the symbol vec and auto-populates the global op registry via
-   `register-op!` so call-sites don't need an out-of-band
-   `(vis/register-op! :alias/sym {:tag ...})` per symbol."
+   Opts may carry `:tag :observation | :mutation`. When present,
+   `register-extension!` walks the symbol vec and auto-populates the
+   global op-keyword -> tag index so call-sites don't need an
+   out-of-band registration step per symbol."
   [{sym :symbol :keys [fn doc arglists source]} opts]
   (let [raw? (true? (:raw? opts))]
     (validate-symbol-entry!
@@ -1229,8 +1226,6 @@
         raw?           (assoc :ext.symbol/raw? true)
         source         (assoc :ext.symbol/source source)
         (:tag opts)            (assoc :ext.symbol/tag (:tag opts))
-        (contains? opts :self-describing?)
-        (assoc :ext.symbol/self-describing? (boolean (:self-describing? opts)))
         (:render-fn opts)   (assoc :ext.symbol/render-fn (:render-fn opts))
         (:before-fn opts)   (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)    (assoc :ext.symbol/after-fn (:after-fn opts))
@@ -1481,12 +1476,9 @@
 (defn- validate-symbol-op-tags!
   "Fail closed: every observed extension tool MUST carry an inline
    `:tag :observation | :mutation` on its `vis/symbol` opts map.
-   Raw helpers (`:raw? true`) are exempt.
-
-   The legacy out-of-band `(vis/register-op! :alias/sym {:tag ...})`
-   surface is RETIRED — only inline `:tag` is allowed.
-   `register-extension!` walks the symbol vec at registration time
-   and populates the global op registry automatically."
+   Raw helpers (`:raw? true`) are exempt. `register-extension!`
+   walks the symbol vec at registration time and populates the
+   global op-keyword -> tag index automatically."
   [ext]
   (doseq [sym-entry (ext-symbols ext)
           :when    (and (:ext.symbol/fn sym-entry)
@@ -1669,10 +1661,10 @@
   "Observed extension tools must carry canonical op metadata. Tool functions may
    set `:op` explicitly via `extension/success`; otherwise the wrapper derives
    it deterministically from the active alias and symbol (`v/cat`, `v/patch`,
-   ...). The tag now comes from the symbol entry's inline `:ext.symbol/tag`
-   first (the post-redesign source of truth) and falls back to the
-   global op registry. Missing tag in BOTH places throws via `op-tag`
-   so unregistered ops still fail closed."
+   ...). The tag comes from the symbol entry's inline `:ext.symbol/tag`
+   (the source of truth); a derived op->tag index covers call-sites
+   without a sym-entry handle. Missing tag in BOTH places throws via
+   `op-tag` so unregistered ops still fail closed."
   [ext sym-entry result]
   (if (and (tool-result? result) (nil? (:symbol result)))
     (let [op (default-tool-op-keyword ext sym-entry)
@@ -2389,19 +2381,15 @@
     (dispatch-providers!   (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
     (theme/register-themes! (:ext/theme ext))
-    ;; Auto-register op metadata for every symbol that declared a
-    ;; `:tag` on its `vis/symbol` opts. Removes the per-extension
-    ;; `doseq + register-op!` boilerplate; the tag lives INLINE on the
-    ;; symbol entry where the rest of the SCI surface (doc, arglists,
-    ;; render-fn) lives.
+    ;; Index every symbol's inline `:ext.symbol/tag` into the
+    ;; global op-keyword -> tag map. The sym-entry remains the source
+    ;; of truth; this index is a cheap lookup for sites (e.g.
+    ;; `envelope-of`) that have an op keyword but no sym-entry handle.
     (doseq [sym-entry (ext-symbols ext)
             :let [tag (:ext.symbol/tag sym-entry)]
             :when tag]
-      (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))
-            meta  (cond-> {:tag tag}
-                    (contains? sym-entry :ext.symbol/self-describing?)
-                    (assoc :self-describing? (:ext.symbol/self-describing? sym-entry)))]
-        (register-op! op-kw meta)))
+      (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
+        (swap! op-keyword->tag assoc op-kw tag)))
     ;; Compute and store source markers in the sidecar atom. Resolved
     ;; via the helper (see source_markers.clj) which knows how to walk
     ;; both file: and jar: classpath URLs. Failures are logged at :warn
@@ -2738,45 +2726,22 @@
    the engine never carries presentation in the tool envelope."
   #{:observation :mutation})
 
-(def ^:private op-keyword->meta
-  "Canonical op-keyword -> op-metadata table.
-
-     {:tag              :observation | :mutation  (required)
-      :self-describing? true | false                            (optional)}
-
-   `:self-describing?` true means the tool's body output is its own
-   summary (shell stdout, search hits, file listings) so channels
-   SHOULD skip the redundant badge row.
-
-   Badge label is derived from `:tag` (`OBSERVATION` / `MUTATION`); no
-   per-op badge field. Channels compose `(str tag-label \" \" op-name)`.
-
-   Each extension owns its own ops via `register-op!`."
+(def ^:private op-keyword->tag
+  "Inverse index from canonical op-keyword to its `:observation` /
+   `:mutation` tag. Populated as a side-effect of `register-extension!`
+   from each symbol entry's inline `:ext.symbol/tag` — the sym-entry
+   stays the source of truth; this atom is just a cheap lookup for
+   sites (e.g. `envelope-of`) that have an op keyword but no sym-entry
+   handle. There is no public `register-op!` writer — registration
+   funnels through `register-extension!` from inline symbol metadata."
   (atom {}))
 
-(defn register-op!
-  "Register or override op metadata for `op-keyword`. `meta` is a map
-   with required `:tag` (member of `op-tags`) and optional
-   `:self-describing?` (boolean). Idempotent."
-  [op-keyword meta]
-  (when-not (contains? op-tags (:tag meta))
-    (anomaly/incorrect!
-      (str "register-op!: unknown tag " (pr-str (:tag meta))
-        "; must be one of " op-tags)
-      {:type :extension/unknown-op-tag :tag (:tag meta) :allowed op-tags}))
-  (swap! op-keyword->meta assoc op-keyword meta)
-  op-keyword)
-
-(defn registered-op?
-  "True when `op-keyword` has mandatory operation metadata."
-  [op-keyword]
-  (contains? @op-keyword->meta op-keyword))
-
 (defn op-tag
-  "Return the registered `:observation | :mutation` value for `op-keyword`. Unknown ops
-   fail closed; extensions must declare observation/mutation explicitly."
+  "Return the `:observation | :mutation` tag for `op-keyword`. Unknown
+   ops fail closed; every symbol must declare `:tag` inline on its
+   `vis/symbol` entry."
   [op-keyword]
-  (if-let [tag (get-in @op-keyword->meta [op-keyword :tag])]
+  (if-let [tag (get @op-keyword->tag op-keyword)]
     tag
     (anomaly/incorrect!
       (str "Unregistered extension op " (pr-str op-keyword)
@@ -2784,20 +2749,14 @@
       {:type :extension/unregistered-op :op op-keyword :allowed op-tags})))
 
 (defn op-presentation
-  "Engine-owned metadata for a tool's `:op` keyword:
-   `{:tag ... :self-describing? ...}`. Tool wrappers merge this
-   into their `:info`/`:metadata` so channels read canonical keys.
+  "Engine-owned presentation metadata for a tool's `:op` keyword:
+   `{:tag ...}`. Tool wrappers merge this into their `:info`/`:metadata`
+   so channels read canonical keys.
 
-   Badge LABEL is derived from `:tag` by the channel, not stored
-   here. Color / glyph / layout remain pure channel concerns."
+   Badge LABEL is derived from `:tag` by the channel, not stored here.
+   Color / glyph / layout remain pure channel concerns."
   [op]
-  (let [m (or (get @op-keyword->meta op)
-            (anomaly/incorrect!
-              (str "Unregistered extension op " (pr-str op)
-                " has no mandatory presentation metadata")
-              {:type :extension/unregistered-op :op op :allowed op-tags}))]
-    (cond-> {:tag (:tag m)}
-      (:self-describing? m) (assoc :self-describing? true))))
+  {:tag (op-tag op)})
 
 (defn registered-extensions-summary
   "Pure data view of the manifest registry: returns `{<id> {:nses [...]}}`

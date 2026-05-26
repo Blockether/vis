@@ -261,11 +261,20 @@ CREATE TABLE session_turn_state (
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
   iteration_count              INTEGER NOT NULL DEFAULT 0 CHECK (iteration_count >= 0),
   duration_ms                  INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
-  llm_input_tokens             INTEGER NOT NULL DEFAULT 0 CHECK (llm_input_tokens >= 0),
-  llm_output_tokens            INTEGER NOT NULL DEFAULT 0 CHECK (llm_output_tokens >= 0),
-  llm_reasoning_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (llm_reasoning_tokens >= 0),
-  llm_cached_tokens            INTEGER NOT NULL DEFAULT 0 CHECK (llm_cached_tokens >= 0),
-  llm_total_cost_usd           REAL NOT NULL DEFAULT 0 CHECK (llm_total_cost_usd >= 0),
+  -- Phase B canonical token shape. `input_tokens` is ALWAYS TOTAL
+  -- (Anthropic-additive raw values are summed at the canonical
+  -- normalizer boundary; OpenAI / Gemini / Z.ai already report total).
+  -- The detail columns are SUBSETS of `input_tokens` and obey the
+  -- invariant:
+  --   input_regular_tokens + input_cache_write_tokens
+  --     + input_cache_read_tokens = input_tokens
+  input_tokens                 INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+  input_regular_tokens         INTEGER NOT NULL DEFAULT 0 CHECK (input_regular_tokens >= 0),
+  input_cache_write_tokens     INTEGER NOT NULL DEFAULT 0 CHECK (input_cache_write_tokens >= 0),
+  input_cache_read_tokens      INTEGER NOT NULL DEFAULT 0 CHECK (input_cache_read_tokens >= 0),
+  output_tokens                INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+  output_reasoning_tokens      INTEGER NOT NULL DEFAULT 0 CHECK (output_reasoning_tokens >= 0),
+  total_cost_usd               REAL NOT NULL DEFAULT 0 CHECK (total_cost_usd >= 0),
   answer_markdown              TEXT,        -- Raw Markdown source the model emitted via `(done {:answer ...})`.
                                             -- Channels parse via `render/markdown->ir` at render time.
                                             -- NULL while the turn is still running.
@@ -349,31 +358,34 @@ CREATE TABLE session_turn_iteration (
   -- this column to rebuild the per-turn replay buffer.
   llm_assistant_message           TEXT,
 
-  -- Per-session_turn_iteration token accounting + estimated USD cost. NULL when
-  -- the provider response did not surface usage (e.g. the LLM call
-  -- itself failed before a response was returned). Reasoning /
-  -- cached tokens are subsets of completion / prompt respectively;
-  -- callers that want "input minus cached" compute it themselves.
+  -- Phase B canonical token shape per iteration. NULL columns when the
+  -- provider response did not surface usage (e.g. LLM call failed
+  -- before a response landed). `input_tokens` is TOTAL, the detail
+  -- columns are subsets obeying the invariant:
+  --   input_regular + input_cache_write + input_cache_read = input_tokens
+  -- `output_reasoning_tokens` is a subset of `output_tokens`.
   -- Cost is provider-side estimated USD via the router's pricing
-  -- table - recorded so historical rows survive future price
-  -- changes.
-  llm_input_tokens                INTEGER CHECK (
-                                    llm_input_tokens IS NULL OR llm_input_tokens >= 0
+  -- table at write time — historical rows survive future price changes.
+  input_tokens                    INTEGER CHECK (
+                                    input_tokens IS NULL OR input_tokens >= 0
                                   ),
-  llm_output_tokens               INTEGER CHECK (
-                                    llm_output_tokens IS NULL OR llm_output_tokens >= 0
+  input_regular_tokens            INTEGER CHECK (
+                                    input_regular_tokens IS NULL OR input_regular_tokens >= 0
                                   ),
-  llm_reasoning_tokens            INTEGER CHECK (
-                                    llm_reasoning_tokens IS NULL OR llm_reasoning_tokens >= 0
+  input_cache_write_tokens        INTEGER CHECK (
+                                    input_cache_write_tokens IS NULL OR input_cache_write_tokens >= 0
                                   ),
-  llm_cached_tokens               INTEGER CHECK (
-                                    llm_cached_tokens IS NULL OR llm_cached_tokens >= 0
+  input_cache_read_tokens         INTEGER CHECK (
+                                    input_cache_read_tokens IS NULL OR input_cache_read_tokens >= 0
                                   ),
-  llm_cost_usd                    REAL    CHECK (
-                                    llm_cost_usd IS NULL OR llm_cost_usd >= 0
+  output_tokens                   INTEGER CHECK (
+                                    output_tokens IS NULL OR output_tokens >= 0
                                   ),
-  llm_cache_created_tokens        INTEGER CHECK (
-                                    llm_cache_created_tokens IS NULL OR llm_cache_created_tokens >= 0
+  output_reasoning_tokens         INTEGER CHECK (
+                                    output_reasoning_tokens IS NULL OR output_reasoning_tokens >= 0
+                                  ),
+  cost_usd                        REAL    CHECK (
+                                    cost_usd IS NULL OR cost_usd >= 0
                                   ),
 
 
