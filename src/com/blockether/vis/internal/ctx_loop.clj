@@ -216,7 +216,9 @@
    or `:archive`, the engine applies them as part of the same swap.
 
    Returns the intent map plus `:blocked? true|false`."
-  [{:keys [ctx-atom] :as env} {:keys [trailer-drop trailer-summarize archive]}]
+  [{:keys [ctx-atom] :as env} {:keys [answer answer-summary
+                                      session-title skip-title-gate?
+                                      trailer-drop trailer-summarize archive]}]
   (let [start-ms (System/nanoTime)
         cursor   (cursor-snapshot env)
         scope    (synthesize-scope env)
@@ -228,7 +230,11 @@
           (let [c+cur (assoc c :session/scope cursor)
                 {ctx' :ctx ws :warnings blocked :blocked?}
                 (eng/apply-done c+cur scope
-                  {:trailer-drop trailer-drop
+                  {:answer answer
+                   :answer-summary answer-summary
+                   :session-title session-title
+                   :skip-title-gate? skip-title-gate?
+                   :trailer-drop trailer-drop
                    :trailer-summarize trailer-summarize
                    :archive archive})]
             (reset! warns (vec ws))
@@ -236,14 +242,18 @@
             (cond-> (dissoc ctx' :session/scope)
               (seq ws) (update :engine/warnings (fnil into []) ws)))))
       (tel/log! {:level :info :id ::apply-done
-                 :data {:trailer-drop trailer-drop
+                 :data {:answer-present?   (boolean (not (clojure.string/blank? (str answer))))
+                        :answer-summary?   (boolean (not (clojure.string/blank? (str answer-summary))))
+                        :trailer-drop      trailer-drop
                         :trailer-summarize trailer-summarize
-                        :archive archive
-                        :warnings @warns
-                        :blocked? @blocked?
-                        :duration-ms (/ (- (System/nanoTime) start-ms) 1e6)}}
+                        :archive           archive
+                        :warnings          @warns
+                        :blocked?          @blocked?
+                        :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
         "apply-done completed"))
-    {:trailer-drop trailer-drop
+    {:answer answer
+     :answer-summary answer-summary
+     :trailer-drop trailer-drop
      :trailer-summarize trailer-summarize
      :archive archive
      :blocked? @blocked?

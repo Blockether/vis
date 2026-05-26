@@ -161,6 +161,35 @@
         (expect (str/includes? (str rendered) "Read `src/foo.clj`"))
         (expect (not (str/includes? (str rendered) "<runtime value"))))))
 
+  (it "rebuild-history recovers single visible form duration from old iteration rows"
+    ;; Historical envelopes lacked per-form :duration-ms. The row-level
+    ;; eval duration is still available; if only one form remains after
+    ;; answer elision, copy it onto that form so restored green footers
+    ;; show the same right-side duration as live progress.
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "patch"
+                      :answer-markdown ""}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :duration-ms 12
+                      :code "(v/patch [])"
+                      :forms [{:scope "t24/i1/f1"
+                               :tag :mutation
+                               :src "(v/patch [])"
+                               :result :ok
+                               :channel [{:position 0
+                                          :form "(v/patch [])"
+                                          :success? true
+                                          :result "PATCH ok"}]}]}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            form    (-> history second :traces first :forms first)]
+        (expect (= "t24/i1/f1" (:scope form)))
+        (expect (= 12 (:duration-ms form))))))
+
   (it "rebuild-history surfaces per-form errors as errors (not successes) and keeps the tool tag"
     ;; Regression from session 11d4f817: the rebuild path used to fold
     ;; the WHOLE iteration into one synthetic block and read non-existent

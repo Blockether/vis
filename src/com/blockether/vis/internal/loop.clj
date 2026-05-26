@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.loop
   (:refer-clojure)
   (:require
-   [clojure.edn :as edn]
    [charred.api :as json]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
@@ -1096,15 +1095,72 @@
         (recur (inc i))
         i))))
 
-(defn- direct-answer-close-suffix?
+(def ^:private direct-answer-tail-keys
+  #{":trailer-drop" ":trailer-summarize" ":archive"})
+
+(defn- allowed-direct-answer-tail-key?
+  [^String s idx]
+  (boolean
+    (some (fn [k]
+            (and (str/starts-with? (subs s idx) k)
+              (let [j (+ idx (count k))]
+                (or (>= j (count s))
+                  (Character/isWhitespace ^char (nth s j))))))
+      direct-answer-tail-keys)))
+
+(defn- balanced-done-tail-end
+  "Return exclusive end index for the tail after a candidate `:answer` close.
+   Tail must close the surrounding `(done { ... })` form. Scans strings so
+   trailer summaries may contain delimiters."
+  [^String s start]
+  (let [n (count s)]
+    (loop [i start
+           stack [\) \}]
+           in-str? false]
+      (cond
+        (>= i n) nil
+
+        in-str?
+        (if (and (= \" (nth s i)) (not (escaped-char? s i)))
+          (recur (inc i) stack false)
+          (recur (inc i) stack true))
+
+        :else
+        (let [ch (nth s i)]
+          (cond
+            (= \" ch)
+            (recur (inc i) stack true)
+
+            (= \; ch)
+            (let [j (or (some #(when (= \newline (nth s %)) %) (range (inc i) n)) n)]
+              (recur j stack false))
+
+            (#{\( \[ \{} ch)
+            (recur (inc i)
+              (conj stack ({\( \) \[ \] \{ \}} ch))
+              false)
+
+            (#{\) \] \}} ch)
+            (when (= ch (peek stack))
+              (let [stack' (pop stack)]
+                (if (empty? stack')
+                  (inc i)
+                  (recur (inc i) stack' false))))
+
+            :else
+            (recur (inc i) stack false)))))))
+
+(defn- direct-answer-close-tail
   [^String s quote-idx]
   (let [n (count s)
         i (skip-ws s (inc quote-idx))]
-    (when (and (< i n) (= \} (nth s i)))
-      (let [j (skip-ws s (inc i))]
-        (and (< j n) (= \) (nth s j)))))))
+    (when (and (< i n)
+            (or (= \} (nth s i))
+              (allowed-direct-answer-tail-key? s i)))
+      (when-let [end (balanced-done-tail-end s i)]
+        (str " " (str/trim (subs s i end)))))))
 
-(defn- direct-answer-close-index
+(defn- direct-answer-close
   [^String s body-start]
   (let [n (count s)]
     (loop [i body-start
@@ -1113,18 +1169,34 @@
         close
         (if (= \" (nth s i))
           (recur (inc i)
-            (if (and (not (escaped-char? s i))
-                  (direct-answer-close-suffix? s i))
-              i
+            (if (not (escaped-char? s i))
+              (if-let [tail (direct-answer-close-tail s i)]
+                {:idx i :tail tail}
+                close)
               close))
           (recur (inc i) close))))))
 
+(defn- escape-unescaped-quotes
+  [^String body]
+  (let [n (count body)]
+    (loop [i 0
+           out (StringBuilder.)]
+      (if (>= i n)
+        (str out)
+        (let [ch (nth body i)]
+          (when (and (= \" ch) (not (escaped-char? body i)))
+            (.append out \\))
+          (.append out ch)
+          (recur (inc i) out))))))
+
 (defn- decode-direct-answer-body
   [body]
-  (try
-    (let [v (edn/read-string (str "\"" body "\""))]
-      (if (string? v) v body))
-    (catch Throwable _
+  (let [decode (fn [s]
+                 (let [forms (edamame/parse-string-all (str "\"" s "\"") edamame-opts)
+                       v     (first forms)]
+                   (when (and (= 1 (count forms)) (string? v)) v)))]
+    (or (try (decode body) (catch Throwable _ nil))
+      (try (decode (escape-unescaped-quotes body)) (catch Throwable _ nil))
       body)))
 
 (defn- raw-response->direct-answer-source
@@ -1133,10 +1205,10 @@
     (let [m (re-matcher #"(?s)\(done\s*\{\s*:answer\s*\"" raw)]
       (when (.find m)
         (let [body-start (.end m)]
-          (when-let [close (direct-answer-close-index raw body-start)]
-            (let [body   (subs raw body-start close)
+          (when-let [{:keys [idx tail]} (direct-answer-close raw body-start)]
+            (let [body   (subs raw body-start idx)
                   answer (decode-direct-answer-body body)]
-              (str "(done {:answer " (pr-str answer) "})"))))))))
+              (str "(done {:answer " (pr-str answer) tail))))))))
 
 (defn- direct-answer-block-recoverable?
   [{:keys [source]}]
@@ -2050,12 +2122,38 @@
                          :iteration iteration-position
                          :started-at-ms provider-started-at-ms}))
           provider-start-ns (System/nanoTime)
+          ;; Phase C: per-session cache-key for OpenAI / Codex / Z.ai
+          ;; sticky routing. svar 0.6.x auto-generates a key from the
+          ;; system-prompt SHA1 prefix when caller omits this, but
+          ;; passing the session-soul-id explicitly is better:
+          ;; (1) sticky AT SESSION GRANULARITY across system-prompt
+          ;;     micro-changes (e.g. extension reload, AGENTS.md edit)
+          ;;     so the inference engine stays warm even when the
+          ;;     auto-hash would otherwise rotate.
+          ;; (2) cross-turn cache reuse within the same session (auto-
+          ;;     hash regenerates if any system byte changed; explicit
+          ;;     session-id pins routing regardless).
+          ;; (3) Anthropic wire strips the field at body-build time so
+          ;;     it's a no-op there — cheap to set unconditionally.
+          session-cache-key (some-> (:session-id environment) str)
+          ;; Phase E: sticky routing default. Cross-provider fallback
+          ;; (svar `:on-transient-error :hybrid`) poisons cache prefixes:
+          ;; an Anthropic 15K cached prefix becomes worthless the moment
+          ;; the next call lands on OpenAI/Z.ai, and the OpenAI cache is
+          ;; empty so we pay full input rate to bootstrap. Keep fallback
+          ;; within the active provider unless the caller explicitly
+          ;; overrides.
+          base-routing (or routing {})
+          sticky-routing (cond-> base-routing
+                           (not (contains? base-routing :on-transient-error))
+                           (assoc :on-transient-error :fallback-model-in-the-same-provider))
           ask-opts (with-default-ask-code-idle-timeout
                      (cond-> {:lang     "clojure"
                               :messages messages
-                              :routing  (or routing {})
+                              :routing  sticky-routing
                               :check-context? true
                               :preserved-thinking? true}
+                       session-cache-key (assoc :cache-key session-cache-key)
                        effective-reasoning  (assoc :reasoning effective-reasoning)
                        streaming-fn         (assoc :on-chunk streaming-fn)
                        effective-llm-headers (assoc :llm-headers effective-llm-headers)
@@ -3630,7 +3728,7 @@
                           (when head-sym
                             (let [op-kw (try (keyword (str head-sym))
                                           (catch Throwable _ nil))]
-                              (when (and op-kw (extension/registered-op? op-kw))
+                              (when op-kw
                                 (try (extension/op-tag op-kw)
                                   (catch Throwable _ nil))))))
                         forms-vec   (if (seq expanded-blocks)
@@ -4796,10 +4894,29 @@
                                          trailer-drop      (when (map? value) (:trailer-drop value))
                                          trailer-summarize (when (map? value) (:trailer-summarize value))
                                          archive           (when (map? value) (:archive value))
+                                         ;; Phase F: extract :answer + optional :answer-summary so the
+                                         ;; engine can write a :turn-N-answer fact under :session/facts.
+                                         ;; Next turn's ;; ctx EDN block surfaces that fact inside the
+                                         ;; cached prefix — replaces the previous-turn-context user-message
+                                         ;; rebuild that assemble-initial-messages used to inject.
+                                         answer-text       (cond
+                                                             (and (map? value) (string? (:answer value))) (:answer value)
+                                                             (and (map? value) (string? (:answer/text value))) (:answer/text value)
+                                                             (string? value) value
+                                                             :else nil)
+                                         answer-summary    (when (map? value) (:answer-summary value))
                                          done-env          {:ctx-atom        ctx-atom
                                                             :turn-state-atom turn-state-atom}
+                                         ;; Phase D: title-gate. Read live title from the closed-over
+                                         ;; session-title-atom (defined in open-env!) so the gate sees
+                                         ;; the current value even mid-iter (e.g. model emitted
+                                         ;; set-session-title! earlier in the same fence).
+                                         current-title   (some-> session-title-atom deref str str/trim not-empty)
                                          done-ret          (ctx-loop/apply-done! done-env
-                                                             {:trailer-drop trailer-drop
+                                                             {:answer answer-text
+                                                              :answer-summary answer-summary
+                                                              :session-title current-title
+                                                              :trailer-drop trailer-drop
                                                               :trailer-summarize trailer-summarize
                                                               :archive archive})]
                                      ;; Consult gate: when consults declared
@@ -4811,9 +4928,18 @@
                                      ;; promote/dismiss the resolved trailer pin
                                      ;; before retrying.
                                      (if (:blocked? done-ret)
-                                       {:vis/done-blocked? true
-                                        :reason :pending-consults
-                                        :hint   "done refused: consults pending this iter; promote/dismiss the resolved trailer pin before retrying"}
+                                       ;; Phase D: distinguish refusal reason so the model
+                                       ;; sees a precise hint (consults vs missing title).
+                                       (let [warnings (:warnings done-ret)
+                                             title-block? (some #(= :done-blocked-by-missing-title (:code %))
+                                                            warnings)]
+                                         (if title-block?
+                                           {:vis/done-blocked? true
+                                            :reason :missing-title
+                                            :hint "done refused: session title is blank on turn 1. Emit (set-session-title! \"...\") as a top-level form BEFORE (done ...). The title labels the session in the channel UI and indexes it in history."}
+                                           {:vis/done-blocked? true
+                                            :reason :pending-consults
+                                            :hint "done refused: consults pending this iter; promote/dismiss the resolved trailer pin before retrying"}))
                                        (do
                                          (reset! answer-atom
                                            {:value    value

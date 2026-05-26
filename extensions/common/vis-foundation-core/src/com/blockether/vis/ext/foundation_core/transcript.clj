@@ -84,11 +84,15 @@
   [iterations]
   (reduce (fn [a it]
             (-> a
-              (update-in [:tokens :input]     + (long   (or (:input-tokens it) 0)))
-              (update-in [:tokens :output]    + (long   (or (:output-tokens it) 0)))
-              (update-in [:tokens :reasoning]     + (long   (or (:reasoning-tokens it) 0)))
-              (update-in [:tokens :cached]        + (long   (or (:cached-tokens it) 0)))
-              (update-in [:tokens :cache-created] + (long   (or (:cache-created-tokens it) 0)))
+              ;; Phase B canonical iteration keys. `:input-tokens` is
+              ;; TOTAL (Anthropic-additive raw values summed at the
+              ;; canonical-normalizer boundary); details obey the
+              ;; invariant on a per-row basis.
+              (update-in [:tokens :input]         + (long   (or (:input-tokens it) 0)))
+              (update-in [:tokens :output]        + (long   (or (:output-tokens it) 0)))
+              (update-in [:tokens :reasoning]     + (long   (or (:output-reasoning-tokens it) 0)))
+              (update-in [:tokens :cached]        + (long   (or (:input-cache-read-tokens it) 0)))
+              (update-in [:tokens :cache-created] + (long   (or (:input-cache-write-tokens it) 0)))
               (update    :cost-usd                + (double (or (:cost-usd it) 0.0)))))
     {:tokens {:input 0 :output 0 :reasoning 0 :cached 0 :cache-created 0}
      :cost-usd 0.0}

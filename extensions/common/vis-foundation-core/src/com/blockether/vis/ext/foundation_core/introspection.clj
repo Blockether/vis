@@ -128,11 +128,12 @@
 
 (defn- turn-cost-summary
   "Pull the token / cost / provider / model summary persisted on
-   `session_turn_state` named columns (`llm_input_tokens`, `llm_output_tokens`,
-   `llm_total_cost_usd`, `llm_root_provider`, `llm_root_model`). Returns a map
-   with the :input-tokens / :output-tokens / :total-cost / :provider
-   / :model / :provider-model keys when present, or an empty map.
-   Never throws.
+   `session_turn_state` canonical columns (Phase B: `input_tokens`,
+   `input_regular_tokens`, `input_cache_write_tokens`,
+   `input_cache_read_tokens`, `output_tokens`, `output_reasoning_tokens`,
+   `total_cost_usd`, `llm_root_provider`, `llm_root_model`). Returns a
+   map with the canonical token keys + cost + provider/model when
+   present, or an empty map. Never throws.
 
    `:provider-model` is a derived `\"provider/model\"` display string
    (e.g. `\"openai/gpt-4o\"`) so callers render it directly - the
@@ -140,13 +141,15 @@
   [turn]
   (let [provider-model (format-provider-model (:provider turn) (:model turn))]
     (cond-> {}
-      (:input-tokens turn)     (assoc :input-tokens     (:input-tokens turn))
-      (:output-tokens turn)    (assoc :output-tokens    (:output-tokens turn))
-      (:reasoning-tokens turn) (assoc :reasoning-tokens (:reasoning-tokens turn))
-      (:cached-tokens turn)    (assoc :cached-tokens    (:cached-tokens turn))
-      (:total-cost turn)       (assoc :total-cost       (:total-cost turn))
-      (:provider turn)         (assoc :provider         (:provider turn))
-      (:model turn)            (assoc :model            (:model turn))
+      (:input-tokens turn)             (assoc :input-tokens             (:input-tokens turn))
+      (:input-regular-tokens turn)     (assoc :input-regular-tokens     (:input-regular-tokens turn))
+      (:input-cache-write-tokens turn) (assoc :input-cache-write-tokens (:input-cache-write-tokens turn))
+      (:input-cache-read-tokens turn)  (assoc :input-cache-read-tokens  (:input-cache-read-tokens turn))
+      (:output-tokens turn)            (assoc :output-tokens            (:output-tokens turn))
+      (:output-reasoning-tokens turn)  (assoc :output-reasoning-tokens  (:output-reasoning-tokens turn))
+      (:total-cost turn)               (assoc :total-cost               (:total-cost turn))
+      (:provider turn)                 (assoc :provider                 (:provider turn))
+      (:model turn)                    (assoc :model                    (:model turn))
       provider-model           (assoc :provider-model   provider-model))))
 
 (defn- elapsed-ms

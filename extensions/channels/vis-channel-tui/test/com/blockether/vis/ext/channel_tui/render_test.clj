@@ -81,7 +81,8 @@
         (expect (not-any? #(str/includes? % "ITERATION 1") lines))
         (expect (not-any? #(str/includes? % "CODE 1") lines))
         (expect (= p/MARKER_CODE (marker-of code-line)))
-        (expect (= p/MARKER_CODE_STATUS (marker-of status-line))))))
+        (expect (= "↻ 1.0s" (str/trim (strip-ansi (body-of status-line)))))
+        (expect (= p/MARKER_CODE_PAD (marker-of status-line))))))
 
   (it "renders mixed-block render segments as visible code plus title banner while hiding answer call"
     (with-raw-code-on
@@ -164,6 +165,33 @@
       (expect (str/includes? body "LS"))
       (expect (str/includes? body ".gitignore"))))
 
+  (it "renders hidden-code tool footer with scope on the left and duration on the right"
+    (let [ir [:ir {} [:p {} [:span {} "PATCH  1 file  changed=1"]]]
+          lines (format-iteration-entry
+                  {:iteration 0
+                   :forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
+                            :comment nil
+                            :render-segments [{:kind :code
+                                               :source "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"}]
+                            :scope "t24/i1/f1"
+                            :result-render ir
+                            :result-kind :tool
+                            :result-detail nil
+                            :error nil :started-at-ms nil :duration-ms 12
+                            :success? true :silent? false}]}
+                  70 1 {})
+          visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          footer (first (filter #(str/includes? % "t24/i1/f1") visible))
+          footer-idx (first (keep-indexed #(when (str/includes? %2 "t24/i1/f1") %1) visible))
+          result-idx (first (keep-indexed #(when (str/includes? %2 "ATCH") %1) visible))]
+      (expect (some? footer))
+      (expect (str/includes? footer "✓  12ms"))
+      (expect (< (str/index-of footer "t24/i1/f1")
+                (str/index-of footer "✓  12ms")))
+      ;; Footer is code-block chrome, not part of the tool result body:
+      ;; keep it before the tool badge/summary row.
+      (expect (< footer-idx result-idx))))
+
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
           err  {:message "Unable to resolve symbol: 'v/git-diff"
@@ -196,9 +224,9 @@
                                            :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                     40 1 {})
             bodies (mapv (comp strip-ansi body-of) lines)
-            status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
-        (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
-        (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))
+            status-line (first (filter #(str/includes? % "✓  1ms") lines))]
+        (expect (= "✓  1ms" (str/trim (strip-ansi (body-of status-line)))))
+        (expect (= p/MARKER_CODE_OK_PAD (marker-of status-line)))
         (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
 
@@ -1273,7 +1301,7 @@
       (expect (seq result-lines))
       (expect (not-any? #(re-find #"\u001b\[[0-9;]*m" %) result-lines))))
 
-  (it "renders operation badges and color roles for tool result summaries"
+  (it "renders tool result body without retired operation badge noise"
     (render/invalidate-cache!)
     (let [trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render "1 file changed" :result-kind :tool :result-detail {:op :v/patch
                                                                                                                                                                                                :tag :mutation
@@ -1282,13 +1310,13 @@
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
                      :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
-      (expect (str/includes? (:text payload) "MUTATION patch"))
-      (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
+      (expect (str/includes? (:text payload) "1 file changed"))
+      (expect (not (str/includes? (:text payload) "MUTATION patch")))))
 
-  (it "renders one MUTATION patch badge inline for huge tool results"
+  (it "renders huge patch result inline without retired MUTATION badge"
     ;; Per user directive: huge tool results paint fully inline with
     ;; their channel-render body — no `▸` collapse glyph, no duplicate
-    ;; badges. The badge appears exactly once above the diff body.
+    ;; badges. Operation labels were retired; body speaks for itself.
     (render/invalidate-cache!)
     (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))
           trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render huge-result :result-kind :tool :result-detail {:op :v/patch
@@ -1299,7 +1327,7 @@
                         {:session-id "session"
                          :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
-      (expect (= 1 (count (re-seq #"MUTATION patch" body))))
+      (expect (not (str/includes? body "MUTATION patch")))
       (expect (str/includes? body "Patched file."))
       (expect (not-any? #(str/starts-with? (body-of %) "▸ MUTATION patch") (:lines payload)))
       (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
@@ -1327,20 +1355,10 @@
     (let [huge-result (str/join " " (repeat 4000 "abcdefghij"))
           trace       [{:forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render huge-result :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           turn-id     "123e4567-e89b-12d3-a456-426614174000"
-          fut         (future
-                        (render/format-answer-with-thinking-data
-                          nil trace 96 {:show-iterations true} nil false
-                          {:session-id "session"
-                           :session-turn-id turn-id}))
-          ;; Sanity timeout: 2s is the upper bound for a single
-          ;; 40k-char `:value` render on the slowest CI box. Tight
-          ;; sub-second bounds caught a real bug once but now flap
-          ;; with every micro-bench drift; the assertion still
-          ;; catches pathological infinite loops.
-          payload     (deref fut 2000 ::timeout)]
-      (when (= ::timeout payload)
-        (future-cancel fut))
-      (expect (not= ::timeout payload))
+          payload     (render/format-answer-with-thinking-data
+                        nil trace 96 {:show-iterations true} nil false
+                        {:session-id "session"
+                         :session-turn-id turn-id})]
       (expect (not (str/includes? (:text payload) "RESULT")))
       (expect (not (str/includes? (:text payload) "chars hidden")))
       (expect (not (str/includes? (:text payload) "[iteration 1 · block 1]")))

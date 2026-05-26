@@ -314,6 +314,7 @@
   {:code            (:code chunk)
    :comment         (:comment chunk)
    :render-segments (:render-segments chunk)
+   :scope           (:scope chunk)
    :started-at-ms   (:started-at-ms chunk)
    :silent?         (silent-chunk? chunk)})
 
@@ -336,6 +337,7 @@
     {:code            (:code chunk)
      :comment         (:comment chunk)
      :render-segments (:render-segments chunk)
+     :scope           (or (:scope chunk) (:scope prev-form))
      :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
      :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
      :result-render   (when-not (or errored? answer-slot?) (format-form-result chunk))

@@ -69,7 +69,7 @@
   ;; letting the sample's bare ``` close the outer block early
   ;; (Vis conv 11d4f817 / t12/i1: torn (done …), dropped trailer keys,
   ;; model retry burns an iteration).
-  com.blockether/svar                             {:mvn/version "0.5.10"}
+  com.blockether/svar                             {:mvn/version "0.6.1"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into

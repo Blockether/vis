@@ -834,14 +834,15 @@
         (expect (= 3 (count iterations)))
         (expect (= [1 2 3] positions)))))
 
-  ;; Token + cost round-trip - iteration.llm_input_tokens /
-  ;; llm_output_tokens / llm_reasoning_tokens / llm_cached_tokens /
-  ;; llm_cost_usd are written by db-store-iteration! when the caller
-  ;; passes :tokens / :cost-usd, and surfaced by db-list-session-turn-iterations
-  ;; under :input-tokens / :output-tokens / :reasoning-tokens /
-  ;; :cached-tokens / :cost-usd. Pinned so a future schema rewrite
-  ;; that drops or renames the columns trips this test before it
-  ;; ships.
+  ;; Phase B canonical token round-trip. session_turn_iteration columns
+  ;;   input_tokens, input_regular_tokens, input_cache_write_tokens,
+  ;;   input_cache_read_tokens, output_tokens, output_reasoning_tokens,
+  ;;   cost_usd
+  ;; are written by db-store-iteration! when the caller passes
+  ;; `:tokens` / `:cost-usd`, and surfaced by db-list-session-turn-iterations
+  ;; under canonical keys obeying the invariant
+  ;;   input-regular + input-cache-write + input-cache-read = input.
+  ;; Pinned so a future schema rewrite trips this test before it ships.
   (it "persists per-iteration token + cost columns and surfaces them on read"
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
@@ -849,15 +850,21 @@
       (h/store-iteration! s {:session-turn-id qid
                              :code "(+ 1 1)" :result 2
                              :duration-ms 5
+                             ;; :input is TOTAL; subtotals must sum to it.
+                             ;; 1200 = regular(?) + cache-write(7000) + cache-read(600)
+                             ;; — inconsistent on purpose: persistance derives
+                             ;; `:input-regular = max(0, input - write - read)` so
+                             ;; this assertion locks the invariant.
                              :tokens   {:input 1200 :output 150 :reasoning 80 :cached 600}
                              :cache-created-tokens 7000
                              :cost-usd 0.0123})
       (let [iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= 1200 (:input-tokens iter)))
+        (expect (= 0    (:input-regular-tokens iter)))     ;; max(0, 1200 - 7000 - 600)
+        (expect (= 7000 (:input-cache-write-tokens iter)))
+        (expect (= 600  (:input-cache-read-tokens iter)))
         (expect (= 150  (:output-tokens iter)))
-        (expect (= 80   (:reasoning-tokens iter)))
-        (expect (= 600  (:cached-tokens iter)))
-        (expect (= 7000 (:cache-created-tokens iter)))
+        (expect (= 80   (:output-reasoning-tokens iter)))
         (expect (= 0.0123 (:cost-usd iter))))))
 
   (it "persists LLM routing trace as first-class rows and rehydrates routing view"
@@ -919,9 +926,11 @@
                              :duration-ms 5})
       (let [iter (first (vis/db-list-session-turn-iterations s qid))]
         (expect (= 0   (:input-tokens iter)))
+        (expect (= 0   (:input-regular-tokens iter)))
+        (expect (= 0   (:input-cache-write-tokens iter)))
+        (expect (= 0   (:input-cache-read-tokens iter)))
         (expect (= 0   (:output-tokens iter)))
-        (expect (= 0   (:reasoning-tokens iter)))
-        (expect (= 0   (:cached-tokens iter)))
+        (expect (= 0   (:output-reasoning-tokens iter)))
         (expect (= 0.0 (:cost-usd iter))))))
 
   (it "persists raw LLM response diagnostics and executable code-block metadata"

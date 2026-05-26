@@ -192,6 +192,8 @@
   {:code            (:code block)
    :comment         (:comment block)
    :render-segments (:render-segments block)
+   :scope           (:scope block)
+   :tag             (:tag block)
    :started-at-ms   nil
    :duration-ms     (or (:duration-ms block) 0)
    :result-render   (form-result-render block)
@@ -254,7 +256,7 @@
               ;; restore-only branch — same renderer everywhere.
               (seq (:channel env))         (assoc :channel (vec (:channel env)))
               (seq segments)               (assoc :render-segments segments)
-              (some? (:duration-ms it))    (assoc :duration-ms (:duration-ms it)))))
+              (some? (:duration-ms env))   (assoc :duration-ms (:duration-ms env)))))
         all-blocks  (if (seq envelopes)
                       (vec (map-indexed envelope->block envelopes))
                       fallback-blocks)
@@ -286,6 +288,25 @@
         visible     (into [] (keep-indexed (fn [idx b]
                                              (when-not (contains? elide-idxs idx) b)))
                       all-blocks)
+        ;; New per-form envelopes carry :duration-ms. Older DB rows do
+        ;; not; recover the iteration eval duration when exactly one
+        ;; non-answer form remains visible after `(done ...)` elision so
+        ;; restored green footers still match live bubbles.
+        duration-fallback-idxs
+        (when (some? (:duration-ms it))
+          (into []
+            (keep-indexed
+              (fn [idx b]
+                (let [src (some-> (:code b) str str/triml)]
+                  (when (and (nil? (:duration-ms b))
+                          (not= :vis/answer (:result b))
+                          (not (str/starts-with? (or src "") "(done")))
+                    idx))))
+            visible))
+        visible     (if (= 1 (count duration-fallback-idxs))
+                      (update visible (first duration-fallback-idxs)
+                        assoc :duration-ms (:duration-ms it))
+                      visible)
         forms       (mapv block->form-record visible)]
     {:position           (when-let [p (:position it)] (dec (long p)))
      :thinking           (visible-thinking (:thinking it))
@@ -438,11 +459,18 @@
                                     empty-ir
                                     (vis/markdown->ir answer-md))
                         model     (:model q)
+                        ;; Phase B: canonical token shape mapped to the per-bubble
+                        ;; render contract. `:input` is TOTAL, `:input-regular` /
+                        ;; `:cached` (cache-read) / `:cache-created` (cache-write)
+                        ;; are subsets. Render layer formats whichever it needs;
+                        ;; absent keys stay absent.
                         tokens    (cond-> {}
-                                    (:input-tokens q)     (assoc :input (:input-tokens q))
-                                    (:output-tokens q)    (assoc :output (:output-tokens q))
-                                    (:reasoning-tokens q) (assoc :reasoning (:reasoning-tokens q))
-                                    (:cached-tokens q)    (assoc :cached (:cached-tokens q)))
+                                    (:input-tokens q)             (assoc :input (:input-tokens q))
+                                    (:input-regular-tokens q)     (assoc :input-regular (:input-regular-tokens q))
+                                    (:input-cache-read-tokens q)  (assoc :cached (:input-cache-read-tokens q))
+                                    (:input-cache-write-tokens q) (assoc :cache-created (:input-cache-write-tokens q))
+                                    (:output-tokens q)            (assoc :output (:output-tokens q))
+                                    (:output-reasoning-tokens q)  (assoc :reasoning (:output-reasoning-tokens q)))
                         iteration-count (:iteration-count q)
                         duration-ms (:duration-ms q)
                         cost      (when-let [total-cost (or (:total-cost q) (:cost q))]
