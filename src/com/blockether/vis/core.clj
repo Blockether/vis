@@ -40,6 +40,7 @@
   (:require
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.commandline  :as commandline]
+   [com.blockether.vis.internal.ctx-engine   :as ctx-engine]
    [com.blockether.vis.internal.config       :as config]
    [com.blockether.vis.internal.doctor       :as doctor]
    [com.blockether.vis.internal.env          :as env]
@@ -159,6 +160,59 @@
 (def format-error                     error/format-error)
 (def final-answer-code-error-message  error/final-answer-code-error-message)
 (def db-error->user-message              persistance/db-error->user-message)
+
+;; =============================================================================
+;; Validator-fn authoring
+;;
+;; `vis/validator-fn` is the canonical host-side authoring helper for
+;; `:session.task/validator-fn` and `:session.requirement/validator-fn`
+;; slots. It emits a dual `{:fn <real-fn> :src "…"}` map so the runtime
+;; can call the fn directly (fast path) while persistence keeps the
+;; SCI source string usable across freeze/thaw and host process boots.
+;;
+;;   (def TITLE_VALIDATOR
+;;     (vis/validator-fn [{:keys [form error]}]
+;;       (and (nil? error)
+;;            (seq? form)
+;;            (= "set-session-title!" (some-> form first name))
+;;            (string? (second form))
+;;            (not (clojure.string/blank? (second form))))))
+;;
+;; Helpers exposed alongside the macro:
+;;
+;;   `validator-fn?`      - structurally-valid validator-fn slot value
+;;                          (plain fn, `{:fn :src}` map, or source string)
+;;   `resolve-validator`  - return `{:fn <callable>}` or `{:error msg}`
+;;                          for any of the three accepted shapes
+;;   `run-validator-fn`   - run a validator under a 50ms timeout;
+;;                          returns `{:ok? bool :reason :detail …}`
+;; =============================================================================
+(defmacro validator-fn
+  "Author a host-side validator and produce the dual `{:fn :src}` map
+   the engine consumes. Authoring shape mirrors `fn`:
+
+     (vis/validator-fn [{:keys [form error]}]
+       (and (nil? error) …))
+
+   The first arg is the full fn ARGLIST (a vector). The body is the
+   fn body. The macro emits `(fn <arglist> <body…>)` and snapshots its
+   pretty-printed source so the validator survives freeze/thaw:
+
+     :fn   - real Clojure fn, runtime fast path
+     :src  - SCI source string, durable across nippy serialization
+             (anonymous fn objects can't be frozen — the source
+             snapshot is what reattaches after a session restore)"
+  [arglist & body]
+  (when-not (vector? arglist)
+    (throw (ex-info "vis/validator-fn first arg must be the fn arglist (a vector)"
+             {:got arglist})))
+  (let [body-form (if (= 1 (count body)) (first body) (cons 'do body))]
+    `{:fn  (fn ~arglist ~@body)
+      :src ~(pr-str (list 'fn arglist body-form))}))
+
+(def validator-fn?     ctx-engine/validator-fn?)
+(def resolve-validator ctx-engine/resolve-validator)
+(def run-validator-fn  ctx-engine/run-validator-fn)
 
 ;; =============================================================================
 ;; Format helpers

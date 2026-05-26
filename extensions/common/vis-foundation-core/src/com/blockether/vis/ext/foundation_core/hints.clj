@@ -13,67 +13,65 @@
 
      {:title        \"<imperative title>\"
       :importance   :info | :warn | :critical
-      :validator-fn \"(fn [{:keys [src result error]}] …)\"}
+      :validator-fn (vis/validator-fn [{:keys [form error]}] …)}
 
-   `:validator-fn` is REQUIRED. The engine evaluates this SCI source
-   against the form envelope at `:proof` when the model writes
+   `:validator-fn` is REQUIRED. The engine runs it against the form
+   envelope at `:proof` when the model writes
    `(task-set! id {:status :done :proof \"tN/iM/fK\"})`. Pass → :done
-   sticks. Fail → task reverts to :todo + warning."
+   sticks. Fail → task reverts to :todo + warning. The macro emits
+   a dual `{:fn :src}` map so the validator survives freeze/thaw
+   (`:fn` for the runtime fast path, `:src` for persistence)."
   (:require
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [com.blockether.vis.core :as vis]))
 
 ;; =============================================================================
 ;; Shared validator-fn source strings
 ;; =============================================================================
 ;;
-;; SCI source strings the engine compiles + runs against a form envelope
-;; `{:scope :tag :src :form :result :error}` when the model attaches a
-;; proof scope to (satisfy-hint! :id [<scope>]). Validators should
-;; pattern-match on `:form` (the parsed sexp) and only fall back to
-;; `:src` string-matching when parsing failed — string matchers leak
-;; false positives from comments / string literals / nested mentions.
-;; Defined as top-level constants so the same SCI compile cache entry
-;; is reused across iters.
+;; Validators authored via `vis/validator-fn`. The macro emits a dual
+;; `{:fn <real-fn> :src "(fn …)"}` map: the runtime calls `:fn`
+;; directly (no SCI compile cost, full Clojure semantics) and `:src`
+;; reconstructs the fn after freeze/thaw (nippy collapses the fn slot
+;; to a `{:vis/ref :expr}` marker; the source string is the durable
+;; representation). Pattern-matching happens on the engine-supplied
+;; `:form` (parsed sexp) so a comment / string literal that mentions
+;; the target head can never trigger a false-positive validation.
+;;
+;; The bodies below are intentionally CLOSED OVER NOTHING — every
+;; helper they reach for is in `clojure.core` / `clojure.string`. The
+;; macro snapshots the source string at expansion time; on restore SCI
+;; recompiles it in a minimal ctx that has no access to our private
+;; helpers, so any extension fn we'd bind to would silently fail after
+;; freeze/thaw.
 
-(def ^:const TITLE_VALIDATOR_FN_SRC
+(def TITLE_VALIDATOR
   "Validator for `:vis.foundation/session-title`. Proof scope must be a
    form whose HEAD call is `set-session-title!` with a non-blank string
-   title. Match is purely structural on `:form` (parsed sexp) — no
-   `:src` string fallback. A proof scope whose source did not parse
-   cleanly is a broken proof; we fail closed instead of pretending
-   string-includes? is a substitute for an AST check.
-
-   Acceptance:
+   title. Acceptance:
      - no `:error` was raised when the form ran
      - `:form` is a list whose head symbol's name is
        \"set-session-title!\" (namespace ignored — SCI may resolve
        it as `set-session-title!` or `vis/set-session-title!`)
      - the form's first arg is a non-blank string title"
-  "(fn [{:keys [form error]}]
-     (and (nil? error)
-          (seq? form)
-          (let [head (first form)
-                head-name (when (symbol? head) (name head))
-                arg (second form)]
-            (and (= \"set-session-title!\" head-name)
-                 (string? arg)
-                 (not (clojure.string/blank? arg))))))")
+  (vis/validator-fn [{:keys [form error]}]
+    (and (nil? error)
+      (seq? form)
+      (symbol? (first form))
+      (= "set-session-title!" (name (first form)))
+      (string? (second form))
+      (not (clojure.string/blank? (second form))))))
 
-(def ^:const CONTEXT_PRESSURE_VALIDATOR_FN_SRC
+(def CONTEXT_PRESSURE_VALIDATOR
   "Validator for `:vis.foundation/context-pressure`. The model satisfies
-   this hint by calling `(done …)` (turn converges) — optionally with
-   `:trailer-summarize` / `:trailer-drop` on the arg map to drop bulky
-   prior iters from the trailer.
-
-   Match is purely structural on `:form` (parsed sexp) so a comment
-   like `;; will :trailer-drop later` or a string literal carrying
-   `done` can never satisfy the hint. No `:src` fallback."
-  "(fn [{:keys [form error]}]
-     (and (nil? error)
-          (seq? form)
-          (let [head (first form)
-                head-name (when (symbol? head) (name head))]
-            (= \"done\" head-name))))")
+   this hint by calling `(done …)` (turn converges). Pure structural
+   match on `:form` — no string-includes? fallback, so comments and
+   string literals mentioning `done` can never satisfy the hint."
+  (vis/validator-fn [{:keys [form error]}]
+    (and (nil? error)
+      (seq? form)
+      (symbol? (first form))
+      (= "done" (name (first form))))))
 
 (def ^:const TITLE_REFRESH_TURN_PERIOD
   "Turn cadence at which `title-hint` fires. BOTH branches —
@@ -159,7 +157,7 @@
       ;; nudge actually fires.
       (and blank? cadence)
       {:importance   :critical
-       :validator-fn TITLE_VALIDATOR_FN_SRC
+       :validator-fn TITLE_VALIDATOR
        :title (str "Set the session title via bare `(set-session-title! \"...\")` "
                 "(3-7-word noun phrase, e.g. \"Refactor auth flow\" or "
                 "\"Triage 148 path failures\"). The title is currently empty. "
@@ -172,7 +170,7 @@
       ;; shifted, and is fine to skip.
       (and (not blank?) cadence)
       {:importance   :info
-       :validator-fn TITLE_VALIDATOR_FN_SRC
+       :validator-fn TITLE_VALIDATOR
        :title (str "Refresh title if focus has shifted. "
                 "Current session title is \"" session-title "\". "
                 "You are " turn-position " turn(s) into this session. "
@@ -243,7 +241,7 @@
                                (str ", ~" cum-rs " reasoning tokens"))
                              " billed."))]
         {:importance   :warn
-         :validator-fn CONTEXT_PRESSURE_VALIDATOR_FN_SRC
+         :validator-fn CONTEXT_PRESSURE_VALIDATOR
          :title (str "Converge now: next request is ~" used " / " limit
                   " input tokens (~" pct "%) of this model's effective window."
                   cumul-clause
