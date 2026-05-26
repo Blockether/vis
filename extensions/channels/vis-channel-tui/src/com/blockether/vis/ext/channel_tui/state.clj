@@ -10,7 +10,9 @@
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.internal.workspace :as workspace]))
+            [com.blockether.vis.internal.workspace :as workspace])
+  (:import [java.util.concurrent Executors ScheduledExecutorService
+            ScheduledFuture TimeUnit]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -263,10 +265,19 @@
    boundaries appear without delay."
   #{:reasoning :content})
 
+(defonce ^:private ^ScheduledExecutorService progress-trailing-flush-scheduler
+  (Executors/newSingleThreadScheduledExecutor
+    (reify java.util.concurrent.ThreadFactory
+      (newThread [_ r]
+        (doto (Thread. ^Runnable r "vis-tui-progress-trailing-flush")
+          (.setDaemon true))))))
+
 (defn- make-progress-render-updater
   ([dispatch-fn]
-   (make-progress-render-updater dispatch-fn #(System/currentTimeMillis)))
+   (make-progress-render-updater dispatch-fn #(System/currentTimeMillis) nil))
   ([dispatch-fn now-ms-fn]
+   (make-progress-render-updater dispatch-fn now-ms-fn nil))
+  ([dispatch-fn now-ms-fn schedule-fn]
    ;; Per-phase clocks: `:reasoning` and `:content` stream
    ;; independently and a fast content stream MUST NOT starve
    ;; reasoning frames (and vice versa). Before this split, both
@@ -275,22 +286,75 @@
    ;; reasoning bubble froze at the very first frame ("I" / "The").
    ;; Lifecycle chunks dispatch immediately and never touch the
    ;; throttle clocks.
-   (let [last-by-phase (atom {})]
-     (fn [timeline chunk]
-       (let [now-ms (long (or (now-ms-fn) 0))
-             phase  (:phase chunk)
-             throttled? (contains? throttled-streaming-phases phase)
-             last-ms (when throttled? (get @last-by-phase phase))
-             due? (or (nil? last-ms)
-                    (>= (- now-ms (long last-ms))
-                      live-progress-render-interval-ms))]
-         (cond
-           (not throttled?)
-           (dispatch-fn [:set-progress-iterations timeline])
+   ;;
+   ;; TRAILING-EDGE FLUSH. Leading-edge-only throttling drops every
+   ;; chunk that lands inside the 80ms window after a dispatch. If
+   ;; the stream then STALLS (model finishes reasoning fast, provider
+   ;; takes 5-30s before the first content delta), the bubble freezes
+   ;; on the FIRST frame ("I" / few words) for the entire stall — the
+   ;; spinner ticks repaint a stale `:progress` slot. When a chunk is
+   ;; dropped we now stash the latest timeline AND schedule a
+   ;; delayed dispatch at `last-ms + interval`; subsequent drops just
+   ;; overwrite the pending timeline so the trailing flush always
+   ;; carries the most recent state. A dispatched chunk (due / not
+   ;; throttled) cancels the pending timer.
+   (let [last-by-phase      (atom {})
+         pending-by-phase   (atom {})
+         scheduled-by-phase (atom {})
+         schedule!          (or schedule-fn
+                              (fn default-schedule! [^Runnable f ^long delay-ms]
+                                (.schedule progress-trailing-flush-scheduler
+                                  f delay-ms TimeUnit/MILLISECONDS)))]
+     (letfn [(cancel-pending! [phase]
+               (when-let [f (get @scheduled-by-phase phase)]
+                 (try (.cancel ^java.util.concurrent.Future f false)
+                   (catch Throwable _ nil)))
+               (swap! scheduled-by-phase dissoc phase))
+             (flush-pending! [phase]
+               ;; Trailing-edge fire: read whatever the latest
+               ;; pending timeline is for this phase, dispatch it,
+               ;; clear the slot, and bump the per-phase clock so
+               ;; the next chunk respects the new window.
+               (let [pending (get @pending-by-phase phase)]
+                 (swap! scheduled-by-phase dissoc phase)
+                 (when pending
+                   (swap! pending-by-phase dissoc phase)
+                   (swap! last-by-phase assoc phase (long (or (now-ms-fn) 0)))
+                   (dispatch-fn [:set-progress-iterations pending]))))]
+       (fn [timeline chunk]
+         (let [now-ms (long (or (now-ms-fn) 0))
+               phase  (:phase chunk)
+               throttled? (contains? throttled-streaming-phases phase)
+               last-ms (when throttled? (get @last-by-phase phase))
+               due? (or (nil? last-ms)
+                      (>= (- now-ms (long last-ms))
+                        live-progress-render-interval-ms))]
+           (cond
+             (not throttled?)
+             (dispatch-fn [:set-progress-iterations timeline])
 
-           due?
-           (do (swap! last-by-phase assoc phase now-ms)
-             (dispatch-fn [:set-progress-iterations timeline]))))))))
+             due?
+             (do
+               ;; Dispatching now — cancel any pending trailing flush;
+               ;; we're carrying its latest timeline (and then some).
+               (cancel-pending! phase)
+               (swap! pending-by-phase dissoc phase)
+               (swap! last-by-phase assoc phase now-ms)
+               (dispatch-fn [:set-progress-iterations timeline]))
+
+             :else
+             (do
+               ;; Drop now, but stash latest timeline so a trailing-edge
+               ;; timer can flush it within the throttle window even if
+               ;; the stream stalls afterward.
+               (swap! pending-by-phase assoc phase timeline)
+               (when-not (get @scheduled-by-phase phase)
+                 (let [delay-ms (max 1 (- live-progress-render-interval-ms
+                                         (- now-ms (long last-ms))))
+                       ^Runnable task (fn [] (try (flush-pending! phase)
+                                               (catch Throwable _ nil)))
+                       f (schedule! task (long delay-ms))]
+                   (swap! scheduled-by-phase assoc phase f)))))))))))
 
 (defn- normalize-theme-name
   [v]
