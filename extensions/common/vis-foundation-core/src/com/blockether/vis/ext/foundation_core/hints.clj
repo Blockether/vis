@@ -27,32 +27,53 @@
 ;; =============================================================================
 ;;
 ;; SCI source strings the engine compiles + runs against a form envelope
-;; `{:scope :tag :src :result :error}` when the model attaches a proof
-;; scope to (satisfy-hint! :id [<scope>]). Defined as top-level
-;; constants so the same SCI compile cache entry is reused across iters.
+;; `{:scope :tag :src :form :result :error}` when the model attaches a
+;; proof scope to (satisfy-hint! :id [<scope>]). Validators should
+;; pattern-match on `:form` (the parsed sexp) and only fall back to
+;; `:src` string-matching when parsing failed — string matchers leak
+;; false positives from comments / string literals / nested mentions.
+;; Defined as top-level constants so the same SCI compile cache entry
+;; is reused across iters.
 
 (def ^:const TITLE_VALIDATOR_FN_SRC
   "Validator for `:vis.foundation/session-title`. Proof scope must be a
-   form whose source calls `(set-session-title! \"…\")`. Source-string
-   match is sufficient — the host fn already has its own argument
-   validation; we just confirm the model actually invoked it."
-  "(fn [{:keys [src error]}]
-     (and (string? src)
-       (clojure.string/includes? src \"set-session-title!\")
-       (nil? error)))")
+   form whose HEAD call is `set-session-title!` with a non-blank string
+   title. Match is purely structural on `:form` (parsed sexp) — no
+   `:src` string fallback. A proof scope whose source did not parse
+   cleanly is a broken proof; we fail closed instead of pretending
+   string-includes? is a substitute for an AST check.
+
+   Acceptance:
+     - no `:error` was raised when the form ran
+     - `:form` is a list whose head symbol's name is
+       \"set-session-title!\" (namespace ignored — SCI may resolve
+       it as `set-session-title!` or `vis/set-session-title!`)
+     - the form's first arg is a non-blank string title"
+  "(fn [{:keys [form error]}]
+     (and (nil? error)
+          (seq? form)
+          (let [head (first form)
+                head-name (when (symbol? head) (name head))
+                arg (second form)]
+            (and (= \"set-session-title!\" head-name)
+                 (string? arg)
+                 (not (clojure.string/blank? arg))))))")
 
 (def ^:const CONTEXT_PRESSURE_VALIDATOR_FN_SRC
   "Validator for `:vis.foundation/context-pressure`. The model satisfies
-   this hint by either calling `(done …)` (turn converges) or by
-   invoking a trailer-summarising form (drops bulky prior iters
-   from the trailer). Either action visibly reduces the next request's
-   token footprint."
-  "(fn [{:keys [src error]}]
-     (and (string? src)
-       (nil? error)
-       (or (clojure.string/starts-with? src \"(done\")
-           (clojure.string/includes? src \":trailer-summarize\")
-           (clojure.string/includes? src \":trailer-drop\"))))")
+   this hint by calling `(done …)` (turn converges) — optionally with
+   `:trailer-summarize` / `:trailer-drop` on the arg map to drop bulky
+   prior iters from the trailer.
+
+   Match is purely structural on `:form` (parsed sexp) so a comment
+   like `;; will :trailer-drop later` or a string literal carrying
+   `done` can never satisfy the hint. No `:src` fallback."
+  "(fn [{:keys [form error]}]
+     (and (nil? error)
+          (seq? form)
+          (let [head (first form)
+                head-name (when (symbol? head) (name head))]
+            (= \"done\" head-name))))")
 
 (def ^:const TITLE_REFRESH_TURN_PERIOD
   "Turn cadence at which `title-hint` fires. BOTH branches —
