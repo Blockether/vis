@@ -304,14 +304,15 @@
                                 :range (when (and (:old-short-sha m) (:new-short-sha m))
                                          (str (:old-short-sha m) ".." (:new-short-sha m))))))
                       (.getTrackingRefUpdates res))]
-        {:op       :fetch
-         :remote   remote
-         :status   (if (seq updates) :updated :up-to-date)
-         :branch   branch
-         :tracking (tracking-status repo branch)
-         :summary  (fetch-summary updates)
-         :updates  updates
-         :messages (.getMessages res)}))))
+        (cond-> {:op       :fetch
+                 :remote   remote
+                 :status   (if (seq updates) :updated :up-to-date)
+                 :branch   branch
+                 :tracking (tracking-status repo branch)
+                 :summary  (fetch-summary updates)
+                 :updates  updates}
+          (not (str/blank? (.getMessages res)))
+          (assoc :remote-messages (.getMessages res)))))))
 
 ;; ============================================================================
 ;; History rewrite ops: reset!, branch!, checkout!, cherry-pick!, rebase!
