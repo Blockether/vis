@@ -3284,6 +3284,24 @@
       :turn-position   (or turn-position 1)
       :iteration       nil
       :form-idx        nil)
+    ;; Phase G fix: sync engine ctx `:session/turn` to the persisted
+    ;; turn-position via `eng/enter-turn`. Without this call the engine
+    ;; ctx `:session/turn` stayed at the `empty-ctx` default of 1
+    ;; forever (the legacy `eng/advance-turn` was never wired in), so
+    ;; the title-gate (`(= 1 :session/turn)`) fired at every turn after
+    ;; the first, every iter would-be-done refused, model retry-loops
+    ;; until it gives up or the user cancels. Concrete forensics:
+    ;; session c4eb7bab t2 i20-i25 — 7 wasted iterations / ~265s /
+    ;; ~17K output tokens / ~1.7M input-token rotation, all because
+    ;; ctx `:session/turn` was stuck at 1.
+    ;;
+    ;; `enter-turn` is idempotent: setting :session/turn to its current
+    ;; value (turn 1 first call) is a no-op. It also clears
+    ;; `:engine/blockers` + `:engine/turn-events` so the new turn starts
+    ;; clean.
+    (when-let [ctx-atom (:ctx-atom environment)]
+      (swap! ctx-atom
+        (fn [c] (ctx-engine/enter-turn c (or turn-position 1)))))
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.

@@ -1727,22 +1727,35 @@
       (assoc :session/tasks (gc-tasks))
       (assoc :session/facts (gc :session/facts :fact)))))
 
-(defn advance-turn
-  "Bump :session/turn, reset :session/scope to {:turn next :iter 1 :next-form 1},
-   then run gc-pass. Caller (engine integration layer) is responsible for
-   Nippy-snapshotting CTX to session_turn_state.ctx BEFORE calling this.
+(defn enter-turn
+  "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
+   resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
+   clears `:engine/turn-events` + `:engine/blockers`, then runs
+   `gc-pass`. Safe to call repeatedly with the same `turn-pos` (no-op
+   semantically); safe to call when ctx was loaded fresh from DB at a
+   turn higher than 1.
 
-   Phase F: clears `:engine/turn-events` so the new turn starts with an
-   empty timeline buffer. The just-closed turn's events have already been
-   drained into the previous turn's `:turn-N-summary` fact by
-   `apply-done`."
-  [ctx]
-  (let [next-turn (inc (or (:session/turn ctx) 0))]
+   THIS is what the integration layer (vis loop) MUST call at the
+   start of every turn. The legacy `advance-turn` (auto-incremented
+   from current value) was never wired into vis loop, so `:session/turn`
+   stayed at 1 forever across multi-turn sessions — surfacing as the
+   title-gate firing at every turn and as scope numbering drift."
+  [ctx turn-pos]
+  (let [next-turn (long (or turn-pos 1))]
     (-> ctx
       (assoc :session/turn next-turn)
       (assoc :session/scope {:turn next-turn :iter 1 :next-form 1})
       (assoc :engine/turn-events [])
+      (assoc :engine/blockers [])
       gc-pass)))
+
+(defn advance-turn
+  "Back-compat alias: bumps `:session/turn` by 1, then delegates to
+   `enter-turn`. Prefer `enter-turn` directly when the integration
+   layer knows the target turn number (it always does — the DB tracks
+   `session_turn_soul.position`)."
+  [ctx]
+  (enter-turn ctx (inc (long (or (:session/turn ctx) 0)))))
 
 ;; =============================================================================
 ;; Empty-ctx constructor — used by tests + scenario replayer
