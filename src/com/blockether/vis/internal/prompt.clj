@@ -133,6 +133,7 @@
                                     | :work-unblocked-todo | :prove-requirement
                             :id     <entity-id-or-blocker-id>
                             :status :blocked | :ready | :doing
+                            :batch  <long>   ;; topological depth
                             :reason \"<short prose>\"
                             :remedy (engine-fn :K {...})} …]
 
@@ -142,17 +143,38 @@
 
       :session/plan IS THE PRIMARY ATTENTION SURFACE. Read it FIRST
       every iter:
-        - `:status :blocked` entries (head of vec) MUST be resolved
-          before any other work. The `:remedy` form is the engine's
-          quoted directive — read it, fill any `\\\"...\\\"` placeholders
-          with real values, then execute it. NEVER ignore a blocker
-          and retry the same `(done ...)`; the gate will refuse again.
-        - `:status :ready` entries follow in topological dep order
-          (tasks ordered by their `:depends-on` linkage). Pick the
-          head; deps are already terminal.
+        - `:status :blocked` entries (always `:batch 0`) MUST be
+          resolved first. The `:remedy` form is the engine's quoted
+          directive — read it, fill any `\\\"...\\\"` placeholders with
+          real values, then execute it.
+        - `:status :ready` entries follow in topological dep order.
         - There are NO `;; ⚠` line-comment warnings inside the ctx
           EDN body anymore — every refusal / blocker / suggested
           action lives as a first-class plan entry.
+
+      PARALLELISM via `:batch`:
+        Entries that share the SAME `:batch` value have NO dependency
+        between them and SHOULD be executed in ONE fence (a single
+        iter / round-trip), in any order. Entries with a HIGHER
+        `:batch` value depend on at least one lower-batch entry;
+        they must wait until prior batches complete on subsequent
+        iters.
+
+        - `:batch 0`  blockers + consistency repairs. All independent
+                       — fix every one in the same fence (e.g. emit
+                       `(set-session-title! \"...\")` AND
+                       `(consult-promote! :K :K-fact)` together).
+        - `:batch 1`  leaf work: tasks whose `:depends-on` is empty
+                       or all terminal. Batch them in one fence;
+                       they cannot conflict.
+        - `:batch 2+` deeper work levels. Only after lower batches
+                       complete (next iter's plan will surface them
+                       in `:batch 1` once their deps land terminal).
+
+        Practical pattern: read the plan, group by `:batch`, take the
+        LOWEST batch group, emit every entry's `:remedy` as top-level
+        forms in ONE fence. ONE iter → N parallel mutations → next
+        iter's plan reflects the new state.
 
     ENGINE FNS (bare symbols — never namespace-qualify)
 
