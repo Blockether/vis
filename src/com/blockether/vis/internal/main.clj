@@ -855,6 +855,14 @@
                  (or (:new-provider chunk) "?")
                  (when-let [reason (:reason chunk)] (str " " (trace-dim (str "(" reason ")"))))))
 
+      :provider-retry-reset
+      (stdout! (str head (trace-warn "↻ provider stream retry")
+                 (when-let [attempt (:attempt chunk)]
+                   (str " " (trace-dim (str "attempt=" attempt))))
+                 (when-let [delay-ms (:delay-ms chunk)]
+                   (str " " (trace-dim (str "delay=" delay-ms "ms"))))
+                 (pretty-block "error" (or (some-> chunk :event :error) (trace-pr-str (:error chunk))))))
+
       :reasoning
       ;; Discrete one-shot render: only fires once per iteration when
       ;; `:done?` is true. Append-only streaming during reasoning happens
