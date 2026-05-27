@@ -235,7 +235,10 @@
        :reason (str "Session title is blank on turn 1. The title labels "
                  "the session in the channel UI and indexes it in history. "
                  "Set it BEFORE `(done ...)` will be accepted.")
-       :remedy '(set-session-title! "3-7-word noun phrase")})))
+       ;; `...` is the model-fillable placeholder — the model emits a real
+       ;; 3-7-word noun phrase here. Engine never executes the remedy form
+       ;; itself, it's an EDN-quoted directive for the model to read + adapt.
+       :remedy '(set-session-title! "...")})))
 
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`.

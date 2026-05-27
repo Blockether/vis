@@ -127,12 +127,32 @@
                                 ;; hook-emitted tasks also carry:
                                 :source? :hook-id? :importance?
                                 :validator-fn? :proof?}}
-      :session/trailer   [{:scope :forms [{:scope :tag :src :result? :error?}]}]
+      :session/trailer   [{:scope :forms [{:scope :tag :form :result? :error?}]}]
       :session/symbols   {sym → {:arglists? :doc? :born}}
+      :session/plan      [{:kind   :blocker | :fix-consistency
+                                    | :work-unblocked-todo | :prove-requirement
+                            :id     <entity-id-or-blocker-id>
+                            :status :blocked | :ready | :doing
+                            :reason \"<short prose>\"
+                            :remedy (engine-fn :K {...})} …]
 
       Project rules (AGENTS.md / CLAUDE.md) ride in a separate system
       block — not in :session/env. Read :session/env BEFORE calling
       v/snapshot; the digest covers most needs.
+
+      :session/plan IS THE PRIMARY ATTENTION SURFACE. Read it FIRST
+      every iter:
+        - `:status :blocked` entries (head of vec) MUST be resolved
+          before any other work. The `:remedy` form is the engine's
+          quoted directive — read it, fill any `\\\"...\\\"` placeholders
+          with real values, then execute it. NEVER ignore a blocker
+          and retry the same `(done ...)`; the gate will refuse again.
+        - `:status :ready` entries follow in topological dep order
+          (tasks ordered by their `:depends-on` linkage). Pick the
+          head; deps are already terminal.
+        - There are NO `;; ⚠` line-comment warnings inside the ctx
+          EDN body anymore — every refusal / blocker / suggested
+          action lives as a first-class plan entry.
 
     ENGINE FNS (bare symbols — never namespace-qualify)
 
@@ -393,10 +413,23 @@
         req-without-validator-fn?         ⚠    ;; soft; warns when testable
         under-declared-deps?              ⚠    ;; soft; scheduler degrades
 
-      ENGINE WARNINGS  (FSM events, not decoration; read first)
-        ;; ⚠ contradicting-facts :K1 :K2     ⇒ flip one :superseded
-        ;; ⚠ rejected-proofs :K count=N …    ⇒ swap evidence; never re-submit
-        ;; ⚠ dangling-proof :req-K …         ⇒ req removed; proof orphaned
+      ENGINE SIGNALS  (FSM events, read FIRST every iter)
+        Refusals + suggested next actions ride on `:session/plan`
+        entries, NOT as `;; ⚠` line-comments. Each entry's `:kind`
+        names the FSM event:
+          :kind :blocker            ⇒ hard refusal (e.g. :missing-title,
+                                      :pending-consults); execute `:remedy`
+                                      BEFORE any other work this iter.
+          :kind :fix-consistency    ⇒ contradicting-facts / rejected-proofs /
+                                      task :done with pending dep; resolve
+                                      via the entry's `:remedy`.
+          :kind :prove-requirement  ⇒ spec :partial / :open req without proof;
+                                      add a task that proofs it.
+          :kind :work-unblocked-todo⇒ task :todo, deps satisfied; flip to
+                                      :doing and probe.
+
+        The model NEVER scans for `;; ⚠` patterns in the ctx text. It
+        reads `:session/plan` as EDN data and walks entries from head.
 
       DEPENDENCY GRAPH  (the symbolic scheduler)
         Three writers, one universal :depends-on slot:
