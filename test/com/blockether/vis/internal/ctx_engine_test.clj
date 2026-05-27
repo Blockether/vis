@@ -594,7 +594,7 @@
                                   :status :todo :lifetime :turn
                                   :validator-fn "(fn [_] true)"
                                   :born "t1/i1/f1"}}}]
-        (expect (= {} (:session/tasks (eng/advance-turn ctx))))))
+        (expect (= {} (:session/tasks (eng/enter-turn ctx 2))))))
 
     (it "drops a :done :validated? false :lifetime :turn task immediately"
       (let [ctx {:session/turn 1
@@ -607,7 +607,7 @@
                                   :validator-fn "(fn [_] true)"
                                   :proof "t1/i1/f2" :done-born "t1/i1/f2"
                                   :born "t1/i1/f1"}}}]
-        (expect (= {} (:session/tasks (eng/advance-turn ctx))))))
+        (expect (= {} (:session/tasks (eng/enter-turn ctx 2))))))
 
     (it "keeps :lifetime :session hook-tasks until the TTL kicks in"
       (let [ctx {:session/turn 1
@@ -618,7 +618,7 @@
                                   :status :todo
                                   :validator-fn "(fn [_] true)"
                                   :born "t1/i1/f1"}}}
-            advanced (eng/advance-turn ctx)]
+            advanced (eng/enter-turn ctx 2)]
         (expect (contains? (:session/tasks advanced) :vis.foundation/session-title))))
 
     (it "keeps user-source tasks even if :lifetime :turn is set on them"
@@ -632,7 +632,7 @@
                                  {:title "do x" :source :user
                                   :status :todo :lifetime :turn
                                   :born "t1/i1/f1"}}}]
-        (expect (contains? (:session/tasks (eng/advance-turn ctx)) :user.thing))))))
+        (expect (contains? (:session/tasks (eng/enter-turn ctx 2)) :user.thing))))))
 
 (defdescribe advance-iter-iteration-lifetime-test
   ;; `:lifetime :iteration` hook-tasks evaporate at every iter

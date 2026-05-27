@@ -7,7 +7,7 @@
      parse-scope-form, scope-compare, classify-scope, build-indexes,
      depends-on-cycle?, derive-progression, derive-warnings,
      derive-plan, apply-mutator, apply-done,
-     reconcile-done-hook-tasks, advance-iter, advance-turn, gc-pass,
+     reconcile-done-hook-tasks, advance-iter, enter-turn, gc-pass,
      introspect-*.
 
    The impure subset (clearly fenced; uses SCI + a cache atom):
@@ -43,7 +43,7 @@
        → {:ctx :warnings} with hook-tasks whose :status :done failed
          validation reverted to :todo
 
-     (advance-turn ctx)
+     (enter-turn ctx turn-pos)
        → ctx with bumped :session/turn, reset :session/scope, gc-pass run
 
      (gc-pass ctx)
@@ -1465,21 +1465,29 @@
 
 (defn- derive-actions
   "Build the actions tail of the plan. Returns a vec of plan-entries
-   shaped `{:kind :id :status :reason :remedy}` — NO `:priority`.
-   Ordering signal is the topological depth of `:depends-on` edges,
-   not a flat priority enum.
+   shaped `{:kind :id :status :batch :reason :remedy}`. NO `:priority`
+   field — ordering signal is `:batch` (topological depth) + insertion
+   order within the same batch.
+
+   `:batch` semantics (the PARALLELISM signal for the model):
+     Entries with the SAME `:batch` value have NO dependency between
+     them — the model SHOULD execute them in ONE fence (parallel
+     within an iteration). Entries with a HIGHER `:batch` value
+     depend (transitively) on at least one lower-batch entry; they
+     must wait until the prior batches complete.
+
+     :batch 0    blockers (gate refusals + consistency repairs).
+                 All blockers are independent and can be fixed in
+                 the same fence.
+     :batch 1+   work entries at increasing topological depth.
+                 Depth 1 = no task deps (leaf); depth 2 = one
+                 task-dep level; ...
 
    Entry kinds:
      :fix-consistency      — spec :done with unproven; task :done with
-                             pending dep. `:status :blocked` — must
-                             repair before generating new work.
+                             pending dep. `:status :blocked`, `:batch 0`.
      :work-unblocked-todo  — task :todo with all deps terminal.
-     :prove-requirement    — spec :partial / :open req without proof.
-
-   Order in the returned vec:
-     1. consistency repairs (:status :blocked, head)
-     2. todo tasks in topological depth order (deepest deps first)
-     3. spec proof-suggestions"
+     :prove-requirement    — spec :partial / :open req without proof."
   [ctx indexes progression]
   (let [{:keys [task-status dep-graph]} indexes
         specs (or (:session/specs ctx) {})
@@ -1497,6 +1505,7 @@
           {:kind   :fix-consistency
            :id     spec-id
            :status :blocked
+           :batch  0
            :reason (str "spec " spec-id " :done but " (count (:missing p))
                      " req(s) unproven: " (vec (sort (:missing p))))
            :remedy (list (symbol "spec-set!") spec-id {:status :open})})
@@ -1509,6 +1518,7 @@
           {:kind   :fix-consistency
            :id     task-id
            :status :blocked
+           :batch  0
            :reason (str "task " task-id " :done but dep " d " is " (:status dep))
            :remedy (list (symbol "task-set!") task-id {:status :doing})})
         todo
@@ -1522,6 +1532,9 @@
           {:kind   :work-unblocked-todo
            :id     task-id
            :status :ready
+           ;; Topo depth + 1 so leaf tasks land in :batch 1
+           ;; (batch 0 is reserved for blockers + consistency repairs).
+           :batch  (inc (long (or (topo task-id) 0)))
            :reason (str "task " task-id " is :todo with all deps :done/:cancelled")
            :remedy (list (symbol "task-set!") task-id {:status :doing})})
         prove
@@ -1532,13 +1545,17 @@
           {:kind   :prove-requirement
            :id     [spec-id rid]
            :status :ready
+           ;; Prove suggestions don't lock execution order on each other,
+           ;; so they share the deepest task batch + 1 — model handles
+           ;; them once concrete task work clears.
+           :batch  (inc (apply max 1 (vals topo)))
            :reason (str "spec " spec-id " req " rid " needs a task proof")
            :remedy (list (symbol "proof-add!") spec-id rid)})]
     (vec
       (concat
         (sort-by (comp str :id) consistency-spec)
         (sort-by (comp str :id) consistency-task)
-        (sort-by (juxt #(or (topo (:id %)) 0) (comp str :id)) todo)
+        (sort-by (juxt :batch (comp str :id)) todo)
         (sort-by (comp str :id) prove)))))
 
 (defn derive-plan
@@ -1558,6 +1575,10 @@
               | :prove-requirement
       :id     <entity-id or blocker-id>
       :status :blocked | :ready | :doing
+      :batch  <long>   ; topological depth; same-batch entries are
+                       ; parallel-safe (model executes in ONE fence).
+                       ; Batch 0 = blockers + consistency repairs;
+                       ; batch 1+ = work in :depends-on dep order.
       :reason <short prose explanation>
       :remedy <quoted form the model should execute next>}
 
@@ -1570,12 +1591,12 @@
        — consistency repairs (`:status :blocked`)"
   ([ctx indexes progression] (derive-plan ctx indexes progression {}))
   ([ctx indexes progression _last-mutation-map]
-   (let [blockers (mapv (fn [b] (assoc b :kind :blocker :status :blocked))
+   (let [blockers (mapv (fn [b] (assoc b :kind :blocker :status :blocked :batch 0))
                     (or (:engine/blockers ctx) []))
          actions  (derive-actions ctx indexes progression)]
      (vec (concat blockers actions)))))
 
-;; advance-iter / advance-turn / gc-pass
+;; advance-iter / enter-turn / gc-pass
 ;; =============================================================================
 
 (defn- mutation-form?
@@ -1732,14 +1753,15 @@
    resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
    clears `:engine/turn-events` + `:engine/blockers`, then runs
    `gc-pass`. Safe to call repeatedly with the same `turn-pos` (no-op
-   semantically); safe to call when ctx was loaded fresh from DB at a
-   turn higher than 1.
+   semantically); safe to call when ctx was loaded fresh from DB at
+   turn-pos > 1.
 
-   THIS is what the integration layer (vis loop) MUST call at the
-   start of every turn. The legacy `advance-turn` (auto-incremented
-   from current value) was never wired into vis loop, so `:session/turn`
-   stayed at 1 forever across multi-turn sessions — surfacing as the
-   title-gate firing at every turn and as scope numbering drift."
+   THIS is what the integration layer (vis loop) calls at the start
+   of every turn. Single chokepoint for engine turn-state advance —
+   no `advance-turn` alias, no auto-incrementing variant. The integration
+   layer always knows the target turn-pos (DB tracks
+   `session_turn_soul.position`), so the engine takes it as an explicit
+   arg."
   [ctx turn-pos]
   (let [next-turn (long (or turn-pos 1))]
     (-> ctx
@@ -1748,14 +1770,6 @@
       (assoc :engine/turn-events [])
       (assoc :engine/blockers [])
       gc-pass)))
-
-(defn advance-turn
-  "Back-compat alias: bumps `:session/turn` by 1, then delegates to
-   `enter-turn`. Prefer `enter-turn` directly when the integration
-   layer knows the target turn number (it always does — the DB tracks
-   `session_turn_soul.position`)."
-  [ctx]
-  (enter-turn ctx (inc (long (or (:session/turn ctx) 0)))))
 
 ;; =============================================================================
 ;; Empty-ctx constructor — used by tests + scenario replayer
