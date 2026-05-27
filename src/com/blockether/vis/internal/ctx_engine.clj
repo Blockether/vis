@@ -6,7 +6,7 @@
    The pure subset:
      parse-scope-form, scope-compare, classify-scope, build-indexes,
      depends-on-cycle?, derive-progression, derive-warnings,
-     derive-next-actions, apply-mutator, apply-done,
+     derive-plan, apply-mutator, apply-done,
      reconcile-done-hook-tasks, advance-iter, advance-turn, gc-pass,
      introspect-*.
 
@@ -28,7 +28,7 @@
      (derive-warnings ctx indexes)
        → [{:level :anchor :code :message} …]   sorted, deduped
 
-     (derive-next-actions ctx indexes progression last-mutation-map)
+     (derive-plan ctx indexes progression last-mutation-map)
        → [{:type :target :priority :hint} …]   top-N ranked
 
      (apply-mutator ctx form-scope mutator args)
@@ -1415,70 +1415,166 @@
      vec)))
 
 ;; =============================================================================
-;; derive-next-actions — top-N ranked, deterministic priority
+;; derive-plan — flat ordered vec of plan-entries for the current iter
 ;; =============================================================================
+;;
+;; Order is the priority. NO `:priority` enum field anywhere. Tasks
+;; link to one another via `:depends-on`; the plan reflects that
+;; topological order verbatim. Blockers (gate refusals from the
+;; integration layer) ride at the head of the vec — the model must
+;; resolve them before anything else.
 
-(defn derive-next-actions
-  "Ranked suggestions. Pure fn. Priority categories (lower = higher):
-     1 :fix-consistency  — spec :done with unproven; task :done with pending dep
-                          (rendered as `:blocking? true` — the symbolic
-                          critic says: fix these before generating new work)
-     2 :work-unblocked-todo  — task :todo with all deps terminal
-     3 :prove-requirement    — spec :partial / :open req without proof
-     4 :revisit-stale        — task :doing (stale heuristic deferred to loop)
+(defn- task-dep-ids
+  "Project a task's `:depends-on` vec to bare task-id set. Engine deps
+   may be plain keywords (legacy bare-key form) or typed `[:task k]`
+   vectors. Other dep kinds (`[:spec …]` `[:fact …]`) are skipped —
+   topological sort here is over the task graph only."
+  [task]
+  (into #{}
+    (keep (fn [d]
+            (cond
+              (keyword? d) d
+              (and (vector? d) (= :task (first d))) (second d))))
+    (:depends-on task)))
 
-   Returns the full sorted vec. The renderer caps at NEXT_ACTIONS_BUDGET
-   and surfaces the suppressed count so the model sees the backlog
-   pressure instead of a silently-truncated list."
-  ([ctx indexes progression] (derive-next-actions ctx indexes progression {}))
+(defn- topo-rank-tasks
+  "Topological depth map `{task-id depth}` over `:depends-on` edges.
+   Lower depth = closer to leaves (run first). Tasks with no deps land
+   at depth 0. Cycles cap at `(count tasks)` defensively — write-time
+   cycle check should prevent them, but legacy snapshots may carry
+   pre-Phase-B data."
+  [tasks]
+  (let [cap (max 1 (count tasks))]
+    (reduce
+      (fn [acc id]
+        (let [depth (loop [stack (seq (task-dep-ids (get tasks id)))
+                           seen  #{id}
+                           d     0]
+                      (cond
+                        (>= d cap) cap
+                        (empty? stack) d
+                        :else
+                        (let [[nxt & more] stack
+                              fresh        (remove seen (task-dep-ids (get tasks nxt)))]
+                          (recur (concat fresh more)
+                            (conj seen nxt)
+                            (inc d)))))]
+          (assoc acc id depth)))
+      {}
+      (keys tasks))))
+
+(defn- derive-actions
+  "Build the actions tail of the plan. Returns a vec of plan-entries
+   shaped `{:kind :id :status :reason :remedy}` — NO `:priority`.
+   Ordering signal is the topological depth of `:depends-on` edges,
+   not a flat priority enum.
+
+   Entry kinds:
+     :fix-consistency      — spec :done with unproven; task :done with
+                             pending dep. `:status :blocked` — must
+                             repair before generating new work.
+     :work-unblocked-todo  — task :todo with all deps terminal.
+     :prove-requirement    — spec :partial / :open req without proof.
+
+   Order in the returned vec:
+     1. consistency repairs (:status :blocked, head)
+     2. todo tasks in topological depth order (deepest deps first)
+     3. spec proof-suggestions"
+  [ctx indexes progression]
+  (let [{:keys [task-status dep-graph]} indexes
+        specs (or (:session/specs ctx) {})
+        tasks (or (:session/tasks ctx) {})
+        topo  (topo-rank-tasks tasks)
+        task-deps (fn [task-id]
+                    (into #{}
+                      (keep (fn [[k id]] (when (= :task k) id)))
+                      (get dep-graph [:task task-id] #{})))
+        consistency-spec
+        (for [[spec-id _] specs
+              :let [p (get progression spec-id)]
+              :when (and p (= (:state p) :partial)
+                      (= :done (get-in specs [spec-id :status])))]
+          {:kind   :fix-consistency
+           :id     spec-id
+           :status :blocked
+           :reason (str "spec " spec-id " :done but " (count (:missing p))
+                     " req(s) unproven: " (vec (sort (:missing p))))
+           :remedy (list (symbol "spec-set!") spec-id {:status :open})})
+        consistency-task
+        (for [[task-id task] tasks
+              :when (= :done (:status task))
+              d (or (:depends-on task) [])
+              :let [dep (get tasks d)]
+              :when (and (some? dep) (not (task-terminal? (:status dep))))]
+          {:kind   :fix-consistency
+           :id     task-id
+           :status :blocked
+           :reason (str "task " task-id " :done but dep " d " is " (:status dep))
+           :remedy (list (symbol "task-set!") task-id {:status :doing})})
+        todo
+        (for [[task-id task] tasks
+              :when (= :todo (:status task))
+              :let [deps     (task-deps task-id)
+                    deps-ok? (every? #(let [s (get task-status %)]
+                                        (or (nil? s) (task-terminal? s)))
+                               deps)]
+              :when deps-ok?]
+          {:kind   :work-unblocked-todo
+           :id     task-id
+           :status :ready
+           :reason (str "task " task-id " is :todo with all deps :done/:cancelled")
+           :remedy (list (symbol "task-set!") task-id {:status :doing})})
+        prove
+        (for [[spec-id _] specs
+              :let [p (get progression spec-id)]
+              :when (and p (#{:partial :open} (:state p)))
+              rid (sort (:missing p))]
+          {:kind   :prove-requirement
+           :id     [spec-id rid]
+           :status :ready
+           :reason (str "spec " spec-id " req " rid " needs a task proof")
+           :remedy (list (symbol "proof-add!") spec-id rid)})]
+    (vec
+      (concat
+        (sort-by (comp str :id) consistency-spec)
+        (sort-by (comp str :id) consistency-task)
+        (sort-by (juxt #(or (topo (:id %)) 0) (comp str :id)) todo)
+        (sort-by (comp str :id) prove)))))
+
+(defn derive-plan
+  "Phase G: the single derived view of \"what should happen this iter\".
+   Returns a flat vec of plan-entry maps. Blockers from
+   `:engine/blockers` come first (`:status :blocked`); actions follow
+   in topological dep order. NO `:priority` field — ordering IS the
+   priority. Tasks link to each other via `:depends-on` and the plan
+   reflects that order verbatim.
+
+   Replaces the legacy triplet (`:session/timeline` +
+   `:session/orphans` + `:session/next-actions`) — the model walks
+   ONE ordered list instead of cross-referencing three derived views.
+
+   Plan-entry shape:
+     {:kind   :blocker | :fix-consistency | :work-unblocked-todo
+              | :prove-requirement
+      :id     <entity-id or blocker-id>
+      :status :blocked | :ready | :doing
+      :reason <short prose explanation>
+      :remedy <quoted form the model should execute next>}
+
+   Sources:
+     - `:engine/blockers` (integration-layer push: title-gate,
+       consult-gate, future hard refusals)
+     - `:session/tasks` :todo with deps satisfied, topologically sorted
+     - `:session/specs` :partial / :open reqs lacking proofs
+     - Spec :done with unproven reqs / task :done with pending dep
+       — consistency repairs (`:status :blocked`)"
+  ([ctx indexes progression] (derive-plan ctx indexes progression {}))
   ([ctx indexes progression _last-mutation-map]
-   (let [{:keys [task-status dep-graph]} indexes
-         specs (or (:session/specs ctx) {})
-         tasks (or (:session/tasks ctx) {})
-         task-deps (fn [task-id]
-                     ;; Phase B: dep-graph is typed; project task-only
-                     ;; deps so task-ordering logic stays bare-key.
-                     (into #{}
-                       (keep (fn [[k id]] (when (= :task k) id)))
-                       (get dep-graph [:task task-id] #{})))
-         consistency-actions
-         (concat
-           (for [[spec-id _] specs
-                 :let [p (get progression spec-id)]
-                 :when (and p (= (:state p) :partial) (= :done (get-in specs [spec-id :status])))]
-             {:type :review-spec :target spec-id :priority 1 :blocking? true
-              :hint (str "spec " spec-id " :done but "
-                      (count (:missing p)) " req(s) unproven: "
-                      (vec (sort (:missing p))))})
-           (for [[task-id task] tasks
-                 :when (= :done (:status task))
-                 d (or (:depends-on task) [])
-                 :let [dep (get tasks d)]
-                 :when (and (some? dep) (not (task-terminal? (:status dep))))]
-             {:type :review-task :target task-id :priority 1 :blocking? true
-              :hint (str "task " task-id " :done but dep " d " is " (:status dep))}))
-         todo-actions
-         (for [[task-id task] tasks
-               :when (= :todo (:status task))
-               :let [deps     (task-deps task-id)
-                     deps-ok? (every? #(let [s (get task-status %)]
-                                         (or (nil? s) (task-terminal? s)))
-                                deps)]
-               :when deps-ok?]
-           {:type :work-unblocked-todo :target task-id :priority 2
-            :hint (str "task " task-id " is :todo with all deps :done/:cancelled")})
-         prove-actions
-         (for [[spec-id _] specs
-               :let [p (get progression spec-id)]
-               :when (and p (#{:partial :open} (:state p)))
-               rid (sort (:missing p))]
-           {:type :prove-requirement :target [spec-id rid] :priority 3
-            :hint (str "spec " spec-id " req " rid " needs a task proof")})]
-     (->> (concat consistency-actions todo-actions prove-actions)
-       (sort-by (juxt :priority (comp str :target)))
-       vec))))
+   (let [blockers (mapv (fn [b] (assoc b :kind :blocker :status :blocked))
+                    (or (:engine/blockers ctx) []))
+         actions  (derive-actions ctx indexes progression)]
+     (vec (concat blockers actions)))))
 
-;; =============================================================================
 ;; advance-iter / advance-turn / gc-pass
 ;; =============================================================================
 
