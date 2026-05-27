@@ -36,6 +36,12 @@
                        (e.g. LLM call failed). Carries `:thinking`
                        and `:error`.
 
+     :provider-retry-reset
+                       Provider stream failed before code eval and Vis is
+                       retrying the provider call. Clears stale live
+                       reasoning/content for this attempt and keeps a retry
+                       recap in `:provider-fallbacks`.
+
    Public API:
 
      `(make-progress-tracker)`              - fresh tracker, no callback
@@ -436,6 +442,16 @@
     :provider-fallback
     (-> entry
       (assoc :activity :provider-call)
+      (update :provider-fallbacks conj
+        (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
+
+    :provider-retry-reset
+    ;; Provider stream died after emitting live text. Vis retries the whole
+    ;; provider call before any code eval, so rewind the live attempt: drop
+    ;; stale reasoning/content/parse state and keep only the retry recap.
+    (-> entry
+      (assoc :activity :provider-call)
+      (dissoc :thinking :content-stream :response-parse)
       (update :provider-fallbacks conj
         (or (:event chunk) (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 

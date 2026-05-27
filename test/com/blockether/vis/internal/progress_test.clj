@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.progress-test
   (:require
+   [clojure.string]
    [com.blockether.vis.internal.progress :as progress]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -91,6 +92,28 @@
       (on {:phase :response-parse :iteration 1 :status :done})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (nil? (:content-stream entry))))))
+
+  (it "provider retry reset rewinds stale streamed reasoning and content"
+    (let [tracker (progress/make-progress-tracker)
+          on     (:on-chunk tracker)
+          event  {:event/type :llm.routing/provider-retry
+                  :provider "zai-coding-plan"
+                  :model "glm-5.1"
+                  :reason :stream-connection-error
+                  :attempt 1
+                  :delay-ms 1000
+                  :error "Stream connection error: closed"}]
+      (on {:phase :reasoning :iteration-count 1 :thinking "dead thinking"})
+      (on {:phase :content :iteration-count 1 :content "dead content"})
+      (on {:phase :provider-retry-reset
+           :iteration 1
+           :iteration-count 1
+           :event event})
+      (let [entry (first ((:get-timeline tracker)))]
+        (expect (nil? (:thinking entry)))
+        (expect (nil? (:content-stream entry)))
+        (expect (= :provider-call (:activity entry)))
+        (expect (= [event] (:provider-fallbacks entry))))))
 
   (it "silently drops chunks that carry neither key"
     ;; Defensive: a malformed producer must not resurrect the phantom

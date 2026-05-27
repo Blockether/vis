@@ -2,7 +2,6 @@
   (:require
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
-   [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
@@ -54,6 +53,48 @@
 
 (def ^:private run-normal-turn!
   (deref #'lp/run-normal-turn!))
+
+(defdescribe provider-stream-rewind-retry-test
+  (it "rewinds streamed reasoning and retries the provider call before eval"
+    (let [env    (lp/create-environment ::router {:db :memory})
+          calls  (atom 0)
+          chunks (atom [])]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_router opts]
+                        (case (swap! calls inc)
+                          1 (do
+                              ((:on-chunk opts) {:reasoning "dead thinking"
+                                                 :content "```clojure\n(dead)"})
+                              (throw (ex-info "Stream connection error: closed"
+                                       {:type :svar.core/http-error
+                                        :stream? true
+                                        :content-acc-len 19
+                                        :reasoning-acc-len 13
+                                        :reasoning "dead thinking"
+                                        :partial-content "```clojure\n(dead)"})))
+                          2 (do
+                              ((:on-chunk opts) {:reasoning "fresh thinking"})
+                              {:blocks [{:lang "clojure"
+                                         :source "(done {:answer \"ok\"})"}]
+                               :raw "```clojure\n(done {:answer \"ok\"})\n```"
+                               :reasoning "fresh thinking"
+                               :tokens {}})))]
+          (let [result (lp/run-iteration env []
+                         {:iteration 0
+                          :resolved-model {:provider :zai-coding-plan :name "glm-5.1"}
+                          :on-chunk #(swap! chunks conj %)})
+                reset-chunk (first (filter #(= :provider-retry-reset (:phase %)) @chunks))
+                fresh-reasoning (last (filter #(= :reasoning (:phase %)) @chunks))]
+            (expect (= 2 @calls))
+            (expect (= "ok" (get-in result [:final-result :answer :answer])))
+            (expect (some? reset-chunk))
+            (expect (= "fresh thinking" (:thinking fresh-reasoning)))
+            (expect (= "fresh thinking" (:delta fresh-reasoning)))
+            (expect (= [:llm.routing/provider-retry]
+                      (mapv :event/type (:llm-routing-trace result))))))
+        (finally
+          (lp/dispose-environment! env))))))
 
 (defdescribe provider-interrupt-retry-test
   (it "retries a provider interrupt once when user did not cancel"
