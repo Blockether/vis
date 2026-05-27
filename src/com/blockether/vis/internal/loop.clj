@@ -177,6 +177,10 @@
 
 (def ^:private PROVIDER_INTERRUPT_RETRIES 1)
 
+(def ^:private PROVIDER_STREAM_REWIND_RETRIES 2)
+
+(def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000])
+
 (defn- provider-call-cancelled?
   [environment]
   (boolean (some-> environment :cancel-atom deref)))
@@ -214,6 +218,103 @@
                 "Provider call interrupted without user cancel; retrying")
               (recur (inc attempt)))
             (throw t)))))))
+
+(defn- stream-transport-error?
+  [^Throwable t]
+  (let [data (ex-data t)
+        msg-lower (str/lower-case (or (ex-message t) ""))
+        cause (ex-cause t)
+        cause-lower (str/lower-case (or (some-> cause ex-message) ""))]
+    (and (= :svar.core/http-error (:type data))
+      (:stream? data)
+      (not (interrupted-cause? t))
+      (or (str/includes? msg-lower "stream connection error")
+        (str/includes? msg-lower "connection reset")
+        (str/includes? msg-lower "connection closed")
+        (str/includes? msg-lower "closed")
+        (str/includes? msg-lower "eof")
+        (str/includes? msg-lower "timed out")
+        (str/includes? cause-lower "connection reset")
+        (str/includes? cause-lower "connection closed")
+        (str/includes? cause-lower "closed")
+        (str/includes? cause-lower "eof")
+        (str/includes? cause-lower "timed out")))))
+
+(defn- provider-retry-event
+  [{:keys [provider model attempt delay-ms error]}]
+  (cond-> {:event/type :llm.routing/provider-retry
+           :reason :stream-connection-error
+           :provider provider
+           :model model
+           :attempt attempt
+           :delay-ms delay-ms
+           :error error}
+    provider (assoc :from-provider provider)
+    model (assoc :from-model model)))
+
+(defn- prepend-routing-trace
+  [result retry-events]
+  (if (seq retry-events)
+    (update result :routed/trace #(vec (concat retry-events (or % []))))
+    result))
+
+(defn- add-routing-trace-to-ex
+  [^Throwable t retry-events]
+  (if (seq retry-events)
+    (ex-info (ex-message t)
+      (update (or (ex-data t) {}) :routed/trace #(vec (concat retry-events (or % []))))
+      t)
+    t))
+
+(defn- call-provider-with-stream-rewind-retry!
+  "Retry provider-stream transport failures at Vis level. This wrapper owns
+   UI rewind because svar cannot retract chunks it already delivered through
+   on-chunk. Safe boundary: wraps only the provider call, before response parse
+   and before any SCI/tool eval."
+  [environment {:keys [iteration-position provider model on-chunk reset-stream-state!]} f]
+  (loop [attempt 0
+         retry-events []]
+    (let [outcome (try
+                    {:ok? true :value (f)}
+                    (catch Throwable t
+                      {:ok? false :throwable t}))]
+      (if (:ok? outcome)
+        (prepend-routing-trace (:value outcome) retry-events)
+        (let [t (:throwable outcome)
+              can-retry? (and (< attempt PROVIDER_STREAM_REWIND_RETRIES)
+                           (not (provider-call-cancelled? environment))
+                           (stream-transport-error? t))]
+          (if can-retry?
+            (let [delay-ms (long (nth PROVIDER_STREAM_REWIND_DELAYS_MS attempt 2000))
+                  event (provider-retry-event {:provider provider
+                                               :model model
+                                               :attempt (inc attempt)
+                                               :delay-ms delay-ms
+                                               :error (ex-message t)})]
+              (reset-stream-state!)
+              (when on-chunk
+                (on-chunk {:phase :provider-retry-reset
+                           :iteration iteration-position
+                           :iteration-count iteration-position
+                           :attempt (inc attempt)
+                           :max-retries PROVIDER_STREAM_REWIND_RETRIES
+                           :delay-ms delay-ms
+                           :error (format-exception-short t)
+                           :event event}))
+              (tel/log! {:level :warn
+                         :data (assoc (format-exception-short t)
+                                 :iteration iteration-position
+                                 :attempt (inc attempt)
+                                 :max-retries PROVIDER_STREAM_REWIND_RETRIES
+                                 :delay-ms delay-ms
+                                 :provider provider
+                                 :model model
+                                 :rewind? true)}
+                "Provider stream failed after live output; rewinding progress and retrying")
+              (when (pos? delay-ms)
+                (Thread/sleep delay-ms))
+              (recur (inc attempt) (conj retry-events event)))
+            (throw (add-routing-trace-to-ex t retry-events))))))))
 
 ;; ---------------------------------------------------------------------------
 
@@ -2067,6 +2168,9 @@
           ;; ignore it and read `:thinking` as before.
           reasoning-len-volatile (volatile! 0)
           content-len-volatile   (volatile! 0)
+          reset-stream-state!     (fn []
+                                    (vreset! reasoning-len-volatile 0)
+                                    (vreset! content-len-volatile 0))
           streaming-fn (when on-chunk
                          (fn [{:keys [reasoning content done?] :as chunk}]
                            (cond
@@ -2161,8 +2265,16 @@
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                             :session-turn-id (:environment-id environment)
                                                             :iteration iteration-position)]
-                           (call-provider-with-interrupt-retry! environment iteration-position
-                             #(svar/ask-code! (:router environment) ask-opts)))
+                           (call-provider-with-stream-rewind-retry!
+                             environment
+                             {:iteration-position iteration-position
+                              :provider (some-> (:provider resolved-model) name)
+                              :model (some-> (:name resolved-model) str)
+                              :on-chunk on-chunk
+                              :reset-stream-state! reset-stream-state!}
+                             #(call-provider-with-interrupt-retry! environment iteration-position
+                                (fn []
+                                  (svar/ask-code! (:router environment) ask-opts)))))
           ask-result (recover-direct-answer-blocks ask-result-raw)
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
