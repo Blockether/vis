@@ -2201,21 +2201,26 @@
    here (ships via the answer channel + `session_turn_state.answer_markdown`
    column); the fact is the model's lookup index, not the artefact.
 
-   Auto-derived skeleton:
-     :question        the user request that started the turn
-     :answer          one-paragraph synopsis (model :answer-summary or
-                      first paragraph of :answer, capped at 280 chars)
-     :facts-born      vec of fact ids created in this turn
-     :specs-born      vec of spec ids created in this turn
-     :tasks-touched   vec of task ids whose done-born landed this turn
-     :status          :active     — surfaces in :session/facts
-     :scope           tN string   — born scope = current turn
-     :source          :done-auto
+   Auto-derived skeleton (FIVE fields — no `:what-we-did` /
+   `:actions` etc., those are already covered by the entity lists):
 
-   Model-extendable: any extra keys from `model-summary` (the value
-   the model passes as `(done {:turn-summary {...}})`) merge into the
-   fact. Reserved keys (`:status :source :scope :born`) cannot be
-   overridden — the engine owns them.
+     :question         user request that started the turn
+     :answer-summary   one-paragraph synopsis (model `:answer-summary`
+                       arg or first paragraph of :answer, 280-char cap)
+     :facts-born       vec of fact ids created in this turn
+     :specs-born       vec of spec ids created in this turn
+     :tasks-touched    vec of task ids whose :done-born landed this turn
+
+   Plus engine-owned framing: `:status :active`, `:scope \"tN\"`,
+   `:source :done-auto`, `:born <form-scope>`.
+
+   Model-extendable: extra keys from `model-summary` (the value the
+   model passes as `(done {:turn-summary {...}})`) merge into the fact.
+   Reserved keys (`:status :source :scope :born`) cannot be overridden
+   — the engine owns them. The auto-derived fields above (`:question`,
+   `:answer-summary`, `:facts-born`, `:specs-born`, `:tasks-touched`)
+   CAN be overridden by the model; the engine just fills them when the
+   model leaves them out.
 
    Returns `[fact-id fact-value]` or nil when there is nothing to record
    (no answer text AND no entities born this turn — a fully silent
@@ -2243,8 +2248,8 @@
                                :scope  (str "t" turn-pos)
                                :source :done-auto
                                :born   form-scope}
-                        question       (assoc :question question)
-                        synopsis       (assoc :answer synopsis)
+                        question            (assoc :question question)
+                        synopsis            (assoc :answer-summary synopsis)
                         (seq facts-born)    (assoc :facts-born facts-born)
                         (seq specs-born)    (assoc :specs-born specs-born)
                         (seq tasks-touched) (assoc :tasks-touched tasks-touched))]
