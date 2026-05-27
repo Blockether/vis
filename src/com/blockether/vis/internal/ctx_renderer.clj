@@ -197,80 +197,6 @@
       (str body "\n " annotation-block)
       body)))
 
-(def ^:private IMPORTANCE_RANK
-  {:critical 0 :warn 1 :info 2 nil 3})
-
-(def ^:private TASK_STATUS_RANK
-  {:todo 0 :doing 1 :blocked 2 :done 3 :cancelled 4})
-
-(defn- task-sort-key
-  "Comparator key for a [task-id task] pair. Order:
-     1. hook-source tasks first (so the model sees pending hook work
-        before its own task list)
-     2. within source, by :importance (critical < warn < info < none)
-     3. within importance, by :status (todo < doing < blocked < done <
-        cancelled) so live work is on top
-     4. tiebreak by string-comparable task id for determinism."
-  [[task-id task]]
-  [(if (= :hook (:source task)) 0 1)
-   (get IMPORTANCE_RANK (:importance task) 3)
-   (get TASK_STATUS_RANK (:status task) 5)
-   (str task-id)])
-
-(defn- rank-tasks
-  "Return an `array-map` of `:session/tasks` entries ranked for render.
-   `array-map` preserves insertion order through zprint so the model
-   reads hook-tasks first. Returns `{}` unchanged when the input is
-   nil/empty."
-  [tasks]
-  (if (empty? tasks)
-    {}
-    (into (array-map) (sort-by task-sort-key tasks))))
-
-(defn- hook-task-annotation-lines
-  "One `;; via hook` annotation line per unresolved hook-task. Lets the
-   model spot pending engine-driven work that's mixed into the same
-   :session/tasks map. Resolved (:status :done :validated? true) hooks
-   are silent."
-  [tasks indent]
-  (let [unresolved (->> tasks
-                     (filter (fn [[_ t]] (and (= :hook (:source t))
-                                           (not (and (= :done (:status t))
-                                                  (:validated? t))))))
-                     (sort-by task-sort-key))]
-    (mapv
-      (fn [[k t]]
-        (str (pad indent) ";; via hook " (:importance t) " "
-          (zp k) "  status=" (:status t)
-          (when (= :done (:status t))
-            (str " :validated? " (boolean (:validated? t))))))
-      unresolved)))
-
-(defn- archived-proofs-annotation-lines
-  "One `;; rejected-proofs …` line per task carrying a non-empty
-   `:archived-proofs` vec. Surfaces validator rejections the engine
-   stamped at end-of-iter so the model sees the history without an
-   explicit `(introspect-failed-proofs :K)` call. Includes the count
-   and the most-recent rejection's `:reason` + `:proof` so a single
-   line carries enough signal to decide whether to swap the proof or
-   change strategy."
-  [tasks indent]
-  (let [with-archive (->> tasks
-                       (filter (fn [[_ t]] (seq (:archived-proofs t))))
-                       (sort-by task-sort-key))]
-    (mapv
-      (fn [[k t]]
-        (let [archive (:archived-proofs t)
-              latest  (peek archive)
-              n       (count archive)
-              reason  (some-> (:reason latest) (str))]
-          (str (pad indent) ";; rejected-proofs " (zp k)
-            "  count=" n
-            "  latest=" (pr-str (:proof latest))
-            (when reason (str "  reason=" reason))
-            "  — (introspect-failed-proofs " (pr-str k) ")")))
-      with-archive)))
-
 ;; ---------------------------------------------------------------------------
 ;; Trailer pins — render :src verbatim, NOT as a Clojure-escaped string.
 ;;
@@ -321,63 +247,17 @@
   [form]
   (apply dissoc (bound-form-result form) prompt-trailer-form-noise-keys))
 
-(defn- consult-pin-summary-line
-  "One-line preview header for a synthetic consult-resolution pin.
-   Reads :id + :result keys (the entry map) and emits a
-   compact ;; consult line so the model scans resolved consults
-   without parsing the full pr-str entry.
-
-   Active entries:  ;; consult :K :high — <citation-title or content-head>
-   Failed entries:  ;; consult :K :failed (:timeout)"
-  [form indent]
-  (let [id     (:id form)
-        entry  (or (:result form) {})
-        status (:status entry)]
-    (case status
-      :failed
-      (str (pad indent) ";; consult " id " :failed (" (:error entry) ")")
-
-      :active
-      (let [confidence (or (:confidence entry) :medium)
-            first-cite (first (:citations entry))
-            content    (or (:content entry) "")
-            tag        (or (some-> first-cite :title)
-                         (some-> first-cite :url)
-                         (when (string? content)
-                           (subs content 0 (min 60 (count content)))))]
-        (str (pad indent) ";; consult " id " " confidence " — " tag))
-
-      (str (pad indent) ";; consult " id " " status))))
-
-(defn- consult-pin?
-  [form]
-  (= :consult (:tag form)))
-
-(defn- render-consult-form-pin
-  "Render a synthetic consult-resolution pin with a leading one-line
-   summary, then the projected entry map. Drops the synthetic `:src`
-   `(consult-resolved :K)` line — it isn't real model-emitted source."
-  [form indent]
-  (let [no-src    (presentation-form form)
-        map-text  (zp no-src)
-        map-line  (str (pad indent) (indent-rest map-text indent))]
-    (str (consult-pin-summary-line form indent) "\n" map-line)))
-
 (defn- render-form-pin
-  "Render one `:forms` entry as a single Clojure map. `:form` (the
-   native list) lives inside the map so the model reads code as code —
-   no `;; src <scope>:` verbatim comment prefix anymore.
-
-   Consult-resolution pins (`:tag :consult`) still get a one-line
-   summary preview because the synthetic `(consult-resolved :K)` form
-   is not real model-emitted source and the entry carries a different
-   `:result` shape (citations / content)."
+  "Render one `:forms` entry as a single Clojure map. ALL pins are pure
+   EDN data — model-emitted forms, consult-resolution pins, summary
+   pins, every kind. No `;; src` verbatim block. No `;; consult` summary
+   line. The model reads the map directly: `:scope :tag :form :result`
+   (or `:scope :tag :id :result` for consult pins). Picking out what
+   matters is the model's job, not the renderer's."
   [form indent]
-  (if (consult-pin? form)
-    (render-consult-form-pin form indent)
-    (let [proj     (presentation-form form)
-          map-text (zp proj)]
-      (str (pad indent) (indent-rest map-text indent)))))
+  (let [proj     (presentation-form form)
+        map-text (zp proj)]
+    (str (pad indent) (indent-rest map-text indent))))
 
 (defn- render-trailer-pin
   "Render one top-level trailer entry. Summary pins (carry `:summary`) zp
