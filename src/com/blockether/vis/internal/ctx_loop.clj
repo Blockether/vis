@@ -31,6 +31,7 @@
             [com.blockether.vis.internal.consult-engine :as consult-engine]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.env-digest :as env-digest]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt :as prompt]
             [taoensso.telemere :as tel]))
@@ -548,12 +549,19 @@
   (when-let [ctx (current-ctx env)]
     (let [active-exts    (try (prompt/active-extensions env)
                            (catch Throwable _ nil))
-          env-block      (try (env-digest/session-env env active-exts)
+          ext-ctx        (try (extension/ctx-contributions env active-exts)
+                           (catch Throwable t
+                             (tel/log! {:level :warn :id ::ctx-contributions-failed
+                                        :data  {:error (ex-message t)}})
+                             {}))
+          env-block      (try (env-digest/deep-merge
+                                (env-digest/base-digest env)
+                                (:session/env ext-ctx))
                            (catch Throwable t
                              (tel/log! {:level :warn :id ::env-digest-failed
                                         :data  {:error (ex-message t)}})
                              nil))
-          ctx*           (cond-> ctx
+          ctx*           (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx :session/env))
                            (seq env-block) (assoc :session/env env-block))
           fr             (trailer->form-results (:session/trailer ctx*))
           idx            (eng/build-indexes ctx*)

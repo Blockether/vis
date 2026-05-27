@@ -82,7 +82,7 @@
         (init-repo! root 3)
         (with-workspace root
           (let [res (wo/reset! {:mode :soft :to "HEAD~1"})]
-            (expect (= :reset (:op res)))
+            (expect (= :git/reset (:op res)))
             (expect (= :soft  (:mode res)))
             (expect (= "HEAD~1" (:to res)))
             (expect (some? (:resolved-sha res)))
@@ -127,7 +127,7 @@
         (with-workspace root
           (let [created (wo/branch! {:op :create :name "feature/x"})
                 listed  (wo/branch! {:op :list :mode :local})]
-            (expect (= :branch/create (:op created)))
+            (expect (= :git/branch-create (:op created)))
             (expect (= "feature/x" (:name created)))
             (expect (= "HEAD" (:from created)))
             (expect (some? (:short-sha created)))
@@ -142,7 +142,7 @@
         (with-workspace root
           (wo/branch! {:op :create :name "throwaway"})
           (let [del (wo/branch! {:op :delete :name "throwaway" :force? true})]
-            (expect (= :branch/delete (:op del)))
+            (expect (= :git/branch-delete (:op del)))
             (expect (= ["throwaway"] (:deleted del)))
             (let [names (set (map :short (:branches (wo/branch! {:op :list}))))]
               (expect (not (contains? names "throwaway"))))))
@@ -155,7 +155,7 @@
         (with-workspace root
           (wo/branch! {:op :create :name "old-name"})
           (let [r (wo/branch! {:op :rename :old "old-name" :new "new-name"})]
-            (expect (= :branch/rename (:op r)))
+            (expect (= :git/branch-rename (:op r)))
             (expect (= "old-name" (:old r)))
             (expect (= "new-name" (:new r)))
             (let [names (set (map :short (:branches (wo/branch! {:op :list}))))]
@@ -183,7 +183,7 @@
         (with-workspace root
           (wo/branch! {:op :create :name "feature/y"})
           (let [r (wo/checkout! {:branch "feature/y"})]
-            (expect (= :checkout (:op r)))
+            (expect (= :git/checkout (:op r)))
             (expect (= "feature/y" (:branch r)))
             (expect (some? (:head r)))
             (expect (= 7 (count (:short-head r))))
@@ -230,7 +230,7 @@
                             (some (fn [b] (when (= trunk-branch (:short b)) (:sha b)))))
                 _         (expect (some? trunk-sha))
                 res       (wo/cherry-pick! {:commits trunk-sha})]
-            (expect (= :cherry-pick (:op res)))
+            (expect (= :git/cherry-pick (:op res)))
             (expect (= "OK" (:status res)))
             (expect (seq (:picked res)))
             (expect (.exists (io/file root "src/f1.clj")))))
@@ -255,7 +255,7 @@
           (let [res      (wo/fetch! {})
                 update   (first (:updates res))
                 tracking (:tracking res)]
-            (expect (= :fetch (:op res)))
+            (expect (= :git/fetch (:op res)))
             (expect (= "origin" (:remote res)))
             (expect (= :updated (:status res)))
             (expect (= "master" (:branch res)))
@@ -295,7 +295,7 @@
           (wo/branch! {:op :create :name "feature/r"})
           (wo/checkout! {:branch "feature/r"})
           (let [r (wo/rebase! {:operation :begin :upstream trunk-branch})]
-            (expect (= :rebase (:op r)))
+            (expect (= :git/rebase (:op r)))
             ;; Status is JGit's enum name; UP_TO_DATE / FAST_FORWARD /
             ;; OK all count as success.
             (expect (true? (:successful? r)))))

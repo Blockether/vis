@@ -137,7 +137,7 @@
       (let [cmd (.add git)]
         (doseq [p paths] (.addFilepattern cmd p))
         (.call cmd)))
-    {:op :add :paths paths}))
+    {:op :git/add :paths paths}))
 
 (defn- head-message [^Git git]
   (some-> (.. git log (setMaxCount 1) call) first .getFullMessage))
@@ -165,7 +165,7 @@
                    (setAllowEmpty (boolean allow-empty?))
                    call)
           sha    (.getName commit)]
-      {:op        (if amend? :amend :commit)
+      {:op        (if amend? :git/amend :git/commit)
        :sha       sha
        :short-sha (subs sha 0 7)
        :message   msg
@@ -221,7 +221,7 @@
                                            :message     (.getMessage u)})
                                      (.getRemoteUpdates r)))
                            results))]
-        {:op      :push
+        {:op      :git/push
          :remote  remote
          :branch  branch
          :force?  (boolean force?)
@@ -304,7 +304,7 @@
                                 :range (when (and (:old-short-sha m) (:new-short-sha m))
                                          (str (:old-short-sha m) ".." (:new-short-sha m))))))
                       (.getTrackingRefUpdates res))]
-        (cond-> {:op       :fetch
+        (cond-> {:op       :git/fetch
                  :remote   remote
                  :status   (if (seq updates) :updated :up-to-date)
                  :branch   branch
@@ -385,7 +385,7 @@
              semantics); without paths the whole tree resets per :mode.
 
    Returns:
-     {:op :reset :mode :to :resolved-sha :short-sha :head-before :head-after
+     {:op :git/reset :mode :to :resolved-sha :short-sha :head-before :head-after
       :paths}
 
    Use as the building block for \"reword 40 commits\": reset --soft to
@@ -411,7 +411,7 @@
         (do (.setMode cmd (reset-mode mode))
           (.call cmd)))
       (let [head-after (some-> (.resolve repo "HEAD") .getName)]
-        {:op           :reset
+        {:op           :git/reset
          :mode         (when (empty? path-strs) mode)
          :to           (str to)
          :resolved-sha resolved
@@ -458,10 +458,10 @@
      :list    {:mode :local | :remote | :all} (default :local).
 
    Returns op-specific maps:
-     create  {:op :branch/create :name :from :sha :short-sha :force?}
-     delete  {:op :branch/delete :deleted [name ...] :force?}
-     rename  {:op :branch/rename :old :new}
-     list    {:op :branch/list :mode :branches [{:name :short :sha :short-sha}]}"
+     create  {:op :git/branch-create :name :from :sha :short-sha :force?}
+     delete  {:op :git/branch-delete :deleted [name ...] :force?}
+     rename  {:op :git/branch-rename :old :new}
+     list    {:op :git/branch-list :mode :branches [{:name :short :sha :short-sha}]}"
   [opts]
   (let [op (or (:op opts)
              (cond (contains? opts :create) :create
@@ -484,7 +484,7 @@
                        (setForce force?)
                        call)
                 sha  (some-> (.getObjectId ref) .getName)]
-            {:op        :branch/create
+            {:op        :git/branch-create
              :name      name
              :from      from
              :sha       sha
@@ -503,7 +503,7 @@
                              (setBranchNames (into-array String names))
                              (setForce force?)
                              call))]
-          {:op      :branch/delete
+          {:op      :git/branch-delete
            :deleted (mapv #(str/replace % #"^refs/heads/" "") deleted)
            :force?  force?})
 
@@ -517,11 +517,11 @@
             (setOldName old-n)
             (setNewName new-n)
             call)
-          {:op :branch/rename :old old-n :new new-n})
+          {:op :git/branch-rename :old old-n :new new-n})
 
         :list
         (let [mode (or (:mode opts) (:list opts) :local)]
-          {:op       :branch/list
+          {:op       :git/branch-list
            :mode     mode
            :branches (list-branches-impl git mode)})
 
@@ -547,7 +547,7 @@
      :start-point  start-point for :create? (defaults to HEAD).
 
    Returns:
-     {:op :checkout :branch :sha :head :short-head :created? :files-restored}"
+     {:op :git/checkout :branch :sha :head :short-head :created? :files-restored}"
   [{:keys [branch sha paths create? force? start-point]}]
   (with-open [git (open-git)]
     (let [repo  (.getRepository git)
@@ -562,7 +562,7 @@
           (.setStartPoint cmd ^String (or sha branch "HEAD"))
           (doseq [p path-strs] (.addPath cmd p))
           (.call cmd)
-          {:op             :checkout
+          {:op             :git/checkout
            :paths          path-strs
            :files-restored (count path-strs)
            :start-point    (or sha branch "HEAD")})
@@ -576,7 +576,7 @@
             (when start-point (.setStartPoint cmd ^String start-point)))
           (.call cmd)
           (let [head (some-> (.resolve repo "HEAD") .getName)]
-            {:op         :checkout
+            {:op         :git/checkout
              :branch     branch
              :head       head
              :short-head (short-sha head)
@@ -588,7 +588,7 @@
           (.setForceRefUpdate cmd (boolean force?))
           (.call cmd)
           (let [head (some-> (.resolve repo "HEAD") .getName)]
-            {:op         :checkout
+            {:op         :git/checkout
              :sha        sha
              :head       head
              :short-head (short-sha head)
@@ -608,7 +608,7 @@
      :mainline  parent number for merge-commit pick (1-based).
      :no-commit? leave changes staged; don't commit per pick.
 
-   Returns: {:op :cherry-pick :status :picked [{...}] :failing-paths}"
+   Returns: {:op :git/cherry-pick :status :picked [{...}] :failing-paths}"
   [{:keys [commits mainline no-commit?]}]
   (when (or (nil? commits) (and (sequential? commits) (empty? commits)))
     (throw (ex-info "git/cherry-pick! requires :commits"
@@ -636,7 +636,7 @@
                                          :short-sha (short-sha sha)}))))
             failing-paths   (some-> result .getFailingPaths)
             new-head        (some-> result .getNewHead .getName)]
-        {:op            :cherry-pick
+        {:op            :git/cherry-pick
          :status        status
          :picked        (or picked-commits [])
          :failing-paths (when failing-paths (vec (.keySet failing-paths)))
@@ -694,7 +694,7 @@
                       :squash. Default returns previous message
                       unchanged.
 
-   Returns: {:op :rebase :status :successful? :conflicts :failing-paths
+   Returns: {:op :git/rebase :status :successful? :conflicts :failing-paths
              :current-commit :short-current}"
   [{:keys [operation upstream onto preserve-merges? edit-todos-fn reword-message-fn]
     :or   {reword-message-fn (fn [_sha msg] msg)}}]
@@ -750,7 +750,7 @@
               ;; + commit! pattern instead.
               (or (reword-message-fn nil commit-msg) commit-msg)))))
       (assoc (rebase-result->map (.call cmd))
-        :op :rebase :operation op))))
+        :op :git/rebase :operation op))))
 
 ;; ============================================================================
 ;; SCI tool wrappers

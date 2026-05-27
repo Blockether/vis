@@ -1792,13 +1792,11 @@
    {:session/id        session-id
     :session/turn      1
     :session/scope     {:turn 1 :iter 1 :next-form 1}
-    ;; VCS-agnostic empty workspace. Detectors (foundation hook /
-    ;; workspace module) stamp real `:vcs/kind` + branch/head/stats
-    ;; once the session resolves to a real git/hg/jj repo. Until then
-    ;; the engine treats absence as `:vcs/kind :none` — no branch name
-    ;; baked in, no "main" sentinel that would lie about non-git
-    ;; workspaces.
-    :session/workspace {:vcs/kind :none}
+    ;; Empty scaffold only. Prompt render replaces this through
+    ;; foundation-core with a real workspace identity:
+    ;;   {:workspace/root ... :workspace/sandbox? ... :vcs/kind ...}
+    ;; `:vcs/kind :none` is reserved for an actual root with no supported VCS.
+    :session/workspace {}
     :session/symbols   {}
     :session/specs     {}
     :session/tasks     {}

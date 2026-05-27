@@ -115,9 +115,9 @@
     ENTITY SHAPES
       :session/scope     {:turn :iter :next-form}
       :session/env       {:host :project :extensions}     ; auto digest
-      :session/workspace {:vcs/kind :vcs/branch :vcs/head :vcs/dirty? …}
+      :session/workspace {:workspace/root :workspace/sandbox? :vcs/kind :vcs/ref :vcs/mainline :vcs/head :vcs/dirty? …}
                          (kind-namespaced :git/* :hg/* :jj/* when emitted;
-                          {:vcs/kind :none} for non-VCS)
+                          {:workspace/root ... :vcs/kind :none} for non-VCS)
       :session/facts     {K → {:content :status :born}}
       :session/specs     {K → {:title :requirements [{:id :title
                                                        :validator-fn?}]
@@ -139,7 +139,7 @@
 
       Project rules (AGENTS.md / CLAUDE.md) ride in a separate system
       block — not in :session/env. Read :session/env BEFORE calling
-      v/snapshot; the digest covers most needs.
+      ad-hoc environment probes; CTX covers workspace/VCS truth.
 
       :session/plan IS THE PRIMARY ATTENTION SURFACE. Read it FIRST
       every iter:

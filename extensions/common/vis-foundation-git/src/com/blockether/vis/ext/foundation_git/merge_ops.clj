@@ -88,7 +88,7 @@
   (with-open [git (open-git)]
     (.. git checkout (setStage CheckoutCommand$Stage/OURS) (addPath path) call)
     (.. git add (addFilepattern path) call))
-  {:path path :op :accept-ours})
+  {:path path :op :git/merge-accept-ours})
 
 (defn accept-theirs
   "Resolve `path` by keeping the branch side (MERGE_HEAD). JGit
@@ -97,7 +97,7 @@
   (with-open [git (open-git)]
     (.. git checkout (setStage CheckoutCommand$Stage/THEIRS) (addPath path) call)
     (.. git add (addFilepattern path) call))
-  {:path path :op :accept-theirs})
+  {:path path :op :git/merge-accept-theirs})
 
 (defn mark-resolved
   "Stage a path the model already edited by hand (e.g. via `v/patch`).
@@ -105,7 +105,7 @@
   [path]
   (with-open [git (open-git)]
     (.. git add (addFilepattern path) call))
-  {:path path :op :mark-resolved})
+  {:path path :op :git/merge-mark-resolved})
 
 (defn continue!
   "Commit the merge with `:message` (default: 'merge-resolve').

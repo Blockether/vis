@@ -38,11 +38,26 @@
   (git! root ["commit" "-m" "base"]))
 
 (defdescribe render-block-test
-  (it "{:vcs/kind :none} when no workspace pinned"
-    (expect (= {:vcs/kind :none}
-              (wctx/render-block {:workspace nil}))))
+  (it "non-VCS workspace keeps workspace identity and :vcs/kind :none"
+    (let [base (temp-dir "vis-wctx-no-vcs")]
+      (try
+        (let [block (wctx/render-block {:workspace {:root base}})]
+          (expect (= base (:workspace/root block)))
+          (expect (= false (:workspace/sandbox? block)))
+          (expect (= :none (:vcs/kind block))))
+        (finally (delete-tree! base)))))
 
-  (it "trunk-kind: :vcs/* keys + no commits-ahead, :ff-possible? false"
+  (it "nil workspace falls back to cwd workspace identity"
+    (let [base (temp-dir "vis-wctx-nil")]
+      (try
+        (binding [com.blockether.vis.internal.workspace/*workspace-root* base]
+          (let [block (wctx/render-block {:workspace nil})]
+            (expect (= base (:workspace/root block)))
+            (expect (= false (:workspace/sandbox? block)))
+            (expect (= :none (:vcs/kind block)))))
+        (finally (delete-tree! base)))))
+
+  (it "primary workspace: generic workspace + :vcs/* keys"
     (let [base (temp-dir "vis-wctx-trunk")]
       (try
         (init-repo! base)
@@ -53,10 +68,11 @@
                      :branch    (git! base ["rev-parse" "--abbrev-ref" "HEAD"])}
               block (wctx/render-block {:workspace ws})]
           (expect (= :git    (:vcs/kind block)))
-          (expect (= :trunk  (:workspace/kind block)))
+          (expect (= false   (:workspace/sandbox? block)))
+          (expect (= base    (:workspace/root block)))
           (expect (= "ws-trunk" (:workspace/id block)))
-          (expect (= [] (:vcs/commits-ahead block)))
-          (expect (= false (:vcs/ff-possible? block)))
+          (expect (= [] (:vcs/unmerged-commits block)))
+          (expect (= false (:vcs/integrable? block)))
           (expect (false? (:vcs/dirty? block))))
         (finally (delete-tree! base)))))
 
@@ -78,7 +94,7 @@
           (expect (= "Auth refactor" (:session/title block))))
         (finally (delete-tree! base)))))
 
-  (it "branch-kind workspace with a commit ahead surfaces :vcs/commits-ahead + :vcs/stats"
+  (it "sandbox workspace with a commit ahead surfaces :vcs/unmerged-commits + :vcs/stats"
     (let [base (temp-dir "vis-wctx-ahead")]
       (try
         (init-repo! base)
@@ -95,12 +111,13 @@
                        :branch    "vis/test-ahead"}
                 block (wctx/render-block {:workspace ws})]
             (expect (= :git (:vcs/kind block)))
-            (expect (= "vis/test-ahead" (:vcs/branch block)))
-            (expect (= trunk (:vcs/trunk block)))
-            (expect (= 1 (count (:vcs/commits-ahead block))))
+            (expect (true? (:workspace/sandbox? block)))
+            (expect (= "vis/test-ahead" (:vcs/ref block)))
+            (expect (= trunk (:vcs/mainline block)))
+            (expect (= 1 (count (:vcs/unmerged-commits block))))
             (expect (= "branch commit"
-                      (-> block :vcs/commits-ahead first :message)))
+                      (-> block :vcs/unmerged-commits first :message)))
             (expect (some? (get-in block [:vcs/stats "note.txt"])))
-            ;; trunk is ancestor of branch → FF possible
-            (expect (true? (:vcs/ff-possible? block)))))
+            ;; mainline is ancestor of sandbox ref → integrable
+            (expect (true? (:vcs/integrable? block)))))
         (finally (delete-tree! base))))))

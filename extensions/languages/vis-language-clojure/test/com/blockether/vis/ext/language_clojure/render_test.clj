@@ -112,7 +112,7 @@
 (defdescribe render-edit-test
   (it "renders an OK edit with delta"
     (let [v (r/render-edit
-              {:status :ok :path "src/a.clj" :op :replace :target "foo"
+              {:status :ok :path "src/a.clj" :op :clj/edit :edit-op :replace :target "foo"
                :bytes {:before 100 :after 110} :delta 10})
           s (pr-str v)]
       (expect (re-find #":replace" s))

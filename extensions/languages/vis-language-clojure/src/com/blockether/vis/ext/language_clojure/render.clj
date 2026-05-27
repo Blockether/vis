@@ -167,7 +167,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn render-edit
-  [{:keys [status path op target error bytes delta]}]
+  [{:keys [status path edit-op target error bytes delta]}]
   (cond
     (= :error status)
     (ir-root
@@ -179,7 +179,7 @@
     (let [{:keys [before after]} (or bytes {})]
       (ir-root
         (ir-p (ir-strong "EDIT")
-          "  " (ir-code (str op))
+          "  " (ir-code (str edit-op))
           "  " (ir-code (str target))
           "  → " (or path "?")
           (when (and before after)
