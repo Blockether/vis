@@ -179,18 +179,22 @@
                             :result-detail nil
                             :error nil :started-at-ms nil :duration-ms 12
                             :success? true :silent? false}]}
-                  70 1 {})
+                  70 1 {:band-w 74})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          footer (first (filter #(str/includes? % "t24/i1/f1") visible))
-          footer-idx (first (keep-indexed #(when (str/includes? %2 "t24/i1/f1") %1) visible))
+          footer (first (filter #(str/includes? % "t24/i1/b1") visible))
+          footer-idx (first (keep-indexed #(when (str/includes? %2 "t24/i1/b1") %1) visible))
           result-idx (first (keep-indexed #(when (str/includes? %2 "ATCH") %1) visible))]
       (expect (some? footer))
-      (expect (str/includes? footer "✓  12ms"))
-      (expect (< (str/index-of footer "t24/i1/f1")
-                (str/index-of footer "✓  12ms")))
+      (expect (str/includes? footer "✓ 12ms"))
+      (expect (= 74 (p/display-width footer)))
+      (expect (str/ends-with? footer "✓ 12ms "))
+      (expect (< (str/index-of footer "t24/i1/b1")
+                (str/index-of footer "✓ 12ms")))
       ;; Footer is code-block chrome, not part of the tool result body:
-      ;; keep it before the tool badge/summary row.
-      (expect (< footer-idx result-idx))))
+      ;; keep it before the tool badge/summary row, with a green pad row
+      ;; under the footer before result content starts.
+      (expect (< footer-idx result-idx))
+      (expect (= p/MARKER_CODE_OK_PAD (marker-of (nth lines (inc footer-idx)))))))
 
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
@@ -224,8 +228,8 @@
                                            :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                     40 1 {})
             bodies (mapv (comp strip-ansi body-of) lines)
-            status-line (first (filter #(str/includes? % "✓  1ms") lines))]
-        (expect (= "✓  1ms" (str/trim (strip-ansi (body-of status-line)))))
+            status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
+        (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
         (expect (= p/MARKER_CODE_OK_PAD (marker-of status-line)))
         (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
@@ -925,6 +929,8 @@
   (it "paints success pad payload text, not only its background"
     (let [puts    (atom [])
           active  (atom #{})
+          fg      (atom nil)
+          bg      (atom nil)
           graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
                      (clearModifiers []
                        (reset! active #{})
@@ -939,21 +945,24 @@
                        (if (empty? @active)
                          (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
                          (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                     (setForegroundColor [_] this)
-                     (setBackgroundColor [_] this)
+                     (setForegroundColor [c] (reset! fg c) this)
+                     (setBackgroundColor [c] (reset! bg c) this)
                      (fillRectangle [_ _ _] this)
                      (setCharacter [_ _ _] this)
                      (putString
-                       ([_col _row text]
-                        (swap! puts conj text)
+                       ([col row text]
+                        (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg :sgr @active})
                         this)))
-          footer   (str p/MARKER_CODE_OK_PAD " t24/i1/f1                          ✓  12ms ")]
+          footer   (str p/MARKER_CODE_OK_PAD " t24/i1/b1                          ✓ 12ms ")]
       (render/draw-chat-bubble! graphics
         {:role :assistant :timestamp nil :prewrapped-lines [footer]}
         0 0 80)
-      (let [painted (apply str @puts)]
-        (expect (str/includes? painted "t24/i1/f1"))
-        (expect (str/includes? painted "✓  12ms"))))))
+      (let [painted (apply str (map :text @puts))
+            stamp   (first (filter #(= "t24/i1/b1" (:text %)) @puts))]
+        (expect (str/includes? painted "t24/i1/b1"))
+        (expect (str/includes? painted "✓ 12ms"))
+        (expect (= t/dialog-hint (:fg stamp)))
+        (expect (contains? (:sgr stamp) com.googlecode.lanterna.SGR/ITALIC))))))
 
 (defdescribe answer-text-inline-sentinel-paint-test
   ;; Final-answer IR uses MARKER_ANSWER_TXT for normal paragraphs.

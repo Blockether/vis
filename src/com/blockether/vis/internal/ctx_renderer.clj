@@ -125,13 +125,19 @@
 (defn- bound-form-result
   "Replace `(:result form)` with a head+tail safe-guard stub when its
    token weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error`,
-   `:channel`, `:src`, `:scope`, `:tag` pass through. Full result
-   stays on the envelope (CTX) and in DB (`session_turn_iteration.forms`);
+   `:src`, `:scope`, `:tag` pass through. Full result stays on the
+   envelope (CTX) and in DB (`session_turn_iteration.forms`);
    `(introspect-form \"<scope>\")` returns the original payload.
 
    This is THE fix for the c8dc39b1 / 1a9a61ee trailer-bloat class:
    `(def x (v/cat huge-file))` no longer rides every later prompt
-   verbatim — the model sees head + tail + the handle."
+   verbatim — the model sees head + tail + the handle.
+
+   Phase G (trailer-noise): `:channel` is NOT in the pass-through set
+   anymore — it carries channel-render IR Hiccup ([:p {} [:strong ...] …])
+   meant for the TUI, never for the model. `presentation-form` strips
+   it (and `:form` / `:form-idx` / `:position` / `:success?` /
+   `:symbol`) so the trailer pin stays model-relevant."
   [form]
   (if (contains? form :result)
     (assoc form :result
@@ -346,18 +352,35 @@
       (str/join "\n"
         (map #(str prefix ";;   " %) lines)))))
 
+(def ^:private prompt-trailer-form-noise-keys
+  "Keys on a trailer-form envelope that are useless to the model and
+   belong only to channel UI / engine internals. Stripped in
+   `presentation-form` before the envelope reaches the prompt.
+
+   - `:src`        rendered separately as `;; src <scope>:` block above
+                   the map (would print the source twice if kept here)
+   - `:channel`    channel-render IR Hiccup (TUI / UI surface only —
+                   `[:p {} [:strong {} ...]]` trees; ~60 lines per form)
+   - `:form`       parsed form (list of symbols/literals) — redundant
+                   with `:src` which the model already sees verbatim
+   - `:form-idx`   engine positional, model has no use
+   - `:position`   engine positional, model has no use
+   - `:success?`   derivable from `:error` (nil = success); redundant
+   - `:symbol`     first symbol of the form (head) — redundant with
+                   `:src` block"
+  [:src :channel :form :form-idx :position :success? :symbol])
+
 (defn- presentation-form
-  "Prompt-facing copy of one trailer form. `:src` is rendered separately
-   as a verbatim block (see `src-lines-as-block`), so the map view drops
-   `:src` to avoid printing the same source twice. `:result` is passed
-   through `bound-form-result` so an oversized payload renders as the
+  "Prompt-facing copy of one trailer form. Strips noise keys (see
+   `prompt-trailer-form-noise-keys`) so the model sees only `:scope`,
+   `:tag`, `:result`, `:error`, and any other engine-emitted
+   forensic fields — not the channel-render IR Hiccup or duplicate
+   source/symbol/position bookkeeping. `:result` is passed through
+   `bound-form-result` so an oversized payload renders as the
    `{:vis/preview :vis/size :vis/full}` safe-guard stub instead of
-   riding into every subsequent prompt verbatim. Other keys pass
-   through unchanged."
+   riding into every subsequent prompt verbatim."
   [form]
-  (-> form
-    bound-form-result
-    (dissoc :src)))
+  (apply dissoc (bound-form-result form) prompt-trailer-form-noise-keys))
 
 (defn- consult-pin-summary-line
   "One-line preview header for a synthetic consult-resolution pin.
