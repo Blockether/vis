@@ -918,6 +918,43 @@
         (expect (not (str/includes? painted p/INLINE_CODE_ON)))
         (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
+(defdescribe code-pad-payload-paint-test
+  ;; Per-form footers use MARKER_CODE_*_PAD so scope + duration live
+  ;; inside same green/red code block. Regression: pad painter filled
+  ;; bg then discarded payload, so live TUI hid `tN/iN/fN` + `✓ 12ms`.
+  (it "paints success pad payload text, not only its background"
+    (let [puts    (atom [])
+          active  (atom #{})
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this)
+                     (putString
+                       ([_col _row text]
+                        (swap! puts conj text)
+                        this)))
+          footer   (str p/MARKER_CODE_OK_PAD " t24/i1/f1                          ✓  12ms ")]
+      (render/draw-chat-bubble! graphics
+        {:role :assistant :timestamp nil :prewrapped-lines [footer]}
+        0 0 80)
+      (let [painted (apply str @puts)]
+        (expect (str/includes? painted "t24/i1/f1"))
+        (expect (str/includes? painted "✓  12ms"))))))
+
 (defdescribe answer-text-inline-sentinel-paint-test
   ;; Final-answer IR uses MARKER_ANSWER_TXT for normal paragraphs.
   ;; Inline code inside that IR arrives at the bubble painter as
