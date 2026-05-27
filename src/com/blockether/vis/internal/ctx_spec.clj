@@ -327,28 +327,32 @@
     :summary ::trailer-summary))
 
 ;; =============================================================================
-;; Workspace — engine-rendered. VCS-agnostic by design: the
-;; `:vcs/kind` discriminator tells consumers which namespaced subset of
-;; keys (`:git/*`, `:hg/*`, `:jj/*`, etc.) the workspace map carries.
-;; Every VCS-specific key is OPTIONAL at the spec level; the detector
-;; for whatever VCS is in use stamps the right ones. An empty `{}` is
-;; a valid workspace (used by `empty-ctx` and any non-VCS session like
-;; a scratch REPL).
+;; Workspace — engine-rendered. Workspace identity and VCS capability are
+;; separate axes:
+;;   workspace = root/place where tools operate
+;;   sandbox   = isolated/disposable workspace flag
+;;   VCS       = optional capability on that root
 ;;
-;; Why no `:req`: hardcoding `:git/branch` forced Mercurial / Jujutsu /
-;; non-VCS workspaces to either fake git keys or fail spec. Permissive
-;; shape lets the detector own the contract; consumers (renderer,
-;; prompt) read defensively.
+;; `:vcs/kind :none` means a real workspace with no supported VCS. It does
+;; NOT mean missing workspace. Generic names only: no git-era
+;; `branch/trunk` aliases in CTX; use `:vcs/ref` and `:vcs/mainline`.
 ;; =============================================================================
 
 (s/def :vcs/kind #{:git :hg :jj :fossil :none})
 
-;; Generic VCS keys — shared semantics across VCS kinds, unprefixed for
-;; the common case. Detectors may also emit kind-specific aliases.
-(s/def :vcs/branch  string?)
-(s/def :vcs/trunk   string?)
-(s/def :vcs/head    string?)
-(s/def :vcs/dirty?  boolean?)
+(s/def :workspace/id any?)
+(s/def :workspace/root string?)
+(s/def :workspace/sandbox? boolean?)
+(s/def :workspace/parent-id any?)
+(s/def :workspace/exists? boolean?)
+(s/def :workspace/error string?)
+
+;; Generic VCS keys — shared semantics across VCS kinds.
+(s/def :vcs/ref       string?)
+(s/def :vcs/mainline  string?)
+(s/def :vcs/head      string?)
+(s/def :vcs/dirty?    boolean?)
+(s/def :vcs/integrable? (s/or :bool boolean? :unknown #{:unknown}))
 
 ;; Per-file added/removed line counts — the only VCS-namespaced sub-spec.
 ;; Used by `:vcs/stats {path → file-stats}`. Common to every detector
@@ -362,9 +366,22 @@
 (s/def :vcs/stats
   (s/map-of string? :vcs/file-stats))
 
+(s/def :vcs/commit
+  (s/keys :opt-un [:vcs.commit/sha :vcs.commit/message]))
+(s/def :vcs.commit/sha string?)
+(s/def :vcs.commit/message string?)
+(s/def :vcs/unmerged-commits (s/coll-of :vcs/commit :kind vector?))
+
 (s/def ::workspace
-  (s/keys :opt [:vcs/kind
-                :vcs/branch :vcs/trunk :vcs/head :vcs/dirty? :vcs/stats]))
+  (s/and
+    (s/keys :opt [:workspace/id :workspace/root :workspace/sandbox?
+                  :workspace/parent-id :workspace/exists? :workspace/error
+                  :vcs/kind :vcs/ref :vcs/mainline :vcs/head :vcs/dirty?
+                  :vcs/stats :vcs/unmerged-commits :vcs/integrable?])
+    ;; If VCS has been detected/rendered at all (including :none), the
+    ;; workspace root must be present. Bare `{:vcs/kind :none}` is legacy
+    ;; placeholder shape and must not validate.
+    #(or (nil? (:vcs/kind %)) (string? (:workspace/root %)))))
 
 ;; =============================================================================
 ;; Symbol directory — engine-rendered from SCI introspection + engine-side :born index

@@ -4378,7 +4378,8 @@
           ;; turn-state-atom already lives on env (one atom for all
           ;; per-turn cursor + id fields); no re-assoc needed.
           workspace-overrides    (select-keys opts [:workspace/root :workspace/id
-                                                    :workspace/kind :workspace/branch])
+                                                    :workspace/sandbox? :vcs/kind
+                                                    :vcs/ref :vcs/mainline])
           environment            (cond-> env
                                    (seq workspace-overrides) (merge workspace-overrides))
           environment-id         (:environment-id env)]
@@ -5194,11 +5195,12 @@
               ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
               ;; root the very first time it fires.
               active-workspace
-              (assoc :workspace        active-workspace
-                :workspace/id     (:id active-workspace)
-                :workspace/root   (:root active-workspace)
-                :workspace/kind   (:kind active-workspace)
-                :workspace/branch (:branch active-workspace)))
+              (assoc :workspace          active-workspace
+                :workspace/id       (:id active-workspace)
+                :workspace/root     (:root active-workspace)
+                :workspace/sandbox? (= :branch (:kind active-workspace))
+                :vcs/kind           :git
+                :vcs/ref            (:branch active-workspace)))
         env (assoc env
               ;; CTX engine atoms — visible to the rest of the loop so the
               ;; renderer / per-iter capture / done snapshot can read and

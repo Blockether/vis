@@ -439,13 +439,12 @@
       (sort cmp rows))))
 
 (defn status
-  "Enrich a workspace record with live VCS status. Stamps the canonical
-   `:vcs/*` keys (`:vcs/kind :git`, `:vcs/branch`, `:vcs/head`,
-   `:vcs/dirty?`). Future Mercurial / Jujutsu detectors fork this fn
-   (or dispatch on a `:vcs/kind` discriminator at the call site) and
-   emit the same `:vcs/*` core keys; the engine reads VCS-agnostic.
-   On error: `:workspace/error`. The previous `:git/*` aliases are
-   GONE; callers read VCS-agnostic `:vcs/*` keys."
+  "Enrich a workspace record with live VCS status. Stamps canonical
+   workspace + `:vcs/*` keys (`:workspace/root`, `:workspace/sandbox?`,
+   `:vcs/kind`, `:vcs/ref`, `:vcs/head`, `:vcs/dirty?`). Future
+   Mercurial / Jujutsu detectors fork this fn (or dispatch on
+   `:vcs/kind`) and emit the same generic keys.
+   On error: `:workspace/error`. No legacy git/trunk aliases."
   [db-info workspace-id]
   (when-let [ws (get db-info workspace-id)]
     (let [root (:root ws)]
@@ -455,11 +454,13 @@
               head    (when exists? (current-head root))
               dirty?  (when exists? (not (jg-clean? root)))]
           (assoc ws
-            :workspace/exists? exists?
-            :vcs/kind          :git
-            :vcs/branch        branch
-            :vcs/head          head
-            :vcs/dirty?        dirty?))
+            :workspace/root     root
+            :workspace/sandbox? (= :branch (:kind ws))
+            :workspace/exists?  exists?
+            :vcs/kind           :git
+            :vcs/ref            branch
+            :vcs/head           head
+            :vcs/dirty?         dirty?))
         (catch Throwable t
           (assoc ws
             :workspace/exists? (.exists (io/file root))

@@ -1658,13 +1658,12 @@
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
 
 (defn- ensure-tool-result-op
-  "Observed extension tools must carry canonical op metadata. Tool functions may
-   set `:op` explicitly via `extension/success`; otherwise the wrapper derives
-   it deterministically from the active alias and symbol (`v/cat`, `v/patch`,
-   ...). The tag comes from the symbol entry's inline `:ext.symbol/tag`
-   (the source of truth); a derived op->tag index covers call-sites
-   without a sym-entry handle. Missing tag in BOTH places throws via
-   `op-tag` so unregistered ops still fail closed."
+  "Observed extension tools must carry canonical op metadata. The wrapper
+   derives it deterministically from active alias + symbol (`v/cat`,
+   `git/fetch!`, ...). The tag comes from the symbol entry's inline
+   `:ext.symbol/tag` (source of truth); a derived op->tag index covers
+   call-sites without a sym-entry handle. Missing tag in BOTH places throws
+   via `op-tag` so unregistered ops still fail closed."
   [ext sym-entry result]
   (if (and (tool-result? result) (nil? (:symbol result)))
     (let [op (default-tool-op-keyword ext sym-entry)
@@ -1672,12 +1671,35 @@
       (assoc result :symbol op :tag tag))
     result))
 
+(defn- public-op-keyword
+  "User-facing op keyword for payload EDN. SCI symbols use `!` for mutation
+   (`git/fetch!`), but result maps read like porcelain (`:git/fetch`)."
+  [op]
+  (when op
+    (let [ns-part (namespace op)
+          n       (name op)
+          n       (str/replace n #"!$" "")]
+      (if ns-part (keyword ns-part n) (keyword n)))))
+
+(defn- stamp-public-result-op
+  "Public SCI value is the envelope's `:result`, not the envelope. If the
+   payload is a map, stamp the canonical tool op so extension implementations
+   do not hand-maintain it. Tool-specific operation details must use a
+   different key (`:edit-op`, `:action`, etc.)."
+  [result]
+  (if (and (tool-result? result)
+        (:success? result)
+        (:symbol result)
+        (map? (:result result)))
+    (update result :result assoc :op (public-op-keyword (:symbol result)))
+    result))
+
 (defn- enrich-tool-result-info
   [ext sym-entry result]
   (if (tool-result? result)
     (let [ext-prov (extension-info-now ext)]
       (merge-into-metadata
-        (ensure-tool-result-op ext sym-entry result)
+        (stamp-public-result-op (ensure-tool-result-op ext sym-entry result))
         {:tool      (cond-> {:symbol  (:ext.symbol/symbol sym-entry)
                              :call (tool-call-name ext (:ext.symbol/symbol sym-entry))}
                       (ext-alias-symbol ext)

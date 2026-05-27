@@ -11,14 +11,11 @@
      * monorepo / multi-package shape detection (polylith, workspace,
        submodules) by counting per-ecosystem manifests.
 
-   Surface inside `:code`:
+   Model-facing VCS/workspace truth lives in `:session/workspace` CTX.
+   Remaining helpers cover coarse project shape (`v/languages`,
+   `v/monorepo`, `v/repositories`) and cache invalidation (`v/refresh!`).
 
-     (v/snapshot)   ;; full structured map
-     (v/git)        ;; git submap or nil
-     (v/languages)  ;; language stats
-     (v/refresh!)   ;; invalidate the cache (call after cd, etc.)
-
-   The snapshot is computed lazily on first access and cached per
+   Runtime facts are computed lazily on first access and cached per
    working-directory. The cache is invalidated automatically when
    `cwd` changes between calls and explicitly by `(refresh!)`."
   (:require
@@ -148,20 +145,10 @@
   [result]
   (extension/success {:result result}))
 
-(defn- snapshot-tool
-  "Full environment snapshot as a map: {:host :git :languages :monorepo :repositories}. Cached per cwd; recomputed automatically when cwd changes or after `(refresh!)`."
-  []
-  (success-envelope (snapshot)))
-
 (defn- repositories-tool
   "Multirepo Git snapshot: {:count :repositories [{:path :branch :dirty? :changes? :stale? :stash-count ...}]} - returned in a canonical tool envelope."
   []
   (success-envelope (repositories)))
-
-(defn- git-tool
-  "Git submap of the snapshot, or nil when not in a repo. Includes :root :branch :detached? :submodules? :worktree? plus dirty-status counts; returned in a canonical tool envelope."
-  []
-  (success-envelope (git)))
 
 (defn- languages-tool
   "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc; returned in a canonical tool envelope."
@@ -256,19 +243,9 @@
         [(into [:ul {}]
            (map (fn [line] [:li {} (ir-p (ir-text line))]) rest-lines))]))))
 
-(defn- render-snapshot-channel
-  [result]
-  (badge-channel "SNAPSHOT" (snapshot-lines result)))
-
 (defn- render-refresh-channel
   [result]
   (badge-channel "REFRESH" (snapshot-lines result)))
-
-(defn- render-git-channel
-  [result]
-  (badge-channel "GIT"
-    [(git-summary result)
-     (when result (str "root " (present (:root result))))]))
 
 (defn- render-languages-channel
   [result]
@@ -306,9 +283,7 @@
 (defn- env-renderers
   [sym]
   (case sym
-    snapshot                {:render-fn render-snapshot-channel}
     refresh!                {:render-fn render-refresh-channel}
-    git                     {:render-fn render-git-channel}
     languages               {:render-fn render-languages-channel}
     monorepo                {:render-fn render-monorepo-channel}
     repositories            {:render-fn render-repositories-channel}
@@ -325,14 +300,8 @@
   (vis/symbol v
     (assoc (env-renderers sym) :symbol sym :tag :observation)))
 
-(def snapshot-symbol
-  (env-data-symbol #'snapshot-tool 'snapshot))
-
 (def repositories-symbol
   (env-data-symbol #'repositories-tool 'repositories))
-
-(def git-symbol
-  (env-data-symbol #'git-tool 'git))
 
 (def languages-symbol
   (env-data-symbol #'languages-tool 'languages))
@@ -366,13 +335,13 @@
   (env-data-symbol #'main-agent-instructions-tool 'main-agent-instructions))
 
 (def environment-symbols
-  [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
+  [repositories-symbol languages-symbol monorepo-symbol
    refresh!-symbol
    main-agent-instructions-symbol])
 
 (def ^:private FN_INDEX
   "One-line strategy for environment fns under the `v/` alias."
-  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change.")
+  "`v/` env strategy: read workspace/VCS facts from `:session/workspace` CTX; use focused env helpers only for coarse project shape. Project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change.")
 
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project

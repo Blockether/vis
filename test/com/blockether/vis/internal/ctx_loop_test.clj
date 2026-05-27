@@ -4,6 +4,8 @@
   (:require
    [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.ctx-loop :as cl]
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.persistance]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- mk-env []
@@ -115,6 +117,20 @@
 
       (it "second drain returns empty (atom cleared)"
         (expect (empty? (cl/drain-warnings! env)))))))
+
+(defdescribe render-block-extension-ctx-test
+  (it "merges top-level extension ctx, including :session/workspace"
+    (let [env (mk-env)
+          rendered (with-redefs [extension/ctx-contributions
+                                 (constantly {:session/workspace
+                                              {:workspace/root "/repo"
+                                               :workspace/sandbox? false
+                                               :vcs/kind :git
+                                               :vcs/ref "main"
+                                               :vcs/mainline "main"}})]
+                     (cl/render-block! env (fn [{:keys [ctx]}] ctx)))]
+      (expect (= :git (get-in rendered [:session/workspace :vcs/kind])))
+      (expect (= "main" (get-in rendered [:session/workspace :vcs/ref]))))))
 
 (defdescribe current-ctx-test
   (describe "current-ctx stamps the cursor at render time"
