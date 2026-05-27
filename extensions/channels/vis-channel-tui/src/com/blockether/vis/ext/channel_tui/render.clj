@@ -290,15 +290,27 @@
   [lines max-width]
   (mapv #(clip-line-preserving-marker % max-width) lines))
 
+(defn- full-band-marker?
+  [line]
+  (let [marker (when (and (string? line) (pos? (count line))) (subs line 0 1))]
+    (contains? #{p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD} marker)))
+
 (defn- clipped-lines
   "Memoized clipping for prewrapped painter lines. Large trace bubbles can
    carry hundreds of rows plus occasional huge raw tool-output rows; scrolling
    must not re-clip every off-screen row on each frame."
-  [raw-lines content-w]
-  (cached* [::clipped-lines
-            (System/identityHashCode raw-lines)
-            (long content-w)]
-    #(clip-lines-preserving-markers raw-lines content-w)))
+  [raw-lines content-w full-w]
+  (let [content-w (long content-w)
+        full-w    (long full-w)]
+    (cached* [::clipped-lines
+              (System/identityHashCode raw-lines)
+              content-w
+              full-w]
+      #(if (some full-band-marker? raw-lines)
+         (mapv (fn [line]
+                 (clip-line-preserving-marker line (if (full-band-marker? line) full-w content-w)))
+           raw-lines)
+         (clip-lines-preserving-markers raw-lines content-w)))))
 
 (defn wrap-text*
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
@@ -1006,6 +1018,8 @@
 (def ^:private th-md-hr-marker         p/MARKER_TH_MD_HR)
 (def ^:private th-md-summary-marker    p/MARKER_TH_MD_SUMMARY)
 
+(def ^:private turn-stamp-pattern #"\bt\d+/i\d+/(?:b|f)\d+\b")
+
 (def ^:private code-text-inset-markers
   #{code-marker code-ok-marker code-err-marker code-status-marker
     result-marker err-result-marker
@@ -1129,6 +1143,23 @@
                 (let [codes (parse-ansi-codes (subs line (+ esc-idx 2) m-idx))
                       fg*   (ansi-codes->fg codes fg base-fg)]
                   (recur (inc m-idx) col fg*))))))))))
+
+(defn- paint-code-pad-payload!
+  "Paint optional code-pad payloads. Blank pad rows only fill bg;
+   footer pad rows also show the turn/block stamp in muted italic and
+   status glyph/duration in success/error color."
+  [^TextGraphics g x y raw base-fg bg status-glyph status-fg]
+  (when (seq raw)
+    (paint-ansi-line! g x y raw base-fg bg)
+    (when-let [stamp (re-find turn-stamp-pattern raw)]
+      (when-let [ci (str/index-of raw stamp)]
+        (p/set-colors! g t/dialog-hint bg)
+        (p/styled g [p/ITALIC]
+          (p/put-str! g (+ x ci) y stamp))))
+    (when (and status-glyph status-fg)
+      (when-let [ci (str/index-of raw status-glyph)]
+        (p/set-colors! g status-fg bg)
+        (p/put-str! g (+ x ci) y (subs raw ci))))))
 
 (defn- warning-message? [text]
   (and (string? text) (str/starts-with? text "Warning:")))
@@ -1588,7 +1619,7 @@
         ;; that bypass projection (rare).
         raw-lines (or (:prewrapped-lines message)
                     (wrap-text text content-w))
-        lines     (clipped-lines raw-lines content-w)
+        lines     (clipped-lines raw-lines content-w bubble-w)
         line-meta (or (:line-meta message)
                     (vec (repeat (count lines) nil)))
         ;; Mid-window walker support: when `:lines-window {:start :total-h}`
@@ -1986,30 +2017,21 @@
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (when (seq raw)
-                        (paint-ansi-line! g x y raw t/code-block-fg t/code-block-bg)))
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-block-bg nil nil))
 
               ;; ── Code block padding (success) ──
                     (str/starts-with? line code-ok-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-ok-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (when (seq raw)
-                        (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
-                        (when-let [ci (str/index-of raw "✓")]
-                          (p/set-colors! g t/code-success-fg t/code-ok-bg)
-                          (p/put-str! g (+ x ci) y (subs raw ci)))))
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-ok-bg "✓" t/code-success-fg))
 
               ;; ── Code block padding (error) ──
                     (str/starts-with? line code-err-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-err-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (when (seq raw)
-                        (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
-                        (when-let [ci (str/index-of raw "✗")]
-                          (p/set-colors! g t/code-error-fg t/code-err-bg)
-                          (p/put-str! g (+ x ci) y (subs raw ci)))))
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-err-bg "✗" t/code-error-fg))
 
               ;; ── Iteration zone padding (margin between blocks) ──
                     (str/starts-with? line iteration-pad-marker)
@@ -2423,7 +2445,7 @@
         ;; draw-chat-bubble! will need while scrolling.
         raw-lines  (or prewrapped-lines
                      (wrap-text text content-w))
-        lines      (clipped-lines raw-lines content-w)
+        lines      (clipped-lines raw-lines content-w bubble-w)
         top-pad    (if (= role :user) 1 0)
         bottom-pad (if (= role :user) 1 0)
         cancelled? (= :cancelled status)
@@ -3277,7 +3299,7 @@
 (defn- format-iteration-entry-entries
   [entry
    code-width iteration-number
-   & [{:keys [show-header? session-id detail-expansions session-turn-id now-ms live-preview?]
+   & [{:keys [show-header? session-id detail-expansions session-turn-id now-ms live-preview? band-w]
        :or   {show-header? false live-preview? false}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
@@ -3535,15 +3557,19 @@
                                   (vec detail-entries)))
                 footer-entry  (line-entry
                                 ;; Footer: LEFT = scope (e.g. "t24/i1/f1"),
-                                ;; RIGHT = status-symbol + duration (e.g. "✓  12ms").
+                                ;; RIGHT = status-symbol + duration (e.g. "✓ 12ms").
                                 (let [status-sym  (cond (not has-status?) "↻"
                                                     success?          "✓"
                                                     :else             "✗")
-                                      left-text   (or scope "")
+                                      left-text   (str/replace (or scope "") #"/f(\d+)\b" "/b$1")
                                       right-text  (if has-status?
-                                                    (str/join "  " (remove str/blank? [status-sym duration-str]))
+                                                    (str/join " " (remove str/blank? [status-sym duration-str]))
                                                     status-text)
-                                      pad         (max 1 (- fill-w (count left-text) (count right-text) 1))]
+                                      footer-w    (long (or band-w fill-w))
+                                      pad         (max 0 (- footer-w
+                                                           (p/display-width left-text)
+                                                           (p/display-width right-text)
+                                                           2))]
                                   (str c-pad " " left-text (repeat-str \space pad) right-text " ")))
                 hide-code-chrome? (and (str/blank? code-text) (not is-error?))
                 code-block    (cond
@@ -3558,7 +3584,8 @@
                                        (when (seq title-lines) [(line-entry "")])
                                        title-lines
                                        (when (seq title-lines) [(line-entry "")])
-                                       [footer-entry]))
+                                       [footer-entry
+                                        (line-entry (str c-pad ""))]))
 
                                 :else
                                 (vec (concat
@@ -3583,7 +3610,8 @@
                                        (when (seq inline-error-message-lines) inline-error-message-lines)
                                        ;; 1-row top margin between code body and footer.
                                        [(line-entry (str c-pad ""))]
-                                       [footer-entry])))
+                                       [footer-entry
+                                        (line-entry (str c-pad ""))])))
                 ;; Blank terminal-bg row between the code chrome
                 ;; and the result pane. Without it the code-block's
                 ;; trailing `c-pad` row (which paints code-block bg)
@@ -3799,7 +3827,7 @@
    assistant bubbles. Live progress and final/cancel rendering must call this
    instead of formatting iterations themselves. The only caller-specific UI is
    the trailer after these entries (spinner, final answer, or cancelled note)."
-  [{:keys [iterations content-w settings now-ms session-id
+  [{:keys [iterations content-w band-w settings now-ms session-id
            session-turn-id detail-expansions live? suppress-trace?]
     :or   {live? false suppress-trace? false}}]
   (let [raw-iterations (or iterations [])
@@ -3838,6 +3866,7 @@
                                   sec-bucket]
                                inner-opts {:show-header?         show-iteration-headers?
                                            :now-ms               (when running? now-ms)
+                                           :band-w               (or band-w content-w)
                                            :session-id      session-id
                                            :session-turn-id session-turn-id
                                            :detail-expansions   detail-expansions
@@ -3926,6 +3955,7 @@
                              :session-id session-id
                              :session-turn-id session-turn-id
                              :detail-expansions detail-expansions
+                             :band-w bubble-w
                              :live? true})
          queued-entries   (queued-progress-entries pending-sends content-w)
          ;; Top margin invariant: the spinner row always has ONE blank
@@ -3997,6 +4027,7 @@
                                    :session-id (:session-id opts)
                                    :session-turn-id (:session-turn-id opts)
                                    :detail-expansions (:detail-expansions opts)
+                                   :band-w bubble-w
                                    :suppress-trace? suppress-trace?})
         ;; IR walker emits painter-ready entries directly. No
         ;; markdown round-trip, no `markdown->entries` rebuild.
