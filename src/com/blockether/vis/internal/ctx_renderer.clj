@@ -179,55 +179,6 @@
   (str/replace s #"\n" (str "\n" (pad n))))
 
 ;; =============================================================================
-;; Annotation lines (the only renderer output that isn't EDN data)
-;; =============================================================================
-
-(defn- warning-line [indent w]
-  (str (pad indent) ";; ⚠ " (:message w)))
-
-(defn- progression-line [indent spec-id p]
-  (let [missing (some-> p :missing seq sort vec)]
-    (str (pad indent) ";; progression " (zp spec-id) " "
-      (:proven p) "/" (:total p) " " (zp (:state p))
-      (when missing (str "; missing " (zp missing))))))
-
-;; =============================================================================
-;; Routing warnings to their owning section
-;; =============================================================================
-
-(defn- anchors-by-subtree
-  "Group warnings by which top-level CTX subtree they anchor to. The :anchor
-   first element is the routing key:
-     - if it's a key in :session/specs → goes to :session/specs section
-     - in :session/tasks → :session/tasks section
-     - in :session/facts → :session/facts section
-     - otherwise → :other (rendered after :session/next-actions)
-   Returns {subtree-key [warnings…]}."
-  [ctx warnings]
-  (let [spec-keys (set (keys (or (:session/specs ctx) {})))
-        task-keys (set (keys (or (:session/tasks ctx) {})))
-        fact-keys (set (keys (or (:session/facts ctx) {})))]
-    (reduce
-      (fn [acc w]
-        (let [a (first (:anchor w))
-              bucket (cond
-                       (contains? spec-keys a) :session/specs
-                       (contains? task-keys a) :session/tasks
-                       (contains? fact-keys a) :session/facts
-                       :else :other)]
-          (update acc bucket (fnil conj []) w)))
-      {} warnings)))
-
-(defn- section-annotations
-  "Build the annotation block (a string of newline-joined ;; lines) for one
-   subtree section. Returns nil when there is nothing to say."
-  [warnings progression-entries indent]
-  (let [lines (concat
-                (map #(warning-line indent %) warnings)
-                (map (fn [[k p]] (progression-line indent k p)) progression-entries))]
-    (when (seq lines) (str/join "\n" lines))))
-
-;; =============================================================================
 ;; Section + bounded subtrees
 ;; =============================================================================
 
@@ -332,53 +283,41 @@
 ;; literal backslash + quote and emits invalid Clojure (`(str \" / \")`),
 ;; producing EOF-quote / unbalanced-quote errors at the very next iter.
 ;;
-;; Fix: render each form's :src as a raw code block annotation (multi-line
-;; comment with verbatim source — no escaping), and emit the form map with
-;; :src omitted. Tag + result + error stay machine-shaped. The trailer is
-;; presentation surface only, so dropping pure-EDN parseability is safe.
-;; ---------------------------------------------------------------------------
-
-(defn- src-lines-as-block
-  "Render `src` as a multi-line block whose lines are prefixed with `;;   `,
-   preceded by a `;; src <scope> (<tag>):` header. `src` may be multi-line
-   or even the literal `<unparseable trailing form>` marker — printed as-is
-   with zero quote-escaping."
-  [scope tag src indent]
-  (let [prefix (pad indent)
-        text   (or src "")
-        lines  (str/split-lines text)
-        lines  (if (seq lines) lines [""])]
-    (str prefix ";; src " scope " (" (name (or tag :form)) "):\n"
-      (str/join "\n"
-        (map #(str prefix ";;   " %) lines)))))
+;; Phase G fix: keep `:form` (the NATIVE Clojure list) in the projected
+;; map and drop the `:src` string. The model reads code as code, no
+;; verbatim comment-block prefix needed, and zero quote-escape
+;; corruption since lists are printed by zprint structurally.
 
 (def ^:private prompt-trailer-form-noise-keys
   "Keys on a trailer-form envelope that are useless to the model and
    belong only to channel UI / engine internals. Stripped in
    `presentation-form` before the envelope reaches the prompt.
 
-   - `:src`        rendered separately as `;; src <scope>:` block above
-                   the map (would print the source twice if kept here)
+   - `:src`        string copy of the form — redundant with `:form`
+                   which is the native Clojure list. Model reads code
+                   natively; comment-block prelude was clutter.
    - `:channel`    channel-render IR Hiccup (TUI / UI surface only —
                    `[:p {} [:strong {} ...]]` trees; ~60 lines per form)
-   - `:form`       parsed form (list of symbols/literals) — redundant
-                   with `:src` which the model already sees verbatim
    - `:form-idx`   engine positional, model has no use
    - `:position`   engine positional, model has no use
    - `:success?`   derivable from `:error` (nil = success); redundant
    - `:symbol`     first symbol of the form (head) — redundant with
-                   `:src` block"
-  [:src :channel :form :form-idx :position :success? :symbol])
+                   `:form` head"
+  [:src :channel :form-idx :position :success? :symbol])
 
 (defn- presentation-form
   "Prompt-facing copy of one trailer form. Strips noise keys (see
    `prompt-trailer-form-noise-keys`) so the model sees only `:scope`,
-   `:tag`, `:result`, `:error`, and any other engine-emitted
-   forensic fields — not the channel-render IR Hiccup or duplicate
-   source/symbol/position bookkeeping. `:result` is passed through
+   `:tag`, `:form` (native Clojure list), `:result`, `:error`, and
+   any engine-emitted forensic fields — not the channel-render IR
+   Hiccup or duplicate `:src` string. `:result` is passed through
    `bound-form-result` so an oversized payload renders as the
    `{:vis/preview :vis/size :vis/full}` safe-guard stub instead of
-   riding into every subsequent prompt verbatim."
+   riding into every subsequent prompt verbatim.
+
+   No more `;; src <scope>:` verbatim comment block prefix — the
+   `:form` field carries the native list which the model reads as
+   first-class code."
   [form]
   (apply dissoc (bound-form-result form) prompt-trailer-form-noise-keys))
 
@@ -425,19 +364,20 @@
     (str (consult-pin-summary-line form indent) "\n" map-line)))
 
 (defn- render-form-pin
-  "Render one `:forms` entry: verbatim src block, then the form map with
-   `:src` stripped (since the block carries the source unescaped).
+  "Render one `:forms` entry as a single Clojure map. `:form` (the
+   native list) lives inside the map so the model reads code as code —
+   no `;; src <scope>:` verbatim comment prefix anymore.
 
-   Consult-resolution pins (`:tag :consult`) get a one-line summary
-   preview instead of the synthetic `(consult-resolved :K)` src block."
+   Consult-resolution pins (`:tag :consult`) still get a one-line
+   summary preview because the synthetic `(consult-resolved :K)` form
+   is not real model-emitted source and the entry carries a different
+   `:result` shape (citations / content)."
   [form indent]
   (if (consult-pin? form)
     (render-consult-form-pin form indent)
-    (let [no-src    (presentation-form form)
-          map-text  (zp no-src)
-          map-line  (str (pad indent) (indent-rest map-text indent))]
-      (str (src-lines-as-block (:scope form) (:tag form) (:src form) indent)
-        "\n" map-line))))
+    (let [proj     (presentation-form form)
+          map-text (zp proj)]
+      (str (pad indent) (indent-rest map-text indent)))))
 
 (defn- render-trailer-pin
   "Render one top-level trailer entry. Summary pins (carry `:summary`) zp
@@ -550,162 +490,24 @@
          (seq proofs)              (assoc :proofs proofs)
          (pos? rejected)           (assoc :rejected-count rejected))]))
 
-(defn- alive?
-  "Entity is `alive` (rendered in timeline/orphans) when not archived.
-   Archived entities go to introspect-archived; live ctx hides them."
-  [entity]
-  (not= :archived (:status entity)))
+(defn- render-plan-value
+  "Phase G: render `:session/plan` — flat vec of plan entries derived
+   by `eng/derive-plan`. Each entry has the canonical shape
+   `{:kind :id :status :reason :remedy}`. Blockers
+   (`:status :blocked`) come first; tasks follow in topological order
+   from `:depends-on` linkage \u2014 NO `:priority` field.
 
-(defn- task-roots
-  "Tasks that no OTHER task points at via :depends-on. They head the
-   timeline; their dep tree expands beneath."
-  [tasks dep-graph]
-  (let [referenced (reduce-kv
-                     (fn [acc [kind _] edges]
-                       (cond-> acc
-                         (= kind :task)
-                         (into (keep (fn [[k id]] (when (= :task k) id)))
-                           edges)))
-                     #{} dep-graph)]
-    (vec (sort (remove #(contains? referenced %) (keys tasks))))))
-
-(defn- build-timeline
-  "Walk each task root through the typed dep-graph collecting the
-   spec/fact refs it reaches (BFS, dedupe across roots). Returns a vec
-   of timeline entries shaped:
-     {:task :K :title :status :born :depends-on :proofs :rejected-count
-      :specs [{projected-spec}] :facts [{projected-fact}]}
-   Tasks whose status is :archived are skipped."
-  [ctx dep-graph progression]
-  (let [tasks (or (:session/tasks ctx) {})
-        specs (or (:session/specs ctx) {})
-        facts (or (:session/facts ctx) {})
-        live-tasks (into {} (filter #(alive? (val %)) tasks))
-        roots (task-roots live-tasks dep-graph)
-        seen-spec  (atom #{})
-        seen-fact  (atom #{})
-        ;; Per-visit dedupe atoms. The dep-graph CAN cycle when ctx
-        ;; snapshots predate the Phase B write-time cycle check, and
-        ;; even acyclic diamond shapes re-enqueue the same node
-        ;; through multiple inbound edges. Without an enqueue-time
-        ;; seen check, the BFS loops forever on cycles and explodes
-        ;; exponentially on diamonds. The seen-spec / seen-fact atoms
-        ;; up in the closure dedupe ACROSS roots (so a node hit by
-        ;; two roots is rendered once); these per-visit `enqueued`
-        ;; sets dedupe WITHIN one root walk so we never push the same
-        ;; node onto the queue twice.
-        visit
-        (fn [task-k]
-          (let [enq-spec (atom #{})
-                enq-fact (atom #{})
-                enqueue? (fn [[kind' k']]
-                           (case kind'
-                             :spec (and (contains? specs k')
-                                     (alive? (get specs k'))
-                                     (not (@enq-spec k'))
-                                     (do (swap! enq-spec conj k') true))
-                             :fact (and (contains? facts k')
-                                     (alive? (get facts k'))
-                                     (not (@enq-fact k'))
-                                     (do (swap! enq-fact conj k') true))
-                             :task false))]
-            (loop [queue [[:task task-k]]
-                   specs-out []
-                   facts-out []]
-              (if (empty? queue)
-                {:specs specs-out :facts facts-out}
-                (let [[kind k :as node] (peek queue)
-                      rest             (pop queue)
-                      edges            (get dep-graph node #{})
-                      spec-here        (and (= :spec kind)
-                                         (alive? (get specs k))
-                                         (not (@seen-spec k))
-                                         k)
-                      fact-here        (and (= :fact kind)
-                                         (alive? (get facts k))
-                                         (not (@seen-fact k))
-                                         k)]
-                  (when spec-here (swap! seen-spec conj spec-here))
-                  (when fact-here (swap! seen-fact conj fact-here))
-                  (recur (into rest (filter enqueue?) edges)
-                    (cond-> specs-out
-                      spec-here (conj (second (project-spec progression
-                                                [spec-here (get specs spec-here)]))))
-                    (cond-> facts-out
-                      fact-here (conj (second (project-fact
-                                                [fact-here (get facts fact-here)]))))))))))]
-    (vec
-      (for [root roots
-            :let [task (get live-tasks root)
-                  {:keys [specs facts]} (visit root)]]
-        (let [[_ projected] (project-task [root task])]
-          (cond-> projected
-            (seq specs) (assoc :specs (vec specs))
-            (seq facts) (assoc :facts (vec facts))
-            true        (assoc :task root)))))))
-
-(defn- build-orphans
-  "Entities (live, non-archived) NOT pulled into any task tree. Returns
-   `{:facts {} :specs {} :tasks {}}`. Tasks here are roots without any
-   connected specs/facts AND themselves point at nothing."
-  [ctx timeline _dep-graph progression]
-  ;; project-* puts the key in position 0 of each returned pair; the
-  ;; timeline `:specs` / `:facts` keep that shape, so we walk them as
-  ;; map entries to collect the visible keys.
-  (let [in-timeline-spec (set (mapcat #(map first (or (:specs %) [])) timeline))
-        in-timeline-fact (set (mapcat #(map first (or (:facts %) [])) timeline))
-        in-timeline-task (set (map :task timeline))
-        live-facts (filter (fn [[_ f]] (alive? f)) (or (:session/facts ctx) {}))
-        live-specs (filter (fn [[_ s]] (alive? s)) (or (:session/specs ctx) {}))
-        live-tasks (filter (fn [[_ t]] (alive? t)) (or (:session/tasks ctx) {}))
-        orphan-fact? (fn [[k _]] (not (contains? in-timeline-fact k)))
-        orphan-spec? (fn [[k _]] (not (contains? in-timeline-spec k)))
-        orphan-task? (fn [[k _]] (not (contains? in-timeline-task k)))]
-    {:facts (into {} (map (fn [pair] (let [[k v] (project-fact pair)] [k v])))
-              (filter orphan-fact? live-facts))
-     :specs (into {} (map (fn [pair] (let [[k v] (project-spec progression pair)] [k v])))
-              (filter orphan-spec? live-specs))
-     :tasks (into {} (map (fn [pair] (let [[k v] (project-task pair)] [k v])))
-              (filter orphan-task? live-tasks))}))
-
-(defn- render-timeline-value
-  "Render :session/timeline. Vec of task-rooted entries, each carrying
-   inline projected specs/facts."
-  [timeline]
-  (if (empty? timeline)
-    "[]"
-    (zp (vec timeline))))
-
-(defn- render-orphans-value
-  "Render :session/orphans. One map with three sub-maps."
-  [{:keys [facts specs tasks]}]
-  (let [m (cond-> {}
-            (seq facts) (assoc :facts facts)
-            (seq specs) (assoc :specs specs)
-            (seq tasks) (assoc :tasks tasks))]
-    (if (empty? m) "{}" (zp m))))
-
-(defn- render-next-actions-value
-  "Next-actions vec capped to NEXT_ACTIONS_BUDGET with an overflow hint.
-   When the head of the list carries `:blocking? true` (priority 1 fix-
-   consistency actions), prepend a `;; ⛔ BLOCKING ...` banner so the
-   model cannot miss it even when scanning the ctx fast. Without the
-   banner the action is just another entry in the EDN list."
-  [actions]
-  (let [n         (count actions)
-        capped    (vec (take NEXT_ACTIONS_BUDGET actions))
-        blocking  (filterv :blocking? capped)
-        body      (if (empty? capped) "[]" (zp capped))
-        prefix    (when (seq blocking)
-                    (str ";; ⛔ " (count blocking)
-                      " BLOCKING action(s) — resolve before generating new work"
-                      (str/join ""
-                        (map (fn [a] (str "\n;;   → " (:hint a))) blocking))
-                      "\n"))
-        suffix    (when (> n NEXT_ACTIONS_BUDGET)
-                    (str "\n;; " (- n NEXT_ACTIONS_BUDGET)
-                      " more action(s) suppressed (raise NEXT_ACTIONS_BUDGET or close work)"))]
-    (str prefix (cond-> body suffix (str suffix)))))
+   Capped at NEXT_ACTIONS_BUDGET with an overflow tag appended IN-VEC
+   as an `{:overflow N :hint \"...\"}` map so the model still parses the
+   list as plain EDN (no trailing line-comments)."
+  [plan]
+  (let [n      (count plan)
+        capped (vec (take NEXT_ACTIONS_BUDGET plan))
+        tail   (when (> n NEXT_ACTIONS_BUDGET)
+                 [{:overflow (- n NEXT_ACTIONS_BUDGET)
+                   :hint     "raise NEXT_ACTIONS_BUDGET or close work"}])
+        full   (vec (concat capped tail))]
+    (if (empty? full) "[]" (zp full))))
 
 ;; =============================================================================
 ;; Top-level
@@ -715,41 +517,28 @@
   "Render the engine view as the bare-EDN text block embedded under `;; ctx`
    in the user message.
 
+   Phase G: the prompt-side derived view is ONE field — `:session/plan`
+   — a flat ordered vec of `{:kind :id :status :reason :remedy}` entries.
+   Replaces the legacy triplet (`:session/timeline` + `:session/orphans`
+   + `:session/next-actions`) AND the trailing `;; ⚠ ...` line-comment
+   annotations. The model reads pure EDN data, no embedded prose.
+
+   Raw entity subtrees (`:session/specs` / `:session/tasks` /
+   `:session/facts`) ride directly into the prompt when non-empty so
+   `(introspect-fact :K)` etc. have their canonical sources visible.
+
    Input map keys:
      :ctx           full ::cs/ctx (validated upstream)
-     :warnings      vec of {:code :anchor :message} from derive-warnings
      :progression   {spec-id {:total :proven :ratio :state :missing}}
-     :next-actions  vec from derive-next-actions
+     :next-actions  vec from `eng/derive-plan` (legacy arg name retained
+                    until callers migrate to `:plan`)
 
-   Output: a string starting with `;; ctx\\n{` and ending with `}`."
-  [{:keys [ctx warnings progression next-actions]}]
-  (let [warnings*     (or warnings [])
-        actions*      (or next-actions [])
-        blocking-n    (count (filter :blocking? actions*))
-        warn-n        (count warnings*)
-        banner        (when (or (pos? blocking-n) (pos? warn-n))
-                        (str ";; ⚠ ctx-summary: "
-                          (when (pos? warn-n) (str warn-n " warning(s)"))
-                          (when (and (pos? warn-n) (pos? blocking-n)) ", ")
-                          (when (pos? blocking-n) (str blocking-n " blocking action(s)"))
-                          " — read :session/next-actions first\n"))
-        ;; Phase G': projection over raw entities. Storage stays full-
-        ;; fidelity in :session/{specs,tasks,facts}; the renderer
-        ;; rebuilds a coherent task-rooted timeline + orphans for the
-        ;; LLM. introspect-* fns still return raw shape for full audit.
-        dep-graph     (or (:dep-graph (eng/build-indexes ctx)) {})
-        timeline      (build-timeline ctx dep-graph (or progression {}))
-        orphans       (build-orphans ctx timeline dep-graph (or progression {}))
-        by-sub        (anchors-by-subtree ctx warnings*)
-        other-tail    (section-annotations
-                        (concat (get by-sub :session/specs [])
-                          (get by-sub :session/tasks [])
-                          (get by-sub :session/facts [])
-                          (get by-sub :other []))
-                        [] 1)]
+   Output: a string starting with `;; ctx\\n{` and ending with `}`.
+   No trailing line-comments anywhere."
+  [{:keys [ctx next-actions]}]
+  (let [plan* (or next-actions [])]
     (str
       ";; ctx\n"
-      banner
       "{" (zp :session/id)    "        " (zp (:session/id ctx))    "\n"
       " " (zp :session/turn)  "      "   (zp (:session/turn ctx))  "\n"
       " " (zp :session/scope) "     "    (zp (:session/scope ctx)) "\n"
@@ -758,15 +547,16 @@
         (zp (or (:session/workspace ctx) {})) nil)                "\n\n"
       (when-let [env-block (:session/env ctx)]
         (str (render-section :session/env (zp env-block) nil) "\n\n"))
-      (render-section :session/symbols
-        (zp (or (:session/symbols ctx) {})) nil)                  "\n\n"
-      (render-section :session/timeline
-        (render-timeline-value timeline) nil)                     "\n\n"
-      (render-section :session/orphans
-        (render-orphans-value orphans) nil)                       "\n\n"
+      (when-let [symbols (not-empty (:session/symbols ctx))]
+        (str (render-section :session/symbols (zp symbols) nil) "\n\n"))
+      (when-let [specs (not-empty (:session/specs ctx))]
+        (str (render-section :session/specs (zp specs) nil) "\n\n"))
+      (when-let [tasks (not-empty (:session/tasks ctx))]
+        (str (render-section :session/tasks (zp tasks) nil) "\n\n"))
+      (when-let [facts (not-empty (:session/facts ctx))]
+        (str (render-section :session/facts (zp facts) nil) "\n\n"))
       (render-section :session/trailer
         (render-trailer-value (or (:session/trailer ctx) [])) nil) "\n\n"
-      (render-section :session/next-actions
-        (render-next-actions-value actions*)
-        other-tail)
+      (render-section :session/plan
+        (render-plan-value plan*) nil)
       "}")))

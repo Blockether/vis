@@ -27,7 +27,7 @@
     ResetCommand$ResetType RebaseCommand$Operation
     RebaseCommand$InteractiveHandler
     RebaseResult]
-   [org.eclipse.jgit.lib ObjectId Ref Repository]
+   [org.eclipse.jgit.lib BranchTrackingStatus ObjectId Repository]
    [org.eclipse.jgit.transport RefSpec SshSessionFactory UsernamePasswordCredentialsProvider]
    [org.eclipse.jgit.transport.sshd KeyPasswordProvider SshdSessionFactory SshdSessionFactoryBuilder]))
 
@@ -248,35 +248,70 @@
    :new-sha       (object-id->sha (.getNewObjectId update))
    :new-short-sha (object-id->short-sha (.getNewObjectId update))})
 
-(defn- advertised-ref->map
-  [^Ref ref]
-  (cond-> {:name             (.getName ref)
-           :symbolic?        (.isSymbolic ref)
-           :object-id        (object-id->sha (.getObjectId ref))
-           :short-object-id  (object-id->short-sha (.getObjectId ref))
-           :peeled?          (.isPeeled ref)
-           :peeled-object-id (object-id->sha (.getPeeledObjectId ref))}
-    (.isSymbolic ref) (assoc :target (some-> ref .getTarget .getName))))
+(defn- update-kind
+  [result]
+  (case (str result)
+    "NEW" :new
+    "FAST_FORWARD" :fast-forward
+    "FORCED" :forced
+    "NO_CHANGE" :unchanged
+    "IO_FAILURE" :error
+    "LOCK_FAILURE" :error
+    "REJECTED" :rejected
+    "RENAMED" :renamed
+    :updated))
+
+(defn- fetch-summary
+  [updates]
+  (let [freqs (frequencies (map :kind updates))]
+    {:updated       (count updates)
+     :new           (long (get freqs :new 0))
+     :fast-forward  (long (get freqs :fast-forward 0))
+     :forced        (long (get freqs :forced 0))
+     :rejected      (long (get freqs :rejected 0))
+     :errors        (long (get freqs :error 0))
+     :up-to-date?   (empty? updates)}))
+
+(defn- tracking-status
+  [^Repository repo branch]
+  (try
+    (when-let [^BranchTrackingStatus tracking (and branch (BranchTrackingStatus/of repo branch))]
+      {:upstream? true
+       :upstream  (.getRemoteTrackingBranch tracking)
+       :ahead     (.getAheadCount tracking)
+       :behind    (.getBehindCount tracking)})
+    (catch Throwable _ nil)))
 
 (defn fetch!
-  "Fetch from a remote. Opts: {:remote :credentials}."
+  "Fetch from a remote. Opts: {:remote :credentials}. Returns porcelain-ish
+   EDN: compact update summary plus current-branch ahead/behind after fetch."
   [{:keys [remote credentials]}]
   (install-sshd-session-factory!)
   (with-open [git (open-git)]
     (let [remote (or remote "origin")
+          repo   (.getRepository git)
+          branch (.getBranch repo)
           cmd    (.. git fetch (setRemote remote))]
       (when-let [cp (->credentials credentials)]
         (.setCredentialsProvider cmd cp))
-      (let [res             (.call cmd)
-            advertised-refs (vec (.getAdvertisedRefs res))]
-        {:op                   :fetch
-         :remote               remote
-         :uri                  (some-> (.getURI res) str)
-         :peer-user-agent      (.getPeerUserAgent res)
-         :messages             (.getMessages res)
-         :advertised-ref-count (count advertised-refs)
-         :advertised-refs      (mapv advertised-ref->map advertised-refs)
-         :tracking-updates     (mapv tracking-update->map (.getTrackingRefUpdates res))}))))
+      (let [res     (.call cmd)
+            updates (mapv (fn [u]
+                            (let [m (tracking-update->map u)]
+                              (assoc m
+                                :ref (some-> (:local-name m)
+                                       (str/replace #"^refs/remotes/" ""))
+                                :kind (update-kind (:result m))
+                                :range (when (and (:old-short-sha m) (:new-short-sha m))
+                                         (str (:old-short-sha m) ".." (:new-short-sha m))))))
+                      (.getTrackingRefUpdates res))]
+        {:op       :fetch
+         :remote   remote
+         :status   (if (seq updates) :updated :up-to-date)
+         :branch   branch
+         :tracking (tracking-status repo branch)
+         :summary  (fetch-summary updates)
+         :updates  updates
+         :messages (.getMessages res)}))))
 
 ;; ============================================================================
 ;; History rewrite ops: reset!, branch!, checkout!, cherry-pick!, rebase!

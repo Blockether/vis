@@ -2126,12 +2126,13 @@
                           t/code-block-fg t/code-block-bg))
                       (case (:kind meta)
                         :toggle-details
-                        (cr/register!
-                          {:bounds {:row abs-row :col fbx :width iw}
-                           :kind :toggle-details
-                           :session-id (:session-id meta)
-                           :node-id (:node-id meta)
-                           :collapsed? (:collapsed? meta)})
+                        (let [click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col fbx :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)}))
 
                         nil))
 
@@ -2271,12 +2272,13 @@
                           t/code-result-fg t/code-block-bg))
                       (case (:kind meta)
                         :toggle-details
-                        (cr/register!
-                          {:bounds {:row abs-row :col fbx :width iw}
-                           :kind :toggle-details
-                           :session-id (:session-id meta)
-                           :node-id (:node-id meta)
-                           :collapsed? (:collapsed? meta)})
+                        (let [click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col fbx :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)}))
 
                         nil))
 
@@ -2856,16 +2858,18 @@
         entries))))
 
 (defn- marker-prefix?
-  "True when the first char of `line` is a paint-zone marker the
-   renderer prepends (zero-width / format codepoints from
-   `primitives` like `MARKER_RESULT`, ...). Plain
-   answer-markdown lines never start with one, so the test lets us
-   strip markers without nibbling the first letter of regular prose."
+  "True when the first char of `line` is a block paint marker the
+   renderer prepends (zero-width format codepoints or PUA marker band
+   U+E000..U+E0FF). Inline style sentinels start at U+E110, so badge
+   labels beginning with bold/code sentinels stay intact."
   ^Boolean [^String line]
   (and (string? line)
     (pos? (count line))
-    (= (int Character/FORMAT)
-      (int (Character/getType (.charAt line 0))))))
+    (let [c (.charAt line 0)
+          i (int c)]
+      (or (= (int Character/FORMAT)
+            (int (Character/getType c)))
+        (and (>= i 0xE000) (<= i 0xE0FF))))))
 
 (def ^:private chrome-meta-kinds
   ;; Row kinds that paint display-only chrome (`▾ SUMMARY [Turn: ...]`).
@@ -2894,17 +2898,56 @@
     (str/join "\n")
     str/trim))
 
+(defn- entry-visible-body
+  "Return visible row body for a pre-rendered entry. Drops block paint
+   marker only; keeps inline style sentinels so BADGE text stays bold."
+  ^String [{:keys [line]}]
+  (let [s (str (or line ""))]
+    (if (marker-prefix? s) (subs s 1) s)))
+
+(defn- collapsible-tool-summary-entry
+  [{:keys [session-id detail-expansions max-w summary-marker session-turn-id
+           iteration-number block-number kind color-role]
+    :as opts}
+   first-entry hidden-entries]
+  (let [node-id    (or (:node-id opts)
+                     (detail-node-id {:session-turn-id session-turn-id
+                                      :iteration-number iteration-number
+                                      :block-number block-number
+                                      :section :iteration
+                                      :kind kind}))
+        expanded?  (detail-expanded? detail-expansions session-id node-id false)
+        chevron    (if expanded? "v" ">")
+        head       (or (some-> first-entry entry-visible-body str/trim not-empty)
+                     (:summary opts)
+                     "TOOL")
+        visible    (str chevron " " (ellipsize-cols head (max 1 (- (long max-w) 2))))
+        marker     (or summary-marker md-summary-marker)
+        meta       (when (and session-id node-id)
+                     {:kind :toggle-details
+                      :session-id (str session-id)
+                      :node-id (str node-id)
+                      :collapsed? (not expanded?)
+                      :color-role color-role
+                      :click-width 1})]
+    (cond-> [{:line (str marker visible) :meta meta}]
+      expanded? (into hidden-entries))))
+
 (defn- maybe-collapse-block
-  "Always render the body fully inline. Collapsible disclosure rows
-   were removed per user directive: no `▾`/`▸` toggle, no auto-collapse
-   threshold. The function name is retained for call-site compatibility
-   and reads as a historical no-op."
-  [{:keys [body-marker lines max-w raw-text]}]
+  "Canonical tool-result collapse. TUI shows only badge/head row by
+   default; chevron at left toggles full body. Result renderers must put
+   primary info in first IR paragraph (LS/CAT/RG/PATCH badge row)."
+  [{:keys [body-marker lines max-w raw-text] :as opts}]
   (let [body-value (or raw-text (str/join "\n" lines))
-        ir-entries (when (channel-ir? body-value)
-                     (ir-body-entries body-value body-marker max-w))]
-    (or ir-entries
-      (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))))
+        entries    (if (channel-ir? body-value)
+                     (ir-body-entries body-value body-marker max-w)
+                     (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))]
+    (when (seq entries)
+      (let [first-entry    (first entries)
+            hidden-entries (vec (rest entries))]
+        (if (seq hidden-entries)
+          (collapsible-tool-summary-entry opts first-entry hidden-entries)
+          entries)))))
 
 (defn- maybe-collapse-thinking-entries
   "Always return reasoning entries inline. Collapsible disclosure was
@@ -2934,8 +2977,8 @@
     (str/join "\n")))
 
 (defn- maybe-collapse-raw-text-block
-  "Render a result block fully inline. Collapsible disclosure was
-   removed per user directive — the body always paints in place."
+  "Render a tool result as default-collapsed badge/head row. Full body
+   appears only after its chevron is toggled."
   [{:keys [raw-text max-w] :as opts}]
   (let [raw-value (if (channel-ir? raw-text) raw-text (str/trim (str raw-text)))]
     (when-not (channel-body-blank? raw-value)

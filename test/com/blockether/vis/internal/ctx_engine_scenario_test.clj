@@ -52,7 +52,7 @@
             indexes      (eng/build-indexes ctx')
             progression  (eng/derive-progression ctx' indexes)
             derived      (eng/derive-warnings ctx' indexes)
-            actions      (eng/derive-next-actions ctx' indexes progression)
+            actions      (eng/derive-plan ctx' indexes progression)
             turn-result  {:turn turn
                           :ctx ctx'
                           :mutation-warnings mut-warnings
@@ -223,12 +223,12 @@
           (expect (= 0 (get-in t2 [:progression :rl-correctness :proven])))
           (expect (= :open (get-in t2 [:progression :rl-correctness :state]))))
 
-        (it "T2: next-actions surface :prove-requirement entries"
-          (expect (some #(= :prove-requirement (:type %)) (:next-actions t2))))
+        (it "T2: plan surfaces :prove-requirement entries (Phase G shape: :kind not :type)"
+          (expect (some #(= :prove-requirement (:kind %)) (:next-actions t2))))
 
-        (it "T2: next-actions also surface :work-unblocked-todo for :swap-to-cas"
-          (expect (some #(and (= :work-unblocked-todo (:type %))
-                           (= :swap-to-cas (:target %)))
+        (it "T2: plan also surfaces :work-unblocked-todo for :swap-to-cas (Phase G shape: :id not :target)"
+          (expect (some #(and (= :work-unblocked-todo (:kind %))
+                           (= :swap-to-cas (:id %)))
                     (:next-actions t2)))))
 
       ;; ─── Turn 3: prereq task done, no proofs yet
