@@ -1977,19 +1977,39 @@
                       (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg))
 
               ;; ── Code block padding (running / neutral) ──
+              ;; These rows are usually blank top/bottom band edges,
+              ;; but the per-form footer deliberately rides the same
+              ;; marker so scope + duration stay inside the green/red
+              ;; code block. Paint optional payload instead of
+              ;; swallowing it.
                     (str/starts-with? line code-pad-marker)
-                    (do (p/set-bg! g t/code-block-bg)
-                      (p/fill-rect! g fbx y iw 1))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (when (seq raw)
+                        (paint-ansi-line! g x y raw t/code-block-fg t/code-block-bg)))
 
               ;; ── Code block padding (success) ──
                     (str/starts-with? line code-ok-pad-marker)
-                    (do (p/set-bg! g t/code-ok-bg)
-                      (p/fill-rect! g fbx y iw 1))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-ok-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (when (seq raw)
+                        (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
+                        (when-let [ci (str/index-of raw "✓")]
+                          (p/set-colors! g t/code-success-fg t/code-ok-bg)
+                          (p/put-str! g (+ x ci) y (subs raw ci)))))
 
               ;; ── Code block padding (error) ──
                     (str/starts-with? line code-err-pad-marker)
-                    (do (p/set-bg! g t/code-err-bg)
-                      (p/fill-rect! g fbx y iw 1))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-err-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (when (seq raw)
+                        (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
+                        (when-let [ci (str/index-of raw "✗")]
+                          (p/set-colors! g t/code-error-fg t/code-err-bg)
+                          (p/put-str! g (+ x ci) y (subs raw ci)))))
 
               ;; ── Iteration zone padding (margin between blocks) ──
                     (str/starts-with? line iteration-pad-marker)
