@@ -15,6 +15,7 @@
   ;; fully-qualified call so no behaviour breaks.
   (:refer-clojure :exclude [reset!])
   (:require
+   [clojure.core :as core]
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
@@ -26,7 +27,7 @@
     ResetCommand$ResetType RebaseCommand$Operation
     RebaseCommand$InteractiveHandler
     RebaseResult]
-   [org.eclipse.jgit.lib ObjectId Repository]
+   [org.eclipse.jgit.lib ObjectId Ref Repository]
    [org.eclipse.jgit.transport RefSpec SshSessionFactory UsernamePasswordCredentialsProvider]
    [org.eclipse.jgit.transport.sshd KeyPasswordProvider SshdSessionFactory SshdSessionFactoryBuilder]))
 
@@ -52,7 +53,7 @@
    passphrase or `nil` to cancel. Pass `nil` to clear (e.g. when the TUI
    channel shuts down)."
   [f]
-  (clojure.core/reset! ssh-passphrase-prompt-fn f))
+  (core/reset! ssh-passphrase-prompt-fn f))
 
 (defn- resolve-passphrase
   "Prompt -> env var fallback. Returns String or nil."
@@ -81,7 +82,7 @@
                        "Set VIS_SSH_KEY_PASSPHRASE or register a passphrase prompt "
                        "(set-ssh-passphrase-prompt!) before calling git/push! again."))))
           (.toCharArray ^String pw)))
-      (setAttempts [_ n] (clojure.core/reset! attempts n))
+      (setAttempts [_ n] (core/reset! attempts n))
       (getAttempts [_] @attempts)
       (keyLoaded [_ _uri _attempt error]
         ;; true -> try again with a new passphrase (we don't loop here;
@@ -116,7 +117,7 @@
                             (->key-password-provider))))
                       (.build nil))]
         (SshSessionFactory/setInstance factory)
-        (clojure.core/reset! installed-sshd-session-factory factory)))))
+        (core/reset! installed-sshd-session-factory factory)))))
 
 (defn- open-git ^Git [] (Git/open ^File (workspace/cwd)))
 
@@ -228,23 +229,54 @@
          :delete? (boolean delete?)
          :updates updates}))))
 
+(defn- object-id->sha
+  [^ObjectId oid]
+  (some-> oid .getName))
+
+(defn- object-id->short-sha
+  [^ObjectId oid]
+  (when-let [sha (object-id->sha oid)]
+    (subs sha 0 (min 7 (count sha)))))
+
+(defn- tracking-update->map
+  [^org.eclipse.jgit.transport.TrackingRefUpdate update]
+  {:local-name    (.getLocalName update)
+   :remote-name   (.getRemoteName update)
+   :result        (str (.getResult update))
+   :old-sha       (object-id->sha (.getOldObjectId update))
+   :old-short-sha (object-id->short-sha (.getOldObjectId update))
+   :new-sha       (object-id->sha (.getNewObjectId update))
+   :new-short-sha (object-id->short-sha (.getNewObjectId update))})
+
+(defn- advertised-ref->map
+  [^Ref ref]
+  (cond-> {:name             (.getName ref)
+           :symbolic?        (.isSymbolic ref)
+           :object-id        (object-id->sha (.getObjectId ref))
+           :short-object-id  (object-id->short-sha (.getObjectId ref))
+           :peeled?          (.isPeeled ref)
+           :peeled-object-id (object-id->sha (.getPeeledObjectId ref))}
+    (.isSymbolic ref) (assoc :target (some-> ref .getTarget .getName))))
+
 (defn fetch!
   "Fetch from a remote. Opts: {:remote :credentials}."
   [{:keys [remote credentials]}]
   (install-sshd-session-factory!)
   (with-open [git (open-git)]
-    (let [cmd (.. git fetch (setRemote (or remote "origin")))]
+    (let [remote (or remote "origin")
+          cmd    (.. git fetch (setRemote remote))]
       (when-let [cp (->credentials credentials)]
         (.setCredentialsProvider cmd cp))
-      (let [res (.call cmd)]
-        {:op       :fetch
-         :remote   (or remote "origin")
-         :messages (.getMessages res)
-         :tracking-updates
-         (mapv (fn [u] {:local-name  (.getLocalName u)
-                        :remote-name (.getRemoteName u)
-                        :result      (str (.getResult u))})
-           (.getTrackingRefUpdates res))}))))
+      (let [res             (.call cmd)
+            advertised-refs (vec (.getAdvertisedRefs res))]
+        {:op                   :fetch
+         :remote               remote
+         :uri                  (some-> (.getURI res) str)
+         :peer-user-agent      (.getPeerUserAgent res)
+         :messages             (.getMessages res)
+         :advertised-ref-count (count advertised-refs)
+         :advertised-refs      (mapv advertised-ref->map advertised-refs)
+         :tracking-updates     (mapv tracking-update->map (.getTrackingRefUpdates res))}))))
 
 ;; ============================================================================
 ;; History rewrite ops: reset!, branch!, checkout!, cherry-pick!, rebase!
