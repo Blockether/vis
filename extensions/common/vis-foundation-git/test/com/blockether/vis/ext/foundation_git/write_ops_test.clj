@@ -236,6 +236,45 @@
             (expect (.exists (io/file root "src/f1.clj")))))
         (finally (cleanup root))))))
 
+(defdescribe fetch!-test
+  (it "returns EDN data with ref/update details, not raw JGit objects"
+    (let [remote (make-tmp-dir)
+          local  (make-tmp-dir)]
+      (try
+        (init-repo! remote 1)
+        (with-open [_ (-> (Git/cloneRepository)
+                        (.setURI (str (.toURI remote)))
+                        (.setDirectory local)
+                        .call)]
+          nil)
+        (spit-rel remote "src/f1.clj" "(ns f1) ;; remote rev\n")
+        (with-open [g (Git/open remote)]
+          (-> g .add (.addFilepattern "src/f1.clj") .call)
+          (-> g .commit (.setMessage "remote commit") .call))
+        (with-workspace local
+          (let [res    (wo/fetch! {})
+                update (first (:tracking-updates res))
+                ref    (first (:advertised-refs res))]
+            (expect (= :fetch (:op res)))
+            (expect (= "origin" (:remote res)))
+            (expect (string? (:uri res)))
+            (expect (string? (:messages res)))
+            (expect (pos? (:advertised-ref-count res)))
+            (expect (map? ref))
+            (expect (string? (:name ref)))
+            (expect (seq (:tracking-updates res)))
+            (expect (map? update))
+            (expect (string? (:local-name update)))
+            (expect (string? (:remote-name update)))
+            (expect (string? (:result update)))
+            (expect (string? (:old-sha update)))
+            (expect (string? (:new-sha update)))
+            (expect (= 7 (count (:old-short-sha update))))
+            (expect (= 7 (count (:new-short-sha update))))))
+        (finally
+          (cleanup local)
+          (cleanup remote))))))
+
 (defdescribe rebase!-test
   (it "non-interactive rebase fast-forwards onto upstream"
     (let [root (make-tmp-dir)]
