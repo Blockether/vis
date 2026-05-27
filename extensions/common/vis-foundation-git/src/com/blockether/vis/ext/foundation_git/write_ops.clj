@@ -88,29 +88,35 @@
         ;; user-supplied prompt is single-shot). false -> give up on key.
         (nil? error)))))
 
+(defonce ^:private installed-sshd-session-factory
+  (atom nil))
+
 (defn- install-sshd-session-factory!
   "Install JGit's Apache-MINA `SshdSessionFactory` once, pointed at the
    user's real ~/.ssh directory and wired to our channel-aware
-   `KeyPasswordProvider`. The default factory cannot read ssh-config or
-   modern key algorithms; without this swap, every push to GitHub fails
-   with `remote hung up unexpectedly` mid-handshake (Vis conv 11d4f817 /
-   t10/i11). Idempotent — only the first call builds and registers the
-   factory."
+   `KeyPasswordProvider`. The stock JGit factory is already an
+   `SshdSessionFactory`, but it is not configured with our home/ssh dirs or
+   prompt provider; checking only `instance?` left it in place and made
+   `git/fetch!` fail with `publickey: no keys to try` (Vis conv c4eb7bab).
+   Ed25519 keys also require the optional Bouncy Castle provider declared in
+   deps.edn. Idempotent while the installed factory remains current."
   []
-  (when-not (instance? SshdSessionFactory (SshSessionFactory/getInstance))
-    (let [home    (System/getProperty "user.home")
-          home-p  (->path home)
-          ssh-p   (->path (str home "/.ssh"))
-          factory (-> (SshdSessionFactoryBuilder.)
-                    (.setPreferredAuthentications "publickey")
-                    (.setHomeDirectory (.toFile home-p))
-                    (.setSshDirectory  (.toFile ssh-p))
-                    (.setKeyPasswordProvider
-                      (reify Function
-                        (apply [_ _credentials-provider]
-                          (->key-password-provider))))
-                    (.build nil))]
-      (SshSessionFactory/setInstance factory))))
+  (let [current (SshSessionFactory/getInstance)]
+    (when-not (identical? current @installed-sshd-session-factory)
+      (let [home    (System/getProperty "user.home")
+            home-p  (->path home)
+            ssh-p   (->path (str home "/.ssh"))
+            factory (-> (SshdSessionFactoryBuilder.)
+                      (.setPreferredAuthentications "publickey")
+                      (.setHomeDirectory (.toFile home-p))
+                      (.setSshDirectory  (.toFile ssh-p))
+                      (.setKeyPasswordProvider
+                        (reify Function
+                          (apply [_ _credentials-provider]
+                            (->key-password-provider))))
+                      (.build nil))]
+        (SshSessionFactory/setInstance factory)
+        (clojure.core/reset! installed-sshd-session-factory factory)))))
 
 (defn- open-git ^Git [] (Git/open ^File (workspace/cwd)))
 
