@@ -154,14 +154,19 @@
                             :result-render ls-ir
                             :result-kind   :tool   ;; promoted via channel sink entries
                             :result-detail nil
+                            :scope "t24/i1/f1"
                             :error nil :started-at-ms nil :duration-ms 1
                             :success? true :silent? false}]}
                   80 1 {})
-          body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) lines))]
+          visible-lines (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          body (str/join "\n" visible-lines)
+          badge-line (first (filter #(str/includes? % "LS") visible-lines))]
       ;; Neither raw code row paints; collapsed tool preview shows badge only.
       (expect (not (str/includes? body "(select-keys")))
       (expect (not (str/includes? body "(def r (v/ls")))
-      (expect (str/includes? body "> LS"))
+      (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▶") lines))
+      (expect (str/includes? body "LS"))
+      (expect (str/includes? badge-line "t24/i1/b1"))
       (expect (not (str/includes? body ".gitignore")))
       (let [expanded-lines (format-iteration-entry
                              {:iteration 0
@@ -175,13 +180,15 @@
                                        :result-render ls-ir
                                        :result-kind   :tool
                                        :result-detail nil
+                                       :scope "t24/i1/f1"
                                        :error nil :started-at-ms nil :duration-ms 1
                                        :success? true :silent? false}]}
                              80 1 {:session-id "s"
                                    :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
                                    :detail-expansions {["s" "iteration:t123e4567:i1:b1:result"] true}})
             expanded-body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) expanded-lines))]
-        (expect (str/includes? expanded-body "v LS"))
+        (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▼") expanded-lines))
+        (expect (str/includes? expanded-body "LS"))
         (expect (str/includes? expanded-body ".gitignore")))))
 
   (it "renders hidden-code tool footer with scope on the left and duration on the right"
@@ -1393,8 +1400,8 @@
                          :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
       (expect (not (str/includes? body "MUTATION patch")))
-      (expect (str/includes? body "> Patched file."))
-      (expect (not-any? #(str/starts-with? (body-of %) "▸ MUTATION patch") (:lines payload)))
+      (expect (str/includes? body "▶ Patched file."))
+      (expect (not-any? #(str/starts-with? (body-of %) "▶ MUTATION patch") (:lines payload)))
       (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "does not emit vague duplicate search-any rows"

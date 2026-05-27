@@ -1144,6 +1144,17 @@
                       fg*   (ansi-codes->fg codes fg base-fg)]
                   (recur (inc m-idx) col fg*))))))))))
 
+(defn- paint-turn-stamp!
+  "Overdraw canonical tN/iN/bN stamps in muted italic. Used by footer
+   rows and collapsed tool badge rows so scope stays visible but dim."
+  [^TextGraphics g x y raw bg]
+  (when-let [stamp (re-find turn-stamp-pattern (str raw))]
+    (when-let [ci (str/index-of (str raw) stamp)]
+      (let [col (p/display-width (subs (str raw) 0 ci))]
+        (p/set-colors! g t/dialog-hint bg)
+        (p/styled g [p/ITALIC]
+          (p/put-str! g (+ x col) y stamp))))))
+
 (defn- paint-code-pad-payload!
   "Paint optional code-pad payloads. Blank pad rows only fill bg;
    footer pad rows also show the turn/block stamp in muted italic and
@@ -1151,11 +1162,7 @@
   [^TextGraphics g x y raw base-fg bg status-glyph status-fg]
   (when (seq raw)
     (paint-ansi-line! g x y raw base-fg bg)
-    (when-let [stamp (re-find turn-stamp-pattern raw)]
-      (when-let [ci (str/index-of raw stamp)]
-        (p/set-colors! g t/dialog-hint bg)
-        (p/styled g [p/ITALIC]
-          (p/put-str! g (+ x ci) y stamp))))
+    (paint-turn-stamp! g x y raw bg)
     (when (and status-glyph status-fg)
       (when-let [ci (str/index-of raw status-glyph)]
         (p/set-colors! g status-fg bg)
@@ -1999,13 +2006,33 @@
                     (str/starts-with? line result-marker)
                     (do (p/set-colors! g t/code-result-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg))
+                      (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)
+                      (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col x :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)}))))
 
               ;; ── Result (error) - neutral code-block bg ──
                     (str/starts-with? line err-result-marker)
                     (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg))
+                      (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg)
+                      (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col x :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)}))))
 
               ;; ── Code block padding (running / neutral) ──
               ;; These rows are usually blank top/bottom band edges,
@@ -2391,12 +2418,22 @@
                   ;; are present, so this is free for ASCII-only text.
                         (p/paint-styled-line! g x y line
                           line-fg line-bg
-                          t/code-block-fg t/code-block-bg)))))
-                (when user?
-                  (p/clear-styles! g)
-                  (p/set-colors! g role-fg bg-color)
-                  (p/put-str! g bx (+ btop i) "│")))
-              (recur (inc i))))))
+                          t/code-block-fg t/code-block-bg))
+                      (paint-turn-stamp! g x y line line-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col x :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)})))))
+                  (when user?
+                    (p/clear-styles! g)
+                    (p/set-colors! g role-fg bg-color)
+                    (p/put-str! g bx (+ btop i) "│")))
+                (recur (inc i))))))
 
       ;; Below-content footer row: optional right-aligned meta, with
       ;; one breathing row between answer body and footer.
@@ -2412,20 +2449,20 @@
       ;;   row 1+N+P                : blank footer margin, when meta present
       ;;   row 2+N+P                : meta right, when present
       ;;   final row                : single blank gap before the next message
-      (p/clear-styles! g)
-      (let [footer?    (some? meta-str)
-            footer-gap (if footer? 1 0)
-            footer-row (+ btop bubble-h bottom-pad footer-gap)]
-        (when footer?
-          (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
+        (p/clear-styles! g)
+        (let [footer?    (some? meta-str)
+              footer-gap (if footer? 1 0)
+              footer-row (+ btop bubble-h bottom-pad footer-gap)]
+          (when footer?
+            (p/set-colors! g t/dialog-hint t/terminal-bg)
+            (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
         ;; Return: rows consumed
         ;;   = label(1) + top-pad(user only) + content(N)
         ;;     + bottom-pad(user only)
         ;;     + footer-gap(meta only)(0|1)
         ;;     + footer(meta)(0|1)
         ;;     + gap(1)
-        (+ top-sep-h 1 top-pad bubble-h bottom-pad footer-gap (if footer? 1 0) 1)))))
+          (+ top-sep-h 1 top-pad bubble-h bottom-pad footer-gap (if footer? 1 0) 1))))))
 
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
@@ -2898,38 +2935,60 @@
     (str/join "\n")
     str/trim))
 
-(defn- entry-visible-body
-  "Return visible row body for a pre-rendered entry. Drops block paint
-   marker only; keeps inline style sentinels so BADGE text stays bold."
-  ^String [{:keys [line]}]
+(defn- split-entry-marker-body
+  "Split one rendered entry into original block marker + visible body.
+   Keeps prior tool badge colours: plain channel badge remains plain;
+   raw result badge keeps result-marker colours."
+  [{:keys [line]}]
   (let [s (str (or line ""))]
-    (if (marker-prefix? s) (subs s 1) s)))
+    (if (marker-prefix? s)
+      [(subs s 0 1) (subs s 1)]
+      ["" s])))
+
+(defn- format-form-scope-stamp
+  ^String [scope]
+  (some-> (str/replace (or scope "") #"/f(\d+)\b" "/b$1") str/trim not-empty))
+
+(defn- append-right-label
+  ^String [left right max-w]
+  (let [max-w (max 1 (long max-w))
+        right (some-> right str/trim not-empty)]
+    (if-not right
+      (ellipsize-cols left max-w)
+      (let [gap-w 2
+            right-w (p/display-width right)]
+        (if (> (+ right-w gap-w 1) max-w)
+          (ellipsize-cols left max-w)
+          (let [left-w  (max 1 (- max-w right-w gap-w))
+                left    (ellipsize-cols left left-w)
+                pad-w   (max gap-w (- max-w (p/display-width left) right-w))]
+            (str left (repeat-str \space pad-w) right)))))))
 
 (defn- collapsible-tool-summary-entry
-  [{:keys [session-id detail-expansions max-w summary-marker session-turn-id
-           iteration-number block-number kind color-role]
+  [{:keys [session-id detail-expansions max-w session-turn-id
+           iteration-number block-number kind color-role scope]
     :as opts}
    first-entry hidden-entries]
-  (let [node-id    (or (:node-id opts)
-                     (detail-node-id {:session-turn-id session-turn-id
-                                      :iteration-number iteration-number
-                                      :block-number block-number
-                                      :section :iteration
-                                      :kind kind}))
-        expanded?  (detail-expanded? detail-expansions session-id node-id false)
-        chevron    (if expanded? "v" ">")
-        head       (or (some-> first-entry entry-visible-body str/trim not-empty)
-                     (:summary opts)
-                     "TOOL")
-        visible    (str chevron " " (ellipsize-cols head (max 1 (- (long max-w) 2))))
-        marker     (or summary-marker md-summary-marker)
-        meta       (when (and session-id node-id)
-                     {:kind :toggle-details
-                      :session-id (str session-id)
-                      :node-id (str node-id)
-                      :collapsed? (not expanded?)
-                      :color-role color-role
-                      :click-width 1})]
+  (let [node-id       (or (:node-id opts)
+                        (detail-node-id {:session-turn-id session-turn-id
+                                         :iteration-number iteration-number
+                                         :block-number block-number
+                                         :section :iteration
+                                         :kind kind}))
+        expanded?     (detail-expanded? detail-expansions session-id node-id false)
+        chevron       (if expanded? "▼" "▶")
+        [marker body] (split-entry-marker-body first-entry)
+        head          (or (some-> body str/trim not-empty)
+                        (:summary opts)
+                        "TOOL")
+        stamp         (format-form-scope-stamp scope)
+        visible       (append-right-label (str chevron " " head) stamp max-w)
+        meta          (when (and session-id node-id)
+                        {:kind :toggle-details
+                         :session-id (str session-id)
+                         :node-id (str node-id)
+                         :collapsed? (not expanded?)
+                         :color-role color-role})]
     (cond-> [{:line (str marker visible) :meta meta}]
       expanded? (into hidden-entries))))
 
@@ -3580,6 +3639,7 @@
                                                         :iteration-number    iteration-number
                                                         :block-number        block-number
                                                         :kind                :result
+                                                        :scope               scope
                                                         :summary             (let [head (some-> code str str/split-lines first str/trim)
                                                                                    head (when (seq head)
                                                                                           (if (> (count head) 80)
@@ -3604,7 +3664,7 @@
                                 (let [status-sym  (cond (not has-status?) "↻"
                                                     success?          "✓"
                                                     :else             "✗")
-                                      left-text   (str/replace (or scope "") #"/f(\d+)\b" "/b$1")
+                                      left-text   (or (format-form-scope-stamp scope) "")
                                       right-text  (if has-status?
                                                     (str/join " " (remove str/blank? [status-sym duration-str]))
                                                     status-text)
