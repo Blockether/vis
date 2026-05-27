@@ -239,5 +239,5 @@
               (do
                 (spit f new-src)
                 (ok (.getPath f) (count src) (count new-src)
-                  :op op
+                  :edit-op op
                   :target tname)))))))))

@@ -15,7 +15,7 @@
 
    Heavy environment scans (full byte-counted language tables, polylith
    brick listings, multi-repo git status) live in the foundation-core
-   `v/snapshot` tool for explicit deep-dives. The digest never calls
+   focused project-shape helpers for explicit deep-dives. The digest never calls
    into extensions — host facts come from `System/getProperty`,
    project shape from a single directory peek. AGENTS.md / CLAUDE.md
    contents ride in their own system block (`internal.prompt`), not here."
@@ -85,7 +85,7 @@
    `bases/` + `components/` pair. Anything else with a `packages/`,
    `apps/`, `modules/`, or `crates/` is treated as `:monorepo`. The
    slim digest never enumerates package count — the deep-dive
-   `v/snapshot` tool covers that."
+   focused project-shape helpers cover that."
   {:polylith #{"bases" "components"}
    :monorepo #{"packages" "apps" "modules" "crates"}})
 
@@ -108,7 +108,7 @@
 (defn- primary-language-guess
   "Cheap primary-language heuristic: peek at top-level files for the
    one universally-diagnostic build artifact per language. Internal
-   never byte-counts files; that's the deep-dive `v/snapshot` job."
+   never byte-counts files; focused project-shape helpers own that."
   [cwd]
   (try
     (let [root  (File. (str cwd))

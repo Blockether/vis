@@ -43,8 +43,8 @@
 (defdescribe environment-core-test
   (it "exports the expected environment symbol surface"
     (let [syms (set (map :ext.symbol/symbol env-core/environment-symbols))]
-      (expect (contains? syms 'snapshot))
-      (expect (contains? syms 'git))
+      (expect (not (contains? syms 'snapshot)))
+      (expect (not (contains? syms 'git)))
       (expect (contains? syms 'repositories))
       (expect (contains? syms 'languages))
       (expect (contains? syms 'monorepo))
@@ -61,7 +61,9 @@
   (it "renders a prompt fragment for the unified v/ alias"
     (let [prompt (env-core/environment-prompt {})]
       (expect (string? prompt))
-      (expect (str/includes? prompt "v/snapshot"))
+      (expect (str/includes? prompt ":session/workspace"))
+      (expect (not (str/includes? prompt (str "v/" "snapshot"))))
+      (expect (not (str/includes? prompt (str "v/" "git"))))
       (expect (not (str/includes? prompt "v/load-skill")))
       (expect (not (str/includes? prompt "reload-skills")))
       (expect (not (str/includes? prompt "reload-instructions!")))
@@ -74,7 +76,7 @@
       (expect (contains? (:project ctx) :host))
       (expect (contains? (:project ctx) :root))))
 
-  (it "uses active workspace root instead of JVM cwd for v/git snapshots"
+  (it "uses active workspace root instead of JVM cwd for internal git facts"
     (let [root   (make-tmp-dir)
           branch "feature/ws"]
       (try

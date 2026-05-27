@@ -36,16 +36,23 @@
   [env]
   (call-resolved! 'com.blockether.vis.ext.foundation-core.doctor/doctor-fn env))
 
+(defn- fallback-workspace
+  [env]
+  {:root (or (workspace/workspace-root env)
+           (workspace/normalize-root (workspace/cwd)))})
+
 (defn- session-workspace-block
   "Resolve the env's pinned workspace + session-state and render the
-   canonical `:session/workspace` CTX block. Returns nil when there
-   is no DB / no workspace pin yet (engine seeds `:vcs/kind :none`
-   from `empty-ctx` in that case)."
+   canonical `:session/workspace` CTX block. If no DB / pin exists yet,
+   render the current root as a real workspace; VCS detection inside
+   `workspace-ctx/render-block` decides `:vcs/kind` (`:git`, `:none`, ...)."
   [env]
-  (when-let [db (:db-info env)]
-    (when-let [ws-id (or (:workspace/id env) (some-> env :workspace :id))]
-      (when-let [pair (workspace/workspace-with-session db ws-id)]
-        (workspace-ctx/render-block pair)))))
+  (let [db    (:db-info env)
+        ws-id (or (:workspace/id env) (some-> env :workspace :id))
+        pair  (when (and db ws-id)
+                (workspace/workspace-with-session db ws-id))]
+    (workspace-ctx/render-block
+      (or pair {:workspace (fallback-workspace env)}))))
 
 (defn- combined-ctx
   "Foundation-core's single `:ext/ctx` fn. Contributes the workspace
@@ -53,9 +60,9 @@
 
    The slim auto-pin `:session/env` digest (host / project / extensions)
    moved to `internal.env-digest` — it's core functionality, not
-   extension-owned. The fat `v/snapshot` tool stays here for deep-dive
-   callers. Legacy `(:project ctx)` contribution dropped (model never
-   needed the redundant blob; slim digest covers it)."
+   extension-owned. Workspace/VCS truth lives in `:session/workspace`.
+   The old redundant `(:project ctx)` contribution is gone; slim digest
+   covers it."
   [env]
   (let [ws-block (session-workspace-block env)]
     (cond-> {}
@@ -64,7 +71,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), env snapshot + project guidance (snapshot/repositories/git/languages/monorepo/main-agent-instructions). Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

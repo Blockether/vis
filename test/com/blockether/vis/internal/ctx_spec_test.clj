@@ -225,27 +225,35 @@
     (it "accepts empty map (no VCS detected yet)"
       (expect (s/valid? ::cs/workspace {})))
 
-    (it "accepts {:vcs/kind :none} for non-VCS sessions"
-      (expect (s/valid? ::cs/workspace {:vcs/kind :none})))
-
-    (it "accepts canonical :vcs/* keys"
+    (it "accepts rooted :vcs/kind :none for non-VCS sessions"
       (expect (s/valid? ::cs/workspace
-                {:vcs/kind :git :vcs/branch "master" :vcs/trunk "master"
+                {:workspace/root "/tmp/project"
+                 :workspace/sandbox? false
+                 :vcs/kind :none})))
+
+    (it "rejects bare {:vcs/kind :none} placeholder"
+      (expect (not (s/valid? ::cs/workspace {:vcs/kind :none}))))
+
+    (it "accepts canonical workspace + :vcs/* keys"
+      (expect (s/valid? ::cs/workspace
+                {:workspace/root "/repo" :workspace/sandbox? false
+                 :vcs/kind :git :vcs/ref "master" :vcs/mainline "master"
                  :vcs/head "abc" :vcs/dirty? true :vcs/stats {}})))
 
-    (it "accepts hg branch shape"
+    (it "accepts hg ref shape"
       (expect (s/valid? ::cs/workspace
-                {:vcs/kind :hg :vcs/branch "default" :vcs/head "rev"})))
+                {:workspace/root "/repo"
+                 :vcs/kind :hg :vcs/ref "default" :vcs/head "rev"})))
 
     (it "rejects bad :vcs/kind value"
       (expect (not (s/valid? ::cs/workspace {:vcs/kind :svn}))))
 
-    (it "rejects non-string :vcs/branch"
-      (expect (not (s/valid? ::cs/workspace {:vcs/branch 42}))))
+    (it "rejects non-string :vcs/ref"
+      (expect (not (s/valid? ::cs/workspace {:vcs/ref 42}))))
 
     (it "rejects negative :added in :vcs/stats"
       (expect (not (s/valid? ::cs/workspace
-                     {:vcs/branch "x" :vcs/trunk "y" :vcs/head "z"
+                     {:vcs/ref "x" :vcs/mainline "y" :vcs/head "z"
                       :vcs/dirty? false
                       :vcs/stats {"a.clj" {:added -1 :removed 0}}}))))))
 
@@ -348,7 +356,9 @@
                 {:session/id        "01HXYZ"
                  :session/turn      1
                  :session/scope     {:turn 1 :iter 1 :next-form 1}
-                 :session/workspace {:vcs/kind :none}
+                 :session/workspace {:workspace/root "/tmp/project"
+                                     :workspace/sandbox? false
+                                     :vcs/kind :none}
                  :session/symbols   {}
                  :session/specs     {}
                  :session/tasks     {}
@@ -358,7 +368,9 @@
     (it "rejects missing :session/scope cursor (required for proof orientation)"
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 1
-                      :session/workspace {:vcs/kind :none}
+                      :session/workspace {:workspace/root "/tmp/project"
+                                          :workspace/sandbox? false
+                                          :vcs/kind :none}
                       :session/symbols {}
                       :session/specs {} :session/tasks {} :session/facts {}
                       :session/trailer []}))))
@@ -367,7 +379,9 @@
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 1
                       :session/scope {:turn 1 :iter 1 :next-form 1}
-                      :session/workspace {:vcs/kind :none}
+                      :session/workspace {:workspace/root "/tmp/project"
+                                          :workspace/sandbox? false
+                                          :vcs/kind :none}
                       :session/symbols {}
                       :session/specs {} :session/tasks {}}))))
 
@@ -375,7 +389,9 @@
       (expect (not (s/valid? ::cs/ctx
                      {:session/id "x" :session/turn 0
                       :session/scope {:turn 1 :iter 1 :next-form 1}
-                      :session/workspace {:vcs/kind :none}
+                      :session/workspace {:workspace/root "/tmp/project"
+                                          :workspace/sandbox? false
+                                          :vcs/kind :none}
                       :session/symbols {}
                       :session/specs {} :session/tasks {} :session/facts {}
                       :session/trailer []}))))
@@ -385,7 +401,8 @@
                 {:session/id        "01HXYZ"
                  :session/turn      7
                  :session/scope     {:turn 7 :iter 3 :next-form 1}
-                 :session/workspace {:vcs/branch "feat/x" :vcs/trunk "main"
+                 :session/workspace {:workspace/root "/repo" :workspace/sandbox? true
+                                     :vcs/ref "feat/x" :vcs/mainline "main"
                                      :vcs/head "abc1234" :vcs/dirty? true
                                      :vcs/stats {"src/a.clj" {:added 5 :removed 2}}}
                  :session/symbols

@@ -1,17 +1,17 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-ctx
-  "Pre-turn `:session/workspace` CTX block. Canonical `:vcs/*` shape;
-   the `:git/*` aliases were retired.
+  "Pre-turn `:session/workspace` CTX block. Canonical workspace + VCS
+   shape. Workspace identity and VCS capability are separate axes.
 
-   The model reads `:session/workspace` to know what workspace is
-   focused, what trunk it FFs onto, and which commits are ahead. The
+   The model reads `:session/workspace` to know the active root,
+   sandbox flag, current VCS ref, mainline, and unmerged commits. The
    block is stamped once per turn at engine start; ctx_renderer
    serialises it into the prompt verbatim. Stale renders must not
    recompute on every iter.
 
-   `render-block` is a pure projection from a hydrated
-   `{:workspace ... :session-state ...}` pair plus optional VCS facts
-   gathered via JGit. Empty / non-VCS sessions render `{:vcs/kind :none}`
-   (matches engine `empty-ctx`)."
+   `render-block` projects a hydrated `{:workspace ... :session-state ...}`
+   pair plus optional VCS facts gathered via JGit. Non-VCS sessions render
+   a rooted workspace map: `{:workspace/root ... :workspace/sandbox? false
+   :vcs/kind :none}`."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -22,6 +22,7 @@
    [org.eclipse.jgit.diff DiffEntry DiffFormatter RawTextComparator]
    [org.eclipse.jgit.lib ObjectId Repository]
    [org.eclipse.jgit.revwalk RevWalk]
+   [org.eclipse.jgit.storage.file FileRepositoryBuilder]
    [org.eclipse.jgit.treewalk CanonicalTreeParser]))
 
 ;; =============================================================================
@@ -30,6 +31,37 @@
 
 (defn- open-git
   ^Git [dir] (Git/open (io/file dir)))
+
+(defn- canonical-path
+  [dir]
+  (some-> dir io/file .getCanonicalPath))
+
+(defn- discover-git-root
+  "Return enclosing git worktree root for `dir`, or nil when unsupported."
+  [dir]
+  (try
+    (let [builder (doto (FileRepositoryBuilder.)
+                    (.findGitDir (io/file dir))
+                    .readEnvironment)
+          git-dir (.getGitDir builder)]
+      (when git-dir
+        (with-open [repo (.build builder)]
+          (some-> repo .getWorkTree canonical-path))))
+    (catch Throwable _ nil)))
+
+(defn- current-ref
+  "Return current VCS ref name for git worktree `dir`, or nil."
+  [dir]
+  (try
+    (with-open [git (open-git dir)]
+      (.getBranch (.getRepository git)))
+    (catch Throwable _ nil)))
+
+(defn- non-vcs-block
+  [root]
+  (cond-> {:workspace/sandbox? false
+           :vcs/kind :none}
+    root (assoc :workspace/root root)))
 
 (defn- head-sha
   "Resolve HEAD in the worktree at `dir`. nil when not a repo or HEAD
@@ -159,49 +191,54 @@
   "Project a hydrated `{:workspace :session-state}` pair into the
    canonical `:session/workspace` CTX map.
 
-   Returns `{:vcs/kind :none}` when `workspace` is nil -- matches the
-   engine's `empty-ctx`.
+   When `workspace` is nil, falls back to the current cwd as workspace root
+   and still emits rooted workspace identity. Bare `{:vcs/kind :none}` is
+   never emitted.
 
-   :workspace/*  -- Vis identity (id, kind, label)
+   :workspace/*  -- Vis identity (id, root, sandbox?, label)
    :session/*    -- soul/state linkage + title + fork lineage
-   :vcs/*        -- git-side facts (branch, trunk, head, dirty?,
-                    stats, commits-ahead, ff-possible?). The
-                    discriminator is `:vcs/kind` (`:git` for now,
-                    `:hg` / `:jj` / `:fossil` plug in later; PLAN
-                    section 8)."
+   :vcs/*        -- VCS facts (ref, mainline, head, dirty?, stats,
+                    unmerged-commits, integrable?). The discriminator
+                    is `:vcs/kind` (`:none`, `:git`, `:hg`, `:jj`,
+                    `:fossil`)."
   [{:keys [workspace session-state]}]
-  (if (nil? workspace)
-    {:vcs/kind :none}
-    (let [repo-root (:repo-root workspace)
-          root      (:root workspace)
-          branch    (:branch workspace)
-          trunk     (when repo-root (workspace/detect-trunk-branch repo-root))
-          head      (when root (head-sha root))
-          dirty     (when root (dirty? root))
-          stats     (numstat-stats repo-root branch trunk)
-          ahead     (commits-ahead repo-root branch trunk)
-          ff?       (cond
-                      (= :trunk (:kind workspace))            false
-                      (and branch trunk)                       (ff-possible? repo-root branch trunk)
-                      :else                                    :unknown)]
-      (cond-> {:workspace/id    (:id workspace)
-               :workspace/kind  (:kind workspace)
-               :vcs/kind        :git
-               :vcs/branch      branch
-               :vcs/trunk       trunk
-               :vcs/head        head
-               :vcs/dirty?      dirty
-               :vcs/stats       stats
-               :vcs/commits-ahead ahead
-               :vcs/ff-possible? ff?}
-        (:label workspace)
-        (assoc :workspace/label (:label workspace))
+  (let [root     (canonical-path (or (:root workspace) (workspace/cwd)))
+        repo-root (or (:repo-root workspace) (discover-git-root root))]
+    (if (nil? repo-root)
+      (non-vcs-block root)
+      (let [ref       (or (:branch workspace) (current-ref root))
+            mainline  (workspace/detect-trunk-branch repo-root)
+            sandbox?  (= :branch (:kind workspace))
+            head      (when root (head-sha root))
+            dirty     (when root (dirty? root))
+            stats     (numstat-stats repo-root ref mainline)
+            unmerged  (commits-ahead repo-root ref mainline)
+            integrable? (cond
+                          (not sandbox?)       false
+                          (and ref mainline)   (ff-possible? repo-root ref mainline)
+                          :else                :unknown)]
+        (cond-> {:workspace/id       (:id workspace)
+                 :workspace/root     root
+                 :workspace/sandbox? sandbox?
+                 :vcs/kind           :git
+                 :vcs/ref            ref
+                 :vcs/mainline       mainline
+                 :vcs/head           head
+                 :vcs/dirty?         dirty
+                 :vcs/stats          stats
+                 :vcs/unmerged-commits unmerged
+                 :vcs/integrable?    integrable?}
+          (:parent-id workspace)
+          (assoc :workspace/parent-id (:parent-id workspace))
 
-        session-state
-        (merge
-          {:session/state-id (:id session-state)
-           :session/id       (:session-soul-id session-state)
-           :session/title    (or (:title session-state) "Untitled")}
-          (when-let [pid (:parent-state-id session-state)]
-            {:session/fork-of {:soul         (:session-soul-id session-state)
-                               :parent-state pid}}))))))
+          (:label workspace)
+          (assoc :workspace/label (:label workspace))
+
+          session-state
+          (merge
+            {:session/state-id (:id session-state)
+             :session/id       (:session-soul-id session-state)
+             :session/title    (or (:title session-state) "Untitled")}
+            (when-let [pid (:parent-state-id session-state)]
+              {:session/fork-of {:soul         (:session-soul-id session-state)
+                                 :parent-state pid}})))))))

@@ -107,7 +107,8 @@
    :session/turn  3
    :session/scope {:turn 3 :iter 1 :next-form 1}
    :session/workspace
-   {:vcs/branch "main" :vcs/trunk "main" :vcs/head "x"
+   {:workspace/root "/repo" :workspace/sandbox? false
+    :vcs/ref "main" :vcs/mainline "main" :vcs/head "x"
     :vcs/dirty? false :vcs/stats {}}
    :session/symbols {}
    :session/specs
