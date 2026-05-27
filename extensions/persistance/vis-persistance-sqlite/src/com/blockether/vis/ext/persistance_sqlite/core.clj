@@ -1587,10 +1587,10 @@
                           ;; canonical boundary in svar 0.6+, so this is a safe
                           ;; compute even when the accumulator did not surface it.
                           true                             (assoc :input_regular_tokens
-                                                            (long (or (:input-regular tokens)
-                                                                    (max 0 (- (long (or (:input tokens) 0))
-                                                                             (long (or cache-created-tokens 0))
-                                                                             (long (or (:cached tokens) 0)))))))
+                                                             (long (or (:input-regular tokens)
+                                                                     (max 0 (- (long (or (:input tokens) 0))
+                                                                              (long (or cache-created-tokens 0))
+                                                                              (long (or (:cached tokens) 0)))))))
                           (some? cache-created-tokens)     (assoc :input_cache_write_tokens (long cache-created-tokens))
                           (some? (:cached tokens))         (assoc :input_cache_read_tokens  (long (:cached tokens)))
                           (some? (:output tokens))         (assoc :output_tokens            (long (:output tokens)))

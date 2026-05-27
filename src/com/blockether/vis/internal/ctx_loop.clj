@@ -202,11 +202,11 @@
           (assoc c :engine/warnings [])))
       @ws)))
 
-(defn- title-gate-warning
-  "Phase D: integration-layer title-gate. Pure helper.
+(defn- title-gate-blocker
+  "Phase G: integration-layer title-gate. Pure helper.
 
-   Returns a warning map when `(done ...)` should be REFUSED, or nil
-   to proceed. Fires when ALL hold:
+   Returns a plan-blocker map (`:id :reason :remedy`) when `(done ...)`
+   should be REFUSED, or nil to proceed. Fires when ALL hold:
      - enforce? is truthy (opt-in flag the host sets when it cares
        about a labelled session — e.g. interactive TUI),
      - turn-pos == 1 (only enforcement point; later turns can re-tag
@@ -218,19 +218,24 @@
    sets `:enforce-title-gate? true` when wiring `apply-done!`.
 
    Kept in ctx-loop, not the engine, so `eng/apply-done` stays pure
-   and `empty-ctx` (which seeds `:session/turn 1`) never trips the gate."
+   and `empty-ctx` (which seeds `:session/turn 1`) never trips the gate.
+
+   The returned blocker rides into `:engine/blockers` which
+   `eng/derive-plan` folds into `:session/plan` as a first-class
+   `{:kind :blocker :status :blocked ...}` entry. The model reads it
+   as EDN data, NOT as a trailing line-comment buried after the
+   ctx map's closing brace."
   [turn-pos session-title enforce?]
   (let [title-str (some-> session-title str clojure.string/trim)
         missing?  (and (true? enforce?)
                     (= 1 (long (or turn-pos 0)))
                     (or (nil? title-str) (clojure.string/blank? title-str)))]
     (when missing?
-      {:code    :done-blocked-by-missing-title
-       :anchor  []
-       :message (str "done refused: session title is blank on turn 1. "
-                  "Emit `(set-session-title! \"3-7-word noun phrase\")` as "
-                  "a top-level form before `(done ...)`. The title labels "
-                  "the session in the channel UI and indexes it in history.")})))
+      {:id     :missing-title
+       :reason (str "Session title is blank on turn 1. The title labels "
+                 "the session in the channel UI and indexes it in history. "
+                 "Set it BEFORE `(done ...)` will be accepted.")
+       :remedy '(set-session-title! "3-7-word noun phrase")})))
 
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`.
@@ -256,23 +261,36 @@
                                       user-request turn-summary
                                       session-title enforce-title-gate?
                                       trailer-drop trailer-summarize archive]}]
-  (let [start-ms   (System/nanoTime)
-        cursor     (cursor-snapshot env)
-        scope      (synthesize-scope env)
-        warns      (atom [])
-        blocked?   (atom false)
-        ctx-now    (when ctx-atom @ctx-atom)
-        title-warn (title-gate-warning (:session/turn ctx-now)
-                     session-title enforce-title-gate?)]
+  (let [start-ms      (System/nanoTime)
+        cursor        (cursor-snapshot env)
+        scope         (synthesize-scope env)
+        warns         (atom [])
+        blocked?      (atom false)
+        ctx-now       (when ctx-atom @ctx-atom)
+        title-blocker (title-gate-blocker (:session/turn ctx-now)
+                        session-title enforce-title-gate?)]
+    ;; Phase G: refresh gate-blockers based on CURRENT state at every
+    ;; apply-done call. The :missing-title blocker is dropped first so
+    ;; a model that did `(set-session-title! "...")` then `(done ...)`
+    ;; in the same fence sees a clean plan — the blocker only re-lands
+    ;; below when the gate STILL refuses with current inputs.
+    (when ctx-atom
+      (swap! ctx-atom update :engine/blockers
+        (fn [bs] (vec (remove #(= :missing-title (:id %)) (or bs []))))))
     (cond
-      ;; Phase D title-gate short-circuits BEFORE the engine swap so
+      ;; Phase G title-gate short-circuits BEFORE the engine swap so
       ;; auto-fact + trailer mutations are not applied for a refused close.
-      title-warn
+      ;; The blocker is pushed into `:engine/blockers` so the NEXT iter's
+      ;; `eng/derive-plan` surfaces it as a first-class `:session/plan`
+      ;; entry (NOT a trailing line-comment).
+      title-blocker
       (do
-        (reset! warns [title-warn])
+        (reset! warns [{:code :done-blocked-by-missing-title
+                        :anchor [(:id title-blocker)]
+                        :message (:reason title-blocker)}])
         (reset! blocked? true)
         (when ctx-atom
-          (swap! ctx-atom update :engine/warnings (fnil conj []) title-warn))
+          (swap! ctx-atom update :engine/blockers (fnil conj []) title-blocker))
         (tel/log! {:level :warn :id ::apply-done-title-blocked
                    :data {:turn (:session/turn ctx-now)}}
           "apply-done blocked by missing title"))
@@ -496,7 +514,7 @@
           drained-warns  (drain-warnings! env)
           derived-warns  (eng/derive-warnings ctx* idx fr)
           warns          (vec (concat drained-warns derived-warns))
-          acts           (eng/derive-next-actions ctx* idx prog)]
+          acts           (eng/derive-plan ctx* idx prog)]
       (renderer-fn {:ctx ctx* :warnings warns
                     :progression prog :next-actions acts}))))
 

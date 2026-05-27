@@ -158,12 +158,31 @@
                             :success? true :silent? false}]}
                   80 1 {})
           body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) lines))]
-      ;; Neither raw code row paints; the bubble is just the LS
-      ;; preview (badge + body).
+      ;; Neither raw code row paints; collapsed tool preview shows badge only.
       (expect (not (str/includes? body "(select-keys")))
       (expect (not (str/includes? body "(def r (v/ls")))
-      (expect (str/includes? body "LS"))
-      (expect (str/includes? body ".gitignore"))))
+      (expect (str/includes? body "> LS"))
+      (expect (not (str/includes? body ".gitignore")))
+      (let [expanded-lines (format-iteration-entry
+                             {:iteration 0
+                              :forms [{:code (str "(def r (v/ls \".\"))\n"
+                                               "(select-keys r [:entry-count :file-count])")
+                                       :comment nil
+                                       :render-segments [{:kind :code
+                                                          :source "(def r (v/ls \".\"))"}
+                                                         {:kind :code
+                                                          :source "(select-keys r [:entry-count :file-count])"}]
+                                       :result-render ls-ir
+                                       :result-kind   :tool
+                                       :result-detail nil
+                                       :error nil :started-at-ms nil :duration-ms 1
+                                       :success? true :silent? false}]}
+                             80 1 {:session-id "s"
+                                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                                   :detail-expansions {["s" "iteration:t123e4567:i1:b1:result"] true}})
+            expanded-body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) expanded-lines))]
+        (expect (str/includes? expanded-body "v LS"))
+        (expect (str/includes? expanded-body ".gitignore")))))
 
   (it "renders hidden-code tool footer with scope on the left and duration on the right"
     (let [ir [:ir {} [:p {} [:span {} "PATCH  1 file  changed=1"]]]
@@ -1359,10 +1378,10 @@
       (expect (str/includes? (:text payload) "1 file changed"))
       (expect (not (str/includes? (:text payload) "MUTATION patch")))))
 
-  (it "renders huge patch result inline without retired MUTATION badge"
-    ;; Per user directive: huge tool results paint fully inline with
-    ;; their channel-render body — no `▸` collapse glyph, no duplicate
-    ;; badges. Operation labels were retired; body speaks for itself.
+  (it "renders huge patch result behind canonical badge disclosure"
+    ;; Tool bodies default collapsed. Badge/head row stays visible with
+    ;; chevron, body opens through :toggle-details. Operation labels remain
+    ;; retired; first result line speaks for itself.
     (render/invalidate-cache!)
     (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))
           trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render huge-result :result-kind :tool :result-detail {:op :v/patch
@@ -1374,9 +1393,9 @@
                          :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
       (expect (not (str/includes? body "MUTATION patch")))
-      (expect (str/includes? body "Patched file."))
+      (expect (str/includes? body "> Patched file."))
       (expect (not-any? #(str/starts-with? (body-of %) "▸ MUTATION patch") (:lines payload)))
-      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
+      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
