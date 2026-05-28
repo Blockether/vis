@@ -91,7 +91,7 @@
         (it "renderer surfaces trailer pins inline"
           (let [text (renderer/render-ctx
                        {:ctx ctx :warnings []
-                        :progression {} :next-actions []})]
+                        :progression {} :stages []})]
             (expect (str/includes? text ":session/trailer"))
             (expect (str/includes? text ":critique"))
             (expect (str/includes? text ":research"))))))))

@@ -6,7 +6,7 @@
    The pure subset:
      parse-scope-form, scope-compare, classify-scope, build-indexes,
      depends-on-cycle?, derive-progression, derive-warnings,
-     derive-plan, apply-mutator, apply-done,
+     derive-stages, apply-mutator, apply-done,
      reconcile-done-hook-tasks, advance-iter, enter-turn, gc-pass,
      introspect-*.
 
@@ -28,7 +28,7 @@
      (derive-warnings ctx indexes)
        → [{:level :anchor :code :message} …]   sorted, deduped
 
-     (derive-plan ctx indexes progression last-mutation-map)
+     (derive-stages ctx indexes progression last-mutation-map)
        → [{:type :target :priority :hint} …]   top-N ranked
 
      (apply-mutator ctx form-scope mutator args)
@@ -1415,7 +1415,7 @@
      vec)))
 
 ;; =============================================================================
-;; derive-plan — flat ordered vec of plan-entries for the current iter
+;; derive-stages — flat ordered vec of plan-entries for the current iter
 ;; =============================================================================
 ;;
 ;; Order is the priority. NO `:priority` enum field anywhere. Tasks
@@ -1463,36 +1463,25 @@
       {}
       (keys tasks))))
 
-(defn- derive-actions
-  "Build the actions tail of the plan. Returns a vec of plan-entries
-   shaped `{:kind :id :status :batch :reason :remedy}`. NO `:priority`
-   field — ordering signal is `:batch` (topological depth) + insertion
-   order within the same batch.
-
-   `:batch` semantics (the PARALLELISM signal for the model):
-     Entries with the SAME `:batch` value have NO dependency between
-     them — the model SHOULD execute them in ONE fence (parallel
-     within an iteration). Entries with a HIGHER `:batch` value
-     depend (transitively) on at least one lower-batch entry; they
-     must wait until the prior batches complete.
-
-     :batch 0    blockers (gate refusals + consistency repairs).
-                 All blockers are independent and can be fixed in
-                 the same fence.
-     :batch 1+   work entries at increasing topological depth.
-                 Depth 1 = no task deps (leaf); depth 2 = one
-                 task-dep level; ...
+(defn- collect-stage-entries
+  "Build the flat sequence of stage entries (each `{:kind :id :status
+   :reason :remedy :stage-rank}`). `:stage-rank` is internal — it is
+   the topological depth used to group entries into stages later.
+   Stripped from the public output by `derive-stages`.
 
    Entry kinds:
      :fix-consistency      — spec :done with unproven; task :done with
-                             pending dep. `:status :blocked`, `:batch 0`.
+                             pending dep. `:status :blocked`, rank 0.
      :work-unblocked-todo  — task :todo with all deps terminal.
-     :prove-requirement    — spec :partial / :open req without proof."
+                             Rank = topo-depth + 1 (rank 0 reserved).
+     :prove-requirement    — spec :partial / :open req without proof.
+                             Rank = max-task-depth + 2."
   [ctx indexes progression]
   (let [{:keys [task-status dep-graph]} indexes
         specs (or (:session/specs ctx) {})
         tasks (or (:session/tasks ctx) {})
         topo  (topo-rank-tasks tasks)
+        max-depth (apply max 0 (vals topo))
         task-deps (fn [task-id]
                     (into #{}
                       (keep (fn [[k id]] (when (= :task k) id)))
@@ -1502,25 +1491,25 @@
               :let [p (get progression spec-id)]
               :when (and p (= (:state p) :partial)
                       (= :done (get-in specs [spec-id :status])))]
-          {:kind   :fix-consistency
-           :id     spec-id
-           :status :blocked
-           :batch  0
-           :reason (str "spec " spec-id " :done but " (count (:missing p))
-                     " req(s) unproven: " (vec (sort (:missing p))))
-           :remedy (list (symbol "spec-set!") spec-id {:status :open})})
+          {:kind       :fix-consistency
+           :id         spec-id
+           :status     :blocked
+           :stage-rank 0
+           :reason     (str "spec " spec-id " :done but " (count (:missing p))
+                         " req(s) unproven: " (vec (sort (:missing p))))
+           :remedy     (list (symbol "spec-set!") spec-id {:status :open})})
         consistency-task
         (for [[task-id task] tasks
               :when (= :done (:status task))
               d (or (:depends-on task) [])
               :let [dep (get tasks d)]
               :when (and (some? dep) (not (task-terminal? (:status dep))))]
-          {:kind   :fix-consistency
-           :id     task-id
-           :status :blocked
-           :batch  0
-           :reason (str "task " task-id " :done but dep " d " is " (:status dep))
-           :remedy (list (symbol "task-set!") task-id {:status :doing})})
+          {:kind       :fix-consistency
+           :id         task-id
+           :status     :blocked
+           :stage-rank 0
+           :reason     (str "task " task-id " :done but dep " d " is " (:status dep))
+           :remedy     (list (symbol "task-set!") task-id {:status :doing})})
         todo
         (for [[task-id task] tasks
               :when (= :todo (:status task))
@@ -1529,73 +1518,77 @@
                                         (or (nil? s) (task-terminal? s)))
                                deps)]
               :when deps-ok?]
-          {:kind   :work-unblocked-todo
-           :id     task-id
-           :status :ready
-           ;; Topo depth + 1 so leaf tasks land in :batch 1
-           ;; (batch 0 is reserved for blockers + consistency repairs).
-           :batch  (inc (long (or (topo task-id) 0)))
-           :reason (str "task " task-id " is :todo with all deps :done/:cancelled")
-           :remedy (list (symbol "task-set!") task-id {:status :doing})})
+          {:kind       :work-unblocked-todo
+           :id         task-id
+           :status     :ready
+           :stage-rank (inc (long (or (topo task-id) 0)))
+           :reason     (str "task " task-id " is :todo with all deps :done/:cancelled")
+           :remedy     (list (symbol "task-set!") task-id {:status :doing})})
         prove
         (for [[spec-id _] specs
               :let [p (get progression spec-id)]
               :when (and p (#{:partial :open} (:state p)))
               rid (sort (:missing p))]
-          {:kind   :prove-requirement
-           :id     [spec-id rid]
-           :status :ready
-           ;; Prove suggestions don't lock execution order on each other,
-           ;; so they share the deepest task batch + 1 — model handles
-           ;; them once concrete task work clears.
-           :batch  (inc (apply max 1 (vals topo)))
-           :reason (str "spec " spec-id " req " rid " needs a task proof")
-           :remedy (list (symbol "proof-add!") spec-id rid)})]
-    (vec
-      (concat
-        (sort-by (comp str :id) consistency-spec)
-        (sort-by (comp str :id) consistency-task)
-        (sort-by (juxt :batch (comp str :id)) todo)
-        (sort-by (comp str :id) prove)))))
+          {:kind       :prove-requirement
+           :id         [spec-id rid]
+           :status     :ready
+           :stage-rank (+ 2 max-depth)
+           :reason     (str "spec " spec-id " req " rid " needs a task proof")
+           :remedy     (list (symbol "proof-add!") spec-id rid)})]
+    (concat consistency-spec consistency-task todo prove)))
 
-(defn derive-plan
-  "Phase G: the single derived view of \"what should happen this iter\".
-   Returns a flat vec of plan-entry maps. Blockers from
-   `:engine/blockers` come first (`:status :blocked`); actions follow
-   in topological dep order. NO `:priority` field — ordering IS the
-   priority. Tasks link to each other via `:depends-on` and the plan
-   reflects that order verbatim.
+(defn derive-stages
+  "Phase H: the single derived view of what should happen this iter.
+   Returns a vec-of-vecs — outer index is the STAGE number, inner vec
+   holds entries that are parallel-safe within that stage.
 
-   Replaces the legacy triplet (`:session/timeline` +
-   `:session/orphans` + `:session/next-actions`) — the model walks
-   ONE ordered list instead of cross-referencing three derived views.
+   Shape:
+     [;; stage 0 — emit all :remedy in ONE fence
+      [{:kind :blocker :id ... :status :blocked :reason :remedy} ...]
+      ;; stage 1 — after stage 0 completes
+      [{:kind :work-unblocked-todo :id ... :status :ready :reason :remedy} ...]
+      ;; stage 2 — after stage 1 completes
+      [...]]
 
-   Plan-entry shape:
+   Stage 0 = blockers from `:engine/blockers` + `:fix-consistency`
+   repairs. All independent; the model SHOULD emit every entry
+   `:remedy` as a top-level form in the same fence.
+
+   Stage 1+ = work entries at increasing `:depends-on` depth
+   (`topo-rank-tasks` over `:session/tasks`). Same-stage entries are
+   independent; cross-stage entries serialise.
+
+   Entry shape (per stage member):
      {:kind   :blocker | :fix-consistency | :work-unblocked-todo
               | :prove-requirement
       :id     <entity-id or blocker-id>
       :status :blocked | :ready | :doing
-      :batch  <long>   ; topological depth; same-batch entries are
-                       ; parallel-safe (model executes in ONE fence).
-                       ; Batch 0 = blockers + consistency repairs;
-                       ; batch 1+ = work in :depends-on dep order.
       :reason <short prose explanation>
-      :remedy <quoted form the model should execute next>}
+      :remedy <quoted form the model should execute>}
+
+   No `:batch` / `:priority` / `:stage-rank` fields on output — stage
+   structure IS the parallelism signal, no per-entry duplicate.
 
    Sources:
-     - `:engine/blockers` (integration-layer push: title-gate,
-       consult-gate, future hard refusals)
-     - `:session/tasks` :todo with deps satisfied, topologically sorted
+     - `:engine/blockers` (integration-layer push: title-gate, etc.)
+     - `:session/tasks` :todo with deps satisfied
      - `:session/specs` :partial / :open reqs lacking proofs
      - Spec :done with unproven reqs / task :done with pending dep
-       — consistency repairs (`:status :blocked`)"
-  ([ctx indexes progression] (derive-plan ctx indexes progression {}))
+       — consistency repairs (stage 0)"
+  ([ctx indexes progression] (derive-stages ctx indexes progression {}))
   ([ctx indexes progression _last-mutation-map]
-   (let [blockers (mapv (fn [b] (assoc b :kind :blocker :status :blocked :batch 0))
-                    (or (:engine/blockers ctx) []))
-         actions  (derive-actions ctx indexes progression)]
-     (vec (concat blockers actions)))))
+   (let [blockers       (mapv (fn [b] (assoc b :kind :blocker :status :blocked
+                                         :stage-rank 0))
+                          (or (:engine/blockers ctx) []))
+         action-entries (collect-stage-entries ctx indexes progression)
+         all-entries    (concat blockers action-entries)
+         by-rank        (sort-by key (group-by :stage-rank all-entries))
+         strip          (fn [e] (dissoc e :stage-rank))]
+     (vec
+       (for [[_rank entries] by-rank]
+         (vec (sort-by (comp str :id) (map strip entries))))))))
 
+;; =============================================================================
 ;; advance-iter / enter-turn / gc-pass
 ;; =============================================================================
 

@@ -233,12 +233,12 @@
                        fresh by definition).
 
    Phase G fix: both blockers are SOFT signals — they ride into
-   `:engine/blockers` (→ `:session/plan` head as a first-class entry),
+   `:engine/blockers` (→ `:session/stages` head as a first-class entry),
    but `apply-done!` no longer hard-refuses the done. The retry-loop
    forensics (session c4eb7bab t2: 7 wasted iters because the model
    couldn't see the buried `;; ⚠` hint and kept resubmitting the same
    refused `(done ...)`) made hard refusal too risky. The new contract:
-   model sees the blocker as DATA in `:session/plan`, the system prompt
+   model sees the blocker as DATA in `:session/stages`, the system prompt
    instructs to handle it, but a determined model can still ship its
    answer. Loud signal, no infinite-loop trap.
 
@@ -332,7 +332,7 @@
     ;; Phase G fix: SOFT signal only. Even when the gate fires, we still
     ;; let `eng/apply-done` run so the answer ships, the auto-fact lands,
     ;; trailer pins / archive apply. The blocker rides into
-    ;; `:engine/blockers` (→ next turn's `:session/plan` head) so the
+    ;; `:engine/blockers` (→ next turn's `:session/stages` head) so the
     ;; model sees it but is NOT trapped in a retry loop on this turn.
     (when (and ctx-atom title-blocker)
       (swap! ctx-atom update :engine/blockers (fnil conj []) title-blocker)
@@ -341,7 +341,7 @@
                          :message (:reason title-blocker)})
       (tel/log! {:level :warn :id ::apply-done-blocker-noted
                  :data {:turn live-turn-pos :blocker-id (:id title-blocker)}}
-        "apply-done shipping answer with active blocker noted in :session/plan"))
+        "apply-done shipping answer with active blocker noted in :session/stages"))
     (when ctx-atom
       (swap! ctx-atom
         (fn [c]
@@ -569,9 +569,9 @@
           drained-warns  (drain-warnings! env)
           derived-warns  (eng/derive-warnings ctx* idx fr)
           warns          (vec (concat drained-warns derived-warns))
-          acts           (eng/derive-plan ctx* idx prog)]
+          stages         (eng/derive-stages ctx* idx prog)]
       (renderer-fn {:ctx ctx* :warnings warns
-                    :progression prog :next-actions acts}))))
+                    :progression prog :stages stages}))))
 
 ;; =============================================================================
 ;; Introspect verbs — model-facing SCI bindings over engine history helpers

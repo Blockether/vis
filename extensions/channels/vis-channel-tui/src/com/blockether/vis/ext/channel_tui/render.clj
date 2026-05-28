@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.render
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.core :as vis]
 
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
@@ -3153,6 +3154,49 @@
   (cond-> s
     rate-limit? (str " — " rate-limit-recovery-hint)))
 
+(def ^:private auth-recovery-hint
+  "re-authenticate provider or update API key")
+
+(defn- parse-provider-body
+  [body]
+  (when (and (string? body) (not (str/blank? body)))
+    (try
+      (json/read-json body :key-fn keyword)
+      (catch Throwable _ nil))))
+
+(defn- provider-body-message
+  [body]
+  (let [parsed (parse-provider-body body)]
+    (or (get-in parsed [:error :message])
+      (:message parsed))))
+
+(defn- generic-provider-wrapper-message?
+  [message]
+  (boolean
+    (when-let [text (some-> message str str/lower-case)]
+      (or (str/includes? text "exceptional status code")
+        (str/includes? text "provider error http")))))
+
+(defn- auth-provider-error?
+  [status provider-message wrapper-message body]
+  (let [text (str (or provider-message "") "\n" (or wrapper-message "") "\n" (or body ""))]
+    (boolean
+      (or (contains? #{401 403} status)
+        (re-find #"(?i)(authentication|unauthorized|forbidden|credential|api[ -]?key|access[ -]?token|expired token|invalid token)"
+          text)))))
+
+(defn- provider-next-step
+  [status]
+  (cond
+    (contains? #{401 403} status)
+    (str "NEXT STEP: " auth-recovery-hint
+      " (Ctrl+K -> Model / Providers; CLI: vis providers auth).")
+
+    (= 429 status)
+    (str "NEXT STEP: " rate-limit-recovery-hint ".")
+
+    :else nil))
+
 (defn- format-fallback-notice
   [{:keys [reason failed-provider new-provider] :as notice}]
   (let [event? (contains? notice :event/type)
@@ -3275,13 +3319,28 @@
   [error]
   (let [data (:data error)]
     (when (and (map? error) (or (:status data) (:body data) (:request-id data) (:request_id data)))
-      (let [status (:status data)
-            msg    (or (:message error) (some-> (:body data) str str/trim) (str (:type error)) "provider error")]
-        (append-rate-limit-hint
-          (str "Provider error" (when status (str " HTTP " status)) ": " msg)
-          (or (= 429 status)
-            (rate-limit-text? msg)
-            (rate-limit-text? (:body data))))))))
+      (let [status           (:status data)
+            body             (some-> (:body data) str str/trim)
+            provider-message (provider-body-message body)
+            wrapper-message  (:message error)
+            auth?            (auth-provider-error? status provider-message wrapper-message body)
+            rate-limit?      (or (= 429 status)
+                               (rate-limit-text? provider-message)
+                               (rate-limit-text? wrapper-message)
+                               (rate-limit-text? body))
+            msg              (or provider-message
+                               (when-not (generic-provider-wrapper-message? wrapper-message) wrapper-message)
+                               (str (:type error))
+                               "provider error")]
+        (cond
+          auth?
+          (str "Provider auth failed" (when status (str " HTTP " status)) " — " auth-recovery-hint)
+
+          rate-limit?
+          (str "Provider rate-limited" (when status (str " HTTP " status)) " — " rate-limit-recovery-hint)
+
+          :else
+          (str "Provider error" (when status (str " HTTP " status)) ": " msg))))))
 
 (defn- recap-kind-of
   "Tag a raw recap row with its kind by reading the leading badge
@@ -3517,15 +3576,26 @@
                   body              (some-> (:body data) str str/trim)
                   status            (:status data)
                   request-id        (or (:request-id data) (:request_id data))
+                  provider-message  (provider-body-message body)
+                  auth?             (auth-provider-error? status provider-message (:message error) body)
+                  actionable?       (or auth? (= 429 status))
+                  parsed-body?      (some? (parse-provider-body body))
+                  next-step         (provider-next-step status)
                   invalid-thinking? (and body (re-find #"(?i)invalid.*signature.*thinking block" body))
                   provider-rows     (when provider-error?
                                       (mapv #(line-entry (str err-result-marker %))
                                         (mapcat #(wrap-text % fill-w)
-                                          (cond-> [(str "PROVIDER_ERROR" (when status (str "  HTTP " status))
-                                                     (when request-id (str "  " request-id)))]
+                                          (cond-> (cond-> []
+                                                    (not actionable?)
+                                                    (conj (str "PROVIDER_ERROR" (when status (str "  HTTP " status))
+                                                            (when request-id (str "  " request-id)))))
                                             invalid-thinking?
                                             (conj "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a thinking block with a signature that is not valid for Anthropic. This usually means preserved-thinking from another provider/model was replayed into Anthropic.")
-                                            (and body (not (str/blank? body)))
+                                            (and provider-message (not invalid-thinking?))
+                                            (conj (str "Provider message: " provider-message))
+                                            next-step
+                                            (conj next-step)
+                                            (and body (not (str/blank? body)) (not actionable?) (not parsed-body?))
                                             (conj (str "provider response: " (if (> (count body) 1200)
                                                                                (str (subs body 0 1200) "...")
                                                                                body)))))))
