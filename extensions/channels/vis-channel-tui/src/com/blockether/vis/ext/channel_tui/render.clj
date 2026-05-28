@@ -3417,31 +3417,27 @@
       :else "")))
 
 (defn- segment->recap-text
-  "Compact one-line summary for a single ctx-mutation render
-   segment. Returns nil for kinds the recap channel doesn't surface
-   (e.g. plain `:code`)."
-  [{:keys [kind value id status proof title]}]
-  (let [status-glyph (case status
-                       :done       "✓ "
-                       :cancelled  "× "
-                       (:todo :doing) "… "
-                       "")]
-    (case kind
-      :title         (if (str/blank? (str value))
-                       "TITLE  (cleared)"
-                       (str "TITLE  \"" value "\""))
-      :task-update   (str "TASK   " status-glyph
-                       (when id (pr-str id))
-                       (when status (str "  :" (name status)))
-                       (when title (str "  \"" title "\""))
-                       (when proof (str "  proof " proof)))
-      :spec-update   (str "SPEC   "
-                       (when id (pr-str id))
-                       (when status (str "  :" (name status))))
-      :fact-update   (str "FACT   "
-                       (when id (pr-str id))
-                       (when status (str "  :" (name status))))
-      nil)))
+  "Compact one-line summary for a single ctx-mutation render segment
+   shown INLINE per form (above the code block).
+
+   Phase H dedup: returns nil for `:task-update` / `:spec-update` /
+   `:fact-update` because those land at iter-bottom as `RECAP Task / Spec
+   / Fact` rows via `chat.clj render-segment-recaps`. Showing them BOTH
+   inline AND in the recap section duplicates every ctx mutation on
+   screen — the same `(task-set! :K {:status :cancelled})` form would
+   produce a TASK badge above the code AND a RECAP Task row below it.
+   The end-of-iter recap is the canonical aggregate; the inline badge
+   was redundant noise.
+
+   `:title` still surfaces inline because the title is a session-level
+   property the user expects to see change in real time, and there is
+   typically only one title change per turn (so no aggregation help)."
+  [{:keys [kind value]}]
+  (case kind
+    :title (if (str/blank? (str value))
+             "TITLE  (cleared)"
+             (str "TITLE  \"" value "\""))
+    nil))
 
 (defn- render-segment-title-entries
   "Recap rows for ctx-mutation render segments. Covers title /
