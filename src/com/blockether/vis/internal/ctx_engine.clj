@@ -1623,8 +1623,12 @@
 
 (defn- repeated-retry-entries
   "Tasks with REPEATED_RETRY_THRESHOLD+ entries in :archived-proofs.
-   Model has been retrying the same task with proofs that keep failing
-   validation \u2014 the validator-fn likely needs an audit."
+   Validator-fn kept rejecting model's proofs, so the strategy is
+   wrong. The :archived-proofs vec is ALREADY visible on the raw task
+   entity in :session/tasks (each entry has :proof :reason) — no
+   introspection needed. :remedy is a real write: cancel the task
+   with a reason, or model can change strategy and (task-set!) it back
+   to :doing with a fresh approach."
   [ctx]
   (let [tasks (or (:session/tasks ctx) {})]
     (for [[task-id task] tasks
@@ -1635,16 +1639,26 @@
        :id         task-id
        :status     :ready
        :stage-rank :advisory
-       :reason     (str "task " task-id " has " n " archived (rejected) proofs. "
-                     "The validator-fn likely needs an audit \u2014 the strategy "
-                     "is producing repeatedly-rejected evidence.")
-       :remedy     (list 'introspect-failed-proofs task-id)})))
+       :reason     (str "task " task-id " has " n " archived (rejected) proofs "
+                     "(see :archived-proofs on the task in :session/tasks). "
+                     "The validator-fn or strategy is wrong. Cancel and "
+                     "restart with a different approach, or audit the "
+                     "validator-fn source.")
+       :remedy     (list (symbol "task-set!") task-id
+                     {:status :cancelled
+                      :reason "..."})})))
 
 (defn- duplicate-observation-entries
   "Trailer pins with the SAME (v/<symbol> ...) :form AND identical
    :result across 2+ iters. Model re-probed but file/state did NOT
    change. Groups by (form, result-hash) so a genuine re-probe with
    DIFFERENT result (e.g. file changed) does NOT trigger.
+
+   The duplicate forms are STILL IN :session/trailer — model can read
+   them directly without any introspect call. There is no `:remedy`
+   form to execute; the advisory is awareness only. Model should
+   reference the earlier scope in its own reasoning instead of
+   re-emitting the same probe.
 
    Result comparison uses (hash result) for bounded comparison cost
    on large payloads."
@@ -1665,9 +1679,12 @@
        :stage-rank :advisory
        :reason     (str "observation " form-str " ran " (count dup-forms)
                      " times with IDENTICAL result (scopes: " (pr-str scopes)
-                     "). Reuse via (introspect-form "
-                     (pr-str (first scopes)) ") instead of re-probing.")
-       :remedy     (list 'introspect-form (first scopes))})))
+                     "). The pin is already in :session/trailer at "
+                     (pr-str (first scopes)) " — read it from there, "
+                     "do NOT re-emit the same probe.")
+       ;; No remedy form — the action is "don't repeat the probe".
+       ;; Reading from trailer is not a form the engine can quote.
+       :remedy     nil})))
 
 (defn- collect-stage-entries
   "Build the flat sequence of stage entries (each `{:kind :id :status
