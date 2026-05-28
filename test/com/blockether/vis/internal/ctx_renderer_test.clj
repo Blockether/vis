@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.ctx-renderer-test
   "Phase G renderer tests. Asserts the prompt-side derived view: pure EDN
-   body, single `:session/plan` section (replacing the legacy
+   body, single `:session/stages` section (replacing the legacy
    :session/timeline + :session/orphans + :session/next-actions triplet),
    NO trailing `;; …` line-comment annotations, trailer pins keep `:form`
    as native Clojure list (no `;; src` verbatim block)."
@@ -38,8 +38,8 @@
 (defn- render [ctx]
   (let [idx  (eng/build-indexes ctx)
         prog (eng/derive-progression ctx idx)
-        plan (eng/derive-plan ctx idx prog)]
-    (r/render-ctx {:ctx ctx :progression prog :next-actions plan})))
+        plan (eng/derive-stages ctx idx prog)]
+    (r/render-ctx {:ctx ctx :progression prog :stages plan})))
 
 (defdescribe render-ctx-structural-test
   (describe "render-ctx structural output"
@@ -61,9 +61,9 @@
                     (idx-of ":session/scope")
                     (idx-of ":session/workspace")
                     (idx-of ":session/trailer")
-                    (idx-of ":session/plan")))))
+                    (idx-of ":session/stages")))))
 
-      (it "DROPS legacy sections that were folded into :session/plan"
+      (it "DROPS legacy sections that were folded into :session/stages"
         (expect (nil? (str/index-of out ":session/timeline")))
         (expect (nil? (str/index-of out ":session/orphans")))
         (expect (nil? (str/index-of out ":session/next-actions"))))
@@ -85,11 +85,11 @@
           (expect (= opens closes)))))))
 
 (defdescribe render-plan-test
-  (describe ":session/plan flat ordered vec"
+  (describe ":session/stages flat ordered vec"
     (let [out (render base-ctx)]
 
-      (it "has the :session/plan section"
-        (expect (str/includes? out ":session/plan")))
+      (it "has the :session/stages section"
+        (expect (str/includes? out ":session/stages")))
 
       (it "renders at least one action entry with canonical keys"
         (expect (re-find #":kind :(prove-requirement|work-unblocked-todo|fix-consistency|blocker)" out))
@@ -97,21 +97,21 @@
         (expect (str/includes? out ":remedy "))))))
 
 (defdescribe render-plan-with-blocker-test
-  (describe "engine blockers appear FIRST in :session/plan"
+  (describe "engine blockers appear FIRST in :session/stages"
     (let [ctx-with-blocker (assoc base-ctx :engine/blockers
                              [{:id     :missing-title
                                :reason "Set the title"
                                :remedy '(set-session-title! "X")}])
           out              (render ctx-with-blocker)]
 
-      (it "renders the blocker as a :session/plan entry"
+      (it "renders the blocker as a :session/stages entry"
         (expect (str/includes? out ":kind :blocker"))
         (expect (str/includes? out ":id :missing-title"))
         (expect (str/includes? out ":status :blocked"))
         (expect (str/includes? out ":remedy (set-session-title! \"X\")")))
 
-      (it "blocker entry sits at the head of :session/plan"
-        (let [plan-start    (str/index-of out ":session/plan")
+      (it "blocker entry sits at the head of :session/stages"
+        (let [plan-start    (str/index-of out ":session/stages")
               blocker-idx   (str/index-of out ":kind :blocker" plan-start)
               non-blocker   (some #(str/index-of out (str ":kind " %) plan-start)
                               [":prove-requirement" ":work-unblocked-todo"])]
@@ -120,7 +120,7 @@
             (expect (< blocker-idx non-blocker))))))))
 
 (defdescribe render-plan-overflow-test
-  (describe ":session/plan overflow tag stays in-vec (no trailing comment)"
+  (describe ":session/stages overflow tag stays in-vec (no trailing comment)"
     (let [many-tasks (into {}
                        (for [i (range 10)]
                          [(keyword (str "todo-" i))
@@ -194,8 +194,8 @@
       (it "starts with `;; ctx\\n{` (no preamble banner)"
         (expect (str/starts-with? out ";; ctx\n{")))
 
-      (it "shows empty :session/plan as []"
-        (expect (str/includes? out ":session/plan\n []")))
+      (it "shows empty :session/stages as []"
+        (expect (str/includes? out ":session/stages\n []")))
 
       (it "omits empty :session/specs / :tasks / :facts entirely"
         (expect (not (str/includes? out ":session/specs"))))

@@ -43,7 +43,7 @@
 
 (defn run-scenario
   "Replay a scenario vector. Returns `{:turns […] :final-ctx …}`. Each turn
-   entry carries `:ctx :warnings :progression :next-actions`. Caller asserts
+   entry carries `:ctx :warnings :progression :stages`. Caller asserts
    over the per-turn data."
   [scenario]
   (reduce
@@ -52,13 +52,13 @@
             indexes      (eng/build-indexes ctx')
             progression  (eng/derive-progression ctx' indexes)
             derived      (eng/derive-warnings ctx' indexes)
-            actions      (eng/derive-plan ctx' indexes progression)
+            stages       (eng/derive-stages ctx' indexes progression)
             turn-result  {:turn turn
                           :ctx ctx'
                           :mutation-warnings mut-warnings
                           :derived-warnings derived
                           :progression progression
-                          :next-actions actions}]
+                          :stages stages}]
         {:ctx ctx' :turns (conj turns turn-result)}))
     {:ctx (eng/empty-ctx "scenario-test") :turns []}
     scenario))
@@ -223,13 +223,14 @@
           (expect (= 0 (get-in t2 [:progression :rl-correctness :proven])))
           (expect (= :open (get-in t2 [:progression :rl-correctness :state]))))
 
-        (it "T2: plan surfaces :prove-requirement entries (Phase G shape: :kind not :type)"
-          (expect (some #(= :prove-requirement (:kind %)) (:next-actions t2))))
+        (it "T2: stages surfaces :prove-requirement entries (Phase H shape: vec-of-vecs)"
+          (expect (some #(= :prove-requirement (:kind %))
+                    (mapcat identity (:stages t2)))))
 
-        (it "T2: plan also surfaces :work-unblocked-todo for :swap-to-cas (Phase G shape: :id not :target)"
+        (it "T2: stages also surfaces :work-unblocked-todo for :swap-to-cas"
           (expect (some #(and (= :work-unblocked-todo (:kind %))
                            (= :swap-to-cas (:id %)))
-                    (:next-actions t2)))))
+                    (mapcat identity (:stages t2))))))
 
       ;; ─── Turn 3: prereq task done, no proofs yet
       (let [t3 (turn-at result 3)]
@@ -287,7 +288,7 @@
                          :spec-done-unproven))))
 
         (it "T6: next-actions empty (no work pending)"
-          (expect (empty? (:next-actions t6)))))
+          (expect (empty? (mapcat identity (:stages t6))))))
 
       ;; ─── Turn 7: reopen + add req + prove + close
       (let [t7 (turn-at result 7)]

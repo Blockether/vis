@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.ctx-renderer
-  "Pure-fn renderer: turn `{:ctx :warnings :progression :next-actions}` into
+  "Pure-fn renderer: turn `{:ctx :warnings :progression :stages}` into
    the bare-EDN text block embedded under `;; ctx` in every user message.
 
    Design rules:
@@ -370,24 +370,41 @@
          (seq proofs)              (assoc :proofs proofs)
          (pos? rejected)           (assoc :rejected-count rejected))]))
 
-(defn- render-plan-value
-  "Phase G: render `:session/plan` — flat vec of plan entries derived
-   by `eng/derive-plan`. Each entry has the canonical shape
-   `{:kind :id :status :reason :remedy}`. Blockers
-   (`:status :blocked`) come first; tasks follow in topological order
-   from `:depends-on` linkage \u2014 NO `:priority` field.
+(defn- render-stages-value
+  "Phase H: render `:session/stages` — vec-of-vecs from
+   `eng/derive-stages`. Outer index = stage number; inner vec holds
+   parallel-safe entries `{:kind :id :status :reason :remedy}` the
+   model emits in ONE fence.
 
-   Capped at NEXT_ACTIONS_BUDGET with an overflow tag appended IN-VEC
-   as an `{:overflow N :hint \"...\"}` map so the model still parses the
-   list as plain EDN (no trailing line-comments)."
-  [plan]
-  (let [n      (count plan)
-        capped (vec (take NEXT_ACTIONS_BUDGET plan))
-        tail   (when (> n NEXT_ACTIONS_BUDGET)
-                 [{:overflow (- n NEXT_ACTIONS_BUDGET)
-                   :hint     "raise NEXT_ACTIONS_BUDGET or close work"}])
-        full   (vec (concat capped tail))]
-    (if (empty? full) "[]" (zp full))))
+   Caps total entry count at NEXT_ACTIONS_BUDGET, trimming from the
+   DEEPEST stage backwards so blockers + leaf work always survive.
+   Overflow is announced as a final stage `[{:overflow N :hint \"...\"}]`
+   so the data shape stays uniform (vec-of-vecs)."
+  [stages]
+  (let [stages (vec (or stages []))
+        sizes  (mapv count stages)
+        total  (apply + 0 sizes)]
+    (if (empty? stages)
+      "[]"
+      (let [budget    NEXT_ACTIONS_BUDGET
+            trim      (fn [stages overflow]
+                        (loop [s   stages
+                               rem overflow]
+                          (if (or (zero? rem) (empty? s))
+                            s
+                            (let [n (count (peek s))]
+                              (cond
+                                (zero? n)   (recur (pop s) rem)
+                                (<= n rem)  (recur (pop s) (- rem n))
+                                :else       (conj (pop s)
+                                              (vec (take (- n rem) (peek s)))))))))
+            overflow  (max 0 (- total budget))
+            trimmed   (if (pos? overflow) (trim stages overflow) stages)
+            with-tail (cond-> trimmed
+                        (pos? overflow)
+                        (conj [{:overflow overflow
+                                :hint     "raise NEXT_ACTIONS_BUDGET or close work"}]))]
+        (zp with-tail)))))
 
 ;; =============================================================================
 ;; Top-level
@@ -397,7 +414,7 @@
   "Render the engine view as the bare-EDN text block embedded under `;; ctx`
    in the user message.
 
-   Phase G: the prompt-side derived view is ONE field — `:session/plan`
+   Phase G: the prompt-side derived view is ONE field — `:session/stages`
    — a flat ordered vec of `{:kind :id :status :reason :remedy}` entries.
    Replaces the legacy triplet (`:session/timeline` + `:session/orphans`
    + `:session/next-actions`) AND the trailing `;; ⚠ ...` line-comment
@@ -410,13 +427,12 @@
    Input map keys:
      :ctx           full ::cs/ctx (validated upstream)
      :progression   {spec-id {:total :proven :ratio :state :missing}}
-     :next-actions  vec from `eng/derive-plan` (legacy arg name retained
-                    until callers migrate to `:plan`)
+     :stages        vec-of-vecs from `eng/derive-stages`
 
    Output: a string starting with `;; ctx\\n{` and ending with `}`.
    No trailing line-comments anywhere."
-  [{:keys [ctx next-actions]}]
-  (let [plan* (or next-actions [])]
+  [{:keys [ctx stages]}]
+  (let [stages* (or stages [])]
     (str
       ";; ctx\n"
       "{" (zp :session/id)    "        " (zp (:session/id ctx))    "\n"
@@ -437,6 +453,6 @@
         (str (render-section :session/facts (zp facts) nil) "\n\n"))
       (render-section :session/trailer
         (render-trailer-value (or (:session/trailer ctx) [])) nil) "\n\n"
-      (render-section :session/plan
-        (render-plan-value plan*) nil)
+      (render-section :session/stages
+        (render-stages-value stages*) nil)
       "}")))

@@ -129,7 +129,7 @@
                                 :validator-fn? :proof?}}
       :session/trailer   [{:scope :forms [{:scope :tag :form :result? :error?}]}]
       :session/symbols   {sym → {:arglists? :doc? :born}}
-      :session/plan      [{:kind   :blocker | :fix-consistency
+      :session/stages      [{:kind   :blocker | :fix-consistency
                                     | :work-unblocked-todo | :prove-requirement
                             :id     <entity-id-or-blocker-id>
                             :status :blocked | :ready | :doing
@@ -141,7 +141,7 @@
       block — not in :session/env. Read :session/env BEFORE calling
       ad-hoc environment probes; CTX covers workspace/VCS truth.
 
-      :session/plan IS THE PRIMARY ATTENTION SURFACE. Read it FIRST
+      :session/stages IS THE PRIMARY ATTENTION SURFACE. Read it FIRST
       every iter:
         - `:status :blocked` entries (always `:batch 0`) MUST be
           resolved first. The `:remedy` form is the engine's quoted
@@ -436,7 +436,7 @@
         under-declared-deps?              ⚠    ;; soft; scheduler degrades
 
       ENGINE SIGNALS  (FSM events, read FIRST every iter)
-        Refusals + suggested next actions ride on `:session/plan`
+        Refusals + suggested next actions ride on `:session/stages`
         entries, NOT as `;; ⚠` line-comments. Each entry's `:kind`
         names the FSM event:
           :kind :blocker            ⇒ hard refusal (e.g. :missing-title,
@@ -451,7 +451,7 @@
                                       :doing and probe.
 
         The model NEVER scans for `;; ⚠` patterns in the ctx text. It
-        reads `:session/plan` as EDN data and walks entries from head.
+        reads `:session/stages` as EDN data and walks entries from head.
 
       DEPENDENCY GRAPH  (the symbolic scheduler)
         Three writers, one universal :depends-on slot:
