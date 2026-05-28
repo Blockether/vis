@@ -1567,20 +1567,33 @@
 
 (defn- idle-task-entries
   "Tasks :status :todo born more than IDLE_TASK_TODO_THRESHOLD turns
-   ago. Model declared but never picked up \u2014 either cancel or schedule."
-  [ctx current-turn]
-  (let [tasks (or (:session/tasks ctx) {})]
+   ago AND whose deps are NOT all terminal. When deps ARE all terminal
+   the task surfaces via :work-unblocked-todo which is actionable; the
+   idle framing would just duplicate the same id with redundant prose.
+
+   Reads :task-status from indexes to check dep terminality without
+   walking the dep-graph again."
+  [ctx indexes current-turn]
+  (let [tasks (or (:session/tasks ctx) {})
+        task-status (:task-status indexes)
+        terminal-by-id (fn [id]
+                         (let [s (get task-status id)]
+                           (or (nil? s) (task-terminal? s))))]
     (for [[task-id task] tasks
           :when (= :todo (:status task))
           :let [born (:born task)
-                gap (turns-since born current-turn)]
-          :when (and gap (>= gap IDLE_TASK_TODO_THRESHOLD))]
+                gap (turns-since born current-turn)
+                deps (or (:depends-on task) [])
+                deps-all-terminal? (every? terminal-by-id deps)]
+          :when (and gap (>= gap IDLE_TASK_TODO_THRESHOLD)
+                  (not deps-all-terminal?))]
       {:kind       :idle-task
        :id         task-id
        :status     :ready
        :stage-rank :advisory
        :reason     (str "task " task-id " is :todo since " born " ("
-                     gap " turns ago) and never moved. Activate or cancel.")
+                     gap " turns ago) AND blocked by non-terminal deps. "
+                     "Either close deps or cancel.")
        :remedy     (list (symbol "task-set!") task-id
                      {:status :cancelled :reason "..."})})))
 
@@ -1628,16 +1641,22 @@
        :remedy     (list 'introspect-failed-proofs task-id)})))
 
 (defn- duplicate-observation-entries
-  "Trailer pins with the SAME (v/<symbol> ...) :form across 2+ iters
-   in the recent window. Model is re-probing already-known state."
+  "Trailer pins with the SAME (v/<symbol> ...) :form AND identical
+   :result across 2+ iters. Model re-probed but file/state did NOT
+   change. Groups by (form, result-hash) so a genuine re-probe with
+   DIFFERENT result (e.g. file changed) does NOT trigger.
+
+   Result comparison uses (hash result) for bounded comparison cost
+   on large payloads."
   [ctx]
   (let [trailer (or (:session/trailer ctx) [])
         all-forms (for [entry trailer
                         form (or (:forms entry) [])
                         :when (= :observation (:tag form))]
                     form)
-        by-form (group-by (comp pr-str :form) all-forms)]
-    (for [[form-str dup-forms] by-form
+        by-key (group-by (fn [f] [(pr-str (:form f)) (hash (:result f))])
+                 all-forms)]
+    (for [[[form-str _result-hash] dup-forms] by-key
           :when (>= (count dup-forms) 2)
           :let [scopes (mapv :scope dup-forms)]]
       {:kind       :duplicate-observation
@@ -1645,9 +1664,9 @@
        :status     :ready
        :stage-rank :advisory
        :reason     (str "observation " form-str " ran " (count dup-forms)
-                     " times in trailer (scopes: " (pr-str scopes)
-                     "). Reuse via (introspect-form \"<earlier-scope>\") "
-                     "instead of re-probing.")
+                     " times with IDENTICAL result (scopes: " (pr-str scopes)
+                     "). Reuse via (introspect-form "
+                     (pr-str (first scopes)) ") instead of re-probing.")
        :remedy     (list 'introspect-form (first scopes))})))
 
 (defn- collect-stage-entries
@@ -1730,7 +1749,7 @@
         gap-prov     (gap-provenance-entries ctx)
         dep-drift    (dep-drift-entries ctx)
         stale-doing  (stale-task-doing-entries ctx current-turn)
-        idle-todo    (idle-task-entries ctx current-turn)
+        idle-todo    (idle-task-entries ctx indexes current-turn)
         stale-spec   (stale-spec-open-entries ctx current-turn progression)
         retried      (repeated-retry-entries ctx)
         dup-obs      (duplicate-observation-entries ctx)]
