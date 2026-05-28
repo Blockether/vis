@@ -2121,8 +2121,9 @@
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
-          form-ref (fn [idx]
-                     (str "turn/" turn-prefix "/iteration/" iteration-position "/block/" (inc idx)))
+          turn-position (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
+          form-scope (fn [idx]
+                       (str "t" turn-position "/i" iteration-position "/f" (inc idx)))
           effective-reasoning (when (and (some? reasoning-level)
                                       (reasoning-effort-configurable? resolved-model))
                                 (or (normalize-reasoning-level reasoning-level)
@@ -2376,7 +2377,7 @@
                                         :iteration-count iteration-position
                                         :position        idx
                                         :count           total-blocks
-                                        :scope           (form-ref idx)
+                                        :scope           (form-scope idx)
                                         :code            expr
                                         :render-segments render-segments
                                         :vis/structurally-silent? (boolean structurally-silent?)
@@ -2386,7 +2387,7 @@
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (swap! turn-state-atom assoc :form-idx idx)
-                           (let [scope (form-ref idx)
+                           (let [scope (form-scope idx)
                                  raw-result (cond
                                               preflight-error
                                               {:result nil
@@ -2616,7 +2617,7 @@
                                :iteration-count   iteration-position
                                :position          form-idx
                                :count             total-forms
-                               :scope             (form-ref form-idx)
+                               :scope             (form-scope form-idx)
                                :code              (:code b)
                                :render-segments   (:render-segments b)
                                :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
