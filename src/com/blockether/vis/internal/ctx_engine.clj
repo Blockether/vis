@@ -794,97 +794,6 @@
         new-vec  (vec (remove #(= (:requirement %) rid) existing))]
     {:ctx (assoc-in ctx path new-vec) :warnings [] :stamped? true}))
 
-;; ----------------------------------------------------------------------------
-;; Phase F timeline: per-turn event log
-;; ----------------------------------------------------------------------------
-;;
-;; `:engine/turn-events` is an ephemeral vec on ctx; every successful
-;; mutator (and bulk-archive) appends one event. At close-of-turn,
-;; `apply-done` drains the events into the `:turn-N-summary` fact's
-;; `:timeline` field so the next turn (and forensics) can see exactly
-;; what happened: not just which entities were touched, but HOW — born,
-;; updated (with field-level :was/:now), status-flipped to done /
-;; cancelled / archived, or contradicted.
-
-(def ^:private mutator->subtree
-  {:spec-set! :session/specs
-   :task-set! :session/tasks
-   :fact-set! :session/facts})
-
-(def ^:private mutator->op-prefix
-  {:spec-set! "spec"
-   :task-set! "task"
-   :fact-set! "fact"})
-
-(defn- derive-turn-event
-  "Build a timeline event for a mutator that just landed a write.
-   Returns nil when the result is indistinguishable from the input
-   (e.g. hook-task idempotent re-emission, no-op merge).
-
-   Shape:
-     :born      — entity did not exist before; carries every field
-                  the model just set (filtered to non-engine keys).
-     :done / :cancelled / :archived / :superseded
-                — entity existed; `:status` flipped to a terminal value.
-     :updated   — entity existed; some field(s) other than status
-                  changed. `:changes` is `{<field> {:was b :now a}}`."
-  [mutator id form-scope before after]
-  (let [prefix (mutator->op-prefix mutator)]
-    (cond
-      ;; New entity: born event with the just-set fields.
-      (nil? before)
-      (let [tracked-keys [:title :summary :content :status :importance
-                          :source :hook-id :depends-on]
-            payload (into {}
-                      (for [k tracked-keys
-                            :let [v (get after k)]
-                            :when (some? v)]
-                        [k v]))]
-        (cond-> {:at form-scope
-                 :op (keyword (str prefix "-born"))
-                 :id id}
-          (seq payload) (assoc :fields payload)))
-
-      ;; Terminal status transition: emit a dedicated op so the model
-      ;; sees ":task-done" instead of ":task-updated {:status ...}".
-      (and (not= (:status before) (:status after))
-        (#{:done :cancelled :archived :superseded :rejected} (:status after)))
-      {:at form-scope
-       :op (keyword (str prefix "-" (name (:status after))))
-       :id id}
-
-      ;; Generic update: diff non-engine fields and emit changed-only map.
-      :else
-      (let [ks (set (concat (keys (or before {})) (keys (or after {}))))
-            ;; Skip engine-internal stamp keys — they are stable derivatives
-            ;; (e.g. born stays put, done-born only flips on status changes).
-            interesting (remove #{:born :done-born :validated? :archived-proofs} ks)
-            changes (into {}
-                      (for [k interesting
-                            :let [b (get before k) a (get after k)]
-                            :when (not= b a)]
-                        [k {:was b :now a}]))]
-        (when (seq changes)
-          {:at form-scope
-           :op (keyword (str prefix "-updated"))
-           :id id
-           :changes changes})))))
-
-(defn- record-mutator-event
-  "Wrap an applier result with a timeline event when it `:stamped?` a
-   write. Pure: takes the original ctx (BEFORE), the applier result,
-   the mutator keyword, form-scope, and entity-id; returns the result
-   with `:engine/turn-events` extended on `:ctx`."
-  [ctx-before result mutator form-scope id]
-  (let [subtree (mutator->subtree mutator)]
-    (if (and subtree id (:stamped? result))
-      (let [before (get-in ctx-before [subtree id])
-            after  (get-in (:ctx result) [subtree id])
-            event  (derive-turn-event mutator id form-scope before after)]
-        (cond-> result
-          event (update :ctx update :engine/turn-events (fnil conj []) event)))
-      result)))
-
 (defn apply-mutator
   "Apply a single mutator call to the CTX. Returns
    `{:ctx new-ctx :warnings vec :stamped? bool}`.
@@ -892,12 +801,7 @@
    On soft warn (collision, dangling ref) :ctx may still update; :warnings
    carry the diagnostic for the renderer.
 
-   Phase F: successful spec-set!/task-set!/fact-set! writes also append
-   a `{:at :op :id :changes|:fields}` event to `:engine/turn-events`
-   so close-of-turn can drain a full timeline into the
-   `:turn-N-summary` fact. Other mutators (depends/contradicts/req/proof)
-   pass through unchanged — their effect is visible via the entity
-   diff at the next set! event."
+"
   [ctx form-scope mutator args]
   (cond
     (malformed-scope? form-scope)
@@ -907,32 +811,25 @@
      :stamped? false}
 
     :else
-    (let [result
-          (case mutator
-            :spec-set!     (apply-spec-set!     ctx form-scope args)
-            :task-set!     (apply-task-set!     ctx form-scope args)
-            :fact-set!     (apply-fact-set!     ctx form-scope args)
-            :spec-depends! (apply-depends!      ctx form-scope (cons :spec args))
-            :task-depends! (apply-depends!      ctx form-scope (cons :task args))
-            :fact-depends! (apply-depends!      ctx form-scope (cons :fact args))
-            :fact-contradicts!        (apply-fact-contradicts!        ctx form-scope args)
-            :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
-            :req-add!      (apply-req-add!      ctx form-scope args)
-            :req-update!   (apply-req-update!   ctx form-scope args)
-            :req-remove!   (apply-req-remove!   ctx form-scope args)
-            :proof-add!    (apply-proof-add!    ctx form-scope args)
-            :proof-remove! (apply-proof-remove! ctx form-scope args)
-            ;; unknown mutator: soft warn, no write
-            {:ctx ctx
-             :warnings [(warn :unknown-mutator [mutator]
-                          (str "unknown mutator " mutator))]
-             :stamped? false})
-          ;; Only the SET mutators emit a directly-readable entity
-          ;; transition; depends/contradicts/req/proof updates are
-          ;; sub-field tweaks that the next set! event will surface.
-          id (when (#{:spec-set! :task-set! :fact-set!} mutator)
-               (first args))]
-      (record-mutator-event ctx result mutator form-scope id))))
+    (case mutator
+      :spec-set!     (apply-spec-set!     ctx form-scope args)
+      :task-set!     (apply-task-set!     ctx form-scope args)
+      :fact-set!     (apply-fact-set!     ctx form-scope args)
+      :spec-depends! (apply-depends!      ctx form-scope (cons :spec args))
+      :task-depends! (apply-depends!      ctx form-scope (cons :task args))
+      :fact-depends! (apply-depends!      ctx form-scope (cons :fact args))
+      :fact-contradicts!        (apply-fact-contradicts!        ctx form-scope args)
+      :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
+      :req-add!      (apply-req-add!      ctx form-scope args)
+      :req-update!   (apply-req-update!   ctx form-scope args)
+      :req-remove!   (apply-req-remove!   ctx form-scope args)
+      :proof-add!    (apply-proof-add!    ctx form-scope args)
+      :proof-remove! (apply-proof-remove! ctx form-scope args)
+      ;; unknown mutator: soft warn, no write
+      {:ctx ctx
+       :warnings [(warn :unknown-mutator [mutator]
+                    (str "unknown mutator " mutator))]
+       :stamped? false})))
 
 ;; =============================================================================
 ;; Validator-fn eval — SCI-bridged, bounded
@@ -1994,8 +1891,8 @@
 (defn enter-turn
   "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
    resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
-   clears `:engine/turn-events` + `:engine/blockers`, then runs
-   `gc-pass`. Safe to call repeatedly with the same `turn-pos` (no-op
+   clears `:engine/blockers`, then runs `gc-pass`.
+   Safe to call repeatedly with the same `turn-pos` (no-op
    semantically); safe to call when ctx was loaded fresh from DB at
    turn-pos > 1.
 
@@ -2010,7 +1907,6 @@
     (-> ctx
       (assoc :session/turn next-turn)
       (assoc :session/scope {:turn next-turn :iter 1 :next-form 1})
-      (assoc :engine/turn-events [])
       (assoc :engine/blockers [])
       gc-pass)))
 
@@ -2045,13 +1941,7 @@
     :session/tasks     {}
     :session/facts     {}
     :session/trailer   []
-    :engine/warnings   []
-    ;; Phase F timeline: per-turn event log. Each successful mutator
-    ;; (spec-set!/task-set!/fact-set! + bulk-archive in done) appends an
-    ;; `{:at :op :id :changes}` map. Drained into the `:turn-N-summary`
-    ;; fact `:timeline` field at close-of-turn, cleared in advance-turn.
-    ;; Engine-ephemeral (`:engine/` namespace — stripped on persist).
-    :engine/turn-events []}))
+    :engine/warnings   []}))
 
 (defn strip-ephemeral
   "Remove every `:engine/*` key from a ctx. Call before Nippy-snapshotting
@@ -2529,12 +2419,6 @@
    status; cleanly distinct from `:done` / `:cancelled` / `:superseded`).
    Missing entities emit a soft warning and skip.
 
-   Phase F timeline: each existing entity archived here emits a
-   `{:op :fact-archived | :spec-archived | :task-archived :id k
-     :at form-scope}` event to `:engine/turn-events` so the
-   close-of-turn summary captures the archive in the timeline next to
-   the born / done events.
-
    Snapshots keep the raw entity; `introspect-archived :kind` returns
    them. Live ctx GC removes archived entries at the next turn boundary
    without waiting for TTL.
@@ -2556,14 +2440,7 @@
                                   (cond-> acc
                                     exists? (assoc-in [subtree k :status] :archived)))
                           ctx outcomes)
-        archive-events (vec (for [{:keys [kind k exists?]} outcomes
-                                  :when exists?]
-                              {:at form-scope
-                               :op (keyword (str (kind->prefix kind) "-archived"))
-                               :id k}))
-        ctx' (cond-> ctx-with-status
-               (seq archive-events)
-               (update :engine/turn-events (fnil into []) archive-events))
+        ctx' ctx-with-status
         warns    (vec (for [{:keys [kind k exists?]} outcomes
                             :when (not exists?)]
                         (warn :done-archive-missing-entity [kind k]
@@ -2664,22 +2541,16 @@
    the answer channel + `session_turn_state.answer_markdown` column);
    the fact is the model's lookup index, not the artefact.
 
-   Auto-derived skeleton (TWO content fields + a timeline field):
+   Auto-derived skeleton (TWO content fields):
 
      :question         user request that started the turn
      :answer-summary   one-paragraph synopsis (model `:answer-summary`
                        arg or first paragraph of :answer, 280-char cap)
-     :timeline         vec of `{:at :op :id ...}` events drained from
-                       `:engine/turn-events` by apply-done-impl. Each
-                       event captures one entity-level transition
-                       (born / updated / done / cancelled / archived
-                       / superseded / rejected) with field-level
-                       diff (`:changes {:was :now}`) for updates and
-                       a `:fields` snapshot for births.
 
-   The previous born/touched id lists (`:facts-born :specs-born
-   :tasks-touched`) are GONE — redundant with the timeline. The model
-   reads ids straight off `(map :id timeline)` when it needs them.
+   Model can reconstruct what changed across the turn by walking
+   :session/{facts,specs,tasks} entries whose :born or :done-born
+   starts with the matching scope prefix — no separate event log
+   needed.
 
    Plus engine-owned framing: `:status :active`, `:scope \"tN\"`,
    `:source :done-auto`, `:born <form-scope>`. Reserved keys cannot
@@ -2689,20 +2560,26 @@
    (no answer AND no entity-level transitions — a fully silent
    close-of-turn, e.g. cancelled iter that touched nothing).
 
-   NOTE: the `:timeline` field is filled by `apply-done-impl` AFTER
-   this fn returns the base skeleton, because the timeline drains
-   `:engine/turn-events` AFTER bulk-archive runs (so archive events
-   make it in). This fn only assembles the question + answer-summary
-   half; the meaningfulness check uses both `:engine/turn-events` and
-   the answer presence."
+"
   [ctx form-scope {:keys [user-request answer answer-summary model-summary]}]
   (let [turn-pos     (or (:session/turn ctx) 0)
         answer-str   (some-> answer str clojure.string/trim not-empty)
         question     (some-> user-request str clojure.string/trim not-empty)
         synopsis     (or (some-> answer-summary str clojure.string/trim not-empty)
                        (some-> answer-str first-paragraph-summary))
-        events       (seq (:engine/turn-events ctx))
-        meaningful?  (or (some? answer-str) (some? events))
+        ;; A turn is worth recording when EITHER the user got an answer
+        ;; OR at least one entity transitioned in this turn (born scope
+        ;; or done-born scope starts with t<turn-pos>/).
+        turn-prefix  (str "t" turn-pos "/")
+        any-born?    (some (fn [m]
+                             (some (fn [[_ entity]]
+                                     (or (clojure.string/starts-with?
+                                           (str (:born entity) "") turn-prefix)
+                                       (clojure.string/starts-with?
+                                         (str (:done-born entity) "") turn-prefix)))
+                               (or m {})))
+                       [(:session/facts ctx) (:session/specs ctx) (:session/tasks ctx)])
+        meaningful?  (or (some? answer-str) any-born?)
         reserved     #{:status :source :scope :born}
         model-extras (when (map? model-summary)
                        (into {} (remove (fn [[k _]] (contains? reserved k)) model-summary)))
@@ -2751,27 +2628,16 @@
                            (str "scope " k " appears in both :trailer-drop and"
                              " :trailer-summarize; drop ignored, summary applied")))
         ctx-with-trailer (assoc ctx :session/trailer sorted)
-        ;; Apply bulk-archive FIRST so its archive-events land in
-        ;; `:engine/turn-events` BEFORE we drain into the summary
-        ;; fact's `:timeline`. Order: born/updated events from the
-        ;; turn so far, then archive-events from the done call itself.
+        ;; Apply bulk-archive before the auto-fact lands so archive
+        ;; entities are visible to the meaningfulness check.
         {ctx-archived :ctx archive-warns :warnings}
         (if (map? archive)
           (apply-bulk-archive ctx-with-trailer form-scope archive)
           {:ctx ctx-with-trailer :warnings []})
-        ;; Drain turn-events into the auto-fact's :timeline before
-        ;; writing the fact. The fact itself is the durable record;
-        ;; `:engine/turn-events` is ephemeral and gets cleared in
-        ;; advance-turn.
-        timeline (vec (or (:engine/turn-events ctx-archived) []))
-        auto-fact-with-timeline (when auto-fact-entry
-                                  [(first auto-fact-entry)
-                                   (cond-> (second auto-fact-entry)
-                                     (seq timeline) (assoc :timeline timeline))])
         ctx-final (cond-> ctx-archived
-                    auto-fact-with-timeline
-                    (assoc-in [:session/facts (first auto-fact-with-timeline)]
-                      (second auto-fact-with-timeline)))]
+                    auto-fact-entry
+                    (assoc-in [:session/facts (first auto-fact-entry)]
+                      (second auto-fact-entry)))]
     {:ctx ctx-final
      :warnings (vec (concat conflict-warns warnings archive-warns))}))
 
