@@ -54,6 +54,9 @@
 (def ^:private run-normal-turn!
   (deref #'lp/run-normal-turn!))
 
+(def ^:private maybe-auto-title!
+  (deref #'lp/maybe-auto-title!))
+
 (defdescribe provider-stream-rewind-retry-test
   (it "rewinds streamed reasoning and retries the provider call before eval"
     (let [env    (lp/create-environment ::router {:db :memory})
@@ -458,7 +461,42 @@
                 hits))
       (expect (= ctx @seen))))
 
-  (it "set-session-title! is a bare engine symbol, not a v/ tool"
+  (it "auto-title asks the cheap routed model with previous title context"
+    (let [seen (atom nil)
+          env  (lp/create-environment ::router {:db :memory :title "Old focus"})]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [router opts]
+                        (reset! seen {:router router :opts opts})
+                        {:result "Settings Tabs Cleanup" :raw ""})]
+          (let [f (maybe-auto-title! env "Please clean up duplicated TUI settings tabs")]
+            @f
+            (expect (= "Settings Tabs Cleanup" @(:session-title-atom env)))
+            (expect (= ::router (:router @seen)))
+            (expect (= {:optimize :cost} (get-in @seen [:opts :routing])))
+            (expect (str/includes? (-> @seen :opts :messages second :content)
+                      "Previous title: Old focus"))))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "auto-title returns immediately while the cheap model runs in background"
+    (let [env (lp/create-environment ::router {:db :memory :title "Old focus"})]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_router _opts]
+                        (Thread/sleep 200)
+                        {:result "Async Title" :raw ""})]
+          (let [start (System/nanoTime)
+                f     (maybe-auto-title! env "rename async")
+                elapsed-ms (/ (- (System/nanoTime) start) 1e6)]
+            (expect (< elapsed-ms 100.0))
+            (expect (= "Old focus" @(:session-title-atom env)))
+            @f
+            (expect (= "Async Title" @(:session-title-atom env)))))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "set-session-title! remains a manual bare override, not a v/ tool"
     (let [env (lp/create-environment ::router {:db :memory})]
       (try
         (expect (= :vis/silent
