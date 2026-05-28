@@ -107,7 +107,7 @@
 (defdescribe render-merge-op-test
   (it "renders op + path as a single line"
     (let [v (gr/render-merge-op {:path "x.clj" :op :git/merge-accept-ours})]
-      (expect (strong-in? v "ACCEPT-OURS"))
+      (expect (strong-in? v "MERGE-ACCEPT-OURS"))
       (expect (re-find #"x\.clj" (pr-str v))))))
 
 (defdescribe render-merge-continue-test
