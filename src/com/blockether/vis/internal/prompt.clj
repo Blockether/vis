@@ -180,6 +180,18 @@
           (consult-promote! :research :research-fact)
           (task-set! :foo {:status :doing})
 
+      `:remedy` SEMANTICS:
+        Most entries carry a quoted form in `:remedy` that is the
+        engine's suggested write. Fill `\"...\"` placeholders with
+        real values then emit as a top-level form.
+
+        Some advisory entries carry `:remedy nil` (no quoted form):
+          - The data the entry references is ALREADY in CTX (trailer
+            pin or entity field still visible at render time).
+          - The action is \"do NOT do X again\" rather than \"emit form Y\".
+          - The advisory is awareness only.
+        For `:remedy nil` entries, read the `:reason` field for guidance.
+
       ENTRY KIND TAXONOMY (what to DO with each):
 
         :blocker
@@ -232,14 +244,20 @@
 
         :repeated-retry                                    (advisory)
           A task has 3+ archived (rejected) proofs. The validator-fn
-          is rejecting the strategy repeatedly. :remedy is
-          (introspect-failed-proofs :K) — read the rejection reasons,
-          then audit the validator-fn or change strategy.
+          is rejecting the strategy repeatedly. The :archived-proofs
+          vec is ALREADY visible on the task in :session/tasks (each
+          entry carries :proof + :reason — no introspect call needed).
+          :remedy is (task-set! :K {:status :cancelled :reason \"...\"}).
+          Cancel and restart with a different approach, or audit the
+          validator-fn source if the rejection reasons point at it.
 
         :duplicate-observation                             (advisory)
           The same (v/...) observation ran 2+ times with IDENTICAL
-          result. :remedy is (introspect-form \"<earlier-scope>\") —
-          reuse the cached result instead of re-probing.
+          result. The duplicate pins are STILL IN :session/trailer at
+          the scopes named in :reason — read them from there, do NOT
+          re-emit the same probe. :remedy is `nil` (awareness only;
+          no form to execute). Reference the earlier scope in your
+          reasoning.
 
     ENGINE FNS (bare symbols — never namespace-qualify)
 
