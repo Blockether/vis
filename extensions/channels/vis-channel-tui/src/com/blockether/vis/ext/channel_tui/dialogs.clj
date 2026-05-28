@@ -2156,11 +2156,13 @@
 (def ^:private navigator-content-h 16)
 
 (def ^:private navigator-columns
-  [{:id :active :label ""        :width 1}
-   {:id :kind   :label "Kind"    :width 10}
+  [{:id :kind   :label "Kind"    :width 10}
    {:id :label  :label "Name"    :flex 1}
-   {:id :ctx    :label "Context" :width 24}
-   {:id :status :label "Status"  :width 16}])
+   {:id :ctx    :label "Context" :width 26}
+   {:id :status :label "Status"  :width 18}])
+
+(def ^:private navigator-table-opts
+  {:sep " | "})
 
 (defn- navigator-short-id
   [id]
@@ -2179,7 +2181,7 @@
   (let [branch (or (:branch workspace) (:vcs/ref workspace))
         root   (or workspace-root (:root workspace) (:workspace/root workspace))]
     (cond
-      (and branch root) (str branch " · " root)
+      (and branch root) (str branch " | " root)
       branch branch
       root root
       :else "-")))
@@ -2189,8 +2191,8 @@
   (let [kind  (some-> (:kind workspace) name)
         state (some-> (:state workspace) name)]
     (str (if active? "focused" "open")
-      (when kind (str " · " kind))
-      (when state (str " · " state)))))
+      (when kind (str " " kind))
+      (when state (str " " state)))))
 
 (defn- navigator-session-row
   [active-session-id session]
@@ -2198,10 +2200,10 @@
         active? (= (str id) (some-> active-session-id str))]
     {:id       (str "session:" id)
      :kind     "session"
-     :active   (if active? "●" "")
      :label    (session-title session)
-     :ctx      (str (navigator-short-id id) " · " (format-session-date (:modified-at session)))
-     :status   (str (long (or (:turn-count session) 0)) " turns")
+     :ctx      (str (navigator-short-id id) " | " (format-session-date (:modified-at session)))
+     :status   (str (when active? "focused ")
+                 (long (or (:turn-count session) 0)) " turns")
      :target   {:action :switch :id id}}))
 
 (defn- navigator-workspace-row
@@ -2209,21 +2211,9 @@
   (let [id (:id entry)]
     {:id       (str "workspace:" id)
      :kind     "workspace"
-     :active   (if (:active? entry) "●" "")
      :label    (navigator-workspace-label entry)
      :ctx      (navigator-workspace-context entry)
      :status   (navigator-workspace-status entry)
-     :target   {:action :switch-workspace :workspace-id id}}))
-
-(defn- navigator-tab-row
-  [idx entry]
-  (let [id (:id entry)]
-    {:id       (str "tab:" id)
-     :kind     "tab"
-     :active   (if (:active? entry) "●" "")
-     :label    (navigator-workspace-label entry)
-     :ctx      (str "#" (inc (long idx)) " · " (name (or id :view)))
-     :status   (if (:active? entry) "focused" "open")
      :target   {:action :switch-workspace :workspace-id id}}))
 
 (defn- navigator-all-rows
@@ -2232,23 +2222,20 @@
     (vec
       (concat
         (map #(navigator-session-row active-session-id %) sessions)
-        (map navigator-workspace-row workspaces)
-        (map-indexed navigator-tab-row workspaces)))))
+        (map navigator-workspace-row workspaces)))))
 
 (defn- navigator-mode-matches?
   [mode row]
   (case mode
     :sessions   (= "session" (:kind row))
     :workspaces (= "workspace" (:kind row))
-    :tabs       (= "tab" (:kind row))
     true))
 
 (defn- navigator-mode-title
   [mode]
   (case mode
-    :sessions "Go To · Sessions"
-    :workspaces "Go To · Workspaces"
-    :tabs "Go To · Tabs"
+    :sessions "Go To - Sessions"
+    :workspaces "Go To - Workspaces"
     "Go To"))
 
 (defn- navigator-next-mode
@@ -2256,8 +2243,18 @@
   (case mode
     :all :sessions
     :sessions :workspaces
-    :workspaces :tabs
     :all))
+
+(defn- navigator-prev-mode
+  [mode]
+  (case mode
+    :all :workspaces
+    :workspaces :sessions
+    :all))
+
+(defn- navigator-separator-line
+  [width]
+  (apply str (repeat (max 0 (long width)) \-)))
 
 (defn- navigator-visible-rows
   [rows mode query]
@@ -2289,6 +2286,7 @@
             table-x      (+ left 1 p/SELECTION_WIDTH)
             table-w      (max 1 (- inner-w 1 p/SELECTION_WIDTH))
             table-body-w (max 1 (- table-w 2))
+            scrollbar-col (+ table-x (dec table-w))
             header-row   (+ content-top 2)
             sep-row      (inc header-row)
             body-top     (inc sep-row)
@@ -2304,10 +2302,10 @@
         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
         (p/styled g [p/BOLD]
           (p/put-str! g table-x header-row
-            (table/header-line navigator-columns table-body-w)))
+            (table/header-line navigator-columns table-body-w navigator-table-opts)))
         (p/set-colors! g t/dialog-border t/dialog-bg)
         (p/put-str! g table-x sep-row
-          (table/border-line navigator-columns table-body-w :middle))
+          (navigator-separator-line table-body-w))
 
         (dotimes [i body-h]
           (let [idx (+ @scroll i)
@@ -2316,7 +2314,7 @@
               (< idx total)
               (let [entry (nth visible-rows idx)]
                 (table/draw-line! g table-x row table-body-w (= idx @selected)
-                  (table/row-line navigator-columns entry table-body-w nil))
+                  (table/row-line navigator-columns entry table-body-w navigator-table-opts))
                 (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                 (p/draw-selection-marker! g (inc left) row (= idx @selected)))
 
@@ -2331,8 +2329,12 @@
                 (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (p/fill-rect! g table-x row table-body-w 1)))))
 
+        (scrollbar/draw! g
+          {:col scrollbar-col :top body-top :track-h body-h
+           :total-h total :inner-h body-h :scroll @scroll})
+
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] ["Enter" "open"] ["Tab" "filter"] ["W/S/T/A" "mode"] ["Esc" "cancel"]])
+          [["↑/↓" "move"] ["Enter" "open"] ["Tab" "filter"] ["type" "search"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -2347,52 +2349,37 @@
                               (reset! selected 0)
                               (reset! scroll 0)
                               (recur))
+                KeyType/ReverseTab (do (reset! mode (navigator-prev-mode @mode))
+                                     (reset! selected 0)
+                                     (reset! scroll 0)
+                                     (recur))
                 KeyType/Backspace (do (if (seq @query)
                                         (swap! query subs 0 (dec (count @query)))
                                         (reset! mode :all))
                                     (reset! selected 0)
                                     (reset! scroll 0)
                                     (recur))
+                KeyType/ArrowLeft (do (reset! mode (navigator-prev-mode @mode))
+                                    (reset! selected 0)
+                                    (reset! scroll 0)
+                                    (recur))
+                KeyType/ArrowRight (do (reset! mode (navigator-next-mode @mode))
+                                     (reset! selected 0)
+                                     (reset! scroll 0)
+                                     (recur))
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
                                   (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
                                     (recur))
                 KeyType/Enter (when (pos? total)
                                 (:target (nth visible-rows @selected)))
-                KeyType/Character (let [raw-c (.getCharacter key)
-                                        c     (when raw-c (Character/toLowerCase raw-c))]
-                                    (cond
-                                      (and (str/blank? @query) (= c \w))
-                                      (do (reset! mode :workspaces)
-                                        (reset! selected 0)
-                                        (reset! scroll 0)
-                                        (recur))
-
-                                      (and (str/blank? @query) (= c \s))
-                                      (do (reset! mode :sessions)
-                                        (reset! selected 0)
-                                        (reset! scroll 0)
-                                        (recur))
-
-                                      (and (str/blank? @query) (= c \t))
-                                      (do (reset! mode :tabs)
-                                        (reset! selected 0)
-                                        (reset! scroll 0)
-                                        (recur))
-
-                                      (and (str/blank? @query) (= c \a))
-                                      (do (reset! mode :all)
-                                        (reset! selected 0)
-                                        (reset! scroll 0)
-                                        (recur))
-
-                                      (and raw-c (not (Character/isISOControl raw-c)))
+                KeyType/Character (let [raw-c (.getCharacter key)]
+                                    (if (and raw-c (not (Character/isISOControl raw-c)))
                                       (do (swap! query str raw-c)
                                         (reset! selected 0)
                                         (reset! scroll 0)
                                         (recur))
-
-                                      :else (recur)))
+                                      (recur)))
                 (recur)))))))))
 
 ;;; ── Command palette ─────────────────────────────────────────────────────────
