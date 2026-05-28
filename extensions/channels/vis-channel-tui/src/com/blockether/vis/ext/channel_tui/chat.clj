@@ -39,54 +39,6 @@
     (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s))
       s)))
 
-(defn- title-recap
-  [value]
-  (let [title (some-> value str str/trim not-empty)]
-    (if title
-      (str "Title — \"" title "\"")
-      "Title changed.")))
-
-(defn- status-glyph
-  [status]
-  (case status
-    :done       "✓ "
-    :cancelled  "× "
-    (:todo :doing) "… "
-    ""))
-
-(defn- task-recap
-  [{:keys [id status proof title]}]
-  (str "Task — " (status-glyph status)
-    (when id (pr-str id))
-    (when status (str "  :" (name status)))
-    (when title (str "  \"" title "\""))
-    (when proof (str "  proof " proof))))
-
-(defn- spec-recap
-  [{:keys [id status]}]
-  (str "Spec — " (pr-str id)
-    (when status (str "  :" (name status)))))
-
-(defn- fact-recap
-  [{:keys [id status]}]
-  (str "Fact — " (pr-str id)
-    (when status (str "  :" (name status)))))
-
-(defn- render-segment-recaps
-  "Recap lines for ctx-mutation render segments. Keep in
-   sync with `progress/render-segment-recaps` — chat replays the same
-   shape from persisted block segments after a session restore."
-  [segments]
-  (->> segments
-    (keep (fn [{:keys [kind value] :as seg}]
-            (case kind
-              :title         (title-recap value)
-              :task-update   (task-recap seg)
-              :spec-update   (spec-recap seg)
-              :fact-update   (fact-recap seg)
-              nil)))
-    vec))
-
 ;; Engine-form detection delegates to `ctx-engine/engine-form-src?` so
 ;; we share one edamame-parsed head-symbol predicate with progress.clj.
 ;; No string-prefix list to keep in sync.
@@ -312,12 +264,14 @@
      :thinking           (visible-thinking (:thinking it))
      :provider-fallbacks (:llm-routing-trace it)
      :forms              forms
-     ;; Iteration-level recap rows (title / task-set! / spec-set! /
-     ;; fact-set! summaries) come from the WHOLE iteration's source.
-     ;; The DB row doesn't ship `:render-segments` (derived view), so
-     ;; rebuild it on the fly from `:code` using the same pure
-     ;; `parse-block-display` parser the live channel consumes.
-     :recaps             (render-segment-recaps (vis/parse-block-display iter-code))}))
+     ;; Iteration-level recaps DROPPED: model bookkeeping (task-set! /
+     ;; spec-set! / fact-set! / set-session-title!) is silent in the
+     ;; chat trace. State is visible via :session/{tasks,specs,facts}
+     ;; in the engine ctx (next-iter render) and via the task / spec /
+     ;; fact panes in the chrome — the chat history shouldn't echo every
+     ;; mutation. Provider-error / fallback / consult recaps still flow
+     ;; via render.clj's own paths.
+     :recaps             []}))
 
 (defn user-message
   "Create a structured user message with timestamp.
