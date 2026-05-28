@@ -679,6 +679,7 @@
           chunks (atom [])
           src    "(done {:answer \"ok\"})\n(def x \"doc\" 1)"]
       (try
+        (ctx-loop/set-turn-state! env :turn-position 4)
         (with-redefs [svar/ask-code! (fn [_ _]
                                        {:blocks [{:source src :lang "clojure"}]
                                         :raw ""
@@ -689,6 +690,8 @@
              :on-chunk #(swap! chunks conj %)})
           (let [starts (filter #(= :form-start (:phase %)) @chunks)]
             (expect (= 1 (count starts)))
+            (expect (re-matches #"t4/i1/f\d+" (:scope (first starts))))
+            (expect (not (str/includes? (:scope (first starts)) "turn/")))
             (expect (false? (:vis/structurally-silent? (first starts))))))
         (finally
           (lp/dispose-environment! env)))))
