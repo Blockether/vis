@@ -232,6 +232,45 @@
         (expect (= "old race fact"
                   (get-in (ictx 1) [:session/facts :rl-bug :content])))))))
 
+(defdescribe db-backed-introspect-diagnostics-test
+  (describe "introspect-form / introspect-iter diagnostics"
+    (let [env (assoc (mk-env) :db-info ::db :session-id "S")
+          turns [{:id "soul-1" :position 1}
+                 {:id "soul-2" :position 2}]
+          iters-by-soul {"soul-1" [{:id "it-1" :position 1 :status "done"
+                                    :code "(+ 1 2)"
+                                    :forms [{:scope "t1/i1/f1"
+                                             :tag :observation
+                                             :src "(+ 1 2)"
+                                             :result 3}]}]
+                         ;; current cursor is t2/i3 from mk-env; no row exists
+                         ;; until the whole fence finishes.
+                         "soul-2" []}
+          bindings (cl/build-introspect-bindings env (constantly []))
+          introspect-form (get bindings 'introspect-form)
+          introspect-iter (get bindings 'introspect-iter)
+          with-db (fn [f]
+                    (with-redefs [com.blockether.vis.internal.persistance/db-list-session-turns
+                                  (constantly turns)
+                                  com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                                  (fn [_db soul-id] (get iters-by-soul soul-id))]
+                      (f)))]
+      (it "returns completed prior form payloads"
+        (with-db
+          #(expect (= 3 (:result (introspect-form "t1/i1/f1"))))))
+
+      (it "current-iteration introspect returns explicit diagnostic, not nil"
+        (with-db
+          #(let [r (introspect-form "t2/i3/f1")]
+             (expect (= :introspect-scope-unavailable (:vis/error r)))
+             (expect (= :current-iteration-not-persisted (:reason r))))))
+
+      (it "malformed iter scope returns explicit diagnostic, not nil"
+        (with-db
+          #(let [r (introspect-iter "bogus")]
+             (expect (= :introspect-scope-unavailable (:vis/error r)))
+             (expect (= :malformed-scope (:reason r)))))))))
+
 ;; =============================================================================
 ;; trailer→form-results projection
 ;; =============================================================================

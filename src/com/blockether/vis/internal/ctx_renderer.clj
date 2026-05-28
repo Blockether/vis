@@ -91,10 +91,10 @@
 ;;
 ;; Limits in tokens (jtokkit cl100k_base, ~10-30% margin vs native
 ;; provider tokenizers). Sized for a 200k-token provider window:
-;;   form-result   2 000 tok   (~1% window)
+;;   form-result  10 000 tok   (~5% window; enough for code slices / rg context)
 ;;   fact-content    800 tok   (~0.4% window)
 
-(def ^:private FORM_RESULT_TOKEN_LIMIT 2000)
+(def ^:private FORM_RESULT_TOKEN_LIMIT 10000)
 (def ^:private FACT_CONTENT_TOKEN_LIMIT 800)
 
 (defn- bound-fact-content
@@ -131,7 +131,8 @@
 
    This is THE fix for the c8dc39b1 / 1a9a61ee trailer-bloat class:
    `(def x (v/cat huge-file))` no longer rides every later prompt
-   verbatim — the model sees head + tail + the handle.
+   verbatim once it crosses the generous 10k-token evidence window —
+   the model sees head + tail + the handle.
 
    Phase G (trailer-noise): `:channel` is NOT in the pass-through set
    anymore — it carries channel-render IR Hiccup ([:p {} [:strong ...] …])

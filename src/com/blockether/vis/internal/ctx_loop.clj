@@ -203,58 +203,12 @@
           (assoc c :engine/warnings [])))
       @ws)))
 
-(def ^:private TITLE_REFRESH_TURN_PERIOD
-  "Cadence at which the title-gate re-fires even when the title is set.
-   Turn 1 fires too (blank-title catch). Tick turns: 1, 10, 20, 30, …."
-  10)
-
-(defn- title-cadence-tick?
-  "True when `turn-pos` lands on a title-cadence tick — i.e. the title
-   gate should re-evaluate this turn. Quiet on intermediate turns."
-  [tp]
-  (and (pos? tp)
-    (or (= 1 tp) (zero? (mod tp TITLE_REFRESH_TURN_PERIOD)))))
-
 (defn title-gate-blocker
-  "Pure helper: returns a `:session/stages` blocker map for the title
-   when attention is warranted, or nil otherwise.
-
-   Two shapes:
-     :missing-title — title blank on a cadence tick (turn 1, 10, 20).
-     :stale-title   — title set BUT cadence tick on turn > 1
-                      (refresh nudge; skipped on turn 1).
-
-   Computed FRESH at every render by `build-and-render-ctx` and
-   injected into the ctx before `derive-stages` runs. NOT persisted
-   to `:engine/blockers` — pure projection of (turn-pos, title) so
-   the model sees the blocker on iter 1 the moment the conditions
-   hold, without waiting for apply-done! to push state. Drops
-   automatically the same iter the title gets set."
-  [turn-pos session-title]
-  (let [title-str (some-> session-title str clojure.string/trim)
-        tp        (long (or turn-pos 0))
-        blank?    (or (nil? title-str) (clojure.string/blank? title-str))]
-    (cond
-      (not (title-cadence-tick? tp)) nil
-
-      blank?
-      {:id     :missing-title
-       :reason (str "Session title is blank on turn " tp ". The title "
-                 "labels the session in the channel UI and indexes it in "
-                 "history. Emit `(set-session-title! \"...\")` BEFORE "
-                 "`(done ...)` so future search / resume / chrome can find "
-                 "this conversation.")
-       :remedy '(set-session-title! "...")}
-
-      (> tp 1)
-      {:id     :stale-title
-       :reason (str "Title refresh check (turn " tp ", every "
-                 TITLE_REFRESH_TURN_PERIOD " turns). Current title: \""
-                 title-str "\". If the conversation focus has shifted, "
-                 "emit `(set-session-title! \"...\")` with a fresh 3-7-word "
-                 "noun phrase before `(done ...)`; otherwise ignore this "
-                 "entry and proceed.")
-       :remedy '(set-session-title! "...")})))
+  "Title setup is host-owned. Kept as a public no-op helper for old tests and
+   extension call sites; the main model should not spend forms on session-title
+   maintenance."
+  [_turn-pos _session-title]
+  nil)
 
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`.
@@ -623,6 +577,28 @@
     (some #(when (= iter-pos (:position %)) %)
       (persistance/db-list-session-turn-iterations (:db-info env) (:id turn)))))
 
+(defn- unavailable-introspect-reason
+  "Classify why a DB-backed iter/form scope cannot be read. The current
+   iteration is not persisted until its whole fence finishes, so same-iter
+   introspection is impossible and should be called out explicitly instead
+   of returning silent nil."
+  [env {:keys [turn iter]}]
+  (let [{ct :turn ci :iter} (cursor-snapshot env)]
+    (cond
+      (or (> turn ct) (and (= turn ct) (> iter ci))) :future-scope
+      (and (= turn ct) (= iter ci))                 :current-iteration-not-persisted
+      :else                                        :scope-not-found)))
+
+(defn- introspect-unavailable
+  [kind scope reason & {:as extra}]
+  (merge
+    {:vis/error :introspect-scope-unavailable
+     :kind      kind
+     :scope     scope
+     :reason    reason
+     :hint      "Only completed iterations are DB-introspectable. Do not introspect the current/future iteration; use visible trailer head/tail first."}
+    extra))
+
 (defn build-introspect-bindings
   "Return `{'symbol bare-fn}` for the introspect-* verbs the model calls.
    `history-loader` is a 0-arity thunk that returns the persisted history
@@ -658,12 +634,16 @@
          (persistance/db-list-session-turns (:db-info env) (:session-id env))))
      'introspect-iter
      (fn introspect-iter [scope]
-       (when-let [{:keys [turn iter]} (parse-iter-scope scope)]
-         (when-let [it (iter-by-pos env turn iter)]
+       (if-let [{:keys [turn iter] :as parsed} (parse-iter-scope scope)]
+         (if-let [it (iter-by-pos env turn iter)]
            {:scope  scope
             :status (:status it)
             :code   (:code it)
-            :forms  (vec (:forms it))})))
+            :forms  (vec (:forms it))}
+           (introspect-unavailable :iter scope
+             (unavailable-introspect-reason env parsed)
+             :parsed parsed))
+         (introspect-unavailable :iter scope :malformed-scope)))
      'trailer-find
      ;; Phase F: SQLite FTS5 search over indexed iteration `code`
      ;; (the whole fence body). Returns iteration scopes ranked by
@@ -722,6 +702,14 @@
                   :rank    rank}))))))
      'introspect-form
      (fn introspect-form [scope]
-       (when-let [{:keys [turn iter form]} (parse-form-scope scope)]
-         (when-let [it (iter-by-pos env turn iter)]
-           (nth (vec (:forms it)) (dec form) nil))))}))
+       (if-let [{:keys [turn iter form] :as parsed} (parse-form-scope scope)]
+         (if-let [it (iter-by-pos env turn iter)]
+           (let [forms (vec (:forms it))]
+             (or (nth forms (dec form) nil)
+               (introspect-unavailable :form scope :form-not-found
+                 :parsed parsed
+                 :available-forms (count forms))))
+           (introspect-unavailable :form scope
+             (unavailable-introspect-reason env parsed)
+             :parsed parsed))
+         (introspect-unavailable :form scope :malformed-scope)))}))
