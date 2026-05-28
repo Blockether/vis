@@ -311,8 +311,27 @@
           body  (->> lines
                   (map (comp str/trim strip-ansi body-of))
                   (str/join " "))]
-      (expect (str/includes? body "RECAP  Provider error HTTP 429: Exceptional status code: 429 — rate limit: wait, re-authenticate, or switch provider/model"))
-      (expect (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
+      (expect (str/includes? body "RECAP  Provider rate-limited HTTP 429 — rate limit: wait, re-authenticate, or switch provider/model"))
+      (expect (str/includes? body "NEXT STEP: rate limit: wait, re-authenticate, or switch provider/model"))
+      (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429"))))))
+
+(defdescribe provider-auth-error-test
+  (it "renders provider auth errors as action, not duplicate raw JSON"
+    (let [lines (format-iteration-entry
+                  {:error {:type :svar.core/http-error
+                           :message "API authentication failed. Check your API key. (Original: Exceptional status code: 401)"
+                           :data {:status 401
+                                  :body "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid authentication credentials\"},\"request_id\":\"req_123\"}"}}}
+                  120 1 {})
+          body  (->> lines
+                  (map (comp str/trim strip-ansi body-of))
+                  (str/join " "))]
+      (expect (str/includes? body "RECAP  Provider auth failed HTTP 401 — re-authenticate provider or update API key"))
+      (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 401")))
+      (expect (str/includes? body "Provider message: Invalid authentication credentials"))
+      (expect (str/includes? body "NEXT STEP: re-authenticate provider or update API key"))
+      (expect (not (str/includes? body "provider response:")))
+      (expect (not (str/includes? body "{\"type\":"))))))
 
 (defdescribe assistant-bubble-footer-fallback-test
   (it "shows selected and actual LLM routing in the assistant bubble footer"
