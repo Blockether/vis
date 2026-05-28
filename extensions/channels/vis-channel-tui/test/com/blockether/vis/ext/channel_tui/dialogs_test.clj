@@ -186,7 +186,7 @@
                                                                :state :active
                                                                :root "/repo"}}]}})]
     (testing "navigator makes entity kind explicit"
-      (is (= #{"session" "workspace" "tab"} (set (map :kind rows))))
+      (is (= #{"session" "workspace"} (set (map :kind rows))))
       (is (= "Untitled session" (:label (first rows))))
       (is (= {:action :switch :id "s1"} (:target (first rows))))
       (is (= [{:action :switch-workspace :workspace-id :main}]
