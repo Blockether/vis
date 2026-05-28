@@ -129,13 +129,21 @@
                                 :validator-fn? :proof?}}
       :session/trailer   [{:scope :forms [{:scope :tag :form :result? :error?}]}]
       :session/symbols   {sym → {:arglists? :doc? :born}}
-      :session/stages      [{:kind   :blocker | :fix-consistency
-                                    | :work-unblocked-todo | :prove-requirement
-                            :id     <entity-id-or-blocker-id>
-                            :status :blocked | :ready | :doing
-                            :batch  <long>   ;; topological depth
-                            :reason \"<short prose>\"
-                            :remedy (engine-fn :K {...})} …]
+      :session/stages    [[<stage-0-entry> …]   ;; emit ALL in ONE fence
+                          [<stage-1-entry> …]   ;; after stage 0
+                          [<stage-2-entry> …]   ;; after stage 1
+                          …]
+
+      Each stage entry shape:
+        {:kind   :blocker | :fix-consistency | :dep-drift
+                  | :work-unblocked-todo | :prove-requirement
+                  | :gap-provenance | :stale-task-doing | :idle-task
+                  | :stale-spec-open | :repeated-retry
+                  | :duplicate-observation
+         :id     <entity-id-or-blocker-id>
+         :status :blocked | :ready | :doing
+         :reason \"<short prose>\"
+         :remedy (engine-fn :K {...})}
 
       Project rules (AGENTS.md / CLAUDE.md) ride in a separate system
       block — not in :session/env. Read :session/env BEFORE calling
@@ -143,38 +151,95 @@
 
       :session/stages IS THE PRIMARY ATTENTION SURFACE. Read it FIRST
       every iter:
-        - `:status :blocked` entries (always `:batch 0`) MUST be
-          resolved first. The `:remedy` form is the engine's quoted
-          directive — read it, fill any `\\\"...\\\"` placeholders with
-          real values, then execute it.
-        - `:status :ready` entries follow in topological dep order.
+        - Stage 0 entries (head of outer vec) MUST be resolved first.
+          All Stage 0 entries are INDEPENDENT — emit EVERY remedy as
+          a top-level form in ONE fence.
+        - Stage 1+ entries follow in topological dep order. Same-stage
+          entries are parallel-safe; cross-stage entries serialise.
+        - The deepest stage holds ADVISORY entries (heuristic gaps the
+          engine spotted). Address them when actionable; ignore when
+          intentional. Advisory entries do NOT block close.
         - There are NO `;; ⚠` line-comment warnings inside the ctx
-          EDN body anymore — every refusal / blocker / suggested
-          action lives as a first-class plan entry.
+          EDN body — every refusal / blocker / suggested action /
+          detected gap lives as a first-class stage entry.
 
-      PARALLELISM via `:batch`:
-        Entries that share the SAME `:batch` value have NO dependency
-        between them and SHOULD be executed in ONE fence (a single
-        iter / round-trip), in any order. Entries with a HIGHER
-        `:batch` value depend on at least one lower-batch entry;
-        they must wait until prior batches complete on subsequent
-        iters.
+      PARALLELISM PATTERN:
+        Take the FIRST inner vec (stage 0). For each entry, emit its
+        `:remedy` as a top-level Clojure form in the SAME fence — they
+        do not conflict. ONE iter → N parallel mutations → next iter's
+        stages reflect the new state and surface stage 1 as the new
+        head.
 
-        - `:batch 0`  blockers + consistency repairs. All independent
-                       — fix every one in the same fence (e.g. emit
-                       `(set-session-title! \"...\")` AND
-                       `(consult-promote! :K :K-fact)` together).
-        - `:batch 1`  leaf work: tasks whose `:depends-on` is empty
-                       or all terminal. Batch them in one fence;
-                       they cannot conflict.
-        - `:batch 2+` deeper work levels. Only after lower batches
-                       complete (next iter's plan will surface them
-                       in `:batch 1` once their deps land terminal).
+        Example: stage 0 with three blockers
+          [{:remedy (set-session-title! \"...\")}
+           {:remedy (consult-promote! :research :research-fact)}
+           {:remedy (task-set! :foo {:status :doing})}]
 
-        Practical pattern: read the plan, group by `:batch`, take the
-        LOWEST batch group, emit every entry's `:remedy` as top-level
-        forms in ONE fence. ONE iter → N parallel mutations → next
-        iter's plan reflects the new state.
+        Fence to emit:
+          (set-session-title! \"Auth flow rewrite\")
+          (consult-promote! :research :research-fact)
+          (task-set! :foo {:status :doing})
+
+      ENTRY KIND TAXONOMY (what to DO with each):
+
+        :blocker
+          Gate refusal (missing-title, stale-title, pending-consult,
+          etc.). :remedy is the gate-closing form. Execute and the
+          blocker drops next iter.
+
+        :fix-consistency
+          Spec :done with unproven req, OR task :done with pending dep.
+          :remedy flips status back so the model can repair.
+          MUST repair before generating new work.
+
+        :dep-drift
+          Task :depends-on includes a :cancelled / :superseded /
+          :archived entity. The dep graph is broken. :remedy is
+          (task-depends! :K [<new>]) or (task-set! :K {:status :cancelled}).
+          Choose: update deps or cancel the task.
+
+        :work-unblocked-todo
+          Task :todo whose deps are all terminal (done/cancelled/
+          archived). :remedy is (task-set! :K {:status :doing}). Pick
+          it up and start working.
+
+        :prove-requirement
+          Spec has an :open requirement with no proof. :remedy is
+          (proof-add! :spec :req). Add the proof after probing the
+          relevant scope.
+
+        :gap-provenance                                    (advisory)
+          A :fact :active has substantial content but no :source nor
+          :depends-on. Declare provenance via (fact-depends! :K [...])
+          or (fact-set! :K {:source :probe :probe-scope \"tN/iM/fK\"}).
+          Cross-turn callers need to audit the fact's origin.
+
+        :stale-task-doing                                  (advisory)
+          A task has been :doing for many turns. Either real work in
+          progress or model forgot. Flip to :status :blocked with a
+          real reason, OR close with a proof, OR cancel.
+
+        :idle-task                                         (advisory)
+          A task :todo for many turns AND blocked by non-terminal deps.
+          Either close the deps so it unblocks, or cancel the task.
+          (Tasks unblocked already surface as :work-unblocked-todo —
+          this kind only fires when deps are non-terminal.)
+
+        :stale-spec-open                                   (advisory)
+          A spec :open for many turns with zero proven requirements.
+          Model is stuck on planning. :remedy suggests a :deep consult
+          to unstick — fill :focus + :question with the actual blocker.
+
+        :repeated-retry                                    (advisory)
+          A task has 3+ archived (rejected) proofs. The validator-fn
+          is rejecting the strategy repeatedly. :remedy is
+          (introspect-failed-proofs :K) — read the rejection reasons,
+          then audit the validator-fn or change strategy.
+
+        :duplicate-observation                             (advisory)
+          The same (v/...) observation ran 2+ times with IDENTICAL
+          result. :remedy is (introspect-form \"<earlier-scope>\") —
+          reuse the cached result instead of re-probing.
 
     ENGINE FNS (bare symbols — never namespace-qualify)
 
