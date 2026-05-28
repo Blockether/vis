@@ -215,49 +215,27 @@
   (and (pos? tp)
     (or (= 1 tp) (zero? (mod tp TITLE_REFRESH_TURN_PERIOD)))))
 
-(defn- title-gate-blocker
-  "Phase G: integration-layer title-gate. Pure helper.
+(defn title-gate-blocker
+  "Pure helper: returns a `:session/stages` blocker map for the title
+   when attention is warranted, or nil otherwise.
 
-   Returns a plan-blocker map (`:id :reason :remedy`) on cadence ticks
-   when title attention is warranted, or nil otherwise. Two blocker
-   shapes:
+   Two shapes:
+     :missing-title — title blank on a cadence tick (turn 1, 10, 20).
+     :stale-title   — title set BUT cadence tick on turn > 1
+                      (refresh nudge; skipped on turn 1).
 
-     :missing-title  — title blank on a cadence tick (turn 1, 10, 20…).
-                       Model MUST set a title; chrome / index will
-                       otherwise show a blank label.
-
-     :stale-title    — title set BUT cadence tick fired on a later
-                       turn (10, 20, 30…). Soft nudge to refresh the
-                       title if conversation focus has drifted from the
-                       opener. Skipped on turn 1 (the existing title is
-                       fresh by definition).
-
-   Phase G fix: both blockers are SOFT signals — they ride into
-   `:engine/blockers` (→ `:session/stages` head as a first-class entry),
-   but `apply-done!` no longer hard-refuses the done. The retry-loop
-   forensics (session c4eb7bab t2: 7 wasted iters because the model
-   couldn't see the buried `;; ⚠` hint and kept resubmitting the same
-   refused `(done ...)`) made hard refusal too risky. The new contract:
-   model sees the blocker as DATA in `:session/stages`, the system prompt
-   instructs to handle it, but a determined model can still ship its
-   answer. Loud signal, no infinite-loop trap.
-
-   Kept in ctx-loop, not the engine, so `eng/apply-done` stays pure
-   and unit tests built on `empty-ctx` never trip the gate.
-
-   Gating order:
-     1. `enforce?` false                              → nil (host opted out)
-     2. NOT on a cadence tick                         → nil (quiet turn)
-     3. title blank                                   → :missing-title
-     4. title set + tp > 1 (refresh tick)             → :stale-title
-     5. title set on turn 1                           → nil (already fresh)"
-  [turn-pos session-title enforce?]
+   Computed FRESH at every render by `build-and-render-ctx` and
+   injected into the ctx before `derive-stages` runs. NOT persisted
+   to `:engine/blockers` — pure projection of (turn-pos, title) so
+   the model sees the blocker on iter 1 the moment the conditions
+   hold, without waiting for apply-done! to push state. Drops
+   automatically the same iter the title gets set."
+  [turn-pos session-title]
   (let [title-str (some-> session-title str clojure.string/trim)
         tp        (long (or turn-pos 0))
         blank?    (or (nil? title-str) (clojure.string/blank? title-str))]
     (cond
-      (not (true? enforce?))            nil
-      (not (title-cadence-tick? tp))    nil
+      (not (title-cadence-tick? tp)) nil
 
       blank?
       {:id     :missing-title
@@ -266,9 +244,6 @@
                  "history. Emit `(set-session-title! \"...\")` BEFORE "
                  "`(done ...)` so future search / resume / chrome can find "
                  "this conversation.")
-       ;; `...` is the model-fillable placeholder — the model emits a real
-       ;; 3-7-word noun phrase here. Engine never executes the remedy form
-       ;; itself, it's an EDN-quoted directive for the model to read + adapt.
        :remedy '(set-session-title! "...")}
 
       (> tp 1)
@@ -303,45 +278,21 @@
    Returns the intent map plus `:blocked? true|false`."
   [{:keys [ctx-atom] :as env} {:keys [answer answer-summary
                                       user-request turn-summary
-                                      session-title enforce-title-gate?
                                       trailer-drop trailer-summarize archive]}]
   (let [start-ms      (System/nanoTime)
         cursor        (cursor-snapshot env)
         scope         (synthesize-scope env)
         warns         (atom [])
-        blocked?      (atom false)
-        ;; Phase G fix: read the LIVE turn-position from turn-state-atom
-        ;; instead of stale `(:session/turn ctx)`. The engine `:session/turn`
-        ;; was historically stuck at 1 because `eng/advance-turn` was never
-        ;; wired — fixed now in vis loop via `eng/enter-turn` — but reading
-        ;; the atom is defensive: turn-position is bumped per-turn at loop
-        ;; init regardless of engine state, so this works even if a future
-        ;; refactor breaks the engine-sync wiring.
-        live-turn-pos (or (:turn-position (read-turn-state env))
-                        (when ctx-atom (:session/turn @ctx-atom)))
-        title-blocker (title-gate-blocker live-turn-pos
-                        session-title enforce-title-gate?)]
-    ;; Phase G: refresh title-related blockers based on CURRENT state at
-    ;; every apply-done call. Both :missing-title and :stale-title are
-    ;; dropped first so a model that did `(set-session-title! "...")`
-    ;; then `(done ...)` in the same fence sees a clean plan — a blocker
-    ;; only re-lands below when the gate STILL fires with current inputs.
+        blocked?      (atom false)]
+    ;; Title-blocker is now computed FRESH at render time in
+    ;; `build-and-render-ctx` (via `title-gate-blocker` over live
+    ;; turn-state + session-title-atom), so apply-done! no longer
+    ;; pushes blocker state. Drop any stale :missing-title /
+    ;; :stale-title from previous renders before the engine swap so
+    ;; nothing leaks into the persisted ctx.
     (when ctx-atom
       (swap! ctx-atom update :engine/blockers
         (fn [bs] (vec (remove #(#{:missing-title :stale-title} (:id %)) (or bs []))))))
-    ;; Phase G fix: SOFT signal only. Even when the gate fires, we still
-    ;; let `eng/apply-done` run so the answer ships, the auto-fact lands,
-    ;; trailer pins / archive apply. The blocker rides into
-    ;; `:engine/blockers` (→ next turn's `:session/stages` head) so the
-    ;; model sees it but is NOT trapped in a retry loop on this turn.
-    (when (and ctx-atom title-blocker)
-      (swap! ctx-atom update :engine/blockers (fnil conj []) title-blocker)
-      (swap! warns conj {:code    :done-completed-with-blocker
-                         :anchor  [(:id title-blocker)]
-                         :message (:reason title-blocker)})
-      (tel/log! {:level :warn :id ::apply-done-blocker-noted
-                 :data {:turn live-turn-pos :blocker-id (:id title-blocker)}}
-        "apply-done shipping answer with active blocker noted in :session/stages"))
     (when ctx-atom
       (swap! ctx-atom
         (fn [c]
@@ -365,8 +316,6 @@
                         :trailer-drop      trailer-drop
                         :trailer-summarize trailer-summarize
                         :archive           archive
-                        :live-turn-pos     live-turn-pos
-                        :title-blocker?    (boolean title-blocker)
                         :warnings          @warns
                         :blocked?          @blocked?
                         :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
@@ -569,8 +518,26 @@
           drained-warns  (drain-warnings! env)
           derived-warns  (eng/derive-warnings ctx* idx fr)
           warns          (vec (concat drained-warns derived-warns))
-          stages         (eng/derive-stages ctx* idx prog)]
-      (renderer-fn {:ctx ctx* :warnings warns
+          ;; Live title-blocker injection. Computed FRESH from
+          ;; turn-state + session-title-atom every render — model sees
+          ;; the blocker on iter 1 the moment the conditions hold,
+          ;; without waiting for apply-done! to push state. Drops the
+          ;; same iter the title gets set.
+          live-turn-pos    (or (:turn-position (read-turn-state env))
+                             (:session/turn ctx*))
+          live-title       (some-> (:session-title-atom env) deref str
+                             clojure.string/trim not-empty)
+          title-blocker    (title-gate-blocker live-turn-pos live-title)
+          ctx-with-blocker (cond-> ctx*
+                             title-blocker
+                             (update :engine/blockers
+                               (fn [bs]
+                                 (vec
+                                   (concat [title-blocker]
+                                     (remove #(#{:missing-title :stale-title} (:id %))
+                                       (or bs [])))))))
+          stages           (eng/derive-stages ctx-with-blocker idx prog)]
+      (renderer-fn {:ctx ctx-with-blocker :warnings warns
                     :progression prog :stages stages}))))
 
 ;; =============================================================================
