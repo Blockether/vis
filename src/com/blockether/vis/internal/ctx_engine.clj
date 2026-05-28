@@ -1711,7 +1711,7 @@
   ([ctx indexes progression] (derive-stages ctx indexes progression {}))
   ([ctx indexes progression _last-mutation-map]
    (let [blockers       (mapv (fn [b] (assoc b :kind :blocker :status :blocked
-                                         :stage-rank 0))
+                                        :stage-rank 0))
                           (or (:engine/blockers ctx) []))
          action-entries (collect-stage-entries ctx indexes progression)
          all-entries    (concat blockers action-entries)

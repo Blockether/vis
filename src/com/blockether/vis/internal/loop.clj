@@ -3431,7 +3431,9 @@
                                        :session current-session
                                        :iteration iteration-position
                                        :session-title (:title current-session)
-                                       :title-refresh? (zero? (long iteration))
+                                       ;; Title setup is host-owned by `maybe-auto-title!`.
+                                       ;; Keep the legacy model-facing title hook quiet.
+                                       :title-refresh? false
                                        :turn-position turn-position
                                        ;; Use `:last-iter-input` so the hint reflects the SIZE OF
                                        ;; THE NEXT REQUEST instead of the cumulative-turn total.
@@ -4199,6 +4201,151 @@
        :slash           slash-result
        :prior-outcome   :complete})))
 
+;; =============================================================================
+;; Title listeners + set-title! broadcast
+;;
+;; Channels (TUI, Telegram, ...) that want to react to a session
+;; title change - typically because the model emitted `(set-session-title! "...")`
+;; mid-turn - register a listener via `add-title-listener!`. The
+;; listener fn receives the new title; it MUST be cheap (typically a
+;; `state/dispatch` into the channel's app-db). Listeners are stored
+;; per session-id so a TUI watching session A doesn't get
+;; woken by a Telegram bot updating session B.
+;;
+;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
+;; `(set-session-title! "...")` fn (model-driven) funnel through
+;; `set-title-with-broadcast!`, which is the single mutation point.
+;; That keeps the in-memory env atom + DB column + listener fan-out
+;; in lockstep - no path can update one without the others.
+;; =============================================================================
+
+(defonce ^:private title-listeners
+  ;; {session-id-uuid #{listener-fn ...}}
+  (atom {}))
+
+(defn add-title-listener!
+  "Register `listener-fn` for `session-id`. The fn is invoked with
+   the new title (a string) every time the title changes. Multiple
+   listeners are supported; they fire in unspecified order.
+
+   Returns the listener fn so callers can pass it to
+   `remove-title-listener!` later."
+  [session-id listener-fn]
+  (let [cid (persistance/->uuid session-id)]
+    (swap! title-listeners update cid (fnil conj #{}) listener-fn))
+  listener-fn)
+
+(defn remove-title-listener!
+  "Deregister a previously added listener. Idempotent."
+  [session-id listener-fn]
+  (let [cid (persistance/->uuid session-id)]
+    (swap! title-listeners update cid
+      (fn [existing] (disj (or existing #{}) listener-fn))))
+  nil)
+
+(defn- broadcast-title-change!
+  "Fire every registered listener for `session-id` with `title`.
+   Listeners that throw are swallowed and logged - a misbehaving
+   channel must NOT block the iteration loop."
+  [session-id title]
+  (let [cid (persistance/->uuid session-id)]
+    (doseq [f (get @title-listeners cid)]
+      (try (f title)
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::title-listener-failed
+                     :data {:session-id cid
+                            :error (ex-message t)}
+                     :msg (str "Title listener threw: " (ex-message t))}))))))
+
+(defn set-title-with-broadcast!
+  "Single mutation point for session titles.
+
+   1. Writes the title to the persisted `session_state` row.
+   2. Updates the env's in-memory `:session-title-atom` so the next iteration's
+      `:session-title-atom` mirror sees the new value AND so a
+      read from the SCI sandbox returns the fresh string immediately,
+      without a DB round-trip.
+   3. Broadcasts to every registered listener.
+
+   `session-title-atom` may be nil (host-driven path with no live env)."
+  [db-info session-id session-title-atom title]
+  (let [t (str title)]
+    (persistance/db-update-session-title! db-info session-id t)
+    (when session-title-atom (reset! session-title-atom t))
+    (broadcast-title-change! session-id t)
+    nil))
+
+(def ^:private AUTO_TITLE_MAX_CHARS 80)
+(def ^:private AUTO_TITLE_TTFT_MS 15000)
+(def ^:private AUTO_TITLE_IDLE_MS 10000)
+(def ^:private AUTO_TITLE_SEMANTIC_MS 30000)
+
+(defn- sanitize-auto-title
+  [s]
+  (let [line (-> (or s "")
+               str
+               str/split-lines
+               first
+               (or "")
+               (str/replace #"(?i)^\s*(title|new title)\s*[:\-–—]\s*" "")
+               (str/replace #"^[\s\"'`*_#>\-–—]+" "")
+               (str/replace #"[\s\"'`*_#>\-–—.]+$" "")
+               str/trim)
+        clipped (truncate line AUTO_TITLE_MAX_CHARS)]
+    (when-not (str/blank? clipped) clipped)))
+
+(defn- auto-title-prompt
+  [previous-title user-request]
+  [{:role "system"
+    :content (str "You generate short chat/session titles. Return ONLY the title text, "
+               "no quotes, no markdown, no prefix. 3-7 words. Prefer stable noun phrases. "
+               "Use the user's latest request and the previous title. If the previous title "
+               "still fits, return it unchanged; otherwise update it to reflect the new focus.")}
+   {:role "user"
+    :content (str "Previous title: " (or (not-empty previous-title) "<none>")
+               "\nLatest user request:\n" user-request)}])
+
+(defn- model-auto-title!
+  "Ask the cheapest routed model for a session title before the main provider
+   call. This removes the old model-visible `(set-session-title! ...)` tax while
+   still using an LLM title that can keep or revise the previous title."
+  [{:keys [router]} previous-title user-request]
+  (let [resp (svar/ask-code! router
+               (with-default-ask-code-idle-timeout
+                 {:messages            (auto-title-prompt previous-title user-request)
+                  :lang                "text"
+                  :reasoning           :off
+                  :routing             {:optimize :cost}
+                  :code-tail-pointer?  true
+                  :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
+                  :idle-timeout-ms     AUTO_TITLE_IDLE_MS
+                  :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))]
+    (or (sanitize-auto-title (:result resp))
+      (sanitize-auto-title (:raw resp)))))
+
+(defn- maybe-auto-title!
+  "Refresh the session title asynchronously before each normal LLM turn using
+   the cheapest routed model. The helper sees the previous title and may return
+   it unchanged. Manual `(set-session-title! ...)` remains available as an
+   override/fallback, but routine title selection is host-owned, not a
+   main-model form. Returns a future or nil; callers intentionally do not wait."
+  [{:keys [db-info session-id session-title-atom] :as env} user-request]
+  (when (and db-info session-id (:router env))
+    (future
+      (let [previous (some-> session-title-atom deref str str/trim not-empty)
+            title    (try
+                       (model-auto-title! env previous user-request)
+                       (catch Throwable t
+                         (tel/log! {:level :warn
+                                    :id ::auto-title-failed
+                                    :data {:session-id session-id
+                                           :previous-title previous
+                                           :error (ex-message t)}}
+                           "Auto-title LLM call failed; keeping existing title")
+                         nil))]
+        (when (and (seq title) (not= title previous))
+          (set-title-with-broadcast! db-info session-id session-title-atom title))))))
+
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
    the end-of-turn CTX snapshot, update the turn row with answer +
@@ -4217,6 +4364,7 @@
             :iteration nil
             :form-idx nil
             :iteration-id nil)
+        _ (maybe-auto-title! env user-request)
         result (iteration-loop env user-request
                  (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)
@@ -4450,80 +4598,6 @@
      :total-tokens-atom total-tokens-atom
      :total-cost-atom   total-cost-atom
      :merge-cost!       merge-cost!}))
-
-;; =============================================================================
-;; Title listeners + set-title! broadcast
-;;
-;; Channels (TUI, Telegram, ...) that want to react to a session
-;; title change - typically because the model emitted `(set-session-title! "...")`
-;; mid-turn - register a listener via `add-title-listener!`. The
-;; listener fn receives the new title; it MUST be cheap (typically a
-;; `state/dispatch` into the channel's app-db). Listeners are stored
-;; per session-id so a TUI watching session A doesn't get
-;; woken by a Telegram bot updating session B.
-;;
-;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
-;; `(set-session-title! "...")` fn (model-driven) funnel through
-;; `set-title-with-broadcast!`, which is the single mutation point.
-;; That keeps the in-memory env atom + DB column + listener fan-out
-;; in lockstep - no path can update one without the others.
-;; =============================================================================
-
-(defonce ^:private title-listeners
-  ;; {session-id-uuid #{listener-fn ...}}
-  (atom {}))
-
-(defn add-title-listener!
-  "Register `listener-fn` for `session-id`. The fn is invoked with
-   the new title (a string) every time the title changes. Multiple
-   listeners are supported; they fire in unspecified order.
-
-   Returns the listener fn so callers can pass it to
-   `remove-title-listener!` later."
-  [session-id listener-fn]
-  (let [cid (persistance/->uuid session-id)]
-    (swap! title-listeners update cid (fnil conj #{}) listener-fn))
-  listener-fn)
-
-(defn remove-title-listener!
-  "Deregister a previously added listener. Idempotent."
-  [session-id listener-fn]
-  (let [cid (persistance/->uuid session-id)]
-    (swap! title-listeners update cid
-      (fn [existing] (disj (or existing #{}) listener-fn))))
-  nil)
-
-(defn- broadcast-title-change!
-  "Fire every registered listener for `session-id` with `title`.
-   Listeners that throw are swallowed and logged - a misbehaving
-   channel must NOT block the iteration loop."
-  [session-id title]
-  (let [cid (persistance/->uuid session-id)]
-    (doseq [f (get @title-listeners cid)]
-      (try (f title)
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::title-listener-failed
-                     :data {:session-id cid
-                            :error (ex-message t)}
-                     :msg (str "Title listener threw: " (ex-message t))}))))))
-
-(defn set-title-with-broadcast!
-  "Single mutation point for session titles.
-
-   1. Writes the title to the persisted `session_state` row.
-   2. Updates the env's in-memory `:session-title-atom` so the next iteration's
-      `:session-title-atom` mirror sees the new value AND so a
-      read from the SCI sandbox returns the fresh string immediately,
-      without a DB round-trip.
-   3. Broadcasts to every registered listener.
-
-   `session-title-atom` may be nil (host-driven path with no live env)."
-  [db-info session-id session-title-atom title]
-  (let [t (str title)]
-    (persistance/db-update-session-title! db-info session-id t)
-    (when session-title-atom (reset! session-title-atom t))
-    (broadcast-title-change! session-id t)
-    nil))
 
 ;; -----------------------------------------------------------------------------
 ;; Finalize turn result

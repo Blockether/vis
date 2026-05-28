@@ -170,13 +170,11 @@
         stages reflect the new state and surface stage 1 as the new
         head.
 
-        Example: stage 0 with three blockers
-          [{:remedy (set-session-title! \"...\")}
-           {:remedy (consult-promote! :research :research-fact)}
+        Example: stage 0 with two blockers
+          [{:remedy (consult-promote! :research :research-fact)}
            {:remedy (task-set! :foo {:status :doing})}]
 
         Fence to emit:
-          (set-session-title! \"Auth flow rewrite\")
           (consult-promote! :research :research-fact)
           (task-set! :foo {:status :doing})
 
@@ -388,6 +386,11 @@
           reference the resulting fact)
 
       Introspection (lazy; reach evidence the live trailer dropped):
+        Use visible trailer :vis/head/:vis/tail first. Do NOT call
+        introspect-* merely because :vis/full exists. Call introspect-*
+        only when missing middle data is required for the next mutation/proof.
+        Never introspect the current/future iteration; only completed
+        iterations are DB-introspectable.
         (introspect-turn-list)
         (introspect-ctx-at        \"t<N>\")
         (introspect-iter          \"t<N>/i<M>\")
@@ -403,7 +406,7 @@
 
       Control:
         (done {:answer :trailer-drop? :trailer-summarize?})
-        (set-session-title! \"title\")
+        Session titles are host-generated; do not spend a form on title setup.
 
     ACCEPTANCE CHAIN
       spec declares intent → req decomposes spec into atoms, each with

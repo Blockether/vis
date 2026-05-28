@@ -1038,9 +1038,9 @@
    Every former boolean / enum (show-thinking, show-iterations,
    show-silent, show-timestamps, mouse-selection-copy,
    voice/respond?, message-meta, reasoning-level,
-   openai-codex-verbosity) was migrated into the toggles registry
-   and now renders under the Feature Toggles section via
-   `registry-toggle-rows`."
+   openai-codex-verbosity) was migrated into the toggles registry.
+   Host-owned toggles render on General; extension-owned toggles render
+   on Extensions so the same switch is not duplicated across tabs."
   []
   [{:key :theme-name
     :type :choice
@@ -1048,30 +1048,36 @@
     :label "Theme"
     :description "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}])
 
+(defn- general-toggle-spec?
+  [{:keys [owner]}]
+  (or (nil? owner) (= :vis owner)))
+
 (defn- registry-toggle-rows
-  "Settings rows for every registered feature toggle.
+  "Settings rows for registered feature toggles accepted by `include?`.
 
    Pure projection over `(vis/registered-toggles)`: any toggle
-   registered by the host or by an extension shows up here without a
-   per-row patch. The `:registry-toggle` row type carries
-   `:toggle-id` so the apply path flips the registry value (which
-   then fan-outs to listeners — persist + render bump — wired in
-   `screen/run-chat!`). Returns nil when no toggle is registered so
-   the section header stays hidden on a bare install."
-  []
-  (let [specs (->> (vis/registered-toggles)
-                (sort-by (juxt #(or (some-> % :group name) "zzz") :id)))]
-    (when (seq specs)
-      (vec
-        (cons {:type :section :label "Feature Toggles"}
-          (for [{:keys [id label description owner]} specs]
-            {:key         (keyword (str "toggle::" id))
-             :type        :registry-toggle
-             :toggle-id   id
-             :label       (or label (str id))
-             :description (str description
-                            (when (and owner (not= owner :vis))
-                              (str "  [" owner "]")))}))))))
+   registered by the host or by an extension shows up in the matching
+   tab without a per-row patch. The `:registry-toggle` row type carries
+   `:toggle-id` so the apply path flips the registry value (which then
+   fan-outs to listeners — persist + render bump — wired in
+   `screen/run-chat!`). Returns nil when no matching toggle is
+   registered so the section header stays hidden on a bare install."
+  ([] (registry-toggle-rows (constantly true)))
+  ([include?]
+   (let [specs (->> (vis/registered-toggles)
+                 (filter include?)
+                 (sort-by (juxt #(or (some-> % :group name) "zzz") :id)))]
+     (when (seq specs)
+       (vec
+         (cons {:type :section :label "Feature Toggles"}
+           (for [{:keys [id label description owner]} specs]
+             {:key         (keyword (str "toggle::" id))
+              :type        :registry-toggle
+              :toggle-id   id
+              :label       (or label (str id))
+              :description (str description
+                             (when (and owner (not= owner :vis))
+                               (str "  [" owner "]")))})))))))
 
 (def ^:private tui-contributor-slots
   #{:tui.slot/header-row :tui.slot/footer-segment :tui.slot/footer-subtitle-segment})
@@ -1120,8 +1126,7 @@
   (default-content-height rows))
 
 (def ^:private settings-tabs
-  [{:id :channels :label "Channels"}
-   {:id :providers :label "Providers & Models"}
+  [{:id :general :label "General"}
    {:id :extensions :label "Extensions"}])
 
 (defn- settings-tab-index
@@ -1329,52 +1334,39 @@
       (sort-by first (group-by extension-group-key extension-rows)))))
 
 (defn- settings-rows
-  ([] (settings-rows :channels (extension-option-rows)))
+  ([] (settings-rows :general (extension-option-rows)))
   ([tab-id] (settings-rows tab-id (extension-option-rows)))
   ([tab-id extension-rows]
    (let [active-provider    (current-provider-id)
          all-extension-rows (filterv #(provider-row-active? active-provider %) extension-rows)
-         provider-rows      (extension-rows-of-kind all-extension-rows :provider)
-         channel-rows       (extension-rows-of-kind all-extension-rows :channel)
-         extension-rows     (extension-rows-of-kind all-extension-rows :extension)
          ;; Reasoning effort migrated to `:vis/reasoning-level` in the
-         ;; toggles registry. The Providers tab now only shows the
-         ;; "unavailable" notice when the active model doesn't expose
-         ;; effort tuning; the actual cycle / set-value lives under
-         ;; Feature Toggles (Channels tab) and via `:cycle-reasoning-level`.
+         ;; toggles registry. General owns the host-wide switches; the
+         ;; Extensions tab owns provider/channel/generic extension settings
+         ;; plus extension-owned registry toggles and TUI contributions.
          model-rows         (if (reasoning-effort-configurable?)
                               []
-                              settings-model-no-effort-rows)]
+                              settings-model-no-effort-rows)
+         extension-toggle-rows (registry-toggle-rows (complement general-toggle-spec?))]
      (vec
        (case tab-id
-         :providers
-         (concat [{:type :section :label "Models"}]
-           model-rows
-           (when (seq provider-rows)
-             (concat [{:type :section :label "Provider Settings"}]
-               (settings-extension-groups provider-rows))))
-
          :extensions
-         (if (seq extension-rows)
-           (concat [{:type :section :label "Extensions"}]
-             (settings-extension-groups extension-rows))
-           (settings-empty-rows "Extensions"
-             "Installed generic extensions have not declared configurable settings or env vars"))
+         (let [rows (concat (or extension-toggle-rows [])
+                      (or (contributor-rows) [])
+                      (when (seq all-extension-rows)
+                        (concat [{:type :section :label "Extension Settings"}]
+                          (settings-extension-groups all-extension-rows))))]
+           (if (seq rows)
+             rows
+             (settings-empty-rows "Extensions"
+               "Installed extensions have not declared configurable settings, env vars, toggles, or TUI contributors")))
 
-         :channels
+         :general
          (concat [{:type :section :label "Terminal UI"}]
            (settings-ui-options)
-           ;; Registry-backed feature toggles (host + extensions).
-           ;; Sits between the TUI settings and the per-extension
-           ;; channel block so a user scanning the Channels tab finds
-           ;; the global flips together with the chrome controls.
-           (or (registry-toggle-rows) [])
-           (or (contributor-rows) [])
-           (when (seq channel-rows)
-             (concat [{:type :section :label "Channel Settings"}]
-               (settings-extension-groups channel-rows))))
+           model-rows
+           (or (registry-toggle-rows general-toggle-spec?) []))
 
-         (settings-rows :channels all-extension-rows))))))
+         (settings-rows :general all-extension-rows))))))
 
 (defn- extension-env-status-label
   [source]

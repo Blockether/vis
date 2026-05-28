@@ -27,7 +27,7 @@
     (let [text (prompt/build-system-prompt {})]
       (expect (str/includes? text "bare symbols"))
       (expect (str/includes? text "never namespace-qualify"))
-      (expect (str/includes? text "(set-session-title!"))))
+      (expect (str/includes? text "Session titles are host-generated"))))
 
   (it "carries EPISTEMIC + IDENTITY stance so the model probes the project first"
     (let [text (prompt/build-system-prompt {})]
