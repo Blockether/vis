@@ -288,6 +288,7 @@
             (expect (= code (:code call)))
             (expect (= "echo hi" (:command call)))
             (expect (= 0 (get-in call [:result-summary :exit])))
+            (expect (= "t1/i1/f1" (:ref code-row)))
             (expect (= (:parent-ref call) (:ref code-row)))
             (expect (= call tool-row))))
         (finally (vis/db-dispose-connection! s))))))

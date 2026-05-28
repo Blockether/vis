@@ -241,9 +241,12 @@
 (defn- block-ref
   [turn iteration block]
   (or (get-in block [:envelope :ref])
-    (str "turn/" (subs (str (:id turn)) 0 8)
-      "/iteration/" (:position iteration)
-      "/block/" (inc (long (form-index block))))))
+    (:scope block)
+    ;; Canonical model/CTX scope. Avoid `turn/<uuid-prefix>` refs: they
+    ;; look like impossible turn numbers (`turn/75797678/...`).
+    (str "t" (:position turn)
+      "/i" (:position iteration)
+      "/f" (inc (long (form-index block))))))
 
 (defn- envelope-duration-ms
   [envelope]
