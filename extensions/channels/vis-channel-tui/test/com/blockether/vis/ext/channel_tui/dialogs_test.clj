@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest testing is]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.workspace :as workspace])
@@ -155,6 +156,41 @@
         (binding [workspace/*workspace-root* "/tmp/vis-dialog-ws"]
           @(open-picker-item! {:path "deps.edn"}))
         (is (= "/tmp/vis-dialog-ws" (deref seen-root 1000 ::timeout)))))))
+
+(deftest reusable-table-test
+  (testing "table rows keep fixed width and expose shared filtering"
+    (let [columns [{:id :kind :label "Kind" :width 8}
+                   {:id :label :label "Name" :flex 1}
+                   {:id :status :label "Status" :width 8}]
+          row     {:kind "session" :label "Untitled session" :status "active"}
+          line    (table/row-line columns row 48 nil)]
+      (is (= 48 (p/display-width line)))
+      (is (str/includes? line "session"))
+      (is (str/includes? (table/header-line columns 48) "Kind"))
+      (is (table/row-matches? row "untitled"))
+      (is (not (table/row-matches? row "workspace"))))))
+
+(deftest navigator-row-model-test
+  (let [all-rows     (var-get #'dlg/navigator-all-rows)
+        visible-rows (var-get #'dlg/navigator-visible-rows)
+        rows         (all-rows {:active-session-id "s1"
+                                :sessions [{:id "s1"
+                                            :title nil
+                                            :turn-count 2
+                                            :modified-at 0}]
+                                :db {:workspaces [{:id :main
+                                                   :label "Main"
+                                                   :active? true
+                                                   :workspace {:kind :trunk
+                                                               :branch "main"
+                                                               :state :active
+                                                               :root "/repo"}}]}})]
+    (testing "navigator makes entity kind explicit"
+      (is (= #{"session" "workspace" "tab"} (set (map :kind rows))))
+      (is (= "Untitled session" (:label (first rows))))
+      (is (= {:action :switch :id "s1"} (:target (first rows))))
+      (is (= [{:action :switch-workspace :workspace-id :main}]
+            (mapv :target (visible-rows rows :workspaces "main")))))))
 
 (deftest file-picker-table-test
   (let [table-widths    (var-get #'dlg/file-picker-table-widths)

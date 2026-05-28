@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
+            [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.theme :as shared-theme]
@@ -612,22 +613,11 @@
             file-w     (max 1 (- available status-w size-w modified-w))]
         [status-w file-w size-w modified-w]))))
 
-(defn- fit-table-cell
-  ([value width]
-   (fit-table-cell value width :left))
-  ([value width align]
-   (let [text (ellipsize (or value "") width)]
-     (case align
-       :right (p/pad-left text width)
-       (p/pad-right text width)))))
-
 (defn- table-row-line
   ([widths cells]
-   (table-row-line widths cells (repeat :left)))
+   (table/row-line widths cells))
   ([widths cells aligns]
-   (str " "
-     (str/join " │ " (map fit-table-cell cells widths aligns))
-     " ")))
+   (table/row-line widths cells aligns)))
 
 (defn- file-picker-table-cells
   [{:keys [status-label path size-label age-label]}]
@@ -639,11 +629,7 @@
 
 (defn- file-picker-table-border-line
   [widths kind]
-  (let [junction (case kind
-                   :top    \┬
-                   :middle \┼)]
-    (str/join (str junction)
-      (map #(p/horiz-line (+ % 2)) widths))))
+  (table/border-line widths kind))
 
 (defn- draw-file-picker-table-line!
   ;; File-picker rows are TABLES; the table body has fixed columns
@@ -654,12 +640,7 @@
   ;; just paints the table body in the normal palette — BOLD on the
   ;; selected row so the cursor cue carries onto the row text too.
   [g x row table-w selected? line]
-  (p/set-colors! g t/dialog-fg t/dialog-bg)
-  (p/fill-rect! g x row table-w 1)
-  (if selected?
-    (p/styled g [p/BOLD]
-      (p/put-str! g x row (ellipsize line table-w)))
-    (p/put-str! g x row (ellipsize line table-w))))
+  (table/draw-line! g x row table-w selected? line))
 
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
@@ -2168,6 +2149,250 @@
                                       \n {:action :new}
                                       \f {:action :fork}
                                       (recur)))
+                (recur)))))))))
+
+;;; ── Global navigator (Ctrl+G) ───────────────────────────────────────────────
+
+(def ^:private navigator-content-h 16)
+
+(def ^:private navigator-columns
+  [{:id :active :label ""        :width 1}
+   {:id :kind   :label "Kind"    :width 10}
+   {:id :label  :label "Name"    :flex 1}
+   {:id :ctx    :label "Context" :width 24}
+   {:id :status :label "Status"  :width 16}])
+
+(defn- navigator-short-id
+  [id]
+  (let [s (str id)]
+    (subs s 0 (min 8 (count s)))))
+
+(defn- navigator-workspace-label
+  [{:keys [label workspace id]}]
+  (or (some-> label str str/trim not-empty)
+    (some-> workspace :label str str/trim not-empty)
+    (some-> workspace :branch str str/trim not-empty)
+    (navigator-short-id id)))
+
+(defn- navigator-workspace-context
+  [{:keys [workspace] workspace-root :workspace/root}]
+  (let [branch (or (:branch workspace) (:vcs/ref workspace))
+        root   (or workspace-root (:root workspace) (:workspace/root workspace))]
+    (cond
+      (and branch root) (str branch " · " root)
+      branch branch
+      root root
+      :else "-")))
+
+(defn- navigator-workspace-status
+  [{:keys [active? workspace]}]
+  (let [kind  (some-> (:kind workspace) name)
+        state (some-> (:state workspace) name)]
+    (str (if active? "focused" "open")
+      (when kind (str " · " kind))
+      (when state (str " · " state)))))
+
+(defn- navigator-session-row
+  [active-session-id session]
+  (let [id      (:id session)
+        active? (= (str id) (some-> active-session-id str))]
+    {:id       (str "session:" id)
+     :kind     "session"
+     :active   (if active? "●" "")
+     :label    (session-title session)
+     :ctx      (str (navigator-short-id id) " · " (format-session-date (:modified-at session)))
+     :status   (str (long (or (:turn-count session) 0)) " turns")
+     :target   {:action :switch :id id}}))
+
+(defn- navigator-workspace-row
+  [entry]
+  (let [id (:id entry)]
+    {:id       (str "workspace:" id)
+     :kind     "workspace"
+     :active   (if (:active? entry) "●" "")
+     :label    (navigator-workspace-label entry)
+     :ctx      (navigator-workspace-context entry)
+     :status   (navigator-workspace-status entry)
+     :target   {:action :switch-workspace :workspace-id id}}))
+
+(defn- navigator-tab-row
+  [idx entry]
+  (let [id (:id entry)]
+    {:id       (str "tab:" id)
+     :kind     "tab"
+     :active   (if (:active? entry) "●" "")
+     :label    (navigator-workspace-label entry)
+     :ctx      (str "#" (inc (long idx)) " · " (name (or id :view)))
+     :status   (if (:active? entry) "focused" "open")
+     :target   {:action :switch-workspace :workspace-id id}}))
+
+(defn- navigator-all-rows
+  [{:keys [sessions active-session-id db]}]
+  (let [workspaces (vec (:workspaces db))]
+    (vec
+      (concat
+        (map #(navigator-session-row active-session-id %) sessions)
+        (map navigator-workspace-row workspaces)
+        (map-indexed navigator-tab-row workspaces)))))
+
+(defn- navigator-mode-matches?
+  [mode row]
+  (case mode
+    :sessions   (= "session" (:kind row))
+    :workspaces (= "workspace" (:kind row))
+    :tabs       (= "tab" (:kind row))
+    true))
+
+(defn- navigator-mode-title
+  [mode]
+  (case mode
+    :sessions "Go To · Sessions"
+    :workspaces "Go To · Workspaces"
+    :tabs "Go To · Tabs"
+    "Go To"))
+
+(defn- navigator-next-mode
+  [mode]
+  (case mode
+    :all :sessions
+    :sessions :workspaces
+    :workspaces :tabs
+    :all))
+
+(defn- navigator-visible-rows
+  [rows mode query]
+  (->> rows
+    (filter #(navigator-mode-matches? mode %))
+    (filter #(table/row-matches? % query))
+    vec))
+
+(defn navigator-dialog!
+  "Global Ctrl+G picker. Returns a target action map or nil on Esc."
+  [^TerminalScreen screen opts]
+  (let [mode     (atom :all)
+        query    (atom "")
+        selected (atom 0)
+        scroll   (atom 0)
+        rows     (navigator-all-rows opts)]
+    (loop []
+      (let [visible-rows (navigator-visible-rows rows @mode @query)
+            total        (count visible-rows)
+            size         (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols         (.getColumns size)
+            rows-n       (.getRows size)
+            g            (.newTextGraphics screen)
+            bounds       (draw-dialog-chrome! g cols rows-n (navigator-mode-title @mode)
+                           navigator-content-h)
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+            query-row    content-top
+            table-x      (+ left 1 p/SELECTION_WIDTH)
+            table-w      (max 1 (- inner-w 1 p/SELECTION_WIDTH))
+            table-body-w (max 1 (- table-w 2))
+            header-row   (+ content-top 2)
+            sep-row      (inc header-row)
+            body-top     (inc sep-row)
+            body-h       (max 1 (- content-h 4))
+            _            (swap! selected #(clamp % 0 (max 0 (dec total))))
+            _            (swap! scroll #(visible-window-start @selected % body-h total))]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) content-top inner-w content-h)
+        (p/set-colors! g t/dialog-hint t/dialog-bg)
+        (p/put-str! g (+ left 2) query-row
+          (ellipsize (str "> search: " @query) (max 1 (- inner-w 3))))
+
+        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+        (p/styled g [p/BOLD]
+          (p/put-str! g table-x header-row
+            (table/header-line navigator-columns table-body-w)))
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/put-str! g table-x sep-row
+          (table/border-line navigator-columns table-body-w :middle))
+
+        (dotimes [i body-h]
+          (let [idx (+ @scroll i)
+                row (+ body-top i)]
+            (cond
+              (< idx total)
+              (let [entry (nth visible-rows idx)]
+                (table/draw-line! g table-x row table-body-w (= idx @selected)
+                  (table/row-line navigator-columns entry table-body-w nil))
+                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                (p/draw-selection-marker! g (inc left) row (= idx @selected)))
+
+              (and (zero? total) (zero? i))
+              (do
+                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                (p/fill-rect! g table-x row table-body-w 1)
+                (p/put-str! g table-x row " No matches "))
+
+              :else
+              (do
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g table-x row table-body-w 1)))))
+
+        (draw-hint-bar! g left hint-row inner-w
+          [["↑/↓" "move"] ["Enter" "open"] ["Tab" "filter"] ["W/S/T/A" "mode"] ["Esc" "cancel"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+
+        (let [key (read-modal-key! screen)]
+          (when key
+            (if-let [wheel-step (modal-wheel-step key)]
+              (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total))))
+                (recur))
+              (condp = (.getKeyType key)
+                KeyType/Escape nil
+                KeyType/Tab (do (reset! mode (navigator-next-mode @mode))
+                              (reset! selected 0)
+                              (reset! scroll 0)
+                              (recur))
+                KeyType/Backspace (do (if (seq @query)
+                                        (swap! query subs 0 (dec (count @query)))
+                                        (reset! mode :all))
+                                    (reset! selected 0)
+                                    (reset! scroll 0)
+                                    (recur))
+                KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
+                                  (recur))
+                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
+                                    (recur))
+                KeyType/Enter (when (pos? total)
+                                (:target (nth visible-rows @selected)))
+                KeyType/Character (let [raw-c (.getCharacter key)
+                                        c     (when raw-c (Character/toLowerCase raw-c))]
+                                    (cond
+                                      (and (str/blank? @query) (= c \w))
+                                      (do (reset! mode :workspaces)
+                                        (reset! selected 0)
+                                        (reset! scroll 0)
+                                        (recur))
+
+                                      (and (str/blank? @query) (= c \s))
+                                      (do (reset! mode :sessions)
+                                        (reset! selected 0)
+                                        (reset! scroll 0)
+                                        (recur))
+
+                                      (and (str/blank? @query) (= c \t))
+                                      (do (reset! mode :tabs)
+                                        (reset! selected 0)
+                                        (reset! scroll 0)
+                                        (recur))
+
+                                      (and (str/blank? @query) (= c \a))
+                                      (do (reset! mode :all)
+                                        (reset! selected 0)
+                                        (reset! scroll 0)
+                                        (recur))
+
+                                      (and raw-c (not (Character/isISOControl raw-c)))
+                                      (do (swap! query str raw-c)
+                                        (reset! selected 0)
+                                        (reset! scroll 0)
+                                        (recur))
+
+                                      :else (recur)))
                 (recur)))))))))
 
 ;;; ── Command palette ─────────────────────────────────────────────────────────

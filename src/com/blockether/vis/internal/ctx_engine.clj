@@ -1463,6 +1463,193 @@
       {}
       (keys tasks))))
 
+(def ^:private STALE_TASK_DOING_THRESHOLD
+  "A task :status :doing for more than this many turns past its
+   :doing-born point lands as a :stale-task-doing stage entry."
+  5)
+
+(def ^:private IDLE_TASK_TODO_THRESHOLD
+  "A task :status :todo whose :born is more than this many turns old
+   lands as an :idle-task stage entry (cancel-or-activate nudge)."
+  8)
+
+(def ^:private STALE_SPEC_OPEN_THRESHOLD
+  "A spec :status :open with no proven requirements for more than this
+   many turns lands as a :stale-spec-open stage entry (consult nudge)."
+  10)
+
+(def ^:private REPEATED_RETRY_THRESHOLD
+  "A task with this many or more entries in :archived-proofs lands as
+   a :repeated-retry stage entry (audit validator-fn)."
+  3)
+
+(def ^:private FACT_PROVENANCE_MIN_CONTENT_CHARS
+  "Facts shorter than this skip the :gap-provenance check — trivia
+   like one-word lookups don't need provenance."
+  50)
+
+(defn- parse-turn-from-scope
+  "Extract the turn number from a scope string `tN`, `tN/iM`, or
+   `tN/iM/fK`. Returns nil when the scope is malformed."
+  [scope]
+  (when (string? scope)
+    (when-let [[_ t] (re-find #"^t([1-9][0-9]*)" scope)]
+      (parse-long t))))
+
+(defn- turns-since
+  "Distance in turns from `scope`'s turn to `current-turn`. Negative
+   when scope is in the future (e.g. born in turn-current). Returns
+   nil when scope is unparseable."
+  [scope current-turn]
+  (when-let [t (parse-turn-from-scope scope)]
+    (- (long (or current-turn 1)) t)))
+
+(defn- gap-provenance-entries
+  "Facts that are :active, non-trivial content, with no :depends-on
+   AND no :source. Model wrote the fact but never explained where it
+   came from \u2014 critical for cross-turn trust. Soft :status :ready."
+  [ctx]
+  (let [facts (or (:session/facts ctx) {})]
+    (for [[fact-id fact] facts
+          :let [content (str (:content fact))
+                len     (count content)]
+          :when (and (= :active (:status fact))
+                  (>= len FACT_PROVENANCE_MIN_CONTENT_CHARS)
+                  (empty? (:depends-on fact))
+                  (nil? (:source fact)))]
+      {:kind       :gap-provenance
+       :id         fact-id
+       :status     :ready
+       :stage-rank :advisory
+       :reason     (str "fact " fact-id " (" len " chars) has no :source AND no :depends-on. "
+                     "Declare provenance so cross-turn callers can audit.")
+       :remedy     (list (symbol "fact-depends!") fact-id [])})))
+
+(defn- dep-drift-entries
+  "Tasks whose :depends-on includes an entity that has been
+   :cancelled / :superseded / :archived. The task is silently stuck
+   on a dead dep. Hard :status :blocked \u2014 the topo graph is broken."
+  [ctx]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (for [[task-id task] tasks
+          :when (#{:todo :doing} (:status task))
+          dep-id (or (:depends-on task) [])
+          :let [dep (get tasks dep-id)
+                dep-status (:status dep)]
+          :when (and dep (#{:cancelled :superseded :archived} dep-status))]
+      {:kind       :dep-drift
+       :id         task-id
+       :status     :blocked
+       :stage-rank 0
+       :reason     (str "task " task-id " :depends-on includes " dep-id
+                     " which is " dep-status ". Update deps or cancel.")
+       :remedy     (list (symbol "task-depends!") task-id [])})))
+
+(defn- stale-task-doing-entries
+  "Tasks :status :doing for more than STALE_TASK_DOING_THRESHOLD turns
+   since :doing-born. Either real work in progress or model forgot."
+  [ctx current-turn]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (for [[task-id task] tasks
+          :when (= :doing (:status task))
+          :let [doing-born (:doing-born task)
+                gap (turns-since doing-born current-turn)]
+          :when (and gap (>= gap STALE_TASK_DOING_THRESHOLD))]
+      {:kind       :stale-task-doing
+       :id         task-id
+       :status     :ready
+       :stage-rank :advisory
+       :reason     (str "task " task-id " is :doing since " doing-born " ("
+                     gap " turns ago). Either flip :status :blocked with reason "
+                     "or close with proof.")
+       :remedy     (list (symbol "task-set!") task-id
+                     {:status :blocked :reason "..."})})))
+
+(defn- idle-task-entries
+  "Tasks :status :todo born more than IDLE_TASK_TODO_THRESHOLD turns
+   ago. Model declared but never picked up \u2014 either cancel or schedule."
+  [ctx current-turn]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (for [[task-id task] tasks
+          :when (= :todo (:status task))
+          :let [born (:born task)
+                gap (turns-since born current-turn)]
+          :when (and gap (>= gap IDLE_TASK_TODO_THRESHOLD))]
+      {:kind       :idle-task
+       :id         task-id
+       :status     :ready
+       :stage-rank :advisory
+       :reason     (str "task " task-id " is :todo since " born " ("
+                     gap " turns ago) and never moved. Activate or cancel.")
+       :remedy     (list (symbol "task-set!") task-id
+                     {:status :cancelled :reason "..."})})))
+
+(defn- stale-spec-open-entries
+  "Specs :status :open with zero proven requirements for more than
+   STALE_SPEC_OPEN_THRESHOLD turns. Model is stuck \u2014 suggest a deep
+   consult to unstick the planning."
+  [ctx current-turn progression]
+  (let [specs (or (:session/specs ctx) {})]
+    (for [[spec-id spec] specs
+          :when (= :open (:status spec))
+          :let [born (:born spec)
+                gap  (turns-since born current-turn)
+                p    (get progression spec-id)
+                proven (long (or (:proven p) 0))]
+          :when (and gap (>= gap STALE_SPEC_OPEN_THRESHOLD)
+                  (zero? proven))]
+      {:kind       :stale-spec-open
+       :id         spec-id
+       :status     :ready
+       :stage-rank :advisory
+       :reason     (str "spec " spec-id " :open since " born " ("
+                     gap " turns ago) with zero proven requirements. "
+                     "Consider a :deep consult to unstick.")
+       :remedy     (list (symbol "consult-request!") spec-id :deep
+                     {:focus [] :question "..."})})))
+
+(defn- repeated-retry-entries
+  "Tasks with REPEATED_RETRY_THRESHOLD+ entries in :archived-proofs.
+   Model has been retrying the same task with proofs that keep failing
+   validation \u2014 the validator-fn likely needs an audit."
+  [ctx]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (for [[task-id task] tasks
+          :let [archived (or (:archived-proofs task) [])
+                n        (count archived)]
+          :when (>= n REPEATED_RETRY_THRESHOLD)]
+      {:kind       :repeated-retry
+       :id         task-id
+       :status     :ready
+       :stage-rank :advisory
+       :reason     (str "task " task-id " has " n " archived (rejected) proofs. "
+                     "The validator-fn likely needs an audit \u2014 the strategy "
+                     "is producing repeatedly-rejected evidence.")
+       :remedy     (list 'introspect-failed-proofs task-id)})))
+
+(defn- duplicate-observation-entries
+  "Trailer pins with the SAME (v/<symbol> ...) :form across 2+ iters
+   in the recent window. Model is re-probing already-known state."
+  [ctx]
+  (let [trailer (or (:session/trailer ctx) [])
+        all-forms (for [entry trailer
+                        form (or (:forms entry) [])
+                        :when (= :observation (:tag form))]
+                    form)
+        by-form (group-by (comp pr-str :form) all-forms)]
+    (for [[form-str dup-forms] by-form
+          :when (>= (count dup-forms) 2)
+          :let [scopes (mapv :scope dup-forms)]]
+      {:kind       :duplicate-observation
+       :id         (first scopes)
+       :status     :ready
+       :stage-rank :advisory
+       :reason     (str "observation " form-str " ran " (count dup-forms)
+                     " times in trailer (scopes: " (pr-str scopes)
+                     "). Reuse via (introspect-form \"<earlier-scope>\") "
+                     "instead of re-probing.")
+       :remedy     (list 'introspect-form (first scopes))})))
+
 (defn- collect-stage-entries
   "Build the flat sequence of stage entries (each `{:kind :id :status
    :reason :remedy :stage-rank}`). `:stage-rank` is internal — it is
@@ -1534,8 +1721,21 @@
            :status     :ready
            :stage-rank (+ 2 max-depth)
            :reason     (str "spec " spec-id " req " rid " needs a task proof")
-           :remedy     (list (symbol "proof-add!") spec-id rid)})]
-    (concat consistency-spec consistency-task todo prove)))
+           :remedy     (list (symbol "proof-add!") spec-id rid)})
+        ;; Phase H heuristics (engine-detected gaps + anti-patterns).
+        ;; Each fn is pure projection of ctx metadata; returns 0..N
+        ;; advisory entries which the resolver maps to the deepest stage.
+        ;; `:dep-drift` is the exception — integrity issue, rank 0.
+        current-turn (long (or (:session/turn ctx) 1))
+        gap-prov     (gap-provenance-entries ctx)
+        dep-drift    (dep-drift-entries ctx)
+        stale-doing  (stale-task-doing-entries ctx current-turn)
+        idle-todo    (idle-task-entries ctx current-turn)
+        stale-spec   (stale-spec-open-entries ctx current-turn progression)
+        retried      (repeated-retry-entries ctx)
+        dup-obs      (duplicate-observation-entries ctx)]
+    (concat consistency-spec consistency-task todo prove
+      gap-prov dep-drift stale-doing idle-todo stale-spec retried dup-obs)))
 
 (defn derive-stages
   "Phase H: the single derived view of what should happen this iter.
@@ -1582,7 +1782,21 @@
                           (or (:engine/blockers ctx) []))
          action-entries (collect-stage-entries ctx indexes progression)
          all-entries    (concat blockers action-entries)
-         by-rank        (sort-by key (group-by :stage-rank all-entries))
+         ;; Resolve `:stage-rank :advisory` to the deepest numeric rank
+         ;; so advisory entries (gap-provenance, stale-task, idle-task,
+         ;; stale-spec, repeated-retry, duplicate-observation) land in
+         ;; the last stage — model sees them but actionable stages
+         ;; 0..N-1 fire first.
+         numeric-ranks  (keep #(when (number? (:stage-rank %)) (:stage-rank %))
+                          all-entries)
+         max-num-rank   (apply max 0 numeric-ranks)
+         advisory-rank  (inc max-num-rank)
+         resolved       (map (fn [e]
+                               (cond-> e
+                                 (= :advisory (:stage-rank e))
+                                 (assoc :stage-rank advisory-rank)))
+                          all-entries)
+         by-rank        (sort-by key (group-by :stage-rank resolved))
          strip          (fn [e] (dissoc e :stage-rank))]
      (vec
        (for [[_rank entries] by-rank]

@@ -1807,6 +1807,16 @@
                        (vis/notify! "No current session to fork"
                          :level :warn
                          :ttl-ms copy-success-ttl-ms))
+                     (= :switch-workspace (:action choice))
+                     (let [target-id (:workspace-id choice)
+                           before    (:active-workspace-id @state/app-db)]
+                       (state/dispatch [:select-workspace-index
+                                        (first (keep-indexed
+                                                 (fn [idx entry]
+                                                   (when (= (:id entry) target-id) idx))
+                                                 (:workspaces @state/app-db)))])
+                       (when-not (= before (:active-workspace-id @state/app-db))
+                         (refresh-active-workspace! true)))
                      (= :switch (:action choice))
                      (let [target-id (:id choice)]
                        (when-not (= (str target-id) (current-session-id))
@@ -1822,10 +1832,11 @@
                                   (when-not (:dialog-open? @state/app-db)
                                     (let [sessions (tui-session-summaries)]
                                       (when-let [choice (with-dialog-lock
-                                                          #(dlg/session-picker-dialog!
+                                                          #(dlg/navigator-dialog!
                                                              screen
-                                                             sessions
-                                                             (current-session-id)))]
+                                                             {:sessions sessions
+                                                              :active-session-id (current-session-id)
+                                                              :db @state/app-db}))]
                                         (switch-session! choice)))))]
              (loop []
                ;; Layout fields are populated by the render thread after the first paint. Until
