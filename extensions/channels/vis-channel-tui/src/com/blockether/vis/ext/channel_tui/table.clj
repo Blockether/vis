@@ -68,28 +68,36 @@
 
 (defn row-line
   "Render `cells` to one fixed-width table row. Legacy arity accepts explicit
-   widths; column arity accepts specs + row map."
+   widths; column arity accepts specs + row map. `opts` supports `:sep`."
   ([widths cells]
    (row-line widths cells (repeat :left)))
   ([widths cells aligns]
    (str " "
      (str/join " │ " (map fit-cell cells widths aligns))
      " "))
-  ([columns row table-w _opts]
+  ([columns row table-w opts]
    (let [widths (column-widths columns table-w)
          cells  (mapv (fn [{:keys [id render]}]
                         (if render
                           (render row)
                           (get row id "")))
                   columns)
-         aligns (mapv #(or (:align %) :left) columns)]
-     (row-line widths cells aligns))))
+         aligns (mapv #(or (:align %) :left) columns)
+         sep    (or (:sep opts) " │ ")]
+     (str " "
+       (str/join sep (map fit-cell cells widths aligns))
+       " "))))
 
 (defn header-line
-  [columns table-w]
-  (row-line (column-widths columns table-w)
-    (mapv #(or (:label %) "") columns)
-    (mapv #(or (:align %) :left) columns)))
+  ([columns table-w]
+   (header-line columns table-w {}))
+  ([columns table-w opts]
+   (let [widths (column-widths columns table-w)
+         aligns (mapv #(or (:align %) :left) columns)
+         sep    (or (:sep opts) " │ ")]
+     (str " "
+       (str/join sep (map fit-cell (mapv #(or (:label %) "") columns) widths aligns))
+       " "))))
 
 (defn border-line
   ([widths kind]
