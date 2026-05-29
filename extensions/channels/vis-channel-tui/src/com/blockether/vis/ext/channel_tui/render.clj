@@ -963,6 +963,11 @@
 (def ^:private duration-marker  p/MARKER_DURATION)
 (def ^:private iteration-hdr-marker  p/MARKER_ITERATION_HDR)
 (def ^:private recap-marker          p/MARKER_RECAP)
+;; BLOCK op rows (`▶ <LABEL>  <summary>`) paint on their OWN marker so the
+;; painter can give them a black-on-white badge look (`answer-fg`/`answer-bg`)
+;; distinct from the neutral code-block result rows. `` is the next free
+;; PUA slot after MARKER_RECAP (``).
+(def ^:private op-row-marker         "")
 
 (def ^:private recap-kinds
   "Known recap badge tokens. Drives both the per-row meta tag and
@@ -2003,6 +2008,21 @@
                     (do (p/set-colors! g t/code-duration-fg iteration-bg)
                       (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
+
+              ;; ── BLOCK op row — black-on-white badge, ▶/▼ disclosure ──
+                    (str/starts-with? line op-row-marker)
+                    (do (p/set-colors! g t/answer-fg t/answer-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) t/answer-fg t/answer-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col x :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)}))))
 
               ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
@@ -3143,23 +3163,16 @@
       (zero? width) ""
 
       (vis/render-zones? summary)
+      ;; Center + right flow LEFT-aligned right after the label, joined by a
+      ;; two-space gap. No right-edge anchoring — the metric sits tight next
+      ;; to the path instead of being pushed to the far edge with a wall of
+      ;; padding.
       (let [center (zone-text (:center summary))
-            right  (zone-text (:right summary))]
-        (cond
-          (and center right)
-          ;; 3-zone: center left-aligned, right anchored.
-          (let [right-w  (p/display-width right)
-                left-cap (max 0 (- width right-w 1))
-                center   (ellipsize-cols center left-cap)
-                pad      (max 1 (- width (p/display-width center) right-w))]
-            (str center (repeat-str \space pad) right))
-          right
-          ;; 2-zone: right anchored.
-          (let [right (ellipsize-cols right width)
-                pad   (max 0 (- width (p/display-width right)))]
-            (str (repeat-str \space pad) right))
-          center (ellipsize-cols center width)
-          :else  ""))
+            right  (zone-text (:right summary))
+            joined (->> [center right]
+                     (remove str/blank?)
+                     (str/join "  "))]
+        (ellipsize-cols joined width))
 
       (some? summary)
       ;; Plain IR: paint the inline text following the label, left-aligned.
@@ -3208,7 +3221,7 @@
                       [{:line (str result-marker
                                 (ellipsize-cols (str "  · " (op-summary-text op)) max-w))
                         :meta nil}]))]
-    (cond-> [{:line (str result-marker line) :meta meta}]
+    (cond-> [{:line (str op-row-marker line) :meta meta}]
       (seq body) (into body))))
 
 (defn- block-op-row-entries
