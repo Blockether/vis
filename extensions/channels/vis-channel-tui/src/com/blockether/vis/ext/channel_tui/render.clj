@@ -3492,24 +3492,14 @@
         ;; starts flush; with recap-lines the bubble gets a neutral blank
         ;; row between the "Vis" label (or prior iteration) and the Recap
         ;; text, so Recap breathes the way thinking and code blocks do.
-        raw-recap-lines (recap-entries line-entry
-                          (cond-> (vec (or recaps []))
-                            (seq provider-fallbacks) (into (map fallback-recap provider-fallbacks))
-                            (seq pending-consults) (into (map pending-consult-recap pending-consults))
-                            (seq consults) (into (map consult-recap consults))
-                            (provider-error-recap error) (conj (provider-error-recap error)))
-                          fill-w)
-        recap-lines (if (seq raw-recap-lines)
-                      ;; Recap chrome paints on terminal-bg. Call-out
-                      ;; carried by the bold + italic recap rows plus
-                      ;; ONE leading neutral blank — the top margin.
-                      ;; NO trailing blank: whatever follows (thinking
-                      ;; band, body's leading iter-pad, the next
-                      ;; iteration's leading blank) owns the boundary
-                      ;; row, so consecutive sections never stack two
-                      ;; blanks against each other.
-                      (vec (cons (line-entry "") raw-recap-lines))
-                      raw-recap-lines)
+        ;; The RECAP rail is retired entirely (per user directive). It
+        ;; duplicated state already visible in the ctx block and
+        ;; accumulated one stale row per iteration (`RECAP Task — ×
+        ;; :K :cancelled`, SPEC, FACT, TITLE, plus provider / consult
+        ;; notices). Provider errors still surface via `error-lines`
+        ;; below; these destructured fields are intentionally unused.
+        _ [recaps consults pending-consults provider-fallbacks]
+        recap-lines []
         thinking-lines
         (fn [thinking-text-or-texts]
           ;; Per user direction: do NOT truncate reasoning while it's
