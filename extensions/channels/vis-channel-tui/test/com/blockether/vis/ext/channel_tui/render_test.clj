@@ -211,8 +211,9 @@
 
   (it "carries status+duration in the BLOCK header, not a per-form footer, and no scope stamp"
     ;; Phase-5: the per-form footer (status glyph + duration + scope stamp) is
-    ;; GONE. Status + duration live in the BLOCK header; the block-level scope
-    ;; lives there too (never `/fK`/`/bK`). The op row carries the tool summary.
+    ;; GONE. Status + duration live in the card header, labelled `ITERATION <M>`
+    ;; (the turn number lives in the parent TURN header; never `/fK`/`/bK`).
+    ;; The op row carries the tool summary.
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file  changed=1"]]]
           lines (format-iteration-entry
                   {:iteration 0
@@ -229,13 +230,13 @@
                             :success? true :silent? false}]}
                   70 1 {:band-w 74})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          header  (first (filter #(str/includes? % "BLOCK - ") visible))
+          header  (first (filter #(str/includes? % "ITERATION") visible))
           op-line (first (filter #(str/includes? % "PATCH") visible))]
       ;; Header carries status + duration.
       (expect (some? header))
       (expect (str/includes? header "✓"))
       (expect (str/includes? header "12ms"))
-      (expect (str/includes? header "t24/i1"))
+      (expect (str/includes? header "ITERATION 1"))
       ;; Block-level scope only — never the per-form `/f1` or `/b1` tail.
       (expect (not (str/includes? header "/f1")))
       (expect (not-any? #(str/includes? % "t24/i1/b1") visible))
@@ -270,9 +271,9 @@
                             :success? true :silent? false}]}
                   80 4 {})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          header  (first (filter #(str/includes? % "BLOCK - ") visible))]
+          header  (first (filter #(str/includes? % "ITERATION") visible))]
       (expect (some? header))
-      (expect (str/includes? header "t7/i3"))
+      (expect (str/includes? header "ITERATION 3"))
       (expect (not (str/includes? header "/f1")))
       (expect (str/includes? header "1 observation"))
       (expect (str/includes? header "1 mutation"))
@@ -2322,7 +2323,7 @@
   (describe "100-cat doseq fan-out"
     (it "header counts are REAL — 100 observations, not the aggregated 1"
       (let [lines (rendered-lines (fanout-entry* 100))
-            hdr   (some #(when (str/includes? % "BLOCK - t1/i1") %) lines)]
+            hdr   (some #(when (str/includes? % "ITERATION 1") %) lines)]
         (expect (some? hdr))
         (expect (str/includes? hdr "100 observations"))))
 

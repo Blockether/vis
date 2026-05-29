@@ -3787,7 +3787,11 @@
             counts-w (max 8 (- fill-w 24))
             counts-text (block-counts-text counts counts-w)
             merged  (:merged-fences block)
-            left    (str "BLOCK - " (if (str/blank? scope) "?" scope)
+            ;; Human label: "ITERATION <M>" (the iteration number within the
+            ;; turn) — the turn number lives in the parent TURN header. Drop
+            ;; the raw `tN/iM` scope token from the card title.
+            iter-m  (or (second (re-find #"/i(\d+)" (str scope))) "?")
+            left    (str "ITERATION " iter-m
                       (when (and merged (> merged 1))
                         (str "  merged " merged " fences")))
             mid     (when (seq counts-text) (str " | " counts-text))
@@ -4419,7 +4423,35 @@
                              (cached* k render!)
                              (render!))))]
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
-      (coalesce-bubble-blanks (mapcat iter-entry-fn visible-iterations)))))
+      (let [iter-lines (coalesce-bubble-blanks (mapcat iter-entry-fn visible-iterations))
+            ;; Turn grouping: a turn (one user msg → done) owns N iterations.
+            ;; Prepend a collapsible `▶/▼ TURN tN · M iterations` header that
+            ;; folds the whole turn's iteration cards away. Turn number comes
+            ;; from any iteration's scope (`tN/iM`). Default open.
+            turn-scope (some (fn [[_ e]]
+                               (:scope (iteration/iteration-entry->display-block e)))
+                         visible-iterations)
+            turn-n     (some-> turn-scope (str/split #"/") first)]
+        (if-not turn-n
+          iter-lines
+          (let [n-iters    (count visible-iterations)
+                turn-node  (str turn-n ":turn")
+                turn-open? (if session-id
+                             (detail-expanded? detail-expansions session-id turn-node true)
+                             true)
+                chevron    (if turn-open? "▼ " "▶ ")
+                turn-hdr   {:line (str iteration-hdr-marker chevron "TURN "
+                                    (str/replace turn-n #"^t" "")
+                                    "  │  " n-iters " iteration"
+                                    (when (not= 1 n-iters) "s"))
+                            :meta (when session-id
+                                    {:kind       :toggle-details
+                                     :session-id (str session-id)
+                                     :node-id    turn-node
+                                     :collapsed? (not turn-open?)})}]
+            (if turn-open?
+              (into [turn-hdr] iter-lines)
+              [turn-hdr])))))))
 
 (defn- queued-preview
   [text]
