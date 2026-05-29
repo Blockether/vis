@@ -138,7 +138,9 @@
       (expect (str/includes? body "bold result"))
       (expect (not (str/includes? body ":ir")))
       (expect (str/includes? (strip-sentinels (strip-ansi (body-of op-line))) "▶"))
-      (expect (str/starts-with? op-line p/MARKER_RESULT))))
+      ;; Op rows ride their OWN marker band (black-on-white badge), not the
+      ;; neutral result-marker band.
+      (expect (str/starts-with? op-line p/MARKER_OP_ROW))))
 
   (it "hides `(def r (v/ls …))` source while keeping the channel preview visible (regression: previous behaviour suppressed both)"
     ;; Two-form fence the model emits in practice: bind a tool result
