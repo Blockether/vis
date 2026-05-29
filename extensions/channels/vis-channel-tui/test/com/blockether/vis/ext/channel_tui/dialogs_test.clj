@@ -320,6 +320,15 @@
           (finally
             (vis/toggle-reset-to-default! id)))))
 
+    (testing "registry rows normalize fallback labels instead of leaking raw ids"
+      (let [id :dialogs-test/raw-label]
+        (vis/register-toggle! {:id id :default false})
+        (try
+          (let [row (first (filter #(= id (:toggle-id %)) (settings-rows :general)))]
+            (is (= "Dialogs Test Raw Label (off)" (settings-option-label row {}))))
+          (finally
+            (vis/toggle-reset-to-default! id)))))
+
     (testing "registry enum rows cycle through the toggles registry"
       (let [id :dialogs-test/registry-enum]
         (vis/register-toggle! {:id id
@@ -476,11 +485,16 @@
                                                        :ext/settings [{:key :openai-codex-verbosity
                                                                        :type :choice
                                                                        :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"}
+                                                                      {:key :openai-codex/verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
                                                                        :label "Codex verbosity"}]}])]
         (let [general-rows     (settings-rows :general)
               extension-rows   (settings-rows :extensions)
               legacy-row-ids   #{[:extension-setting "voice" :voice/respond?]
-                                 [:extension-setting "provider-openai-codex" :openai-codex-verbosity]}
+                                 [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
+                                 [:extension-setting "provider-openai-codex" :openai-codex/verbosity]}
               extension-ids    (set (map :id extension-rows))
               general-toggles  (set (keep :toggle-id general-rows))
               extension-toggles (set (keep :toggle-id extension-rows))]
