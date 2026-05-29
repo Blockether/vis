@@ -1,126 +1,157 @@
 (ns com.blockether.vis.ext.language-clojure.render-test
-  "Verify the channel renderers emit valid IR vectors with the shapes
-   that downstream channel sinks expect:
+  "Verify the channel renderers emit the `{:summary :display}` contract
+   (`:com.blockether.vis.internal.extension/render-fn-result`):
 
+     {:summary <zone-map-or-ir>   ; the badge row; first [:strong] = label
+      :display [:ir {} <block>…]}  ; the full expanded body
+
+   `:display` is canonical IR:
      [:ir {} <block> ...]   root
      [:p  {} <inline> ...]  paragraph
      [:c  {} <text>]        inline code
      [:code {:lang ...} <body>]  fenced code
 
-   The renderers MUST tolerate the realistic failure shapes too
-   (timeouts, missing keys, error result maps) without throwing,
-   because they fire from the channel sink with no try/catch above."
+   The renderers MUST tolerate the realistic failure shapes too (timeouts,
+   missing keys, error result maps) without throwing, because they fire from
+   the channel sink with no try/catch above."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.ext.language-clojure.render :as r]
+   [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- ir? [x] (and (vector? x) (= :ir (first x))))
 
+(defn- contract?
+  "Conforms to ::render-fn-result with non-empty summary + display."
+  [result]
+  (and (extension/render-fn-result? result)
+    (some? (:summary result))
+    (ir? (:display result))
+    (> (count (:display result)) 2)))
+
 (defn- flat-text
-  "Concatenate every string leaf in an IR tree. Used by tests so
-   inline span boundaries (introduced by `ir-p` wrapping each arg)
-   don't fragment regex matches."
+  "Concatenate every string leaf in an IR tree. Used by tests so inline span
+   boundaries (introduced by `ir-p` / `ir-strong` wrapping each arg) don't
+   fragment regex matches."
   [node]
   (cond
     (string? node) node
     (vector? node) (str/join "" (map flat-text (rest node)))
     :else ""))
 
-(defdescribe render-ports-test
-  (it "renders zero ports as a single badge headline (no body)"
-    (let [v (r/render-ports {:default nil :ports []})]
-      (expect (ir? v))
-      (expect (some #(and (vector? %) (= :p (first %))) v))
-      ;; No listing body when n <= 1.
-      (expect (not-any? #(and (vector? %) (= :code (first %))) v))))
+(defn- summary-text
+  "Flatten the (zone-or-IR) summary to a single string for regex matching."
+  [summary]
+  (if (map? summary)
+    (str/join "  " (map flat-text [(:left summary) (:center summary) (:right summary)]))
+    (flat-text summary)))
 
-  (it "drops the listing when only one port is visible (badge already carries default=)"
-    (let [v    (r/render-ports {:default 7888
+(defdescribe render-ports-test
+  (it "zero ports → contract; display is a single badge headline (no listing)"
+    (let [res (r/render-ports {:default nil :ports []})]
+      (expect (contract? res))
+      (expect (re-find #"PORTS" (summary-text (:summary res))))
+      (expect (re-find #"0 visible" (summary-text (:summary res))))
+      ;; No listing body when n <= 1.
+      (expect (not-any? #(and (vector? %) (= :code (first %))) (:display res)))))
+
+  (it "one port → contract; display drops the listing (badge already carries default=)"
+    (let [res  (r/render-ports {:default 7888
                                 :ports   [{:port 7888 :source "/x/.nrepl-port"}]})
-          flat (pr-str v)]
-      (expect (ir? v))
-      (expect (re-find #"default=7888" flat))
-      ;; The path used to leak as a code-block row — verify it is
-      ;; gone, otherwise the user reads it as duplicate noise next
-      ;; to the badge.
+          flat (pr-str (:display res))]
+      (expect (contract? res))
+      (expect (re-find #"default=7888" (summary-text (:summary res))))
+      ;; The path used to leak as a code-block row — verify it is gone.
       (expect (not (re-find #"\.nrepl-port" flat)))))
 
-  (it "renders multiple ports as a code block (disambiguates which file the default came from)"
-    (let [v (r/render-ports {:default 7888
-                             :ports   [{:port 7888 :source "/x/.nrepl-port"}
-                                       {:port 60001 :source "/y/.nrepl-port"}]})
-          flat (pr-str v)]
-      (expect (ir? v))
+  (it "multiple ports → contract; display lists each port→source"
+    (let [res  (r/render-ports {:default 7888
+                                :ports   [{:port 7888 :source "/x/.nrepl-port"}
+                                          {:port 60001 :source "/y/.nrepl-port"}]})
+          flat (pr-str (:display res))]
+      (expect (contract? res))
       (expect (re-find #"7888" flat))
       (expect (re-find #"60001" flat))
       (expect (re-find #"\.nrepl-port" flat)))))
 
 (defdescribe render-eval-test
-  (it "produces an EVAL header on success"
-    (let [v (r/render-eval {:value "42" :ns "user" :status #{"done"} :ms 5 :port 7888})
-          t (flat-text v)]
-      (expect (ir? v))
-      (expect (re-find #"EVAL" t))
-      (expect (re-find #":7888" t))
+  (it "success → contract; EVAL badge + value in display"
+    (let [res (r/render-eval {:value "42" :ns "user" :status #{"done"} :ms 5 :port 7888})
+          st  (summary-text (:summary res))
+          t   (flat-text (:display res))]
+      (expect (contract? res))
+      (expect (re-find #"EVAL" st))
+      (expect (re-find #":7888" st))
       (expect (re-find #"42" t))))
 
-  (it "produces a TIMEOUT header when timed-out?"
-    (let [v (r/render-eval {:timed-out? true :status #{"done" "timeout"} :port 7888})]
-      (expect (re-find #"TIMEOUT" (flat-text v)))))
+  (it "timed-out? → TIMEOUT badge in summary"
+    (let [res (r/render-eval {:timed-out? true :status #{"done" "timeout"} :port 7888})]
+      (expect (contract? res))
+      (expect (re-find #"TIMEOUT" (summary-text (:summary res))))))
 
-  (it "shows :out and :err blocks when present"
-    (let [v (r/render-eval {:value nil :out "hi\n" :err "boom\n" :status #{"done"} :port 7888})
-          t (flat-text v)]
+  (it "shows :out and :err blocks in display when present"
+    (let [res (r/render-eval {:value nil :out "hi\n" :err "boom\n" :status #{"done"} :port 7888})
+          t   (flat-text (:display res))]
+      (expect (contract? res))
       (expect (re-find #":out" t))
       (expect (re-find #":err" t))
       (expect (re-find #"hi" t))
       (expect (re-find #"boom" t)))))
 
 (defdescribe render-outline-test
-  (it "shows ns, counts and a forms code block"
-    (let [v (r/render-outline
-              {:path "src/a.clj" :bytes 123 :total 2
-               :ns {:name "a" :doc nil}
-               :counts {:defn 2}
-               :forms [{:kind :defn :name "x" :line 3 :arglists [["a"]] :doc "doc"}
-                       {:kind :defn :name "y" :line 7 :arglists [["b"]]}]})
-          s (pr-str v)]
-      (expect (ir? v))
+  (it "shows ns, counts and a forms code block in display"
+    (let [res (r/render-outline
+                {:path "src/a.clj" :bytes 123 :total 2
+                 :ns {:name "a" :doc nil}
+                 :counts {:defn 2}
+                 :forms [{:kind :defn :name "x" :line 3 :arglists [["a"]] :doc "doc"}
+                         {:kind :defn :name "y" :line 7 :arglists [["b"]]}]})
+          s (pr-str (:display res))]
+      (expect (contract? res))
+      (expect (re-find #"src/a.clj" (summary-text (:summary res))))
       (expect (re-find #"src/a.clj" s))
       (expect (re-find #"2×defn" s))
       (expect (re-find #"defn  x" s))
       (expect (re-find #"defn  y" s))))
 
-  (it "passes :error through without throwing"
-    (let [v (r/render-outline {:path "x.clj" :error "parse-failed" :forms [] :total 0})
-          t (flat-text v)]
-      (expect (re-find #"OUTLINE!" t))
-      (expect (re-find #"parse-failed" t)))))
+  (it "passes :error through without throwing → OUTLINE! badge"
+    (let [res (r/render-outline {:path "x.clj" :error "parse-failed" :forms [] :total 0})
+          st  (summary-text (:summary res))]
+      (expect (contract? res))
+      (expect (re-find #"OUTLINE!" st))
+      (expect (re-find #"parse-failed" st)))))
 
 (defdescribe render-find-test
-  (it "renders header counts and a match block"
-    (let [v (r/render-find
-              {:scanned 12 :elapsed-ms 4 :truncated? false
-               :matches [{:path "src/a.clj" :line 3 :kind :defn :name "foo"}
-                         {:path "src/b.clj" :line 9 :kind :defmacro :name "bar"}]})
-          t (flat-text v)]
-      (expect (re-find #"2 matches" t))
+  (it "renders header counts in summary and a match block in display"
+    (let [res (r/render-find
+                {:scanned 12 :elapsed-ms 4 :truncated? false
+                 :matches [{:path "src/a.clj" :line 3 :kind :defn :name "foo"}
+                           {:path "src/b.clj" :line 9 :kind :defmacro :name "bar"}]})
+          st  (summary-text (:summary res))
+          t   (flat-text (:display res))]
+      (expect (contract? res))
+      (expect (re-find #"2 matches" st))
       (expect (re-find #"foo" t))
       (expect (re-find #"src/b.clj:9" t)))))
 
 (defdescribe render-edit-test
-  (it "renders an OK edit with delta"
-    (let [v (r/render-edit
-              {:status :ok :path "src/a.clj" :op :clj/edit :edit-op :replace :target "foo"
-               :bytes {:before 100 :after 110} :delta 10})
-          s (pr-str v)]
-      (expect (re-find #":replace" s))
-      (expect (re-find #"foo" s))
+  (it "renders an OK edit with delta → contract"
+    (let [res (r/render-edit
+                {:status :ok :path "src/a.clj" :op :clj/edit :edit-op :replace :target "foo"
+                 :bytes {:before 100 :after 110} :delta 10})
+          st  (summary-text (:summary res))
+          s   (pr-str (:display res))]
+      (expect (contract? res))
+      (expect (re-find #":replace" st))
+      (expect (re-find #"foo" st))
+      (expect (re-find #"Δ=\+10" st))
       (expect (re-find #"src/a.clj" s))
       (expect (re-find #"Δ=\+10" s))))
 
-  (it "renders an :error edit"
-    (let [v (r/render-edit {:status :error :error "target not found" :target "ghost"})]
-      (expect (re-find #"EDIT FAILED" (pr-str v)))
-      (expect (re-find #"target not found" (pr-str v))))))
+  (it "renders an :error edit → EDIT FAILED badge"
+    (let [res (r/render-edit {:status :error :error "target not found" :target "ghost"})]
+      (expect (contract? res))
+      (expect (re-find #"EDIT FAILED" (summary-text (:summary res))))
+      (expect (re-find #"target not found" (summary-text (:summary res))))
+      (expect (re-find #"target not found" (pr-str (:display res)))))))

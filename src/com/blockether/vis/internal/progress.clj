@@ -178,19 +178,21 @@
         channel-entries
         ;; Sort by :position so racy futures (which can land in
         ;; completion order rather than source order) render in canonical
-        ;; source order.
+        ;; source order. Each sink entry's `:result` is the
+        ;; `{:summary :display}` contract; flatten to a summary-led IR
+        ;; (badge paragraph first, expanded body after).
         (extension/combine-render-values
           (map (fn [{:keys [success? result error]}]
                  (if success?
-                   result
-                   ;; Build the envelope shape the default error
-                   ;; formatter expects.
-                   (extension/default-error-ir
-                     {:success? false :error error})))
+                   (extension/render-fn-result->ir result)
+                   (extension/render-fn-result->ir
+                     (extension/default-error-result
+                       {:success? false :error error}))))
             (sort-by :position channel-entries)))
 
         (extension/tool-result? (:result chunk))
-        (extension/render-tool-result (:result chunk))
+        (extension/render-fn-result->ir
+          (extension/render-tool-result (:result chunk)))
 
         :else
         (fmt/bounded-value-str (:result chunk))))))

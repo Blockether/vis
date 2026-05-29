@@ -131,7 +131,8 @@
     (let [entry (extension/symbol #'demo-symbol-fn
                   {:symbol 'demo
                    :tag :observation
-                   :render-fn (fn [_] [:ir {} [:p {} [:span {} "render-specific"]]])})
+                   :render-fn (fn [_] {:summary [:ir {} [:p {} [:span {} "render-specific"]]]
+                                       :display [:ir {} [:p {} [:span {} "render-specific"]]]})})
           ext   (extension/register-extension!
                   {:ext/name "test.renderer"
                    :ext/kind "test"
@@ -144,7 +145,8 @@
         (binding [extension/*render-sink*    channel
                   extension/*sink-position*  (atom -1)]
           ((get (extension/wrap-extension ext {}) 'demo)))
-        (expect (= [:ir {} [:p {} [:span {} "render-specific"]]]
+        (expect (= {:summary [:ir {} [:p {} [:span {} "render-specific"]]]
+                    :display [:ir {} [:p {} [:span {} "render-specific"]]]}
                   (-> @channel first :result)))
         (finally
           (extension/deregister-extension! "test.renderer")))))
@@ -158,7 +160,8 @@
     (let [entry (extension/symbol #'demo-symbol-fn
                   {:symbol 'demo
                    :tag :observation
-                   :render-fn (fn [_] [:ir {} [:p {} [:span {} "x"]]])})
+                   :render-fn (fn [_] {:summary [:ir {} [:p {} [:span {} "x"]]]
+                                       :display [:ir {} [:p {} [:span {} "x"]]]})})
           ext   (extension/register-extension!
                   {:ext/name "test.form-idx-stamp"
                    :ext/kind "test"
@@ -189,7 +192,8 @@
     (let [entry (extension/symbol #'demo-symbol-fn
                   {:symbol 'demo
                    :tag :observation
-                   :render-fn (fn [_] [:ir {} [:p {} [:span {} "x"]]])})
+                   :render-fn (fn [_] {:summary [:ir {} [:p {} [:span {} "x"]]]
+                                       :display [:ir {} [:p {} [:span {} "x"]]]})})
           ext   (extension/register-extension!
                   {:ext/name "test.form-idx-unbound"
                    :ext/kind "test"

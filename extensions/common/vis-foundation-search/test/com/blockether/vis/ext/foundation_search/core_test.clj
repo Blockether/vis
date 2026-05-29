@@ -225,26 +225,39 @@ The spec library specifies the structure of data.")
           (expect (= :arxiv (:source p))))))))
 
 (defdescribe channel-render-test
-  (describe "channel-render-search builds canonical answer-IR from the structured payload"
+  (describe "channel-render-search returns the {:summary :display} contract"
     (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
                   (mock-mcp SAMPLE_EXA_TEXT)]
-      (let [env (search/web "clojure malli" {:num-results 2})
-            r   (envelope-result env)
-            ir  (search/channel-render-search r)]
+      (let [env    (search/web "clojure malli" {:num-results 2})
+            r      (envelope-result env)
+            result (search/channel-render-search r)
+            disp   (:display result)
+            disp-text (pr-str disp)]
 
-        (it "root is an :ir node"
-          (expect (= :ir (first ir))))
+        (it "conforms to ::render-fn-result"
+          (expect (extension/render-fn-result? result))
+          (expect (some? (:summary result)))
+          (expect (some? (:display result))))
 
-        (it "head paragraph carries the badge label + citation count"
-          (let [head-text (pr-str ir)]
-            (expect (str/includes? head-text "SEARCH WEB"))
-            (expect (str/includes? head-text "2 citations"))))
+        (it "summary is a zone map with label + query + count"
+          (let [summary (:summary result)]
+            (expect (extension/render-zones? summary))
+            (let [s (pr-str summary)]
+              (expect (str/includes? s "SEARCH WEB"))
+              (expect (str/includes? s "clojure malli"))
+              (expect (str/includes? s "2 citations")))))
 
-        (it "each citation contributes a clickable link block"
-          (let [text (pr-str ir)]
-            (expect (str/includes? text "https://github.com/metosin/malli"))
-            (expect (str/includes? text "https://clojuredocs.org/clojure.spec.alpha"))
-            (expect (str/includes? text "metosin/malli"))))
+        (it "display root is an :ir node"
+          (expect (= :ir (first disp))))
+
+        (it "display head paragraph carries the badge label + citation count"
+          (expect (str/includes? disp-text "SEARCH WEB"))
+          (expect (str/includes? disp-text "2 citations")))
+
+        (it "each citation contributes a clickable link block in :display"
+          (expect (str/includes? disp-text "https://github.com/metosin/malli"))
+          (expect (str/includes? disp-text "https://clojuredocs.org/clojure.spec.alpha"))
+          (expect (str/includes? disp-text "metosin/malli")))
 
         (it "markdown excerpts are parsed into commonmark blocks (not raw text)"
           ;; The `# Repository: …` excerpt header must become an :h node
@@ -252,27 +265,30 @@ The spec library specifies the structure of data.")
           ;; point of the structured output. A regression to raw
           ;; `# Repository` text would render as a plain :p span without
           ;; any :h / :ul tags in the tree.
-          (let [text (pr-str ir)]
-            (expect (str/includes? text ":h "))
-            (expect (str/includes? text ":level 1"))
-            (expect (str/includes? text ":level 2"))
-            ;; Bullet list under the first citation lands as :ul + :li.
-            (expect (str/includes? text ":ul"))
-            (expect (str/includes? text ":li"))))))
+          (expect (str/includes? disp-text ":h "))
+          (expect (str/includes? disp-text ":level 1"))
+          (expect (str/includes? disp-text ":level 2"))
+          ;; Bullet list under the first citation lands as :ul + :li.
+          (expect (str/includes? disp-text ":ul"))
+          (expect (str/includes? disp-text ":li")))))
 
     (describe "failure render carries a visible failure badge"
-      (let [env (search/papers "anything")
-            ;; Force-failure: with-redefs over http/get
-            ir  (search/channel-render-search
-                  (envelope-result
-                    (with-redefs [http/get (fn [_url _opts] (throw (ex-info "503" {})))]
-                      (search/papers "anything"))))]
-        (it "failure header text"
-          (let [text (pr-str ir)]
+      (let [result (search/channel-render-search
+                     (envelope-result
+                       (with-redefs [http/get (fn [_url _opts] (throw (ex-info "503" {})))]
+                         (search/papers "anything"))))]
+        (it "conforms to ::render-fn-result"
+          (expect (extension/render-fn-result? result))
+          (expect (some? (:summary result)))
+          (expect (some? (:display result))))
+        (it "summary marks the failure"
+          (let [s (pr-str (:summary result))]
+            (expect (str/includes? s "SEARCH PAPERS"))
+            (expect (str/includes? s "failed"))))
+        (it "display header text"
+          (let [text (pr-str (:display result))]
             (expect (str/includes? text "SEARCH PAPERS"))
-            (expect (str/includes? text "failed"))))
-        (it "(silence-unused-binding env)"
-          (expect (some? env)))))))
+            (expect (str/includes? text "failed"))))))))
 
 (defdescribe engine-scope-test
   (describe "every search/* symbol is :consult-only AND ships a render-fn"

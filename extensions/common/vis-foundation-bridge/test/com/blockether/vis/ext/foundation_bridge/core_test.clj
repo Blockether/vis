@@ -4,7 +4,24 @@
             [bridge.io :as bio]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.ext.foundation-bridge.core :as bridge]))
+            [com.blockether.vis.ext.foundation-bridge.core :as bridge]
+            [com.blockether.vis.ext.foundation-bridge.render :as render]))
+
+(defn- expect-contract
+  "Assert `result` conforms to the {:summary :display} render contract and
+   that both channels are non-empty."
+  [result]
+  (expect (extension/render-fn-result? result))
+  (expect (some? (:summary result)))
+  (expect (some? (:display result)))
+  ;; display is a canonical [:ir ...] document with at least one block
+  (expect (= :ir (first (:display result))))
+  (expect (seq (drop 2 (:display result))))
+  ;; summary normalizes to a [:p ...]-bearing [:ir ...]
+  (let [ir (extension/summary->ir (:summary result))]
+    (expect (= :ir (first ir)))
+    (expect (seq (drop 2 ir))))
+  result)
 
 (defn- run-in!
   [root & args]
@@ -287,3 +304,111 @@
       (expect (str/includes? (:title configured-hint) "(br/next)"))
       (expect (not (str/includes? (:title configured-hint) "(br/run-evidence)")))
       (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))
+
+;; ---------------------------------------------------------------------------
+;; Render contract: every `:render-fn` returns {:summary :display}
+;; (`::render-fn-result`). We exercise both the populated and the
+;; unconfigured/empty branch of each renderer, since the cond path
+;; decides the summary shape.
+;; ---------------------------------------------------------------------------
+
+(defdescribe bridge-render-contract-test
+  (it "render-init conforms across configured / already / unconfigured branches"
+    (expect-contract
+      (render/render-init {:configured? true :already-configured? true
+                           :workspace-root "/ws" :profile-path ".bridge/profile.edn"
+                           :message "ready"}))
+    (expect-contract
+      (render/render-init {:configured? true :already-configured? false
+                           :workspace-root "/ws" :profile-path ".bridge/profile.edn"
+                           :created [".bridge/profile.edn" ".bridge/verification-policy.yaml"]
+                           :updated [".gitignore"]}))
+    ;; configured with no created/updated counts
+    (expect-contract
+      (render/render-init {:configured? true :profile-path ".bridge/profile.edn"
+                           :created [] :updated []}))
+    (expect-contract
+      (render/render-init {:configured? false :workspace-root "/ws"
+                           :message "not configured"})))
+
+  (it "render-profile conforms with and without a profile"
+    (expect-contract
+      (render/render-profile {:configured? false :message "no profile"}))
+    (expect-contract
+      (render/render-profile {:configured? true
+                              :summary {:project "vis" :version "1" :name "vis-profile"}
+                              :profile-path ".bridge/profile.edn"
+                              :policy-path ".bridge/verification-policy.yaml"
+                              :policy-loaded? true}))
+    ;; minimal summary (no name/version/project)
+    (expect-contract
+      (render/render-profile {:configured? true :summary {}
+                              :policy-loaded? false})))
+
+  (it "render-check conforms across ok / fail / unconfigured branches"
+    (expect-contract
+      (render/render-check {:configured? false :message "no profile"}))
+    (expect-contract
+      (render/render-check {:configured? true :status :ok :issue-count 0
+                            :status-summary {:project "vis"}
+                            :required-obligations [] :recommended-obligations []
+                            :evidence-receipts []}))
+    (expect-contract
+      (render/render-check {:configured? true :status :attention-required
+                            :issue-count 2 :status-summary {:project "vis"}
+                            :required-obligations [{:kind :unit-tests :subject "vis"
+                                                    :summary "needs unit tests" :state "open"}]
+                            :recommended-obligations [{:kind :lint :artifact "lint"
+                                                       :state "open"}]
+                            :evidence-receipts [{:status "failed"}]}))
+    ;; no :status key -> :center omitted from summary
+    (expect-contract
+      (render/render-check {:configured? true :issue-count 0
+                            :required-obligations [] :recommended-obligations []
+                            :evidence-receipts []})))
+
+  (it "render-next conforms across ok / suggestions / unconfigured branches"
+    (expect-contract
+      (render/render-next {:configured? false :message "no profile"}))
+    (expect-contract
+      (render/render-next {:configured? true :issue-count 0 :actions []
+                           :status-summary {:project "vis"}}))
+    (expect-contract
+      (render/render-next {:configured? true :issue-count 1
+                           :actions [{:op {:call "(br/run-evidence \"unit\")"}
+                                      :summary "run unit tests"
+                                      :required-evidence ["unit-tests"]}]
+                           :next-step {:op {:call "(br/run-evidence \"unit\")"}}
+                           :status-summary {:project "vis"}})))
+
+  (it "render-list-evidence conforms with and without commands"
+    (expect-contract
+      (render/render-list-evidence {:configured? false :message "no profile"}))
+    (expect-contract
+      (render/render-list-evidence {:configured? true :profile-path ".bridge/profile.edn"
+                                    :commands []}))
+    (expect-contract
+      (render/render-list-evidence {:configured? true :profile-path ".bridge/profile.edn"
+                                    :commands [{:id "unit" :description "run unit tests"
+                                                :command "clojure -M:test" :timeout-seconds 120}
+                                               {:id "lint" :command "clj-kondo"}]})))
+
+  (it "render-run-evidence conforms across passed / failed / dry-run branches"
+    (expect-contract
+      (render/render-run-evidence {:profile-path ".bridge/profile.edn"
+                                   :result {:id "unit" :status "passed"
+                                            :duration-ms 1234 :exit-code 0
+                                            :receipt-path ".bridge/ephemeral/evidence/unit.yaml"
+                                            :stdout "all tests passed\n"}}))
+    (expect-contract
+      (render/render-run-evidence {:profile-path ".bridge/profile.edn"
+                                   :result {:id "unit" :status "failed"
+                                            :duration-ms 99 :exit-code 1
+                                            :stderr "boom\n"}}))
+    ;; dry-run: no status / duration / exit -> :right omitted
+    (expect-contract
+      (render/render-run-evidence {:profile-path ".bridge/profile.edn"
+                                   :result {:id "unit"}}))
+    ;; empty result map
+    (expect-contract
+      (render/render-run-evidence {:profile-path ".bridge/profile.edn" :result {}}))))

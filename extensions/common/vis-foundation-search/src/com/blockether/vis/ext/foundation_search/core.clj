@@ -860,27 +860,52 @@
     :search/papers "SEARCH PAPERS"
     "SEARCH"))
 
-(defn channel-render-search
-  "Build canonical IR for a search result. Reads the structured
-   `:result` map (`{:vis.op :query :citations …}`) directly — no
-   markdown round-trip on the result blob itself."
+(defn- search-summary
+  "Zone summary for a search result: label on the left, the query in the
+   center, the citation count (plus truncated/failed/source markers) anchored
+   right. First `[:strong …]` of `:left` is the badge label by convention."
+  [{op :vis.op :keys [query citations citation-count truncated? source error?]}]
+  (let [n      (or citation-count (count citations))
+        metric (str n " citation" (when (not= 1 n) "s")
+                 (when truncated? " (truncated)")
+                 (when error?     " ⚠ failed")
+                 (when source     (str " · " (name source))))]
+    (cond-> {:left  (ir-strong (search-badge-label op))
+             :right metric}
+      (not (str/blank? (str query)))
+      (assoc :center [:c {} (str query)]))))
+
+(defn- search-display
+  "Full expanded IR body: a header paragraph echoing the query/count, then
+   one card per citation (markdown-parsed excerpts), separated by rules."
   [{op :vis.op :keys [query citations citation-count truncated? source endpoint error?]}]
-  (let [head (ir-p (ir-strong (search-badge-label op))
-               "  " [:c {} (or query "")]
-               "  " (str (or citation-count (count citations)) " citation"
-                      (when (not= 1 (or citation-count (count citations))) "s"))
-               (when truncated? "  (truncated)")
-               (when error?     "  ⚠ failed")
-               (when source     (str "  source=" (name source)))
-               (when endpoint   (str "  ep=" endpoint)))
-        cards (->> citations
-                (map-indexed citation-card)
-                (interpose [(ir-hr)])
-                (mapcat identity)
-                vec)
+  (let [head   (ir-p (ir-strong (search-badge-label op))
+                 "  " [:c {} (or query "")]
+                 "  " (str (or citation-count (count citations)) " citation"
+                        (when (not= 1 (or citation-count (count citations))) "s"))
+                 (when truncated? "  (truncated)")
+                 (when error?     "  ⚠ failed")
+                 (when source     (str "  source=" (name source)))
+                 (when endpoint   (str "  ep=" endpoint)))
+        cards  (->> citations
+                 (map-indexed citation-card)
+                 (interpose [(ir-hr)])
+                 (mapcat identity)
+                 vec)
         blocks (cond-> [head]
                  (seq cards) (into cards))]
     (into [:ir {}] (filter some? blocks))))
+
+(defn channel-render-search
+  "Render a search result to the `{:summary :display}` contract. Reads the
+   structured `:result` map (`{:vis.op :query :citations …}`) directly — no
+   markdown round-trip on the result blob itself.
+
+   `:summary` is a zone badge (label · query · citation count); `:display`
+   is the full IR body with one markdown-parsed card per citation."
+  [result]
+  {:summary (search-summary result)
+   :display (search-display result)})
 
 ;; =============================================================================
 ;; Symbol entries (all `:consult`-scope)
