@@ -97,7 +97,7 @@
           ;; nothing changed in the editor. Surface the empty case
           ;; explicitly instead of pretending we appended text.
           (publish! {:op :notify
-                     :text "Voice produced no audible text (try speaking longer or check your mic level)"
+                     :text "Voice produced no audible text"
                      :level :warn})
           (do
             (publish! (cond-> {:op :input/append

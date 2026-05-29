@@ -112,8 +112,7 @@
     ;; ctrl+b is not fucking ADDING TO THE FUCKING TEXT\".
     ;;
     ;; Fix: when transcription is blank, skip `:input/append` and
-    ;; publish a `:warn` notify that names the likely causes so the
-    ;; user knows it ran but produced nothing.
+    ;; publish exactly the terse `:warn` notify the user should see.
     (let [events (atom [])]
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
       (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
@@ -139,10 +138,10 @@
         (expect (not-any? #(and (= :notify (:op %))
                              (clojure.string/includes? (str (:text %)) "✓ Voice appended"))
                   @events))
-        ;; A clear no-audible-text warning DID fire.
+        ;; A clear no-audible-text warning DID fire, with no parenthetical advice.
         (expect (some #(and (= :notify (:op %))
                          (= :warn (:level %))
-                         (clojure.string/includes? (str (:text %)) "no audible text"))
+                         (= "Voice produced no audible text" (:text %)))
                   @events))
         (expect (= false (:transcribing? @voice/state))))))
 
@@ -165,7 +164,7 @@
             (Thread/sleep 20)
             (recur (dec n))))
         (expect (not-any? #(= :input/append (:op %)) @events))
-        (expect (some #(clojure.string/includes? (str (:text %)) "no audible text")
+        (expect (some #(= "Voice produced no audible text" (:text %))
                   @events)))))
 
   (it "publishes clean voice failure and logs ASR exceptions"
