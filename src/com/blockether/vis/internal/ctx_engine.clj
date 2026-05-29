@@ -1,35 +1,24 @@
 (ns com.blockether.vis.internal.ctx-engine
-  "Engine surface over CTX. Almost entirely pure — only validator-fn compile +
-   run depend on SCI (and a per-source compile cache). Persistence, IO, and
-   the provider live elsewhere and call into these fns.
+  "Engine surface over CTX — a typed, dependency-checked working memory of
+   tasks + facts. Entirely pure. Persistence, IO, and the provider live
+   elsewhere and call into these fns.
 
-   The pure subset:
-     parse-scope-form, scope-compare, classify-scope, build-indexes,
-     depends-on-cycle?, derive-progression, derive-warnings,
-     derive-stages, apply-mutator, apply-done,
-     reconcile-done-hook-tasks, advance-iter, enter-turn, gc-pass,
-     introspect-*.
-
-   The impure subset (clearly fenced; uses SCI + a cache atom):
-     compile-validator-fn, run-validator-fn.
+   The engine keeps the graph consistent (cycle-free `:depends-on`, status
+   FSM, fact contradictions, GC/TTL) and surfaces STRUCTURAL warnings — but
+   it does NOT verify the model's claims. Done is self-asserted:
+   `(task-set! :K {:status :done})` is accepted as-is, the engine stamps
+   `:done-born`, and there is no proof, validator, or reversion.
 
    Public surface (all pure):
 
      (build-indexes ctx)
-       → {:req-index :proof-index :task-by-spec :fact-refs :dep-graph :rev-deps
-          :spec-status :task-status :fact-status :fact-refs}
+       → {:dep-graph :rev-deps :task-status :fact-status}
 
      (classify-scope scope-form cursor form-results)
        → one of :ok :unknown :errored :future-form :future-iter :future-turn :malformed
 
-     (derive-progression ctx indexes)
-       → {spec-id {:total :proven :ratio :state :missing}}
-
      (derive-warnings ctx indexes)
-       → [{:level :anchor :code :message} …]   sorted, deduped
-
-     (derive-stages ctx indexes progression last-mutation-map)
-       → [{:type :target :priority :hint} …]   top-N ranked
+       → {:warnings [short-string …]}   sorted, deduped structural warnings
 
      (apply-mutator ctx form-scope mutator args)
        → {:ctx :warnings :stamped?}            engine never throws on soft;
@@ -39,10 +28,6 @@
      (advance-iter ctx form-results-vec)
        → ctx with trailer pin appended and :session/scope advanced
 
-     (reconcile-done-hook-tasks ctx form-results-map)
-       → {:ctx :warnings} with hook-tasks whose :status :done failed
-         validation reverted to :todo
-
      (enter-turn ctx turn-pos)
        → ctx with bumped :session/turn, reset :session/scope, gc-pass run
 
@@ -50,28 +35,22 @@
        → ctx with terminal-status entries past TTL removed from live tree
 
    Mutator keywords accepted by `apply-mutator`:
-     :spec-set! :task-set! :fact-set!
-     :req-add! :req-update! :req-remove!
-     :proof-add! :proof-remove!
+     :task-set! :fact-set!
+     :task-depends! :fact-depends!
+     :fact-contradicts! :fact-contradicts-remove!
 
    Hard rejects (engine writes nothing, warnings carry the reason):
      - malformed scope string anywhere
-     - depends-on cycle introduced by task-set!
+     - depends-on cycle introduced by task-set! / fact-set! / *-depends!
      - partial-overlap trailer-summarize at done-time
 
-   Everything else is a soft warning surfaced via `derive-warnings` and inlined
-   by the renderer as `;; ⚠ …` next to the offending entry. The engine NEVER
-   refuses a write outside the three hard rules above.
-
-   This file ships only declarations + helpers + the deterministic skeletons
-   needed to start scenario testing. Each fn is implemented incrementally; the
-   accompanying `ctx-engine-test` namespace drives the implementation order
-   via REPL-replayable scenarios."
+   Everything else is a soft warning surfaced via `derive-warnings` as a
+   simple `:session/warnings` vec of short strings. The engine NEVER refuses
+   a write outside the three hard rules above."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [edamame.core :as edamame]
-            [com.blockether.vis.internal.tokens :as tokens]
-            [sci.core :as sci]))
+            [com.blockether.vis.internal.tokens :as tokens]))
 
 ;; =============================================================================
 ;; Scope parsing — deterministic, regex-driven
@@ -167,102 +146,35 @@
 ;; =============================================================================
 
 (defn build-indexes
-  "Compute every reverse / projection index used by warnings / progression /
-   next-actions. Pure, idempotent, generator-property-testable.
+  "Compute the reverse / projection indexes used by the cycle check and
+   warning passes. Pure, idempotent, generator-property-testable.
 
    Returned shape (every value bounded by ctx size — no unbounded recursion):
 
-     {:req-index    {requirement-id → {:spec spec-id :req requirement-map}}
-      :proof-index  {[spec-id requirement-id] → [{:task task-id :scope scope-form} …]}
-      :task-by-spec {spec-id → #{task-id …}}
-      :fact-refs    {fact-id → #{requirement-id …}}      ; which reqs cite this fact
-      :spec-by-task {task-id → #{spec-id …}}              ; mirror of :session.task/specs keys
-      :dep-graph    {[kind id] → #{[kind id] …}}          ; typed depends-on edges
+     {:dep-graph    {[kind id] → #{[kind id] …}}          ; typed depends-on edges
       :rev-deps     {[kind id] → #{[kind id] …}}          ; reverse depends-on
-      :spec-status  {spec-id → status-keyword}
       :task-status  {task-id → status-keyword}
       :fact-status  {fact-id → status-keyword}}            ; :active when omitted
 
    Engine NEVER mutates ctx — indexes are throwaway computed fresh on demand.
-   Cost is O(|specs|+|tasks|+|facts|) plus the proof and depends-on traversals,
-   both bounded by the same totals. Cheap; rebuilt each render."
+   Cost is O(|tasks|+|facts|) plus the depends-on traversal. Cheap; rebuilt
+   each render."
   [ctx]
-  (let [specs (or (:session/specs ctx) {})
-        tasks (or (:session/tasks ctx) {})
+  (let [tasks (or (:session/tasks ctx) {})
         facts (or (:session/facts ctx) {})
 
-        req-index
-        (into {}
-          (for [[spec-id spec] specs
-                req (or (:requirements spec) [])]
-            [(:id req) {:spec spec-id :req req}]))
-
-        proof-index
-        (reduce-kv
-          (fn [acc task-id task]
-            (reduce-kv
-              (fn [a spec-id proofs]
-                (reduce
-                  (fn [a' proof]
-                    ;; Phase E: compose-aware entries. :scope keeps the
-                    ;; legacy single-string view; :scopes carries the
-                    ;; full vec (1 element for singleton :proof, N for
-                    ;; :proof-compose). Downstream derive-progression /
-                    ;; pass-* helpers read `:scopes` so both shapes work.
-                    (let [scopes (cond
-                                   (vector? (:proof-compose proof))
-                                   (vec (or (:proof-compose proof) []))
-
-                                   (string? (:proof proof))
-                                   [(:proof proof)]
-
-                                   :else [])]
-                      (update a' [spec-id (:requirement proof)] (fnil conj [])
-                        {:task   task-id
-                         :scope  (first scopes)
-                         :scopes scopes})))
-                  a
-                  (or proofs [])))
-              acc
-              (or (:specs task) {})))
-          {}
-          tasks)
-
-        task-by-spec
-        (reduce-kv
-          (fn [acc task-id task]
-            (reduce (fn [a spec-id] (update a spec-id (fnil conj #{}) task-id))
-              acc
-              (keys (or (:specs task) {}))))
-          {}
-          tasks)
-
-        spec-by-task
-        (into {}
-          (for [[task-id task] tasks]
-            [task-id (set (keys (or (:specs task) {})))]))
-
-        fact-refs
-        (reduce-kv
-          (fn [acc _ {req :req}]
-            (reduce (fn [a fid] (update a fid (fnil conj #{}) (:id req)))
-              acc
-              (or (:facts req) [])))
-          {}
-          req-index)
-
-        ;; ---------- Universal :depends-on (Phase B) ----------
+        ;; ---------- Universal :depends-on ----------
         ;; dep-graph nodes are typed refs `[:kind :K]` where :kind is
-        ;; one of #{:task :spec :fact}. Edges are sets of typed refs.
-        ;; Bare-key entries on a task / spec / fact `:depends-on` are
-        ;; treated as same-kind shorthand (`:K` on a task → `[:task :K]`).
-        ;; Engine internals + introspection always work in typed shape.
+        ;; one of #{:task :fact}. Edges are sets of typed refs. Bare-key
+        ;; entries on a task / fact `:depends-on` are treated as same-kind
+        ;; shorthand (`:K` on a task → `[:task :K]`). Engine internals +
+        ;; introspection always work in typed shape.
         normalize-ref
         (fn [default-kind ref]
           (cond
             (vector? ref)
             (let [[kind k] ref]
-              (when (and (#{:task :spec :fact} kind) (some? k))
+              (when (and (#{:task :fact} kind) (some? k))
                 [kind k]))
             (keyword? ref) [default-kind ref]
             :else nil))
@@ -279,11 +191,6 @@
                 (edges-from :task (:depends-on task))))
             g tasks)
           (reduce-kv
-            (fn [acc spec-id spec]
-              (assoc acc [:spec spec-id]
-                (edges-from :spec (:depends-on spec))))
-            g specs)
-          (reduce-kv
             (fn [acc fact-id fact]
               (assoc acc [:fact fact-id]
                 (edges-from :fact (:depends-on fact))))
@@ -297,19 +204,12 @@
           {}
           dep-graph)
 
-        spec-status (into {} (map (fn [[k v]] [k (:status v)])) specs)
         task-status (into {} (map (fn [[k v]] [k (:status v)])) tasks)
         fact-status (into {} (map (fn [[k v]] [k (or (:status v) :active)])) facts)]
-    {:req-index       req-index
-     :proof-index     proof-index
-     :task-by-spec    task-by-spec
-     :spec-by-task    spec-by-task
-     :fact-refs       fact-refs
-     :dep-graph       dep-graph
-     :rev-deps        rev-deps
-     :spec-status     spec-status
-     :task-status     task-status
-     :fact-status     fact-status}))
+    {:dep-graph    dep-graph
+     :rev-deps     rev-deps
+     :task-status  task-status
+     :fact-status  fact-status}))
 
 ;; =============================================================================
 ;; depends-on cycle detection — pure DFS, no recursion-on-recursion
@@ -337,95 +237,9 @@
       (some #(visit % []) (sort (keys dep-graph))))))
 
 ;; =============================================================================
-;; derive-progression — per-spec proof coverage, deterministic
-;; =============================================================================
-
-(defn proof-scopes
-  "Phase E helper. Return the vec of scope strings a proof entry
-   carries. Backward compat: a `:proof` singleton becomes `[scope]`;
-   a `:proof-compose [s1 s2 …]` returns the vec verbatim. Empty when
-   neither field is populated."
-  [proof]
-  (cond
-    (vector? (:proof-compose proof))
-    (vec (or (:proof-compose proof) []))
-
-    (string? (:proof proof))
-    [(:proof proof)]
-
-    :else []))
-
-(defn- proof-valid?
-  "Stub: a proof is 'valid' for progression accounting iff every scope
-   it carries exists in form-results and the referenced requirement is
-   present on the spec. Validator-fn evaluation lives in a separate
-   pass (T2) because it needs SCI and bounded eval — those are non-pure
-   and handled outside this namespace. Progression here counts presence
-   only; T2 narrows it later.
-
-   Phase E: a `:proof-compose` entry is valid for progression iff every
-   sub-scope is present in form-results (or form-results is nil —
-   optimistic). The validator pass later AND/OR's the result; here we
-   just need to know the proof reaches every form it claims."
-  [proof req-index form-results]
-  (let [scopes (or (:scopes proof) [])]
-    (and (every? parse-scope-form scopes)
-      (contains? req-index (:requirement-id proof))
-      (or (nil? form-results)
-        (every? #(contains? form-results %) scopes)))))
-
-(defn derive-progression
-  "For each spec, count how many requirements have at least one proof entry
-   that points to an executed form. Returns:
-
-     {spec-id {:total N :proven N :ratio Double|nil :state kw :missing #{req-id}}}
-
-   :state ∈ #{:empty :open :partial :ready}
-   :empty when total = 0
-   :open when proven = 0 and total > 0
-   :partial when 0 < proven < total
-   :ready when proven = total > 0
-
-   `form-results` is optional. When nil, every proof scope is assumed
-   executed (used for tests that don't simulate form_results). When passed,
-   only proofs whose scope is in form-results count."
-  ([ctx indexes] (derive-progression ctx indexes nil))
-  ([ctx indexes form-results]
-   (let [{:keys [req-index proof-index]} indexes
-         specs (or (:session/specs ctx) {})]
-     (into {}
-       (for [[spec-id spec] specs
-             :let [reqs   (or (:requirements spec) [])
-                   total  (count reqs)
-                   proven (set
-                            (for [req reqs
-                                  :let [proofs (get proof-index [spec-id (:id req)])]
-                                  :when (some (fn [p]
-                                                (proof-valid?
-                                                  {:scopes (or (:scopes p)
-                                                             (when (:scope p) [(:scope p)])
-                                                             [])
-                                                   :requirement-id (:id req)}
-                                                  req-index form-results))
-                                          (or proofs []))]
-                              (:id req)))
-                   hit (count proven)]]
-         [spec-id
-          {:total   total
-           :proven  hit
-           :ratio   (when (pos? total) (double (/ hit total)))
-           :state   (cond
-                      (zero? total) :empty
-                      (= hit total) :ready
-                      (pos? hit)    :partial
-                      :else         :open)
-           :missing (set (remove proven (map :id reqs)))}])))))
-
-;; =============================================================================
 ;; Status terminal predicates + done-born stamping
 ;; =============================================================================
 
-(def ^:private spec-terminal? #{:done :cancelled :archived})
 (def ^:private task-terminal? #{:done :cancelled :archived})
 (def ^:private fact-terminal? #{:superseded :archived})
 
@@ -452,23 +266,22 @@
   {:code code :anchor anchor :message message})
 
 (defn- normalize-dep-ref
-  "Phase B helper: accept a `:depends-on` element and return a typed
-   `[:kind :K]` ref or nil when the input is malformed. Bare keys are
-   resolved to `default-kind`, matching the legacy task-only behaviour
-   for `(task-set! :T {:depends-on [:other-task]})`."
+  "Accept a `:depends-on` element and return a typed `[:kind :K]` ref or
+   nil when the input is malformed. Bare keys are resolved to
+   `default-kind`, matching the same-kind shorthand for
+   `(task-set! :T {:depends-on [:other-task]})`."
   [default-kind ref]
   (cond
     (vector? ref)
     (let [[kind k] ref]
-      (when (and (#{:task :spec :fact} kind) (some? k))
+      (when (and (#{:task :fact} kind) (some? k))
         [kind k]))
     (keyword? ref) [default-kind ref]
     :else nil))
 
 (defn- new-cycle-on-node?
-  "Phase B generalization of `new-cycle?`. Would assigning `:depends-on`
-   `new-deps` to the typed node `[kind k]` introduce a cycle in the
-   unified dep-graph?"
+  "Would assigning `:depends-on` `new-deps` to the typed node `[kind k]`
+   introduce a cycle in the unified dep-graph?"
   [ctx kind k new-deps]
   (let [normalized (into #{} (keep (partial normalize-dep-ref kind)) (or new-deps []))
         dg (-> (build-indexes ctx)
@@ -476,30 +289,9 @@
              (assoc [kind k] normalized))]
     (some? (depends-on-cycle? dg))))
 
-(defn- apply-spec-set! [ctx form-scope [spec-k partial-map]]
-  (cond
-    ;; Hard reject cycle BEFORE writing :depends-on. Mirrors task-set!
-    ;; behaviour so cross-entity cycles are caught at write time.
-    (and (contains? partial-map :depends-on)
-      (new-cycle-on-node? ctx :spec spec-k (:depends-on partial-map)))
-    {:ctx ctx
-     :warnings [(warn :depends-on-cycle [:spec spec-k]
-                  (str "spec " spec-k " :depends-on " (:depends-on partial-map)
-                    " would introduce a cycle; write refused"))]
-     :stamped? false}
-
-    :else
-    (let [path     [:session/specs spec-k]
-          existing (get-in ctx path)
-          merged   (cond-> (merge existing partial-map)
-                     (nil? existing) (assoc :born form-scope))
-          stamped  (stamp-or-clear-done-born merged form-scope spec-terminal?)]
-      {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true})))
-
 (defn- new-cycle?
-  "Legacy task-only cycle check. Phase B: delegates to the universal
-   `new-cycle-on-node?` so a task `:depends-on [:other-task]` still
-   normalizes via `[:task :other-task]`."
+  "Task cycle check. Delegates to the universal `new-cycle-on-node?` so a
+   task `:depends-on [:other-task]` normalizes via `[:task :other-task]`."
   [ctx task-k deps]
   (new-cycle-on-node? ctx :task task-k deps))
 
@@ -535,16 +327,8 @@
       :else
       (let [merged   (cond-> (merge existing partial-map)
                        (nil? existing) (assoc :born form-scope))
-            stamped  (stamp-or-clear-done-born merged form-scope task-terminal?)
-            ;; FSM rule: any non-:done status transition clears the
-            ;; `:validated?` flag so a later return to :done forces a
-            ;; fresh validator pass. Engine never sets `:validated?`
-            ;; here — only `reconcile-done-hook-tasks` does.
-            cleared  (if (and (contains? partial-map :status)
-                           (not= :done (:status stamped)))
-                       (dissoc stamped :validated?)
-                       stamped)]
-        {:ctx (assoc-in ctx path cleared) :warnings [] :stamped? true}))))
+            stamped  (stamp-or-clear-done-born merged form-scope task-terminal?)]
+        {:ctx (assoc-in ctx path stamped) :warnings [] :stamped? true}))))
 
 (def ^:private FACT_CONTENT_SOFT_LIMIT
   "Per-fact `:content` size cap (chars of `pr-str`) above which a soft
@@ -643,18 +427,17 @@
      :stamped?  true}))
 
 (defn- apply-depends!
-  "Phase B convenience mutator. `kind` is one of #{:task :spec :fact},
-   `k` is the entity id, `deps` is the new vec of dep refs (bare keys
-   shorthand for `kind`, or `[:kind :K]` cross-kind). Engine REPLACES
-   the existing `:depends-on` rather than merging — the model owns the
-   full vec each call.
+  "Convenience mutator. `kind` is one of #{:task :fact}, `k` is the
+   entity id, `deps` is the new vec of dep refs (bare keys shorthand for
+   `kind`, or `[:kind :K]` cross-kind). Engine REPLACES the existing
+   `:depends-on` rather than merging — the model owns the full vec each
+   call.
 
    Cycle check fires before write. Missing entity emits a soft warning
-   and writes anyway so the model can fix forward."
+   and skips the write."
   [ctx _form-scope [kind k deps]]
   (let [subtree (case kind
                   :task :session/tasks
-                  :spec :session/specs
                   :fact :session/facts)
         path    [subtree k]
         exists? (some? (get-in ctx path))]
@@ -678,122 +461,6 @@
        :warnings []
        :stamped? true})))
 
-(defn- apply-req-add! [ctx _form-scope [spec-k req]]
-  (let [path     [:session/specs spec-k :requirements]
-        existing (or (get-in ctx path) [])
-        rid      (:id req)
-        collide? (some #(= (:id %) rid) existing)]
-    (cond
-      (not (contains? ctx :session/specs))
-      {:ctx ctx
-       :warnings [(warn :req-add-no-spec [spec-k]
-                    (str "req-add! target spec " spec-k " does not exist"))]
-       :stamped? false}
-
-      (nil? (get-in ctx [:session/specs spec-k]))
-      {:ctx ctx
-       :warnings [(warn :req-add-no-spec [spec-k]
-                    (str "req-add! target spec " spec-k " does not exist"))]
-       :stamped? false}
-
-      collide?
-      {:ctx ctx
-       :warnings [(warn :req-add-collision [spec-k rid]
-                    (str "requirement " rid " already exists on spec " spec-k
-                      "; use req-update! to merge"))]
-       :stamped? false}
-
-      :else
-      {:ctx (update-in ctx path (fnil conj []) req) :warnings [] :stamped? true})))
-
-(defn- apply-req-update! [ctx _form-scope [spec-k rid partial-req]]
-  (let [path     [:session/specs spec-k :requirements]
-        existing (or (get-in ctx path) [])
-        idx      (first (keep-indexed (fn [i r] (when (= (:id r) rid) i)) existing))
-        id-warn  (when (contains? partial-req :id)
-                   (warn :req-update-id-immutable [spec-k rid]
-                     "req-update! cannot change :id; field ignored"))
-        clean    (dissoc partial-req :id)]
-    (cond
-      (nil? idx)
-      {:ctx ctx
-       :warnings [(warn :req-update-missing [spec-k rid]
-                    (str "requirement " rid " not found on spec " spec-k))]
-       :stamped? false}
-
-      :else
-      {:ctx (update-in ctx path
-              (fn [v] (vec (map-indexed (fn [i r] (if (= i idx) (merge r clean) r)) v))))
-       :warnings (vec (remove nil? [id-warn]))
-       :stamped? true})))
-
-(defn- orphan-warnings-for-removed-req [ctx spec-k rid]
-  (vec
-    (for [[task-id task] (or (:session/tasks ctx) {})
-          :let [proofs (get-in task [:specs spec-k])]
-          :when (some? proofs)
-          proof proofs
-          :when (= (:requirement proof) rid)]
-      (warn :req-removed-orphaned-proof
-        [task-id spec-k rid]
-        (str "task " task-id " proof for " rid "/" spec-k
-          " orphaned (req removed); scope " (:proof proof))))))
-
-(defn- apply-req-remove! [ctx _form-scope [spec-k rid]]
-  (let [path     [:session/specs spec-k :requirements]
-        existing (or (get-in ctx path) [])
-        new-vec  (vec (remove #(= (:id %) rid) existing))
-        warns    (orphan-warnings-for-removed-req ctx spec-k rid)]
-    {:ctx (assoc-in ctx path new-vec) :warnings warns :stamped? true}))
-
-(defn- apply-proof-add! [ctx _form-scope [task-k spec-k proof]]
-  (let [task-path  [:session/tasks task-k :specs spec-k]
-        existing   (or (get-in ctx task-path) [])
-        spec-known (some? (get-in ctx [:session/specs spec-k]))
-        req-known  (when spec-known
-                     (some #(= (:id %) (:requirement proof))
-                       (get-in ctx [:session/specs spec-k :requirements])))
-        ;; Phase E shape checks. :proof and :proof-compose are
-        ;; mutually exclusive in spirit; if both are present we keep
-        ;; both verbatim but warn. Empty :proof-compose is rejected
-        ;; (no scopes → vacuously true under :and). Unknown
-        ;; :proof-rule reverts to :and with a warning.
-        rule       (:proof-rule proof)
-        compose    (:proof-compose proof)
-        compose-shape-warns
-        (cond-> []
-          (and (some? compose) (not (vector? compose)))
-          (conj (warn :proof-compose-malformed [task-k spec-k]
-                  (str "proof-add! :proof-compose must be a vec of scope strings")))
-          (and (vector? compose) (empty? compose))
-          (conj (warn :proof-compose-empty [task-k spec-k]
-                  (str "proof-add! :proof-compose vec is empty; need ≥1 scope")))
-          (and (vector? compose) (some #(not (string? %)) compose))
-          (conj (warn :proof-compose-non-string [task-k spec-k]
-                  (str "proof-add! :proof-compose elements must be scope strings")))
-          (and (some? rule) (not (#{:and :or} rule)))
-          (conj (warn :proof-rule-unknown [task-k spec-k rule]
-                  (str "proof-add! :proof-rule " rule
-                    " unknown; only :and or :or supported — defaulting to :and"))))
-        warns      (concat compose-shape-warns
-                     (cond-> []
-                       (not spec-known)
-                       (conj (warn :proof-unknown-spec [task-k spec-k]
-                               (str "proof-add! refs unknown spec " spec-k)))
-                       (and spec-known (not req-known))
-                       (conj (warn :proof-unknown-req [task-k spec-k (:requirement proof)]
-                               (str "proof-add! refs unknown req " (:requirement proof)
-                                 " on spec " spec-k)))))]
-    {:ctx (assoc-in ctx task-path (conj existing proof))
-     :warnings (vec warns)
-     :stamped? true}))
-
-(defn- apply-proof-remove! [ctx _form-scope [task-k spec-k rid]]
-  (let [path     [:session/tasks task-k :specs spec-k]
-        existing (or (get-in ctx path) [])
-        new-vec  (vec (remove #(= (:requirement %) rid) existing))]
-    {:ctx (assoc-in ctx path new-vec) :warnings [] :stamped? true}))
-
 (defn apply-mutator
   "Apply a single mutator call to the CTX. Returns
    `{:ctx new-ctx :warnings vec :stamped? bool}`.
@@ -812,19 +479,12 @@
 
     :else
     (case mutator
-      :spec-set!     (apply-spec-set!     ctx form-scope args)
       :task-set!     (apply-task-set!     ctx form-scope args)
       :fact-set!     (apply-fact-set!     ctx form-scope args)
-      :spec-depends! (apply-depends!      ctx form-scope (cons :spec args))
       :task-depends! (apply-depends!      ctx form-scope (cons :task args))
       :fact-depends! (apply-depends!      ctx form-scope (cons :fact args))
       :fact-contradicts!        (apply-fact-contradicts!        ctx form-scope args)
       :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
-      :req-add!      (apply-req-add!      ctx form-scope args)
-      :req-update!   (apply-req-update!   ctx form-scope args)
-      :req-remove!   (apply-req-remove!   ctx form-scope args)
-      :proof-add!    (apply-proof-add!    ctx form-scope args)
-      :proof-remove! (apply-proof-remove! ctx form-scope args)
       ;; unknown mutator: soft warn, no write
       {:ctx ctx
        :warnings [(warn :unknown-mutator [mutator]
@@ -832,221 +492,35 @@
        :stamped? false})))
 
 ;; =============================================================================
-;; Validator-fn eval — SCI-bridged, bounded
+;; derive-warnings — render-time STRUCTURAL passes over indexes
 ;; =============================================================================
-;;
-;; Defined BEFORE derive-warnings because the T2 validator pass consumes it.
-;; Validator-fn dispatch — three shapes supported:
-;;
-;;   1. Plain `fn?` value (host-defined, in-memory only).
-;;      Called directly under a timeout, no SCI eval. Fastest path.
-;;
-;;   2. Map `{:fn <fn> :src \"…\"}` (host-defined, persist-safe).
-;;      Runtime prefers `:fn`; after freeze/thaw the fn slot collapses
-;;      to a `{:vis/ref :expr}` marker so the dispatcher falls through
-;;      to `:src` and compiles via SCI. Authoring helper:
-;;      `vis/validator-fn` macro (see `com.blockether.vis.core`).
-;;
-;;   3. String (model-emitted from inside the SCI sandbox — the only
-;;      shape the model can produce). Compiled via SCI once and cached.
-;;
-;; The compile result is cached by source string; the eval path uses a
-;; coarse timeout (future + future-cancel) to guard against infinite
-;; loops. The minimal SCI ctx (core arithmetic / set / coll predicates)
-;; is plenty — validators are tiny predicates over the per-form envelope.
-
-(def ^:private validator-cache
-  ;; {source-string → {:fn compiled-fn} or {:error msg}}
-  ;; Compile cache. Pure in spirit: same source → same compiled fn.
-  ;; Cached in an atom so the JIT cost is paid once per validator source.
-  (atom {}))
-
-(defn- compile-validator-fn*
-  "Compile `src` as a single SCI expression that should evaluate to a fn.
-   Returns `{:fn compiled-fn}` on success, `{:error msg}` on failure. The SCI
-   ctx is intentionally minimal — validator-fns are tiny predicates over the
-   form-result map; they don't need the full Vis sandbox."
-  [src]
-  (try
-    (let [v (sci/eval-string src)]
-      (if (fn? v)
-        {:fn v}
-        {:error (str "validator-fn source did not evaluate to a function (got "
-                  (pr-str (type v)) ")")}))
-    (catch Throwable t
-      {:error (str "validator-fn compile error: " (ex-message t))})))
-
-(defn compile-validator-fn
-  "Cached front for `compile-validator-fn*`. Returns the cached entry."
-  [src]
-  (or (get @validator-cache src)
-    (let [entry (compile-validator-fn* src)]
-      (swap! validator-cache assoc src entry)
-      entry)))
-
-(defn resolve-validator
-  "Return `{:fn <callable>}` or `{:error <msg>}` for any of the three
-   supported `:validator-fn` shapes (plain fn, dual map, source string).
-   `nil` is a structural error — callers should already have refused
-   to register the task. Pure (apart from the SCI compile cache)."
-  [v]
-  (cond
-    (nil? v)
-    {:error "validator-fn is nil"}
-
-    (fn? v)
-    {:fn v}
-
-    (map? v)
-    (cond
-      (fn? (:fn v))         {:fn (:fn v)}
-      (string? (:src v))    (compile-validator-fn (:src v))
-      :else                 {:error (str "validator-fn map must carry :fn or :src; got "
-                                      (pr-str (keys v)))})
-
-    (string? v)
-    (compile-validator-fn v)
-
-    :else
-    {:error (str "unsupported validator-fn type: " (pr-str (type v)))}))
-
-(defn validator-fn?
-  "True when `v` is a structurally-valid `:validator-fn` slot value
-   (any of the three accepted shapes). Used by spec checks +
-   pre-write guards instead of the old hardcoded `(string? v)`."
-  [v]
-  (or (fn? v)
-    (and (map? v) (or (fn? (:fn v)) (string? (:src v))))
-    (string? v)))
-
-(defn run-validator-fn
-  "Run a validator (any of: plain fn, dual `{:fn :src}` map, source string)
-   with a 50ms timeout. Returns
-     {:ok? bool :reason :timed-out|:threw|:falsy|:ok|:compile-error :detail …}
-   When the validator failed to resolve (nil / wrong type / bad source),
-   returns `{:ok? false :reason :compile-error :detail <msg>}`."
-  ([validator form-result-map] (run-validator-fn validator form-result-map 50))
-  ([validator form-result-map timeout-ms]
-   (let [entry (resolve-validator validator)]
-     (cond
-       (:error entry)
-       {:ok? false :reason :compile-error :detail (:error entry)}
-
-       :else
-       (let [fut (future
-                   (try
-                     (let [r ((:fn entry) form-result-map)]
-                       {:result r})
-                     (catch Throwable t {:threw (ex-message t)})))
-             res (deref fut timeout-ms ::timeout)]
-         (cond
-           (= res ::timeout)
-           (do (future-cancel fut)
-             {:ok? false :reason :timed-out})
-
-           (:threw res)
-           {:ok? false :reason :threw :detail (:threw res)}
-
-           (not (:result res))
-           {:ok? false :reason :falsy :detail (:result res)}
-
-           :else
-           {:ok? true :reason :ok :detail (:result res)}))))))
-
-;; =============================================================================
-;; derive-warnings — render-time invariant passes over indexes
-;; =============================================================================
-
-(defn- pass-req-facts-refs
-  "Invariant 2: requirement :facts entries must point to live facts."
-  [ctx _indexes]
-  (let [facts (or (:session/facts ctx) {})]
-    (vec
-      (for [[spec-id spec] (or (:session/specs ctx) {})
-            req (or (:requirements spec) [])
-            f   (or (:facts req) [])
-            :when (nil? (get facts f))]
-        (warn :req-fact-dangling [spec-id (:id req) f]
-          (str "req " (:id req) " on spec " spec-id
-            " refs nonexistent fact " f))))))
-
-(defn- pass-task-specs-refs
-  "Invariant 4: task :specs keys must point to live specs."
-  [ctx _indexes]
-  (let [specs (or (:session/specs ctx) {})]
-    (vec
-      (for [[task-id task] (or (:session/tasks ctx) {})
-            sk (keys (or (:specs task) {}))
-            :when (nil? (get specs sk))]
-        (warn :task-spec-dangling [task-id sk]
-          (str "task " task-id " :specs refs nonexistent spec " sk))))))
 
 (defn- pass-task-depends-on-refs
-  "Invariant 5: task :depends-on keys must point to live tasks.
-   Phase B: also runs the universal pass for spec/fact dep refs across
-   all three entity kinds. Each dangling ref is anchored under its
-   owning entity so the renderer can surface it inline."
+  "Structural pass: task/fact `:depends-on` refs must point to a live
+   task or fact. Bare-key refs resolve same-kind; typed `[:kind :K]`
+   refs are checked against their target subtree. Each dangling ref is
+   anchored under its owning entity so the renderer can surface it."
   [ctx _indexes]
   (let [tasks (or (:session/tasks ctx) {})
-        specs (or (:session/specs ctx) {})
         facts (or (:session/facts ctx) {})
-        subtree {:task tasks :spec specs :fact facts}
+        subtree {:task tasks :fact facts}
         ref-exists?
         (fn [[k kw]]
           (some? (get (get subtree k) kw)))]
     (vec
-      (concat
-        ;; legacy task-only dangling pass (bare-key refs only)
-        (for [[task-id task] tasks
-              d (or (:depends-on task) [])
-              :when (keyword? d)
-              :when (nil? (get tasks d))]
-          (warn :task-dep-dangling [task-id d]
-            (str "task " task-id " :depends-on refs nonexistent task " d)))
-        ;; universal pass: any typed [:kind :K] ref on any entity
-        (for [[default-kind subtree-map] [[:task tasks] [:spec specs] [:fact facts]]
-              [entity-id entity] subtree-map
-              raw-dep (or (:depends-on entity) [])
-              :let [ref (normalize-dep-ref default-kind raw-dep)]
-              :when (and ref (not (ref-exists? ref)))]
-          (warn :depends-on-dangling [default-kind entity-id ref]
-            (str (name default-kind) " " entity-id
-              " :depends-on refs nonexistent " (name (first ref))
-              " " (second ref))))))))
-
-(defn- pass-proof-req-refs
-  "Invariant 7: every task proof :requirement must exist on the referenced
-   spec. Tasks that hold proofs for requirements removed from the spec
-   surface here even when no req-remove! was emitted (e.g. after spec-set!
-   :requirements wholesale replace)."
-  [ctx _indexes]
-  (vec
-    (for [[task-id task] (or (:session/tasks ctx) {})
-          [sk proofs]    (or (:specs task) {})
-          proof          proofs
-          :let [req-ids (set (map :id (get-in ctx [:session/specs sk :requirements])))]
-          :when (and (some? (get-in ctx [:session/specs sk]))
-                  (not (contains? req-ids (:requirement proof))))]
-      (warn :proof-unknown-req [task-id sk (:requirement proof)]
-        (str "task " task-id " proof refs unknown req "
-          (:requirement proof) " on spec " sk)))))
-
-(defn- pass-spec-done-coverage
-  "Invariant 10: spec :status :done ⇒ every requirement has ≥1 proof. Uses
-   derive-progression for the count."
-  [ctx indexes]
-  (let [prog (derive-progression ctx indexes)]
-    (vec
-      (for [[spec-id spec] (or (:session/specs ctx) {})
-            :when (= :done (:status spec))
-            :let [p (get prog spec-id)]
-            :when (and p (not= (:state p) :ready))
-            rid (:missing p)]
-        (warn :spec-done-unproven [spec-id rid]
-          (str "spec " spec-id " :done but req " rid " has no valid proof"))))))
+      (for [[default-kind subtree-map] [[:task tasks] [:fact facts]]
+            [entity-id entity] subtree-map
+            raw-dep (or (:depends-on entity) [])
+            :let [ref (normalize-dep-ref default-kind raw-dep)]
+            :when (and ref (not (ref-exists? ref)))]
+        (warn :depends-on-dangling [default-kind entity-id ref]
+          (str (name default-kind) " " entity-id
+            " :depends-on refs nonexistent " (name (first ref))
+            " " (second ref)))))))
 
 (defn- pass-task-done-deps
-  "Invariant 11: task :status :done ⇒ every :depends-on target is terminal."
+  "Structural pass: task :status :done while a :depends-on target is
+   non-terminal. Soft only — done is self-asserted and never reverted."
   [ctx _indexes]
   (let [tasks (or (:session/tasks ctx) {})]
     (vec
@@ -1057,173 +531,6 @@
             :when (and (some? dep) (not (task-terminal? (:status dep))))]
         (warn :task-done-pending-dep [task-id d]
           (str "task " task-id " :done but dep " d " is " (:status dep)))))))
-
-(defn- pass-scope-classification
-  "Invariant 8: proof scopes classify :ok against the cursor + form-results.
-   form-results is optional — when nil the pass only flags :malformed /
-   :future-* classes (which don't need executed-form knowledge)."
-  ([ctx indexes] (pass-scope-classification ctx indexes nil))
-  ([ctx _indexes form-results]
-   (let [cursor (:session/scope ctx)]
-     (vec
-       (for [[task-id task] (or (:session/tasks ctx) {})
-             [sk proofs]    (or (:specs task) {})
-             proof          proofs
-             :let [klass (classify-scope (:proof proof) cursor form-results)]
-             :when (and (not= klass :ok)
-                     ;; without form-results we can't tell :unknown / :errored apart
-                     ;; from :ok; only complain about ones we can prove
-                     (or form-results (not (#{:unknown :errored} klass))))]
-         (warn :proof-scope-bad-class [task-id sk (:requirement proof) klass]
-           (str "task " task-id " proof " (:proof proof)
-             " classified " klass " relative to cursor")))))))
-
-(def ^:private ARCHIVED_PROOFS_CAP_PER_TASK
-  "Cap on `:archived-proofs` vec length per task. Older entries are dropped
-   first when the cap is exceeded. 10 keeps recent rejection history
-   readable without unbounded ctx growth across long sessions."
-  10)
-
-(defn- evaluate-proof-scopes
-  "Phase E pure helper. Run the req's :validator-fn against every scope
-   the proof entry carries (handles both `:proof` and `:proof-compose`)
-   and combine results per `:proof-rule` (default `:and`).
-
-   Returns `{:ok? bool :failed [{:scope :reason :detail} …]}` where
-   :failed is empty on success. For `:and` failure means at least one
-   sub-scope rejected; :failed lists only the actual rejects. For
-   `:or` failure means ALL sub-scopes rejected; :failed lists every
-   sub-scope (the caller archives all of them).
-
-   Scopes whose classification is not `:ok` are skipped silently — the
-   scope-class pass already complained about those."
-  [src cursor form-results proof]
-  (let [scopes (proof-scopes proof)
-        rule   (or (:proof-rule proof) :and)
-        per    (for [s scopes
-                     :let [klass (classify-scope s cursor form-results)]
-                     :when (= klass :ok)
-                     :let [envelope (get form-results s)
-                           res (run-validator-fn src envelope)]]
-                 (assoc res :scope s))
-        results (vec per)
-        failed-results (filterv #(not (:ok? %)) results)
-        passed?  (case rule
-                   :or  (some :ok? results)
-                   ;; :and (default)
-                   (and (seq results) (every? :ok? results)))]
-    {:ok?    (boolean passed?)
-     :failed (mapv (fn [r] {:scope  (:scope r)
-                            :reason (:reason r)
-                            :detail (:detail r)})
-               (case rule
-                 :or  (if passed? [] results)
-                 ;; :and: archive only the actual rejects
-                 failed-results))}))
-
-(defn- find-failed-task-proofs
-  "Pure helper: returns a vec of `{:task-id :spec-id :req-id :proof
-   :reason :detail}` for every task-level :specs proof whose req has a
-   :validator-fn that REJECTS the form result at the proof scope.
-
-   Phase E: a proof entry can carry `:proof-compose [s1 s2 …]` plus
-   `:proof-rule :and|:or`. Each FAILED sub-scope becomes its own
-   failure record so the archive captures individual rejections rather
-   than the whole composition.
-
-   Skipped when `form-results` is nil (cannot judge without :result).
-   Sub-scopes not classified `:ok` are skipped silently — the scope-
-   class pass complains separately."
-  [ctx form-results]
-  (if-not (map? form-results)
-    []
-    (let [cursor (:session/scope ctx)]
-      (vec
-        (for [[task-id task] (or (:session/tasks ctx) {})
-              [sk proofs]    (or (:specs task) {})
-              proof          proofs
-              :let [spec (get-in ctx [:session/specs sk])
-                    req  (some #(when (= (:id %) (:requirement proof)) %)
-                           (:requirements spec))
-                    src  (:validator-fn req)]
-              :when (and req src)
-              :let [outcome (evaluate-proof-scopes src cursor form-results proof)]
-              :when (and (not (:ok? outcome)) (seq (:failed outcome)))
-              failure (:failed outcome)]
-          {:task-id task-id
-           :spec-id sk
-           :req-id  (:requirement proof)
-           :proof   (:scope failure)
-           :reason  (:reason failure)
-           :detail  (:detail failure)})))))
-
-(defn- pass-validators
-  "Invariant 9: every task proof whose referenced requirement carries a
-   `:validator-fn` source string must pass that validator against the form
-   result at the proof scope. The engine evals the source in a bounded SCI
-   sandbox (50ms timeout). Skipped when `form-results` is nil (we cannot
-   judge without seeing the form's :result), or when the proof scope is
-   not classified `:ok` (the scope-class pass already complained)."
-  [ctx _indexes form-results]
-  (mapv (fn [{:keys [task-id spec-id req-id proof reason detail]}]
-          (warn :proof-validator-fail
-            [task-id spec-id req-id reason]
-            (str "proof " proof " fails validator on req "
-              req-id " / spec " spec-id
-              " (" reason
-              (when detail (str ": " (pr-str detail))) ")")))
-    (find-failed-task-proofs ctx form-results)))
-
-(defn- archive-entry
-  "Build the entry shape stored under `:archived-proofs`."
-  [{:keys [spec-id req-id proof reason detail]} rejected-at rejected-by]
-  (cond-> {:proof       proof
-           :rejected-by rejected-by
-           :rejected-at rejected-at}
-    spec-id    (assoc :spec spec-id)
-    req-id     (assoc :requirement req-id)
-    reason     (assoc :reason (if (keyword? reason) reason (str reason)))
-    detail     (assoc :detail (pr-str detail))))
-
-(defn- append-archived-proof
-  "Append `entry` to `existing` (vec of archive entries) capped at
-   ARCHIVED_PROOFS_CAP_PER_TASK. Dedupes against an entry with the same
-   `:proof` + `:rejected-at` + `:reason` so a single iter cannot stamp
-   the same rejection twice. Drops oldest entries first on overflow."
-  [existing entry]
-  (let [existing (vec (or existing []))
-        dup?     (some #(and (= (:proof %)       (:proof entry))
-                          (= (:rejected-at %) (:rejected-at entry))
-                          (= (:reason %)      (:reason entry)))
-                   existing)]
-    (if dup?
-      existing
-      (let [appended (conj existing entry)
-            overflow (- (count appended) ARCHIVED_PROOFS_CAP_PER_TASK)]
-        (if (pos? overflow)
-          (vec (drop overflow appended))
-          appended)))))
-
-(defn archive-failed-task-proofs
-  "End-of-iter mutator. Scans task-level proofs; for every one whose
-   :validator-fn rejects the form-result, appends a rejection entry to
-   the task's `:archived-proofs` vec. The proof itself is NOT removed
-   from `:specs` — model owns the regular-task lifecycle. The model
-   sees the archive next iter and decides whether to swap the proof or
-   change strategy.
-
-   Returns updated ctx. Idempotent within an iter (dedupe by
-   :proof + :rejected-at + :reason). Pure."
-  [ctx form-results]
-  (let [failures   (find-failed-task-proofs ctx form-results)
-        s          (:session/scope ctx)
-        rejected-at (str "t" (:turn s) "/i" (:iter s))]
-    (reduce (fn [c failure]
-              (let [entry (archive-entry failure rejected-at :proof-validator-fail)]
-                (update-in c
-                  [:session/tasks (:task-id failure) :archived-proofs]
-                  append-archived-proof entry)))
-      ctx failures)))
 
 (def ^:private rebind-loop-threshold
   "Number of consecutive trailer pins binding the same def-name that
@@ -1291,449 +598,30 @@
               " before another rebind.")))))))
 
 (defn derive-warnings
-  "Run every invariant pass and return a sorted, deduped vec of warning maps.
-   `form-results` may be nil for off-line / write-time use; pass it from the
-   loop's per-iter capture for render-time precision."
+  "Run the STRUCTURAL invariant passes and return a sorted, deduped vec of
+   short warning STRINGS — the `:session/warnings` shape surfaced verbatim
+   in the rendered ctx (no stages, no `;; ⚠` inside EDN). Each pass yields
+   `{:code :anchor :message}` maps internally for stable ordering; only the
+   `:message` strings are projected out.
+
+   Passes:
+     - dep-target-exists      (`pass-task-depends-on-refs`)
+     - contradicting-facts    (`pass-contradicting-facts`)
+     - rebind-loop            (`pass-rebind-loop`)
+     - task-done-with-non-terminal-dep (`pass-task-done-deps`)
+
+   `form-results` arg is accepted for call-site compatibility but the
+   structural passes do not consult it."
   ([ctx indexes] (derive-warnings ctx indexes nil))
-  ([ctx indexes form-results]
+  ([ctx indexes _form-results]
    (->> (concat
           (pass-contradicting-facts   ctx indexes)
-          (pass-req-facts-refs        ctx indexes)
-          (pass-task-specs-refs       ctx indexes)
           (pass-task-depends-on-refs  ctx indexes)
-          (pass-proof-req-refs        ctx indexes)
-          (pass-spec-done-coverage    ctx indexes)
           (pass-task-done-deps        ctx indexes)
-          (pass-scope-classification  ctx indexes form-results)
-          (pass-validators            ctx indexes form-results)
           (pass-rebind-loop           ctx indexes))
      distinct
      (sort-by (juxt :code (comp str :anchor)))
-     vec)))
-
-;; =============================================================================
-;; derive-stages — flat ordered vec of plan-entries for the current iter
-;; =============================================================================
-;;
-;; Order is the priority. NO `:priority` enum field anywhere. Tasks
-;; link to one another via `:depends-on`; the plan reflects that
-;; topological order verbatim. Blockers (gate refusals from the
-;; integration layer) ride at the head of the vec — the model must
-;; resolve them before anything else.
-
-(defn- task-dep-ids
-  "Project a task's `:depends-on` vec to bare task-id set. Engine deps
-   may be plain keywords (legacy bare-key form) or typed `[:task k]`
-   vectors. Other dep kinds (`[:spec …]` `[:fact …]`) are skipped —
-   topological sort here is over the task graph only."
-  [task]
-  (into #{}
-    (keep (fn [d]
-            (cond
-              (keyword? d) d
-              (and (vector? d) (= :task (first d))) (second d))))
-    (:depends-on task)))
-
-(defn- topo-rank-tasks
-  "Topological depth map `{task-id depth}` over `:depends-on` edges.
-   Lower depth = closer to leaves (run first). Tasks with no deps land
-   at depth 0. Cycles cap at `(count tasks)` defensively — write-time
-   cycle check should prevent them, but legacy snapshots may carry
-   pre-Phase-B data."
-  [tasks]
-  (let [cap (max 1 (count tasks))]
-    (reduce
-      (fn [acc id]
-        (let [depth (loop [stack (seq (task-dep-ids (get tasks id)))
-                           seen  #{id}
-                           d     0]
-                      (cond
-                        (>= d cap) cap
-                        (empty? stack) d
-                        :else
-                        (let [[nxt & more] stack
-                              fresh        (remove seen (task-dep-ids (get tasks nxt)))]
-                          (recur (concat fresh more)
-                            (conj seen nxt)
-                            (inc d)))))]
-          (assoc acc id depth)))
-      {}
-      (keys tasks))))
-
-(def ^:private STALE_TASK_DOING_THRESHOLD
-  "A task :status :doing for more than this many turns past its
-   :doing-born point lands as a :stale-task-doing stage entry."
-  5)
-
-(def ^:private IDLE_TASK_TODO_THRESHOLD
-  "A task :status :todo whose :born is more than this many turns old
-   lands as an :idle-task stage entry (cancel-or-activate nudge)."
-  8)
-
-(def ^:private STALE_SPEC_OPEN_THRESHOLD
-  "A spec :status :open with no proven requirements for more than this
-   many turns lands as a :stale-spec-open stage entry (consult nudge)."
-  10)
-
-(def ^:private REPEATED_RETRY_THRESHOLD
-  "A task with this many or more entries in :archived-proofs lands as
-   a :repeated-retry stage entry (audit validator-fn)."
-  3)
-
-(def ^:private FACT_PROVENANCE_MIN_CONTENT_CHARS
-  "Facts shorter than this skip the :gap-provenance check — trivia
-   like one-word lookups don't need provenance."
-  50)
-
-(defn- parse-turn-from-scope
-  "Extract the turn number from a scope string `tN`, `tN/iM`, or
-   `tN/iM/fK`. Returns nil when the scope is malformed."
-  [scope]
-  (when (string? scope)
-    (when-let [[_ t] (re-find #"^t([1-9][0-9]*)" scope)]
-      (parse-long t))))
-
-(defn- turns-since
-  "Distance in turns from `scope`'s turn to `current-turn`. Negative
-   when scope is in the future (e.g. born in turn-current). Returns
-   nil when scope is unparseable."
-  [scope current-turn]
-  (when-let [t (parse-turn-from-scope scope)]
-    (- (long (or current-turn 1)) t)))
-
-(defn- gap-provenance-entries
-  "Facts that are :active, non-trivial content, with no :depends-on
-   AND no :source. Model wrote the fact but never explained where it
-   came from \u2014 critical for cross-turn trust. Soft :status :ready."
-  [ctx]
-  (let [facts (or (:session/facts ctx) {})]
-    (for [[fact-id fact] facts
-          :let [content (str (:content fact))
-                len     (count content)]
-          :when (and (= :active (:status fact))
-                  (>= len FACT_PROVENANCE_MIN_CONTENT_CHARS)
-                  (empty? (:depends-on fact))
-                  (nil? (:source fact)))]
-      {:kind       :gap-provenance
-       :id         fact-id
-       :status     :ready
-       :stage-rank :advisory
-       :reason     (str "fact " fact-id " (" len " chars) has no :source AND no :depends-on. "
-                     "Declare provenance so cross-turn callers can audit.")
-       :remedy     (list (symbol "fact-depends!") fact-id [])})))
-
-(defn- dep-drift-entries
-  "Tasks whose :depends-on includes an entity that has been
-   :cancelled / :superseded / :archived. The task is silently stuck
-   on a dead dep. Hard :status :blocked \u2014 the topo graph is broken."
-  [ctx]
-  (let [tasks (or (:session/tasks ctx) {})]
-    (for [[task-id task] tasks
-          :when (#{:todo :doing} (:status task))
-          dep-id (or (:depends-on task) [])
-          :let [dep (get tasks dep-id)
-                dep-status (:status dep)]
-          :when (and dep (#{:cancelled :superseded :archived} dep-status))]
-      {:kind       :dep-drift
-       :id         task-id
-       :status     :blocked
-       :stage-rank 0
-       :reason     (str "task " task-id " :depends-on includes " dep-id
-                     " which is " dep-status ". Update deps or cancel.")
-       :remedy     (list (symbol "task-depends!") task-id [])})))
-
-(defn- stale-task-doing-entries
-  "Tasks :status :doing for more than STALE_TASK_DOING_THRESHOLD turns
-   since :doing-born. Either real work in progress or model forgot."
-  [ctx current-turn]
-  (let [tasks (or (:session/tasks ctx) {})]
-    (for [[task-id task] tasks
-          :when (= :doing (:status task))
-          :let [doing-born (:doing-born task)
-                gap (turns-since doing-born current-turn)]
-          :when (and gap (>= gap STALE_TASK_DOING_THRESHOLD))]
-      {:kind       :stale-task-doing
-       :id         task-id
-       :status     :ready
-       :stage-rank :advisory
-       :reason     (str "task " task-id " is :doing since " doing-born " ("
-                     gap " turns ago). Either flip :status :blocked with reason "
-                     "or close with proof.")
-       :remedy     (list (symbol "task-set!") task-id
-                     {:status :blocked :reason "..."})})))
-
-(defn- idle-task-entries
-  "Tasks :status :todo born more than IDLE_TASK_TODO_THRESHOLD turns
-   ago AND whose deps are NOT all terminal. When deps ARE all terminal
-   the task surfaces via :work-unblocked-todo which is actionable; the
-   idle framing would just duplicate the same id with redundant prose.
-
-   Reads :task-status from indexes to check dep terminality without
-   walking the dep-graph again."
-  [ctx indexes current-turn]
-  (let [tasks (or (:session/tasks ctx) {})
-        task-status (:task-status indexes)
-        terminal-by-id (fn [id]
-                         (let [s (get task-status id)]
-                           (or (nil? s) (task-terminal? s))))]
-    (for [[task-id task] tasks
-          :when (= :todo (:status task))
-          :let [born (:born task)
-                gap (turns-since born current-turn)
-                deps (or (:depends-on task) [])
-                deps-all-terminal? (every? terminal-by-id deps)]
-          :when (and gap (>= gap IDLE_TASK_TODO_THRESHOLD)
-                  (not deps-all-terminal?))]
-      {:kind       :idle-task
-       :id         task-id
-       :status     :ready
-       :stage-rank :advisory
-       :reason     (str "task " task-id " is :todo since " born " ("
-                     gap " turns ago) AND blocked by non-terminal deps. "
-                     "Either close deps or cancel.")
-       :remedy     (list (symbol "task-set!") task-id
-                     {:status :cancelled :reason "..."})})))
-
-(defn- stale-spec-open-entries
-  "Specs :status :open with zero proven requirements for more than
-   STALE_SPEC_OPEN_THRESHOLD turns. Model is stuck \u2014 suggest a deep
-   consult to unstick the planning."
-  [ctx current-turn progression]
-  (let [specs (or (:session/specs ctx) {})]
-    (for [[spec-id spec] specs
-          :when (= :open (:status spec))
-          :let [born (:born spec)
-                gap  (turns-since born current-turn)
-                p    (get progression spec-id)
-                proven (long (or (:proven p) 0))]
-          :when (and gap (>= gap STALE_SPEC_OPEN_THRESHOLD)
-                  (zero? proven))]
-      {:kind       :stale-spec-open
-       :id         spec-id
-       :status     :ready
-       :stage-rank :advisory
-       :reason     (str "spec " spec-id " :open since " born " ("
-                     gap " turns ago) with zero proven requirements. "
-                     "Consider a :deep consult to unstick.")
-       :remedy     (list (symbol "consult-request!") spec-id :deep
-                     {:focus [] :question "..."})})))
-
-(defn- repeated-retry-entries
-  "Tasks with REPEATED_RETRY_THRESHOLD+ entries in :archived-proofs.
-   Validator-fn kept rejecting model's proofs, so the strategy is
-   wrong. The :archived-proofs vec is ALREADY visible on the raw task
-   entity in :session/tasks (each entry has :proof :reason) — no
-   introspection needed. :remedy is a real write: cancel the task
-   with a reason, or model can change strategy and (task-set!) it back
-   to :doing with a fresh approach."
-  [ctx]
-  (let [tasks (or (:session/tasks ctx) {})]
-    (for [[task-id task] tasks
-          :let [archived (or (:archived-proofs task) [])
-                n        (count archived)]
-          :when (>= n REPEATED_RETRY_THRESHOLD)]
-      {:kind       :repeated-retry
-       :id         task-id
-       :status     :ready
-       :stage-rank :advisory
-       :reason     (str "task " task-id " has " n " archived (rejected) proofs "
-                     "(see :archived-proofs on the task in :session/tasks). "
-                     "The validator-fn or strategy is wrong. Cancel and "
-                     "restart with a different approach, or audit the "
-                     "validator-fn source.")
-       :remedy     (list (symbol "task-set!") task-id
-                     {:status :cancelled
-                      :reason "..."})})))
-
-(defn- duplicate-observation-entries
-  "Trailer pins with the SAME (v/<symbol> ...) :form AND identical
-   :result across 2+ iters. Model re-probed but file/state did NOT
-   change. Groups by (form, result-hash) so a genuine re-probe with
-   DIFFERENT result (e.g. file changed) does NOT trigger.
-
-   The duplicate forms are STILL IN :session/trailer — model can read
-   them directly without any introspect call. There is no `:remedy`
-   form to execute; the advisory is awareness only. Model should
-   reference the earlier scope in its own reasoning instead of
-   re-emitting the same probe.
-
-   Result comparison uses (hash result) for bounded comparison cost
-   on large payloads."
-  [ctx]
-  (let [trailer (or (:session/trailer ctx) [])
-        all-forms (for [entry trailer
-                        form (or (:forms entry) [])
-                        :when (= :observation (:tag form))]
-                    form)
-        by-key (group-by (fn [f] [(pr-str (:form f)) (hash (:result f))])
-                 all-forms)]
-    (for [[[form-str _result-hash] dup-forms] by-key
-          :when (>= (count dup-forms) 2)
-          :let [scopes (mapv :scope dup-forms)]]
-      {:kind       :duplicate-observation
-       :id         (first scopes)
-       :status     :ready
-       :stage-rank :advisory
-       :reason     (str "observation " form-str " ran " (count dup-forms)
-                     " times with IDENTICAL result (scopes: " (pr-str scopes)
-                     "). The pin is already in :session/trailer at "
-                     (pr-str (first scopes)) " — read it from there, "
-                     "do NOT re-emit the same probe.")
-       ;; No remedy form — the action is "don't repeat the probe".
-       ;; Reading from trailer is not a form the engine can quote.
-       :remedy     nil})))
-
-(defn- collect-stage-entries
-  "Build the flat sequence of stage entries (each `{:kind :id :status
-   :reason :remedy :stage-rank}`). `:stage-rank` is internal — it is
-   the topological depth used to group entries into stages later.
-   Stripped from the public output by `derive-stages`.
-
-   Entry kinds:
-     :fix-consistency      — spec :done with unproven; task :done with
-                             pending dep. `:status :blocked`, rank 0.
-     :work-unblocked-todo  — task :todo with all deps terminal.
-                             Rank = topo-depth + 1 (rank 0 reserved).
-     :prove-requirement    — spec :partial / :open req without proof.
-                             Rank = max-task-depth + 2."
-  [ctx indexes progression]
-  (let [{:keys [task-status dep-graph]} indexes
-        specs (or (:session/specs ctx) {})
-        tasks (or (:session/tasks ctx) {})
-        topo  (topo-rank-tasks tasks)
-        max-depth (apply max 0 (vals topo))
-        task-deps (fn [task-id]
-                    (into #{}
-                      (keep (fn [[k id]] (when (= :task k) id)))
-                      (get dep-graph [:task task-id] #{})))
-        consistency-spec
-        (for [[spec-id _] specs
-              :let [p (get progression spec-id)]
-              :when (and p (= (:state p) :partial)
-                      (= :done (get-in specs [spec-id :status])))]
-          {:kind       :fix-consistency
-           :id         spec-id
-           :status     :blocked
-           :stage-rank 0
-           :reason     (str "spec " spec-id " :done but " (count (:missing p))
-                         " req(s) unproven: " (vec (sort (:missing p))))
-           :remedy     (list (symbol "spec-set!") spec-id {:status :open})})
-        consistency-task
-        (for [[task-id task] tasks
-              :when (= :done (:status task))
-              d (or (:depends-on task) [])
-              :let [dep (get tasks d)]
-              :when (and (some? dep) (not (task-terminal? (:status dep))))]
-          {:kind       :fix-consistency
-           :id         task-id
-           :status     :blocked
-           :stage-rank 0
-           :reason     (str "task " task-id " :done but dep " d " is " (:status dep))
-           :remedy     (list (symbol "task-set!") task-id {:status :doing})})
-        todo
-        (for [[task-id task] tasks
-              :when (= :todo (:status task))
-              :let [deps     (task-deps task-id)
-                    deps-ok? (every? #(let [s (get task-status %)]
-                                        (or (nil? s) (task-terminal? s)))
-                               deps)]
-              :when deps-ok?]
-          {:kind       :work-unblocked-todo
-           :id         task-id
-           :status     :ready
-           :stage-rank (inc (long (or (topo task-id) 0)))
-           :reason     (str "task " task-id " is :todo with all deps :done/:cancelled")
-           :remedy     (list (symbol "task-set!") task-id {:status :doing})})
-        prove
-        (for [[spec-id _] specs
-              :let [p (get progression spec-id)]
-              :when (and p (#{:partial :open} (:state p)))
-              rid (sort (:missing p))]
-          {:kind       :prove-requirement
-           :id         [spec-id rid]
-           :status     :ready
-           :stage-rank (+ 2 max-depth)
-           :reason     (str "spec " spec-id " req " rid " needs a task proof")
-           :remedy     (list (symbol "proof-add!") spec-id rid)})
-        ;; Phase H heuristics (engine-detected gaps + anti-patterns).
-        ;; Each fn is pure projection of ctx metadata; returns 0..N
-        ;; advisory entries which the resolver maps to the deepest stage.
-        ;; `:dep-drift` is the exception — integrity issue, rank 0.
-        current-turn (long (or (:session/turn ctx) 1))
-        gap-prov     (gap-provenance-entries ctx)
-        dep-drift    (dep-drift-entries ctx)
-        stale-doing  (stale-task-doing-entries ctx current-turn)
-        idle-todo    (idle-task-entries ctx indexes current-turn)
-        stale-spec   (stale-spec-open-entries ctx current-turn progression)
-        retried      (repeated-retry-entries ctx)
-        dup-obs      (duplicate-observation-entries ctx)]
-    (concat consistency-spec consistency-task todo prove
-      gap-prov dep-drift stale-doing idle-todo stale-spec retried dup-obs)))
-
-(defn derive-stages
-  "Phase H: the single derived view of what should happen this iter.
-   Returns a vec-of-vecs — outer index is the STAGE number, inner vec
-   holds entries that are parallel-safe within that stage.
-
-   Shape:
-     [;; stage 0 — emit all :remedy in ONE fence
-      [{:kind :blocker :id ... :status :blocked :reason :remedy} ...]
-      ;; stage 1 — after stage 0 completes
-      [{:kind :work-unblocked-todo :id ... :status :ready :reason :remedy} ...]
-      ;; stage 2 — after stage 1 completes
-      [...]]
-
-   Stage 0 = blockers from `:engine/blockers` + `:fix-consistency`
-   repairs. All independent; the model SHOULD emit every entry
-   `:remedy` as a top-level form in the same fence.
-
-   Stage 1+ = work entries at increasing `:depends-on` depth
-   (`topo-rank-tasks` over `:session/tasks`). Same-stage entries are
-   independent; cross-stage entries serialise.
-
-   Entry shape (per stage member):
-     {:kind   :blocker | :fix-consistency | :work-unblocked-todo
-              | :prove-requirement
-      :id     <entity-id or blocker-id>
-      :status :blocked | :ready | :doing
-      :reason <short prose explanation>
-      :remedy <quoted form the model should execute>}
-
-   No `:batch` / `:priority` / `:stage-rank` fields on output — stage
-   structure IS the parallelism signal, no per-entry duplicate.
-
-   Sources:
-     - `:engine/blockers` (integration-layer push: title-gate, etc.)
-     - `:session/tasks` :todo with deps satisfied
-     - `:session/specs` :partial / :open reqs lacking proofs
-     - Spec :done with unproven reqs / task :done with pending dep
-       — consistency repairs (stage 0)"
-  ([ctx indexes progression] (derive-stages ctx indexes progression {}))
-  ([ctx indexes progression _last-mutation-map]
-   (let [blockers       (mapv (fn [b] (assoc b :kind :blocker :status :blocked
-                                        :stage-rank 0))
-                          (or (:engine/blockers ctx) []))
-         action-entries (collect-stage-entries ctx indexes progression)
-         all-entries    (concat blockers action-entries)
-         ;; Resolve `:stage-rank :advisory` to the deepest numeric rank
-         ;; so advisory entries (gap-provenance, stale-task, idle-task,
-         ;; stale-spec, repeated-retry, duplicate-observation) land in
-         ;; the last stage — model sees them but actionable stages
-         ;; 0..N-1 fire first.
-         numeric-ranks  (keep #(when (number? (:stage-rank %)) (:stage-rank %))
-                          all-entries)
-         max-num-rank   (apply max 0 numeric-ranks)
-         advisory-rank  (inc max-num-rank)
-         resolved       (map (fn [e]
-                               (cond-> e
-                                 (= :advisory (:stage-rank e))
-                                 (assoc :stage-rank advisory-rank)))
-                          all-entries)
-         by-rank        (sort-by key (group-by :stage-rank resolved))
-         strip          (fn [e] (dissoc e :stage-rank))]
-     (vec
-       (for [[_rank entries] by-rank]
-         (vec (sort-by (comp str :id) (map strip entries))))))))
+     (mapv :message))))
 
 ;; =============================================================================
 ;; advance-iter / enter-turn / gc-pass
@@ -1799,7 +687,7 @@
   (let [cursor    (:session/scope ctx)
         iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
         ;; drop both `(done …)` AND forms whose result is
-        ;; `:vis/silent`. Engine mutators (spec-set!, task-set!, fact-set!,
+        ;; `:vis/silent`. Engine mutators (task-set!, fact-set!,
         ;; consult-request!, etc.) return `:vis/silent`; their effect lives
         ;; in ctx subtree mutations, not in the trailer pin log.
         keepable  (vec (remove (fn [r]
@@ -1827,16 +715,12 @@
 
 (def ^:private TTL-TASK-DONE 6)
 (def ^:private TTL-TASK-CANCELLED 10)
-(def ^:private TTL-SPEC-DONE 6)
-(def ^:private TTL-SPEC-CANCELLED 10)
 (def ^:private TTL-FACT-SUPERSEDED 6)
 
 (defn- ttl-for [entity-type status]
   (case [entity-type status]
     [:task :done]       TTL-TASK-DONE
     [:task :cancelled]  TTL-TASK-CANCELLED
-    [:spec :done]       TTL-SPEC-DONE
-    [:spec :cancelled]  TTL-SPEC-CANCELLED
     [:fact :superseded] TTL-FACT-SUPERSEDED
     nil))
 
@@ -1852,9 +736,9 @@
    `:vis.foundation/context-pressure`) that should not survive across
    turns: if the originating hint condition still holds, the next iter
    recreates them; if not, they stay gone. Without this prune, a
-   transient warning lingered as a `:done :validated? false` task for
-   6 turns and the model kept emitting `(task-set! … :done)` every
-   turn to silence stale CTX chrome it could never actually resolve
+   transient warning lingered as a `:done` task for 6 turns and the
+   model kept emitting `(task-set! … :done)` every turn to silence
+   stale CTX chrome it could never actually resolve
    (Vis conv 11d4f817 / t14–t16)."
   [entry]
   (and (= :hook (:source entry))
@@ -1884,7 +768,6 @@
                                         (turn-lifetime-hook-task? v)))]
                        [k v])))]
     (-> ctx
-      (assoc :session/specs (gc :session/specs :spec))
       (assoc :session/tasks (gc-tasks))
       (assoc :session/facts (gc :session/facts :fact)))))
 
@@ -1923,9 +806,9 @@
    the system can swap! it without nil-puncturing. Stripped at
    persistence boundaries via `strip-ephemeral`.
 
-   D12: no `:session/hints` — hook-emitted soft work items live as
+   No `:session/hints` — hook-emitted soft work items live as
    hook-sourced tasks under `:session/tasks` (`:source :hook`,
-   `:hook-id`, `:importance`, `:validator-fn`, `:proof`)."
+   `:hook-id`, `:importance`)."
   ([] (empty-ctx "test-session"))
   ([session-id]
    {:session/id        session-id
@@ -1937,7 +820,6 @@
     ;; `:vcs/kind :none` is reserved for an actual root with no supported VCS.
     :session/workspace {}
     :session/symbols   {}
-    :session/specs     {}
     :session/tasks     {}
     :session/facts     {}
     :session/trailer   []
@@ -2258,163 +1140,9 @@
                             ". Full data via (introspect-iter \""
                             scope-start "\")."))]}))))
 
-;; =============================================================================
-;; reconcile-done-hook-tasks — validate hook-task :done transitions
-;; =============================================================================
-;;
-;; Hook-sourced tasks (D12) carry a task-level `:validator-fn` source
-;; string plus a `:proof` scope-form the model writes when flipping the
-;; task to `:status :done`. The validator must see the form envelope at
-;; that proof scope, which is only fully available after the iter's
-;; trailer pin lands. Hence this pass runs end-of-iter.
-;;
-;; Behaviour for every task with :source :hook, :status :done, and
-;; :validator-fn present:
-;;
-;;   - :proof missing or not a string             → revert to :todo, warn
-;;                                                  `:task-done-no-proof`
-;;   - :proof malformed (not tN/iM/fK)            → revert + warn
-;;                                                  `:task-done-proof-malformed`
-;;   - :proof classifies :future-* / :errored     → revert + warn
-;;                                                  `:task-done-proof-future` /
-;;                                                  `:task-done-proof-errored`
-;;   - :proof scope unknown in form-results       → revert + warn
-;;                                                  `:task-done-proof-unknown`
-;;   - validator-fn returns falsy / throws / etc. → revert + warn
-;;                                                  `:task-done-validator-fail`
-;;   - validator-fn passes                        → :done sticks (already validated
-;;                                                  on a previous iter? —
-;;                                                  idempotent, just re-verifies)
-;;
-;; Tasks without :source :hook are NOT touched by this pass. Tasks with
-;; :source :hook but NO :validator-fn (legacy / user-created hook tasks)
-;; are NOT touched either — only the contract of
-;; \"hook ships validator-fn\" is enforced. Pure: takes ctx + form-results
-;; map, returns `{:ctx ctx' :warnings […]}`.
-
-(defn- revert-done-hook-task
-  "Flip a hook-task back to :todo, archive the rejected `:proof` into
-   `:archived-proofs`, then drop the un-validated `:proof` and the
-   engine-stamped `:done-born`. `archive-meta` carries
-   `{:rejected-by :reason :detail :rejected-at}` so the archive entry
-   captures WHY the proof was rejected, not just THAT it was. Returns
-   the rebuilt task map."
-  [task archive-meta]
-  (let [proof    (:proof task)
-        entry    (when (and proof archive-meta)
-                   (archive-entry
-                     {:proof   proof
-                      :reason  (:reason archive-meta)
-                      :detail  (:detail archive-meta)}
-                     (:rejected-at archive-meta)
-                     (:rejected-by archive-meta)))
-        archived (cond-> (vec (or (:archived-proofs task) []))
-                   entry (append-archived-proof entry))]
-    (cond-> task
-      true       (assoc :status :todo)
-      (seq archived) (assoc :archived-proofs archived)
-      true       (dissoc :done-born :proof))))
-
-(defn reconcile-done-hook-tasks
-  "Validate every hook-task that landed at `:status :done` this turn.
-   On any failure (missing/bad proof, validator fail), engine reverts
-   the task to `:todo`, drops `:proof` + `:done-born`, and emits a
-   warning. Pure. Called end-of-iter by the loop after advance-iter.
-
-   FSM safety: tasks already carrying `:validated? true` (i.e. a prior
-   reconcile passed) are SKIPPED. Without this guard a later
-   `(done {:trailer-drop […]})` that wipes the proof envelope would
-   retro-actively revert the satisfaction. `:validated?` is cleared by
-   `apply-task-set!` on any non-:done transition so re-entry to :done
-   triggers a fresh validation pass."
-  [ctx form-results-map]
-  (let [cursor      (:session/scope ctx)
-        rejected-at (str "t" (:turn cursor) "/i" (:iter cursor))
-        tasks       (or (:session/tasks ctx) {})
-        per-task
-        (for [[tk task] tasks
-              :when (and (= :hook (:source task))
-                      (= :done (:status task))
-                      (validator-fn? (:validator-fn task))
-                      (not (:validated? task)))]
-          (let [proof (:proof task)
-                outcome
-                (cond
-                  (or (nil? proof) (not (string? proof)))
-                  {:revert? true
-                   :archive {:rejected-by :task-done-no-proof :rejected-at rejected-at
-                             :reason :missing-proof}
-                   :warn (warn :task-done-no-proof [tk]
-                           (str "task " tk " :status :done lacks :proof scope; reverting to :todo"))}
-
-                  (malformed-scope? proof)
-                  {:revert? true
-                   :archive {:rejected-by :task-done-proof-malformed :rejected-at rejected-at
-                             :reason :malformed-scope}
-                   :warn (warn :task-done-proof-malformed [tk proof]
-                           (str "task " tk " :proof " proof
-                             " is not a valid tN/iM/fK form-scope; reverting to :todo"))}
-
-                  :else
-                  (let [klass (classify-scope proof cursor form-results-map)]
-                    (cond
-                      (#{:future-form :future-iter :future-turn} klass)
-                      {:revert? true
-                       :archive {:rejected-by :task-done-proof-future :rejected-at rejected-at
-                                 :reason klass}
-                       :warn (warn :task-done-proof-future [tk proof klass]
-                               (str "task " tk " :proof " proof
-                                 " is " (name klass) " relative to cursor; reverting to :todo"))}
-
-                      (= klass :errored)
-                      {:revert? true
-                       :archive {:rejected-by :task-done-proof-errored :rejected-at rejected-at
-                                 :reason :form-errored}
-                       :warn (warn :task-done-proof-errored [tk proof]
-                               (str "task " tk " :proof " proof
-                                 " form errored; reverting to :todo"))}
-
-                      (or (= klass :unknown) (nil? (get form-results-map proof)))
-                      {:revert? true
-                       :archive {:rejected-by :task-done-proof-unknown :rejected-at rejected-at
-                                 :reason :no-form-result}
-                       :warn (warn :task-done-proof-unknown [tk proof]
-                               (str "task " tk " :proof " proof
-                                 " has no captured form result; reverting to :todo"))}
-
-                      :else
-                      (let [envelope (get form-results-map proof)
-                            res (run-validator-fn (:validator-fn task) envelope)]
-                        (if (:ok? res)
-                          {:revert? false}
-                          {:revert? true
-                           :archive {:rejected-by :task-done-validator-fail :rejected-at rejected-at
-                                     :reason (:reason res) :detail (:detail res)}
-                           :warn (warn :task-done-validator-fail
-                                   [tk proof (:reason res)]
-                                   (str "task " tk " :status :done at " proof
-                                     " failed validator (" (name (:reason res))
-                                     (when-let [d (:detail res)] (str ": " (pr-str d)))
-                                     "); reverting to :todo"))})))))]
-            [tk outcome]))
-        reverts  (filter (fn [[_ {:keys [revert?]}]] revert?) per-task)
-        passes   (filter (fn [[_ {:keys [revert?]}]] (not revert?)) per-task)
-        ctx'     (-> ctx
-                   (as-> c
-                     (reduce (fn [acc [tk {:keys [archive]}]]
-                               (update-in acc [:session/tasks tk]
-                                 revert-done-hook-task archive))
-                       c reverts))
-                   (as-> c
-                     (reduce (fn [acc [tk _]]
-                               (assoc-in acc [:session/tasks tk :validated?] true))
-                       c passes)))
-        warns    (vec (keep (fn [[_ {:keys [warn]}]] warn) reverts))]
-    {:ctx ctx' :warnings warns}))
-
 (defn- apply-bulk-archive
-  "bulk-archive encje wymienione w `(done {:archive {...}})`.
-   `archive-map` keys: `:facts :specs :tasks` → vec of entity keys. Each
+  "bulk-archive entities listed in `(done {:archive {...}})`.
+   `archive-map` keys: `:facts :tasks` → vec of entity keys. Each
    listed entity gets its `:status` flipped to `:archived` (new terminal
    status; cleanly distinct from `:done` / `:cancelled` / `:superseded`).
    Missing entities emit a soft warning and skip.
@@ -2425,12 +1153,10 @@
 
    Returns `{:ctx :warnings}`."
   [ctx form-scope archive-map]
-  (let [{:keys [facts specs tasks]} (or archive-map {})
-        kind->subtree {:fact :session/facts :spec :session/specs :task :session/tasks}
-        kind->prefix  {:fact "fact" :spec "spec" :task "task"}
+  (let [{:keys [facts tasks]} (or archive-map {})
+        kind->subtree {:fact :session/facts :task :session/tasks}
         attempts (concat
                    (for [k (or facts [])]  [:fact k])
-                   (for [k (or specs [])]  [:spec k])
                    (for [k (or tasks [])]  [:task k]))
         outcomes (for [[kind k] attempts]
                    (let [subtree (kind->subtree kind)
@@ -2578,7 +1304,7 @@
                                        (clojure.string/starts-with?
                                          (str (:done-born entity) "") turn-prefix)))
                                (or m {})))
-                       [(:session/facts ctx) (:session/specs ctx) (:session/tasks ctx)])
+                       [(:session/facts ctx) (:session/tasks ctx)])
         meaningful?  (or (some? answer-str) any-born?)
         reserved     #{:status :source :scope :born}
         model-extras (when (map? model-summary)
@@ -2659,41 +1385,23 @@
     (sequential? history) (sort-by first history)
     :else nil))
 
-(defn introspect-spec
-  "Latest snapshot in which spec `k` existed. Returns the entry plus
-   `:as-of-turn N`, or nil when never present."
-  [history k]
-  (let [snaps (snapshots-asc history)]
-    (some (fn [[turn ctx]]
-            (when-let [entry (get-in ctx [:session/specs k])]
-              (assoc entry :as-of-turn turn)))
-      (reverse snaps))))
-
 (defn- entity-change-summary
   "Pure: given a `before` and `after` snapshot of a single entity
-   (`{:status :born :depends-on :title :content :archived-proofs …}`),
-   return a vec of `[field before-val after-val]` rows for fields that
-   actually changed. Engine-internal flags (`:validated?`) are dropped."
+   (`{:status :born :depends-on :title :content …}`), return a vec of
+   `[field before-val after-val]` rows for fields that actually changed."
   [before after]
   (let [tracked [:status :title :content :born :done-born :depends-on
-                 :proof :validator-fn :hook-id :importance :source
-                 :contradicts]
-        rejected-before (count (or (:archived-proofs before) []))
-        rejected-after  (count (or (:archived-proofs after) []))
-        rejected-delta  (- rejected-after rejected-before)
-        base (vec
-               (for [f tracked
-                     :let [b (get before f) a (get after f)]
-                     :when (not= b a)]
-                 [f b a]))]
-    (cond-> base
-      (pos? rejected-delta)
-      (conj [:rejected-proofs rejected-before rejected-after]))))
+                 :hook-id :importance :source :contradicts]]
+    (vec
+      (for [f tracked
+            :let [b (get before f) a (get after f)]
+            :when (not= b a)]
+        [f b a]))))
 
 (defn- diff-subtree
   "Compare two snapshots' entries under `subtree-key` (e.g.
-   `:session/specs`). Returns a vec of change records:
-     {:kind :spec|:task|:fact :K :K
+   `:session/tasks`). Returns a vec of change records:
+     {:kind :task|:fact :K :K
       :change :added | :removed | [[field b a] …]}"
   [before after subtree-key kind]
   (let [bm (or (get before subtree-key) {})
@@ -2712,15 +1420,13 @@
 
 (defn diff-ctx
   "Pure: return a vec of change records between two ctx snapshots.
-   Each record: `{:kind ∈ #{:spec :task :fact :rule} :K :change …}`.
+   Each record: `{:kind ∈ #{:task :fact} :K :change …}`.
    `:change` is one of `:added` | `:removed` | vec of `[field before
-   after]` tuples. Engine-internal fields (`:validated?`) are skipped.
-   Trailer diffs are intentionally NOT included — trailer is ephemeral;
-   model already reads it inline."
+   after]` tuples. Trailer diffs are intentionally NOT included —
+   trailer is ephemeral; model already reads it inline."
   [before after]
   (vec
     (concat
-      (remove nil? (diff-subtree before after :session/specs :spec))
       (remove nil? (diff-subtree before after :session/tasks :task))
       (remove nil? (diff-subtree before after :session/facts :fact)))))
 
@@ -2730,10 +1436,9 @@
    diff. Returns nil when N is missing or N-1 doesn't exist (e.g. on
    turn 1).
 
-   Each entry: `{:kind :spec|:task|:fact|:rule :K k :change …}`
+   Each entry: `{:kind :task|:fact :K k :change …}`
    where `:change` is `:added`, `:removed`, or a vec of `[field b a]`
-   field-level transitions (status flip, born stamp, deps reshape,
-   archived-proofs delta, …)."
+   field-level transitions (status flip, born stamp, deps reshape, …)."
   [history turn-key]
   (let [snaps (snapshots-asc history)
         n     (cond
@@ -2757,19 +1462,6 @@
               (assoc entry :as-of-turn turn)))
       (reverse snaps))))
 
-(defn introspect-failed-proofs
-  "Return the `:archived-proofs` vec for task `k` from the latest snapshot
-   in which it exists. Each entry: `{:proof :rejected-by :rejected-at
-   :reason? :detail? :spec? :requirement?}`. Empty vec when the task
-   exists but has no archived rejections. Nil when the task was never
-   present in any snapshot."
-  [history k]
-  (let [snaps (snapshots-asc history)]
-    (some (fn [[_ ctx]]
-            (when-let [entry (get-in ctx [:session/tasks k])]
-              (vec (or (:archived-proofs entry) []))))
-      (reverse snaps))))
-
 (defn introspect-fact
   [history k]
   (let [snaps (snapshots-asc history)]
@@ -2781,13 +1473,12 @@
 (defn- subtree-key-for-kind
   [kind]
   (case kind
-    :specs :session/specs
     :tasks :session/tasks
     :facts :session/facts))
 
 (defn introspect-archived
   "Return summaries of entries archived from the LATEST snapshot but present
-   in some earlier one. `kind` is `:specs`/`:tasks`/`:facts`. Each entry:
+   in some earlier one. `kind` is `:tasks`/`:facts`. Each entry:
      {:key k :as-of-turn N :status …}"
   [history kind]
   (let [snaps     (snapshots-asc history)
@@ -2864,7 +1555,7 @@
    These are the symbols the engine itself defines and recognises:
 
      • SCI def-shape forms (sandbox state writes)
-     • CTX memory mutators (spec/task/fact + req/proof surface)
+     • CTX memory mutators (task/fact surface)
      • Control flow (done, set-session-title!)
      • Clojure native mutators that survive the sandbox
        (reset!, swap!, alter-var-root)
@@ -2876,9 +1567,9 @@
    `classify-form-tag` as an optional resolver. Keeping the core set
    pure of `v/*` heads stops the engine from owning extension policy."
   '#{def defn defmacro defmulti defmethod
-     spec-set! task-set! fact-set!
-     req-add! req-update! req-remove!
-     proof-add! proof-remove!
+     task-set! fact-set!
+     task-depends! fact-depends!
+     fact-contradicts! fact-contradicts-remove!
      done set-session-title!
      reset! swap! alter-var-root})
 
@@ -2898,9 +1589,9 @@
    `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
   '#{set-session-title!
      done
-     spec-set! task-set! fact-set!
-     req-add! req-update! req-remove!
-     proof-add! proof-remove!})
+     task-set! fact-set!
+     task-depends! fact-depends!
+     fact-contradicts! fact-contradicts-remove!})
 
 (defn engine-form-src?
   "True when `src` is a top-level call whose head names an engine-only

@@ -230,7 +230,7 @@
       (expect (= 2048 (:output-tokens ctx)))
       (expect (str/includes? (:message ctx) "max_tokens"))
       (expect (str/includes? (:message ctx) "hidden reasoning"))
-      (expect (str/includes? (:hint ctx) ":session/stages"))
+      (expect (str/includes? (:hint ctx) ":session/warnings"))
       (expect (str/includes? (:hint ctx) "canonical"))
       (expect (not (str/includes? (:hint ctx) "v/strategy")))
       (expect (not (str/includes? (:hint ctx) ":start/:max-lines")))))
@@ -427,7 +427,6 @@
 (defdescribe iteration-start-hook-test
   (it "collects active :turn.iteration/start hooks as hook-task descriptors (D12)"
     (let [seen (atom nil)
-          validator "(fn [_] true)"
           ext {:ext/name "test.hooks"
                :ext/hooks [{:id :test/title
                             :doc "title"
@@ -435,32 +434,29 @@
                             :fn (fn [ctx]
                                   (reset! seen ctx)
                                   {:title "set title"
-                                   :importance :warn
-                                   :validator-fn validator})}
+                                   :importance :warn})}
                            {:id :test/answer
                             :doc "answer"
                             :phase :turn.answer/validate
                             :fn (fn [_] {:reject true})}
-                           {:id :test/no-validator
-                            :doc "missing validator-fn—rejected"
-                            :phase :turn.iteration/start
-                            :fn (fn [_] {:title "hook without validator"})}
                            {:id :test/no-title
                             :doc "missing title—rejected"
                             :phase :turn.iteration/start
-                            :fn (fn [_] {:importance :warn :validator-fn validator})}]}
+                            :fn (fn [_] {:importance :warn})}]}
           ctx {:session-title nil
                :title-refresh? true
                :turn-position 1}
           hits (collect-iteration-start-hints {} [ext] ctx)]
+      ;; Only the title-bearing :turn.iteration/start hook materialises;
+      ;; the :turn.answer/validate hook is the wrong phase and the
+      ;; title-less hook is dropped. Self-asserted done means no
+      ;; validator-fn and no :specs in the hook-task descriptor.
       (expect (= [{:id :test/title
                    :task {:title "set title"
-                          :specs {}
                           :status :todo
                           :source :hook
                           :hook-id :test/title
-                          :importance :warn
-                          :validator-fn validator}}]
+                          :importance :warn}}]
                 hits))
       (expect (= ctx @seen))))
 
@@ -479,6 +475,22 @@
             (expect (= {:optimize :cost} (get-in @seen [:opts :routing])))
             (expect (str/includes? (-> @seen :opts :messages second :content)
                       "Previous title: Old focus"))))
+        (finally
+          (lp/dispose-environment! env)))))
+
+  (it "auto-title treats Untitled placeholders as missing previous titles"
+    (let [seen (atom nil)
+          env  (lp/create-environment ::router {:db :memory :title "Untitled"})]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_router opts]
+                        (reset! seen opts)
+                        {:result "Current Bug Triage" :raw ""})]
+          (let [f (maybe-auto-title! env "Wez to sprawdz")]
+            @f
+            (expect (= "Current Bug Triage" @(:session-title-atom env)))
+            (expect (str/includes? (-> @seen :messages second :content)
+                      "Previous title: <none>"))))
         (finally
           (lp/dispose-environment! env)))))
 

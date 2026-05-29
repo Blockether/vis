@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.ctx-loop-test
   "Tests for the loop integration adapter — scope synthesis, ctx atom
-   swapping, mutator binding wiring."
+   swapping, mutator binding wiring (tasks + facts model)."
   (:require
    [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.ctx-loop :as cl]
@@ -49,54 +49,74 @@
   (describe "SCI bindings build"
     (let [env (mk-env)
           bindings (cl/build-sci-bindings env)]
-      (it "exposes every engine mutator plus the async consult surface"
-        (expect (= #{'spec-set! 'task-set! 'fact-set!
-                     'spec-depends! 'task-depends! 'fact-depends!
+      (it "exposes exactly the surviving engine mutators plus the async consult surface"
+        (expect (= #{'task-set! 'fact-set!
+                     'task-depends! 'fact-depends!
                      'fact-contradicts! 'fact-contradicts-remove!
-                     'req-add! 'req-update! 'req-remove!
-                     'proof-add! 'proof-remove!
                      'consult-request! 'consult-promote! 'consult-dismiss!}
                   (set (keys bindings)))))
 
       (it "each binding is a callable function"
         (expect (every? fn? (vals bindings)))))))
 
-(defdescribe mutator-roundtrip-test
-  (describe "spec-set! through the binding mutates the ctx atom"
+(defdescribe task-mutator-roundtrip-test
+  (describe "task-set! through the binding mutates the ctx atom"
     (let [env (mk-env)
-          {spec-set 'spec-set!} (cl/build-sci-bindings env)
-          ret (spec-set :auth {:title "switch to bcrypt" :status :draft})]
+          {task-set 'task-set!} (cl/build-sci-bindings env)
+          ret (task-set :auth {:title "switch to bcrypt" :status :todo})]
       (it "returns :vis/silent (no echo)"
         (expect (= :vis/silent ret)))
 
-      (it "ctx atom carries the new spec"
+      (it "ctx atom carries the new task"
         (expect (= "switch to bcrypt"
-                  (get-in @(:ctx-atom env) [:session/specs :auth :title]))))
+                  (get-in @(:ctx-atom env) [:session/tasks :auth :title]))))
 
       (it "the :born scope was stamped from the loop cursor"
         (expect (= "t2/i3/f5"
-                  (get-in @(:ctx-atom env) [:session/specs :auth :born])))))))
+                  (get-in @(:ctx-atom env) [:session/tasks :auth :born])))))))
 
-(defdescribe req-add-collision-warning-test
-  (describe "req-add! collision routes to the warnings atom"
+(defdescribe fact-mutator-roundtrip-test
+  (describe "fact-set! through the binding mutates the ctx atom"
     (let [env (mk-env)
-          {spec-set 'spec-set! req-add 'req-add!} (cl/build-sci-bindings env)
-          _ (spec-set :s {:title "x" :status :draft})
-          _ (req-add :s {:id :r1 :title "first"})
-          _ (req-add :s {:id :r1 :title "duplicate"})]
-      (it "collision rejected; spec keeps original :r1 only"
-        (expect (= 1 (count (get-in @(:ctx-atom env) [:session/specs :s :requirements])))))
+          {fact-set 'fact-set!} (cl/build-sci-bindings env)
+          _ (fact-set :race {:content "non-atomic trim+conj"})]
+      (it "ctx atom carries the new fact, :active by default"
+        (expect (= "non-atomic trim+conj"
+                  (get-in @(:ctx-atom env) [:session/facts :race :content]))))
 
-      (it "warning captured on `:engine/warnings`"
-        (let [ws (warnings-of env)]
-          (expect (some #(= :req-add-collision (:code %)) ws)))))))
+      (it "the :born scope was stamped from the loop cursor"
+        (expect (= "t2/i3/f5"
+                  (get-in @(:ctx-atom env) [:session/facts :race :born])))))))
+
+(defdescribe done-self-asserted-test
+  (describe "task-set! :status :done is accepted and stamped (self-asserted)"
+    (let [env (mk-env)
+          {task-set 'task-set!} (cl/build-sci-bindings env)
+          _ (task-set :ship {:title "ship it" :status :todo})
+          _ (task-set :ship {:status :done})]
+      (it "status is :done"
+        (expect (= :done (get-in @(:ctx-atom env) [:session/tasks :ship :status]))))
+
+      (it ":done-born stamped by the engine"
+        (expect (some? (get-in @(:ctx-atom env) [:session/tasks :ship :done-born])))))))
+
+(defdescribe fact-contradicts-binding-test
+  (describe "fact-contradicts! through the binding writes symmetric link"
+    (let [env (mk-env)
+          {fact-set 'fact-set! fc 'fact-contradicts!} (cl/build-sci-bindings env)
+          _ (fact-set :a {:content "bcrypt"})
+          _ (fact-set :b {:content "argon2"})
+          _ (fc :a :b)]
+      (it "both facts carry the symmetric :contradicts link"
+        (expect (contains? (get-in @(:ctx-atom env) [:session/facts :a :contradicts]) :b))
+        (expect (contains? (get-in @(:ctx-atom env) [:session/facts :b :contradicts]) :a))))))
 
 (defdescribe cycle-hard-reject-test
   (describe "task-set! :depends-on cycle is hard-rejected via the binding"
     (let [env (mk-env)
           {task-set 'task-set!} (cl/build-sci-bindings env)
-          _ (task-set :a {:title "a" :specs {} :status :todo})
-          _ (task-set :b {:title "b" :specs {} :status :todo :depends-on [:a]})
+          _ (task-set :a {:title "a" :status :todo})
+          _ (task-set :b {:title "b" :status :todo :depends-on [:a]})
           _ (task-set :a {:depends-on [:b]})]
       (it ":a has no :depends-on (write refused)"
         (expect (not (contains? (get-in @(:ctx-atom env) [:session/tasks :a])
@@ -109,8 +129,9 @@
 (defdescribe drain-warnings-test
   (describe "drain-warnings! returns + clears"
     (let [env (mk-env)
-          {req-add 'req-add!} (cl/build-sci-bindings env)
-          _ (req-add :missing-spec {:id :r :title "x"})]
+          {fc 'fact-contradicts!} (cl/build-sci-bindings env)
+          ;; fact-contradicts! on a missing fact emits a warning onto the atom
+          _ (fc :missing-a :missing-b)]
       (it "drain yields the recorded warnings"
         (let [ws (cl/drain-warnings! env)]
           (expect (>= (count ws) 1))))
@@ -132,14 +153,40 @@
       (expect (= :git (get-in rendered [:session/workspace :vcs/kind])))
       (expect (= "main" (get-in rendered [:session/workspace :vcs/ref]))))))
 
+(defdescribe render-block-payload-test
+  (describe "render-block! passes {:ctx :warnings} and surfaces :session/warnings"
+    (let [env (mk-env)
+          {task-set 'task-set!} (cl/build-sci-bindings env)
+          ;; produce a structural warning: task :done with a non-terminal dep
+          _ (task-set :prereq {:title "first" :status :todo})
+          _ (task-set :follow {:title "second" :depends-on [:prereq] :status :done})
+          captured (atom nil)
+          rendered (cl/render-block! env
+                     (fn [payload] (reset! captured payload) (:ctx payload)))]
+      (it "renderer receives a map with :ctx and :warnings keys"
+        (expect (contains? @captured :ctx))
+        (expect (contains? @captured :warnings)))
+
+      (it ":warnings is a vec of short strings (not maps)"
+        (expect (vector? (:warnings @captured)))
+        (expect (every? string? (:warnings @captured)))
+        (expect (seq (:warnings @captured))))
+
+      (it "rendered ctx carries :session/warnings as the same string vec"
+        (expect (= (:warnings @captured) (:session/warnings rendered)))
+        (expect (every? string? (:session/warnings rendered))))
+
+      (it "rendered ctx carries NO :session/stages"
+        (expect (not (contains? rendered :session/stages)))))))
+
 (defdescribe current-ctx-test
   (describe "current-ctx stamps the cursor at render time"
     (let [env (mk-env)
-          {spec-set 'spec-set!} (cl/build-sci-bindings env)
-          _ (spec-set :s {:title "x" :status :draft})
+          {task-set 'task-set!} (cl/build-sci-bindings env)
+          _ (task-set :s {:title "x" :status :todo})
           c (cl/current-ctx env)]
-      (it "ctx carries the spec"
-        (expect (= "x" (get-in c [:session/specs :s :title]))))
+      (it "ctx carries the task"
+        (expect (= "x" (get-in c [:session/tasks :s :title]))))
 
       (it ":session/scope reflects current cursor"
         (expect (= {:turn 2 :iter 3 :next-form 5}
@@ -153,27 +200,25 @@
         (expect (= "test-session" (:session/id c)))))))
 
 (defdescribe end-to-end-mini-scenario-test
-  (describe "small scenario via SCI bindings: facts → spec → req → task → proof"
+  (describe "small scenario via SCI bindings: facts → tasks → deps → done"
     (let [env (mk-env)
-          {sp 'spec-set! tk 'task-set! ft 'fact-set!
-           ra 'req-add! pa 'proof-add!} (cl/build-sci-bindings env)
+          {tk 'task-set! ft 'fact-set! td 'task-depends!} (cl/build-sci-bindings env)
           _ (ft :rl-bug {:content "race"})
-          _ (sp :rl {:title "race-free" :status :draft})
-          _ (ra :rl {:id :linearizable :title "..." :facts [:rl-bug]})
-          _ (tk :swap {:title "CAS" :specs {:rl []} :status :doing})
-          _ (pa :swap :rl {:requirement :linearizable :proof "t2/i3/f5"})
-          ctx (cl/current-ctx env)
-          idx (eng/build-indexes ctx)
-          prog (eng/derive-progression ctx idx)]
-      (it "ctx has all four memo entries"
+          _ (tk :swap {:title "CAS" :status :doing})
+          _ (tk :test {:title "property test" :status :todo})
+          _ (td :test [:swap])
+          _ (tk :swap {:status :done})
+          ctx (cl/current-ctx env)]
+      (it "ctx has the fact and both tasks"
         (expect (= 1 (count (:session/facts ctx))))
-        (expect (= 1 (count (:session/specs ctx))))
-        (expect (= 1 (count (:session/tasks ctx)))))
+        (expect (= 2 (count (:session/tasks ctx)))))
 
-      (it "spec progression is :ready (1/1) since the proof landed"
-        (expect (= 1 (get-in prog [:rl :total])))
-        (expect (= 1 (get-in prog [:rl :proven])))
-        (expect (= :ready (get-in prog [:rl :state])))))))
+      (it ":test depends on :swap (via task-depends!)"
+        (expect (= [:swap] (get-in ctx [:session/tasks :test :depends-on]))))
+
+      (it ":swap is :done with :done-born stamped"
+        (expect (= :done (get-in ctx [:session/tasks :swap :status])))
+        (expect (some? (get-in ctx [:session/tasks :swap :done-born])))))))
 
 ;; =============================================================================
 ;; Introspect verb bindings
@@ -182,9 +227,8 @@
 (defdescribe introspect-bindings-test
   (describe "build-introspect-bindings"
     (let [env (mk-env)
-          {sp 'spec-set! tk 'task-set!} (cl/build-sci-bindings env)
-          _   (sp :auth {:title "switch to bcrypt" :status :draft})
-          _   (tk :swap {:title "CAS rewrite" :specs {:auth []} :status :doing})
+          {tk 'task-set!} (cl/build-sci-bindings env)
+          _   (tk :swap {:title "CAS rewrite" :status :doing})
           ;; History loader returns a vec of [turn ctx] pairs as if loaded
           ;; from persistance. We fake one prior turn snapshot.
           prior-ctx (-> (eng/empty-ctx "test-session")
@@ -192,16 +236,11 @@
                       (assoc-in [:session/facts :rl-bug]
                         {:content "old race fact" :born "t1/i1/f1"}))
           history-loader (constantly [[1 prior-ctx]])
-          {ispec 'introspect-spec
-           itask 'introspect-task
+          {itask 'introspect-task
            ifact 'introspect-fact
            iarch 'introspect-archived
            ictx  'introspect-ctx-at}
           (cl/build-introspect-bindings env history-loader)]
-
-      (it "introspect-spec finds spec in LIVE ctx (this iter)"
-        (let [r (ispec :auth)]
-          (expect (= "switch to bcrypt" (:title r)))))
 
       (it "introspect-task finds task in LIVE ctx"
         (let [r (itask :swap)]
@@ -303,77 +342,6 @@
 
       (it "preserves :error for errored forms"
         (expect (= "boom" (:message (:error (get fr "t1/i2/f1")))))))))
-
-;; =============================================================================
-
-;; =============================================================================
-;; reconcile-done-hook-tasks! end-to-end via ctx-loop wiring (D12)
-;; =============================================================================
-
-(def ^:private TITLE_VALIDATOR
-  "(fn [{:keys [src error]}]
-     (and (string? src)
-       (clojure.string/includes? src \"set-session-title!\")
-       (nil? error)))")
-
-(defn- plant-done-hook-task!
-  "Plant a hook-sourced task that the model just flipped to :done with a
-   given :proof scope, mimicking the state after the loop has captured
-   the proof form's envelope."
-  [env proof]
-  (swap! (:ctx-atom env) assoc-in
-    [:session/tasks :vis.foundation/session-title]
-    {:title         "set the session title"
-     :specs         {}
-     :status        :done
-     :source        :hook
-     :hook-id       :vis.foundation/session-title
-     :importance    :critical
-     :validator-fn  TITLE_VALIDATOR
-     :proof         proof
-     :done-born     proof
-     :born          "t1/i1/f1"}))
-
-(defdescribe reconcile-passing-via-loop-test
-  (describe "reconcile-done-hook-tasks! — passing validator keeps :done"
-    (let [env (mk-env)
-          _ (plant-done-hook-task! env "t1/i1/f3")
-          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :mutation
-                           :src "(set-session-title! \"X\")"
-                           :result :vis/silent}}
-          _ (cl/reconcile-done-hook-tasks! env fr)]
-
-      (it "task stays :done"
-        (expect (= :done
-                  (get-in @(:ctx-atom env)
-                    [:session/tasks :vis.foundation/session-title :status]))))
-
-      (it "no warnings appended to :engine/warnings"
-        (expect (empty? (-> env :ctx-atom deref :engine/warnings)))))))
-
-(defdescribe reconcile-failing-via-loop-test
-  (describe "reconcile-done-hook-tasks! — failing validator reverts + warns"
-    (let [env (mk-env)
-          _ (plant-done-hook-task! env "t1/i1/f3")
-          ;; Proof form does NOT call set-session-title!
-          fr  {"t1/i1/f3" {:scope "t1/i1/f3" :tag :observation
-                           :src "(v/ls)" :result []}}
-          _ (cl/reconcile-done-hook-tasks! env fr)]
-
-      (it "task reverted to :todo"
-        (expect (= :todo
-                  (get-in @(:ctx-atom env)
-                    [:session/tasks :vis.foundation/session-title :status]))))
-
-      (it ":proof and :done-born dropped"
-        (expect (nil? (get-in @(:ctx-atom env)
-                        [:session/tasks :vis.foundation/session-title :proof])))
-        (expect (nil? (get-in @(:ctx-atom env)
-                        [:session/tasks :vis.foundation/session-title :done-born]))))
-
-      (it ":task-done-validator-fail warning on :engine/warnings"
-        (expect (some #(= :task-done-validator-fail (:code %))
-                  (-> env :ctx-atom deref :engine/warnings)))))))
 
 ;; =============================================================================
 ;; Phase F: trailer-find — FTS5 query → ranked iteration scopes.

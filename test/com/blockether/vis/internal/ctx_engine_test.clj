@@ -1,21 +1,18 @@
 (ns com.blockether.vis.internal.ctx-engine-test
   "Pure-fn tests + REPL-replayable scenarios for the CTX engine.
 
-   Test categories:
+   The engine is a typed, dependency-checked working memory of tasks +
+   facts. Done is self-asserted; there is no proof / validator / spec /
+   stage machinery. These tests exercise the surviving surface:
 
-     1. **Unit / property tests** — one fn at a time. Mostly hit by
-        `s/gen ::cs/ctx` generators when the fn is data-shape-checking,
-        plus targeted positive/negative cases for parsing + classification.
-
-     2. **Scenario tests** — multi-turn transcripts (`scenarios` ns) replayed
-        through `apply-mutator` etc., with `:expect` assertions at each turn
-        boundary. Each scenario is intentionally a *narrative* of what a
-        real model would emit. Failing assertions point at gaps in the
-        engine.
-
-   The pattern: scenarios are written first, fn stubs added to `ctx-engine`,
-   each red turn drives one piece of implementation. Once green, the
-   scenario becomes a regression."
+     • parse / classify-scope helpers
+     • build-indexes (dep-graph / rev-deps / task-status / fact-status)
+     • depends-on cycle detection + hard reject at write time
+     • fact contradictions + derive-warnings (vec of short strings)
+     • task / fact CRUD via apply-mutator (slimmed shapes)
+     • advance-iter trailer behaviour + hook-task lifetimes
+     • form tag classification + blocks->forms projection
+     • diff-ctx / introspect-changes over snapshots"
   (:require
    [clojure.spec.alpha :as s]
    [clojure.spec.gen.alpha :as gen]
@@ -98,7 +95,7 @@
         (expect (= :ok (eng/classify-scope "t1/i1/f1" cursor fr)))))))
 
 ;; =============================================================================
-;; build-indexes — shape + cross-references
+;; build-indexes — shape + cross-references (tasks + facts only)
 ;; =============================================================================
 
 (def ^:private mini-ctx
@@ -111,20 +108,12 @@
     :vcs/ref "main" :vcs/mainline "main" :vcs/head "x"
     :vcs/dirty? false :vcs/stats {}}
    :session/symbols {}
-   :session/specs
-   {:rl {:title "rate-limit"
-         :requirements [{:id :r1 :title "x" :facts [:f1]}
-                        {:id :r2 :title "y"}]
-         :status :doing
-         :born "t1/i1/f1"}}
    :session/tasks
    {:t1 {:title "task 1"
-         :specs {:rl [{:requirement :r1 :proof "t2/i1/f1"}]}
          :status :done
          :born "t1/i1/f2"
          :done-born "t2/i1/f2"}
     :t2 {:title "task 2"
-         :specs {:rl []}
          :depends-on [:t1]
          :status :todo
          :born "t1/i1/f3"}}
@@ -135,23 +124,9 @@
 (defdescribe build-indexes-test
   (describe "build-indexes shape"
     (let [idx (eng/build-indexes mini-ctx)]
-      (it ":req-index keyed by requirement id"
-        (expect (= :rl (get-in idx [:req-index :r1 :spec])))
-        (expect (= :rl (get-in idx [:req-index :r2 :spec]))))
-
-      (it ":proof-index keyed by [spec-id req-id]"
-        ;; Phase E: entries now carry :scopes (vec) alongside the
-        ;; legacy :scope (first sub-scope) so derive-progression can
-        ;; reason about both singleton and compose proofs uniformly.
-        (expect (= [{:task :t1 :scope "t2/i1/f1" :scopes ["t2/i1/f1"]}]
-                  (get-in idx [:proof-index [:rl :r1]])))
-        (expect (nil? (get-in idx [:proof-index [:rl :r2]]))))
-
-      (it ":task-by-spec maps spec-id → set of task-ids"
-        (expect (= #{:t1 :t2} (get-in idx [:task-by-spec :rl]))))
-
-      (it ":fact-refs is the reverse of requirement :facts"
-        (expect (= #{:r1} (get-in idx [:fact-refs :f1]))))
+      (it "returns exactly the four expected keys"
+        (expect (= #{:dep-graph :rev-deps :task-status :fact-status}
+                  (set (keys idx)))))
 
       (it ":dep-graph captures :depends-on edges as typed refs"
         (expect (= #{[:task :t1]} (get-in idx [:dep-graph [:task :t2]])))
@@ -159,6 +134,10 @@
 
       (it ":rev-deps reverses the typed graph"
         (expect (= #{[:task :t2]} (get-in idx [:rev-deps [:task :t1]]))))
+
+      (it ":task-status maps task-id → status"
+        (expect (= :done (get-in idx [:task-status :t1])))
+        (expect (= :todo (get-in idx [:task-status :t2]))))
 
       (it ":fact-status defaults to :active when omitted"
         (expect (= :active (get-in idx [:fact-status :f1]))))))
@@ -170,10 +149,10 @@
 
     (it "tolerates empty subtrees"
       (let [empty-ctx (-> mini-ctx
-                        (assoc :session/specs {} :session/tasks {} :session/facts {}))]
-        (expect (= {} (:req-index (eng/build-indexes empty-ctx))))
-        (expect (= {} (:proof-index (eng/build-indexes empty-ctx))))
-        (expect (= {} (:dep-graph (eng/build-indexes empty-ctx))))))))
+                        (assoc :session/tasks {} :session/facts {}))]
+        (expect (= {} (:dep-graph (eng/build-indexes empty-ctx))))
+        (expect (= {} (:task-status (eng/build-indexes empty-ctx))))
+        (expect (= {} (:fact-status (eng/build-indexes empty-ctx))))))))
 
 ;; =============================================================================
 ;; depends-on cycle detection
@@ -197,49 +176,6 @@
                                              :c #{:d} :d #{}}))))))
 
 ;; =============================================================================
-;; derive-progression
-;; =============================================================================
-
-(defdescribe derive-progression-test
-  (describe "derive-progression"
-    (let [idx  (eng/build-indexes mini-ctx)
-          prog (eng/derive-progression mini-ctx idx)]
-      (it "computes total + proven counts"
-        (expect (= 2 (get-in prog [:rl :total])))
-        (expect (= 1 (get-in prog [:rl :proven]))))
-
-      (it ":ratio is double in [0,1]"
-        (expect (= 0.5 (get-in prog [:rl :ratio]))))
-
-      (it ":state :partial when 0 < proven < total"
-        (expect (= :partial (get-in prog [:rl :state]))))
-
-      (it ":missing carries unproven requirement ids"
-        (expect (= #{:r2} (get-in prog [:rl :missing])))))
-
-    (it ":state :empty when spec has no requirements"
-      (let [ctx (assoc-in mini-ctx [:session/specs :rl :requirements] [])
-            idx (eng/build-indexes ctx)
-            prog (eng/derive-progression ctx idx)]
-        (expect (= :empty (get-in prog [:rl :state])))
-        (expect (zero? (get-in prog [:rl :total])))))
-
-    (it ":state :ready when every requirement has a proof"
-      (let [ctx (-> mini-ctx
-                  (assoc-in [:session/tasks :t1 :specs :rl]
-                    [{:requirement :r1 :proof "t2/i1/f1"}
-                     {:requirement :r2 :proof "t2/i1/f2"}]))
-            idx (eng/build-indexes ctx)
-            prog (eng/derive-progression ctx idx)]
-        (expect (= :ready (get-in prog [:rl :state])))
-        (expect (= 1.0 (get-in prog [:rl :ratio])))))
-
-    (it "form-results filter narrows :proven when scope not executed"
-      (let [idx (eng/build-indexes mini-ctx)
-            prog (eng/derive-progression mini-ctx idx #{})]   ;; no executed forms
-        (expect (zero? (get-in prog [:rl :proven])))))))
-
-;; =============================================================================
 ;; Property: generated ctx always builds indexes cleanly
 ;; =============================================================================
 
@@ -252,9 +188,10 @@
     (it "every value in every index slot is iterable / lookup-safe"
       (let [samples (gen/sample (s/gen ::cs/ctx) 10)
             idxs   (map eng/build-indexes samples)]
-        (expect (every? #(map? (:req-index %)) idxs))
-        (expect (every? #(map? (:proof-index %)) idxs))
-        (expect (every? #(map? (:dep-graph %)) idxs))))))
+        (expect (every? #(map? (:dep-graph %)) idxs))
+        (expect (every? #(map? (:rev-deps %)) idxs))
+        (expect (every? #(map? (:task-status %)) idxs))
+        (expect (every? #(map? (:fact-status %)) idxs))))))
 
 ;; =============================================================================
 ;; Form tag classification + blocks→forms projection
@@ -263,11 +200,10 @@
 (defdescribe classify-form-tag-test
   (describe "classify-form-tag"
     (it ":mutation for engine-owned mutators"
-      (expect (= :mutation (eng/classify-form-tag "(spec-set! :K {:title \"x\"})")))
       (expect (= :mutation (eng/classify-form-tag "(task-set! :A {})")))
       (expect (= :mutation (eng/classify-form-tag "(fact-set! :F {:content \"y\"})")))
-      (expect (= :mutation (eng/classify-form-tag "(req-add! :S {})")))
-      (expect (= :mutation (eng/classify-form-tag "(proof-add! :T :S {:requirement :r1 :proof \"t1/i1/f1\"})"))))
+      (expect (= :mutation (eng/classify-form-tag "(task-depends! :A [:b])")))
+      (expect (= :mutation (eng/classify-form-tag "(fact-contradicts! :f1 :f2)"))))
 
     (it ":mutation for def / defn / defmacro"
       (expect (= :mutation (eng/classify-form-tag "(def x 42)")))
@@ -305,10 +241,10 @@
       ;; practice extensions only declare their own ops; this just
       ;; documents the precedence rule.
       (expect (= :observation
-                (eng/classify-form-tag "(spec-set! :K {:title \"x\"})"
+                (eng/classify-form-tag "(task-set! :K {:title \"x\"})"
                   (fn [_] :observation))))
       (expect (= :mutation
-                (eng/classify-form-tag "(spec-set! :K {:title \"x\"})"))))))
+                (eng/classify-form-tag "(task-set! :K {:title \"x\"})"))))))
 
 (defdescribe advance-iter-trailer-test
   (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
@@ -350,7 +286,7 @@
                   (mapv :scope (:session/trailer step3))))))))
 
 (defdescribe rebind-loop-warning-test
-  (it "flags a `:trailer-rebind-loop` once the same def is rebound 3+ times"
+  (it "flags a rebind-loop warning once the same def is rebound 3+ times"
     (let [trailer [{:scope "t1/i1"
                     :forms [{:src "(def persist (v/rg {:any [\"a\"]}))"
                              :tag :mutation :scope "t1/i1/f1"}]}
@@ -364,10 +300,8 @@
                :session/scope {:turn 1 :iter 4 :next-form 1}
                :session/trailer trailer}
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
-      (expect (some #(= :trailer-rebind-loop (:code %)) warns))
-      (expect (= ["persist"]
-                (->> warns (filter #(= :trailer-rebind-loop (:code %)))
-                  first :anchor)))))
+      ;; derive-warnings returns a vec of short strings now.
+      (expect (some #(re-find #"def persist" %) warns))))
 
   (it "stays quiet when a different def lands between rebinds"
     (let [trailer [{:scope "t1/i1"
@@ -380,7 +314,7 @@
                :session/scope {:turn 1 :iter 4 :next-form 1}
                :session/trailer trailer}
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
-      (expect (not-any? #(= :trailer-rebind-loop (:code %)) warns)))))
+      (expect (not-any? #(re-find #"rebound" %) warns)))))
 
 ;; ---------------------------------------------------------------------------
 ;; trailer pin filter for :vis/silent results.
@@ -391,7 +325,7 @@
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           mixed [{:scope "t1/i1/f1" :tag :mutation
-                  :src "(spec-set! :K {:title \"x\"})"
+                  :src "(task-set! :K {:title \"x\"})"
                   :result :vis/silent}
                  {:scope "t1/i1/f2" :tag :observation
                   :src "(v/cat \"a\")"
@@ -413,7 +347,7 @@
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           all-silent [{:scope "t1/i1/f1" :tag :mutation
-                       :src "(spec-set! :K {:title \"x\"})"
+                       :src "(task-set! :K {:title \"x\"})"
                        :result :vis/silent}
                       {:scope "t1/i1/f2" :tag :mutation
                        :src "(task-set! :T {:title \"x\"})"
@@ -427,7 +361,7 @@
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           forms [{:scope "t1/i1/f1" :tag :mutation
-                  :src "(spec-set! :K {})"
+                  :src "(fact-set! :K {})"
                   :vis/silent true
                   :result :vis/silent}
                  {:scope "t1/i1/f2" :tag :observation
@@ -549,7 +483,7 @@
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
     (let [cursor {:turn 5 :iter 2}
-          blocks [{:code "(spec-set! :K {:title \"x\"})" :result :ok}
+          blocks [{:code "(task-set! :K {:title \"x\"})" :result :ok}
                   {:code "(v/cat \"a.clj\")"          :result "(ns a) ..."}
                   {:code "(/ 1 0)" :error {:message "Divide by zero"}}]
           forms (eng/blocks->forms blocks cursor)]
@@ -569,7 +503,7 @@
         (expect (not (contains? (nth forms 2) :result))))
 
       (it "every envelope has :src from block :code"
-        (expect (= "(spec-set! :K {:title \"x\"})" (:src (first forms)))))
+        (expect (= "(task-set! :K {:title \"x\"})" (:src (first forms)))))
 
       (it "empty input returns empty vec"
         (expect (= [] (eng/blocks->forms [] cursor)))))))
@@ -577,14 +511,10 @@
 (defdescribe gc-pass-turn-lifetime-test
   ;; Vis conv 11d4f817 / t14–t16: a transient context-pressure
   ;; hook-task lingered for 6 turns after the originating hint had
-  ;; stopped firing, because the model marked it :done with a proof
-  ;; scope that pointed at the (task-set! …) form itself instead of
-  ;; the sibling (done …), the validator (which requires (done …) or
-  ;; trailer-summarize/drop source) said no, and the renderer kept
-  ;; surfacing the resulting :done :validated? false task. Hooks now
-  ;; opt in via `:lifetime :turn` and `gc-pass` drops those entries at
-  ;; advance-turn so the next iter starts clean — re-created on
-  ;; demand by the hook only when the condition still holds.
+  ;; stopped firing. Hooks now opt in via `:lifetime :turn` and
+  ;; `gc-pass` drops those entries at advance-turn so the next iter
+  ;; starts clean — re-created on demand by the hook only when the
+  ;; condition still holds.
   (describe "gc-pass drops :lifetime :turn hook-tasks regardless of status"
     (it "drops an open :lifetime :turn hook-task at advance-turn"
       (let [ctx {:session/turn 1
@@ -593,20 +523,18 @@
                                  {:title "warn" :source :hook
                                   :hook-id :vis.foundation/context-pressure
                                   :status :todo :lifetime :turn
-                                  :validator-fn "(fn [_] true)"
                                   :born "t1/i1/f1"}}}]
         (expect (= {} (:session/tasks (eng/enter-turn ctx 2))))))
 
-    (it "drops a :done :validated? false :lifetime :turn task immediately"
+    (it "drops a :done :lifetime :turn task immediately"
       (let [ctx {:session/turn 1
                  :session/scope {:turn 1 :iter 1 :next-form 1}
                  :session/tasks {:vis.foundation/context-pressure
                                  {:title "warn" :source :hook
                                   :hook-id :vis.foundation/context-pressure
-                                  :status :done :validated? false
+                                  :status :done
                                   :lifetime :turn
-                                  :validator-fn "(fn [_] true)"
-                                  :proof "t1/i1/f2" :done-born "t1/i1/f2"
+                                  :done-born "t1/i1/f2"
                                   :born "t1/i1/f1"}}}]
         (expect (= {} (:session/tasks (eng/enter-turn ctx 2))))))
 
@@ -617,7 +545,6 @@
                                  {:title "set title" :source :hook
                                   :hook-id :vis.foundation/session-title
                                   :status :todo
-                                  :validator-fn "(fn [_] true)"
                                   :born "t1/i1/f1"}}}
             advanced (eng/enter-turn ctx 2)]
         (expect (contains? (:session/tasks advanced) :vis.foundation/session-title))))
@@ -649,20 +576,18 @@
                                  {:title "retry" :source :hook
                                   :hook-id :vis.foundation/retry-shape
                                   :status :todo :lifetime :iteration
-                                  :validator-fn "(fn [_] true)"
                                   :born "t1/i1/f1"}}}]
         (expect (= {} (:session/tasks (eng/advance-iter ctx []))))))
 
-    (it "drops a :done :validated? false :lifetime :iteration task immediately"
+    (it "drops a :done :lifetime :iteration task immediately"
       (let [ctx {:session/turn 1
                  :session/scope {:turn 1 :iter 1 :next-form 1}
                  :session/tasks {:vis.foundation/retry-shape
                                  {:title "retry" :source :hook
                                   :hook-id :vis.foundation/retry-shape
-                                  :status :done :validated? false
+                                  :status :done
                                   :lifetime :iteration
-                                  :validator-fn "(fn [_] true)"
-                                  :proof "t1/i1/f2" :done-born "t1/i1/f2"
+                                  :done-born "t1/i1/f2"
                                   :born "t1/i1/f1"}}}]
         (expect (= {} (:session/tasks (eng/advance-iter ctx []))))))
 
@@ -673,7 +598,6 @@
                                  {:title "warn" :source :hook
                                   :hook-id :vis.foundation/context-pressure
                                   :status :todo :lifetime :turn
-                                  :validator-fn "(fn [_] true)"
                                   :born "t1/i1/f1"}}}]
         (expect (contains? (:session/tasks (eng/advance-iter ctx []))
                   :vis.foundation/context-pressure))))
@@ -685,7 +609,6 @@
                                  {:title "set title" :source :hook
                                   :hook-id :vis.foundation/session-title
                                   :status :todo
-                                  :validator-fn "(fn [_] true)"
                                   :born "t1/i1/f1"}}}]
         (expect (contains? (:session/tasks (eng/advance-iter ctx []))
                   :vis.foundation/session-title))))
@@ -711,7 +634,6 @@
                                  {:title "retry" :source :hook
                                   :hook-id :vis.foundation/retry-shape
                                   :status :todo :lifetime :iteration
-                                  :validator-fn "(fn [_] true)"
                                   :born "t1/i2/f1"}}}
             advanced (eng/advance-iter ctx
                        [{:scope "t1/i2/f1" :src "(v/cat \"a.clj\")"
@@ -722,227 +644,16 @@
         (expect (= {} (:session/tasks advanced)))))))
 
 ;; =============================================================================
-;; Failed-proof archive (Phase A: introspect-failed-proofs)
+;; Universal :depends-on across task/fact entities.
 ;;
-;; When a task-level proof references a req carrying a :validator-fn, and
-;; that validator REJECTS the form result at the proof scope, the engine's
-;; `archive-failed-task-proofs` records the rejection on the task's
-;; `:archived-proofs` vec. The :specs entry stays — model owns regular
-;; task lifecycle — but the failure is now introspectable next iter so
-;; the model can swap evidence or change strategy instead of re-emitting
-;; the same rejected scope.
-;;
-;; For HOOK-source tasks, the existing `reconcile-done-hook-tasks` reverts
-;; the task to :todo and now also stamps :archived-proofs with the same
-;; entry shape.
-;; =============================================================================
-
-(defdescribe archive-failed-task-proofs-test
-  (describe "regular task proof rejected by validator → archive entry"
-    (let [;; spec :K with req :r1 whose validator demands :result = 42
-          spec-K {:title "answer"
-                  :requirements [{:id :r1 :title "answer must be 42"
-                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
-                  :status :doing
-                  :born "t1/i1/f1"}
-          task-K {:title "compute answer"
-                  :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
-                  :status :doing
-                  :born "t2/i1/f1"}
-          ctx {:session/turn 2
-               :session/scope {:turn 2 :iter 2 :next-form 1}
-               :session/specs {:K spec-K}
-               :session/tasks {:T task-K}}
-          ;; form-result at the proof scope returned 7, NOT 42 → validator rejects
-          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation
-                                    :src "(+ 1 6)" :result 7}}
-          ctx' (eng/archive-failed-task-proofs ctx form-results)
-          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
-
-      (it "emits one archive entry"
-        (expect (= 1 (count archive))))
-
-      (it "captures the rejected proof scope + req + spec identifiers"
-        (let [e (first archive)]
-          (expect (= "t2/i1/f1" (:proof e)))
-          (expect (= :K          (:spec e)))
-          (expect (= :r1         (:requirement e)))))
-
-      (it "captures the rejection cause as :proof-validator-fail"
-        (expect (= :proof-validator-fail (:rejected-by (first archive)))))
-
-      (it "stamps the rejection at the CURRENT iter scope, not the proof scope"
-        ;; cursor sits at t2/i2; the proof scope was t2/i1. The archive
-        ;; records WHEN the rejection happened, not where the proof points.
-        (expect (= "t2/i2" (:rejected-at (first archive)))))
-
-      (it "does NOT remove the :specs proof entry — model owns the lifecycle"
-        ;; The model can still see the proof in :specs and decide to
-        ;; (proof-remove!) + (proof-add!) a different scope. Engine only
-        ;; stamps history.
-        (expect (= [{:requirement :r1 :proof "t2/i1/f1"}]
-                  (get-in ctx' [:session/tasks :T :specs :K]))))))
-
-  (describe "validator passes → no archive entry"
-    (let [spec-K {:title "answer"
-                  :requirements [{:id :r1 :title "answer must be 42"
-                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
-                  :status :doing :born "t1/i1/f1"}
-          task-K {:title "compute" :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
-                  :status :doing :born "t2/i1/f1"}
-          ctx {:session/turn 2 :session/scope {:turn 2 :iter 2 :next-form 1}
-               :session/specs {:K spec-K} :session/tasks {:T task-K}}
-          ;; form-result actually equals 42 → validator passes
-          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation
-                                    :src "(* 6 7)" :result 42}}
-          ctx' (eng/archive-failed-task-proofs ctx form-results)]
-      (it "leaves :archived-proofs empty (or nil)"
-        (expect (empty? (get-in ctx' [:session/tasks :T :archived-proofs]))))))
-
-  (describe "idempotent within an iter (dedupe by proof+rejected-at+reason)"
-    (let [spec-K {:title "answer"
-                  :requirements [{:id :r1 :title "must be 42"
-                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
-                  :status :doing :born "t1/i1/f1"}
-          task-K {:title "compute" :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
-                  :status :doing :born "t2/i1/f1"}
-          ctx {:session/turn 2 :session/scope {:turn 2 :iter 2 :next-form 1}
-               :session/specs {:K spec-K} :session/tasks {:T task-K}}
-          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation
-                                    :src "(+ 1 6)" :result 7}}
-          ;; run TWICE in the same iter — second run must be a no-op
-          ctx-1 (eng/archive-failed-task-proofs ctx form-results)
-          ctx-2 (eng/archive-failed-task-proofs ctx-1 form-results)]
-      (it "does not append a duplicate entry"
-        (expect (= 1 (count (get-in ctx-2 [:session/tasks :T :archived-proofs]))))))))
-
-(defdescribe archived-proofs-cap-test
-  (describe "archive vec is capped at ARCHIVED_PROOFS_CAP_PER_TASK"
-    ;; Simulate many failed iters by manually seeding 11 archive entries
-    ;; (each stamped at a unique :rejected-at so dedupe lets them through),
-    ;; then run one more archiving pass; oldest must be dropped.
-    (let [seeded (vec (for [i (range 11)]
-                        {:proof (str "t1/i" i "/f1")
-                         :spec :K :requirement :r1
-                         :rejected-by :proof-validator-fail
-                         :rejected-at (str "t1/i" i)
-                         :reason :predicate-false}))
-          spec-K {:title "answer"
-                  :requirements [{:id :r1 :title "must be 42"
-                                  :validator-fn "(fn [{:keys [result]}] (= result 42))"}]
-                  :status :doing :born "t1/i1/f1"}
-          ;; 12th rejection arrives this iter
-          task-K {:title "compute"
-                  :specs {:K [{:requirement :r1 :proof "t2/i9/f1"}]}
-                  :status :doing
-                  :archived-proofs seeded
-                  :born "t2/i1/f1"}
-          ctx {:session/turn 2 :session/scope {:turn 2 :iter 9 :next-form 2}
-               :session/specs {:K spec-K} :session/tasks {:T task-K}}
-          form-results {"t2/i9/f1" {:scope "t2/i9/f1" :tag :observation
-                                    :src "(+ 1 6)" :result 7}}
-          archive (get-in (eng/archive-failed-task-proofs ctx form-results)
-                    [:session/tasks :T :archived-proofs])]
-
-      (it "caps the vec at 10 entries"
-        (expect (= 10 (count archive))))
-
-      (it "drops the OLDEST entry first (FIFO)"
-        ;; the entry stamped at "t1/i0" must be gone
-        (expect (not (some #(= "t1/i0" (:rejected-at %)) archive))))
-
-      (it "keeps the newly-archived rejection"
-        ;; the new entry is at the current cursor t2/i9
-        (expect (some #(= "t2/i9" (:rejected-at %)) archive))))))
-
-(defdescribe reconcile-hook-task-archives-on-revert-test
-  (describe "hook-task reverted by reconcile gets :archived-proofs stamped"
-    (let [task-K {:title "set title" :source :hook
-                  :hook-id :vis.foundation/session-title
-                  :status :done
-                  :proof "t1/i1/f1"
-                  :done-born "t1/i1/f1"
-                  :validator-fn "(fn [{:keys [result]}] (= result :title-set))"
-                  :born "t1/i1/f1"}
-          ctx {:session/turn 1 :session/scope {:turn 1 :iter 2 :next-form 1}
-               :session/tasks {:T task-K}}
-          ;; form-result :nope ≠ :title-set → validator rejects
-          form-results {"t1/i1/f1" {:scope "t1/i1/f1" :tag :mutation
-                                    :src "(set-session-title! \"x\")"
-                                    :result :nope}}
-          {ctx' :ctx warnings :warnings}
-          (eng/reconcile-done-hook-tasks ctx form-results)
-          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
-
-      (it "reverts :status :done back to :todo"
-        (expect (= :todo (get-in ctx' [:session/tasks :T :status]))))
-
-      (it "writes one archive entry capturing the rejected proof"
-        (expect (= 1 (count archive)))
-        (expect (= "t1/i1/f1" (:proof (first archive)))))
-
-      (it "tags the rejection cause as :task-done-validator-fail"
-        (expect (= :task-done-validator-fail (:rejected-by (first archive)))))
-
-      (it "drops :proof from the task body but keeps the archive"
-        (expect (nil? (get-in ctx' [:session/tasks :T :proof])))
-        (expect (seq archive)))
-
-      (it "still emits a soft warning so the model sees the revert"
-        (expect (some #(= :task-done-validator-fail (:code %)) warnings))))))
-
-(defdescribe introspect-failed-proofs-test
-  (describe "introspect-failed-proofs returns the archive from the latest snapshot"
-    (let [task-T (fn [archive]
-                   {:title "compute"
-                    :specs {:K [{:requirement :r1 :proof "t2/i1/f1"}]}
-                    :status :doing
-                    :archived-proofs archive
-                    :born "t2/i1/f1"})
-          snap-1 {:session/turn 1
-                  :session/scope {:turn 1 :iter 1 :next-form 1}
-                  :session/tasks {:T (task-T [])}}
-          snap-2 {:session/turn 2
-                  :session/scope {:turn 2 :iter 2 :next-form 1}
-                  :session/tasks {:T (task-T [{:proof "t2/i1/f1" :spec :K
-                                               :requirement :r1
-                                               :rejected-by :proof-validator-fail
-                                               :rejected-at "t2/i2"
-                                               :reason :predicate-false}])}}
-          history [[1 snap-1] [2 snap-2]]]
-
-      (it "returns the most-recent archive vec"
-        (let [archive (eng/introspect-failed-proofs history :T)]
-          (expect (= 1 (count archive)))
-          (expect (= "t2/i1/f1" (:proof (first archive))))))
-
-      (it "returns nil when the task was never present in any snapshot"
-        (expect (nil? (eng/introspect-failed-proofs history :missing))))
-
-      (it "returns empty vec when the task exists but has no archive"
-        (let [empty-snap {:session/turn 1
-                          :session/scope {:turn 1 :iter 1 :next-form 1}
-                          :session/tasks {:T (task-T [])}}]
-          (expect (= [] (eng/introspect-failed-proofs [[1 empty-snap]] :T))))))))
-
-;; =============================================================================
-;; Phase B: Universal :depends-on across spec/task/fact entities.
-;;
-;; `:depends-on` becomes a first-class relation on every entity kind, not just
-;; tasks. Refs are either bare keys (same-kind shorthand) or typed `[:kind :K]`
-;; pairs. Cycle detection is unified across the three subtrees so a chain
-;; `task -> spec -> fact -> task` is hard-rejected at write time.
+;; `:depends-on` is a first-class relation on tasks and facts. Refs are
+;; either bare keys (same-kind shorthand) or typed `[:kind :K]` pairs.
+;; Cycle detection is unified across the two subtrees so a chain
+;; `task -> fact -> task` is hard-rejected at write time.
 ;; =============================================================================
 
 (defdescribe universal-depends-on-test
-  (describe "spec-set! / fact-set! accept :depends-on like task-set!"
-    (it "spec :depends-on is preserved through apply-spec-set!"
-      (let [{ctx :ctx}
-            (eng/apply-mutator (eng/empty-ctx "t") "t1/i1/f1"
-              :spec-set! [:K {:title "x" :depends-on [:other :extra]}])]
-        (expect (= [:other :extra]
-                  (get-in ctx [:session/specs :K :depends-on])))))
-
+  (describe "task-set! / fact-set! accept :depends-on"
     (it "fact :depends-on is preserved through apply-fact-set!"
       (let [{ctx :ctx}
             (eng/apply-mutator (eng/empty-ctx "t") "t1/i1/f1"
@@ -950,32 +661,27 @@
         (expect (= [[:task :impl]]
                   (get-in ctx [:session/facts :K :depends-on])))))
 
-    (it "spec-depends! / task-depends! / fact-depends! all write through"
+    (it "task-depends! / fact-depends! all write through"
       (let [base (-> (eng/empty-ctx "t")
-                   (assoc-in [:session/specs :S] {:title "s" :born "t1/i1/f1"})
                    (assoc-in [:session/tasks :T] {:title "t" :born "t1/i1/f1"})
                    (assoc-in [:session/facts :F] {:content "f" :born "t1/i1/f1"}))
-            after-s (:ctx (eng/apply-mutator base "t1/i1/f1" :spec-depends! [:S [[:fact :F]]]))
-            after-t (:ctx (eng/apply-mutator after-s "t1/i1/f1" :task-depends! [:T [[:spec :S]]]))
+            after-t (:ctx (eng/apply-mutator base "t1/i1/f1" :task-depends! [:T [[:fact :F]]]))
             after-f (:ctx (eng/apply-mutator after-t "t1/i1/f1" :fact-depends! [:F []]))]
-        (expect (= [[:fact :F]] (get-in after-f [:session/specs :S :depends-on])))
-        (expect (= [[:spec :S]] (get-in after-f [:session/tasks :T :depends-on])))
+        (expect (= [[:fact :F]] (get-in after-f [:session/tasks :T :depends-on])))
         (expect (= []           (get-in after-f [:session/facts :F :depends-on])))))))
 
 (defdescribe cross-entity-cycle-rejection-test
-  (describe "spec→task→fact→spec cycle is hard-rejected at write time"
+  (describe "task→fact→task cycle is hard-rejected at write time"
     ;; Seed a chain that's already valid up to fact :F, then attempt to close
-    ;; the loop with a fact-depends! that points back to spec :S. The engine
+    ;; the loop with a fact-depends! that points back to task :T. The engine
     ;; must refuse the write and emit :depends-on-cycle.
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/specs :S]
-                  {:title "s" :born "t1/i1/f1" :depends-on [[:task :T]]})
                 (assoc-in [:session/tasks :T]
                   {:title "t" :born "t1/i1/f1" :depends-on [[:fact :F]]})
                 (assoc-in [:session/facts :F]
                   {:content "f" :born "t1/i1/f1"}))
           {ctx' :ctx warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i2/f1" :fact-depends! [:F [[:spec :S]]])]
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-depends! [:F [[:task :T]]])]
 
       (it "refuses the write (no :depends-on on :F)"
         (expect (not (:stamped? out)))
@@ -985,66 +691,116 @@
         (expect (some #(= :depends-on-cycle (:code %)) warnings))))))
 
 (defdescribe build-indexes-dep-graph-typed-test
-  (describe "build-indexes derives the typed :dep-graph across all entity kinds"
-    ;; Phase B canonical shape: :dep-graph keys are typed `[:kind :K]`
-    ;; refs. Bare-key entries on `:depends-on` are normalized to
-    ;; same-kind typed refs at index-build time.
+  (describe "build-indexes derives the typed :dep-graph across task + fact kinds"
+    ;; Canonical shape: :dep-graph keys are typed `[:kind :K]` refs.
+    ;; Bare-key entries on `:depends-on` are normalized to same-kind
+    ;; typed refs at index-build time.
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/specs :S]
-                  {:title "s" :born "t1/i1/f1" :depends-on [[:fact :F]]})
                 (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends-on [[:spec :S]]})
+                  {:title "t" :born "t1/i1/f1" :depends-on [[:fact :F]]})
                 (assoc-in [:session/facts :F]
                   {:content "f" :born "t1/i1/f1"}))
           idx (eng/build-indexes ctx)]
 
       (it "indexes the typed dep-graph with each node present"
         (let [g (:dep-graph idx)]
-          (expect (contains? g [:spec :S]))
           (expect (contains? g [:task :T]))
           (expect (contains? g [:fact :F]))))
 
       (it "edges normalize bare and typed refs uniformly"
         (let [g (:dep-graph idx)]
-          (expect (= #{[:fact :F]} (get g [:spec :S])))
-          (expect (= #{[:spec :S]} (get g [:task :T])))))
+          (expect (= #{[:fact :F]} (get g [:task :T])))))
 
       (it "empty-deps entity still appears as a node with an empty edge set"
         (let [g (:dep-graph idx)]
           (expect (= #{} (get g [:fact :F]))))))))
 
-;; introspect-dep-graph removed: the typed dep-graph is visible inline
-;; on every entity's `:depends-on` field in rendered ctx, so a separate
-;; introspection fn was redundant surface. `build-indexes` still returns
-;; `:dep-graph` for engine internals (cycle detection, derive-warnings)
-;; — the test in build-indexes-dep-graph-typed-test covers that path.
-
 (defdescribe depends-on-dangling-warning-test
   (describe "typed :depends-on refs that point at nonexistent entities surface as warnings"
-    ;; Engine-level invariant for Phase B: bare-key task→task dangling refs
-    ;; were already covered by `:task-dep-dangling`. The new typed pass adds
-    ;; cross-entity coverage so a missing `[:spec :ghost]` on any owner is
-    ;; flagged.
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends-on [[:spec :ghost]]}))
+                  {:title "t" :born "t1/i1/f1" :depends-on [[:fact :ghost]]}))
           idx (eng/build-indexes ctx)
           warns (eng/derive-warnings ctx idx)]
-      (it "emits :depends-on-dangling pointing at the missing kind+key"
-        (expect (some (fn [w]
-                        (and (= :depends-on-dangling (:code w))
-                          (some #(= [:spec :ghost] %) (or (:anchor w) []))))
+      (it "emits a dangling-dep warning naming the missing kind+key"
+        ;; derive-warnings is a vec of short strings now.
+        (expect (some #(and (re-find #"ghost" %)
+                         (re-find #"depends-on" %))
                   warns))))))
 
 ;; =============================================================================
-;; Phase C: Contradiction detection on facts.
+;; Task done semantics — self-asserted, no validator, no reversion
+;; =============================================================================
+
+(defdescribe task-done-self-asserted-test
+  (describe "task-set! :status :done is accepted as-is and stamps :done-born"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc :session/scope {:turn 2 :iter 1 :next-form 1})
+                (assoc-in [:session/tasks :T]
+                  {:title "impl" :status :doing :born "t1/i1/f1"}))
+          {ctx' :ctx :as out}
+          (eng/apply-mutator ctx "t2/i1/f1" :task-set! [:T {:status :done}])]
+
+      (it "the write is stamped"
+        (expect (:stamped? out)))
+
+      (it ":status is :done"
+        (expect (= :done (get-in ctx' [:session/tasks :T :status]))))
+
+      (it "engine stamps :done-born at the form scope"
+        (expect (= "t2/i1/f1" (get-in ctx' [:session/tasks :T :done-born]))))
+
+      (it "no warnings — done is self-asserted, never re-run"
+        (expect (empty? (:warnings out))))))
+
+  (describe "flipping a :done task back to a non-terminal status clears :done-born"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc :session/scope {:turn 2 :iter 1 :next-form 1})
+                (assoc-in [:session/tasks :T]
+                  {:title "impl" :status :done :born "t1/i1/f1"
+                   :done-born "t1/i2/f1"}))
+          {ctx' :ctx}
+          (eng/apply-mutator ctx "t2/i1/f1" :task-set! [:T {:status :doing}])]
+      (it ":done-born cleared on the transition"
+        (expect (nil? (get-in ctx' [:session/tasks :T :done-born])))))))
+
+(defdescribe task-done-pending-dep-warning-test
+  (describe "task :done while a dep is non-terminal surfaces a soft warning"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/tasks :a] {:title "dep" :status :doing
+                                               :born "t1/i1/f1"})
+                (assoc-in [:session/tasks :b] {:title "main" :status :done
+                                               :done-born "t1/i2/f1"
+                                               :depends-on [:a]
+                                               :born "t1/i1/f2"}))
+          warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
+      (it "emits a short warning string naming the task + non-terminal dep"
+        ;; e.g. "task :b :done but dep :a is :doing"
+        (expect (some #(and (re-find #":b" %) (re-find #":a" %)
+                         (re-find #"done" %))
+                  warns)))))
+
+  (describe "no warning when the dep is terminal"
+    (let [ctx (-> (eng/empty-ctx "t")
+                (assoc-in [:session/tasks :a] {:title "dep" :status :done
+                                               :done-born "t1/i1/f1"
+                                               :born "t1/i1/f1"})
+                (assoc-in [:session/tasks :b] {:title "main" :status :done
+                                               :done-born "t1/i2/f1"
+                                               :depends-on [:a]
+                                               :born "t1/i1/f2"}))
+          warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
+      (it "stays quiet"
+        (expect (not-any? #(re-find #"but dep" %) warns))))))
+
+;; =============================================================================
+;; Contradiction detection on facts.
 ;;
 ;; `(fact-contradicts! :K1 :K2)` declares a SYMMETRIC, NON-TRANSITIVE link
 ;; between two facts. The engine writes `:contradicts` on both sides so the
 ;; warning surfaces regardless of read direction. When both facts stay
-;; `:active`, `derive-warnings` emits `:contradicting-facts`. Resolving a
-;; contradiction is the model's job (flip one to `:superseded`) — engine
-;; never auto-resolves.
+;; `:active`, `derive-warnings` emits a contradiction string. Resolving a
+;; contradiction is the model's job (flip one to `:superseded`).
 ;; =============================================================================
 
 (defdescribe fact-contradicts-test
@@ -1112,7 +868,7 @@
         (expect (empty? warnings))))))
 
 (defdescribe contradicting-facts-warning-test
-  (describe "derive-warnings emits :contradicting-facts when both stay :active"
+  (describe "derive-warnings emits a contradiction string when both stay :active"
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/facts :f1] {:content "x" :status :active
                                                 :born "t1/i1/f1"
@@ -1122,13 +878,12 @@
                                                 :contradicts #{:f1}}))
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
       (it "fires exactly one warning per unordered pair"
-        (let [hits (filter #(= :contradicting-facts (:code %)) warns)]
+        (let [hits (filter #(re-find #"↔" %) warns)]
           (expect (= 1 (count hits)))))
-      (it "warning anchors carry both fact ids"
-        (let [w (first (filter #(= :contradicting-facts (:code %)) warns))]
-          (expect (= 2 (count (:anchor w))))
-          (expect (contains? (set (:anchor w)) :f1))
-          (expect (contains? (set (:anchor w)) :f2))))))
+      (it "warning string names both fact ids"
+        (let [w (first (filter #(re-find #"↔" %) warns))]
+          (expect (re-find #":f1" w))
+          (expect (re-find #":f2" w))))))
 
   (describe "flipping one fact to :superseded silences the warning"
     (let [ctx (-> (eng/empty-ctx "t")
@@ -1139,8 +894,8 @@
                                                 :born "t1/i1/f1"
                                                 :contradicts #{:f1}}))
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
-      (it "no :contradicting-facts warning is emitted"
-        (expect (not-any? #(= :contradicting-facts (:code %)) warns))))))
+      (it "no contradiction warning is emitted"
+        (expect (not-any? #(re-find #"↔" %) warns))))))
 
 (defdescribe contradiction-is-not-transitive-test
   (describe "A↔B and B↔C does NOT imply A↔C"
@@ -1159,190 +914,52 @@
                                                :born "t1/i1/f1"
                                                :contradicts #{:B}}))
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))
-          hits (filter #(= :contradicting-facts (:code %)) warns)
-          anchored-pairs (set (map (comp set :anchor) hits))]
+          hits (filter #(re-find #"↔" %) warns)]
       (it "two warnings emitted (A↔B, B↔C)"
         (expect (= 2 (count hits))))
       (it "A↔C is NOT emitted"
-        (expect (not (contains? anchored-pairs #{:A :C})))))))
+        (expect (not-any? #(and (re-find #":A" %) (re-find #":C" %)
+                             (not (re-find #":B" %)))
+                  hits))))))
 
 ;; =============================================================================
-;; Proof composition.
-;;
-;; Proof entries can carry `:proof-compose [s1 s2 …]` plus `:proof-rule
-;; :and|:or`. The validator pass evaluates each sub-scope and combines the
-;; results. Failed sub-scopes archive individually so the model can swap
-;; only the broken evidence without rebuilding the whole composition.
-;; =============================================================================
-
-(defn- with-spec-req-validator [ctx spec-k req-id src]
-  (-> ctx
-    (assoc-in [:session/specs spec-k]
-      {:title "s" :born "t1/i1/f1" :status :doing
-       :requirements [{:id req-id :title "r" :validator-fn src}]})))
-
-(defn- with-compose-proof [ctx task-k spec-k req-id scopes rule]
-  (assoc-in ctx [:session/tasks task-k]
-    {:title "t" :born "t1/i1/f1" :status :doing
-     :specs {spec-k [(cond-> {:requirement req-id :proof-compose scopes}
-                       rule (assoc :proof-rule rule))]}}))
-
-(defdescribe proof-compose-and-test
-  (describe ":and composition passes when EVERY sub-scope's validator passes"
-    (let [ctx (-> (eng/empty-ctx "t")
-                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
-                (with-spec-req-validator :S :r1
-                  "(fn [{:keys [result]}] (true? result))")
-                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :and))
-          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}
-                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result true}}
-          ctx' (eng/archive-failed-task-proofs ctx form-results)]
-      (it "writes no archive entry — both passed"
-        (expect (empty? (get-in ctx' [:session/tasks :T :archived-proofs]))))))
-
-  (describe ":and composition archives ONLY the failed sub-scope"
-    (let [ctx (-> (eng/empty-ctx "t")
-                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
-                (with-spec-req-validator :S :r1
-                  "(fn [{:keys [result]}] (true? result))")
-                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :and))
-          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}
-                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result false}}
-          ctx' (eng/archive-failed-task-proofs ctx form-results)
-          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
-
-      (it "archives exactly one entry (the rejected scope)"
-        (expect (= 1 (count archive))))
-
-      (it "captures the failing sub-scope, not the whole compose"
-        (let [e (first archive)]
-          (expect (= "t2/i1/f2" (:proof e)))
-          (expect (= :r1 (:requirement e))))))))
-
-(defdescribe proof-compose-or-test
-  (describe ":or composition passes when AT LEAST ONE sub-scope passes"
-    (let [ctx (-> (eng/empty-ctx "t")
-                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
-                (with-spec-req-validator :S :r1
-                  "(fn [{:keys [result]}] (true? result))")
-                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :or))
-          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result false}
-                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result true}}
-          ctx' (eng/archive-failed-task-proofs ctx form-results)]
-      (it "writes no archive entry — one passed"
-        (expect (empty? (get-in ctx' [:session/tasks :T :archived-proofs]))))))
-
-  (describe ":or composition archives ALL sub-scopes when none pass"
-    (let [ctx (-> (eng/empty-ctx "t")
-                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
-                (with-spec-req-validator :S :r1
-                  "(fn [{:keys [result]}] (true? result))")
-                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :or))
-          form-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result false}
-                        "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result false}}
-          ctx' (eng/archive-failed-task-proofs ctx form-results)
-          archive (get-in ctx' [:session/tasks :T :archived-proofs])]
-      (it "archives every sub-scope"
-        (expect (= 2 (count archive))))
-      (it "covers both failing scopes"
-        (let [scopes (set (map :proof archive))]
-          (expect (= #{"t2/i1/f1" "t2/i1/f2"} scopes)))))))
-
-(defdescribe proof-compose-schema-test
-  (describe "apply-proof-add! validates compose shape at write time"
-    (let [base (-> (eng/empty-ctx "t")
-                 (with-spec-req-validator :S :r1 "(fn [_] true)")
-                 (assoc-in [:session/tasks :T]
-                   {:title "t" :born "t1/i1/f1" :status :doing}))]
-      (it "rejects empty :proof-compose with :proof-compose-empty"
-        (let [{warnings :warnings}
-              (eng/apply-mutator base "t1/i2/f1" :proof-add!
-                [:T :S {:requirement :r1 :proof-compose []}])]
-          (expect (some #(= :proof-compose-empty (:code %)) warnings))))
-
-      (it "rejects non-string sub-scopes with :proof-compose-non-string"
-        (let [{warnings :warnings}
-              (eng/apply-mutator base "t1/i2/f1" :proof-add!
-                [:T :S {:requirement :r1 :proof-compose [:not-a-string]}])]
-          (expect (some #(= :proof-compose-non-string (:code %)) warnings))))
-
-      (it "warns on unknown :proof-rule with :proof-rule-unknown"
-        (let [{warnings :warnings}
-              (eng/apply-mutator base "t1/i2/f1" :proof-add!
-                [:T :S {:requirement :r1 :proof-compose ["t1/i1/f1"]
-                        :proof-rule :xor}])]
-          (expect (some #(= :proof-rule-unknown (:code %)) warnings)))))))
-
-(defdescribe proof-compose-progression-test
-  (describe "progression counts compose proofs as proven only when every sub-scope is reachable"
-    (let [ctx (-> (eng/empty-ctx "t")
-                (assoc :session/scope {:turn 2 :iter 2 :next-form 1})
-                (with-spec-req-validator :S :r1 "(fn [_] true)")
-                (with-compose-proof :T :S :r1 ["t2/i1/f1" "t2/i1/f2"] :and))
-          ;; only one of the two compose scopes is in form-results
-          partial-results {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}}
-          full-results    {"t2/i1/f1" {:scope "t2/i1/f1" :tag :observation :result true}
-                           "t2/i1/f2" {:scope "t2/i1/f2" :tag :observation :result true}}
-          prog-partial (eng/derive-progression ctx (eng/build-indexes ctx) partial-results)
-          prog-full    (eng/derive-progression ctx (eng/build-indexes ctx) full-results)]
-      (it "partial form-results → spec still :open"
-        (expect (= :open (get-in prog-partial [:S :state]))))
-      (it "full form-results → spec :ready"
-        (expect (= :ready (get-in prog-full [:S :state])))))))
-
-;; =============================================================================
-;; Phase L: introspect-changes — turn-to-turn delta over snapshots.
+;; introspect-changes — turn-to-turn delta over snapshots.
 ;;
 ;; Diff is a pure projection over the persisted snapshots
 ;; (session_turn_state.ctx). Returns per-entity change records:
-;;   {:kind :spec|:task|:fact|:rule :K k :change <:added | :removed | vec>}
+;;   {:kind :task|:fact :K k :change <:added | :removed | vec>}
 ;; Each per-field change is `[field before after]`.
 ;; Trailer is intentionally excluded — model already reads it inline.
 ;; =============================================================================
 
 (defdescribe diff-ctx-test
   (describe "diff-ctx returns per-entity change records"
-    (let [before {:session/specs {:S {:title "switch to bcrypt" :status :doing
-                                      :born "t1/i1/f1"}}
-                  :session/tasks {:T {:title "impl" :status :todo
+    (let [before {:session/tasks {:T {:title "impl" :status :todo
                                       :born "t1/i1/f1"}}
                   :session/facts {:F {:content "uses literal compare"
                                       :status :active :born "t1/i1/f1"}}}
-          after  {:session/specs {:S {:title "switch to bcrypt" :status :done
-                                      :born "t1/i1/f1" :done-born "t2/i1/f2"}
-                                  :S2 {:title "new spec" :status :draft :born "t2/i1/f3"}}
-                  :session/tasks {:T {:title "impl" :status :doing
-                                      :born "t1/i1/f1"
-                                      :archived-proofs [{:proof "t2/i1/f1"}]}}
+          after  {:session/tasks {:T {:title "impl" :status :doing
+                                      :born "t1/i1/f1"}
+                                  :T2 {:title "new task" :status :todo
+                                       :born "t2/i1/f3"}}
                   :session/facts {:F {:content "uses bcrypt now"
-                                      :status :active :born "t1/i1/f1"}}}
+                                      :status :superseded :born "t1/i1/f1"
+                                      :done-born "t2/i1/f2"}}}
           diff (eng/diff-ctx before after)
           by-key (group-by (juxt :kind :K) diff)]
 
       (it "captures :added entities"
-        (let [[entry] (get by-key [:spec :S2])]
+        (let [[entry] (get by-key [:task :T2])]
           (expect (= :added (:change entry)))
-          (expect (= "new spec" (get-in entry [:after :title])))))
+          (expect (= "new task" (get-in entry [:after :title])))))
 
       (it "captures :status transitions"
-        (let [[entry] (get by-key [:spec :S])
+        (let [[entry] (get by-key [:task :T])
               tuples  (:change entry)
               status  (some (fn [[f b a]] (when (= f :status) [b a])) tuples)]
-          (expect (= [:doing :done] status))))
+          (expect (= [:todo :doing] status))))
 
-      (it "captures :done-born stamping"
-        (let [[entry] (get by-key [:spec :S])
-              tuples  (:change entry)]
-          (expect (some #(= [:done-born nil "t2/i1/f2"] %) tuples))))
-
-      (it "captures rejected-proofs growth as a :rejected-proofs delta"
-        (let [[entry] (get by-key [:task :T])
-              tuples  (:change entry)]
-          (expect (some (fn [[f b a]]
-                          (and (= f :rejected-proofs) (= b 0) (= a 1)))
-                    tuples))))
-
-      (it "captures fact :content changes"
+      (it "captures fact :content + :status changes"
         (let [[entry] (get by-key [:fact :F])
               tuples  (:change entry)
               ch (some (fn [[f b a]] (when (= f :content) [b a])) tuples)]
@@ -1350,8 +967,8 @@
 
 (defdescribe introspect-changes-test
   (describe "introspect-changes reads snapshots N-1 and N and diffs them"
-    (let [snap-1 {:session/specs {:S {:title "x" :status :doing :born "t1/i1/f1"}}}
-          snap-2 {:session/specs {:S {:title "x" :status :done :born "t1/i1/f1"
+    (let [snap-1 {:session/tasks {:T {:title "x" :status :doing :born "t1/i1/f1"}}}
+          snap-2 {:session/tasks {:T {:title "x" :status :done :born "t1/i1/f1"
                                       :done-born "t2/i1/f1"}}}
           history [[1 snap-1] [2 snap-2]]
           changes (eng/introspect-changes history "t2")]
@@ -1361,14 +978,14 @@
         (expect (pos? (count changes))))
 
       (it "includes the :status flip from :doing to :done"
-        (let [[entry] (filter #(and (= :spec (:kind %)) (= :S (:K %))) changes)
+        (let [[entry] (filter #(and (= :task (:kind %)) (= :T (:K %))) changes)
               tuples  (:change entry)]
           (expect (some (fn [[f b a]]
                           (and (= f :status) (= :doing b) (= :done a)))
                     tuples)))))
 
     (describe "returns nil when snapshot N or N-1 is missing"
-      (let [history [[1 {:session/specs {}}]]]
+      (let [history [[1 {:session/tasks {}}]]]
         (it "nil when N doesn't exist"
           (expect (nil? (eng/introspect-changes history "t5"))))
         (it "nil when N-1 doesn't exist (e.g. turn 1)"

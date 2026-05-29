@@ -662,7 +662,7 @@
         ;; Per-top-level-form cursor pointer. Multi-form fences need the
         ;; turn-state-atom's :form-idx (used by `(done …)` to
         ;; stamp answer-atom :position, by cursor-snapshot to compute
-        ;; :next-form for proof classification, etc.) to ADVANCE as
+        ;; :next-form for scope classification, etc.) to ADVANCE as
         ;; each top-level form runs. Without this update the atom
         ;; stayed at whatever the outer executed-mapv set (0 for a
         ;; single-fence iter), so cursor :next-form was always 1 and
@@ -1432,7 +1432,7 @@
                                                        ;; The block is structurally silent when its
                                                        ;; parsed segments carry only recap kinds
                                                        ;; (`:title` / `:answer-ref` /
-                                                       ;; `:task-update` / `:spec-update` /
+                                                       ;; `:task-update` /
                                                        ;; `:fact-update`) — no `:code` segments at
                                                        ;; all. The channel hides `:code` rows by
                                                        ;; default (`:vis/show-raw-code` toggle
@@ -1591,27 +1591,27 @@
 
 (defn- iteration-start-hook-hit
   "Normalise the value returned by a `:turn.iteration/start` hook into a
-   hook-task shape (D12). Hooks emit `{:title :validator-fn :importance?}`
-   maps. The loop wraps this into a full `::cs/task` map keyed by the
-   hook id, suitable for direct fold onto `:session/tasks`.
+   hook-task shape (D12). Hooks emit `{:title :importance?}` maps. The
+   loop wraps this into a slimmed task map keyed by the hook id, suitable
+   for direct fold onto `:session/tasks`. The model satisfies a hook task
+   by self-asserting `(task-set! :hook-id {:status :done})` — there is no
+   validator-fn and no proof.
 
-   Returns `{:id <kw> :task <task-map> :emit {:specs :tasks :facts}}`
+   Returns `{:id <kw> :task <task-map> :emit {:tasks :facts}}`
    or nil. The `:emit` key carries optional secondary CTX writes:
-   each entry under `:emit/specs` / `:emit/tasks` / `:emit/facts`
-   flows through `ctx-loop/apply-and-record!` exactly like a model-
-   emitted mutator.
-   Hooks may also return ONLY `{:emit ...}` to seed specs/tasks/facts
-   without registering a hook-task themselves -- in that case both
-   `:title` and `:validator-fn` may be absent and `:task` returns nil.
+   each entry under `:emit/tasks` / `:emit/facts` flows through
+   `ctx-loop/apply-and-record!` exactly like a model-emitted mutator.
+   Hooks may also return ONLY `{:emit ...}` to seed tasks/facts without
+   registering a hook-task themselves -- in that case `:title` may be
+   absent and `:task` returns nil.
 
    `lifetime` (`:turn` | `:session`) flows from the hook registration
    spec into the task. `:turn` tasks are dropped at advance-turn so a
-   transient signal (e.g. context-pressure) doesn't linger in CTX as
-   stale `:done :validated? false` chrome the model keeps re-marking;
+   transient signal (e.g. context-pressure) doesn't linger in CTX;
    `:session` tasks (default) follow the standard TTL.
 
-   Hooks that emit a hook-task but omit `:title` or `:validator-fn`
-   are rejected with a log warn."
+   Hooks that emit a hook-task but omit a non-blank `:title` (and carry
+   no `:emit` payload) are rejected with a log warn."
   [ext id lifetime hit]
   (cond
     (nil? hit) nil
@@ -1625,7 +1625,6 @@
 
     :else
     (let [title         (:title hit)
-          validator-fn  (:validator-fn hit)
           emit          (when (map? (:emit hit)) (:emit hit))
           hook-task?    (and (string? title) (not (str/blank? title)))]
       (cond
@@ -1640,21 +1639,12 @@
               "Hook returned map without non-blank :title (and no :emit payload); dropping")
           nil)
 
-        (or (not (string? validator-fn)) (str/blank? validator-fn))
-        (do (tel/log! {:level :warn
-                       :id ::iteration-start-hook-missing-validator
-                       :data {:ext (:ext/name ext) :hook id}}
-              "Hook returned map without :validator-fn source string; dropping (every hook task MUST be validatable)")
-          nil)
-
         :else
         (cond-> {:id id
-                 :task (cond-> {:title         title
-                                :specs         {}
-                                :status        :todo
-                                :source        :hook
-                                :hook-id       id
-                                :validator-fn  validator-fn}
+                 :task (cond-> {:title   title
+                                :status  :todo
+                                :source  :hook
+                                :hook-id id}
                          (:importance hit) (assoc :importance (:importance hit))
                          lifetime          (assoc :lifetime lifetime))}
           emit (assoc :emit emit))))))
@@ -2804,7 +2794,7 @@
                output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
                max-tokens-exhaust?
-               "Shorten next iteration. Follow current :session/stages; keep tool procedure canonical and compact. Drop unrelated defs and emit `(done ...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               "Shorten next iteration. Follow current :session/tasks and heed :session/warnings; keep tool procedure canonical and compact. Drop unrelated defs and emit `(done ...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
                :else
                "Adjust your approach or finish with `(done ...)` using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate
@@ -3463,20 +3453,18 @@
                                     iteration-hints))
                     _ (doseq [{:keys [id task]} (or folded-hits [])]
                         (ctx-loop/apply-and-record! environment :task-set! [id task]))
-                    ;; Hook :emit payload: route secondary `:specs /
-                    ;; :tasks / :facts` writes from every hit through
+                    ;; Hook :emit payload: route secondary `:tasks /
+                    ;; :facts` writes from every hit through
                     ;; `apply-and-record!` so a
                     ;; hook can seed CTX in the same way a slash's
-                    ;; `:slash/specs` / `:slash/tasks` / `:slash/facts`
-                    ;; envelope does. Hooks that returned ONLY an :emit
-                    ;; map (no hook-task body) still flow through this
-                    ;; path — they were filtered out of `folded-hits`
-                    ;; above but kept in `iteration-hints`.
+                    ;; `:slash/tasks` / `:slash/facts` envelope does.
+                    ;; Hooks that returned ONLY an :emit map (no
+                    ;; hook-task body) still flow through this path —
+                    ;; they were filtered out of `folded-hits` above
+                    ;; but kept in `iteration-hints`.
                     _ (when (:ctx-atom environment)
                         (doseq [{emit :emit} iteration-hints
                                 :when (map? emit)]
-                          (doseq [[k partial] (:specs emit)]
-                            (ctx-loop/apply-and-record! environment :spec-set! [k partial]))
                           (doseq [[k partial] (:tasks emit)]
                             (ctx-loop/apply-and-record! environment :task-set! [k partial]))
                           (doseq [[k partial] (:facts emit)]
@@ -3778,15 +3766,15 @@
                         ;; at the top of each iter. The renderer +
                         ;; cursor-snapshot consume that atom, so they see
                         ;; 1-based iters. Trailer pin + form envelopes
-                        ;; MUST agree with the renderer (model writes
-                        ;; proof scopes `tN/iM/fK` against the rendered
-                        ;; cursor), so we read the same 1-based source
-                        ;; here. Using raw `iteration` (0) at this point
-                        ;; caused a turn-1 off-by-one: trailer pinned
-                        ;; `t1/i0/fK` while the rendered ctx showed the
-                        ;; model `t1/i1` — hook-task validators couldn't
-                        ;; find their proof scope in the form-results
-                        ;; map and reverted satisfied tasks.
+                        ;; MUST agree with the renderer (model
+                        ;; references scopes `tN/iM/fK` against the
+                        ;; rendered cursor), so we read the same 1-based
+                        ;; source here. Using raw `iteration` (0) at this
+                        ;; point caused a turn-1 off-by-one: trailer
+                        ;; pinned `t1/i0/fK` while the rendered ctx showed
+                        ;; the model `t1/i1` — scope references in the
+                        ;; form-results map didn't line up with the
+                        ;; cursor the model saw.
                         cursor      {:turn (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
                                      :iter (or (:iteration (ctx-loop/read-turn-state environment))
                                              (inc (long (or iteration 0))))}
@@ -3800,7 +3788,7 @@
                         ;; fence as a single envelope at f1, dropping every
                         ;; form after the first from the trailer pin and
                         ;; from the form-results map the model references
-                        ;; on proof scopes.
+                        ;; by scope.
                         ;; Per-form expansion. Each entry inherits a
                         ;; `:channel` slice from the parent fence so the
                         ;; per-form envelope carries the pre-rendered tool
@@ -3894,9 +3882,9 @@
                         _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
                         ;; =====================================================
                         ;; CTX engine end-of-iter pipeline (D11/D12).
-                        ;; Flat: advance-iter, then reconcile, with phase
-                        ;; timing + state logged to telemere so the run is
-                        ;; replayable from ~/.vis/vis.log alone.
+                        ;; Flat: advance-iter, then process consults, with
+                        ;; phase timing + state logged to telemere so the
+                        ;; run is replayable from ~/.vis/vis.log alone.
                         ;; =====================================================
                         ctx-atom-ref (:ctx-atom environment)
                         advance-iter-start-ms (System/currentTimeMillis)
@@ -3913,9 +3901,9 @@
                                             (into {}
                                               (for [[k v] (:session/tasks @ctx-atom-ref)
                                                     :when (= :hook (:source v))]
-                                                [k (select-keys v [:status :proof :done-born])])))
+                                                [k (select-keys v [:status :done-born])])))
                         _ (when ctx-atom-ref
-                            (tel/log! {:level :info :id ::iter-end-pre-reconcile
+                            (tel/log! {:level :info :id ::iter-end-pre-consults
                                        :data {:iteration iteration
                                               :cursor cursor
                                               :pinned-forms (count forms-vec)
@@ -3923,18 +3911,9 @@
                                               :form-result-scopes (vec (sort (keys (or form-results-map {}))))
                                               :hook-tasks-pre hook-tasks-pre
                                               :advance-iter-ms advance-iter-duration-ms}}
-                              "CTX iter-end: trailer pinned; about to reconcile hook-tasks"))
-                        reconcile-start-ms (System/currentTimeMillis)
+                              "CTX iter-end: trailer pinned; about to process consults"))
+                        consult-start-ms (System/currentTimeMillis)
                         _ (when ctx-atom-ref
-                            (ctx-loop/reconcile-done-hook-tasks! environment (or form-results-map {}))
-                            ;; Regular task proofs that fail their req's
-                            ;; validator-fn get archived into the task's
-                            ;; `:archived-proofs` vec so the model can
-                            ;; `(introspect-failed-proofs :K)` next iter
-                            ;; and avoid re-submitting the same rejected
-                            ;; scope. Hook-task rejections were already
-                            ;; archived inside reconcile-done-hook-tasks!.
-                            (ctx-loop/archive-failed-task-proofs! environment (or form-results-map {}))
                             ;; Drain :engine/pending-consults declared
                             ;; via (consult-request! …) inside this
                             ;; iter's fence. Each pending intent runs
@@ -3945,21 +3924,21 @@
                             ;; channel. Done is refused while pending
                             ;; consults exist.
                             (ctx-loop/process-pending-consults! environment on-chunk))
-                        reconcile-duration-ms (- (System/currentTimeMillis) reconcile-start-ms)
+                        consult-duration-ms (- (System/currentTimeMillis) consult-start-ms)
                         hook-tasks-post   (when ctx-atom-ref
                                             (into {}
                                               (for [[k v] (:session/tasks @ctx-atom-ref)
                                                     :when (= :hook (:source v))]
-                                                [k (select-keys v [:status :proof :done-born])])))
+                                                [k (select-keys v [:status :done-born])])))
                         warnings-post     (when ctx-atom-ref (:engine/warnings @ctx-atom-ref))
                         _ (when ctx-atom-ref
-                            (tel/log! {:level :info :id ::iter-end-post-reconcile
+                            (tel/log! {:level :info :id ::iter-end-post-consults
                                        :data {:iteration iteration
                                               :hook-tasks-post hook-tasks-post
                                               :hook-tasks-changed? (not= hook-tasks-pre hook-tasks-post)
                                               :warnings warnings-post
-                                              :reconcile-ms reconcile-duration-ms}}
-                              "CTX iter-end: reconcile complete"))
+                                              :consult-ms consult-duration-ms}}
+                              "CTX iter-end: consults processed"))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
@@ -4105,18 +4084,14 @@
     "_slash handled_"))
 
 (defn- apply-slash-mutations!
-  "Route a slash result's `:slash/specs / :slash/tasks / :slash/facts`
-   entries through `ctx-loop/apply-and-record!` so the slash leaves
-   the same kind of CTX trace a model-emitted
-   `(spec-set! ...)` / `(task-set! ...)` / `(fact-set! ...)` would.
-   Engine FSM checks, dedup, and validator-fn satisfaction all run
-   identically; warnings land on `:engine/warnings` for the next
-   render pass."
+  "Route a slash result's `:slash/tasks / :slash/facts` entries through
+   `ctx-loop/apply-and-record!` so the slash leaves the same kind of CTX
+   trace a model-emitted `(task-set! ...)` / `(fact-set! ...)` would.
+   Engine FSM checks and dedup run identically; warnings land on
+   `:engine/warnings` for the next render pass."
   [env slash-result]
   (let [result (:result slash-result)]
     (when (map? result)
-      (doseq [[k partial] (:slash/specs result)]
-        (ctx-loop/apply-and-record! env :spec-set! [k partial]))
       (doseq [[k partial] (:slash/tasks result)]
         (ctx-loop/apply-and-record! env :task-set! [k partial]))
       (doseq [[k partial] (:slash/facts result)]
@@ -4129,7 +4104,7 @@
    any LLM round-trip. Returns the same shape `iteration-loop` would
    have produced (so callers don't special-case slash turns).
 
-   When the slash result carries `:slash/specs / :tasks / :facts`,
+   When the slash result carries `:slash/tasks / :facts`,
    those mutations are applied to the env's `ctx-atom` via
    `apply-and-record!` BEFORE the synthetic iter row lands, so the
    end-of-turn ctx snapshot (persisted to `session_turn_state.ctx`)
@@ -4280,6 +4255,20 @@
 (def ^:private AUTO_TITLE_IDLE_MS 10000)
 (def ^:private AUTO_TITLE_SEMANTIC_MS 30000)
 
+(def ^:private auto-title-placeholder-labels
+  #{"untitled" "untitled session"})
+
+(defn- auto-title-placeholder?
+  [s]
+  (contains? auto-title-placeholder-labels
+    (str/lower-case (str/trim (str s)))))
+
+(defn- usable-existing-title
+  [s]
+  (let [t (some-> s str str/trim not-empty)]
+    (when-not (auto-title-placeholder? t)
+      t)))
+
 (defn- sanitize-auto-title
   [s]
   (let [line (-> (or s "")
@@ -4292,7 +4281,9 @@
                (str/replace #"[\s\"'`*_#>\-–—.]+$" "")
                str/trim)
         clipped (truncate line AUTO_TITLE_MAX_CHARS)]
-    (when-not (str/blank? clipped) clipped)))
+    (when-not (or (str/blank? clipped)
+                (auto-title-placeholder? clipped))
+      clipped)))
 
 (defn- auto-title-prompt
   [previous-title user-request]
@@ -4332,19 +4323,26 @@
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
   (when (and db-info session-id (:router env))
     (future
-      (let [previous (some-> session-title-atom deref str str/trim not-empty)
-            title    (try
-                       (model-auto-title! env previous user-request)
-                       (catch Throwable t
-                         (tel/log! {:level :warn
-                                    :id ::auto-title-failed
-                                    :data {:session-id session-id
-                                           :previous-title previous
-                                           :error (ex-message t)}}
-                           "Auto-title LLM call failed; keeping existing title")
-                         nil))]
-        (when (and (seq title) (not= title previous))
-          (set-title-with-broadcast! db-info session-id session-title-atom title))))))
+      (try
+        (let [previous (usable-existing-title (some-> session-title-atom deref))
+              title    (try
+                         (model-auto-title! env previous user-request)
+                         (catch Throwable t
+                           (tel/log! {:level :warn
+                                      :id ::auto-title-failed
+                                      :data {:session-id session-id
+                                             :previous-title previous
+                                             :error (ex-message t)}}
+                             "Auto-title LLM call failed; keeping existing title")
+                           nil))]
+          (when (and (seq title) (not= title previous))
+            (set-title-with-broadcast! db-info session-id session-title-atom title)))
+        (catch Throwable t
+          (tel/log! {:level :warn
+                     :id ::auto-title-update-failed
+                     :data {:session-id session-id
+                            :error (ex-message t)}}
+            "Auto-title update failed; keeping existing title"))))))
 
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
@@ -5208,7 +5206,7 @@
         ;; one of the verbs.
         ;;
         ;; PER-ITER CACHE: the model may call multiple introspect-* verbs
-        ;; inside a single iter (e.g. `(introspect-spec :a)` AND
+        ;; inside a single iter (e.g. `(introspect-fact :a)` AND
         ;; `(introspect-task :b)`). Each call would otherwise hit
         ;; `db-load-ctx-history` against SQLite. We cache the loaded
         ;; history per `(turn, iter)` key derived from the loop's running
@@ -5241,7 +5239,7 @@
                                    {'done            answer-fn
                                     'set-session-title! session-title-fn}
                                    ;; build-sci-bindings contributes every
-                                   ;; engine mutator (spec/task/fact/req/proof).
+                                   ;; engine mutator (task/fact + contradicts).
                                    (ctx-loop/build-sci-bindings ctx-loop-env)
                                    (ctx-loop/build-introspect-bindings
                                      ctx-loop-env introspect-history-loader))

@@ -1176,7 +1176,6 @@
      :answer-ref  —  (done …)
      :title       —  (set-session-title! …)
      :task-update —  (task-set! K {…})
-     :spec-update —  (spec-set! K {…})
      :fact-update —  (fact-set! K {…})
      :code        —  anything else (def, fn call, nested do/let/when, etc.)
    Match is namespace-agnostic by NAME; engine forms come unqualified."
@@ -1186,7 +1185,6 @@
       "done"             :answer-ref
       "set-session-title!"  :title
       "task-set!"        :task-update
-      "spec-set!"        :spec-update
       "fact-set!"        :fact-update
       :code)
     :code))
@@ -1200,7 +1198,7 @@
 ;;
 ;; CHANNEL (TUI / Telegram): user-facing. Show TOOL CALL previews
 ;; (CAT / LS / RG / EDIT badges + bodies), RECAP rows (title / task /
-;; spec / fact), and the final answer. Everything else — def
+;; fact), and the final answer. Everything else — def
 ;; bindings, accessor projections, keyword lookups, bare symbols,
 ;; plain-value forms — is bookkeeping noise.
 ;;
@@ -1247,8 +1245,8 @@
 
 (defn- ctx-mutation-payload
   "Pull `{:k :partial}` out of `(mutator k partial)` shape — used by
-   `parse-block-display` to surface `task-set!`/`spec-set!`/
-   `fact-set!` calls as structured recap segments instead of raw
+   `parse-block-display` to surface `task-set!`/`fact-set!`
+   calls as structured recap segments instead of raw
    source lines. Returns nil when the form doesn't match the
    2-arg mutator shape."
   [form]
@@ -1319,7 +1317,7 @@
                                  :answer-ref [{:kind :answer-ref}]
                                  :title      [{:kind :title
                                                :value (title-value-from-form form)}]
-                                 (:task-update :spec-update :fact-update)
+                                 (:task-update :fact-update)
                                  (let [payload (ctx-mutation-payload form)
                                        k       (some-> payload :k)]
                                    (cond
@@ -1327,14 +1325,14 @@
                                      ;; `(set-session-title! …)` is
                                      ;; followed by `(task-set!
                                      ;; :vis.foundation/session-title
-                                     ;; {:status :done :proof scope})`
-                                     ;; from the foundation hook. The
-                                     ;; matching `:title` recap row
-                                     ;; already tells the user what
-                                     ;; happened; the auto-ack row right
-                                     ;; below it is bookkeeping noise.
-                                     ;; Drop the segment so it never
-                                     ;; reaches the renderer.
+                                     ;; {:status :done})` from the
+                                     ;; foundation hook. The matching
+                                     ;; `:title` recap row already tells
+                                     ;; the user what happened; the
+                                     ;; auto-ack row right below it is
+                                     ;; bookkeeping noise. Drop the
+                                     ;; segment so it never reaches the
+                                     ;; renderer.
                                      (= :vis.foundation/session-title k)
                                      []
 
@@ -1343,8 +1341,6 @@
                                                :id   k}
                                         (some-> payload :partial :status)
                                         (assoc :status (-> payload :partial :status))
-                                        (some-> payload :partial :proof)
-                                        (assoc :proof  (-> payload :partial :proof))
                                         (some-> payload :partial :title)
                                         (assoc :title  (-> payload :partial :title)))]))
                                  :code
@@ -1377,8 +1373,8 @@
 
 (defn block-structurally-silent?
   "True when the block source carries only structural recap segments
-   (`:title`, `:answer-ref`, `:task-update`, `:spec-update`,
-   `:fact-update`) AND the user hasn't flipped
+   (`:title`, `:answer-ref`, `:task-update`, `:fact-update`)
+   AND the user hasn't flipped
    `:vis/show-raw-code` on. The engine stamps the persisted block +
    stream chunk with `:vis/silent? true` based on this so channels
    that don't parse segments still drop the entry from default

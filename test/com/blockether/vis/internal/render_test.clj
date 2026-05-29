@@ -112,7 +112,7 @@
     ;; :vis.foundation/session-title :done`) which is pure noise.
     (expect (= [{:kind :title :value "Greeting"}]
               (render/parse-block-display
-                "(set-session-title! \"Greeting\")\n(task-set! :vis.foundation/session-title {:status :done :proof \"t1/i1/f1\"})"))))
+                "(set-session-title! \"Greeting\")\n(task-set! :vis.foundation/session-title {:status :done})"))))
 
   (it "keeps the model's own task-set! recaps for non-engine ids"
     ;; A model-emitted task-set! that ISN'T the session-title
@@ -133,12 +133,14 @@
               (render/parse-block-display "(v/cat \"src/foo.clj\")"))))
 
   (it "classifies ctx mutators as structured recap segments (engine-only — raw source is hidden)"
-    (expect (= [{:kind :spec-update :id :K :title "x"}]
-              (render/parse-block-display "(spec-set! :K {:title \"x\"})")))
-    (expect (= [{:kind :task-update :id :K :status :done :proof "t1/i1/f1"}]
-              (render/parse-block-display "(task-set! :K {:status :done :proof \"t1/i1/f1\"})")))
+    ;; Only task-set! / fact-set! survive; spec-set! and proof extraction
+    ;; are gone. task-set! recap carries :status / :title only.
+    (expect (= [{:kind :task-update :id :K :status :done}]
+              (render/parse-block-display "(task-set! :K {:status :done})")))
+    (expect (= [{:kind :task-update :id :K :title "x"}]
+              (render/parse-block-display "(task-set! :K {:title \"x\"})")))
     (expect (= [{:kind :fact-update :id :K}]
-              (render/parse-block-display "(fact-set! :K {:summary \"f\"})"))))
+              (render/parse-block-display "(fact-set! :K {:content \"f\"})"))))
 
   (it "coalesces neighboring hidden tool calls into one hidden segment"
     (let [out (render/parse-block-display

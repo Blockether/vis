@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.ctx-renderer
-  "Pure-fn renderer: turn `{:ctx :warnings :progression :stages}` into
-   the bare-EDN text block embedded under `;; ctx` in every user message.
+  "Pure-fn renderer: turn `{:ctx :warnings}` into the bare-EDN text block
+   embedded under `;; ctx` in every user message.
 
    Design rules:
 
@@ -10,16 +10,14 @@
       `pprint`, no ad-hoc string concat for value bodies.
 
    2. **Top-level structure is hand-assembled.** The renderer interleaves
-      `:session/X` headers with their zp'd values and per-section annotation
-      tails. That structural layer is the only thing the renderer itself
-      writes; it never tries to inject text inside a zp'd value.
+      `:session/X` headers with their zp'd values. That structural layer is
+      the only thing the renderer itself writes; it never tries to inject
+      text inside a zp'd value.
 
-   3. **Annotations live in section tails.** Warnings and progression hints
-      anchored to a top-level subtree (`:session/specs`, `:session/tasks`,
-      `:session/facts`) follow that section's value as `;; ⚠ …` / `;;
-      progression …` lines, indented to the section body's column. Model
-      reads the data first, then the issues immediately below — clear
-      locality without polluting the EDN.
+   3. **Warnings are their own subtree.** The engine's `derive-warnings`
+      yields a vec of short strings; the renderer prints them under
+      `:session/warnings` (only when non-empty) as the single \"what needs
+      attention\" surface. No `;; ⚠` line-comments inside any EDN value.
 
    Output skeleton:
 
@@ -31,17 +29,10 @@
       :session/workspace {…}
       :session/symbols   {…}
 
-      :session/specs
-      {:auth {…}}
-      ;; ⚠ spec :auth req :r1 refs nonexistent fact :foo
-      ;; progression :auth 2/3 :partial; missing [:r2]
-
       :session/tasks {…}
-      ;; ⚠ task :t1 :done but dep :t2 is :doing
-
       :session/facts   {…}
       :session/trailer […]
-      :session/next-actions […]}"
+      :session/warnings [\"task :t1 :done but dep :t2 is :doing\"]}"
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -298,11 +289,6 @@
       (str/join "\n" (map #(render-trailer-pin % 1) trailer))
       "\n ]")))
 
-(defn- pct-string [ratio]
-  (cond
-    (nil? ratio) "0%"
-    :else (str (Math/round (* 100.0 (double ratio))) "%")))
-
 (defn- project-fact
   "LLM-facing projection of a fact. Drops engine-internal flags; keeps
    `:content`, `:status`, `:born`, `:depends-on`, `:contradicts` (vec).
@@ -314,98 +300,15 @@
        (seq (:depends-on f))     (assoc :depends-on (:depends-on f))
        (seq (:contradicts f))    (assoc :contradicts (vec (sort (:contradicts f)))))])
 
-(defn- project-spec
-  "LLM-facing projection of a spec. Drops `:validator-fn` source from
-   each requirement (engine remembers; `(introspect-spec :K)` returns).
-   Adds derived: `:progress`, `:missing`, `:validators`. Reqs become
-   flat `{:req-id {:title}}` map."
-  [progression [k s]]
-  (let [reqs (or (:requirements s) [])
-        p    (get progression k)]
-    [k (cond-> {:title (:title s) :status (or (:status s) :draft)}
-         (:born s)                 (assoc :born (:born s))
-         (:done-born s)            (assoc :done-born (:done-born s))
-         (seq (:depends-on s))     (assoc :depends-on (:depends-on s))
-         (seq reqs)                (assoc :reqs
-                                     (into {}
-                                       (for [r reqs]
-                                         [(:id r) {:title (:title r)}])))
-         (some? p)                 (assoc :progress
-                                     (str (:proven p) "/" (:total p)
-                                       " (" (pct-string (:ratio p)) ") "
-                                       (name (:state p))))
-         (some? p)                 (assoc :missing (vec (sort (:missing p))))
-         (seq reqs)                (assoc :validators
-                                     (str (count (filter :validator-fn reqs))
-                                       "/" (count reqs))))]))
-
-(defn- task-proof-shape
-  "Flat proof view per task: `{:spec/req <scope-or-compose>}`. Compose
-   proofs surface as the full sub-scope vec under the qualified key."
-  [t]
-  (into {}
-    (for [[spec-k proof-vec] (or (:specs t) {})
-          proof              proof-vec
-          :let [k (keyword (name spec-k) (name (:requirement proof)))]]
-      [k (cond
-           (vector? (:proof-compose proof))
-           (vec (:proof-compose proof))
-           (string? (:proof proof))
-           (:proof proof)
-           :else nil)])))
-
-(defn- project-task
-  "LLM-facing projection of a task. Drops `:validated?`, drops the raw
-   `:archived-proofs` vec (replaced by `:rejected-count`), flattens
-   `:specs {spec-K [proofs]}` to `:proofs {:spec/:req scope}`."
-  [[k t]]
-  (let [proofs (task-proof-shape t)
-        rejected (count (or (:archived-proofs t) []))]
-    [k (cond-> {:title (:title t) :status (or (:status t) :todo)}
-         (:born t)                 (assoc :born (:born t))
-         (:done-born t)            (assoc :done-born (:done-born t))
-         (:source t)               (assoc :source (:source t))
-         (:hook-id t)              (assoc :hook-id (:hook-id t))
-         (:importance t)           (assoc :importance (:importance t))
-         (seq (:depends-on t))     (assoc :depends-on (:depends-on t))
-         (seq proofs)              (assoc :proofs proofs)
-         (pos? rejected)           (assoc :rejected-count rejected))]))
-
-(defn- render-stages-value
-  "Phase H: render `:session/stages` — vec-of-vecs from
-   `eng/derive-stages`. Outer index = stage number; inner vec holds
-   parallel-safe entries `{:kind :id :status :reason :remedy}` the
-   model emits in ONE fence.
-
-   Caps total entry count at NEXT_ACTIONS_BUDGET, trimming from the
-   DEEPEST stage backwards so blockers + leaf work always survive.
-   Overflow is announced as a final stage `[{:overflow N :hint \"...\"}]`
-   so the data shape stays uniform (vec-of-vecs)."
-  [stages]
-  (let [stages (vec (or stages []))
-        sizes  (mapv count stages)
-        total  (apply + 0 sizes)]
-    (if (empty? stages)
-      "[]"
-      (let [budget    NEXT_ACTIONS_BUDGET
-            trim      (fn [stages overflow]
-                        (loop [s   stages
-                               rem overflow]
-                          (if (or (zero? rem) (empty? s))
-                            s
-                            (let [n (count (peek s))]
-                              (cond
-                                (zero? n)   (recur (pop s) rem)
-                                (<= n rem)  (recur (pop s) (- rem n))
-                                :else       (conj (pop s)
-                                              (vec (take (- n rem) (peek s)))))))))
-            overflow  (max 0 (- total budget))
-            trimmed   (if (pos? overflow) (trim stages overflow) stages)
-            with-tail (cond-> trimmed
-                        (pos? overflow)
-                        (conj [{:overflow overflow
-                                :hint     "raise NEXT_ACTIONS_BUDGET or close work"}]))]
-        (zp with-tail)))))
+(defn- render-warnings-value
+  "Render `:session/warnings` — the vec of short warning STRINGS from
+   `eng/derive-warnings`. This is the single \"what needs attention\"
+   surface (replaces the legacy `:session/stages` derived view and the
+   trailing `;; warn` line-comments). Pure EDN data; the model reads the
+   strings and acts on them. Caller only renders this section when the
+   vec is non-empty, so an empty vec never reaches here."
+  [warnings]
+  (zp (vec warnings)))
 
 ;; =============================================================================
 ;; Top-level
@@ -415,25 +318,25 @@
   "Render the engine view as the bare-EDN text block embedded under `;; ctx`
    in the user message.
 
-   Phase G: the prompt-side derived view is ONE field — `:session/stages`
-   — a flat ordered vec of `{:kind :id :status :reason :remedy}` entries.
-   Replaces the legacy triplet (`:session/timeline` + `:session/orphans`
-   + `:session/next-actions`) AND the trailing `;; ⚠ ...` line-comment
-   annotations. The model reads pure EDN data, no embedded prose.
+   `:session/warnings` is the only derived field: a flat vec of short
+   warning STRINGS from `eng/derive-warnings` (dep target missing,
+   contradicting facts, rebind loop, task :done with a non-terminal dep).
+   It is the single 'what needs attention' surface and replaces the legacy
+   `:session/stages` view plus the trailing `;; warn ...` line-comments.
+   The model reads pure EDN data, no embedded prose.
 
-   Raw entity subtrees (`:session/specs` / `:session/tasks` /
-   `:session/facts`) ride directly into the prompt when non-empty so
-   `(introspect-fact :K)` etc. have their canonical sources visible.
+   Raw entity subtrees (`:session/tasks` / `:session/facts`) ride directly
+   into the prompt when non-empty so `(introspect-fact :K)` etc. have their
+   canonical sources visible.
 
    Input map keys:
-     :ctx           full ::cs/ctx (validated upstream)
-     :progression   {spec-id {:total :proven :ratio :state :missing}}
-     :stages        vec-of-vecs from `eng/derive-stages`
+     :ctx       full ::cs/ctx (validated upstream)
+     :warnings  vec of short strings from `eng/derive-warnings`
 
    Output: a string starting with `;; ctx\\n{` and ending with `}`.
    No trailing line-comments anywhere."
-  [{:keys [ctx stages]}]
-  (let [stages* (or stages [])]
+  [{:keys [ctx warnings]}]
+  (let [warnings* (vec (or warnings []))]
     (str
       ";; ctx\n"
       "{" (zp :session/id)    "        " (zp (:session/id ctx))    "\n"
@@ -446,14 +349,15 @@
         (str (render-section :session/env (zp env-block) nil) "\n\n"))
       (when-let [symbols (not-empty (:session/symbols ctx))]
         (str (render-section :session/symbols (zp symbols) nil) "\n\n"))
-      (when-let [specs (not-empty (:session/specs ctx))]
-        (str (render-section :session/specs (zp specs) nil) "\n\n"))
       (when-let [tasks (not-empty (:session/tasks ctx))]
         (str (render-section :session/tasks (zp tasks) nil) "\n\n"))
       (when-let [facts (not-empty (:session/facts ctx))]
         (str (render-section :session/facts (zp facts) nil) "\n\n"))
       (render-section :session/trailer
-        (render-trailer-value (or (:session/trailer ctx) [])) nil) "\n\n"
-      (render-section :session/stages
-        (render-stages-value stages*) nil)
+        (render-trailer-value (or (:session/trailer ctx) [])) nil)
+      (when (seq warnings*)
+        (str "\n\n"
+          (render-section :session/warnings
+            (render-warnings-value warnings*) nil)))
       "}")))
+

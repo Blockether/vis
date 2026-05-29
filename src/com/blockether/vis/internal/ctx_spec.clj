@@ -1,69 +1,61 @@
 (ns com.blockether.vis.internal.ctx-spec
-  "Formal data model for the new CTX (per CTX_REDESIGN.md).
+  "Formal data model for the CTX — tasks + facts only.
 
    `clojure.spec.alpha` definitions for every shape in the CTX blob.
-   Engine consults these specs at write time (warn on shape mismatch),
-   at render time (deterministic ordering), and at test time
-   (`s/gen` generators). The specs are the canonical source of truth;
-   the prose in CTX_REDESIGN.md describes RATIONALE around the specs,
-   not the shape itself.
+   The engine consults these specs at write time (warn on shape
+   mismatch), at render time (deterministic ordering), and at test time
+   (`s/gen` generators). The specs are the canonical source of truth for
+   the SHAPE; the engine adds dependency / contradiction / FSM
+   invariants on top.
 
    Top-level entry point: `::ctx`.
 
    Subtrees:
      `:session/scope`     engine-rendered cursor {:turn :iter :next-form}
-     `:session/specs`     formal requirements with validator-backed requirements
-     `:session/tasks`     work items; each task carries proofs grouped by spec
+     `:session/tasks`     work items; status FSM, deps, hook metadata
      `:session/facts`     observations, decisions, rules, behavior
      `:session/workspace` engine-rendered git workspace state
      `:session/symbols`   engine-rendered live SCI symbol directory
      `:session/trailer`   pinned iter envelopes (verbatim or summarized)
 
    Foundation extension `:turn.iteration/start` hooks emit hook-sourced
-   tasks (`:source :hook`, `:hook-id`, `:importance`, `:validator-fn`)
-   under `:session/tasks`; the model satisfies them via
-   `(task-set! id {:status :done :proof \"…\"})`. There is no separate
-   `:session/hints` subtree (collapsed into tasks in D12).
+   tasks (`:source :hook`, `:hook-id`, `:importance`) under
+   `:session/tasks`; the model satisfies them via
+   `(task-set! id {:status :done})`. Done is self-asserted — the engine
+   stamps `:done-born` and does NOT verify the claim.
 
    Scope coordinates:
      `::scope-form`  e.g. \"t3/i2/f1\"
      `::scope-iter`  e.g. \"t3/i2\"
      `::scope-turn`  e.g. \"t3\"
 
-   Edge inventory across subtrees (validated as soft warnings, not by spec):
-     spec requirement → facts via `:session.requirement/facts` (vec of `::entry-key`)
-     requirement      → validator source via `:session.requirement/validator-fn`
-     task             → specs via `:session.task/specs` map keys
-     task             → tasks via `:session.task/depends-on` (vec of `::entry-key`)
-     task proof       → requirement via `:session.task.proof/requirement`
-     task proof       → scope via `:session.task.proof/proof`
+   Universal `:depends-on` edge inventory across subtrees:
+     task → task | fact via `:session.task/depends-on`
+     fact → task | fact via `:session.fact/depends-on`
+   Refs are bare keys (same-kind shorthand) or typed `[:task :K]` /
+   `[:fact :K]` vectors. The engine HARD-rejects writes that would
+   introduce a `:depends-on` cycle across kinds; dangling refs are a
+   soft `:session/warnings` entry.
 
-   Proofs live on tasks, grouped by spec. Specs define requirements and
-   optional validators. Facts are connected through requirements, not generic
-   fact-to-anything edges.
-
-   Scope cursor (`:session/scope`) is required so the model can pick proof
-   scopes deterministically. Engine stamps it before render. User-supplied
-   `::scope-form` values that resolve to the future relative to the cursor
-   are soft-warned by the engine — not refused, since the model may legally
-   reference scopes later in the same fence.
+   Scope cursor (`:session/scope`) is engine-stamped before render so
+   the model always knows where it is. User-supplied `::scope-form`
+   values are accepted verbatim; the engine never refuses a write on a
+   future scope.
 
    Mutator API (upsert-only; consumed by `ctx-engine/apply-mutator`):
 
      Top-level (merge partials):
-       :spec-set! :task-set! :fact-set!
+       :task-set! :fact-set!
 
-     Per-requirement (on :session/specs/:K/:requirements):
-       :req-add!    — collision on :id is soft-rejected (no write)
-       :req-update! — :id immutable, other keys merged
-       :req-remove! — cascade-warns orphaned task proofs
+     Dependency edges (replace the full vec):
+       :task-depends! :fact-depends!
 
-     Per-proof (on :session/tasks/:K/:specs/:spec-K):
-       :proof-add! :proof-remove!
+     Fact contradictions (symmetric):
+       :fact-contradicts! :fact-contradicts-remove!
 
-   See CTX_REDESIGN.md §Invariants for the full enforcement matrix and which
-   invariants are HARD (cycle, malformed scope, partial-overlap trailer) vs
-   SOFT (everything else, surfaced as `;; ⚠` annotations)."
+   Invariants the engine enforces are split HARD (cycle, malformed scope,
+   partial-overlap trailer-summarize) vs SOFT (everything else, surfaced
+   as `:session/warnings` short strings in rendered ctx)."
   (:require [clojure.spec.alpha :as s]
             [clojure.spec.gen.alpha :as gen]))
 
@@ -120,20 +112,27 @@
 ;; Facts are not deleted. When a fact is superseded by newer knowledge the
 ;; model flips :status to :superseded; engine stamps :done-born and GCs from
 ;; live CTX after the superseded-TTL. :active facts live indefinitely.
+;;
+;; Facts carry the universal `:depends-on` graph and symmetric
+;; `:contradicts` links (declared via `fact-contradicts!`).
 
-(s/def :session.fact/status    #{:active :superseded})
-(s/def :session.fact/done-born ::scope-form)
+(s/def :session.fact/status     #{:active :superseded})
+(s/def :session.fact/done-born  ::scope-form)
+(s/def :session.fact/depends-on (s/coll-of ::entry-key :kind vector?))
+(s/def :session.fact/contradicts (s/coll-of ::entry-key :kind set?))
 
 (s/def ::fact
   (s/keys :req-un [::content ::born]
     :opt-un [:session.fact/status
-             :session.fact/done-born]))
+             :session.fact/done-born
+             :session.fact/depends-on
+             :session.fact/contradicts]))
 
 ;; Soft rules:
 ;;   - :status defaults to :active when omitted (engine assumes :active for legacy facts)
 ;;   - :status :superseded MUST have :done-born (engine auto-stamps)
-;;   - facts referenced by NO active requirement :facts vec AND aged > 12 turns
-;;     emit a render hint suggesting supersede, but engine never auto-archives :active facts
+;;   - :depends-on entries must point to existing tasks/facts (engine warns)
+;;   - two :active facts that declared symmetric :contradicts emit a warning
 
 ;; =============================================================================
 ;; Task — work items
@@ -141,29 +140,19 @@
 ;;
 ;; Model never deletes tasks. To abandon: flip :status to :cancelled. Engine
 ;; stamps :done-born when status enters a terminal value (:done / :cancelled)
-;; and garbage-collects the entry from live CTX after a status-specific TTL
-;; (see versioning + GC section in CTX_REDESIGN.md). Snapshots in
-;; per-turn ctx snapshots on session_turn_state make every archived
-;; entry replayable through the soul/state chain.
+;; and garbage-collects the entry from live CTX after a status-specific TTL.
+;; Snapshots in per-turn ctx snapshots on session_turn_state make every
+;; archived entry replayable through the soul/state chain.
+;;
+;; Done is SELF-ASSERTED. `(task-set! :K {:status :done})` is accepted as-is;
+;; the engine stamps :done-born and does NOT verify the claim. There is no
+;; proof, validator, or reversion.
 
 (s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
 (s/def :session.task/status     #{:todo :doing :done :cancelled})
 (s/def :session.task/done-born  ::scope-form)
 
-(s/def :session.task.proof/requirement keyword?)
-(s/def :session.task.proof/proof       ::scope-form)
-;; Entry inside a task's `:specs` proofs map (`:session.task/specs`).
-;; Renamed from `:session.task/proof` to `:session.task/proof-entry`
-;; in D12 so the task-level `:proof` field (hook-task done scope) can
-;; own the unqualified `:proof` key without collision.
-(s/def :session.task/proof-entry
-  (s/keys :req-un [:session.task.proof/requirement
-                   :session.task.proof/proof]))
-
-(s/def :session.task/specs
-  (s/map-of ::entry-key (s/coll-of :session.task/proof-entry :kind vector?)))
-
-;; Hook-emitted task fields (D12: hints collapsed into tasks).
+;; Hook-emitted task fields (hints collapsed into tasks).
 ;;
 ;; `:source` discriminates ownership:
 ;;   :user   — model-created via `(task-set! …)`
@@ -172,108 +161,29 @@
 ;;
 ;; Hook-tasks additionally carry `:hook-id` (the keyword the hook
 ;; identified itself with, also used as the task key so dedup is
-;; trivial), `:importance` for renderer sort order, and `:validator-fn`
-;; — a SCI source string the engine runs against the form envelope at
-;; `:proof` when the model writes
-;; `(task-set! :hook-id {:status :done :proof \"tN/iM/fK\"})`. Pass
-;; sticks the :done; fail reverts to :todo and emits a warning.
-(s/def :session.task/source       #{:user :hook :engine})
-(s/def :session.task/hook-id      keyword?)
-(s/def :session.task/importance   #{:info :warn :critical})
-;; `:validator-fn` accepts any of three shapes (see
-;; `ctx-engine/resolve-validator`):
-;;   - plain `fn?` value             (in-memory only)
-;;   - `{:fn <fn> :src "…"}` map       (host-defined, persist-safe)
-;;   - SCI source string             (model-emitted)
-;; Spec is predicate-only (no `s/or` branching) and pins the generator
-;; to the string shape — `s/or` would try to generate from `fn?`,
-;; which has no built-in generator and blows up the round-trip
-;; property tests. Structural validity is enforced by
-;; `ctx-engine/validator-fn?`.
-(s/def :session.task/validator-fn
-  (s/with-gen (some-fn fn? map? string?)
-    #(gen/fmap (fn [_] "(fn [_] true)") (gen/return nil))))
-(s/def :session.task/proof        ::scope-form)
-;; Engine-stamped `:validated? true` once `reconcile-done-hook-tasks`
-;; runs the task's `:validator-fn` against the form envelope at `:proof`
-;; and the validator returns truthy. Subsequent reconcile passes skip
-;; already-validated `:done` tasks so an unrelated `(done {:trailer-drop
-;; […]})` that wipes the proof envelope cannot retro-actively revert a
-;; legitimately satisfied hook-task. Cleared when `:status` transitions
-;; away from `:done` (any non-:done write).
-(s/def :session.task/validated?   boolean?)
+;; trivial) and `:importance` for renderer sort order. The model
+;; satisfies a hook task by `(task-set! :hook-id {:status :done})`.
+(s/def :session.task/source     #{:user :hook :engine})
+(s/def :session.task/hook-id    keyword?)
+(s/def :session.task/importance #{:info :warn :critical})
 
 (s/def ::task
   (s/keys :req-un [::title
-                   :session.task/specs
                    :session.task/status
                    ::born]
     :opt-un [:session.task/depends-on
              :session.task/done-born
              :session.task/source
              :session.task/hook-id
-             :session.task/importance
-             :session.task/validator-fn
-             :session.task/proof
-             :session.task/validated?]))
+             :session.task/importance]))
 
-;; Soft rules (engine-side validators; not enforced by spec):
-;;   - :specs keys must point to existing keys in :session/specs
-;;   - :depends-on entries must point to existing keys in :session/tasks
-;;   - proof :requirement ids must exist on the referenced spec
-;;   - when requirement has :validator-fn, proof scope result must satisfy it
+;; Soft rules (engine-side; not enforced by spec):
+;;   - :depends-on entries must point to existing tasks/facts
 ;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
-;;   - :status :done requires every :depends-on target to be :done or :cancelled
-;;   - task-level :validator-fn (D12 hook-tasks): when the model writes
-;;       (task-set! id {:status :done :proof "tN/iM/fK"})
-;;     engine runs the validator-fn against the form envelope at :proof.
-;;     Pass → :done sticks. Fail → status reverts (or stays :todo) and the
-;;     engine emits `:task-done-validator-fail`. No :proof + :validator-fn
-;;     present → `:task-done-no-proof` warn + status reverted.
+;;   - :status :done while a :depends-on target is non-terminal emits a soft
+;;     warning (does not block or revert — done is self-asserted)
 ;;   - status transitions are reconstructable from :session/trailer mutation pins;
 ;;     no per-task journal is stored
-
-;; =============================================================================
-;; Spec — formal requirements
-;; =============================================================================
-
-(s/def :session.requirement/id           keyword?)
-(s/def :session.requirement/title        string?)
-;; Same shape contract as `:session.task/validator-fn`. Generator
-;; pinned to a string sample for the same reason — see comment there.
-(s/def :session.requirement/validator-fn
-  (s/with-gen (some-fn fn? map? string?)
-    #(gen/fmap (fn [_] "(fn [_] true)") (gen/return nil))))
-(s/def :session.requirement/facts
-  (s/coll-of ::entry-key :kind vector?))
-
-(s/def :session.spec/requirement
-  (s/keys :req-un [:session.requirement/id
-                   :session.requirement/title]
-    :opt-un [:session.requirement/facts
-             :session.requirement/validator-fn]))
-
-(s/def :session.spec/requirements
-  (s/coll-of :session.spec/requirement :kind vector? :min-count 1))
-
-(s/def :session.spec/status
-  #{:draft :doing :done :cancelled})
-
-(s/def :session.spec/done-born ::scope-form)
-
-(s/def ::spec
-  (s/keys :req-un [::title
-                   :session.spec/requirements
-                   :session.spec/status
-                   ::born]
-    :opt-un [:session.spec/done-born]))
-
-;; Soft rules:
-;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
-;;   - requirement :facts entries must point to existing keys in :session/facts
-;;   - :status :done requires every requirement to have at least one valid task proof
-;;   - :validator-fn is an SCI fn source string evaluated by the engine in a
-;;     bounded sandbox; parse / runtime failures surface as render warnings
 
 ;; =============================================================================
 ;; Trailer entries — verbatim pin OR summary
@@ -399,30 +309,13 @@
              :session.symbol/doc]))
 
 ;; =============================================================================
-;; Hints — RETIRED (D12)
-;; =============================================================================
-;; What used to be `:session/hints` is now expressed as tasks with
-;; `:source :hook`, `:hook-id`, `:importance`, and `:validator-fn`.
-;; Foundation extension hooks emit task shape directly; the model
-;; satisfies via `(task-set! :hook-id {:status :done :proof "…"})`.
-;; One concept, one mutator, one validator path.
-
-;; =============================================================================
 ;; Scope cursor — engine-rendered current position inside the turn
 ;; =============================================================================
 ;;
 ;; `:session/scope` tells the model where it is RIGHT NOW. Engine-stamped per
-;; iter, before render. Without it the model cannot honestly pick a `:proof`
-;; scope: `:session/turn` lives at top level but iter and form counters do not.
-;;
-;; `:next-form` is 1-based — the index that the model's first form in this
-;; iter's fence WILL receive. Subsequent forms in the same fence increment
-;; from there.
-;;
-;; Soft rule: any user-provided `::scope-form` (e.g. task proof :proof) is
-;; classified by the engine relative to this cursor:
-;;   :ok | :unknown | :errored | :future-form | :future-iter | :future-turn
-;; Future-scope refs and unknown scopes warn but never refuse.
+;; iter, before render. `:next-form` is 1-based — the index that the model's
+;; first form in this iter's fence WILL receive. Subsequent forms in the same
+;; fence increment from there.
 
 (s/def :session.scope/turn      pos-int?)
 (s/def :session.scope/iter      pos-int?)
@@ -441,7 +334,6 @@
 (s/def :session/turn      pos-int?)
 (s/def :session/workspace ::workspace)
 (s/def :session/symbols   (s/map-of symbol?      ::symbol-info))
-(s/def :session/specs     (s/map-of ::entry-key  ::spec))
 (s/def :session/tasks     (s/map-of ::entry-key  ::task))
 (s/def :session/facts     (s/map-of ::entry-key  ::fact))
 (s/def :session/trailer   (s/coll-of ::trailer-entry :kind vector?))
@@ -461,7 +353,6 @@
                 :session/scope
                 :session/workspace
                 :session/symbols
-                :session/specs
                 :session/tasks
                 :session/facts
                 :session/trailer]
@@ -476,15 +367,13 @@
    `(task-set! :K v)`, engine looks up `(get subtree->entry-spec :session/tasks)`
    and runs `(s/explain-data spec v)` for soft warnings."}
   subtree->entry-spec
-  {:session/specs  ::spec
-   :session/tasks  ::task
+  {:session/tasks  ::task
    :session/facts  ::fact})
 
 (def ^{:doc "Maps a `:session/X` subtree key to the spec for the whole subtree map.
    Used at render and persistence boundaries."}
   subtree->container-spec
-  {:session/specs    :session/specs
-   :session/tasks    :session/tasks
+  {:session/tasks    :session/tasks
    :session/facts    :session/facts
    :session/workspace :session/workspace
    :session/symbols  :session/symbols

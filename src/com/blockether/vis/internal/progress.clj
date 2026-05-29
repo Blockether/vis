@@ -237,7 +237,7 @@
 (defn- structurally-silent-chunk?
   "True for host-bookkeeping forms that should never appear in user traces:
    session-title updates, answer-emission forms, ctx mutators
-   (`task-set!`, `spec-set!`, `fact-set!`), and engine-internal
+   (`task-set!`, `fact-set!`), and engine-internal
    probes (`introspect-*`). They may still execute and feed channel
    chrome / final answer, but the code/result row itself is noise in
    both TUI and CLI trace views. Mixed blocks with visible code
@@ -273,19 +273,13 @@
     ""))
 
 (defn- task-recap
-  [{:keys [id status proof title]}]
+  [{:keys [id status title]}]
   (let [head (cond
                (and id status) (str (status-glyph status) (pr-str id) "  :" (name status))
                id              (str (pr-str id))
                :else           "task update")]
     (str "Task — " head
-      (when title (str "  \"" title "\""))
-      (when proof (str "  proof " proof)))))
-
-(defn- spec-recap
-  [{:keys [id status]}]
-  (str "Spec — " (pr-str id)
-    (when status (str "  :" (name status)))))
+      (when title (str "  \"" title "\"")))))
 
 (defn- fact-recap
   [{:keys [id status]}]
@@ -299,7 +293,6 @@
             (case kind
               :title         (title-recap value)
               :task-update   (task-recap seg)
-              :spec-update   (spec-recap seg)
               :fact-update   (fact-recap seg)
               nil)))
     vec))

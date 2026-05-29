@@ -388,14 +388,12 @@
                :finished-at-ms, :duration-ms, etc.
      :emit     optional CTX mutation payload routed through the
                engine after the tool returns. Shape:
-                 {:specs {entry-key partial-spec-map}
-                  :tasks {entry-key partial-task-map}
+                 {:tasks {entry-key partial-task-map}
                   :facts {entry-key partial-fact-map}}
                The wrapper applies each entry via
                `ctx-loop/apply-and-record!` so the surface matches
-               a model-emitted `(spec-set! ...)` / `(task-set! ...)`
-               / `(fact-set! ...)` exactly: same engine FSM checks,
-               dedup, validator-fn satisfaction, warnings.
+               a model-emitted `(task-set! ...)` / `(fact-set! ...)`
+               exactly: same engine FSM checks, dedup, warnings.
 
    Produces a flat `:envelope` map."
   [{:keys [result op metadata emit]} success? error]
@@ -1984,7 +1982,7 @@
                        (assert-symbol-envelope! sym))
               ms (elapsed-ms t0)]
           (write-sink-entries! ext sym-entry original-args result)
-          ;; If the symbol's envelope declared `:emit/{specs,tasks,facts}`,
+          ;; If the symbol's envelope declared `:emit/{tasks,facts}`,
           ;; route each entry through `ctx-loop/apply-and-record!` so
           ;; extensions can mutate CTX from inside an op without
           ;; reaching for an explicit `(task-set! ...)` form. Pure
@@ -1993,8 +1991,6 @@
             (when-let [apply-and-record!
                        (requiring-resolve
                          'com.blockether.vis.internal.ctx-loop/apply-and-record!)]
-              (doseq [[k partial] (:specs emit)]
-                (apply-and-record! call-env :spec-set! [k partial]))
               (doseq [[k partial] (:tasks emit)]
                 (apply-and-record! call-env :task-set! [k partial]))
               (doseq [[k partial] (:facts emit)]
