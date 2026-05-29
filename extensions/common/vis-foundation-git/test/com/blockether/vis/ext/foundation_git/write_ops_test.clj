@@ -386,12 +386,18 @@
            {:op :git/rebase :status "OK" :successful? true}]]
       (expect (fn? render))
       (doseq [m samples]
-        (let [r (render m)]
+        (let [r     (render m)
+              label (get-in r [:summary :left 2 2])]  ; [:strong {} [:span {} LABEL]]
           (expect (extension/render-fn-result? r))
           (expect (some? (:summary r)))
           (expect (some? (:display r)))
-          ;; display body is canonical IR; first block is the label paragraph
-          (expect (= :ir (first (:display r)))))))))
+          (expect (= :ir (first (:display r))))
+          ;; The op-row already paints the badge `label` from the summary, so
+          ;; the display body must NOT repeat it (that rendered the badge twice).
+          (expect (string? label))
+          (expect (not (re-find (re-pattern (str "\\[:strong \\{\\} \\[:span \\{\\} \""
+                                              (java.util.regex.Pattern/quote label) "\"\\]\\]"))
+                         (pr-str (:display r))))))))))
 
 ;; Suppress unused-require lint on str/blank? helpers.
 (comment str/blank?)

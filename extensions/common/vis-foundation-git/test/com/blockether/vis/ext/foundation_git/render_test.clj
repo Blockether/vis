@@ -180,3 +180,33 @@
     (let [v (gr/render-merge-abort {:result :aborted})]
       (expect (contract? v))
       (expect (strong-in? v "ABORTED")))))
+
+;; The op-row paints the badge label from the :summary. The :display body must
+;; NEVER repeat that label as its own `[:strong]` heading, or the badge renders
+;; twice (the duplication the user hit on DIFF / ADD / COMMIT / …).
+(defn- display-repeats-label? [v label]
+  (boolean
+    (re-find (re-pattern (str "\\[:strong \\{\\} \\[:span \\{\\} \""
+                           (java.util.regex.Pattern/quote label) "\"\\]\\]"))
+      (pr-str (:display v)))))
+
+(defdescribe display-never-repeats-summary-label-test
+  (it "no observation render echoes its badge label into the display body"
+    (let [cases [["DIRTY" (gr/render-status {:branch "main" :head "abc1234" :clean? false
+                                             :entries [{:status "M" :file "a.clj"}]})]
+                 ["DIFF"  (gr/render-diff {:branch "main" :head "abc1234" :kind :workspace
+                                           :from "HEAD" :to nil :stat {:files 1 :+ 1 :- 0}
+                                           :files [{:file "a.clj" :+ 1 :- 0}] :porcelain []})]
+                 ["LOG"   (gr/render-log {:branch "main"
+                                          :commits [{:short-sha "abc1234" :author "Vi" :at "d" :subject "s"}]})]
+                 ["SHOW"  (gr/render-show {:short-sha "abc1234" :sha "abc1234567" :author "Vi"
+                                           :subject "subj" :body "body"
+                                           :files [{:file "a.clj" :+ 1 :- 0}] :stat {:files 1 :+ 1 :- 0}})]
+                 ["BLAME" (gr/render-blame {:path "x.clj" :head "abc1234" :total 1 :ignored-revs []
+                                            :lines [{:line 1 :short-sha "aaa1111" :author "A" :content "(ns x)"}]})]
+                 ["MERGING" (gr/render-merge-status {:in-progress? true :branch "main" :head "abc1234"
+                                                     :merge-head "def5678" :conflicts [{:path "a" :state "UU"}]})]]]
+      (doseq [[label v] cases]
+        (expect (contract? v))
+        (expect (strong-in? v label))
+        (expect (not (display-repeats-label? v label)))))))
