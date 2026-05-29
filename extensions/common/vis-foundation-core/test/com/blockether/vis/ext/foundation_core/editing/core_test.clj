@@ -177,17 +177,13 @@
     (expect (string/includes? editing/editing-prompt "v/cat"))
     nil)
 
-  (it "documents v/rg's exact single spec-map grammar, not the old shorthand"
+  (it "documents only the canonical root-scoped v/rg map shape"
     (expect (string/includes? editing/editing-prompt
-              "{:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]}"))
-    ;; After the v/rg sweep regex is no longer the only matching mode —
-    ;; the default IS literal, but `:regex? true` flips it. Updated copy:
-    (expect (string/includes? editing/editing-prompt "Literal substrings by default"))
-    (expect (string/includes? editing/editing-prompt ":regex? B"))
-    (expect (string/includes? editing/editing-prompt ":context N"))
-    (expect (string/includes? editing/editing-prompt ":files-only?"))
-    (expect (string/includes? editing/editing-prompt ":counts?"))
-    (expect (not (string/includes? editing/editing-prompt "(v/rg :include/:exclude"))))
+              "(v/rg {:any [P] :files-only? true})"))
+    (expect (string/includes? editing/editing-prompt "Do not assume `src`"))
+    (expect (not (string/includes? editing/editing-prompt ":paths [\"src\"]")))
+    (expect (not (string/includes? editing/editing-prompt "kwargs")))
+    (expect (not (string/includes? editing/editing-prompt "BOTH"))))
 
   (it "registers observed fn-symbols with tool-specific renderers"
     (doseq [sym-name '[cat ls rg patch write create-dirs copy move delete delete-if-exists exists?]]
@@ -383,56 +379,29 @@
       (expect (= :none (-> failure :error :failures first :access))))))
 
 (defdescribe editing-prompt-read-policy-test
-  (it "teaches windowed reads, canonical patching, and no duplicate rereads by default"
+  (it "keeps the prompt small and canonical"
     (let [patch-symbol (some #(when (= 'patch (:ext.symbol/symbol %)) %)
-                         editing/editing-symbols)]
-      ;; Post-handle removal the prompt is RLM-shaped: plain-map results,
-      ;; refine-don't-re-read tactics, explicit pagination via :next-offset.
-      (expect (string/includes? editing/editing-prompt "PLAIN CLOJURE MAP"))
-      (expect (string/includes? editing/editing-prompt "(:next-offset prev)"))
-      (expect (string/includes? editing/editing-prompt
-                "(v/patch [{:path :search :replace}])"))
-      ;; New semantics: first-occurrence default, no global-uniqueness rule.
-      ;; The prompt should advertise the new optional keys instead.
-      (expect (string/includes? editing/editing-prompt "replaces the FIRST"))
-      (expect (string/includes? editing/editing-prompt ":after  \"context\""))
-      (expect (string/includes? editing/editing-prompt ":before \"context\""))
-      (expect (string/includes? editing/editing-prompt ":nth :first|:last|:all|N"))
-      (expect (string/includes? editing/editing-prompt ":expected-mtime"))
-      (expect (string/includes? editing/editing-prompt "5-pass fuzzy fallback"))
-      (expect (string/includes? editing/editing-prompt ":loop-hint"))
-      ;; Codex envelope grammar was retired; the prompt should not
-      ;; mention it any more (and patch-symbol's docstring should follow).
-      (expect (not (string/includes? editing/editing-prompt "Codex envelope")))
-      (expect (not (string/includes? editing/editing-prompt "*** Begin Patch")))
-      (expect (not (string/includes? editing/editing-prompt "*** End Patch")))
-      (expect (not (string/includes? editing/editing-prompt "*** Add File")))
-      (expect (not (string/includes? editing/editing-prompt "*** Move to")))
+                         editing/editing-symbols)
+          prompt editing/editing-prompt]
+      (expect (< (count prompt) 1600))
+      (expect (string/includes? prompt "Canonical path only"))
+      (expect (not (string/includes? prompt "v/strategy")))
+      (expect (string/includes? prompt "(v/ls \".\" {:depth 2})"))
+      (expect (string/includes? prompt "(v/rg {:any [P] :files-only? true})"))
+      (expect (string/includes? prompt "400-500 line range"))
+      (expect (string/includes? prompt "(v/patch [{:path P :search S :replace R}])"))
+      (expect (string/includes? prompt "diff is evidence"))
+      (expect (not (string/includes? prompt "kwargs")))
+      (expect (not (string/includes? prompt "BOTH")))
+      (expect (not (string/includes? prompt "STRATEGIES — decision table")))
+      (expect (not (string/includes? prompt "Bulk rename idiom")))
+      (expect (not (string/includes? prompt "Codex envelope")))
+      (expect (not (string/includes? prompt "*** Begin Patch")))
       (expect (not (string/includes? (:ext.symbol/doc patch-symbol)
                      "Codex `apply_patch` envelope")))
-      ;; The single mutation-primitive list is what replaced the envelope
-      ;; example block.
-      (expect (string/includes? editing/editing-prompt
-                "Single mutation primitive per intent"))
-      (expect (string/includes? editing/editing-prompt "v/write"))
-      ;; T5 — bulk rename idiom in the prompt body.
-      (expect (string/includes? editing/editing-prompt "Bulk rename idiom"))
-      (expect (string/includes? editing/editing-prompt ":nth :all"))
-      ;; T4 — :diff hunk header IS the line-number signal.
-      (expect (string/includes? editing/editing-prompt "`@@ -N,X +M,Y @@`"))
-      ;; T3 — prompt no longer carries the contradiction.
-      (expect (not (string/includes? editing/editing-prompt "Do NOT v/cat to verify")))
-      (expect (not (string/includes? editing/editing-prompt "any prior read of the same path is stale")))
-      (expect (string/includes? editing/editing-prompt "Stale-read rule"))
-      (expect (string/includes? editing/editing-prompt "never re-cat just to verify"))
-      ;; T1 — structured trailer recipe for failures.
-      (expect (string/includes? editing/editing-prompt
-                ";; ! data {:reason"))
-      (expect (string/includes? editing/editing-prompt "RULES"))
-      (expect (string/includes? editing/editing-prompt "Execute side effects"))
-      (expect (not (string/includes? editing/editing-prompt "read-all-lines")))
-      (expect (not (string/includes? editing/editing-prompt "write-lines")))
-      (expect (not (string/includes? editing/editing-prompt "update-file"))))))
+      (expect (not (string/includes? prompt "read-all-lines")))
+      (expect (not (string/includes? prompt "write-lines")))
+      (expect (not (string/includes? prompt "update-file"))))))
 
 (defdescribe vis-ls-flat-shape-test
   ;; v/ls now returns a FLAT entry list (no nested :children). The shape
@@ -1373,12 +1342,12 @@
       (expect (false? (:exists? missing)))
       (expect (= missing-path (:path missing)))))
 
-  (it "editing-prompt documents v/exists?'s map-shape return so the model destructures :exists?"
-    ;; Without explicit prompt guidance the model treated v/exists? as
-    ;; a bare boolean (see conv 11d4f817-fbd1-43ab-a6b4-052c8557af0a t4).
-    ;; The prompt must say so directly.
-    (expect (string/includes? editing/editing-prompt ":vis.op :v/exists?"))
-    (expect (string/includes? editing/editing-prompt ":exists?")))
+  (it "keeps v/exists? shape details out of the compact prompt and in symbol docs"
+    (let [exists-symbol (some #(when (= 'exists? (:ext.symbol/symbol %)) %)
+                          editing/editing-symbols)]
+      (expect (not (string/includes? editing/editing-prompt ":vis.op :v/exists?")))
+      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":vis.op :v/exists?"))
+      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":exists?"))))
 
   (it "bash helpers fully removed from the editing core"
     (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation-core.editing.core" "run-bash-safe"))))

@@ -30,26 +30,16 @@
         (expect (not (str/includes? prompt "RUNTIME")))
         (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))
         (expect (not (str/includes? prompt "SCAN-WARNINGS")))
-        ;; Post-handle removal the editing prompt is RLM-shaped. Concepts
-        ;; carry over (v/rg + v/ls for discovery, v/cat for windows); the
-        ;; phrasing is now organised under READ / EDIT / RLM TACTICS.
+        ;; Editing prompt is now compact: canonical path only, no strategy symbol.
         (expect (str/includes? prompt "v/rg"))
         (expect (str/includes? prompt "v/ls"))
-        (expect (str/includes? prompt "RULES"))
+        (expect (str/includes? prompt "Canonical path only"))
+        (expect (not (str/includes? prompt "v/strategy")))
         (expect (not (str/includes? prompt "clojure.repl/doc")))
         (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-        ;; RLM prompt teaches deep exploration / combine / refine across
-        ;; iterations with worked-example code; cap guards against drift.
-        ;; Bumped 8000 → 9000 after the v/rg sweep added context/regex/
-        ;; output-mode idioms + the v/cat :range arity doc.
-        ;; Bumped 9000 → 12000 after the STRATEGIES section landed:
-        ;; good-only iter-composition recipes (probe → widen, locate
-        ;; → open, single-scan-many-views, multi-edit-one-call) plus
-        ;; HARD RULES against one-shot fences that brick the trailer.
-        ;; Bumped 12000 → 13000 after the kwargs/map dual calling
-        ;; convention examples landed on v/ls + v/rg docstrings.
-        (expect (< (count prompt) 13000)))))
+        ;; Cap guards against strategy prose drifting back into prompt.
+        (expect (< (count prompt) 5000)))))
 
   (it "contributes only the workspace block through ctx now"
     ;; `:session/env` (host / project / extensions digest) moved to
