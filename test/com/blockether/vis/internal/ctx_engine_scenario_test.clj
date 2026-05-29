@@ -1,16 +1,17 @@
 (ns com.blockether.vis.internal.ctx-engine-scenario-test
-  "Multi-turn scenario tests for the CTX engine.
+  "Multi-turn scenario tests for the CTX engine under the tasks + facts model.
 
    Scenarios are flat data: a vec of turns, each turn declaring its ops and
    the assertions to hold after every op has been applied. The replayer is
    `run-scenario`; assertions are a small DSL evaluated against the final
-   ctx + warnings + progression + next-actions.
+   ctx + warnings.
 
    These tests are the design-doc validation harness — when a turn fails its
    assertion, that's a real gap in the engine, not a test bug. Each scenario
    doubles as a regression for the invariant it exercises."
   (:require
    [clojure.spec.alpha :as s]
+   [clojure.string]
    [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.ctx-spec :as cs]
    [lazytest.core :refer [defdescribe describe expect it]]))
@@ -43,22 +44,18 @@
 
 (defn run-scenario
   "Replay a scenario vector. Returns `{:turns […] :final-ctx …}`. Each turn
-   entry carries `:ctx :warnings :progression :stages`. Caller asserts
+   entry carries `:ctx :mutation-warnings :derived-warnings`. Caller asserts
    over the per-turn data."
   [scenario]
   (reduce
     (fn [{:keys [ctx turns]} {:keys [turn ops]}]
       (let [{ctx' :ctx mut-warnings :warnings} (run-turn ctx turn ops)
             indexes      (eng/build-indexes ctx')
-            progression  (eng/derive-progression ctx' indexes)
             derived      (eng/derive-warnings ctx' indexes)
-            stages       (eng/derive-stages ctx' indexes progression)
             turn-result  {:turn turn
                           :ctx ctx'
                           :mutation-warnings mut-warnings
-                          :derived-warnings derived
-                          :progression progression
-                          :stages stages}]
+                          :derived-warnings derived}]
         {:ctx ctx' :turns (conj turns turn-result)}))
     {:ctx (eng/empty-ctx "scenario-test") :turns []}
     scenario))
@@ -67,19 +64,30 @@
 ;; Assertion helpers
 ;; =============================================================================
 
-(defn- warning-codes [ws] (set (map :code ws)))
+(defn- mutation-codes
+  "derive-warnings returns plain strings now, but mutation warnings (the
+   :warnings vec returned directly by apply-mutator) are still {:code …}
+   maps. This helper projects their :code set."
+  [ws]
+  (set (map :code ws)))
+
+(defn- derived-has?
+  "True if any derived warning string contains `frag`."
+  [ws frag]
+  (boolean (some #(clojure.string/includes? % frag) ws)))
 
 (defn- turn-at [result n]
   (first (filter #(= n (:turn %)) (:turns result))))
 
 ;; =============================================================================
-;; Rate-limiter reconsider — the full inflection-point scenario
+;; Rate-limiter reconsider — tasks + facts, deps, supersede, done, cancel
 ;; =============================================================================
 
 (def ^:private rate-limiter-scenario
-  "Compressed transcript of the multi-turn rate-limiter formal-verification
-   session: observe → spec → reconsider sliding-window → token-bucket → audit
-   add → prove → done → reopen for boundary edge → final done."
+  "Compressed transcript of the multi-turn rate-limiter session reframed for
+   the tasks+facts model: observe (facts) → plan (tasks + deps) → progress
+   (done) → reconsider (supersede facts, cancel tasks, new direction) →
+   close out remaining work as :done."
   [;; ─────────────────────────────────────────────────────────────────────
    ;; Turn 1 — observation: two facts about the buggy sliding-window
    {:turn 1
@@ -89,27 +97,15 @@
      [:fact-set! :rl-race-trim-inc
       {:content "two concurrent allow? can both observe count<=limit and both write"}]]}
 
-   ;; Turn 2 — formal spec + 3 reqs + 2 tasks
+   ;; Turn 2 — plan: two tasks, one depending on the other
    {:turn 2
     :ops
-    [[:spec-set! :rl-correctness
-      {:title "rate_limit/allow? is race-free" :status :draft}]
-     [:req-add! :rl-correctness
-      {:id :linearizable-count :title "concurrent allow? preserves count<=limit"
-       :facts [:rl-race-trim-inc]}]
-     [:req-add! :rl-correctness
-      {:id :no-lost-updates :title "two trues never combined exceed limit"
-       :facts [:rl-race-trim-inc]}]
-     [:req-add! :rl-correctness
-      {:id :determinism-replay :title "fixed ts seq -> deterministic outcomes"}]
-     [:task-set! :swap-to-cas
-      {:title "replace swap! with CAS retry" :specs {:rl-correctness []}
-       :status :todo}]
+    [[:task-set! :swap-to-cas
+      {:title "replace swap! with CAS retry" :status :todo}]
      [:task-set! :concurrency-test
-      {:title "jstress-style test" :specs {:rl-correctness []}
-       :depends-on [:swap-to-cas] :status :todo}]]}
+      {:title "jstress-style test" :depends-on [:swap-to-cas] :status :todo}]]}
 
-   ;; Turn 3 — progress: CAS rewrite as prereq (no proof yet)
+   ;; Turn 3 — progress: CAS rewrite to :doing then :done
    {:turn 3
     :ops
     [[:task-set! :swap-to-cas {:status :doing}]
@@ -121,19 +117,6 @@
     [;; supersede stale facts
      [:fact-set! :rl-impl-sliding-window {:status :superseded}]
      [:fact-set! :rl-race-trim-inc       {:status :superseded}]
-     ;; drop old requirements granularly
-     [:req-remove! :rl-correctness :linearizable-count]
-     [:req-remove! :rl-correctness :no-lost-updates]
-     [:req-remove! :rl-correctness :determinism-replay]
-     ;; rename spec direction
-     [:spec-set! :rl-correctness {:title "rate_limit/allow? is a correct token-bucket"}]
-     ;; new requirements
-     [:req-add! :rl-correctness
-      {:id :bucket-monotone :title "tokens never exceed cap; refill bounded"}]
-     [:req-add! :rl-correctness
-      {:id :no-overshoot :title "1000 concurrent allow? with cap=10 -> <=10 true"}]
-     [:req-add! :rl-correctness
-      {:id :memory-bounded :title "per-key state is {:tokens :last-refill-ms}"}]
      ;; cancel orphaned tasks
      [:task-set! :swap-to-cas       {:status :cancelled}]
      [:task-set! :concurrency-test  {:status :cancelled}]
@@ -141,58 +124,31 @@
      [:fact-set! :rl-token-bucket-rationale
       {:content "token-bucket per key {tokens last-refill-ms}; bounded memory; exact rate"}]
      [:task-set! :rewrite-bucket
-      {:title "rewrite allow? as token-bucket with CAS"
-       :specs {:rl-correctness []} :status :todo}]
+      {:title "rewrite allow? as token-bucket with CAS" :status :todo}]
      [:task-set! :bucket-property-test
       {:title "property test bucket invariants"
-       :specs {:rl-correctness []} :depends-on [:rewrite-bucket] :status :todo}]]}
+       :depends-on [:rewrite-bucket] :status :todo}]]}
 
-   ;; Turn 5 — add 4th requirement (audit log)
+   ;; Turn 5 — add audit-log task depending on the rewrite
    {:turn 5
     :ops
-    [[:req-add! :rl-correctness
-      {:id :audit-log-denials :title "false return emits {:rate-limit/denied …}"
-       :facts [:rl-token-bucket-rationale]}]
-     [:task-set! :audit-log-hook
+    [[:task-set! :audit-log-hook
       {:title "emit-event in allow? false branch"
-       :specs {:rl-correctness []} :depends-on [:rewrite-bucket] :status :todo}]]}
+       :depends-on [:rewrite-bucket] :status :todo}]]}
 
-   ;; Turn 6 — prove everything + spec :done
+   ;; Turn 6 — close everything out
    {:turn 6
     :ops
-    [[:task-set!  :rewrite-bucket {:status :done}]
-     [:task-set!  :bucket-property-test {:status :done}]
-     [:proof-add! :bucket-property-test :rl-correctness
-      {:requirement :bucket-monotone :proof "t6/i1/f2"}]
-     [:proof-add! :bucket-property-test :rl-correctness
-      {:requirement :no-overshoot :proof "t6/i1/f2"}]
-     [:proof-add! :bucket-property-test :rl-correctness
-      {:requirement :memory-bounded :proof "t6/i1/f2"}]
-     [:task-set!  :audit-log-hook {:status :done}]
-     [:proof-add! :audit-log-hook :rl-correctness
-      {:requirement :audit-log-denials :proof "t6/i1/f3"}]
-     [:spec-set!  :rl-correctness {:status :done}]]}
-
-   ;; Turn 7 — REOPEN to add edge-case requirement
-   {:turn 7
-    :ops
-    [[:spec-set! :rl-correctness {:status :doing}]
-     [:req-add!  :rl-correctness
-      {:id :zero-refill-boundary
-       :title "tokens=0 + refill=0 -> false; tokens=1 -> true"}]
-     [:task-set! :zero-refill-test
-      {:title "boundary test" :specs {:rl-correctness []} :status :todo}]
-     [:task-set! :zero-refill-test {:status :done}]
-     [:proof-add! :zero-refill-test :rl-correctness
-      {:requirement :zero-refill-boundary :proof "t7/i1/f5"}]
-     [:spec-set! :rl-correctness {:status :done}]]}])
+    [[:task-set! :rewrite-bucket {:status :done}]
+     [:task-set! :bucket-property-test {:status :done}]
+     [:task-set! :audit-log-hook {:status :done}]]}])
 
 ;; =============================================================================
 ;; Scenario assertions — each turn's expected state
 ;; =============================================================================
 
 (defdescribe rate-limiter-scenario-test
-  (describe "rate-limiter reconsider scenario, end-to-end"
+  (describe "rate-limiter reconsider scenario, end-to-end (tasks + facts)"
     (let [result (run-scenario rate-limiter-scenario)
           ctx-final (:ctx result)]
 
@@ -209,163 +165,132 @@
         (it "T1: no warnings (clean observation phase)"
           (expect (empty? (:derived-warnings t1)))))
 
-      ;; ─── Turn 2: spec drafted with 3 requirements, 2 tasks
+      ;; ─── Turn 2: two tasks, dependency wired
       (let [t2 (turn-at result 2)]
-        (it "T2: spec has 3 requirements"
-          (expect (= 3 (count (get-in t2 [:ctx :session/specs :rl-correctness :requirements])))))
+        (it "T2: two tasks recorded, both :todo"
+          (expect (= 2 (count (:session/tasks (:ctx t2)))))
+          (expect (= :todo (get-in t2 [:ctx :session/tasks :swap-to-cas :status])))
+          (expect (= :todo (get-in t2 [:ctx :session/tasks :concurrency-test :status]))))
 
-        (it "T2: spec born stamped at first emission"
+        (it "T2: task born stamped at first emission"
           (expect (= "t2/i1/f1"
-                    (get-in t2 [:ctx :session/specs :rl-correctness :born]))))
+                    (get-in t2 [:ctx :session/tasks :swap-to-cas :born]))))
 
-        (it "T2: progression 0/3 :open"
-          (expect (= 3 (get-in t2 [:progression :rl-correctness :total])))
-          (expect (= 0 (get-in t2 [:progression :rl-correctness :proven])))
-          (expect (= :open (get-in t2 [:progression :rl-correctness :state]))))
+        (it "T2: :concurrency-test depends on :swap-to-cas"
+          (expect (= [:swap-to-cas]
+                    (get-in t2 [:ctx :session/tasks :concurrency-test :depends-on]))))
 
-        (it "T2: stages surfaces :prove-requirement entries (Phase H shape: vec-of-vecs)"
-          (expect (some #(= :prove-requirement (:kind %))
-                    (mapcat identity (:stages t2)))))
+        (it "T2: no dangling-dep or cycle warnings"
+          (expect (not (derived-has? (:derived-warnings t2) "nonexistent")))
+          (expect (empty? (filter #(clojure.string/includes? % "cycle")
+                            (:derived-warnings t2))))))
 
-        (it "T2: stages also surfaces :work-unblocked-todo for :swap-to-cas"
-          (expect (some #(and (= :work-unblocked-todo (:kind %))
-                           (= :swap-to-cas (:id %)))
-                    (mapcat identity (:stages t2))))))
-
-      ;; ─── Turn 3: prereq task done, no proofs yet
+      ;; ─── Turn 3: prereq task done, done-born stamped
       (let [t3 (turn-at result 3)]
         (it "T3: :swap-to-cas is :done with :done-born stamped"
           (expect (= :done (get-in t3 [:ctx :session/tasks :swap-to-cas :status])))
           (expect (some? (get-in t3 [:ctx :session/tasks :swap-to-cas :done-born]))))
 
-        (it "T3: progression unchanged (no proofs added)"
-          (expect (= 0 (get-in t3 [:progression :rl-correctness :proven])))))
+        (it "T3: done is self-asserted — no reversion, status stays :done"
+          (expect (= :done (get-in t3 [:ctx :session/tasks :swap-to-cas :status])))))
 
-      ;; ─── Turn 4: full reconsider — 3 facts superseded, 3 reqs swapped, 2 cancels
+      ;; ─── Turn 4: full reconsider — facts superseded, tasks cancelled, new work
       (let [t4 (turn-at result 4)]
         (it "T4: old facts flipped to :superseded with :done-born stamped"
           (expect (= :superseded
                     (get-in t4 [:ctx :session/facts :rl-impl-sliding-window :status])))
           (expect (some? (get-in t4 [:ctx :session/facts :rl-impl-sliding-window :done-born]))))
 
-        (it "T4: spec :requirements rebuilt with new ids"
-          (let [ids (set (map :id (get-in t4 [:ctx :session/specs :rl-correctness :requirements])))]
-            (expect (= #{:bucket-monotone :no-overshoot :memory-bounded} ids))))
-
         (it "T4: cancelled tasks have :done-born stamped"
           (expect (= :cancelled (get-in t4 [:ctx :session/tasks :swap-to-cas :status])))
           (expect (some? (get-in t4 [:ctx :session/tasks :swap-to-cas :done-born]))))
 
-        (it "T4: no orphan-proof warnings (no proofs existed before removal)"
-          (expect (not (contains? (warning-codes (:derived-warnings t4))
-                         :req-removed-orphaned-proof))))
+        (it "T4: new token-bucket fact + tasks present"
+          (expect (some? (get-in t4 [:ctx :session/facts :rl-token-bucket-rationale])))
+          (expect (= :todo (get-in t4 [:ctx :session/tasks :rewrite-bucket :status])))
+          (expect (= [:rewrite-bucket]
+                    (get-in t4 [:ctx :session/tasks :bucket-property-test :depends-on])))))
 
-        (it "T4: progression reset to 0/3 on the new requirement set"
-          (expect (= 3 (get-in t4 [:progression :rl-correctness :total])))
-          (expect (= 0 (get-in t4 [:progression :rl-correctness :proven])))))
-
-      ;; ─── Turn 5: requirement added
+      ;; ─── Turn 5: audit task added, depends on the rewrite
       (let [t5 (turn-at result 5)]
-        (it "T5: spec now has 4 requirements"
-          (expect (= 4 (count (get-in t5 [:ctx :session/specs :rl-correctness :requirements])))))
-
         (it "T5: :audit-log-hook depends on :rewrite-bucket"
           (expect (= [:rewrite-bucket]
-                    (get-in t5 [:ctx :session/tasks :audit-log-hook :depends-on])))))
+                    (get-in t5 [:ctx :session/tasks :audit-log-hook :depends-on]))))
 
-      ;; ─── Turn 6: prove all + spec :done
+        (it "T5: a :done task with non-terminal dep surfaces no done-dep warning yet"
+          ;; :rewrite-bucket is still :todo here but nothing :done depends on it
+          (expect (not (derived-has? (:derived-warnings t5) ":done but dep")))))
+
+      ;; ─── Turn 6: close everything out, all terminal
       (let [t6 (turn-at result 6)]
-        (it "T6: spec is :done with :done-born stamped"
-          (expect (= :done (get-in t6 [:ctx :session/specs :rl-correctness :status])))
-          (expect (some? (get-in t6 [:ctx :session/specs :rl-correctness :done-born]))))
+        (it "T6: every task is :done with :done-born stamped"
+          (doseq [k [:rewrite-bucket :bucket-property-test :audit-log-hook]]
+            (expect (= :done (get-in t6 [:ctx :session/tasks k :status])))
+            (expect (some? (get-in t6 [:ctx :session/tasks k :done-born])))))
 
-        (it "T6: progression :ready (4/4)"
-          (expect (= :ready (get-in t6 [:progression :rl-correctness :state])))
-          (expect (= 4 (get-in t6 [:progression :rl-correctness :proven]))))
-
-        (it "T6: no :spec-done-unproven warning"
-          (expect (not (contains? (warning-codes (:derived-warnings t6))
-                         :spec-done-unproven))))
-
-        (it "T6: next-actions empty (no work pending)"
-          (expect (empty? (mapcat identity (:stages t6))))))
-
-      ;; ─── Turn 7: reopen + add req + prove + close
-      (let [t7 (turn-at result 7)]
-        (it "T7: spec re-entered :done with 5 requirements proven"
-          (expect (= 5 (count (get-in t7 [:ctx :session/specs :rl-correctness :requirements]))))
-          (expect (= :done (get-in t7 [:ctx :session/specs :rl-correctness :status])))
-          (expect (= :ready (get-in t7 [:progression :rl-correctness :state]))))
-
-        (it "T7: :done-born scope updates to the final close form, not the original t6"
-          (expect (= "t7"
-                    (subs (get-in t7 [:ctx :session/specs :rl-correctness :done-born]) 0 2)))))
+        (it "T6: no task-done-pending-dep warning (all deps terminal)"
+          (expect (not (derived-has? (:derived-warnings t6) ":done but dep")))))
 
       ;; ─── Cross-turn invariants
-      (it "Across all turns: no :depends-on-cycle warning (no cycles introduced)"
-        (expect (not (some #(contains? (warning-codes (:derived-warnings %))
-                              :depends-on-cycle)
+      (it "Across all turns: no cycle warning (no cycles introduced)"
+        (expect (not (some #(some (fn [w] (clojure.string/includes? w "cycle"))
+                              (:derived-warnings %))
                        (:turns result)))))
 
       (it "Final CTX validates against ::cs/ctx"
         (expect (s/valid? ::cs/ctx ctx-final))))))
 
 ;; =============================================================================
-;; req-remove! cascade: orphan-proof warnings appear when proofs reference
-;; the removed requirement.
+;; task-done-pending-dep: a :done task whose dep is non-terminal warns (soft)
 ;; =============================================================================
 
-(def ^:private cascade-scenario
+(def ^:private done-pending-dep-scenario
   [{:turn 1
     :ops
-    [[:spec-set! :s {:title "x" :status :draft}]
-     [:req-add!  :s {:id :r1 :title "first"}]
-     [:req-add!  :s {:id :r2 :title "second"}]
-     [:task-set! :t {:title "y" :specs {:s []} :status :todo}]
-     [:proof-add! :t :s {:requirement :r1 :proof "t1/i1/f4"}]
-     [:proof-add! :t :s {:requirement :r2 :proof "t1/i1/f5"}]]}
+    [[:task-set! :prereq {:title "do first" :status :todo}]
+     [:task-set! :follow {:title "do second" :depends-on [:prereq] :status :todo}]
+     ;; close the follow-up while prereq is still open
+     [:task-set! :follow {:status :done}]]}])
+
+(defdescribe done-pending-dep-test
+  (describe "task :done while a dep is non-terminal emits a soft warning"
+    (let [result (run-scenario done-pending-dep-scenario)
+          t1 (turn-at result 1)]
+      (it ":follow is :done (self-asserted, never reverted)"
+        (expect (= :done (get-in t1 [:ctx :session/tasks :follow :status]))))
+
+      (it "derive-warnings surfaces a :done-but-pending-dep advisory string"
+        (expect (derived-has? (:derived-warnings t1) ":done but dep :prereq"))))))
+
+;; =============================================================================
+;; Contradicting facts: symmetric contradiction + soft warning while both active
+;; =============================================================================
+
+(def ^:private contradiction-scenario
+  [{:turn 1
+    :ops
+    [[:fact-set! :a {:content "uses bcrypt"}]
+     [:fact-set! :b {:content "uses argon2"}]
+     [:fact-contradicts! :a :b]]}
    {:turn 2
     :ops
-    [[:req-remove! :s :r1]]}])
+    [;; resolve by superseding one side
+     [:fact-set! :a {:status :superseded}]]}])
 
-(defdescribe cascade-test
-  (describe "req-remove! emits orphan-proof warnings via mutator"
-    (let [result (run-scenario cascade-scenario)
+(defdescribe contradiction-test
+  (describe "fact-contradicts! is symmetric and warns while both stay :active"
+    (let [result (run-scenario contradiction-scenario)
+          t1 (turn-at result 1)
           t2 (turn-at result 2)]
-      (it "spec only has :r2 after removal"
-        (expect (= [:r2]
-                  (mapv :id (get-in t2 [:ctx :session/specs :s :requirements])))))
+      (it "T1: contradiction written symmetrically on both facts"
+        (expect (contains? (get-in t1 [:ctx :session/facts :a :contradicts]) :b))
+        (expect (contains? (get-in t1 [:ctx :session/facts :b :contradicts]) :a)))
 
-      (it "task still carries the orphaned :r1 proof (engine does not auto-clean)"
-        (expect (= 2 (count (get-in t2 [:ctx :session/tasks :t :specs :s])))))
+      (it "T1: both :active → derive-warnings flags the contradiction"
+        (expect (derived-has? (:derived-warnings t1) "↔")))
 
-      (it "derive-warnings flags the orphan via :proof-unknown-req"
-        (expect (contains? (warning-codes (:derived-warnings t2))
-                  :proof-unknown-req))))))
-
-;; =============================================================================
-;; Collision: req-add! on existing :id soft-rejects and emits a mutation warn
-;; =============================================================================
-
-(def ^:private collision-scenario
-  [{:turn 1
-    :ops
-    [[:spec-set! :s {:title "x" :status :draft}]
-     [:req-add!  :s {:id :r1 :title "first"}]
-     [:req-add!  :s {:id :r1 :title "duplicate"}]]}])
-
-(defdescribe collision-test
-  (describe "req-add! collision is soft-rejected"
-    (let [result (run-scenario collision-scenario)
-          t1 (turn-at result 1)]
-      (it "spec keeps the original :r1 (duplicate not appended)"
-        (expect (= 1 (count (get-in t1 [:ctx :session/specs :s :requirements]))))
-        (expect (= "first"
-                  (get-in t1 [:ctx :session/specs :s :requirements 0 :title]))))
-
-      (it "mutation produced a :req-add-collision warning"
-        (expect (contains? (warning-codes (:mutation-warnings t1))
-                  :req-add-collision))))))
+      (it "T2: superseding one side clears the contradiction warning"
+        (expect (not (derived-has? (:derived-warnings t2) "↔")))))))
 
 ;; =============================================================================
 ;; Cycle hard reject: task-set! with a cycle does not write and warns
@@ -374,8 +299,8 @@
 (def ^:private cycle-scenario
   [{:turn 1
     :ops
-    [[:task-set! :a {:title "a" :specs {} :status :todo}]
-     [:task-set! :b {:title "b" :specs {} :status :todo :depends-on [:a]}]
+    [[:task-set! :a {:title "a" :status :todo}]
+     [:task-set! :b {:title "b" :status :todo :depends-on [:a]}]
      [:task-set! :a {:depends-on [:b]}]]}])
 
 (defdescribe cycle-test
@@ -386,8 +311,27 @@
         (expect (not (contains? (get-in t1 [:ctx :session/tasks :a]) :depends-on))))
 
       (it "mutation produced a :depends-on-cycle warning"
-        (expect (contains? (warning-codes (:mutation-warnings t1))
+        (expect (contains? (mutation-codes (:mutation-warnings t1))
                   :depends-on-cycle))))))
+
+;; =============================================================================
+;; Dangling dep: a :depends-on ref to a nonexistent entity surfaces structurally
+;; =============================================================================
+
+(def ^:private dangling-dep-scenario
+  [{:turn 1
+    :ops
+    [[:task-set! :solo {:title "depends on a ghost" :depends-on [:ghost] :status :todo}]]}])
+
+(defdescribe dangling-dep-test
+  (describe "task :depends-on a nonexistent entity → structural dangling warning"
+    (let [result (run-scenario dangling-dep-scenario)
+          t1 (turn-at result 1)]
+      (it "the dep was written (cycle check passed; target just doesn't exist)"
+        (expect (= [:ghost] (get-in t1 [:ctx :session/tasks :solo :depends-on]))))
+
+      (it "derive-warnings flags the nonexistent target"
+        (expect (derived-has? (:derived-warnings t1) "nonexistent"))))))
 
 ;; =============================================================================
 ;; gc-pass: terminal entries past TTL are dropped from live CTX
@@ -401,22 +345,22 @@
           ctx (-> base
                 ;; task :done at turn 6, TTL 6 → eligible at turn 12+
                 (assoc-in [:session/tasks :old-done]
-                  {:title "x" :specs {} :status :done :born "t6/i1/f1"
+                  {:title "x" :status :done :born "t6/i1/f1"
                    :done-born "t6/i1/f3"})
                 ;; task :cancelled at turn 4, TTL 10 → eligible at turn 14+
                 (assoc-in [:session/tasks :recent-cancelled]
-                  {:title "y" :specs {} :status :cancelled :born "t4/i1/f1"
+                  {:title "y" :status :cancelled :born "t4/i1/f1"
                    :done-born "t4/i1/f4"})
-                ;; spec :done at turn 7, TTL 6 → eligible at turn 13+
-                (assoc-in [:session/specs :old-spec]
-                  {:title "z" :requirements [{:id :r :title "x"}]
-                   :status :done :born "t2/i1/f1" :done-born "t7/i2/f9"}))
+                ;; fact :superseded at turn 7, TTL 6 → eligible at turn 13+
+                (assoc-in [:session/facts :old-fact]
+                  {:content "z" :status :superseded :born "t2/i1/f1"
+                   :done-born "t7/i2/f9"}))
           gced (eng/gc-pass ctx)]
       (it "task done past TTL is archived from live tree"
         (expect (nil? (get-in gced [:session/tasks :old-done]))))
 
-      (it "spec done at the exact TTL boundary is archived"
-        (expect (nil? (get-in gced [:session/specs :old-spec]))))
+      (it "fact superseded at the exact TTL boundary is archived"
+        (expect (nil? (get-in gced [:session/facts :old-fact]))))
 
       (it "task cancelled but inside TTL stays live"
         (expect (some? (get-in gced [:session/tasks :recent-cancelled])))))))

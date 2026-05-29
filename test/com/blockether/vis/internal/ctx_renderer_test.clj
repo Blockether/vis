@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.ctx-renderer-test
   "Phase G renderer tests. Asserts the prompt-side derived view: pure EDN
-   body, single `:session/stages` section (replacing the legacy
-   :session/timeline + :session/orphans + :session/next-actions triplet),
-   NO trailing `;; …` line-comment annotations, trailer pins keep `:form`
-   as native Clojure list (no `;; src` verbatim block)."
+   body, a single `:session/warnings` section (vec of short strings,
+   rendered only when non-empty), NO trailing `;; …` line-comment
+   annotations, trailer pins keep `:form` as native Clojure list (no
+   `;; src` verbatim block)."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -16,30 +16,24 @@
     (assoc :session/turn 2)
     (assoc-in [:session/facts :f1]
       {:content "auth uses literal compare" :born "t1/i1/f1"})
-    (assoc-in [:session/specs :auth]
-      {:title "switch to bcrypt"
-       :requirements [{:id :r1 :title "check uses bcrypt" :facts [:f1]}
-                      {:id :r2 :title "wrong path covered"}]
-       :status :doing
-       :born "t1/i2/f1"})
     (assoc-in [:session/tasks :add-bcrypt]
       {:title "add bcrypt dep"
-       :specs {:auth [{:requirement :r1 :proof "t2/i1/f3"}]}
        :status :done
        :done-born "t2/i1/f4"
        :born "t1/i2/f2"})
     (assoc-in [:session/tasks :replace-check]
       {:title "replace literal compare"
-       :specs {:auth []}
        :depends-on [:add-bcrypt]
        :status :doing
        :born "t1/i2/f3"})))
 
-(defn- render [ctx]
-  (let [idx  (eng/build-indexes ctx)
-        prog (eng/derive-progression ctx idx)
-        plan (eng/derive-stages ctx idx prog)]
-    (r/render-ctx {:ctx ctx :progression prog :stages plan})))
+(defn- render
+  "Render `ctx` with engine-derived warnings, matching the production
+   `{:ctx :warnings}` entry into `render-ctx`."
+  [ctx]
+  (let [idx      (eng/build-indexes ctx)
+        warnings (eng/derive-warnings ctx idx)]
+    (r/render-ctx {:ctx ctx :warnings warnings})))
 
 (defdescribe render-ctx-structural-test
   (describe "render-ctx structural output"
@@ -48,10 +42,10 @@
       (it "starts with `;; ctx` marker followed directly by `{`"
         (expect (str/starts-with? out ";; ctx\n{")))
 
-      (it "body is pure EDN \u2014 no `;; \u26a0` / `;; \u26d4` / `;; ctx-summary` annotations"
+      (it "body is pure EDN — no `;; ⚠` / `;; ⛔` / `;; ctx-summary` annotations"
         (let [body (str/replace-first out #"^;; ctx\n" "")]
-          (expect (not (str/includes? body ";; \u26a0")))
-          (expect (not (str/includes? body ";; \u26d4")))
+          (expect (not (str/includes? body ";; ⚠")))
+          (expect (not (str/includes? body ";; ⛔")))
           (expect (not (str/includes? body "ctx-summary")))))
 
       (it "top-level keys appear in deterministic order"
@@ -60,16 +54,16 @@
                     (idx-of ":session/turn")
                     (idx-of ":session/scope")
                     (idx-of ":session/workspace")
-                    (idx-of ":session/trailer")
-                    (idx-of ":session/stages")))))
+                    (idx-of ":session/trailer")))))
 
-      (it "DROPS legacy sections that were folded into :session/stages"
+      (it "DROPS legacy derived sections"
+        (expect (nil? (str/index-of out ":session/specs")))
+        (expect (nil? (str/index-of out ":session/stages")))
         (expect (nil? (str/index-of out ":session/timeline")))
         (expect (nil? (str/index-of out ":session/orphans")))
         (expect (nil? (str/index-of out ":session/next-actions"))))
 
       (it "renders raw entity subtrees that contain data"
-        (expect (str/includes? out ":session/specs"))
         (expect (str/includes? out ":session/tasks"))
         (expect (str/includes? out ":session/facts")))
 
@@ -84,55 +78,29 @@
               closes (count (re-seq #"\}" out))]
           (expect (= opens closes)))))))
 
-(defdescribe render-plan-test
-  (describe ":session/stages flat ordered vec"
-    (let [out (render base-ctx)]
+(defdescribe render-warnings-test
+  (describe ":session/warnings vec-of-strings section"
 
-      (it "has the :session/stages section"
-        (expect (str/includes? out ":session/stages")))
+    (it "renders a :session/warnings section when warnings are present"
+      (let [out (r/render-ctx {:ctx base-ctx
+                               :warnings ["task :t1 :done but dep :t2 is :doing"
+                                          "fact :a contradicts :b"]})]
+        (expect (str/includes? out ":session/warnings"))
+        (expect (str/includes? out "\"task :t1 :done but dep :t2 is :doing\""))
+        (expect (str/includes? out "\"fact :a contradicts :b\""))))
 
-      (it "renders at least one action entry with canonical keys"
-        (expect (re-find #":kind :(prove-requirement|work-unblocked-todo|fix-consistency|blocker)" out))
-        (expect (str/includes? out ":status :"))
-        (expect (str/includes? out ":remedy "))))))
+    (it "omits the :session/warnings section entirely when empty"
+      (let [out (r/render-ctx {:ctx base-ctx :warnings []})]
+        (expect (not (str/includes? out ":session/warnings")))))
 
-(defdescribe render-plan-with-blocker-test
-  (describe "engine blockers appear FIRST in :session/stages"
-    (let [ctx-with-blocker (assoc base-ctx :engine/blockers
-                             [{:id     :missing-title
-                               :reason "Set the title"
-                               :remedy '(set-session-title! "X")}])
-          out              (render ctx-with-blocker)]
+    (it "omits the :session/warnings section when warnings key absent"
+      (let [out (r/render-ctx {:ctx base-ctx})]
+        (expect (not (str/includes? out ":session/warnings")))))
 
-      (it "renders the blocker as a :session/stages entry"
-        (expect (str/includes? out ":kind :blocker"))
-        (expect (str/includes? out ":id :missing-title"))
-        (expect (str/includes? out ":status :blocked"))
-        (expect (str/includes? out ":remedy (set-session-title! \"X\")")))
-
-      (it "blocker entry sits at the head of :session/stages"
-        (let [plan-start    (str/index-of out ":session/stages")
-              blocker-idx   (str/index-of out ":kind :blocker" plan-start)
-              non-blocker   (some #(str/index-of out (str ":kind " %) plan-start)
-                              [":prove-requirement" ":work-unblocked-todo"])]
-          (expect (some? blocker-idx))
-          (when non-blocker
-            (expect (< blocker-idx non-blocker))))))))
-
-(defdescribe render-plan-overflow-test
-  (describe ":session/stages overflow tag stays in-vec (no trailing comment)"
-    (let [many-tasks (into {}
-                       (for [i (range 10)]
-                         [(keyword (str "todo-" i))
-                          {:title (str "todo-" i) :status :todo :born "t1/i1/f1"
-                           :specs {}}]))
-          ctx        (update base-ctx :session/tasks merge many-tasks)
-          out        (render ctx)]
-
-      (it "appends overflow as an in-vec map (NOT a trailing `;;` comment)"
-        (expect (str/includes? out ":overflow "))
-        (expect (str/includes? out ":hint \"raise NEXT_ACTIONS_BUDGET"))
-        (expect (not (str/includes? out ";; more action(s)")))))))
+    (it "warnings render as pure EDN strings (no `;;` annotations)"
+      (let [out  (r/render-ctx {:ctx base-ctx :warnings ["a missing dep"]})
+            body (str/replace-first out #"^;; ctx\n" "")]
+        (expect (not (str/includes? body ";; ⚠")))))))
 
 (defdescribe render-trailer-form-pin-test
   (describe "trailer form pin is one Clojure map, :form is a native list"
@@ -194,11 +162,12 @@
       (it "starts with `;; ctx\\n{` (no preamble banner)"
         (expect (str/starts-with? out ";; ctx\n{")))
 
-      (it "shows empty :session/stages as []"
-        (expect (str/includes? out ":session/stages\n []")))
+      (it "omits empty :session/tasks / :facts entirely"
+        (expect (not (str/includes? out ":session/tasks")))
+        (expect (not (str/includes? out ":session/facts"))))
 
-      (it "omits empty :session/specs / :tasks / :facts entirely"
-        (expect (not (str/includes? out ":session/specs"))))
+      (it "omits :session/warnings when there are none"
+        (expect (not (str/includes? out ":session/warnings"))))
 
       (it "carries no comment annotations anywhere"
         (let [body (str/replace-first out #"^;; ctx\n" "")]

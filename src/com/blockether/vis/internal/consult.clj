@@ -144,7 +144,7 @@
                          (pr-str
                            (select-keys c
                              [:session/id :session/turn :session/scope
-                              :session/specs :session/tasks :session/facts
+                              :session/tasks :session/facts
                               :session/trailer]))))
                      (catch Throwable _ ""))
           intent {:id consult-id

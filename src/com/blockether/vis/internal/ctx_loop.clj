@@ -24,8 +24,9 @@
    D12: hint-satisfaction surface (`satisfy-hint!`,
    `drain-and-apply-satisfies!`, `:engine/pending-satisfies`) was retired.
    Hook-emitted soft work items now live as hook-sourced tasks; the model
-   satisfies them via `(task-set! id {:status :done :proof \"…\"})` and the
-   engine reconciles at end-of-iter via `eng/reconcile-done-hook-tasks`."
+   satisfies them via `(task-set! id {:status :done})`. Done is
+   self-asserted — the engine stamps `:done-born` and surfaces a soft
+   terminal-dep warning, but does not verify or revert."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.consult :as consult]
             [com.blockether.vis.internal.consult-engine :as consult-engine]
@@ -152,27 +153,20 @@
 
 (defn build-sci-bindings
   "Return `{'symbol bare-fn}` for every engine mutator. The model writes
-   `(spec-set! :K {…})` or `(task-set! :K {:status :done :proof \"…\"})`
-   directly inside a fence; we route the call through `apply-and-record!`
-   against the single ctx-atom.
+   `(task-set! :K {:status :done})` or `(fact-set! :K {…})` directly inside
+   a fence; we route the call through `apply-and-record!` against the
+   single ctx-atom.
 
    All mutators return `:vis/silent` — engine mutations are 'effect-only',
    visible on next render but quiet in the form echo.
 
    D12: no `satisfy-hint!` binding. Hook-task satisfaction goes through
-   the standard `task-set!` mutator with `{:status :done :proof \"…\"}`."
+   the standard `task-set!` mutator with `{:status :done}`."
   [env]
-  {'spec-set!     (fn spec-set!     [k partial]            (apply-and-record! env :spec-set!     [k partial]))
-   'task-set!     (fn task-set!     [k partial]            (apply-and-record! env :task-set!     [k partial]))
+  {'task-set!     (fn task-set!     [k partial]            (apply-and-record! env :task-set!     [k partial]))
    'fact-set!     (fn fact-set!     [k partial]            (apply-and-record! env :fact-set!     [k partial]))
-   'spec-depends! (fn spec-depends! [k deps]               (apply-and-record! env :spec-depends! [k deps]))
    'task-depends! (fn task-depends! [k deps]               (apply-and-record! env :task-depends! [k deps]))
    'fact-depends! (fn fact-depends! [k deps]               (apply-and-record! env :fact-depends! [k deps]))
-   'req-add!      (fn req-add!      [spec-k req]           (apply-and-record! env :req-add!      [spec-k req]))
-   'req-update!   (fn req-update!   [spec-k rid partial]   (apply-and-record! env :req-update!   [spec-k rid partial]))
-   'req-remove!   (fn req-remove!   [spec-k rid]           (apply-and-record! env :req-remove!   [spec-k rid]))
-   'proof-add!    (fn proof-add!    [task-k spec-k proof]  (apply-and-record! env :proof-add!    [task-k spec-k proof]))
-   'proof-remove! (fn proof-remove! [task-k spec-k rid]    (apply-and-record! env :proof-remove! [task-k spec-k rid]))
    'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
    'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))
    ;; Secondary-model consultation (async cross-iter). The model
@@ -282,39 +276,6 @@
      :blocked? @blocked?
      :warnings @warns}))
 
-(defn reconcile-done-hook-tasks!
-  "Run `eng/reconcile-done-hook-tasks` against the live ctx atom; append
-   any reverted-task warnings to `:engine/warnings`. Called at end-of-
-   iter (after advance-iter has pinned the trailer + bumped the cursor)
-   so the validator sees the full form-results map.
-
-   `form-results-map` is `{scope-string envelope}` for every scope in the
-   trailer including the iter that just landed.
-
-   No-op when ctx-atom is missing (defensive guard for tests that wire a
-   partial env)."
-  [{:keys [ctx-atom] :as env} form-results-map]
-  (if-not ctx-atom
-    (do (tel/log! {:level :warn :id ::reconcile-no-ctx-atom}
-          "reconcile-done-hook-tasks! called without :ctx-atom on env")
-      nil)
-    (let [start-ms (System/currentTimeMillis)
-          cursor   (cursor-snapshot env)
-          warns-acc (atom [])]
-      (swap! ctx-atom
-        (fn [c]
-          (let [c+cur (assoc c :session/scope cursor)
-                {:keys [ctx warnings]} (eng/reconcile-done-hook-tasks c+cur form-results-map)]
-            (reset! warns-acc (vec warnings))
-            (cond-> ctx
-              (seq warnings) (update :engine/warnings (fnil into []) warnings)))))
-      (tel/log! {:level :info :id ::reconcile-done-hook-tasks
-                 :data {:cursor cursor
-                        :form-result-scopes (vec (sort (keys (or form-results-map {}))))
-                        :warnings @warns-acc
-                        :duration-ms (- (System/currentTimeMillis) start-ms)}}
-        "reconcile-done-hook-tasks completed"))))
-
 (defn process-pending-consults!
   "Parallel runner. Drains `:engine/pending-consults` atomically,
    spawns one future per intent dispatching to
@@ -378,28 +339,6 @@
                             :result          r}))))
            (mapv :id results)))))))
 
-(defn archive-failed-task-proofs!
-  "Run `eng/archive-failed-task-proofs` against the live ctx atom: scans
-   regular task-level proofs whose `:validator-fn` rejects the form
-   result, and appends a rejection entry to the task's
-   `:archived-proofs` vec. The proof itself stays in `:specs` — model
-   owns regular-task lifecycle. Idempotent within an iter.
-
-   Companion to `reconcile-done-hook-tasks!` which handles HOOK-source
-   tasks (engine reverts those). Call this after reconcile so the two
-   archive paths see a consistent ctx.
-
-   No-op when ctx-atom is missing (defensive for partial test envs)."
-  [{:keys [ctx-atom] :as env} form-results-map]
-  (when ctx-atom
-    (let [cursor (cursor-snapshot env)]
-      (swap! ctx-atom
-        (fn [c]
-          (-> c
-            (assoc :session/scope cursor)
-            (eng/archive-failed-task-proofs form-results-map)
-            (dissoc :session/scope)))))))
-
 (defn stamp-cursor
   "Return a ctx map with both `:session/turn` and `:session/scope` synced
    from the loop's running counters. Render path + every engine derivation
@@ -422,9 +361,8 @@
 
 (defn trailer->form-results
   "Flatten every trailer pin's :forms vec into a `{scope envelope}` map.
-   Used at render time so engine's `classify-scope` and validator-fn pass
-   can look up per-form `:result` / `:error` for any scope the model
-   references on a task proof."
+   Used at render time so engine's `classify-scope` pass can look up
+   per-form `:result` / `:error` for any scope the model references."
   [trailer]
   (into {}
     (for [entry trailer
@@ -441,9 +379,8 @@
    Flow:
      deref ctx-atom → stamp cursor → attach `:session/env` digest +
      extension `:ext/ctx` contributions → build form-results map from
-     trailer → build indexes → derive progression → drain mutator
-     warnings + derive render-time warnings → derive next-actions →
-     call renderer.
+     trailer → build indexes → drain mutator warnings + derive
+     render-time warnings → assoc `:session/warnings` → call renderer.
 
    `:session/env` lives on the rendered ctx but is NOT pushed back into
    `ctx-atom`: extension contributions are recomputed each iter so
@@ -468,7 +405,6 @@
                            (seq env-block) (assoc :session/env env-block))
           fr             (trailer->form-results (:session/trailer ctx*))
           idx            (eng/build-indexes ctx*)
-          prog           (eng/derive-progression ctx* idx fr)
           drained-warns  (drain-warnings! env)
           derived-warns  (eng/derive-warnings ctx* idx fr)
           warns          (vec (concat drained-warns derived-warns))
@@ -490,9 +426,13 @@
                                    (concat [title-blocker]
                                      (remove #(#{:missing-title :stale-title} (:id %))
                                        (or bs [])))))))
-          stages           (eng/derive-stages ctx-with-blocker idx prog)]
-      (renderer-fn {:ctx ctx-with-blocker :warnings warns
-                    :progression prog :stages stages}))))
+          ;; `:session/warnings` is a render-only key: a vec of short
+          ;; strings (structural warnings + drained mutator warnings)
+          ;; surfaced to the model in the rendered ctx. NOT pushed back
+          ;; into ctx-atom.
+          ctx-rendered     (cond-> ctx-with-blocker
+                             (seq warns) (assoc :session/warnings warns))]
+      (renderer-fn {:ctx ctx-rendered :warnings warns}))))
 
 ;; =============================================================================
 ;; Introspect verbs — model-facing SCI bindings over engine history helpers
@@ -607,17 +547,15 @@
 
    The live ctx-atom is folded in on every call so introspection on the
    IN-PROGRESS turn also works (otherwise the model could not query its
-   own just-defined specs from the next iter).
+   own just-defined tasks/facts from the next iter).
 
    Per-form / per-iter / per-turn verbs read `session_turn_iteration.forms`
    directly via `persistance/db-list-session-turn-iterations` against the
    env's `:db-info` + `:session-id` keys."
   [env history-loader]
   (let [history #(with-live-history env history-loader)]
-    {'introspect-spec     (fn introspect-spec     [k]   (eng/introspect-spec (history) k))
-     'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
+    {'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
      'introspect-fact     (fn introspect-fact     [k]   (eng/introspect-fact (history) k))
-     'introspect-failed-proofs (fn introspect-failed-proofs [k] (eng/introspect-failed-proofs (history) k))
      'introspect-changes  (fn introspect-changes  [turn-key] (eng/introspect-changes (history) turn-key))
      'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
      'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]

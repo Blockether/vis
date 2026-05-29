@@ -4,7 +4,7 @@
    Asserts that `run-turn!` short-circuits the LLM round-trip when
    the user message resolves to a registered slash, persists a
    synthetic iteration row with `:tag :user-slash`, and (when the
-   slash returns `:slash/specs / :tasks / :facts`) writes them to
+   slash returns `:slash/tasks / :facts`) writes them to
    the CTX engine via the same path a model-emitted mutator would."
   (:require
    [clojure.string :as str]
@@ -119,11 +119,11 @@
           (expect (str/includes? (:answer result) "**world**")))))))
 
 ;; =============================================================================
-;; Slash-emitted spec / task / fact land on CTX engine
+;; Slash-emitted task / fact land on CTX engine
 ;; =============================================================================
 
 (defdescribe slash-emits-ctx-mutations-test
-  (it "slash :slash/specs / :slash/tasks / :slash/facts route through apply-and-record!"
+  (it "slash :slash/tasks / :slash/facts route through apply-and-record!"
     (with-store
       (fn [store]
         (let [emitter {:slash/name "seed"
@@ -131,28 +131,24 @@
                        (fn [_]
                          {:slash/status :ok
                           :slash/title  "seeded"
-                          :slash/specs  {:design/api {:summary "API surface"}}
                           :slash/tasks  {:task/migrate
                                          {:title "migrate"
                                           :status :todo
                                           :importance :info}}
-                          :slash/facts  {:fact/build-green {:value true}}})}
+                          :slash/facts  {:fact/build-green {:content "build is green"}}})}
               env     (slash-env store [emitter])
               _result (with-redefs [lp/iteration-loop (fn [& _] {:status :success})]
                         (lp/run-turn! env "/seed" {}))
               ctx     @(:ctx-atom env)]
-          (expect (some? (get-in ctx [:session/specs :design/api])))
-          (expect (= "API surface"
-                    (get-in ctx [:session/specs :design/api :summary])))
           (expect (some? (get-in ctx [:session/tasks :task/migrate])))
           (expect (= :todo
                     (get-in ctx [:session/tasks :task/migrate :status])))
           (expect (some? (get-in ctx [:session/facts :fact/build-green])))
-          (expect (= true
-                    (get-in ctx [:session/facts :fact/build-green :value])))
+          (expect (= "build is green"
+                    (get-in ctx [:session/facts :fact/build-green :content])))
           ;; Every mutation got the canonical t1/i1/f1 scope.
           (expect (= "t1/i1/f1"
-                    (get-in ctx [:session/specs :design/api :born])))
+                    (get-in ctx [:session/facts :fact/build-green :born])))
           (expect (= "t1/i1/f1"
                     (get-in ctx [:session/tasks :task/migrate :born]))))))))
 
