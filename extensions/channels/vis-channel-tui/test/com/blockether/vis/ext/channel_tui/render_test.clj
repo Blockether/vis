@@ -41,6 +41,16 @@
 (defn- strip-ansi [s]
   (str/replace (or s "") #"\u001b\[[0-9;]*m" ""))
 
+(defn- op-entry
+  "Build ONE `:channel` sink op carrying the `{:summary :display}` render
+   contract. Phase-5 op rows source LABEL/summary/body from this, not from the
+   legacy per-form `:result-render`."
+  ([summary display] (op-entry 0 :tool :observation summary display true))
+  ([position op tag summary display success?]
+   {:position position :form (str "(" (name op) ")")
+    :symbol op :op op :tag tag :success? success? :error nil
+    :result {:summary summary :display display}}))
+
 (defn- body-of
   "Drop the leading marker (PUA codepoint) and return the visible text.
    Tolerates empty input - a blank line in `:answer` mode renders as
@@ -111,22 +121,24 @@
         (expect (str/includes? body "result"))
         (expect (not (str/includes? body ":ir"))))))
 
-  (it "renders channel sink IR returned by a tool without EDN dumping"
-    ;; Tool results carry their channel-render IR via `:result-render`.
-    ;; Plain `:value` form results are now hidden per user directive;
-    ;; only `:tool` kind reaches the result pane, so the test asserts the
-    ;; IR contract for the case the renderer actually paints.
-    (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
+  (it "renders a channel sink op as a BLOCK op row without EDN dumping"
+    ;; Phase-5: tool output surfaces as ONE `▶ <LABEL> <summary>` op row
+    ;; sourced from the canonical `:channel` op's `{:summary :display}`
+    ;; contract — not the legacy per-form `:result-render`. The op-row label
+    ;; is the summary's first [:strong]; the row rides the result marker band.
+    (let [summary [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
           lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(def t (z/forms \"x.clj\"))" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+                                         :forms [{:code "(def t (z/forms \"x.clj\"))" :comment nil :render-segments nil
+                                                  :channel [(op-entry summary summary)]
+                                                  :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   60 1 {})
           visible-lines (mapv (comp strip-sentinels strip-ansi) lines)
           body (str/join "\n" visible-lines)
-          ir-line (first (filter #(str/includes? (strip-sentinels %) "bold result") lines))]
+          op-line (first (filter #(str/includes? (strip-sentinels %) "bold result") lines))]
       (expect (str/includes? body "bold result"))
       (expect (not (str/includes? body ":ir")))
-      (expect (not (str/starts-with? ir-line p/MARKER_RESULT)))
-      (expect (not (str/starts-with? ir-line p/MARKER_ANSWER_TXT)))))
+      (expect (str/includes? (strip-sentinels (strip-ansi (body-of op-line))) "▶"))
+      (expect (str/starts-with? op-line p/MARKER_RESULT))))
 
   (it "hides `(def r (v/ls …))` source while keeping the channel preview visible (regression: previous behaviour suppressed both)"
     ;; Two-form fence the model emits in practice: bind a tool result
@@ -137,8 +149,9 @@
     ;; FENCE's last value was a plain map), so the tool's
     ;; preview pane was suppressed by the `(= :tool result-kind)`
     ;; gate. Both halves are now wired.
-    (let [ls-ir [:ir {} [:p {} [:strong {} [:span {} "LS"]] [:span {} "  ."]]
-                 [:code {:lang "text"} ".gitignore\nsrc/"]]
+    (let [ls-summary [:ir {} [:p {} [:strong {} [:span {} "LS"]] [:span {} "  ."]]]
+          ls-display [:ir {} [:p {} [:strong {} [:span {} "LS"]] [:span {} "  ."]]
+                      [:code {:lang "text"} ".gitignore\nsrc/"]]
           lines (format-iteration-entry
                   {:iteration 0
                    :forms [{:code (str "(def r (v/ls \".\"))\n"
@@ -151,7 +164,8 @@
                                                :source "(def r (v/ls \".\"))"}
                                               {:kind :code
                                                :source "(select-keys r [:entry-count :file-count])"}]
-                            :result-render ls-ir
+                            :channel [(op-entry ls-summary ls-display)]
+                            :result-render ls-display
                             :result-kind   :tool   ;; promoted via channel sink entries
                             :result-detail nil
                             :scope "t24/i1/f1"
@@ -177,7 +191,8 @@
                                                           :source "(def r (v/ls \".\"))"}
                                                          {:kind :code
                                                           :source "(select-keys r [:entry-count :file-count])"}]
-                                       :result-render ls-ir
+                                       :channel [(op-entry ls-summary ls-display)]
+                                       :result-render ls-display
                                        :result-kind   :tool
                                        :result-detail nil
                                        :scope "t24/i1/f1"
@@ -185,18 +200,18 @@
                                        :success? true :silent? false}]}
                              80 1 {:session-id "s"
                                    :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                                   :detail-expansions {["s" "iteration:t123e4567:i1:b1:result"] true}})
+                                   ;; Phase-5 disclosure node id: `<block-scope>:op<position>`.
+                                   :detail-expansions {["s" "t24/i1:op0"] true}})
             expanded-body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) expanded-lines))]
         (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▼") expanded-lines))
         (expect (str/includes? expanded-body "LS"))
         (expect (str/includes? expanded-body ".gitignore")))))
 
-  (it "renders the per-form footer with status+duration right-anchored and NO scope stamp (scope moved to BLOCK header)"
-    ;; Phase-5: the block-level scope stamp moved to the BLOCK header row
-    ;; (`block-header-line`). The per-form footer no longer duplicates the
-    ;; `tN/iM/bK` scope; it carries only the status glyph + duration,
-    ;; right-anchored. The scope must NOT appear in the footer any more.
-    (let [ir [:ir {} [:p {} [:span {} "PATCH  1 file  changed=1"]]]
+  (it "carries status+duration in the BLOCK header, not a per-form footer, and no scope stamp"
+    ;; Phase-5: the per-form footer (status glyph + duration + scope stamp) is
+    ;; GONE. Status + duration live in the BLOCK header; the block-level scope
+    ;; lives there too (never `/fK`/`/bK`). The op row carries the tool summary.
+    (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file  changed=1"]]]
           lines (format-iteration-entry
                   {:iteration 0
                    :forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
@@ -204,28 +219,29 @@
                             :render-segments [{:kind :code
                                                :source "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"}]
                             :scope "t24/i1/f1"
-                            :result-render ir
+                            :channel [(op-entry 0 :v/patch :mutation summary summary true)]
+                            :result-render summary
                             :result-kind :tool
                             :result-detail nil
                             :error nil :started-at-ms nil :duration-ms 12
                             :success? true :silent? false}]}
                   70 1 {:band-w 74})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          footer (first (filter #(str/includes? % "✓ 12ms") visible))
-          footer-idx (first (keep-indexed #(when (str/includes? %2 "✓ 12ms") %1) visible))
-          result-idx (first (keep-indexed #(when (str/includes? %2 "ATCH") %1) visible))]
-      (expect (some? footer))
-      (expect (str/includes? footer "✓ 12ms"))
-      (expect (= 74 (p/display-width footer)))
-      (expect (str/ends-with? footer "✓ 12ms "))
-      ;; Scope stamp is gone from the footer entirely — it lives in the
-      ;; BLOCK header now.
+          header  (first (filter #(str/includes? % "BLOCK - ") visible))
+          op-line (first (filter #(str/includes? % "PATCH") visible))]
+      ;; Header carries status + duration.
+      (expect (some? header))
+      (expect (str/includes? header "✓"))
+      (expect (str/includes? header "12ms"))
+      (expect (str/includes? header "t24/i1"))
+      ;; Block-level scope only — never the per-form `/f1` or `/b1` tail.
+      (expect (not (str/includes? header "/f1")))
       (expect (not-any? #(str/includes? % "t24/i1/b1") visible))
-      ;; Footer is code-block chrome, not part of the tool result body:
-      ;; keep it before the tool badge/summary row, with a green pad row
-      ;; under the footer before result content starts.
-      (expect (< footer-idx result-idx))
-      (expect (= p/MARKER_CODE_OK_PAD (marker-of (nth lines (inc footer-idx)))))))
+      ;; The op row paints the tool summary; the `✓ 12ms` status appears ONCE
+      ;; (in the header) — no duplicate per-form footer row.
+      (expect (some? op-line))
+      (expect (str/includes? op-line "▶"))
+      (expect (= 1 (count (filter #(str/includes? % "✓ 12ms") visible))))))
 
   (it "renders a BLOCK header with block-level scope, op counts, and status+duration"
     ;; Phase-5: one card title per fence. The header sources its scope /
@@ -598,9 +614,11 @@
 
   (it "uses the same trace renderer for live progress and cancelled bubbles"
     (let [ir       [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
-          ;; Tool-kind result so the channel-render IR actually paints —
-          ;; plain `:value` results are hidden per user directive.
-          iter     {:forms [{:code "(tool)" :comment nil :render-segments nil :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
+          ;; Phase-5: tool output paints from the `:channel` op contract as a
+          ;; BLOCK op row — both live and cancelled paths share the renderer.
+          iter     {:forms [{:code "(tool)" :comment nil :render-segments nil
+                             :channel [(op-entry ir ir)]
+                             :result-render ir :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
           settings {:show-thinking true :show-iterations true}
           live     (:lines (render/progress->lines-data
                              {:iterations [iter]} 80 settings
@@ -1418,29 +1436,35 @@
       (expect (not (str/includes? (:text payload) "● RAW")))
       (expect (not-any? #(= :preview-switcher (:kind %)) (:line-meta payload)))))
 
-  (it "renders tool result text literally without ANSI syntax colors"
-    ;; Tools own their own output formatting via `:render-fn`; the TUI
-    ;; must paint the channel-render text verbatim, not re-tokenize it
-    ;; with zprint ANSI codes. Plain `:value` form results no longer
-    ;; render at all, so this assertion lives on the `:tool` path.
+  (it "renders the tool op display body literally without ANSI syntax colors"
+    ;; Tools own their own output formatting via `:render-fn`; the TUI paints
+    ;; the op's `:display` IR verbatim when the row is expanded, not
+    ;; re-tokenized with zprint ANSI codes. Phase-5: output is the canonical
+    ;; `:channel` op, not the legacy per-form `:result-render`.
     (render/invalidate-cache!)
     (let [raw "{:b 2 :a [1 2 3]}"
-          trace [{:forms [{:code "{:b 2 :a [1 2 3]}" :comment nil :render-segments nil :result-render raw :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+          summary [:ir {} [:p {} [:strong {} [:span {} "EVAL"]]]]
+          display [:ir {} [:p {} [:span {} raw]]]
+          trace [{:forms [{:code "{:b 2 :a [1 2 3]}" :comment nil :render-segments nil
+                           :channel [(op-entry summary display)]
+                           :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
-                     :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
-          text (:text payload)
-          result-lines (filter #(str/includes? % raw) (:lines payload))]
+                     :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                     :detail-expansions {:vis.channel-tui/expand-all-details? true}})
+          text (strip-sentinels (:text payload))
+          result-lines (filter #(str/includes? (strip-sentinels %) raw) (:lines payload))]
       (expect (str/includes? text raw))
       (expect (seq result-lines))
       (expect (not-any? #(re-find #"\u001b\[[0-9;]*m" %) result-lines))))
 
-  (it "renders tool result body without retired operation badge noise"
+  (it "renders the tool op summary without retired operation badge noise"
     (render/invalidate-cache!)
-    (let [trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render "1 file changed" :result-kind :tool :result-detail {:op :v/patch
-                                                                                                                                                                                               :tag :mutation
-                                                                                                                                                                                               :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+    (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file changed"]]]
+          trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                           :channel [(op-entry 0 :v/patch :mutation summary summary true)]
+                           :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
@@ -1448,15 +1472,17 @@
       (expect (str/includes? (:text payload) "1 file changed"))
       (expect (not (str/includes? (:text payload) "MUTATION patch")))))
 
-  (it "renders huge patch result behind canonical badge disclosure"
-    ;; Tool bodies default collapsed. Badge/head row stays visible with
-    ;; chevron, body opens through :toggle-details. Operation labels remain
-    ;; retired; first result line speaks for itself.
+  (it "renders a huge patch op behind a canonical op-row disclosure"
+    ;; Op rows default collapsed: the `▶ <LABEL> <summary>` row stays visible
+    ;; with a chevron; the `:display` body opens via :toggle-details. The
+    ;; LABEL is the summary's first [:strong]; no MUTATION-style badge noise.
     (render/invalidate-cache!)
-    (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))
-          trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render huge-result :result-kind :tool :result-detail {:op :v/patch
-                                                                                                                                                                                                :tag :mutation
-                                                                                                                                                                                                :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+    (let [diff (str/join " " (repeat 500 "diff-line"))
+          summary [:ir {} [:p {} [:strong {} [:span {} "Patched file."]]]]
+          display [:ir {} [:p {} [:strong {} [:span {} "Patched file."]]] [:code {:lang "text"} diff]]
+          trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                                 :channel [(op-entry 0 :v/patch :mutation summary display true)]
+                                 :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload     (render/format-answer-with-thinking-data
                         nil trace 96 {:show-iterations true} nil false
                         {:session-id "session"
@@ -1469,11 +1495,11 @@
 
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
-    (let [trace   [{:forms [{:code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil :result-render "Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)." :result-kind :tool :result-detail {:op :any
-                                                                                                                                                                                                                                                                     :tag :observation
-                                                                                                                                                                                                                                                                     :color-role :tool-color/search
-                                                                                                                                                                                                                                                                     :spec {:any ["alpha" "beta"] :paths ["src"]}
-                                                                                                                                                                                                                                                                     :paths ["src"]} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+    (let [summary [:ir {} [:p {} [:strong {} [:span {} "RG"]]
+                           [:span {} "  Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)."]]]
+          trace   [{:forms [{:code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil
+                             :channel [(op-entry 0 :v/rg :observation summary summary true)]
+                             :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
@@ -1572,26 +1598,24 @@
 ;; Markdown-to-TUI coloring, no special fence renderer, no visible fence rows.
 ;; ─────────────────────────────────────────────────────────────────────────
 
-(defdescribe tool-detail-plain-result-rendering-test
-  (describe "expanded tool result body renders as literal result text"
-    (it "bullet lines inside an expanded tool result are reachable as text"
-      ;; The earlier contract re-rendered tool-result bodies through the
-      ;; Markdown pipeline, producing MARKER_MD_BULLET rows. The current
-      ;; renderer keeps tool result bodies as literal text on the
-      ;; result-marker band — cheaper, and side-steps reparsing arbitrary
-      ;; tool output. The user-facing text still shows the bullets, just
-      ;; not as styled bullet rows.
+(defdescribe tool-detail-op-display-rendering-test
+  ;; Phase-5: a tool's expanded op row reveals its `:display` IR. Tools emit
+  ;; canonical IR (no Markdown strings), so the renderer paints that IR
+  ;; faithfully — paragraphs reach the user as text on the result band.
+  (describe "expanded op row reveals the op :display IR"
+    (it "multi-paragraph display lines are reachable as text when expanded"
       (render/invalidate-cache!)
-      (let [body (str "Tool finished:\n"
-                   "- alpha line\n"
-                   "- beta line\n"
-                   "- gamma line")
-            big-body (str body "\n\n" (apply str (repeat 4096 "x")))
-            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :mutation
-                                                                                                                                                                                         :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+      (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  3 lines"]]]
+            display [:ir {}
+                     [:p {} [:span {} "alpha line"]]
+                     [:p {} [:span {} "beta line"]]
+                     [:p {} [:span {} "gamma line"]]]
+            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                             :channel [(op-entry 0 :v/patch :mutation summary display true)]
+                             :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                  :detail-expansions {["session" "iteration:t123e4567:i1:b1:result"] true}}
+                  :detail-expansions {:vis.channel-tui/expand-all-details? true}}
             payload (render/format-answer-with-thinking-data
                       nil trace 96 {:show-iterations true} nil false opts)
             lines   (:lines payload)]
@@ -1599,71 +1623,39 @@
         (expect (some #(str/includes? % "beta line") lines))
         (expect (some #(str/includes? % "gamma line") lines))))
 
-    (it "inline bold/italic inside tool results stays literal, with no inline sentinels"
+    (it "the op row label is the summary's first [:strong], with no inline sentinels in the label"
       (render/invalidate-cache!)
-      (let [body "Result: **important** and *subtle*."
-            ;; Trip auto-collapse with filler.
-            big-body (str body "\n" (apply str (repeat 4096 "y")))
-            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/patch :tag :mutation
-                                                                                                                                                                                         :color-role :tool-color/edit} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+      (let [summary [:ir {} [:p {} [:strong {} [:span {} "EDITED"]] [:span {} "  src/a.clj"]]]
+            display [:ir {} [:p {} [:span {} "1 hunk applied"]]]
+            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                             :channel [(op-entry 0 :v/patch :mutation summary display true)]
+                             :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
-                  :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                  :detail-expansions {["session" "iteration:t123e4567:i1:b1:result"] true}}
+                  :session-turn-id "123e4567-e89b-12d3-a456-426614174000"}
             payload (render/format-answer-with-thinking-data
                       nil trace 96 {:show-iterations true} nil false opts)
-            lines   (:lines payload)
-            text    (:text payload)]
-        (expect (not-any? #(str/includes? % p/INLINE_BOLD_ON) lines))
-        (expect (not-any? #(str/includes? % p/INLINE_BOLD_OFF) lines))
-        (expect (not-any? #(str/includes? % p/INLINE_ITALIC_ON) lines))
-        (expect (not-any? #(str/includes? % p/INLINE_ITALIC_OFF) lines))
-        (expect (str/includes? text "**important**"))
-        (expect (str/includes? text "*subtle*"))))
+            text    (strip-sentinels (strip-ansi (:text payload)))]
+        (expect (str/includes? text "▶ EDITED"))
+        (expect (str/includes? text "src/a.clj"))))
 
-    (it "strips fenced marker rows and does not run Markdown structural rendering in tool results"
+    (it "an errored op surfaces its error summary as the op row"
+      ;; Errored ops synthesise the default `{:summary :display}` error
+      ;; contract via `sink-entry->op`; the renderer paints the ERROR badge
+      ;; row from `:summary`, no fake per-form badge.
       (render/invalidate-cache!)
-      (let [body (str "# Tool output\n\n"
-                   "```diagram\n"
-                   "flowchart LR\n"
-                   "A[Start] --> B[Done]\n"
-                   "```\n\n"
-                   "```diff\n"
-                   "+changed\n"
-                   "```\n")
-            big-body (str body "\n" (apply str (repeat 4096 "z")))
-            trace [{:forms [{:code "(v/cat \"x\")" :comment nil :render-segments nil :result-render big-body :result-kind :tool :result-detail {:op :v/cat :tag :observation
-                                                                                                                                                :color-role :tool-color/read} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+      (let [err {:message "boom" :type "java.lang.RuntimeException"}
+            trace [{:forms [{:code "(boom)" :comment nil :render-segments nil
+                             :channel [{:position 0 :form "(boom)" :symbol :boom :op :boom
+                                        :tag :observation :success? false :result nil :error err}]
+                             :result-render nil :result-kind :error :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                  :detail-expansions {["session" "iteration:t123e4567:i1:b1:result"] true}}
+                  :detail-expansions {:vis.channel-tui/expand-all-details? true}}
             payload (render/format-answer-with-thinking-data
                       nil trace 96 {:show-iterations true} nil false opts)
-            lines   (:lines payload)
-            text    (:text payload)]
-        (expect (not (str/includes? text "```")))
-        (expect (not (str/includes? text "diagram")))
-        (expect (str/includes? text "# Tool output"))
-        (expect (str/includes? text "flowchart LR"))
-        (expect (str/includes? text "A[Start] --> B[Done]"))
-        (expect (str/includes? text "+changed"))
-        (expect (not-any? #(= p/MARKER_MD_H1 (marker-of %)) lines))
-        (expect (not-any? #(= p/MARKER_MD_CODE (marker-of %)) lines))))
-
-    (it "errors keep raw rendering - error formatting handles its own marker"
-      ;; Errors come through err-result-marker. This test pins that
-      ;; contract: the error body still appears verbatim and does NOT
-      ;; pick up bullet markers from accidental IR conversion.
-      (render/invalidate-cache!)
-      (let [trace [{:forms [{:code "(boom)" :comment nil :render-segments nil :result-render "- pretend-bullet" :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? false :silent? false}]}]
-            opts {:session-id "session"
-                  :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                  :detail-expansions {}}
-            payload (render/format-answer-with-thinking-data
-                      nil trace 96 {:show-iterations true} nil false opts)
-            lines   (:lines payload)]
-        ;; The literal `- pretend-bullet` text stays in the row; we
-        ;; never re-render error bodies as Markdown.
-        (expect (some #(str/includes? % "- pretend-bullet") lines))))))
+            text    (strip-sentinels (strip-ansi (:text payload)))]
+        (expect (str/includes? text "ERROR"))
+        (expect (str/includes? text "boom"))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Retired answer disclosure tags must not create collapsible output.
