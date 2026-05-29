@@ -9,7 +9,8 @@
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.format :as fmt])
+            [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.iteration :as iteration])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [java.util LinkedHashMap]))
@@ -2946,7 +2947,10 @@
       [(subs s 0 1) (subs s 1)]
       ["" s])))
 
-(defn- format-form-scope-stamp
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} format-form-scope-stamp
+  "Block-scope stamp transform (`tN/iM/fK` → `tN/iM/bK`). Retained as the
+   canonical scope-display formatter; the per-form footer no longer prints it
+   (Phase-5 moved the scope to the BLOCK header) but other chrome may reuse it."
   ^String [scope]
   (some-> (str/replace (or scope "") #"/f(\d+)\b" "/b$1") str/trim not-empty))
 
@@ -3004,6 +3008,85 @@
                          :color-role color-role})]
     (cond-> [{:line (str marker visible) :meta meta}]
       expanded? (into hidden-entries))))
+
+(defn- op-summary-text
+  "Flatten one op's `:summary` IR (or zones) to a single readable line for
+   the aggregated-op expanded list. Strings in source order; zones joined
+   left → center → right. Falls back to the op keyword."
+  ^String [{:keys [summary op]}]
+  (let [from-ir   (fn [ir]
+                    (->> ir
+                      (tree-seq #(or (vector? %) (seq? %)) seq)
+                      (filter string?)
+                      (map str/trim)
+                      (remove str/blank?)
+                      (str/join " ")))
+        text (cond
+               (map? summary) (->> [(:left summary) (:center summary) (:right summary)]
+                                (map (fn [z] (if (string? z) z (from-ir z))))
+                                (remove str/blank?)
+                                (str/join "  "))
+               (some? summary) (from-ir summary)
+               :else "")]
+    (or (not-empty (str/trim text)) (str op))))
+
+(defn- aggregated-op-entries
+  "Phase-4 renderer aggregation. For ONE aggregated op (a same-op run longer
+   than `iteration/aggregate-threshold`), emit a synthetic collapsible row:
+
+     ▶ CAT × 100 (a, b, c, …)
+
+   Expanded, the row reveals the full list with one per-op summary line each.
+   The disclosure node id follows the Phase-5 contract
+   `<block-scope>:op<position>` so a click toggles exactly this run.
+
+   Returns a vec of `{:line :meta}` entries (collapsed: one row)."
+  [{:keys [session-id detail-expansions session-turn-id iteration-number
+           block-scope max-w]}
+   agg]
+  (let [node-id   (str block-scope ":op" (:position agg))
+        expanded? (detail-expanded? detail-expansions session-id node-id false)
+        chevron   (if expanded? "▼" "▶")
+        head      (iteration/aggregate-op-head agg)
+        visible   (ellipsize-cols (str chevron " " head) max-w)
+        meta      (when (and session-id node-id)
+                    {:kind       :toggle-details
+                     :session-id (str session-id)
+                     :node-id    (str node-id)
+                     :collapsed? (not expanded?)
+                     :color-role nil})
+        hidden    (mapv (fn [op]
+                          {:line (str result-marker
+                                   (ellipsize-cols
+                                     (str "  · " (op-summary-text op))
+                                     max-w))
+                           :meta nil})
+                    (:ops agg))]
+    (cond-> [{:line (str result-marker visible) :meta meta}]
+      expanded? (into hidden))))
+
+(defn- block-aggregated-op-entries
+  "Synthetic aggregated rows for every same-op run in the block that exceeded
+   `iteration/aggregate-threshold`. Pure projection off the display-block's
+   `:aggregated-ops`; non-aggregated entries (short runs, mixed ops) are
+   skipped here — they keep their normal per-form rows. Returns a flat vec of
+   `{:line :meta}` entries (possibly empty)."
+  [entry {:keys [session-id detail-expansions session-turn-id
+                 iteration-number max-w]}]
+  (let [block (iteration/iteration-entry->display-block entry)
+        scope (:scope block)]
+    (into []
+      (comp (filter :aggregate)
+        (mapcat (fn [agg]
+                  (aggregated-op-entries
+                    {:session-id        session-id
+                     :detail-expansions detail-expansions
+                     :session-turn-id   session-turn-id
+                     :iteration-number  iteration-number
+                     :block-scope       scope
+                     :max-w             max-w}
+                    agg))))
+      (:aggregated-ops block))))
 
 (defn- maybe-collapse-block
   "Canonical tool-result collapse. TUI shows only the badge/head row by
@@ -3467,6 +3550,82 @@
                   (recap-row-entries text pad-w)))
         segments))))
 
+(defn- block-counts-text
+  "Width-responsive op-count phrase for the BLOCK header.
+     full ≥ 50 cols : `2 observations · 1 mutation`
+     compact ≥ 36   : `2 obs · 1 mut`
+     narrow         : `O2 M1`
+   Counts are always REAL (no aggregation bias); omit a zero side."
+  ^String [{:keys [observations mutations]} avail-w]
+  (let [obs (long (or observations 0))
+        mut (long (or mutations 0))
+        plural (fn [n word] (str n " " word (when (not= 1 n) "s")))
+        full   (->> [(when (pos? obs) (plural obs "observation"))
+                     (when (pos? mut) (plural mut "mutation"))]
+                 (remove nil?) (str/join " · "))
+        compact (->> [(when (pos? obs) (str obs " obs"))
+                      (when (pos? mut) (str mut " mut"))]
+                  (remove nil?) (str/join " · "))
+        narrow  (->> [(when (pos? obs) (str "O" obs))
+                      (when (pos? mut) (str "M" mut))]
+                  (remove nil?) (str/join " "))]
+    (cond
+      (str/blank? full) ""
+      (and (>= avail-w 50) (<= (count full) avail-w)) full
+      (and (>= avail-w 36) (<= (count compact) avail-w)) compact
+      :else narrow)))
+
+(defn- block-header-line
+  "The Phase-5 BLOCK header row:
+     BLOCK - <scope> | <counts> | <status+duration>
+   `scope` is block-level (tN/iM, never /fK). Status glyphs:
+   ✓ ✗ ↻ ⊘ ⏱. The line is painted on the iteration-header marker band so
+   it reads as the card's title. Returns nil when the iteration carries no
+   ops to count (plain-value-only / pure-thinking iterations stay headerless)."
+  ^String [entry fill-w now-ms]
+  (let [block   (iteration/iteration-entry->display-block entry)
+        ops     (:ops block)
+        counts  (:counts block)]
+    (when (seq ops)
+      (let [scope   (or (:scope block) "")
+            status  (:status block)
+            ;; A still-running block shows live elapsed; otherwise the
+            ;; recorded duration.
+            running? (= :running status)
+            dur-ms  (if (and running? now-ms)
+                      (let [started (some :started-at-ms (:forms block))]
+                        (when started (max 0 (- (long now-ms) (long started)))))
+                      (:duration-ms block))
+            dur-str (some-> dur-ms vis/format-duration)
+            glyph   (get iteration/status-glyph status "✓")
+            status-text (str/trim (str glyph (when dur-str (str " " dur-str))))
+            counts-w (max 8 (- fill-w 24))
+            counts-text (block-counts-text counts counts-w)
+            merged  (:merged-fences block)
+            left    (str "BLOCK - " (if (str/blank? scope) "?" scope)
+                      (when (and merged (> merged 1))
+                        (str "  merged " merged " fences")))
+            mid     (when (seq counts-text) (str " | " counts-text))
+            head    (str left mid " | ")
+            pad     (max 1 (- fill-w (p/display-width head) (p/display-width status-text)))]
+        (str iteration-hdr-marker head (repeat-str \space pad) status-text " ")))))
+
+(defn- block-batch-hint-lines
+  "Phase-4 high-fan-out soft warnings for a block. When the agent ran the
+   SAME tool more than its threshold times in one block, the iteration
+   surfaces a `BATCH HINT  call (cat [...]) once instead of N times` note.
+
+   Rendered as block-level annotation rows riding the iteration-header marker
+   band (the same band the BLOCK header uses), so the hint reads as part of
+   the card title rather than resurrecting the removed RECAP rail. Returns a
+   vec of line-entries (possibly empty)."
+  [entry fill-w]
+  (let [block (iteration/iteration-entry->display-block entry)]
+    (mapv (fn [{:keys [text]}]
+            {:line (str iteration-hdr-marker " " (ellipsize-cols text fill-w) " ")
+             :meta nil})
+      (:batch-hints block))))
+
 (defn- format-iteration-entry-entries
   [entry
    code-width iteration-number
@@ -3729,12 +3888,16 @@
                                                         :max-w               fill-w})]
                                   (vec detail-entries)))
                 footer-entry  (line-entry
-                                ;; Footer: LEFT = scope (e.g. "t24/i1/f1"),
-                                ;; RIGHT = status-symbol + duration (e.g. "✓ 12ms").
+                                ;; Footer: RIGHT = status-symbol + duration
+                                ;; (e.g. "✓ 12ms"). The block-level scope
+                                ;; stamp moved to the BLOCK header
+                                ;; (`block-header-line`); the per-form
+                                ;; footer no longer duplicates it.
                                 (let [status-sym  (cond (not has-status?) "↻"
                                                     success?          "✓"
                                                     :else             "✗")
-                                      left-text   (or (format-form-scope-stamp scope) "")
+                                      _scope      scope
+                                      left-text   ""
                                       right-text  (if has-status?
                                                     (str/join " " (remove str/blank? [status-sym duration-str]))
                                                     status-text)
@@ -3835,7 +3998,33 @@
                 (conj (line-entry (str iteration-pad-marker "")))))))
         body (or grouped [])
         trailing-errors (error-lines)
-        thinking-body (or (thinking-lines thinking) [])]
+        thinking-body (or (thinking-lines thinking) [])
+        ;; Phase-5 BLOCK header: one card title per code fence / merged
+        ;; code-entry, sourced from the canonical iteration-entry's ops.
+        ;; `BLOCK - <scope> | <counts> | <status+duration>`. Painted above
+        ;; the body; absent for plain-value-only / pure-thinking iterations.
+        block-header  (block-header-line entry fill-w now-ms)
+        ;; Phase-4 high-fan-out soft warnings ride directly under the header
+        ;; on the same band; only meaningful when there is a header to ride.
+        batch-hints   (when (seq block-header) (block-batch-hint-lines entry fill-w))
+        ;; Phase-4 renderer aggregation: same-op runs > aggregate-threshold
+        ;; collapse into one synthetic `▶ OP × N (a, b, …)` disclosure row.
+        ;; Only emitted when the block actually carries an aggregated run, so
+        ;; ordinary blocks keep their individual per-form rows untouched.
+        aggregated-rows (when (seq block-header)
+                          (block-aggregated-op-entries
+                            entry
+                            {:session-id        session-id
+                             :detail-expansions detail-expansions
+                             :session-turn-id   session-turn-id
+                             :iteration-number  iteration-number
+                             :max-w             fill-w}))
+        header-lines  (if (seq block-header)
+                        (-> [(line-entry (str iteration-pad-marker ""))
+                             (line-entry block-header)]
+                          (into batch-hints)
+                          (into aggregated-rows))
+                        [])]
     ;; Layout: header (optional ITERATION-N label) + recap lines
     ;; (provider-fallback notices, provider-error recap, recap
     ;; segments) + thinking lines + error rows + body (per-form
@@ -3849,7 +4038,7 @@
     ;; zero gap between the thinking band and the code (the
     ;; thinking pad is the bottom \"band edge\"; the code chrome
     ;; takes over immediately).
-    (into (vec (concat header recap-lines thinking-body trailing-errors))
+    (into (vec (concat header header-lines recap-lines thinking-body trailing-errors))
       body)))
 
 (defn format-iteration-entry

@@ -191,7 +191,11 @@
         (expect (str/includes? expanded-body "LS"))
         (expect (str/includes? expanded-body ".gitignore")))))
 
-  (it "renders hidden-code tool footer with scope on the left and duration on the right"
+  (it "renders the per-form footer with status+duration right-anchored and NO scope stamp (scope moved to BLOCK header)"
+    ;; Phase-5: the block-level scope stamp moved to the BLOCK header row
+    ;; (`block-header-line`). The per-form footer no longer duplicates the
+    ;; `tN/iM/bK` scope; it carries only the status glyph + duration,
+    ;; right-anchored. The scope must NOT appear in the footer any more.
     (let [ir [:ir {} [:p {} [:span {} "PATCH  1 file  changed=1"]]]
           lines (format-iteration-entry
                   {:iteration 0
@@ -207,20 +211,55 @@
                             :success? true :silent? false}]}
                   70 1 {:band-w 74})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          footer (first (filter #(str/includes? % "t24/i1/b1") visible))
-          footer-idx (first (keep-indexed #(when (str/includes? %2 "t24/i1/b1") %1) visible))
+          footer (first (filter #(str/includes? % "✓ 12ms") visible))
+          footer-idx (first (keep-indexed #(when (str/includes? %2 "✓ 12ms") %1) visible))
           result-idx (first (keep-indexed #(when (str/includes? %2 "ATCH") %1) visible))]
       (expect (some? footer))
       (expect (str/includes? footer "✓ 12ms"))
       (expect (= 74 (p/display-width footer)))
       (expect (str/ends-with? footer "✓ 12ms "))
-      (expect (< (str/index-of footer "t24/i1/b1")
-                (str/index-of footer "✓ 12ms")))
+      ;; Scope stamp is gone from the footer entirely — it lives in the
+      ;; BLOCK header now.
+      (expect (not-any? #(str/includes? % "t24/i1/b1") visible))
       ;; Footer is code-block chrome, not part of the tool result body:
       ;; keep it before the tool badge/summary row, with a green pad row
       ;; under the footer before result content starts.
       (expect (< footer-idx result-idx))
       (expect (= p/MARKER_CODE_OK_PAD (marker-of (nth lines (inc footer-idx)))))))
+
+  (it "renders a BLOCK header with block-level scope, op counts, and status+duration"
+    ;; Phase-5: one card title per fence. The header sources its scope /
+    ;; counts / status from the canonical iteration-entry ops (the
+    ;; `:channel` sink slice on the form).
+    (let [summary [:ir {} [:p {} [:strong {} [:span {} "STATUS"]]]]
+          ok-entry (fn [pos op tag]
+                     {:position pos :form (str "(" (name op) ")")
+                      :symbol op :op op :tag tag :success? true :error nil
+                      :result {:summary summary :display summary}})
+          lines (format-iteration-entry
+                  {:iteration 3
+                   :forms [{:code "(git/status)\n(git/add \".\")"
+                            :comment nil
+                            :render-segments [{:kind :code :source "(git/status)"}
+                                              {:kind :code :source "(git/add \".\")"}]
+                            :scope "t7/i3/f1"
+                            :channel [(ok-entry 0 :git/status :observation)
+                                      (ok-entry 1 :git/add :mutation)]
+                            :result-render summary
+                            :result-kind :tool
+                            :result-detail nil
+                            :error nil :started-at-ms nil :duration-ms 812
+                            :success? true :silent? false}]}
+                  80 4 {})
+          visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          header  (first (filter #(str/includes? % "BLOCK - ") visible))]
+      (expect (some? header))
+      (expect (str/includes? header "t7/i3"))
+      (expect (not (str/includes? header "/f1")))
+      (expect (str/includes? header "1 observation"))
+      (expect (str/includes? header "1 mutation"))
+      (expect (str/includes? header "✓"))
+      (expect (str/includes? header "812ms"))))
 
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
@@ -2259,3 +2298,62 @@
       ;; No horizontal-rule border was drawn (no ─ in any putString).
       (expect (some #(= 0 (:row %)) @puts))
       (expect (not-any? #(str/starts-with? (:text %) "─") @puts)))))
+
+;; ── Phase-4 high-fan-out policy (BLOCK revamp) ──────────────────────────────
+;;
+;; A `doseq` fan-out runs the SAME tool many times in one block. The renderer
+;; must: keep the header counts REAL, collapse the same-op run into ONE
+;; synthetic `▶ CAT × N` row, and surface the soft BATCH HINT note.
+
+(defn- cat-sink-entry*
+  [position file]
+  {:position position :form (str "(v/cat \"" file "\")")
+   :symbol :cat :op :cat :tag :observation :success? true :error nil
+   :result {:summary (vis/ir-root (vis/ir-p (vis/ir-strong file) "  120 lines"))
+            :display (vis/ir-root (vis/ir-p (vis/ir-strong file) "  full body"))}})
+
+(defn- fanout-entry*
+  [n]
+  (let [channel (mapv (fn [i] (cat-sink-entry* i (str "f" i ".txt"))) (range n))]
+    {:position 0
+     :code "(doseq [f files] (v/cat f))"
+     :forms [{:scope "t1/i1/f1" :tag :observation
+              :src "(doseq [f files] (v/cat f))"
+              :channel channel :duration-ms 4200 :success? true}]}))
+
+(defn- rendered-lines [entry & [opts]]
+  (mapv strip-ansi (format-iteration-entry entry 80 1 (or opts {}))))
+
+(defdescribe phase4-high-fan-out-render-test
+  (describe "100-cat doseq fan-out"
+    (it "header counts are REAL — 100 observations, not the aggregated 1"
+      (let [lines (rendered-lines (fanout-entry* 100))
+            hdr   (some #(when (str/includes? % "BLOCK - t1/i1") %) lines)]
+        (expect (some? hdr))
+        (expect (str/includes? hdr "100 observations"))))
+
+    (it "emits ONE synthetic grouped row `▶ CAT × 100 (…)`"
+      (let [lines (rendered-lines (fanout-entry* 100))
+            grouped (filter #(str/includes? % "CAT × 100") lines)]
+        (expect (= 1 (count grouped)))
+        (expect (str/includes? (first grouped) "▶"))
+        (expect (str/includes? (first grouped) "f0.txt"))))
+
+    (it "expands to the full per-op list when the disclosure is open"
+      (let [lines (rendered-lines (fanout-entry* 100)
+                    {:detail-expansions {:vis.channel-tui/expand-all-details? true}})
+            per-op (filter #(str/includes? % "120 lines") lines)]
+        ;; The grouped row uses ▼ when open; every underlying op shows below.
+        (expect (some #(str/includes? % "▼ CAT × 100") lines))
+        (expect (= 100 (count per-op)))))
+
+    (it "surfaces the soft BATCH HINT note"
+      (let [lines (rendered-lines (fanout-entry* 100))]
+        (expect (some #(str/includes? % "BATCH HINT  call (cat [...]) once instead of 100 times")
+                  lines)))))
+
+  (describe "below-threshold block"
+    (it "stays headerless of any grouped row or batch hint"
+      (let [lines (rendered-lines (fanout-entry* 4))]
+        (expect (not-any? #(str/includes? % "CAT × ") lines))
+        (expect (not-any? #(str/includes? % "BATCH HINT") lines))))))
