@@ -320,6 +320,27 @@
           (finally
             (vis/toggle-reset-to-default! id)))))
 
+    (testing "registry enum rows cycle through the toggles registry"
+      (let [id :dialogs-test/registry-enum]
+        (vis/register-toggle! {:id id
+                               :label "Enum Test"
+                               :type :enum
+                               :choices [:low :medium :high]
+                               :default :low})
+        (try
+          (is (= "Enum Test: low"
+                (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"}
+                  {})))
+          (let [out (apply-settings-option {:something "else"}
+                      {:type :registry-toggle :toggle-id id})]
+            (is (= {:something "else"} out))
+            (is (= :medium (vis/toggle-value id)))
+            (is (= "Enum Test: medium"
+                  (settings-option-label {:type :registry-toggle :toggle-id id :label "Enum Test"}
+                    {}))))
+          (finally
+            (vis/toggle-reset-to-default! id)))))
+
     (testing "choice rows cycle quick -> balanced -> deep -> quick"
       (is (= {:reasoning-level :balanced}
             (apply-settings-option {:reasoning-level :quick}
@@ -442,6 +463,34 @@
           (is (= "Exa API key: set in Vis config"
                 (settings-option-label row {})))
           (is (not (str/includes? (settings-option-label row {}) "UNKNOWN"))))))
+
+    (testing "migrated extension settings render as Extensions registry toggles, not General rows"
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/name "voice"
+                                                       :ext/settings [{:key :voice/respond?
+                                                                       :type :toggle
+                                                                       :label "Voice responses"}]}
+                                                      {:ext/name "provider-openai-codex"
+                                                       :ext/providers [{:provider/id :openai-codex
+                                                                        :provider/label "OpenAI Codex"}]
+                                                       :ext/settings [{:key :openai-codex-verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"}]}])]
+        (let [general-rows     (settings-rows :general)
+              extension-rows   (settings-rows :extensions)
+              legacy-row-ids   #{[:extension-setting "voice" :voice/respond?]
+                                 [:extension-setting "provider-openai-codex" :openai-codex-verbosity]}
+              extension-ids    (set (map :id extension-rows))
+              general-toggles  (set (keep :toggle-id general-rows))
+              extension-toggles (set (keep :toggle-id extension-rows))]
+          (is (not (contains? general-toggles :voice/respond?)))
+          (is (not (contains? general-toggles :vis/reasoning-level)))
+          (is (not (contains? general-toggles :openai-codex/verbosity)))
+          (is (contains? extension-toggles :voice/respond?))
+          (is (contains? extension-toggles :vis/reasoning-level))
+          (is (contains? extension-toggles :openai-codex/verbosity))
+          (is (not-any? extension-ids legacy-row-ids)))))
 
     (testing "provider-declared settings render under Providers & Models, not Extensions"
       (with-redefs [vis/get-router (constantly nil)

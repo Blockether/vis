@@ -300,10 +300,10 @@
         ;; the renderer paints as block op rows; `:forms` stays proof-granular.
         forms       (mapv block->form-record visible)]
     (iteration/canonicalize
-    {:position           (when-let [p (:position it)] (dec (long p)))
-     :thinking           (visible-thinking (:thinking it))
-     :provider-fallbacks (:llm-routing-trace it)
-     :forms              forms
+      {:position           (when-let [p (:position it)] (dec (long p)))
+       :thinking           (visible-thinking (:thinking it))
+       :provider-fallbacks (:llm-routing-trace it)
+       :forms              forms
      ;; Iteration-level recaps DROPPED: model bookkeeping (task-set! /
      ;; spec-set! / fact-set! / set-session-title!) is silent in the
      ;; chat trace. State is visible via :session/{tasks,specs,facts}
@@ -311,7 +311,7 @@
      ;; fact panes in the chrome — the chat history shouldn't echo every
      ;; mutation. Provider-error / fallback / consult recaps still flow
      ;; via render.clj's own paths.
-     :recaps             []})))
+       :recaps             []})))
 
 (defn user-message
   "Create a structured user message with timestamp.
