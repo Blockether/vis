@@ -166,7 +166,7 @@
       (expect (not (str/includes? body "(def r (v/ls")))
       (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▶") lines))
       (expect (str/includes? body "LS"))
-      (expect (str/includes? badge-line "t24/i1/b1"))
+      (expect (not (str/includes? badge-line "t24/i1/b1")))
       (expect (not (str/includes? body ".gitignore")))
       (let [expanded-lines (format-iteration-entry
                              {:iteration 0

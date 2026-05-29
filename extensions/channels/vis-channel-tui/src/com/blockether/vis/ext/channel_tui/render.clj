@@ -2988,8 +2988,10 @@
         head          (or (some-> body str/trim not-empty)
                         (:summary opts)
                         "TOOL")
-        stamp         (format-form-scope-stamp scope)
-        visible       (append-right-label (str chevron " " head) stamp max-w)
+        ;; Keep the collapsed tool badge focused on the tool summary only.
+        ;; Scope stays in the per-form footer chrome; duplicating it after
+        ;; badge text (e.g. "PATCH ... t24/i1/b1") is noisy.
+        visible       (ellipsize-cols (str chevron " " head) max-w)
         meta          (when (and session-id node-id)
                         {:kind :toggle-details
                          :session-id (str session-id)
