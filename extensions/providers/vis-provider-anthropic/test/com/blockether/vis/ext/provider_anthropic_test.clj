@@ -12,7 +12,7 @@
           oauth-provider (vis/provider-by-id :anthropic-coding-plan)]
       (expect (= :anthropic (:provider/id api-provider)))
       (expect (= "Anthropic (API Key)" (:provider/label api-provider)))
-      (expect (= "claude-opus-4-7" (first (get-in api-provider [:provider/preset :default-models]))))
+      (expect (= "claude-opus-4-8" (first (get-in api-provider [:provider/preset :default-models]))))
       (expect (nil? (:provider/auth-fn api-provider)))
       (expect (= :anthropic-coding-plan (:provider/id oauth-provider)))
       (expect (= "Anthropic (Claude Subscription)" (:provider/label oauth-provider)))
