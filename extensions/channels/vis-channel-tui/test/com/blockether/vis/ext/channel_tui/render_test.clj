@@ -278,8 +278,10 @@
                                          :error "Exceptional status code: 429"}}]}
                     120 1 {})
             body  (str/join "\n" (map (comp strip-ansi body-of) lines))]
-        (expect (str/includes? body "RECAP  Provider fallback: anthropic-coding-plan/claude-opus-4-7"))
-        (expect (str/includes? body "Exceptional status code: 429")))))
+        ;; The recap rail is retired; provider fallback notices were
+        ;; recap-only rows and no longer surface.
+        (expect (not (str/includes? body "RECAP")))
+        (expect (not (str/includes? body "Provider fallback:"))))))
 
   (it "formats same-provider retry notices as recap rows"
     (let [lines (format-iteration-entry
@@ -299,7 +301,9 @@
           body (->> lines
                  (map (comp str/trim strip-ansi body-of))
                  (str/join " "))]
-      (expect (str/includes? body "RECAP  Provider retry: anthropic-coding-plan/claude-opus-4-7 — rate-limit, retry in 2s — rate limit: wait, re-authenticate, or switch provider/model"))))
+      ;; Retired with the recap rail — same-provider retry notices were
+      ;; recap-only rows and no longer surface.
+      (expect (not (str/includes? body "RECAP")))))
 
   (it "renders provider error recap lines above provider error details"
     (let [lines (format-iteration-entry
@@ -311,7 +315,9 @@
           body  (->> lines
                   (map (comp str/trim strip-ansi body-of))
                   (str/join " "))]
-      (expect (str/includes? body "RECAP  Provider rate-limited HTTP 429 — rate limit: wait, re-authenticate, or switch provider/model"))
+      ;; The recap rail is retired; the provider error itself still
+      ;; surfaces its actionable guidance via the error panel.
+      (expect (not (str/includes? body "RECAP")))
       (expect (str/includes? body "NEXT STEP: rate limit: wait, re-authenticate, or switch provider/model"))
       (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429"))))))
 
@@ -326,7 +332,8 @@
           body  (->> lines
                   (map (comp str/trim strip-ansi body-of))
                   (str/join " "))]
-      (expect (str/includes? body "RECAP  Provider auth failed HTTP 401 — re-authenticate provider or update API key"))
+      ;; The recap rail is retired; auth errors still render as action.
+      (expect (not (str/includes? body "RECAP")))
       (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 401")))
       (expect (str/includes? body "Provider message: Invalid authentication credentials"))
       (expect (str/includes? body "NEXT STEP: re-authenticate provider or update API key"))
@@ -460,17 +467,15 @@
         (expect (visually-blank? (nth ln 0)))
         (expect (not-any? pad? ln))))
 
-    (it "recap-only trace leaves one blank row before the answer text"
+    (it "engine-mutation recaps no longer render in the trace"
+      ;; The RECAP rail is fully retired: an iteration carrying
+      ;; `:recaps` produces no RECAP rows above the answer.
       (let [p          (render/format-answer-with-thinking-data*
                          ans [{:recaps ["Title — \"Wyjaśnienie rozmiaru kontekstu\""]}]
                          80 settings nil false nil)
-            ln         (:lines p)
-            recap-idx  (index-of p "RECAP  Title")
             answer-idx (index-of p "hello")]
-        (expect (some? recap-idx))
         (expect (some? answer-idx))
-        (expect (= 2 (- answer-idx recap-idx)))
-        (expect (visually-blank? (nth ln (inc recap-idx))))))
+        (expect (nil? (index-of p "RECAP")))))
 
     (it "answer with code-bearing trace keeps band edges + a terminal-bg gap between trace and answer"
       ;; Spacing contract enforced by `coalesce-bubble-blanks`:
