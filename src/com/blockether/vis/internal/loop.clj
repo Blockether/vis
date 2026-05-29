@@ -596,11 +596,44 @@
         "ClassCastException. Most often this is JS/Python call-paren leakage: "
         "write `(v/bold \"text\")`, not `(v/bold(\"text\"))`."))))
 
+(def ^:private banned-io-print-names
+  "Head-symbol names of stdout/stderr side-effect fns. Matched by NAME so
+   namespaced calls (`clojure.core/println`, `clojure.pprint/pprint`) and
+   bare ones are both caught. `pprint-str` is deliberately ABSENT — it
+   RETURNS a string and is the sanctioned way to format a value."
+  #{"println" "print" "prn" "pr" "printf" "pprint" "tap>" "flush" "newline"})
+
+(defn- io-print-hint
+  "Detect stdout/stderr printing idioms (`println`, `pprint`, a bare
+   `*out*`/`*err*` reference, including inside `with-out-str`). The sandbox
+   has NO terminal channel, so printing is meaningless — redirect the model
+   to return data or build a string with `(pp/pprint-str x)` before it burns
+   an iteration on `clojure.core/*out* is not allowed!`. Scans the form tree."
+  [form]
+  (let [hit (some (fn [node]
+                    (cond
+                      (and (seq? node) (symbol? (first node))
+                        (contains? banned-io-print-names (name (first node))))
+                      (first node)
+
+                      (and (symbol? node) (#{"*out*" "*err*"} (name node)))
+                      node))
+              (when (coll? form) (tree-seq coll? seq form)))]
+    (when hit
+      (str "`" (pr-str hit) "` prints to stdout/stderr, but the sandbox has no "
+        "terminal channel — printing makes no sense here (that is why "
+        "`*out*`/`println`/`with-out-str` are unavailable). Return the value "
+        "directly (the transcript renders it), or build a formatted string with "
+        "`(pp/pprint-str x)` (it RETURNS a string) and put that in "
+        "`(done {:answer …})`."))))
+
 (defn- pre-eval-lint-hint
   "Return a hint string when a parsed form would clearly fail at eval time
-   (bare list literal, string-as-fn call). Returns nil for clean forms."
+   (bare list literal, string-as-fn call, stdout printing). Returns nil for
+   clean forms."
   [form]
   (or (bare-list-literal-hint form)
+    (io-print-hint form)
     (string-as-fn-hint form)))
 
 (defn- enrich-parse-error
