@@ -30,6 +30,23 @@
         (expect (zero? @render-invalidations))
         (expect (zero? @height-invalidations)))))
 
+  (it "explicitly stores collapsed for a default-expanded row (BLOCK / op-row click)"
+    ;; Regression: BLOCK header + op rows default to EXPANDED. The old
+    ;; absent/true-only toggle could never store \"collapsed\", so clicking to
+    ;; collapse a default-expanded row was a no-op. The 3-arg explicit form
+    ;; (driven by the click region's current :collapsed?) fixes it.
+    (reset! state/app-db {:detail-expansions {} :render-version 0})
+    ;; Currently expanded (region :collapsed? false) → click collapses it.
+    (state/dispatch [:toggle-detail "cid" "t1/i1:block" false])
+    (expect (= {["cid" "t1/i1:block"] false} (:detail-expansions @state/app-db)))
+    (expect (false? (#'render/detail-expanded?
+                      (:detail-expansions @state/app-db) "cid" "t1/i1:block" true)))
+    ;; Click again (region :collapsed? true) → expands it.
+    (state/dispatch [:toggle-detail "cid" "t1/i1:block" true])
+    (expect (= {["cid" "t1/i1:block"] true} (:detail-expansions @state/app-db)))
+    (expect (true? (#'render/detail-expanded?
+                     (:detail-expansions @state/app-db) "cid" "t1/i1:block" true))))
+
   (it "stores preview switcher mode on the same detail-expansions bus"
     (reset! state/app-db {:detail-expansions {}
                           :render-version 0})

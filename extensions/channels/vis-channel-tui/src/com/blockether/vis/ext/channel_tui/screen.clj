@@ -2160,9 +2160,11 @@
                                                                    :id (:text hit)})
                                  :workspace-entry
                                  (activate-workspace-entry-hit! refresh-active-workspace! hit)
+                                 ;; new expanded = current collapsed (flip).
                                  :toggle-details (state/dispatch [:toggle-detail
                                                                   (:session-id hit)
-                                                                  (:node-id hit)])
+                                                                  (:node-id hit)
+                                                                  (:collapsed? hit)])
                                  :preview-switcher (state/dispatch [:select-preview-mode
                                                                     (:session-id hit)
                                                                     (:node-id hit) (:mode hit)])
@@ -2225,7 +2227,8 @@
                                :workspace-entry
                                (activate-workspace-entry-hit! refresh-active-workspace! hit)
                                :toggle-details (state/dispatch [:toggle-detail (:session-id hit)
-                                                                (:node-id hit)])
+                                                                (:node-id hit)
+                                                                (:collapsed? hit)])
                                :preview-switcher (state/dispatch [:select-preview-mode
                                                                   (:session-id hit)
                                                                   (:node-id hit) (:mode hit)])

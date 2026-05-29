@@ -828,14 +828,23 @@
     (assoc db :layout layout)))
 
 (reg-event-db :toggle-detail
-  (fn [db [_ session-id node-id]]
+  (fn [db [_ session-id node-id explicit-expand?]]
     (let [k [(str session-id) (str node-id)]]
-      (update db :detail-expansions
-        (fn [m]
-          (let [expanded? (true? (get m k false))]
-            (if expanded?
-              (dissoc m k)
-              (assoc (or m {}) k true))))))))
+      (if (some? explicit-expand?)
+        ;; Caller knows the row's CURRENT effective state (from the click
+        ;; region's `:collapsed?`) and passes the desired new expanded state.
+        ;; Store it EXPLICITLY (true/false) — required for rows whose default
+        ;; is expanded (BLOCK header, op rows): the old absent/true-only model
+        ;; could never represent "explicitly collapsed", so collapsing a
+        ;; default-expanded row was a no-op.
+        (assoc-in db [:detail-expansions k] (boolean explicit-expand?))
+        ;; Legacy 2-arg path (default-collapsed rows): absent <-> true.
+        (update db :detail-expansions
+          (fn [m]
+            (let [expanded? (true? (get m k false))]
+              (if expanded?
+                (dissoc m k)
+                (assoc (or m {}) k true)))))))))
 
 (reg-event-db :select-preview-mode
   (fn [db [_ session-id node-id mode]]
