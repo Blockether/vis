@@ -67,7 +67,35 @@
                         :patch "diff --git a/a.clj b/a.clj\n+(def x 1)\n"}]
                :porcelain []})]
       (expect (contract? v))
-      (expect (re-find #"diff --git" (pr-str (:display v)))))))
+      (expect (re-find #"diff --git" (pr-str (:display v))))))
+
+  (it "the display body never duplicates the summary header, drops `──` separators, and de-dups porcelain"
+    (let [v (gr/render-diff
+              {:branch "main" :head "3e48931cabc" :kind :workspace :from "HEAD" :to nil
+               :stat {:files 2 :+ 5 :- 6}
+               :files [{:file "a.clj" :+ 1 :- 1
+                        :patch "diff --git a/a.clj b/a.clj\n@@ -1 +1 @@\n-x\n+y\n"}
+                       {:file "b.clj" :+ 4 :- 5
+                        :patch "diff --git a/b.clj b/b.clj\n@@ -1 +1 @@\n-p\n+q\n"}]
+               ;; `a.clj`/`b.clj` are tracked (in numstat); `.junk` is untracked.
+               :porcelain [{:status "M" :file "a.clj"}
+                           {:status "M" :file "b.clj"}
+                           {:status "??" :file ".junk"}]})
+          disp (pr-str (:display v))]
+      (expect (contract? v))
+      ;; No `── file ──` separator rows — JGit patches self-label.
+      (expect (not (re-find #"──" disp)))
+      ;; The DIFF label, range and +/- counts live ONLY in the summary; the
+      ;; display must not repeat them (the expanded row showed twice before).
+      (expect (not (re-find #"DIFF" disp)))
+      (expect (not (re-find #"HEAD\.\." disp)))
+      (expect (not (re-find #"2 file" disp)))
+      ;; Tracked porcelain rows are NOT re-listed (numstat already has them);
+      ;; the untracked entry IS shown exactly once.
+      (expect (not (re-find #"M a\.clj" disp)))
+      (expect (= 1 (count (re-seq #"\?\? \.junk" disp))))
+      ;; Both patches survive, concatenated into one diff block.
+      (expect (= 2 (count (re-seq #"diff --git" disp)))))))
 
 (defdescribe render-log-test
   (it "renders a row per commit"
