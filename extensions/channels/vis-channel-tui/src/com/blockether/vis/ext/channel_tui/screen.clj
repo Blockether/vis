@@ -372,7 +372,7 @@
   "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
   2)
 (def ^:private assistant-code-text-inset-markers
-  #{p/MARKER_CODE p/MARKER_CODE_OK p/MARKER_CODE_ERR p/MARKER_CODE_STATUS p/MARKER_RESULT
+  #{p/MARKER_CODE p/MARKER_CODE_OK p/MARKER_CODE_ERR p/MARKER_RESULT
     p/MARKER_ERR_RESULT p/MARKER_MD_CODE p/MARKER_TH_MD_CODE})
 (def ^:private selection-output-indent "  ")
 (def ^:private selection-output-indent-markers #{})
@@ -398,7 +398,7 @@
    Mouse-selection copy operates on rendered screen cells, so clipping these
    rows before extraction keeps copied transcript text free of role banners,
    answer dividers, padding bands, iteration labels, and provider/model footers."
-  #{p/MARKER_ITERATION_HDR p/MARKER_DURATION p/MARKER_CODE_STATUS p/MARKER_SEP p/MARKER_ANSWER_SEP
+  #{p/MARKER_ITERATION_HDR p/MARKER_DURATION p/MARKER_SEP p/MARKER_ANSWER_SEP
     p/MARKER_ANSWER_HDR p/MARKER_ANSWER_PAD p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD
     p/MARKER_CODE_ERR_PAD p/MARKER_ITERATION_PAD})
 (defn- copyable-transcript-line?

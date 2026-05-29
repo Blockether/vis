@@ -76,23 +76,21 @@
     (expect (= " 6 more " (input-more-hint 10 4)))))
 
 (defdescribe live-running-block-test
-  (it "renders a block slot with no result as currently running with elapsed time"
+  (it "renders a block slot with no status footer"
     (with-raw-code-on
     ;; The right-aligned `BLOCK N` / `ITERATION N` / `CODE N` header bands
-    ;; were retired per user directive (see comments in render.clj). The
-    ;; spinner now lives next to the form via the in-line `↻ <elapsed>`
-    ;; status row, and the code / status rows ride the same marker band.
+    ;; were retired per user directive (see comments in render.clj). Per-form
+    ;; status footers are gone too; code blocks are source-only.
       (let [lines (format-iteration-entry {:iteration 0
                                            :forms [{:code "(Thread/sleep 1000)" :comment nil :render-segments nil :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms 1000 :duration-ms 0 :success? nil :silent? false}]}
                     40 1 {:now-ms 2500})
-            code-line (first (filter #(str/includes? % "Thread/sleep") lines))
-            status-line (first (filter #(str/includes? % "↻ 1.0s") lines))]
+            code-line (first (filter #(str/includes? % "Thread/sleep") lines))]
         (expect (not-any? #(str/includes? % "BLOCK 1") lines))
         (expect (not-any? #(str/includes? % "ITERATION 1") lines))
         (expect (not-any? #(str/includes? % "CODE 1") lines))
         (expect (= p/MARKER_CODE (marker-of code-line)))
-        (expect (= "↻ 1.0s" (str/trim (strip-ansi (body-of status-line)))))
-        (expect (= p/MARKER_CODE_PAD (marker-of status-line))))))
+        (expect (not-any? #(str/includes? % "↻") lines))
+        (expect (not-any? #(str/includes? % "1.0s") lines)))))
 
   (it "renders mixed-block render segments as visible code plus title banner while hiding answer call"
     (with-raw-code-on
@@ -212,10 +210,9 @@
 
   (it "labels the BLOCK header by op counts only — no status glyph, no duration, no scope stamp"
     ;; The block IS the code-block grouping unit. Its header carries ONLY the
-    ;; op counts (the collapsed one-line summary). The aggregate status mark and
-    ;; total duration live on the parent TURN header, never on the green block;
-    ;; per-op status shows on the op rows. No `ITERATION N`, no `/fK`/`/bK`
-    ;; scope stamp, no per-form footer.
+    ;; op counts (the collapsed one-line summary). Per-form timing never shows
+    ;; on the green block; per-op status shows on op rows. No `ITERATION N`,
+    ;; no `/fK`/`/bK` scope stamp, no timed per-form footer.
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file  changed=1"]]]
           lines (format-iteration-entry
                   {:iteration 0
@@ -230,7 +227,7 @@
                             :result-detail nil
                             :error nil :started-at-ms nil :duration-ms 12
                             :success? true :silent? false}]}
-                  70 1 {:band-w 74})
+                  70 1 {})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
           header  (first (filter #(str/includes? % "1 mutation") visible))
           op-line (first (filter #(str/includes? % "PATCH") visible))]
@@ -297,13 +294,12 @@
       (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote code)) body))))
       (expect (= p/MARKER_CODE_ERR (marker-of error-line)))))
 
-  (it "puts success status on its own bottom line and keeps bottom padding"
+  (it "omits success status footer and keeps only code band edges"
     (with-raw-code-on
-    ;; Layout (post header-band removal):
+    ;; Layout (post status-footer removal):
     ;;   iteration-pad
-    ;;   code-ok-pad             ← the trailing pad lives ABOVE result rows,
-    ;;   <code line>                not at (count-2). Check it exists somewhere
-    ;;   <status line ✓>            inside the code-block region.
+    ;;   code-ok-pad
+    ;;   <code line>
     ;;   code-ok-pad
     ;;   iteration-pad
     ;; Plain `:value` form results no longer render — the trailing
@@ -311,11 +307,10 @@
       (let [lines (format-iteration-entry {:iteration 0
                                            :forms [{:code "(+ 1 2)" :comment nil :render-segments nil :result-render "3" :result-kind :value :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                     40 1 {})
-            bodies (mapv (comp strip-ansi body-of) lines)
-            status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
-        (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
-        (expect (= p/MARKER_CODE_OK_PAD (marker-of status-line)))
-        (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
+            bodies (mapv (comp strip-ansi body-of) lines)]
+        (expect (not-any? #(str/includes? % "✓") lines))
+        (expect (not-any? #(str/includes? % "1ms") lines))
+        (expect (= 2 (count (filter #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))))
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
 
   (it "pads displayed form comments by one column"
@@ -593,7 +588,7 @@
         stid    "abcd1234-5678-9999"
         frag    "tabcd1234"
         trace   [(block "t7/i1/f1" 1200 [(op-entry 0 :git/status :observation (summary "STATUS") (summary "STATUS") true)
-                                          (op-entry 1 :v/ls :observation (summary "LS") (summary "LS") true)])
+                                         (op-entry 1 :v/ls :observation (summary "LS") (summary "LS") true)])
                  (block "t7/i2/f1" 3300 [(op-entry 0 :git/commit! :mutation (summary "COMMIT") (summary "COMMIT") true)])]
         render* (fn [dx]
                   (->> (:lines (render/format-answer-with-thinking-data*
@@ -1107,10 +1102,9 @@
         (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
 (defdescribe code-pad-payload-paint-test
-  ;; Per-form footers use MARKER_CODE_*_PAD so scope + duration live
-  ;; inside same green/red code block. Regression: pad painter filled
-  ;; bg then discarded payload, so live TUI hid `tN/iN/fN` + `✓ 12ms`.
-  (it "paints success pad payload text, not only its background"
+  ;; MARKER_CODE_*_PAD can carry optional payload text. Regression: pad
+  ;; painter filled bg then discarded payload.
+  (it "paints code-pad payload text, not only its background"
     (let [puts    (atom [])
           active  (atom #{})
           fg      (atom nil)
@@ -1137,14 +1131,15 @@
                        ([col row text]
                         (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg :sgr @active})
                         this)))
-          footer   (str p/MARKER_CODE_OK_PAD " t24/i1/b1                          ✓ 12ms ")]
+          footer   (str p/MARKER_CODE_OK_PAD " t24/i1/b1 ")]
       (render/draw-chat-bubble! graphics
         {:role :assistant :timestamp nil :prewrapped-lines [footer]}
         0 0 80)
       (let [painted (apply str (map :text @puts))
             stamp   (first (filter #(= "t24/i1/b1" (:text %)) @puts))]
         (expect (str/includes? painted "t24/i1/b1"))
-        (expect (str/includes? painted "✓ 12ms"))
+        (expect (not (str/includes? painted "✓")))
+        (expect (not (str/includes? painted "12ms")))
         (expect (= t/dialog-hint (:fg stamp)))
         (expect (contains? (:sgr stamp) com.googlecode.lanterna.SGR/ITALIC))))))
 

@@ -165,8 +165,7 @@
   (it "rebuild-history recovers single visible form duration from old iteration rows"
     ;; Historical envelopes lacked per-form :duration-ms. The row-level
     ;; eval duration is still available; if only one form remains after
-    ;; answer elision, copy it onto that form so restored green footers
-    ;; show the same right-side duration as live progress.
+    ;; answer elision, preserve it on the form for transcript/debug use.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns
                   (fn [_db _cid]

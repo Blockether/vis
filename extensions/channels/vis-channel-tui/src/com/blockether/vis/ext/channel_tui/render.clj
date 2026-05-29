@@ -959,7 +959,6 @@
 (def ^:private code-ok-marker   p/MARKER_CODE_OK)
 (def ^:private code-err-marker  p/MARKER_CODE_ERR)
 (def ^:private err-result-marker p/MARKER_ERR_RESULT)
-(def ^:private code-status-marker p/MARKER_CODE_STATUS)
 (def ^:private duration-marker  p/MARKER_DURATION)
 (def ^:private iteration-hdr-marker  p/MARKER_ITERATION_HDR)
 (def ^:private recap-marker          p/MARKER_RECAP)
@@ -1028,7 +1027,7 @@
 (def ^:private turn-stamp-pattern #"\bt\d+/i\d+/(?:b|f)\d+\b")
 
 (def ^:private code-text-inset-markers
-  #{code-marker code-ok-marker code-err-marker code-status-marker
+  #{code-marker code-ok-marker code-err-marker
     result-marker err-result-marker
     md-code-marker th-md-code-marker
     thinking-marker
@@ -1164,16 +1163,11 @@
 
 (defn- paint-code-pad-payload!
   "Paint optional code-pad payloads. Blank pad rows only fill bg;
-   footer pad rows also show the turn/block stamp in muted italic and
-   status glyph/duration in success/error color."
-  [^TextGraphics g x y raw base-fg bg status-glyph status-fg]
+   payload rows can also show turn/block stamps in muted italic."
+  [^TextGraphics g x y raw base-fg bg]
   (when (seq raw)
     (paint-ansi-line! g x y raw base-fg bg)
-    (paint-turn-stamp! g x y raw bg)
-    (when (and status-glyph status-fg)
-      (when-let [ci (str/index-of raw status-glyph)]
-        (p/set-colors! g status-fg bg)
-        (p/put-str! g (+ x ci) y (subs raw ci))))))
+    (paint-turn-stamp! g x y raw bg)))
 
 (defn- warning-message? [text]
   (and (string? text) (str/starts-with? text "Warning:")))
@@ -1965,48 +1959,19 @@
                           t/dialog-hint t/iteration-header-bg
                           t/code-block-fg t/code-block-bg)))
 
-              ;; ── Code (success) - light green bg, green ✓ suffix ──
+              ;; ── Code (success) - light green bg ──
                     (str/starts-with? line code-ok-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-ok-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
-                      (when-let [ci (str/index-of raw "✓")]
-                        (p/set-colors! g t/code-success-fg t/code-ok-bg)
-                        (p/put-str! g (+ x ci) y (subs raw ci))))
+                      (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg))
 
-              ;; ── Code (error) - light red bg, red ✗ suffix ──
+              ;; ── Code (error) - light red bg ──
                     (str/starts-with? line code-err-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-err-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
-                      (when-let [ci (str/index-of raw "✗")]
-                        (p/set-colors! g t/code-error-fg t/code-err-bg)
-                        (p/put-str! g (+ x ci) y (subs raw ci))))
-
-              ;; ── Code status line (✓/✗/↻ timing) - skip in copy, style by glyph ──
-                    (str/starts-with? line code-status-marker)
-                    (let [raw (subs line 1)]
-                      (cond
-                        (str/includes? raw "\u2713")
-                        (do (p/set-colors! g t/code-block-fg t/code-ok-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
-                          (when-let [ci (str/index-of raw "\u2713")]
-                            (p/set-colors! g t/code-success-fg t/code-ok-bg)
-                            (p/put-str! g (+ x ci) y (subs raw ci))))
-                        (str/includes? raw "\u2717")
-                        (do (p/set-colors! g t/code-block-fg t/code-err-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
-                          (when-let [ci (str/index-of raw "\u2717")]
-                            (p/set-colors! g t/code-error-fg t/code-err-bg)
-                            (p/put-str! g (+ x ci) y (subs raw ci))))
-                        :else
-                        (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g x y raw t/code-block-fg t/code-block-bg))))
+                      (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg))
 
               ;; ── Code (running, no status yet) - neutral bg ──
                     (str/starts-with? line code-marker)
@@ -2070,28 +2035,26 @@
               ;; ── Code block padding (running / neutral) ──
               ;; These rows are usually blank top/bottom band edges,
               ;; but the per-form footer deliberately rides the same
-              ;; marker so scope + duration stay inside the green/red
-              ;; code block. Paint optional payload instead of
-              ;; swallowing it.
+              ;; marker. Paint optional payload instead of swallowing it.
                     (str/starts-with? line code-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-block-bg nil nil))
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-block-bg))
 
               ;; ── Code block padding (success) ──
                     (str/starts-with? line code-ok-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-ok-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-ok-bg "✓" t/code-success-fg))
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-ok-bg))
 
               ;; ── Code block padding (error) ──
                     (str/starts-with? line code-err-pad-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/code-block-fg t/code-err-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-err-bg "✗" t/code-error-fg))
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-err-bg))
 
               ;; ── Iteration zone padding (margin between blocks) ──
                     (str/starts-with? line iteration-pad-marker)
@@ -2666,18 +2629,6 @@
        (subs s 0 (min 64 n))
        (subs s (max 0 (- n 256)))])))
 
-(defn- iteration-running?
-  "True when at least one form in the iteration has started but not
-   yet completed. Drives the per-iteration cache key: iterations with
-   running forms include a 1-second time bucket so the `↻ Ns`
-   running-duration label refreshes; fully-done iterations cache
-   forever (until LRU eviction)."
-  [{:keys [forms]}]
-  (boolean
-    (some (fn [{:keys [started-at-ms success?]}]
-            (and (some? started-at-ms) (nil? success?)))
-      (or forms []))))
-
 (defn- visible-iteration-entry
   "Filter `:forms` down to visibly-running/completed entries. When
    `show-silent?` is true the entry passes through unchanged; otherwise
@@ -2691,7 +2642,7 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment render-segments result-render result-kind result-detail
-           error duration-ms success? silent? started-at-ms]}]
+           error success? silent?]}]
   [(text-fingerprint code)
    (text-fingerprint comment)
    render-segments
@@ -2700,10 +2651,8 @@
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail
    error
-   duration-ms
    success?
-   silent?
-   started-at-ms])
+   silent?])
 
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
@@ -3767,12 +3716,11 @@
 
 (defn- block-header-line
   "The Phase-5 BLOCK header row:
-     BLOCK - <scope> | <counts> | <status+duration>
-   `scope` is block-level (tN/iM, never /fK). Status glyphs:
-   ✓ ✗ ↻ ⊘ ⏱. The line is painted on the iteration-header marker band so
-   it reads as the card's title. Returns nil when the iteration carries no
-   ops to count (plain-value-only / pure-thinking iterations stay headerless)."
-  ^String [entry fill-w _now-ms]
+     BLOCK - <counts>
+   The line is painted on the iteration-header marker band so it reads as
+   the card's title. Returns nil when the iteration carries no ops to count
+   (plain-value-only / pure-thinking iterations stay headerless)."
+  ^String [entry fill-w]
   (let [block   (iteration/iteration-entry->display-block entry)
         ops     (:ops block)
         counts  (:counts block)]
@@ -3811,7 +3759,7 @@
 (defn- format-iteration-entry-entries
   [entry
    code-width iteration-number
-   & [{:keys [show-header? session-id detail-expansions session-turn-id now-ms live-preview? band-w]
+   & [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?]
        :or   {show-header? false live-preview? false}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
@@ -3962,24 +3910,15 @@
         form-lines
         (fn [form block-number]
           (let [{:keys [code comment render-segments result-render result-kind
-                        error duration-ms started-at-ms success? scope]} form
+                        error success?]} form
                 has-status?   (some? success?)
                 is-error?     (and has-status? (not success?))
-                duration-str  (vis/format-duration duration-ms)
                 ;; BLOCK N header removed per user directive (also gated
                 ;; on `show-header?` which is now always false). Keep
                 ;; `expr-hdr` defined as empty so the existing `(when
                 ;; show-header? ...)` branch is dead but type-safe.
                 _expr-num     block-number
                 expr-hdr      ""
-                running-ms    (when (and started-at-ms now-ms)
-                                (max 0 (- (long now-ms) (long started-at-ms))))
-                running-ms    (when running-ms (* 1000 (quot running-ms 1000)))
-                running-str   (or (some-> running-ms vis/format-duration) "0ms")
-                status-text   (if has-status?
-                                (str (if success? "✓" "✗")
-                                  (when duration-str (str " " duration-str)))
-                                (str "↻ " running-str))
                 c-marker      (cond
                                 (not has-status?) code-marker
                                 success?          code-ok-marker
@@ -4042,26 +3981,6 @@
                 ;; stays per-form (forms = the block's source); errors keep
                 ;; their inline caret treatment above.
                 result-lines  nil
-                footer-entry  (line-entry
-                                ;; Footer: RIGHT = status-symbol + duration
-                                ;; (e.g. "✓ 12ms"). The block-level scope
-                                ;; stamp moved to the BLOCK header
-                                ;; (`block-header-line`); the per-form
-                                ;; footer no longer duplicates it.
-                                (let [status-sym  (cond (not has-status?) "↻"
-                                                    success?          "✓"
-                                                    :else             "✗")
-                                      _scope      scope
-                                      left-text   ""
-                                      right-text  (if has-status?
-                                                    (str/join " " (remove str/blank? [status-sym duration-str]))
-                                                    status-text)
-                                      footer-w    (long (or band-w fill-w))
-                                      pad         (max 0 (- footer-w
-                                                           (p/display-width left-text)
-                                                           (p/display-width right-text)
-                                                           2))]
-                                  (str c-pad " " left-text (repeat-str \space pad) right-text " ")))
                 hide-code-chrome? (and (str/blank? code-text) (not is-error?))
                 code-block    (cond
                                 hide-code-chrome?
@@ -4100,10 +4019,9 @@
                                        [(line-entry (str c-pad ""))]
                                        c-lines
                                        (when (seq inline-error-message-lines) inline-error-message-lines)
-                                       ;; 1-row top margin between code body and footer.
-                                       [(line-entry (str c-pad ""))]
-                                       [footer-entry
-                                        (line-entry (str c-pad ""))])))
+                                       ;; Bottom band edge. No per-form status
+                                       ;; footer; code blocks stay source-only.
+                                       [(line-entry (str c-pad ""))])))
                 _ result-lines]
             ;; Phase-5: per-form result panes are gone; the form contributes
             ;; only its code body (errors keep their inline caret). Tool
@@ -4153,9 +4071,9 @@
         thinking-body (or (thinking-lines thinking) [])
         ;; Phase-5 BLOCK header: one card title per code fence / merged
         ;; code-entry, sourced from the canonical iteration-entry's ops.
-        ;; `BLOCK - <scope> | <counts> | <status+duration>`. Painted above
-        ;; the body; absent for plain-value-only / pure-thinking iterations.
-        block-header  (block-header-line entry fill-w now-ms)
+        ;; Counts-only block header. Painted above the body; absent for
+        ;; plain-value-only / pure-thinking iterations.
+        block-header  (block-header-line entry fill-w)
         ;; The BLOCK header is a disclosure toggle keyed on the block scope.
         ;; Collapsing it folds the code body + op rows away, leaving just the
         ;; card title with a ▶. Default OPEN (content visible) until the user
@@ -4377,7 +4295,7 @@
    assistant bubbles. Live progress and final/cancel rendering must call this
    instead of formatting iterations themselves. The only caller-specific UI is
    the trailer after these entries (spinner, final answer, or cancelled note)."
-  [{:keys [iterations content-w band-w settings now-ms session-id
+  [{:keys [iterations content-w settings session-id
            session-turn-id detail-expansions live? suppress-trace?]
     :or   {live? false suppress-trace? false}}]
   (let [raw-iterations (or iterations [])
@@ -4394,8 +4312,6 @@
         iter-entry-fn  (fn [[idx entry]]
                          (let [visible  (visible-iteration-entry entry show-silent?)
                                stripped (if show-thinking? visible (dissoc visible :thinking))
-                               running? (and live? (iteration-running? stripped))
-                               sec-bucket (when running? (quot (long (or now-ms 0)) 1000))
                                iter-num (inc (long idx))
                                detail-scope-opts {:section :iteration
                                                   :iteration-number iter-num
@@ -4412,11 +4328,8 @@
                                   (boolean show-silent?)
                                   session-id
                                   session-turn-id
-                                  (relevant-detail-expansions-key detail-scope-opts)
-                                  sec-bucket]
+                                  (relevant-detail-expansions-key detail-scope-opts)]
                                inner-opts {:show-header?         show-iteration-headers?
-                                           :now-ms               (when running? now-ms)
-                                           :band-w               (or band-w content-w)
                                            :session-id      session-id
                                            :session-turn-id session-turn-id
                                            :detail-expansions   detail-expansions
@@ -4508,7 +4421,6 @@
                              :session-id session-id
                              :session-turn-id session-turn-id
                              :detail-expansions detail-expansions
-                             :band-w bubble-w
                              :live? true})
          queued-entries   (queued-progress-entries pending-sends content-w)
          ;; Top margin invariant: the spinner row always has ONE blank
@@ -4580,7 +4492,6 @@
                                    :session-id (:session-id opts)
                                    :session-turn-id (:session-turn-id opts)
                                    :detail-expansions (:detail-expansions opts)
-                                   :band-w bubble-w
                                    :suppress-trace? suppress-trace?})
         ;; IR walker emits painter-ready entries directly. No
         ;; markdown round-trip, no `markdown->entries` rebuild.
@@ -4741,8 +4652,8 @@
 ;;
 ;; PUBLIC because `screen.clj` must compute bubble width with the same
 ;; gutter math the painter uses; if the two layers disagree by even one
-;; column, `format-iteration-entry` sizes labels (`BLOCK 3`, `✓ 3ms`,
-;; `FINAL ANSWER`) for one bubble-w while `draw-chat-bubble!` paints
+;; column, `format-iteration-entry` sizes labels (`BLOCK 3`, `FINAL ANSWER`)
+;; for one bubble-w while `draw-chat-bubble!` paints
 ;; into a different bubble-w and the right-aligned labels wrap onto
 ;; two lines.
 ;;
