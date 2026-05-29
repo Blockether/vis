@@ -124,13 +124,13 @@
                               {:scope "t1/i1/f2" :tag :host :src "(set-session-title! \"Mixed\")" :result :vis/silent}
                               {:scope "t1/i1/f3" :tag :host :src "(done [:ir [:p \"Done\"]])" :result :vis/answer}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            trace   (-> history second :traces first)]
-        ;; The answer form is elided per the existing answer-position
-        ;; rule; the def + title-set! survive as form records and the
-        ;; iteration-level :recaps surface the title summary derived
-        ;; from the full iteration source.
-        (expect (pos? (count (:forms trace))))
-        (expect (some #(re-find #"Mixed" (str %)) (:recaps trace))))))
+            trace   (-> history second :traces first)
+            form    (-> trace :forms first)]
+        ;; Resume regroups model-facing per-form envelopes back to the
+        ;; single live display block, while the structural title segment
+        ;; survives for render.clj to paint.
+        (expect (= 1 (count (:forms trace))))
+        (expect (some #(re-find #"Mixed" (str %)) (:render-segments form))))))
 
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (v/cat ...))` persists the live var value as
@@ -190,16 +190,11 @@
         (expect (= "t24/i1/f1" (:scope form)))
         (expect (= 12 (:duration-ms form))))))
 
-  (it "rebuild-history surfaces per-form errors as errors (not successes) and keeps the tool tag"
-    ;; Regression from session 11d4f817: the rebuild path used to fold
-    ;; the WHOLE iteration into one synthetic block and read non-existent
-    ;; iteration-level `:result` / `:error` / `:channel` keys off the
-    ;; persisted row. Errored forms restored as successful and tool tags
-    ;; (`:observation` / `:mutation` plus the pi-style preview IR)
-    ;; vanished. Acceptance criterion is that the restored bubble looks
-    ;; identical to the live one, so we iterate the `:forms` envelope
-    ;; vec the loop persists and project each form into the same
-    ;; record shape `progress/chunk->form-result` builds live.
+  (it "rebuild-history regroups persisted envelopes and preserves errors"
+    ;; Persisted `:forms` are proof-granularity envelopes. Live progress
+    ;; renders the whole emitted fence as one display block. Resume must
+    ;; regroup those envelopes back to one block, while preserving the
+    ;; first per-form error so the block does not render as success.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns
                   (fn [_db _cid]
@@ -222,19 +217,13 @@
                                :error {:message "file not found: ghost.clj"}}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             forms   (-> history second :traces first :forms)
-            [f1 f2] forms]
-        ;; The persisted bubble surfaces ONE record per form, not one
-        ;; opaque block for the whole iteration.
-        (expect (= 2 (count forms)))
-        ;; Form 1: succeeded; tool tag and preview IR present.
-        (expect (true?  (:success? f1)))
-        (expect (= :tool (:result-kind f1)))
-        (expect (str/includes? (str (:result-render f1)) "CAT src/foo.clj"))
-        ;; Form 2: errored; the rebuild MUST surface it as an error
-        ;; instead of papering over with success (the original bug).
-        (expect (false? (:success? f2)))
-        (expect (= :error (:result-kind f2)))
-        (expect (some? (:error f2))))))
+            form    (first forms)]
+        (expect (= 1 (count forms)))
+        (expect (str/includes? (:code form) "src/foo.clj"))
+        (expect (str/includes? (:code form) "ghost.clj"))
+        (expect (false? (:success? form)))
+        (expect (= :error (:result-kind form)))
+        (expect (some? (:error form))))))
 
   (it "rebuild-history renders legacy runtime-ref payloads as a non-restorable label"
     ;; Historical sessions may still carry `{:vis/ref :expr}` from the

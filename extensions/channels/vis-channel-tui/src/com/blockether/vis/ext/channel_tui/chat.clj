@@ -259,6 +259,34 @@
                       (update visible (first duration-fallback-idxs)
                         assoc :duration-ms (:duration-ms it))
                       visible)
+        ;; Persisted `:forms` are model-facing proof envelopes (one per
+        ;; top-level form, scopes tN/iM/fK). Live TUI progress, however,
+        ;; renders one card per emitted fence/code-entry. A single fence
+        ;; containing `(git/status)`, `(git/add ...)`, `(git/commit! ...)`,
+        ;; `(git/push!)` therefore appeared as ONE block live but split into
+        ;; four cards after resume. Re-group restored envelopes back to the
+        ;; fence row so resume matches live presentation; keep channel slices
+        ;; and first error so tool previews / failures still render.
+        visible     (if (and (seq envelopes) (seq visible))
+                      (let [first-visible (first visible)
+                            channels      (vec (mapcat :channel visible))
+                            first-error   (some :error visible)
+                            grouped-code  (if (seq elide-idxs)
+                                            (str/join "\n" (keep :code visible))
+                                            iter-code)
+                            grouped       (cond-> {:position 0
+                                                   :code     grouped-code
+                                                   :scope    (:scope first-visible)
+                                                   :tag      (:tag first-visible)}
+                                            (seq channels) (assoc :channel channels)
+                                            (some? first-error) (assoc :error first-error)
+                                            (nil? first-error) (assoc :result (:result (last visible)))
+                                            (seq (vis/parse-block-display grouped-code))
+                                            (assoc :render-segments (vis/parse-block-display grouped-code))
+                                            (some? (:duration-ms it))
+                                            (assoc :duration-ms (:duration-ms it)))]
+                        [grouped])
+                      visible)
         forms       (mapv block->form-record visible)]
     {:position           (when-let [p (:position it)] (dec (long p)))
      :thinking           (visible-thinking (:thinking it))
