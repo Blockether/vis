@@ -13,6 +13,36 @@
   []
   (extension/success {:result {:secret "payload"}}))
 
+(defdescribe sink-entry-zone-summary-test
+  (it "accepts a success sink entry whose render result carries a zone-map summary"
+    ;; Regression: `::sink-entry` is `(s/and (s/keys …) (fn …))`; `s/and`
+    ;; threads the CONFORMED keys output into the fn, so a zone-map
+    ;; `:summary` arrived wrapped as `[:zones …]` (the `:render/summary`
+    ;; `s/or` tag) and the old `(render-fn-result? result)` re-check failed
+    ;; — every zone-summary tool (git/editing/search/…) threw "Invalid sink
+    ;; entry" at runtime even though its render output was valid. IR-only
+    ;; summaries slipped through because `[:ir …]` still reads as an IR node.
+    ;; The predicate now only checks result presence; the `:ext.sink/result`
+    ;; key spec validates the shape against the raw value.
+    (let [entry {:position 0 :form "(v/ls \".\")" :success? true
+                 :symbol 'ls :tag :observation :op :v/ls
+                 :result {:summary {:left   [:strong {} "LS"]
+                                    :center [:c {} "."]
+                                    :right  "18 entries"}
+                          :display [:ir {} [:code {:lang "text"} "a\nb"]]}
+                 :error nil}]
+      (expect (= entry (extension/assert-sink-entry! entry)))))
+
+  (it "still rejects a success sink entry whose result is the wrong shape"
+    (expect (= :rejected
+              (try
+                (extension/assert-sink-entry!
+                  {:position 0 :form "(v/ls)" :success? true
+                   :result [:ir {} [:p {} [:span {} "raw ir, not {:summary :display}"]]]
+                   :error nil})
+                :accepted
+                (catch clojure.lang.ExceptionInfo _ :rejected))))))
+
 (defdescribe prompt-normalization-test
   (it "normalizes string and fn extension prompts"
     (let [prompt-text "\n\n    First line\n\n\n\n      Nested line\n"

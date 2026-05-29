@@ -319,9 +319,18 @@
                      :ext.sink/success? :ext.sink/result :ext.sink/error]
       :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag
                :ext.sink/op :ext.sink/started-at-ms :ext.sink/finished-at-ms])
+    ;; NOTE: `s/and` threads the CONFORMED output of the `s/keys` stage
+    ;; into this predicate, so by the time we see `:result` its `:summary`
+    ;; has been wrapped by the `:render/summary` `s/or` (e.g. `[:zones …]`)
+    ;; and `:symbol` by its `s/or`. Do NOT re-validate the render shape
+    ;; here — `(render-fn-result? result)` on the conformed value always
+    ;; fails, which silently broke EVERY tool's sink write. The
+    ;; `:ext.sink/result` key spec (`(s/nilable ::render-fn-result)`)
+    ;; already validates the shape against the RAW value; this predicate
+    ;; only enforces the success/result/error relationship.
     (fn [{:keys [success? result error]}]
       (if success?
-        (and (render-fn-result? result) (nil? error))
+        (and (some? result) (nil? error))
         (and (nil? result) (some? error))))))
 
 (defn assert-sink-entry!
