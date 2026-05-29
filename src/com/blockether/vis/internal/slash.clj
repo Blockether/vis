@@ -38,16 +38,14 @@
       :slash/title  short headline (string, plain)
       :slash/body   IR (vector starting with :ir ...) OR Markdown string
       :slash/actions [{:label :slash}]   ;; optional follow-ups
-      :slash/specs   {entry-key partial-spec-map}    ;; -> :session/specs
       :slash/tasks   {entry-key partial-task-map}    ;; -> :session/tasks
       :slash/facts   {entry-key partial-fact-map}    ;; -> :session/facts
       :slash/data    arbitrary payload (workspace-id, sha, ...)}
 
-   The engine routes `:slash/specs / :tasks / :facts` through
+   The engine routes `:slash/tasks / :facts` through
    `ctx-loop/apply-and-record!` so a slash leaves the same kind of
-   trace on `:session/*` that a model-emitted `(spec-set! ...)` / etc.
-   would have. Validation, hook-task dedup, FSM safety all flow the
-   same way."
+   trace on `:session/*` that a model-emitted `(task-set! ...)` / etc.
+   would have. Hook-task dedup and FSM safety all flow the same way."
 
   (:require
    [clojure.string :as str]

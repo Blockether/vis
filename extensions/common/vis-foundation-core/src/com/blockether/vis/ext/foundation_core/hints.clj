@@ -12,66 +12,15 @@
    `::cs/task` keyed by the hook id):
 
      {:title        \"<imperative title>\"
-      :importance   :info | :warn | :critical
-      :validator-fn (vis/validator-fn [{:keys [form error]}] …)}
+      :importance   :info | :warn | :critical}
 
-   `:validator-fn` is REQUIRED. The engine runs it against the form
-   envelope at `:proof` when the model writes
-   `(task-set! id {:status :done :proof \"tN/iM/fK\"})`. Pass → :done
-   sticks. Fail → task reverts to :todo + warning. The macro emits
-   a dual `{:fn :src}` map so the validator survives freeze/thaw
-   (`:fn` for the runtime fast path, `:src` for persistence)."
+   The model satisfies a hook task by `(task-set! id {:status :done})`.
+   The engine no longer verifies the claim — it just stamps `:done-born`
+   and lets the done status stick. Honesty about whether the underlying
+   action actually happened is on the model."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]))
-
-;; =============================================================================
-;; Shared validator-fn source strings
-;; =============================================================================
-;;
-;; Validators authored via `vis/validator-fn`. The macro emits a dual
-;; `{:fn <real-fn> :src "(fn …)"}` map: the runtime calls `:fn`
-;; directly (no SCI compile cost, full Clojure semantics) and `:src`
-;; reconstructs the fn after freeze/thaw (nippy collapses the fn slot
-;; to a `{:vis/ref :expr}` marker; the source string is the durable
-;; representation). Pattern-matching happens on the engine-supplied
-;; `:form` (parsed sexp) so a comment / string literal that mentions
-;; the target head can never trigger a false-positive validation.
-;;
-;; The bodies below are intentionally CLOSED OVER NOTHING — every
-;; helper they reach for is in `clojure.core` / `clojure.string`. The
-;; macro snapshots the source string at expansion time; on restore SCI
-;; recompiles it in a minimal ctx that has no access to our private
-;; helpers, so any extension fn we'd bind to would silently fail after
-;; freeze/thaw.
-
-(def TITLE_VALIDATOR
-  "Validator for `:vis.foundation/session-title`. Proof scope must be a
-   form whose HEAD call is `set-session-title!` with a non-blank string
-   title. Acceptance:
-     - no `:error` was raised when the form ran
-     - `:form` is a list whose head symbol's name is
-       \"set-session-title!\" (namespace ignored — SCI may resolve
-       it as `set-session-title!` or `vis/set-session-title!`)
-     - the form's first arg is a non-blank string title"
-  (vis/validator-fn [{:keys [form error]}]
-    (and (nil? error)
-      (seq? form)
-      (symbol? (first form))
-      (= "set-session-title!" (name (first form)))
-      (string? (second form))
-      (not (clojure.string/blank? (second form))))))
-
-(def CONTEXT_PRESSURE_VALIDATOR
-  "Validator for `:vis.foundation/context-pressure`. The model satisfies
-   this hint by calling `(done …)` (turn converges). Pure structural
-   match on `:form` — no string-includes? fallback, so comments and
-   string literals mentioning `done` can never satisfy the hint."
-  (vis/validator-fn [{:keys [form error]}]
-    (and (nil? error)
-      (seq? form)
-      (symbol? (first form))
-      (= "done" (name (first form))))))
 
 (def ^:const TITLE_REFRESH_TURN_PERIOD
   "Turn cadence at which `title-hint` fires. BOTH branches —
@@ -82,9 +31,8 @@
 
    Why blank-title is also cadence-gated now:
    the earlier rule fired `:critical` every iteration whenever the
-   title was blank. If the model failed the validator once (wrong
-   proof scope) the task reverted to `:todo`, the hint re-fired
-   every iter, and `progress.clj` emitted one `Title — …` recap
+   title was blank, so the hint re-fired every iter and
+   `progress.clj` emitted one `Title — …` recap
    row per `(set-session-title! …)` call. Cadence-gating keeps
    the recap to at most one nudge per cadence tick — quiet inside
    any single turn, quiet on turns 2–9, etc.
@@ -157,25 +105,23 @@
       ;; nudge actually fires.
       (and blank? cadence)
       {:importance   :critical
-       :validator-fn TITLE_VALIDATOR
        :title (str "Set the session title via bare `(set-session-title! \"...\")` "
                 "(3-7-word noun phrase, e.g. \"Refactor auth flow\" or "
                 "\"Triage 148 path failures\"). The title is currently empty. "
                 "Emit the call as its own top-level form before your first real probe; "
                 "do not namespace-qualify it (engine-owned, not a `v/` tool). "
-                "Then `(task-set! :vis.foundation/session-title {:status :done :proof \"<scope>\"})`.")}
+                "Then `(task-set! :vis.foundation/session-title {:status :done})`.")}
 
       ;; Periodic refresh stays :info — the existing title already labels
       ;; the session; this branch only hints when focus may have
       ;; shifted, and is fine to skip.
       (and (not blank?) cadence)
       {:importance   :info
-       :validator-fn TITLE_VALIDATOR
        :title (str "Refresh title if focus has shifted. "
                 "Current session title is \"" session-title "\". "
                 "You are " turn-position " turn(s) into this session. "
                 "Call bare `(set-session-title! \"...\")` (do not namespace-qualify it), "
-                "then `(task-set! :vis.foundation/session-title {:status :done :proof \"<scope>\"})`.")})))
+                "then `(task-set! :vis.foundation/session-title {:status :done})`.")})))
 
 (defn context-pressure-hint
   "Return a `:high`-importance hint when the most recent provider
@@ -241,14 +187,13 @@
                                (str ", ~" cum-rs " reasoning tokens"))
                              " billed."))]
         {:importance   :warn
-         :validator-fn CONTEXT_PRESSURE_VALIDATOR
          :title (str "Converge now: next request is ~" used " / " limit
                   " input tokens (~" pct "%) of this model's effective window."
                   cumul-clause
                   " Finalise via `(done {:answer \"…\"})`, or drop/summarise older "
                   "trailer iters via `(done {:answer … :trailer-summarize [{:scope-start <…> "
                   ":scope-end <…> :summary …}]})`. Then `(task-set! "
-                  ":vis.foundation/context-pressure {:status :done :proof \"<scope>\"})`. "
+                  ":vis.foundation/context-pressure {:status :done})`. "
                   "Avoid dumping more file contents, diffs, or repeated diagnostics. "
                   "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 
@@ -273,14 +218,10 @@
     ;; which can swing wildly across turns (heavy refactor turn at 60%
     ;; followed by a one-word "ok" turn at 1%). Letting the resulting
     ;; hook-task survive across turns turned into a cargo-cult bug:
-    ;; the model marked it `:done` with `:proof` pointing at the
-    ;; `(task-set! …)` form itself, the validator (which expects a
-    ;; `(done …)` / trailer-summarize source) said no, the task stayed
-    ;; in `:session/tasks` as `:done :validated? false` for 6 turns,
-    ;; and the renderer kept surfacing it so the model kept re-marking
-    ;; it on every turn including trivial chat replies (Vis conv
-    ;; 11d4f817 / t14–t16). `:lifetime :turn` drops the task at
-    ;; `advance-turn`; if next turn's input is still over budget the
-    ;; hint re-fires and the task is re-created cleanly.
+    ;; the model kept re-marking the lingering task `:done` on every
+    ;; turn including trivial chat replies, and the renderer kept
+    ;; surfacing it (Vis conv 11d4f817 / t14–t16). `:lifetime :turn`
+    ;; drops the task at `advance-turn`; if next turn's input is still
+    ;; over budget the hint re-fires and the task is re-created cleanly.
     :lifetime :turn
     :fn    context-pressure-hint}])

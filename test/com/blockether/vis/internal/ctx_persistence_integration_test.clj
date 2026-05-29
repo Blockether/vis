@@ -7,7 +7,7 @@
    No real LLM call — we drive the SCI bindings directly. The point is to
    prove the **persistence + restore** layer works end-to-end against the
    real schema + Nippy serialization. If this test passes, kill-vis-and-
-   restart preserves specs/tasks/facts/trailer/cursor correctly."
+   restart preserves tasks/facts/trailer/cursor correctly."
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.persistance-sqlite.registrar]
@@ -46,7 +46,7 @@
 
 (defdescribe end-to-end-persist-restart-test
   (describe "engine state survives DB round-trip"
-    (it "specs / tasks / facts persist across env rebuild on the same session"
+    (it "tasks / facts persist across env rebuild on the same session"
       (let [db-info (vis/db-create-connection! :memory)]
         (try
           (let [ws (vis/workspace-ensure-trunk! db-info {})
@@ -54,7 +54,7 @@
                              db-info {:channel :tui :title "integration"
                                       :workspace-id (:id ws)})
 
-                ;; ── Turn 1: define fact + spec + req + task
+                ;; ── Turn 1: define fact + task
                 turn1-id (vis/db-store-session-turn!
                            db-info {:parent-session-id session-id
                                     :user-request "Verify rate limiter"
@@ -63,21 +63,17 @@
                 ctx1 (simulate-turn! db-info turn1-id env1
                        (fn [e]
                          (via e 'fact-set! :rl-bug {:content "swap! race observed"})
-                         (via e 'spec-set! :rl {:title "race-free" :status :draft})
-                         (via e 'req-add!  :rl {:id :linearizable
-                                                :title "concurrent count <= limit"
-                                                :facts [:rl-bug]})
                          (via e 'task-set! :swap {:title "CAS rewrite"
-                                                  :specs {:rl []}
                                                   :status :doing})))]
             (expect (= "swap! race observed"
                       (get-in ctx1 [:session/facts :rl-bug :content])))
-            (expect (= "race-free" (get-in ctx1 [:session/specs :rl :title])))
             (expect (= "CAS rewrite" (get-in ctx1 [:session/tasks :swap :title])))
+            (expect (= :doing (get-in ctx1 [:session/tasks :swap :status])))
 
             ;; ── Verify db-load-latest-ctx returns the same shape
             (let [persisted (persistance/db-load-latest-ctx db-info session-id)]
-              (expect (= "race-free" (get-in persisted [:session/specs :rl :title])))
+              (expect (= "swap! race observed"
+                        (get-in persisted [:session/facts :rl-bug :content])))
               (expect (= "CAS rewrite" (get-in persisted [:session/tasks :swap :title]))))
 
             ;; ── Restart: drop env1, rebuild env2 fresh; load ctx from DB
@@ -86,32 +82,26 @@
               (when loaded
                 (reset! (:ctx-atom env2) (assoc loaded :session/id session-id)))
 
-              ;; env2 sees turn 1's spec/task immediately
-              (expect (= "race-free"
-                        (get-in @(:ctx-atom env2) [:session/specs :rl :title])))
+              ;; env2 sees turn 1's task immediately
+              (expect (= "CAS rewrite"
+                        (get-in @(:ctx-atom env2) [:session/tasks :swap :title])))
 
-              ;; ── Turn 2: extend task with proof, flip to :done
+              ;; ── Turn 2: self-assert the task done; engine stamps :done-born
               (let [turn2-id (vis/db-store-session-turn!
                                db-info {:parent-session-id session-id
-                                        :user-request "Add proof"
+                                        :user-request "Close it out"
                                         :status :running})
                     ctx2 (simulate-turn! db-info turn2-id env2
                            (fn [e]
-                             (via e 'proof-add! :swap :rl
-                               {:requirement :linearizable :proof "t2/i1/f1"})
                              (via e 'task-set! :swap {:status :done})))]
-                (expect (= "race-free" (get-in ctx2 [:session/specs :rl :title])))
                 (expect (= "swap! race observed"
                           (get-in ctx2 [:session/facts :rl-bug :content])))
-                (expect (= [{:requirement :linearizable :proof "t2/i1/f1"}]
-                          (get-in ctx2 [:session/tasks :swap :specs :rl])))
                 (expect (= :done (get-in ctx2 [:session/tasks :swap :status])))
                 (expect (some? (get-in ctx2 [:session/tasks :swap :done-born])))
 
-                ;; Second restart sees the proof too
+                ;; Second restart sees the done status too
                 (let [reloaded (persistance/db-load-latest-ctx db-info session-id)]
-                  (expect (= [{:requirement :linearizable :proof "t2/i1/f1"}]
-                            (get-in reloaded [:session/tasks :swap :specs :rl])))))
+                  (expect (= :done (get-in reloaded [:session/tasks :swap :status])))))
 
               ;; ── History loader sees BOTH turns
               (let [history (persistance/db-load-ctx-history db-info session-id)
@@ -120,9 +110,9 @@
                 (expect (= 2 (count history)))
                 (expect (some? as-of-1))
                 (expect (some? as-of-2))
-                ;; turn 1 had no proof; turn 2 has it
-                (expect (empty? (get-in as-of-1 [:session/tasks :swap :specs :rl])))
-                (expect (seq (get-in as-of-2 [:session/tasks :swap :specs :rl]))))))
+                ;; turn 1 had the task :doing; turn 2 flipped it :done
+                (expect (= :doing (get-in as-of-1 [:session/tasks :swap :status])))
+                (expect (= :done (get-in as-of-2 [:session/tasks :swap :status]))))))
           (finally (vis/db-dispose-connection! db-info)))))))
 
 (defdescribe ttl-gc-survives-restart-test
@@ -143,7 +133,7 @@
                 env1 (mk-env db-info session-id 1)
                 _ (simulate-turn! db-info turn1-id env1
                     (fn [e]
-                      (via e 'task-set! :old-task {:title "x" :specs {} :status :done})
+                      (via e 'task-set! :old-task {:title "x" :status :done})
                       (swap! (:ctx-atom e)
                         assoc-in [:session/tasks :old-task :done-born] "t1/i1/f1")))
 
@@ -161,7 +151,7 @@
                 ctx8 (simulate-turn! db-info turn8-id env8
                        (fn [e]
                          (via e 'task-set! :new-task
-                           {:title "current" :specs {} :status :todo})))]
+                           {:title "current" :status :todo})))]
             ;; live ctx after turn 8: :old-task gone, :new-task alive
             (expect (nil? (get-in ctx8 [:session/tasks :old-task])))
             (expect (= "current" (get-in ctx8 [:session/tasks :new-task :title])))

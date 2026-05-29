@@ -14,7 +14,6 @@
   {:router ::router
    :ctx-atom (atom {:session/id "test" :session/turn 1
                     :session/scope {:turn 1 :iter 1 :next-form 1}
-                    :session/specs {}
                     :session/tasks {}
                     :session/facts {}
                     :session/trailer []})

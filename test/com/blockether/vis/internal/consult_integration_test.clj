@@ -24,7 +24,7 @@
   (merge {:ctx-atom (atom {:session/id "test"
                            :session/turn 1
                            :session/scope {:turn 1 :iter 1 :next-form 1}
-                           :session/specs {} :session/tasks {}
+                           :session/tasks {}
                            :session/facts {} :session/trailer []})
           :consult-budget-atom (consult/fresh-budget-atom)
           :current-form-scope "t1/i1/f1"
@@ -90,8 +90,7 @@
 
         (it "renderer surfaces trailer pins inline"
           (let [text (renderer/render-ctx
-                       {:ctx ctx :warnings []
-                        :progression {} :stages []})]
+                       {:ctx ctx :warnings []})]
             (expect (str/includes? text ":session/trailer"))
             (expect (str/includes? text ":critique"))
             (expect (str/includes? text ":research"))))))))

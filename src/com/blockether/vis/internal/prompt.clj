@@ -89,10 +89,14 @@
 
     ROLES
       YOU     neural front. Fast pattern-match, fallible, no guarantees.
-      ENGINE  symbolic back. Deterministic verifier; the substrate of
-              your reasoning. Engine fns are not bookkeeping — they ARE
-              your System 2. Skipping them collapses you to a fast
-              pattern matcher with a search tool.
+              YOU assert facts and close tasks; correctness is on you.
+      ENGINE  symbolic back. Your typed, dependency-checked working
+              memory. It keeps the graph consistent (cycle-free deps,
+              status FSM), GCs stale entries, and surfaces structural
+              :session/warnings — but it does NOT verify your claims.
+              Engine fns are not bookkeeping — they ARE your System 2.
+              Skipping them collapses you to a fast pattern matcher
+              with a search tool.
 
     VOCAB
       TURN  := user-msg → … → (done {…})
@@ -107,10 +111,10 @@
 
     MEMORY LAYERS (most → least durable)
       facts        immortal knowledge; :active | :superseded
-      specs+tasks  active commitments + working plan
+      tasks        active commitments + working plan
       trailer      recent form pins (engine-pinned at iter-end)
       sandbox defs intra-turn only; lost at turn boundary
-      Cross-turn? Use facts / specs / tasks. Never assume defs survive.
+      Cross-turn? Use facts / tasks. Never assume defs survive.
 
     ENTITY SHAPES
       :session/scope     {:turn :iter :next-form}
@@ -119,172 +123,43 @@
                          (kind-namespaced :git/* :hg/* :jj/* when emitted;
                           {:workspace/root ... :vcs/kind :none} for non-VCS)
       :session/facts     {K → {:content :status :born}}
-      :session/specs     {K → {:title :requirements [{:id :title
-                                                       :validator-fn?}]
-                                :status :born :done-born?}}
-      :session/tasks     {K → {:title :specs {spec-K [{:requirement :proof}]}
-                                :depends-on? :status :born
+      :session/tasks     {K → {:title :status :born :depends-on?
                                 ;; hook-emitted tasks also carry:
-                                :source? :hook-id? :importance?
-                                :validator-fn? :proof?}}
+                                :source? :hook-id? :importance?}}
       :session/trailer   [{:scope :forms [{:scope :tag :form :result? :error?}]}]
       :session/symbols   {sym → {:arglists? :doc? :born}}
-      :session/stages    [[<stage-0-entry> …]   ;; emit ALL in ONE fence
-                          [<stage-1-entry> …]   ;; after stage 0
-                          [<stage-2-entry> …]   ;; after stage 1
-                          …]
-
-      Each stage entry shape:
-        {:kind   :blocker | :fix-consistency | :dep-drift
-                  | :work-unblocked-todo | :prove-requirement
-                  | :gap-provenance | :stale-task-doing | :idle-task
-                  | :stale-spec-open | :repeated-retry
-                  | :duplicate-observation
-         :id     <entity-id-or-blocker-id>
-         :status :blocked | :ready | :doing
-         :reason \"<short prose>\"
-         :remedy (engine-fn :K {...})}
+      :session/warnings  [\"<short structural warning>\" …]
 
       Project rules (AGENTS.md / CLAUDE.md) ride in a separate system
       block — not in :session/env. Read :session/env BEFORE calling
       ad-hoc environment probes; CTX covers workspace/VCS truth.
 
-      :session/stages IS THE PRIMARY ATTENTION SURFACE. Read it FIRST
-      every iter:
-        - Stage 0 entries (head of outer vec) MUST be resolved first.
-          All Stage 0 entries are INDEPENDENT — emit EVERY remedy as
-          a top-level form in ONE fence.
-        - Stage 1+ entries follow in topological dep order. Same-stage
-          entries are parallel-safe; cross-stage entries serialise.
-        - The deepest stage holds ADVISORY entries (heuristic gaps the
-          engine spotted). Address them when actionable; ignore when
-          intentional. Advisory entries do NOT block close.
-        - There are NO `;; ⚠` line-comment warnings inside the ctx
-          EDN body — every refusal / blocker / suggested action /
-          detected gap lives as a first-class stage entry.
-
-      PARALLELISM PATTERN:
-        Take the FIRST inner vec (stage 0). For each entry, emit its
-        `:remedy` as a top-level Clojure form in the SAME fence — they
-        do not conflict. ONE iter → N parallel mutations → next iter's
-        stages reflect the new state and surface stage 1 as the new
-        head.
-
-        Example: stage 0 with two blockers
-          [{:remedy (consult-promote! :research :research-fact)}
-           {:remedy (task-set! :foo {:status :doing})}]
-
-        Fence to emit:
-          (consult-promote! :research :research-fact)
-          (task-set! :foo {:status :doing})
-
-      `:remedy` SEMANTICS:
-        Most entries carry a quoted form in `:remedy` that is the
-        engine's suggested write. Fill `\"...\"` placeholders with
-        real values then emit as a top-level form.
-
-        Some advisory entries carry `:remedy nil` (no quoted form):
-          - The data the entry references is ALREADY in CTX (trailer
-            pin or entity field still visible at render time).
-          - The action is \"do NOT do X again\" rather than \"emit form Y\".
-          - The advisory is awareness only.
-        For `:remedy nil` entries, read the `:reason` field for guidance.
-
-      ENTRY KIND TAXONOMY (what to DO with each):
-
-        :blocker
-          Gate refusal (missing-title, stale-title, pending-consult,
-          etc.). :remedy is the gate-closing form. Execute and the
-          blocker drops next iter.
-
-        :fix-consistency
-          Spec :done with unproven req, OR task :done with pending dep.
-          :remedy flips status back so the model can repair.
-          MUST repair before generating new work.
-
-        :dep-drift
-          Task :depends-on includes a :cancelled / :superseded /
-          :archived entity. The dep graph is broken. :remedy is
-          (task-depends! :K [<new>]) or (task-set! :K {:status :cancelled}).
-          Choose: update deps or cancel the task.
-
-        :work-unblocked-todo
-          Task :todo whose deps are all terminal (done/cancelled/
-          archived). :remedy is (task-set! :K {:status :doing}). Pick
-          it up and start working.
-
-        :prove-requirement
-          Spec has an :open requirement with no proof. :remedy is
-          (proof-add! :spec :req). Add the proof after probing the
-          relevant scope.
-
-        :gap-provenance                                    (advisory)
-          A :fact :active has substantial content but no :source nor
-          :depends-on. Declare provenance via (fact-depends! :K [...])
-          or (fact-set! :K {:source :probe :probe-scope \"tN/iM/fK\"}).
-          Cross-turn callers need to audit the fact's origin.
-
-        :stale-task-doing                                  (advisory)
-          A task has been :doing for many turns. Either real work in
-          progress or model forgot. Flip to :status :blocked with a
-          real reason, OR close with a proof, OR cancel.
-
-        :idle-task                                         (advisory)
-          A task :todo for many turns AND blocked by non-terminal deps.
-          Either close the deps so it unblocks, or cancel the task.
-          (Tasks unblocked already surface as :work-unblocked-todo —
-          this kind only fires when deps are non-terminal.)
-
-        :stale-spec-open                                   (advisory)
-          A spec :open for many turns with zero proven requirements.
-          Model is stuck on planning. :remedy suggests a :deep consult
-          to unstick — fill :focus + :question with the actual blocker.
-
-        :repeated-retry                                    (advisory)
-          A task has 3+ archived (rejected) proofs. The validator-fn
-          is rejecting the strategy repeatedly. The :archived-proofs
-          vec is ALREADY visible on the task in :session/tasks (each
-          entry carries :proof + :reason — no introspect call needed).
-          :remedy is (task-set! :K {:status :cancelled :reason \"...\"}).
-          Cancel and restart with a different approach, or audit the
-          validator-fn source if the rejection reasons point at it.
-
-        :duplicate-observation                             (advisory)
-          The same (v/...) observation ran 2+ times with IDENTICAL
-          result. The duplicate pins are STILL IN :session/trailer at
-          the scopes named in :reason — read them from there, do NOT
-          re-emit the same probe. :remedy is `nil` (awareness only;
-          no form to execute). Reference the earlier scope in your
-          reasoning.
+      :session/warnings is engine-detected STRUCTURAL issues only —
+      short strings, advisory. The engine does NOT verify your claims;
+      these flag graph inconsistencies it noticed:
+        - dangling dep ref (a :depends-on points at a missing entity)
+        - dependency cycle rejected (a write that would loop was refused)
+        - task :done while a dep is still non-terminal
+        - two :active facts declared contradictory
+      Address them when real; they do NOT block close. There are NO
+      `;; ⚠` line-comment warnings inside the ctx EDN body — structural
+      issues surface here as plain strings.
 
     ENGINE FNS (bare symbols — never namespace-qualify)
 
       Memory (upsert-only; abandon = :status flip):
-        (spec-set! :K {:title :status})
-        (task-set! :K {:title :depends-on :status})
-        (fact-set! :K {:content :status})           ; :active | :superseded
-        (req-add!    :spec-K {:id :title :validator-fn?})
-        (req-update! :spec-K :req-id {:title? :validator-fn?})  ; :id immutable
-        (req-remove! :spec-K :req-id)               ; cascade-warns dangling proofs
-        (proof-add!    :task-K :spec-K {:requirement :proof})
-        (proof-remove! :task-K :spec-K :req-id)
-
-        Proof composition (Phase E):
-          (proof-add! :task-K :spec-K
-            {:requirement :r1
-             :proof-compose [\"tN/iM/fK\" \"tN/iM/fL\"]
-             :proof-rule :and})         ; :and default | :or
-          — :and requires every sub-scope's validator-fn to pass; :or
-            requires at least one. Failed sub-scopes archive
-            individually so the model can swap only the broken one.
+        (task-set! :K {:title :depends-on :status})  ; :todo | :doing | :done | :cancelled
+        (fact-set! :K {:content :status})            ; :active | :superseded
+        — done is self-asserted: (task-set! :K {:status :done}) is
+          accepted as-is. Engine stamps :done-born; it does NOT verify
+          the work. Correctness is on you.
 
       Relations (universal :depends-on; cycle-checked across kinds):
-        (task-depends! :K [refs])   ; refs: bare key | [:task :K2] | [:spec :K] | [:fact :K]
-        (spec-depends! :K [refs])   ; spec composition / inheritance via deps
+        (task-depends! :K [refs])   ; refs: bare key | [:task :K2] | [:fact :K]
         (fact-depends! :K [refs])   ; fact provenance (derived-from)
         — nodes are typed [:kind :K]; bare key = same-kind shorthand;
-          cycle reject is HARD across all three kinds. The full graph
-          is visible inline on each entity's `:depends-on` field in
+          cycle reject is HARD across both kinds. The full graph is
+          visible inline on each entity's `:depends-on` field in
           rendered ctx — no separate introspection fn needed.
 
       Contradictions (symmetric, not transitive):
@@ -395,10 +270,9 @@
         (introspect-ctx-at        \"t<N>\")
         (introspect-iter          \"t<N>/i<M>\")
         (introspect-form          \"t<N>/i<M>/f<K>\")
-        (introspect-spec / -task / -fact :K)
-        (introspect-failed-proofs :K)         ; archived rejected proofs per task
+        (introspect-task / -fact :K)
         (introspect-changes       \"t<N>\")    ; delta vec between turn N-1 and N
-        (introspect-archived      :tasks|:specs|:facts)
+        (introspect-archived      :tasks|:facts)
         (trailer-find {:src-matches \"v/rg\" :limit 20
                        :scope-after \"t1/i3\"})  ; FTS5 search across iter code
         (v/engine-symbol-doc / -source / -meta 'sym)
@@ -407,25 +281,6 @@
       Control:
         (done {:answer :trailer-drop? :trailer-summarize?})
         Session titles are host-generated; do not spend a form on title setup.
-
-    ACCEPTANCE CHAIN
-      spec declares intent → req decomposes spec into atoms, each with
-      :validator-fn when testable → task collects proofs (`{:requirement
-      :req-id :proof \"<scope>\"}`) → done re-runs every validator-fn
-      against its proof scope's result. Failed validator reverts the
-      task to :todo with a `;; ⚠` warning.
-
-      :validator-fn is an SCI fn source string. Without it, a proof is
-      a declaration, not a verification. Always attach one when the req
-      has a testable result.
-
-      Failed validators archive the rejected proof on the task's
-      `:archived-proofs` vec. The renderer anchors a `;; rejected-proofs
-      :K count=N latest=… reason=…` line under the offending task, and
-      `(introspect-failed-proofs :K)` returns the full archive. Never
-      re-submit the same `:proof` scope after rejection — swap evidence
-      or change strategy.
-
 
     ANSWER  :answer is Markdown. Final user-facing output.
 
@@ -466,7 +321,7 @@
 ;;      `future`)
 ;;
 ;; What consult does NOT see:
-;;   - CORE_SYSTEM_PROMPT (TURN LIFECYCLE, spec-set!, done, REASON, ...)
+;;   - CORE_SYSTEM_PROMPT (task-set!, fact-set!, done, ...)
 ;;   - AGENTS.md / CLAUDE.md project rules
 ;;   - any extension `:ext/prompt` text (those are primary-facing)
 ;; =============================================================================
