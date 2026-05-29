@@ -663,11 +663,7 @@
      :ext/kind      "voice"
      :ext/prompt    voice-response-prompt
      :ext/doctor-fn doctor-fn
-     :ext/settings  [{:key :voice/respond?
-                      :type :toggle
-                      :label "Voice responses"
-                      :description "Speak assistant final answers with Piper TTS. The answer is still saved as text."}
-                     {:key :voice/telegram-send-transcript?
+     :ext/settings  [{:key :voice/telegram-send-transcript?
                       :type :toggle
                       :label "Telegram transcript text"
                       :description "In Telegram duplex mode, send the transcribed user request before the answer audio."}

@@ -939,33 +939,10 @@
     :label "Theme",
     :description
     "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}])
-(def ^{:private true} extension-setting-toggle-aliases
-  "Normalize legacy :ext/settings keys to canonical toggle ids.
-
-   UX rule: users see one clean toggle row in the right tab. Legacy extension
-   declarations may still use old unqualified keys, but the dialog never leaks
-   those aliases as duplicate rows or raw ids."
-  {:voice/respond?           :voice/respond?
-   :reasoning-level          :vis/reasoning-level
-   :vis/reasoning-level      :vis/reasoning-level
-   :openai-codex-verbosity   :openai-codex/verbosity
-   :openai-codex/verbosity   :openai-codex/verbosity})
-
-(def ^{:private true} extension-setting-toggle-ids
-  (set (vals extension-setting-toggle-aliases)))
-
-(defn- canonical-extension-setting-toggle-id
-  [setting-id]
-  (get extension-setting-toggle-aliases setting-id))
-
-(defn- extension-setting-registry-toggle?
-  [{:keys [id]}]
-  (contains? extension-setting-toggle-ids id))
-
 (defn- general-toggle-spec?
-  [{:keys [owner] :as spec}]
-  (and (not (extension-setting-registry-toggle? spec))
-    (or (nil? owner) (= :vis owner))))
+  [{:keys [owner]}]
+  (or (nil? owner) (= :vis owner)))
+
 (declare titleize-label)
 
 (defn- registry-toggle-rows
@@ -1128,10 +1105,12 @@
   (cond (keyword? v) v
     (string? v) (let [s (str/trim v)] (when-not (str/blank? s) (keyword s)))
     :else nil))
-(defn- registry-backed-extension-setting?
-  [setting-key]
-  (when-let [toggle-id (canonical-extension-setting-toggle-id setting-key)]
-    (some? (vis/toggle-spec toggle-id))))
+
+(def ^{:private true} retired-extension-setting-keys
+  "Old :ext/settings rows now owned by registry toggles. Drop them rather than
+   aliasing or rendering duplicates."
+  #{:voice/respond? :reasoning-level :vis/reasoning-level
+    :openai-codex-verbosity :openai-codex/verbosity})
 
 (defn- extension-setting-declarations
   []
@@ -1143,13 +1122,14 @@
                     provider-ids (set (keep :provider/id (:ext/providers ext)))]
                 (keep-indexed (fn [idx decl]
                                 (when-let [k (setting-key (:key decl))]
-                                  (assoc decl
-                                    :key k
-                                    :extension-id ext-id
-                                    :extension-kind ext-kind
-                                    :extension-label ext-label
-                                    :extension-order idx
-                                    :provider-ids provider-ids)))
+                                  (when-not (contains? retired-extension-setting-keys k)
+                                    (assoc decl
+                                      :key k
+                                      :extension-id ext-id
+                                      :extension-kind ext-kind
+                                      :extension-label ext-label
+                                      :extension-order idx
+                                      :provider-ids provider-ids))))
                   (:ext/settings ext)))))
     (sort-by (juxt :extension-kind :extension-label :extension-order :key))
     vec))
@@ -1227,12 +1207,9 @@
   ([tab-id] (settings-rows tab-id (extension-option-rows)))
   ([tab-id extension-rows]
    (let [active-provider (current-provider-id)
-         all-extension-rows (filterv #(provider-row-active? active-provider %) extension-rows)
-         extension-tab-rows (remove #(registry-backed-extension-setting? (:key %)) all-extension-rows)
-         ;; Reasoning effort migrated to `:vis/reasoning-level` in the
-         ;; toggles registry. General owns the host-wide switches; the
-         ;; Extensions tab owns provider/channel/generic extension settings
-         ;; plus extension-owned registry toggles and TUI contributions.
+         extension-tab-rows (filterv #(provider-row-active? active-provider %) extension-rows)
+         ;; Registry owns migrated host settings; :ext/settings now only
+         ;; renders settings still declared by real extensions.
          model-rows (if (reasoning-effort-configurable?) [] settings-model-no-effort-rows)
          extension-toggle-rows (registry-toggle-rows (complement general-toggle-spec?))]
      (vec
@@ -1252,7 +1229,7 @@
                     (settings-ui-options)
                     model-rows
                     (or (registry-toggle-rows general-toggle-spec?) []))
-         (settings-rows :general all-extension-rows))))))
+         (settings-rows :general extension-rows))))))
 (defn- extension-env-status-label
   [source]
   (case source
