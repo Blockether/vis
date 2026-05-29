@@ -103,32 +103,38 @@
         scope (or branch (name (or kind :workspace)))
         range (str (or (short-sha from) (str from)) ".."
                 (or (short-sha to) (if to (str to) "WT")))
-        body  (str/join "\n" (map diff-row files))
-        patches (->> files
-                  (filter :patch)
-                  (mapcat (fn [{:keys [file patch]}]
-                            [(ir-p (ir-strong (str "── " file " ──")))
-                             (ir-code-block "diff" (cap patch))])))]
+        ;; ONE file overview. The numstat carries the tracked changes (+/-);
+        ;; porcelain entries the numstat didn't already cover (untracked files
+        ;; have no +/- line) are appended so nothing is listed twice.
+        tracked   (set (map :file files))
+        untracked (remove #(contains? tracked (:file %)) (or porcelain []))
+        overview  (str/join "\n"
+                    (concat
+                      (map diff-row files)
+                      (map (fn [{:keys [status file]}] (str status " " file)) untracked)))
+        ;; JGit's DiffFormatter already prefixes each file with its own
+        ;; `diff --git a/… b/…` header, so the patches self-label — no
+        ;; `── file ──` separator rows (those wrecked the layout). One block.
+        patch-text (str/join "\n" (keep :patch files))]
     {:summary
      {:left   (ir-strong "DIFF")
       :center (ir-p (ir-code scope) " " range)
       :right  (str nf " file" (when (not= 1 nf) "s") "  +" np "  −" nm)}
      :display
      (apply ir-root
-       (ir-p (ir-strong "DIFF")
-         "  " (ir-code scope)
-         "  " range
-         (when path (str "  path=" path))
-         (when head (str "  @" (short-sha head))))
-       (ir-p (str nf " file" (when (not= 1 nf) "s")
-               "  +" np "  −" nm))
-       (when (seq files)  (ir-code-block "text" (cap body)))
-       (when (seq porcelain)
-         (ir-code-block "text"
-           (cap (str/join "\n"
-                  (map (fn [{:keys [status file]}] (str status " " file))
-                    porcelain)))))
-       patches)}))
+       (concat
+         ;; Context NOT already in the summary header (path filter / resolved
+         ;; HEAD sha). The DIFF label, scope, range and +/- counts live in the
+         ;; summary — never repeat them here or the expanded row shows twice.
+         (when (or path head)
+           [(ir-p (str/join "  "
+                    (remove nil?
+                      [(when path (str "path=" path))
+                       (when head (str "@" (short-sha head)))])))])
+         (when (seq (str/trim overview))
+           [(ir-code-block "text" (cap overview))])
+         (when (seq (str/trim patch-text))
+           [(ir-code-block "diff" (cap patch-text))])))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/log
@@ -168,11 +174,9 @@
         nm    (or (:- stat) 0)
         sha*  (or short-sha (when sha (subs sha 0 (min 8 (count sha)))) "?")
         body* (str/join "\n" (map diff-row files))
-        patches (->> files
-                  (filter :patch)
-                  (mapcat (fn [{:keys [file patch]}]
-                            [(ir-p (ir-strong (str "── " file " ──")))
-                             (ir-code-block "diff" (cap patch))])))]
+        ;; Patches self-label via JGit's `diff --git a/… b/…` headers — one
+        ;; diff block, no `── file ──` separator rows.
+        patch-text (str/join "\n" (keep :patch files))]
     {:summary
      {:left   (ir-strong "SHOW")
       :center (ir-p (ir-code sha*) " " (or subject author "?"))
@@ -193,7 +197,8 @@
                  (str "  committer=" committer))))
        (when (seq files)
          (ir-code-block "text" (cap body*)))
-       patches)}))
+       (when (seq (str/trim patch-text))
+         (ir-code-block "diff" (cap patch-text))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/blame
