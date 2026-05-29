@@ -226,44 +226,63 @@
      (repositories-summary repositories)]))
 
 (defn- ir-text [s] [:span {} (str s)])
-(defn- ir-strong [s] [:strong {} (str s)])
-(defn- ir-p [& children] (into [:p {}] children))
 
-(defn- badge-channel
-  "Badge preview: `[:strong BADGE]  <inline summary>` followed by
-   an optional `[:ul]` of lines. Replaces the legacy `lines-channel`
-   helper that prefixed every preview with `[:c \"v/foo\"]`."
+(defn- lines->ul
+  "Render a seq of plain-text lines as a `[:ul]` block, or nil when empty."
+  [lines]
+  (when (seq lines)
+    (into [:ul {}]
+      (map (fn [line] [:li {} (vis/ir-p (ir-text line))]) lines))))
+
+(defn- badge-display
+  "Full `:display` IR for a badge channel: a lead `[:strong BADGE]  <summary>`
+   paragraph followed by an optional `[:ul]` of the remaining lines."
   [badge lines]
   (let [first-line (some-> lines first)
         rest-lines (rest lines)]
-    (into [:ir {}
-           (ir-p (ir-strong badge)
-             (when first-line (ir-text (str "  " first-line))))]
-      (when (seq rest-lines)
-        [(into [:ul {}]
-           (map (fn [line] [:li {} (ir-p (ir-text line))]) rest-lines))]))))
+    (apply vis/ir-root
+      (remove nil?
+        [(vis/ir-p (vis/ir-strong badge)
+           (when first-line (ir-text (str "  " first-line))))
+         (lines->ul rest-lines)]))))
+
+(defn- zone-summary
+  "Build a `{:left :center? :right?}` zone summary, dropping nil optional zones
+   so the result stays contract-valid (only present keys are spec-checked)."
+  [label center right]
+  (cond-> {:left (vis/ir-strong label)}
+    center (assoc :center center)
+    right  (assoc :right right)))
 
 (defn- render-refresh-channel
   [result]
-  (badge-channel "REFRESH" (snapshot-lines result)))
+  (let [lines (snapshot-lines result)]
+    {:summary (zone-summary "REFRESH" nil (str (count lines) " facts"))
+     :display (badge-display "REFRESH" lines)}))
 
 (defn- render-languages-channel
   [result]
-  (badge-channel "LANGUAGES" [(language-summary result)]))
+  {:summary (zone-summary "LANGUAGES"
+              (some-> (:primary result) present vis/ir-code)
+              (str (or (:total-files result) 0) " files"))
+   :display (badge-display "LANGUAGES" [(language-summary result)])})
 
 (defn- render-monorepo-channel
   [result]
-  (badge-channel "MONOREPO" [(monorepo-summary result)]))
+  {:summary (zone-summary "MONOREPO" nil
+              (if-let [shape (:shape result)] (name shape) "none"))
+   :display (badge-display "MONOREPO" [(monorepo-summary result)])})
 
 (defn- render-repositories-channel
   [result]
-  (let [repos (take 10 (:repositories result))]
-    (badge-channel "REPOS"
-      (cons (repositories-summary result)
-        (map (fn [{:keys [path branch dirty? clean?]}]
-               (str (present path) " / " (present branch) " / "
-                 (cond dirty? "dirty" clean? "clean" :else "unknown")))
-          repos)))))
+  (let [repos (take 10 (:repositories result))
+        lines (cons (repositories-summary result)
+                (map (fn [{:keys [path branch dirty? clean?]}]
+                       (str (present path) " / " (present branch) " / "
+                         (cond dirty? "dirty" clean? "clean" :else "unknown")))
+                  repos))]
+    {:summary (zone-summary "REPOS" nil (str (or (:count result) 0) " repos"))
+     :display (badge-display "REPOS" lines)}))
 
 (defn- guidance-summary
   [{:keys [found? source path content]}]
@@ -274,11 +293,17 @@
 
 (defn- render-guidance-channel
   [{:keys [content found?] :as result}]
-  (into [:ir {}
-         (ir-p (ir-strong (if found? "GUIDANCE" "NO GUIDANCE"))
-           (ir-text (str "  " (guidance-summary result))))]
-    (when (seq content)
-      [[:code {:lang "text"} content]])))
+  (let [label (if found? "GUIDANCE" "NO GUIDANCE")
+        lines (when content (count (string/split-lines content)))]
+    {:summary (zone-summary label
+                (when found? (some-> (:path result) present vis/ir-code))
+                (when (and found? lines) (str lines " lines")))
+     :display (apply vis/ir-root
+                (remove nil?
+                  [(vis/ir-p (vis/ir-strong label)
+                     (ir-text (str "  " (guidance-summary result))))
+                   (when (seq content)
+                     (vis/ir-code-block "text" content))]))}))
 
 (defn- env-renderers
   [sym]

@@ -2984,10 +2984,14 @@
                                          :kind kind}))
         expanded?     (detail-expanded? detail-expansions session-id node-id false)
         chevron       (if expanded? "▼" "▶")
+        ;; First entry IS the summary badge by construction: the sink
+        ;; `:result` contract is `{:summary :display}` and the chokepoints
+        ;; (`progress/format-form-result`, `chat/form-result-render`)
+        ;; flatten it summary-first via `render-fn-result->ir`. No IR
+        ;; sniffing — the badge row is whatever the tool's `:summary`
+        ;; rendered to (first [:strong ...] = label).
         [marker body] (split-entry-marker-body first-entry)
-        head          (or (some-> body str/trim not-empty)
-                        (:summary opts)
-                        "TOOL")
+        head          (or (some-> body str/trim not-empty) "TOOL")
         ;; Keep the collapsed tool badge focused on the tool summary only.
         ;; Scope stays in the per-form footer chrome; duplicating it after
         ;; badge text (e.g. "PATCH ... t24/i1/b1") is noisy.
@@ -3002,9 +3006,11 @@
       expanded? (into hidden-entries))))
 
 (defn- maybe-collapse-block
-  "Canonical tool-result collapse. TUI shows only badge/head row by
-   default; chevron at left toggles full body. Result renderers must put
-   primary info in first IR paragraph (LS/CAT/RG/PATCH badge row)."
+  "Canonical tool-result collapse. TUI shows only the badge/head row by
+   default; the chevron at left toggles the full body. The badge is the
+   tool's `:summary` (flattened to the first IR block upstream via
+   `render-fn-result->ir`); the rest is the `:display` body. No
+   first-paragraph heuristic — summary is explicit in the contract."
   [{:keys [body-marker lines max-w raw-text] :as opts}]
   (let [body-value (or raw-text (str/join "\n" lines))
         entries    (if (channel-ir? body-value)

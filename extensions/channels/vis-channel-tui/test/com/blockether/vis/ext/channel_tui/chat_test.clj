@@ -154,7 +154,8 @@
                                :channel [{:position 0
                                           :form "(v/cat \"src/foo.clj\")"
                                           :success? true
-                                          :result "Read `src/foo.clj` — 10 line(s)."}]}]}])]
+                                          :result {:summary [:ir {} [:p {} [:span {} "Read `src/foo.clj` — 10 line(s)."]]]
+                                                   :display [:ir {} [:p {} [:span {} "Read `src/foo.clj` — 10 line(s)."]]]}}]}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)
             rendered (-> trace :forms first :result-render)]

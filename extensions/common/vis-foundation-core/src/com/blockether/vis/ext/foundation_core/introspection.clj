@@ -988,24 +988,80 @@
        (ir-code "v/session-report")
        (ir-text " for the full dump."))]))
 
-(defn- session-state-channel [result] (session-state-ir result))
-(defn- symbol-doc-channel [result] (symbol-doc-ir result))
-(defn- symbol-source-channel [result] (symbol-source-ir result))
-(defn- symbol-meta-channel [result] (symbol-meta-ir result))
-(defn- apropos-channel [result] (apropos-ir result))
+;; ---------------------------------------------------------------------------
+;; Render-fns — the `{:summary :display}` contract (Phase 2).
+;;
+;; Each `*-channel` returns `{:summary <zone-map-or-ir> :display <ir>}`.
+;; `:summary` is a zone map ({:left :center? :right?}) whenever the result
+;; has a natural label + right-anchored metric (counts, chars, char-length);
+;; the first [:strong] of `:left` is the badge label by convention.
+;; `:display` is the full IR body the `*-ir` builders produce.
+;; ---------------------------------------------------------------------------
+
+(defn- session-state-channel
+  "Badge: `SESSION  <turns>·<iters>` left, `failures=N` right.
+   Display: the full session-state IR."
+  [{:keys [failures transcript] :as result}]
+  (let [turns      (vec (:turns transcript))
+        iterations (reduce + 0 (map (comp count :iterations) turns))]
+    {:summary {:left  (ir-strong "SESSION")
+               :center (ir-text (str (count turns) " turn" (when (not= 1 (count turns)) "s")
+                                  "  " iterations " iter" (when (not= 1 iterations) "s")))
+               :right (ir-text (str "failures=" (count failures)))}
+     :display (session-state-ir result)}))
+
+(defn- symbol-doc-channel
+  "Badge: `DOC` / `NO DOC` left, the (resolved) symbol right.
+   Display: the full doc IR."
+  [{:keys [symbol resolved-symbol found?] :as result}]
+  {:summary {:left  (ir-strong (if found? "DOC" "NO DOC"))
+             :right (ir-code (or resolved-symbol symbol))}
+   :display (symbol-doc-ir result)})
+
+(defn- symbol-source-channel
+  "Badge: `SOURCE` / `NO SOURCE` left, symbol center, char count right
+   when source is present. Display: the full source IR."
+  [{:keys [symbol resolved-symbol found? source source-length] :as result}]
+  {:summary (if (and found? (seq source))
+              {:left   (ir-strong "SOURCE")
+               :center (ir-code (or resolved-symbol symbol))
+               :right  (ir-text (str source-length " chars"))}
+              {:left  (ir-strong "NO SOURCE")
+               :right (ir-code (or resolved-symbol symbol))})
+   :display (symbol-source-ir result)})
+
+(defn- symbol-meta-channel
+  "Badge: `META` / `NO META` left, the (resolved) symbol right.
+   Display: the full metadata IR."
+  [{:keys [symbol resolved-symbol found?] :as result}]
+  {:summary {:left  (ir-strong (if found? "META" "NO META"))
+             :right (ir-code (or resolved-symbol symbol))}
+   :display (symbol-meta-ir result)})
+
+(defn- apropos-channel
+  "Badge: `APROPOS` left, `query=...` center, `N matches` right.
+   Display: the full apropos IR."
+  [{:keys [query count] :as result}]
+  {:summary {:left   (ir-strong "APROPOS")
+             :center (ir-code (pr-str query))
+             :right  (ir-text (str count " match" (when (not= 1 count) "es")))}
+   :display (apropos-ir result)})
 
 (defn- session-report-channel
-  "`v/session-report` returns a single Markdown string. Wrap it in a
-   header + a fenced text block so the channel preview
-   matches the rest of the foundation surface (no bare `str`-dump)."
+  "`v/session-report` returns a single Markdown string. Badge: `REPORT`
+   left, char count right. Display: a header + fenced markdown block so
+   the channel preview matches the rest of the foundation surface (no
+   bare `str`-dump)."
   [result]
   (let [s     (str result)
         chars (count s)
         body  (truncate-text s symbol-render-chars)]
-    [:ir {}
-     (ir-p (ir-strong "REPORT")
-       (ir-text (str "  " chars " char" (when (not= 1 chars) "s"))))
-     (ir-code-block "markdown" body)]))
+    {:summary {:left  (ir-strong "REPORT")
+               :right (ir-text (str chars " char" (when (not= 1 chars) "s")))}
+     :display [:ir {}
+               (ir-p (ir-strong "REPORT")
+                 (ir-text (str "  " chars " char" (when (not= 1 chars) "s"))))
+               (ir-code-block "markdown" body)]}))
 
 (defn- inject-environment
   [env f args]

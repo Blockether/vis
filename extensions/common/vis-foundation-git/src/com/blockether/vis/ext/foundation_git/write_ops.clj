@@ -758,12 +758,60 @@
 
 (defn- ok [v] (extension/success {:result v}))
 
+(defn- op-label
+  "Badge label for a write-op `:op` keyword. `:git/branch-create` →
+   \"BRANCH-CREATE\", falls back to \"GIT\" when absent."
+  [op]
+  (if op (str/upper-case (name op)) "GIT"))
+
 (defn- render-edn
-  "Tiny channel renderer: surface the result map as a fenced EDN code block.
-   The model gets the raw map via SCI; this only shapes the TUI/channel
-   preview. Must return canonical IR ([:ir {} …]) per `render-value?`."
+  "Channel renderer for the write-op family. Returns the
+   `{:summary :display}` contract: a zone summary (op label on the left,
+   the most salient metric on the right) plus the full EDN dump as the
+   display body. The model gets the raw map via SCI; this only shapes
+   the TUI/channel preview."
   [result]
-  [:ir {} [:code {:lang "edn"} (pr-str result)]])
+  (let [op    (:op result)
+        label (op-label op)
+        ;; Right-anchored metric chosen per op shape; everything has a
+        ;; natural short-sha / count / branch we can surface.
+        right (case op
+                :git/commit     (:short-sha result)
+                :git/amend      (:short-sha result)
+                :git/reset      (:short-sha result)
+                :git/push       (let [n (count (:updates result))]
+                                  (str n " update" (when (not= 1 n) "s")))
+                :git/fetch      (let [s (:summary result)]
+                                  (if (:up-to-date? s)
+                                    "up-to-date"
+                                    (str (:updated s) " update"
+                                      (when (not= 1 (:updated s)) "s"))))
+                :git/add        (let [n (count (:paths result))]
+                                  (str n " path" (when (not= 1 n) "s")))
+                :git/branch-create (:short-sha result)
+                :git/branch-delete (let [n (count (:deleted result))]
+                                     (str n " deleted"))
+                :git/branch-rename (:new result)
+                :git/branch-list   (let [n (count (:branches result))]
+                                     (str n " branch" (when (not= 1 n) "es")))
+                :git/checkout   (or (:short-head result)
+                                  (when-let [n (:files-restored result)]
+                                    (str n " restored")))
+                :git/cherry-pick (:status result)
+                :git/rebase     (:status result)
+                nil)
+        ;; A middle hint: the branch / target / first path when present.
+        center (some-> (or (:branch result) (:to result) (:remote result)
+                         (:name result) (:from result))
+                 str)]
+    {:summary
+     (cond-> {:left (extension/ir-strong label)}
+       (and center (not (str/blank? center))) (assoc :center (extension/ir-code center))
+       (and right (not (str/blank? (str right)))) (assoc :right (str right)))
+     :display
+     (extension/ir-root
+       (extension/ir-p (extension/ir-strong label))
+       (extension/ir-code-block "edn" (pr-str result)))}))
 
 (defn add-tool
   "Stage paths. (git/add \"file\"), (git/add [\"a\" \"b\"]), or (git/add :all)."
