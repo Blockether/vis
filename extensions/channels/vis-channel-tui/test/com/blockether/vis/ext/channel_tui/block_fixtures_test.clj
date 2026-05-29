@@ -46,18 +46,24 @@
   ([entry opts]
    (mapv clean (format-iteration-entry entry 80 1 opts))))
 
+;; The BLOCK header is labelled by op COUNTS only — `N observation(s)` /
+;; `N mutation(s)` (no `ITERATION N`, no status glyph, no duration). It rides
+;; the same ▼/▶ disclosure chevron as the op rows, so we discriminate header
+;; from op rows by the counts vocabulary.
+(def ^:private counts-re #"observation|mutation")
+
 (defn- op-rows
   "Visible `▶`/`▼` op rows in a rendered frame. Excludes the BLOCK header,
-   which now also carries a ▶/▼ disclosure chevron (the whole block is
-   collapsible) and would otherwise be miscounted as an op row."
+   which also carries a ▶/▼ disclosure chevron (the whole block is
+   collapsible) and is identified by its counts label."
   [lines]
   (filter #(and (or (str/includes? % "▶") (str/includes? % "▼"))
-             (not (str/includes? % "ITERATION")))
+             (not (re-find counts-re %)))
     lines))
 
 (defn- header-of
   [lines]
-  (some #(when (str/includes? % "ITERATION") %) lines))
+  (some #(when (re-find counts-re %) %) lines))
 
 ;; ---------------------------------------------------------------------------
 ;; Sink-entry + entry builders.
@@ -120,16 +126,16 @@
         (expect (= [:git/status :git/add :git/commit! :git/push!]
                   (mapv :op (:ops block))))))
 
-    (it "renders ONE header `1 observation · 3 mutations` with ✓ and four op rows"
+    (it "renders ONE header `1 observation · 3 mutations` (counts only) and four op rows"
       (let [lines (rendered (git-fence-entry))
             hdr   (header-of lines)]
-        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
         (expect (some? hdr))
-        (expect (str/includes? hdr "ITERATION 1"))
+        ;; Counts label, no ITERATION word, no status glyph, no scope stamp.
+        (expect (not-any? #(str/includes? % "ITERATION") lines))
         (expect (not (str/includes? hdr "/f1")))
         (expect (str/includes? hdr "1 observation"))
         (expect (str/includes? hdr "3 mutations"))
-        (expect (str/includes? hdr "✓"))
+        (expect (not (str/includes? hdr "✓")))
         ;; Four op rows, one per tool call.
         (let [rows (op-rows lines)]
           (expect (= 4 (count rows)))
@@ -139,11 +145,14 @@
           (expect (some #(str/includes? % "PUSH") rows)))))
 
     (it "collapses the whole block (code + op rows) when the header toggle is off"
-      ;; The BLOCK header is a disclosure toggle keyed on `<scope>:block`.
+      ;; The BLOCK header is a disclosure toggle keyed on `iter<N>:block`
+      ;; (the iteration-number is unique within the turn; the display-block
+      ;; `:scope` is NOT — it can be duplicated/nil on the rebuild path, so
+      ;; keying on it made one click collapse the wrong block).
       ;; Collapsed → only the header (with ▶) survives; code body + op rows fold away.
       (let [lines (rendered (git-fence-entry)
                     {:session-id "s1"
-                     :detail-expansions {["s1" "t6/i1:block"] false}})]
+                     :detail-expansions {["s1" "iter1:block"] false}})]
         ;; Header still present...
         (expect (some? (header-of lines)))
         ;; ...but every op row is gone, and the code body is folded.
@@ -175,7 +184,7 @@
     (it "renders ONE header with `2 observations · 1 mutation` and three op rows"
       (let [lines (rendered (nested-let-entry))
             hdr   (header-of lines)]
-        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
+        (expect (not-any? #(str/includes? % "ITERATION") lines))
         (expect (str/includes? hdr "2 observations"))
         (expect (str/includes? hdr "1 mutation"))
         (expect (= 3 (count (op-rows lines))))))))
@@ -198,7 +207,8 @@
 
     (it "renders ONE header and ONE op row"
       (let [lines (rendered (def-bind-entry))]
-        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
+        (expect (not-any? #(str/includes? % "ITERATION") lines))
+        (expect (some? (header-of lines)))
         (expect (= 1 (count (op-rows lines))))
         (expect (some #(str/includes? % "CAT") (op-rows lines)))))))
 
@@ -274,11 +284,12 @@
       (let [block (iteration/iteration-entry->display-block (cancelled-entry))]
         (expect (= :cancelled (:status block)))))
 
-    (it "renders the ⊘ cancelled glyph in the header"
+    (it "keeps the status glyph OFF the green block header (it lives on the TURN header)"
       (let [lines (rendered (cancelled-entry))
             hdr   (header-of lines)]
         (expect (some? hdr))
-        (expect (str/includes? hdr (iteration/status-glyph :cancelled)))))))
+        (expect (not (str/includes? hdr (iteration/status-glyph :cancelled))))
+        (expect (not (str/includes? hdr (iteration/status-glyph :ok))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 7 — timeout mid-block → :timeout.
@@ -296,11 +307,12 @@
       (let [block (iteration/iteration-entry->display-block (timeout-entry))]
         (expect (= :timeout (:status block)))))
 
-    (it "renders the ⏱ timeout glyph in the header"
+    (it "keeps the status glyph OFF the green block header (it lives on the TURN header)"
       (let [lines (rendered (timeout-entry))
             hdr   (header-of lines)]
         (expect (some? hdr))
-        (expect (str/includes? hdr (iteration/status-glyph :timeout)))))))
+        (expect (not (str/includes? hdr (iteration/status-glyph :timeout))))
+        (expect (not (str/includes? hdr (iteration/status-glyph :ok))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 8 — merged multi-fence → header annotates `merged N fences`.
@@ -326,5 +338,5 @@
     (it "renders ONE header annotating `merged 2 fences`"
       (let [lines (rendered (merged-fences-entry))
             hdr   (header-of lines)]
-        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
+        (expect (not-any? #(str/includes? % "ITERATION") lines))
         (expect (str/includes? hdr "merged 2 fences"))))))
