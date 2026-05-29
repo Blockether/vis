@@ -4318,6 +4318,20 @@
                 (auto-title-placeholder? clipped))
       clipped)))
 
+(def ^:private uuid-text-pattern
+  #"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+
+(defn- fallback-auto-title
+  "Cheap deterministic title when the auto-title LLM route fails. Keeps TUI
+   sessions from staying `Untitled` just because the cheapest routed model was
+   unavailable/unsupported."
+  [user-request]
+  (let [words (->> (str/replace (str user-request) uuid-text-pattern " ")
+                (re-seq #"[\p{L}\p{N}][\p{L}\p{N}'-]*")
+                (take 7)
+                (str/join " "))]
+    (sanitize-auto-title words)))
+
 (defn- auto-title-prompt
   [previous-title user-request]
   [{:role "system"
@@ -4358,16 +4372,18 @@
     (future
       (try
         (let [previous (usable-existing-title (some-> session-title-atom deref))
-              title    (try
-                         (model-auto-title! env previous user-request)
-                         (catch Throwable t
-                           (tel/log! {:level :warn
-                                      :id ::auto-title-failed
-                                      :data {:session-id session-id
-                                             :previous-title previous
-                                             :error (ex-message t)}}
-                             "Auto-title LLM call failed; keeping existing title")
-                           nil))]
+              title    (or (try
+                             (model-auto-title! env previous user-request)
+                             (catch Throwable t
+                               (tel/log! {:level :warn
+                                          :id ::auto-title-failed
+                                          :data {:session-id session-id
+                                                 :previous-title previous
+                                                 :error (ex-message t)}}
+                                 "Auto-title LLM call failed; using deterministic fallback when title is missing")
+                               nil))
+                         (when-not previous
+                           (fallback-auto-title user-request)))]
           (when (and (seq title) (not= title previous))
             (set-title-with-broadcast! db-info session-id session-title-atom title)))
         (catch Throwable t

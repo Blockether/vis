@@ -473,12 +473,15 @@
                 (settings-option-label row {})))
           (is (not (str/includes? (settings-option-label row {}) "UNKNOWN"))))))
 
-    (testing "migrated extension settings render as Extensions registry toggles, not General rows"
+    (testing "retired extension setting declarations are dropped, registry owns the rows"
       (with-redefs [vis/get-router (constantly nil)
                     vis/registered-extensions (fn [] [{:ext/name "voice"
                                                        :ext/settings [{:key :voice/respond?
                                                                        :type :toggle
-                                                                       :label "Voice responses"}]}
+                                                                       :label "Voice responses"}
+                                                                      {:key :voice/tui-auto-read?
+                                                                       :type :toggle
+                                                                       :label "TUI auto-read"}]}
                                                       {:ext/name "provider-openai-codex"
                                                        :ext/providers [{:provider/id :openai-codex
                                                                         :provider/label "OpenAI Codex"}]
@@ -490,23 +493,19 @@
                                                                        :type :choice
                                                                        :choices [:low :medium :high]
                                                                        :label "Codex verbosity"}]}])]
-        (let [general-rows     (settings-rows :general)
-              extension-rows   (settings-rows :extensions)
-              legacy-row-ids   #{[:extension-setting "voice" :voice/respond?]
-                                 [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
-                                 [:extension-setting "provider-openai-codex" :openai-codex/verbosity]}
-              extension-ids    (set (map :id extension-rows))
-              general-toggles  (set (keep :toggle-id general-rows))
-              extension-toggles (set (keep :toggle-id extension-rows))]
-          (is (not (contains? general-toggles :voice/respond?)))
-          (is (not (contains? general-toggles :vis/reasoning-level)))
-          (is (not (contains? general-toggles :openai-codex/verbosity)))
-          (is (contains? extension-toggles :voice/respond?))
-          (is (contains? extension-toggles :vis/reasoning-level))
-          (is (contains? extension-toggles :openai-codex/verbosity))
-          (is (not-any? extension-ids legacy-row-ids)))))
+        (let [general-rows    (settings-rows :general)
+              extension-rows  (settings-rows :extensions)
+              extension-ids   (set (map :id extension-rows))
+              general-toggles (set (keep :toggle-id general-rows))]
+          (is (contains? general-toggles :voice/respond?))
+          (is (contains? general-toggles :vis/reasoning-level))
+          (is (contains? general-toggles :openai-codex/verbosity))
+          (is (contains? extension-ids [:extension-setting "voice" :voice/tui-auto-read?]))
+          (is (not (contains? extension-ids [:extension-setting "voice" :voice/respond?])))
+          (is (not (contains? extension-ids [:extension-setting "provider-openai-codex" :openai-codex-verbosity])))
+          (is (not (contains? extension-ids [:extension-setting "provider-openai-codex" :openai-codex/verbosity]))))))
 
-    (testing "provider-declared settings render under Providers & Models, not Extensions"
+    (testing "provider-declared legacy settings are ignored"
       (with-redefs [vis/get-router (constantly nil)
                     vis/registered-extensions (fn [] [{:ext/name "provider-openai-codex"
                                                        :ext/providers [{:provider/id :openai-codex
@@ -516,25 +515,10 @@
                                                                        :choices [:low :medium :high]
                                                                        :label "Codex verbosity"
                                                                        :description "Output detail."}]}])]
-        (let [provider-rows (settings-rows :providers)
-              extension-rows (settings-rows :extensions)
-              row  (first (filter #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
-                                     (:id %))
-                            provider-rows))]
-          (is (= ["Models" "Provider Settings"]
-                (->> provider-rows
-                  (filter #(= :section (:type %)))
-                  (mapv :label))))
-          (is (= ["OpenAI Codex"]
-                (->> provider-rows
-                  (filter #(= :subsection (:type %)))
-                  (mapv :label))))
-          (is (nil? (first (filter #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
-                                      (:id %))
-                             extension-rows))))
-          (is (= :choice (:type row)))
-          (is (= "Codex verbosity: high"
-                (settings-option-label row {:openai-codex-verbosity :high}))))))
+        (let [extension-rows (settings-rows :extensions)]
+          (is (not-any? #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
+                           (:id %))
+                extension-rows)))))
 
     (testing "active Z.ai hides reasoning effort and Codex-only provider settings"
       (with-redefs [vis/get-router (constantly :router)

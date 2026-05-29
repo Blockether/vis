@@ -494,6 +494,18 @@
         (finally
           (lp/dispose-environment! env)))))
 
+  (it "auto-title uses deterministic fallback when cheap routed model fails and title is missing"
+    (let [env (lp/create-environment ::router {:db :memory :title "Untitled"})]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_router _opts]
+                        (throw (ex-info "Exceptional status code: 400" {})))]
+          (let [f (maybe-auto-title! env "1dff1f5a-76dc-431e-ad2b-97af14c731f1 can you check why TUI title is missing?")]
+            @f
+            (expect (= "can you check why TUI title is" @(:session-title-atom env)))))
+        (finally
+          (lp/dispose-environment! env)))))
+
   (it "auto-title returns immediately while the cheap model runs in background"
     (let [env (lp/create-environment ::router {:db :memory :title "Old focus"})]
       (try

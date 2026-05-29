@@ -425,12 +425,6 @@
      :ext/author    "Blockether"
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
-     :ext/settings
-     [{:key :openai-codex-verbosity
-       :type :choice
-       :choices [:low :medium :high]
-       :label "Codex verbosity"
-       :description "Output detail for OpenAI Codex responses: low / medium / high"}]
      :ext/providers
      [{:provider/id           :openai-codex
        :provider/label        "OpenAI Codex (ChatGPT OAuth)"

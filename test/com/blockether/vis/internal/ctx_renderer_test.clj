@@ -121,6 +121,19 @@
       (it "keeps `:form (v/ls \".\" :depth 1)` as native list inside the map"
         (expect (str/includes? out ":form (v/ls \".\" :depth 1)")))
 
+      (it "keeps short v/cat :range forms on one line"
+        (let [ctx (assoc base-ctx
+                    :session/trailer
+                    [{:scope "t2/i1"
+                      :forms [{:scope "t2/i1/f1"
+                               :tag :observation
+                               :form '(v/cat "src/com/blockether/vis/internal/loop.clj" :range 4380 4525)
+                               :result {:ok true}}]}])
+              out (render ctx)]
+          (expect (str/includes?
+                    out
+                    ":form (v/cat \"src/com/blockether/vis/internal/loop.clj\" :range 4380 4525)"))))
+
       (it "strips all noise keys (:channel :src :form-idx :position :success? :symbol)"
         (let [pin-region (subs out (str/index-of out ":session/trailer"))]
           (expect (not (str/includes? pin-region ":channel")))
