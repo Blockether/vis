@@ -64,7 +64,7 @@
 ;; large to fit a prompt, that must be addressed at the source — not
 ;; by silently dropping bytes here.
 (def ^:private NEXT_ACTIONS_BUDGET 5)
-(def ^:private WIDTH 80)
+(def ^:private WIDTH 100)
 
 ;; ---------------------------------------------------------------------------
 ;; Safe-guards

@@ -184,12 +184,7 @@
       (expect (ifn? (:provider/limits-fn provider))))))
 
 (defdescribe codex-extension-settings-test
-  (it "owns its TUI settings metadata"
+  (it "does not declare legacy TUI settings metadata"
     (let [ext (first (filter #(= "provider-openai-codex" (:ext/name %))
                        (vis/registered-extensions)))]
-      (expect (= [{:key :openai-codex-verbosity
-                   :type :choice
-                   :choices [:low :medium :high]
-                   :label "Codex verbosity"
-                   :description "Output detail for OpenAI Codex responses: low / medium / high"}]
-                (:ext/settings ext))))))
+      (expect (= [] (:ext/settings ext))))))
