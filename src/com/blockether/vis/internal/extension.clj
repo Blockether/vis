@@ -800,6 +800,17 @@
 ;; op-keyword -> tag index automatically.
 (s/def :ext.symbol/tag #{:observation :mutation})
 
+;; Optional REGISTER-TIME contract sample (Phase 7). When present, it is a
+;; representative tool-result value `register-extension!` feeds through
+;; `:render-fn` (and, if declared, `:render-error-fn`) at registration time,
+;; HARD-rejecting the extension when the render-fn does not return the
+;; `{:summary :display}` contract (`::render-fn-result`). This makes the
+;; contract a register-time gate, not only a sink-write assertion. Optional
+;; because render-fns are written against their tool's concrete result shape
+;; and a fabricated value would spuriously fail; tools that supply a sample
+;; get the strongest, earliest rejection.
+(s/def :ext.symbol/render-sample any?)
+
 ;; High-fan-out batch-hint threshold (Phase 4). When a single display-block
 ;; accumulates MORE than this many ops with the same `:op`, the iteration
 ;; surfaces a soft "BATCH HINT" note nudging the agent to call the tool once
@@ -829,6 +840,7 @@
     :opt [:ext.symbol/raw?
           :ext.symbol/tag
           :ext.symbol/batch-hint
+          :ext.symbol/render-sample
           :ext.symbol/render-fn
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn
@@ -1403,6 +1415,7 @@
         source         (assoc :ext.symbol/source source)
         (:tag opts)            (assoc :ext.symbol/tag (:tag opts))
         (:batch-hint opts)     (assoc :ext.symbol/batch-hint (:batch-hint opts))
+        (contains? opts :render-sample) (assoc :ext.symbol/render-sample (:render-sample opts))
         (:render-fn opts)   (assoc :ext.symbol/render-fn (:render-fn opts))
         (:before-fn opts)   (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)    (assoc :ext.symbol/after-fn (:after-fn opts))
@@ -1442,7 +1455,12 @@
      :raw?        - true for plain composable helpers.
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
-     :render-fn   - REQUIRED for observed tools; returns IR.
+     :render-fn   - REQUIRED for observed tools; returns the
+                    `{:summary :display}` contract.
+     :render-sample - OPTIONAL representative tool-result value;
+                    `register-extension!` smoke-calls `:render-fn` (and
+                    `:render-error-fn`) with it and HARD-rejects a
+                    non-`{:summary :display}` result at register time.
      :before-fn :after-fn :on-error-fn :render-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
@@ -1680,26 +1698,43 @@
    facing surface is the trailer (real SCI form values); no second
    model-side render is required or accepted.
 
-   Presence of `:render-fn` is checked here at register time. The SHAPE of
-   its return value — the `{:summary :display}` contract (`::render-fn-result`)
-   — is enforced at the single call site `render-value` via
-   `assert-render-fn-result!`, which runs on every sink write and throws a
-   hard `:extension/render-non-contract` error. We do NOT smoke-call the
-   render-fn at register time with a sentinel payload: render-fns are written
-   against their tool's concrete result shape and a fabricated value would
-   spuriously fail. The first real call validates; there is no legacy
-   raw-IR fallback path."
+   Two register-time gates (Phase 7):
+
+   1. Presence — every observed (non-raw) tool MUST declare a `:render-fn`.
+
+   2. Contract — when a tool also declares a `:ext.symbol/render-sample`
+      (a representative tool-result value), `:render-fn` (and, if present,
+      `:render-error-fn`) is SMOKE-CALLED here and HARD-rejected unless it
+      returns the `{:summary :display}` contract (`::render-fn-result`). This
+      is the register-time enforcement of the render contract — not only a
+      sink-write assertion. We can only smoke-call against a tool-declared
+      sample because render-fns are written for their tool's concrete result
+      shape; a fabricated value would spuriously fail, so the sample is the
+      tool's own representative payload.
+
+   Independently, `assert-render-fn-result!` still runs at the single call
+   site `render-value` on every sink write, so a tool WITHOUT a sample is
+   still hard-rejected on its first real call. There is no legacy raw-IR
+   fallback path."
   [ext]
   (doseq [sym-entry (ext-symbols ext)
           :when    (and (:ext.symbol/fn sym-entry)
                      (not (:ext.symbol/raw? sym-entry)))]
-    (when-not (:ext.symbol/render-fn sym-entry)
-      (anomaly/incorrect!
-        (str "Extension '" (:ext/name ext) "' symbol '"
-          (:ext.symbol/symbol sym-entry) "' is missing :render-fn.")
-        {:type      :extension/missing-renderer
-         :extension (:ext/name ext)
-         :symbol    (:ext.symbol/symbol sym-entry)})))
+    (let [sym (:ext.symbol/symbol sym-entry)]
+      (when-not (:ext.symbol/render-fn sym-entry)
+        (anomaly/incorrect!
+          (str "Extension '" (:ext/name ext) "' symbol '" sym
+            "' is missing :render-fn.")
+          {:type      :extension/missing-renderer
+           :extension (:ext/name ext)
+           :symbol    sym}))
+      ;; Register-time contract gate: smoke-call against the declared sample.
+      (when (contains? sym-entry :ext.symbol/render-sample)
+        (let [sample (:ext.symbol/render-sample sym-entry)]
+          (assert-render-fn-result!
+            ((:ext.symbol/render-fn sym-entry) sample) sym :render-fn)
+          (when-let [ef (:ext.symbol/render-error-fn sym-entry)]
+            (assert-render-fn-result! (ef sample) sym :render-error-fn))))))
   ext)
 
 (defn validate!

@@ -2988,11 +2988,12 @@
                                          :kind kind}))
         expanded?     (detail-expanded? detail-expansions session-id node-id false)
         chevron       (if expanded? "▼" "▶")
-        ;; First entry IS the summary badge by construction: the sink
-        ;; `:result` contract is `{:summary :display}` and the chokepoints
-        ;; (`progress/format-form-result`, `chat/form-result-render`)
-        ;; flatten it summary-first via `render-fn-result->ir`. No IR
-        ;; sniffing — the badge row is whatever the tool's `:summary`
+        ;; First entry IS the summary badge by construction: the proof
+        ;; envelope's sink `:result` contract is `{:summary :display}` and
+        ;; the chokepoints (`progress/format-form-result`,
+        ;; `chat/form-result-render`) flatten it summary-first via
+        ;; `render-fn-result->ir`. No IR sniffing / first-paragraph
+        ;; heuristic — the badge row is whatever the tool's `:summary`
         ;; rendered to (first [:strong ...] = label).
         [marker body] (split-entry-marker-body first-entry)
         head          (or (some-> body str/trim not-empty) "TOOL")
@@ -3065,19 +3066,172 @@
     (cond-> [{:line (str result-marker visible) :meta meta}]
       expanded? (into hidden))))
 
-(defn- block-aggregated-op-entries
-  "Synthetic aggregated rows for every same-op run in the block that exceeded
-   `iteration/aggregate-threshold`. Pure projection off the display-block's
-   `:aggregated-ops`; non-aggregated entries (short runs, mixed ops) are
-   skipped here — they keep their normal per-form rows. Returns a flat vec of
+;; ---------------------------------------------------------------------------
+;; Phase-5 BLOCK op rows.
+;;
+;; Each non-plain op in a block paints ONE row:
+;;
+;;   ▶ <LABEL>   <summary-row>
+;;
+;; LABEL is the first `[:strong …]` in the op's `:summary` IR (or the zone
+;; `:left`), padded to the widest label in the block so the summary columns
+;; line up. `<summary-row>` is painted from `:summary`:
+;;   - zone map → 2-zone (`left … right`) / 3-zone (`left … center … right`)
+;;     with the right side anchored to the row's right edge
+;;   - plain IR → left-aligned, ellipsis on overflow
+;; The ▶/▼ chevron is the ONLY disclosure affordance; expand reveals the op's
+;; `:display` IR. Disclosure node id is `<block-scope>:op<position>`.
+;; ---------------------------------------------------------------------------
+
+(defn- ir-strong-text
+  "First `[:strong …]` text under an IR node, trimmed; nil when absent."
+  ^String [ir]
+  (some->> ir
+    (tree-seq #(or (vector? %) (seq? %)) seq)
+    (some (fn [node]
+            (when (and (vector? node) (= :strong (first node)))
+              (->> node
+                (tree-seq #(or (vector? %) (seq? %)) seq)
+                (filter string?)
+                (str/join "")
+                str/trim
+                not-empty))))))
+
+(defn- ir-inline-text
+  "All string leaves under an IR node, space-joined and trimmed."
+  ^String [ir]
+  (->> ir
+    (tree-seq #(or (vector? %) (seq? %)) seq)
+    (filter string?)
+    (map str/trim)
+    (remove str/blank?)
+    (str/join " ")
+    str/trim
+    not-empty))
+
+(defn- zone-text
+  "Flatten one zone payload (string or IR) to plain text; nil when blank."
+  ^String [z]
+  (cond
+    (nil? z)    nil
+    (string? z) (not-empty (str/trim z))
+    :else       (ir-inline-text z)))
+
+(defn- op-row-label
+  "The op-row LABEL: the first `[:strong …]` in the op's summary IR, or — for
+   zone summaries — the `:left` zone text. Falls back to the canonical op
+   label (`STATUS`, `CAT`, …) so every row carries a stable prefix."
+  ^String [{:keys [summary op]}]
+  (or
+    (when (vis/render-zones? summary) (zone-text (:left summary)))
+    (ir-strong-text summary)
+    (when (some? summary) (ir-inline-text summary))
+    (some-> op name (str/split #"/") last str/upper-case)))
+
+(defn- op-row-summary
+  "The `<summary-row>` painted to the right of the padded LABEL, sized to
+   `width` columns.
+
+   Zone summaries anchor their right (and optional center) side to the row's
+   right edge — `left … right` for two zones, `left … center … right` for
+   three — with the LEFT zone already consumed by the label, so only the
+   center/right zones paint here. Plain-IR summaries paint the inline text
+   that FOLLOWS the label, left-aligned with an ellipsis on overflow."
+  ^String [{:keys [summary] :as op} width]
+  (let [width (max 0 (long width))]
+    (cond
+      (zero? width) ""
+
+      (vis/render-zones? summary)
+      (let [center (zone-text (:center summary))
+            right  (zone-text (:right summary))]
+        (cond
+          (and center right)
+          ;; 3-zone: center left-aligned, right anchored.
+          (let [right-w  (p/display-width right)
+                left-cap (max 0 (- width right-w 1))
+                center   (ellipsize-cols center left-cap)
+                pad      (max 1 (- width (p/display-width center) right-w))]
+            (str center (repeat-str \space pad) right))
+          right
+          ;; 2-zone: right anchored.
+          (let [right (ellipsize-cols right width)
+                pad   (max 0 (- width (p/display-width right)))]
+            (str (repeat-str \space pad) right))
+          center (ellipsize-cols center width)
+          :else  ""))
+
+      (some? summary)
+      ;; Plain IR: paint the inline text following the label, left-aligned.
+      (let [label (ir-strong-text summary)
+            full  (ir-inline-text summary)
+            rest  (cond
+                    (nil? full)  nil
+                    (nil? label) full
+                    (str/starts-with? full label)
+                    (not-empty (str/trim (subs full (count label))))
+                    :else full)]
+        (if rest (ellipsize-cols rest width) ""))
+
+      :else "")))
+
+(defn- op-row-entries
+  "ONE op row: `▶ <LABEL>   <summary-row>`, expandable to the op's `:display`.
+
+   `label-w` is the block-wide max label width so summaries align; `max-w` is
+   the full row width. The disclosure node id is `<block-scope>:op<position>`
+   and the chevron is the only disclosure affordance."
+  [{:keys [session-id detail-expansions block-scope max-w label-w]} op]
+  (let [node-id   (str block-scope ":op" (:position op))
+        expanded? (detail-expanded? detail-expansions session-id node-id false)
+        chevron   (if expanded? "▼" "▶")
+        label     (op-row-label op)
+        gap       3
+        ;; chevron(1) + space(1) + label + gap + summary
+        label-w   (max (p/display-width label) (long (or label-w 0)))
+        head-w    (+ 2 label-w gap)
+        sum-w     (max 0 (- (long max-w) head-w))
+        summary   (op-row-summary op sum-w)
+        label-pad (max 0 (- label-w (p/display-width label)))
+        line      (ellipsize-cols
+                    (str chevron " " label (repeat-str \space label-pad)
+                      (repeat-str \space gap) summary)
+                    max-w)
+        meta      (when (and session-id node-id)
+                    {:kind       :toggle-details
+                     :session-id (str session-id)
+                     :node-id    (str node-id)
+                     :collapsed? (not expanded?)
+                     :color-role nil})
+        body      (when expanded?
+                    (or (ir-body-entries (:display op) result-marker max-w)
+                      [{:line (str result-marker
+                                (ellipsize-cols (str "  · " (op-summary-text op)) max-w))
+                        :meta nil}]))]
+    (cond-> [{:line (str result-marker line) :meta meta}]
+      (seq body) (into body))))
+
+(defn- block-op-row-entries
+  "Phase-5 BLOCK op rows: ONE row per op in the block, painted from the
+   canonical `:aggregated-ops` view so long same-op runs collapse into a
+   single `▶ OP × N (…)` row while individual ops paint `▶ <LABEL> <summary>`.
+
+   Header counts stay REAL (off `:ops`); this is the DISPLAY projection. The
+   row order matches the block's source order. Returns a flat vec of
    `{:line :meta}` entries (possibly empty)."
   [entry {:keys [session-id detail-expansions session-turn-id
                  iteration-number max-w]}]
   (let [block (iteration/iteration-entry->display-block entry)
-        scope (:scope block)]
+        scope (:scope block)
+        ops   (:aggregated-ops block)
+        ;; Align summary columns: widest label across the individual op rows.
+        label-w (->> ops
+                  (remove :aggregate)
+                  (map (fn [op] (p/display-width (op-row-label op))))
+                  (reduce max 0))]
     (into []
-      (comp (filter :aggregate)
-        (mapcat (fn [agg]
+      (mapcat (fn [op]
+                (if (:aggregate op)
                   (aggregated-op-entries
                     {:session-id        session-id
                      :detail-expansions detail-expansions
@@ -3085,8 +3239,15 @@
                      :iteration-number  iteration-number
                      :block-scope       scope
                      :max-w             max-w}
-                    agg))))
-      (:aggregated-ops block))))
+                    op)
+                  (op-row-entries
+                    {:session-id        session-id
+                     :detail-expansions detail-expansions
+                     :block-scope       scope
+                     :max-w             max-w
+                     :label-w           label-w}
+                    op))))
+      ops)))
 
 (defn- maybe-collapse-block
   "Canonical tool-result collapse. TUI shows only the badge/head row by
@@ -3852,41 +4013,14 @@
                                              (mapv #(line-entry (str c-marker %))
                                                (wrap-text (form-error-headline error) fill-w)))
                 r-marker      (if is-error? err-result-marker result-marker)
-                ;; Per user directive: only tool calls show a result
-                ;; pane (the channel-render-fn output — "what the tool
-                ;; changed"). Plain-value form results (`:result-kind
-                ;; :value`) are hidden; errors keep their inline caret
-                ;; treatment above and never reach this branch.
-                show-result?  (and (= :tool result-kind)
-                                result-text
-                                (not (str/blank? (str result-text))))
-                result-lines  (when show-result?
-                                (let [detail-entries (maybe-collapse-raw-text-block
-                                                       {:session-id      session-id
-                                                        :detail-expansions   detail-expansions
-                                                        :session-turn-id session-turn-id
-                                                        :iteration-number    iteration-number
-                                                        :block-number        block-number
-                                                        :kind                :result
-                                                        :scope               scope
-                                                        :summary             (let [head (some-> code str str/split-lines first str/trim)
-                                                                                   head (when (seq head)
-                                                                                          (if (> (count head) 80)
-                                                                                            (str (subs head 0 77) "...")
-                                                                                            head))
-                                                                                   status-sym (cond (not has-status?) "↻"
-                                                                                                success?          "✓"
-                                                                                                :else             "✗")
-                                                                                   right-bits (remove str/blank? [status-sym duration-str])]
-                                                                               (str (or head "FORM")
-                                                                                 (when (seq right-bits)
-                                                                                   (str "  " (str/join " " right-bits)))))
-                                                        :color-role          nil
-                                                        :summary-marker      md-summary-marker
-                                                        :body-marker         r-marker
-                                                        :raw-text            result-text
-                                                        :max-w               fill-w})]
-                                  (vec detail-entries)))
+                _ [result-text r-marker]
+                ;; Phase-5: per-form result panes are GONE. Tool output now
+                ;; surfaces as block-level `▶ <LABEL> <summary>` op rows
+                ;; painted ONCE per block from the canonical `:ops`
+                ;; (`block-op-row-entries`), not per-form here. The code body
+                ;; stays per-form (forms = the block's source); errors keep
+                ;; their inline caret treatment above.
+                result-lines  nil
                 footer-entry  (line-entry
                                 ;; Footer: RIGHT = status-symbol + duration
                                 ;; (e.g. "✓ 12ms"). The block-level scope
@@ -3910,18 +4044,19 @@
                 hide-code-chrome? (and (str/blank? code-text) (not is-error?))
                 code-block    (cond
                                 hide-code-chrome?
-                                ;; When raw code is hidden (def-wrapped
-                                ;; tool call or any successful tool form), drop
-                                ;; the code chrome entirely so the result pane
-                                ;; below speaks for itself. Title recap rows
-                                ;; still appear because they are recap text,
-                                ;; not code.
+                                ;; When raw code is hidden (def-wrapped tool
+                                ;; call or any successful tool form), drop the
+                                ;; code chrome entirely: the block-level op
+                                ;; rows (`▶ <LABEL> <summary>`) speak for the
+                                ;; form, and the BLOCK header carries the
+                                ;; aggregate status + duration. Only title
+                                ;; recap rows (ctx mutations like TITLE) stay,
+                                ;; since those are recap text, not code, and
+                                ;; have no op row. No per-form footer.
                                 (vec (concat
                                        (when (seq title-lines) [(line-entry "")])
                                        title-lines
-                                       (when (seq title-lines) [(line-entry "")])
-                                       [footer-entry
-                                        (line-entry (str c-pad ""))]))
+                                       (when (seq title-lines) [(line-entry "")])))
 
                                 :else
                                 (vec (concat
@@ -3948,23 +4083,19 @@
                                        [(line-entry (str c-pad ""))]
                                        [footer-entry
                                         (line-entry (str c-pad ""))])))
-                ;; Blank terminal-bg row between the code chrome
-                ;; and the result pane. Without it the code-block's
-                ;; trailing `c-pad` row (which paints code-block bg)
-                ;; sits flush against the result pane's first row,
-                ;; so the result reads as a continuation of the
-                ;; code chrome. The pad row gives the result its
-                ;; own visual band — same breathing room recap
-                ;; rows get above and below.
-                result-margin (when (and (seq result-lines)
-                                      (not (str/blank? code-text)))
-                                [(line-entry (str iteration-pad-marker ""))])]
-            (vec (concat code-block
-                   result-margin
-                   result-lines))))
-        grouped
+                _ result-lines]
+            ;; Phase-5: per-form result panes are gone; the form contributes
+            ;; only its code body (errors keep their inline caret). Tool
+            ;; output paints as block-level op rows below the code.
+            (vec code-block)))
+        ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
+        ;; rows joined into the one card. Phase-5 dropped per-form result
+        ;; panes, so this carries code lines only (tool output paints below
+        ;; as block-level op rows). `forms` here = proof envelopes, the
+        ;; canonical meaning; the rendered card is the display block.
+        block-code-body
         (when (seq forms)
-          (let [code+result-lines
+          (let [block-code-lines
                 (into []
                   (mapcat (fn [[idx form]]
                             ;; ONE terminal-bg blank between
@@ -3992,11 +4123,11 @@
             ;;   badge / result
             ;;   [gap]               <- this trailing iter-pad
             ;;   next iteration ...
-            (when (seq code+result-lines)
+            (when (seq block-code-lines)
               (-> [(line-entry (str iteration-pad-marker ""))]
-                (into code+result-lines)
+                (into block-code-lines)
                 (conj (line-entry (str iteration-pad-marker "")))))))
-        body (or grouped [])
+        body (or block-code-body [])
         trailing-errors (error-lines)
         thinking-body (or (thinking-lines thinking) [])
         ;; Phase-5 BLOCK header: one card title per code fence / merged
@@ -4007,24 +4138,29 @@
         ;; Phase-4 high-fan-out soft warnings ride directly under the header
         ;; on the same band; only meaningful when there is a header to ride.
         batch-hints   (when (seq block-header) (block-batch-hint-lines entry fill-w))
-        ;; Phase-4 renderer aggregation: same-op runs > aggregate-threshold
-        ;; collapse into one synthetic `▶ OP × N (a, b, …)` disclosure row.
-        ;; Only emitted when the block actually carries an aggregated run, so
-        ;; ordinary blocks keep their individual per-form rows untouched.
-        aggregated-rows (when (seq block-header)
-                          (block-aggregated-op-entries
-                            entry
-                            {:session-id        session-id
-                             :detail-expansions detail-expansions
-                             :session-turn-id   session-turn-id
-                             :iteration-number  iteration-number
-                             :max-w             fill-w}))
         header-lines  (if (seq block-header)
                         (-> [(line-entry (str iteration-pad-marker ""))
                              (line-entry block-header)]
-                          (into batch-hints)
-                          (into aggregated-rows))
-                        [])]
+                          (into batch-hints))
+                        [])
+        ;; Phase-5 BLOCK op rows: ONE `▶ <LABEL> <summary>` row per op
+        ;; (long same-op runs collapse to `▶ OP × N (…)`), painted ONCE per
+        ;; block from the canonical `:ops` and placed BELOW the code body —
+        ;; the block's "what changed" section. Only meaningful when the block
+        ;; carries ops (a header is present); plain-value / pure-thinking
+        ;; blocks have none.
+        op-rows       (when (seq block-header)
+                        (block-op-row-entries
+                          entry
+                          {:session-id        session-id
+                           :detail-expansions detail-expansions
+                           :session-turn-id   session-turn-id
+                           :iteration-number  iteration-number
+                           :max-w             fill-w}))
+        op-rows-block (when (seq op-rows)
+                        (-> [(line-entry (str iteration-pad-marker ""))]
+                          (into op-rows)
+                          (conj (line-entry (str iteration-pad-marker "")))))]
     ;; Layout: header (optional ITERATION-N label) + recap lines
     ;; (provider-fallback notices, provider-error recap, recap
     ;; segments) + thinking lines + error rows + body (per-form
@@ -4038,8 +4174,9 @@
     ;; zero gap between the thinking band and the code (the
     ;; thinking pad is the bottom \"band edge\"; the code chrome
     ;; takes over immediately).
-    (into (vec (concat header header-lines recap-lines thinking-body trailing-errors))
-      body)))
+    (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
+      (into body)
+      (into (or op-rows-block [])))))
 
 (defn format-iteration-entry
   [entry code-width iteration-number & [opts]]
