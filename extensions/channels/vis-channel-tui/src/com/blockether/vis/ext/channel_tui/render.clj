@@ -4427,54 +4427,10 @@
                              (cached* k render!)
                              (render!))))]
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
-      (let [iter-lines (coalesce-bubble-blanks (mapcat iter-entry-fn visible-iterations))
-            ;; Turn grouping: a turn (one user msg → done) owns N code blocks.
-            ;; Prepend a collapsible `▶/▼ TURN N  │  <status> <total>` header
-            ;; that folds the whole turn's code blocks away. The TURN header is
-            ;; the SINGLE place that carries the aggregate status mark and the
-            ;; total wall-clock — the green blocks underneath carry neither.
-            ;; Turn number comes from any iteration's scope (`tN/iM`).
-            blocks     (keep (fn [[_ e]] (iteration/iteration-entry->display-block e))
-                         visible-iterations)
-            turn-scope (some :scope blocks)
-            turn-n     (some-> turn-scope (str/split #"/") first)]
-        (if-not turn-n
-          iter-lines
-          (let [statuses    (set (map :status blocks))
-                running?    (boolean (some iteration-running? (map second visible-iterations)))
-                dur-ms      (if (and running? now-ms)
-                              (let [started (some (fn [[_ e]]
-                                                    (some :started-at-ms (:forms e)))
-                                              visible-iterations)]
-                                (when started (max 0 (- (long now-ms) (long started)))))
-                              (reduce + 0 (keep :duration-ms blocks)))
-                agg-status  (cond
-                              (contains? statuses :error)     :error
-                              (contains? statuses :cancelled) :cancelled
-                              (contains? statuses :timeout)   :timeout
-                              (or running? (contains? statuses :running)) :running
-                              :else :ok)
-                glyph       (get iteration/status-glyph agg-status "✓")
-                dur-str     (when (and dur-ms (pos? (long dur-ms))) (vis/format-duration dur-ms))
-                status-text (str/trim (str glyph (when dur-str (str " " dur-str))))
-                turn-node   (str turn-n ":turn"
-                              (when session-turn-id
-                                (str ":t" (short-id-fragment session-turn-id))))
-                turn-open?  (if session-id
-                              (detail-expanded? detail-expansions session-id turn-node true)
-                              true)
-                chevron     (if turn-open? "▼ " "▶ ")
-                turn-hdr    {:line (str iteration-hdr-marker chevron "TURN "
-                                     (str/replace turn-n #"^t" "")
-                                     "  │  " status-text)
-                             :meta (when session-id
-                                     {:kind       :toggle-details
-                                      :session-id (str session-id)
-                                      :node-id    turn-node
-                                      :collapsed? (not turn-open?)})}]
-            (if turn-open?
-              (into [turn-hdr] iter-lines)
-              [turn-hdr])))))))
+      ;; The code blocks render flat — no TURN wrapper. The turn-level
+      ;; collapsible header was removed (it only hid the blocks and carried no
+      ;; information the per-block headers + op rows don't already convey).
+      (coalesce-bubble-blanks (mapcat iter-entry-fn visible-iterations)))))
 
 (defn- queued-preview
   [text]
