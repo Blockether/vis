@@ -599,7 +599,7 @@
 
 (defn- file-picker-table-widths
   [table-w]
-  (let [overhead  (dec (* 3 (count file-picker-table-headers)))
+  (let [overhead  (inc (* 3 (count file-picker-table-headers)))
         available (max (count file-picker-table-headers) (- table-w overhead))]
     (if (>= available 32)
       (let [status-w   9
@@ -613,29 +613,23 @@
             file-w     (max 1 (- available status-w size-w modified-w))]
         [status-w file-w size-w modified-w]))))
 
-(defn- table-row-line
-  ([widths cells]
-   (table/row-line widths cells))
-  ([widths cells aligns]
-   (table/row-line widths cells aligns)))
-
 (defn- file-picker-table-cells
   [{:keys [status-label path size-label age-label]}]
   [status-label path size-label age-label])
 
 (defn- file-picker-table-row-line
   [widths cells]
-  (table-row-line widths cells))
+  (table/boxed-row-line widths cells (repeat :left)))
 
 (defn- file-picker-table-border-line
   [widths kind]
-  (table/border-line widths kind))
+  (table/boxed-border-line widths kind))
 
 (defn- draw-file-picker-table-line!
   ;; File-picker rows are TABLES; the table body has fixed columns
   ;; (size, modified, name) that must not shift between selected and
-  ;; unselected states. The `> ` cursor glyph is therefore painted by
-  ;; the caller in the dialog's left padding column (outside the
+  ;; unselected states. The dot marker is therefore painted by the
+  ;; caller in the dialog's left padding column (outside the
   ;; table-x origin) via `p/draw-selection-marker!`. This function
   ;; just paints the table body in the normal palette — BOLD on the
   ;; selected row so the cursor cue carries onto the row text too.
@@ -680,7 +674,7 @@
                             "   Sort: " (picker/sort-label @sort-mode @query))
             ;; `table-x` is shifted right by `p/SELECTION_WIDTH` so the
             ;; first 2 cols of the dialog inner area form the selection
-            ;; gutter: col `left+1` holds the `>` cursor glyph, col
+            ;; gutter: col `left+1` holds the dot marker, col
             ;; `left+2` is the margin between marker and table body.
             ;; The table itself starts at `left+3` and shrinks by the
             ;; same gutter so the right edge / scrollbar still align.
@@ -710,8 +704,8 @@
                   (draw-file-picker-table-line! g table-x row table-content-w (= idx @selected)
                     (file-picker-table-row-line widths
                       (file-picker-table-cells (nth items idx))))
-                  ;; `> ` cursor glyph in the dialog padding column,
-                  ;; outside the table body. Anchored at `(+ left 1)`
+                  ;; Dot marker in the dialog padding column, outside
+                  ;; table body. Anchored at `(+ left 1)`
                   ;; so it sits one col inside the dialog frame and
                   ;; one col before the table content begins.
                   (p/set-colors! g t/dialog-hint-key t/dialog-bg)
@@ -1678,8 +1672,8 @@
    (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
    (let [extension-rows (extension-option-rows)
-         active-tab     (atom :channels)
-         selected       (atom (first-selectable-index (settings-rows :channels extension-rows)))
+         active-tab     (atom :general)
+         selected       (atom (first-selectable-index (settings-rows :general extension-rows)))
          scroll         (atom 0)
          values         (atom (or settings {}))
          scrollbar-drag-offset (volatile! nil)
@@ -2186,9 +2180,6 @@
    {:id :ctx    :label "Context" :width 26}
    {:id :status :label "Status"  :width 18}])
 
-(def ^:private navigator-table-opts
-  {:sep " | "})
-
 (defn- navigator-short-id
   [id]
   (let [s (str id)]
@@ -2277,10 +2268,6 @@
     :workspaces :sessions
     :all))
 
-(defn- navigator-separator-line
-  [width]
-  (apply str (repeat (max 0 (long width)) \-)))
-
 (defn- navigator-visible-rows
   [rows mode query]
   (->> rows
@@ -2312,10 +2299,13 @@
             table-w      (max 1 (- inner-w 1 p/SELECTION_WIDTH))
             table-body-w (max 1 (- table-w 2))
             scrollbar-col (+ table-x (dec table-w))
-            header-row   (+ content-top 2)
+            table-widths (table/column-widths navigator-columns (max 1 (- table-body-w 2)))
+            top-row      (+ content-top 2)
+            header-row   (inc top-row)
             sep-row      (inc header-row)
             body-top     (inc sep-row)
-            body-h       (max 1 (- content-h 4))
+            body-h       (max 1 (- content-h 5))
+            bottom-row   (+ body-top body-h)
             _            (swap! selected #(clamp % 0 (max 0 (dec total))))
             _            (swap! scroll #(visible-window-start @selected % body-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -2324,22 +2314,30 @@
         (p/put-str! g (+ left 2) query-row
           (ellipsize (str p/SELECTION_GLYPH "search: " @query) (max 1 (- inner-w 3))))
 
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/put-str! g table-x top-row
+          (table/boxed-border-line table-widths :top))
         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
         (p/styled g [p/BOLD]
           (p/put-str! g table-x header-row
-            (table/header-line navigator-columns table-body-w navigator-table-opts)))
+            (table/boxed-row-line table-widths (mapv #(or (:label %) "") navigator-columns)
+              (mapv #(or (:align %) :left) navigator-columns))))
         (p/set-colors! g t/dialog-border t/dialog-bg)
         (p/put-str! g table-x sep-row
-          (navigator-separator-line table-body-w))
+          (table/boxed-border-line table-widths :middle))
 
         (dotimes [i body-h]
           (let [idx (+ @scroll i)
                 row (+ body-top i)]
             (cond
               (< idx total)
-              (let [entry (nth visible-rows idx)]
+              (let [entry (nth visible-rows idx)
+                    cells (mapv (fn [{:keys [id render]}]
+                                  (if render (render entry) (get entry id "")))
+                            navigator-columns)]
                 (table/draw-line! g table-x row table-body-w (= idx @selected)
-                  (table/row-line navigator-columns entry table-body-w navigator-table-opts))
+                  (table/boxed-row-line table-widths cells
+                    (mapv #(or (:align %) :left) navigator-columns)))
                 (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                 (p/draw-selection-marker! g (inc left) row (= idx @selected)))
 
@@ -2347,12 +2345,18 @@
               (do
                 (p/set-colors! g t/dialog-hint t/dialog-bg)
                 (p/fill-rect! g table-x row table-body-w 1)
-                (p/put-str! g table-x row " No matches "))
+                (p/put-str! g table-x row
+                  (table/boxed-row-line table-widths ["" "No matches" "" ""]
+                    (repeat :left))))
 
               :else
               (do
                 (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (p/fill-rect! g table-x row table-body-w 1)))))
+
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/put-str! g table-x bottom-row
+          (table/boxed-border-line table-widths :bottom))
 
         (scrollbar/draw! g
           {:col scrollbar-col :top body-top :track-h body-h
