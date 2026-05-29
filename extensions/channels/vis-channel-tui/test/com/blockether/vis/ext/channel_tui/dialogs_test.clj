@@ -232,14 +232,14 @@
         body-height     (var-get #'dlg/file-picker-table-body-height)
         scrollbar-geom  (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
         widths          (table-widths 72)]
-    (testing "file picker renders a table with headers and no outer side borders"
+    (testing "file picker renders a full boxed table with headers and side borders"
       (let [top-line    (border-line widths :top)
             header-line (row-line widths headers)]
         (is (= 72 (count top-line)))
-        (is (not= \│ (first top-line)))
-        (is (not= \│ (last top-line)))
-        (is (= \space (first header-line)))
-        (is (= \space (last header-line)))
+        (is (= \┌ (first top-line)))
+        (is (= \┐ (last top-line)))
+        (is (= \│ (first header-line)))
+        (is (= \│ (last header-line)))
         (is (re-find #"Status.*File.*Size.*Modified" header-line))))
 
     (testing "status is rendered as a word, not a bracket badge"
