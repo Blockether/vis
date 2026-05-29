@@ -111,6 +111,26 @@
   ([columns table-w kind]
    (border-line (column-widths columns table-w) kind)))
 
+(defn boxed-row-line
+  "Render fixed-width cells with outer vertical borders. Use inside dialog
+   bodies when table should visually read as nested dialog chrome."
+  [widths cells aligns]
+  (str "│ "
+    (str/join " │ " (map fit-cell cells widths aligns))
+    " │"))
+
+(defn boxed-border-line
+  "Render top/middle/bottom border for `boxed-row-line`."
+  [widths kind]
+  (let [[left junction right] (case kind
+                                :top    ["┌" "┬" "┐"]
+                                :middle ["├" "┼" "┤"]
+                                :bottom ["└" "┴" "┘"]
+                                ["├" "┼" "┤"])]
+    (str left
+      (str/join junction (map #(p/horiz-line (+ % 2)) widths))
+      right)))
+
 (defn draw-line!
   [g x row width selected? line]
   (p/set-colors! g t/dialog-fg t/dialog-bg)
