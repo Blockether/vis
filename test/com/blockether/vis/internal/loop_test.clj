@@ -230,7 +230,10 @@
       (expect (= 2048 (:output-tokens ctx)))
       (expect (str/includes? (:message ctx) "max_tokens"))
       (expect (str/includes? (:message ctx) "hidden reasoning"))
-      (expect (str/includes? (:hint ctx) ":start"))))
+      (expect (str/includes? (:hint ctx) ":session/stages"))
+      (expect (str/includes? (:hint ctx) "canonical"))
+      (expect (not (str/includes? (:hint ctx) "v/strategy")))
+      (expect (not (str/includes? (:hint ctx) ":start/:max-lines")))))
 
   (it "keeps the legacy `:llm-provider/output-budget-exhausted` mapping"
     ;; Anthropic native `:svar.core/stream-incomplete + :reason

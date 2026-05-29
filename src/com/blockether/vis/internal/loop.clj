@@ -2804,7 +2804,7 @@
                output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
                max-tokens-exhaust?
-               "Shorten the next probe so reasoning + answer fit inside the budget: trim file reads with narrower :start/:max-lines on v/cat, drop unrelated context from defs, and emit `(done ...)` early if the previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               "Shorten next iteration. Follow current :session/stages; keep tool procedure canonical and compact. Drop unrelated defs and emit `(done ...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
                :else
                "Adjust your approach or finish with `(done ...)` using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate

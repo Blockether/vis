@@ -1713,7 +1713,7 @@
             0 abs-row (long viewport-top) (long viewport-h)))
         (when time-str
           (p/set-colors! g t/dialog-hint t/terminal-bg)
-          (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) label-row time-str))))
+          (p/put-str! g time-x label-row time-str))))
 
     ;; Content begins directly under the role banner for ASSISTANT
     ;; bubbles - the previous breathing row read as an unwanted top
@@ -2951,6 +2951,12 @@
   (some-> (str/replace (or scope "") #"/f(\d+)\b" "/b$1") str/trim not-empty))
 
 (defn- append-right-label
+  "Append `right` so its final cell lands on `max-w`'s right edge.
+
+   Collapsed tool rows (`▶ CAT … tN/iN/bN`) are painted inside a fixed-width
+   result/code area. The scope stamp is chrome, not part of the badge label,
+   so use display-cell widths all the way through instead of string counts or
+   incidental padding."
   ^String [left right max-w]
   (let [max-w (max 1 (long max-w))
         right (some-> right str/trim not-empty)]
@@ -2960,9 +2966,9 @@
             right-w (p/display-width right)]
         (if (> (+ right-w gap-w 1) max-w)
           (ellipsize-cols left max-w)
-          (let [left-w  (max 1 (- max-w right-w gap-w))
-                left    (ellipsize-cols left left-w)
-                pad-w   (max gap-w (- max-w (p/display-width left) right-w))]
+          (let [left-w (max 1 (- max-w right-w gap-w))
+                left   (ellipsize-cols left left-w)
+                pad-w  (- max-w (p/display-width left) right-w)]
             (str left (repeat-str \space pad-w) right)))))))
 
 (defn- collapsible-tool-summary-entry
