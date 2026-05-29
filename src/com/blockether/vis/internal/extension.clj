@@ -235,7 +235,7 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-(declare op-tag op-tags op-keyword->tag tool-call-name)
+(declare op-tag op-tags op-keyword->tag op-keyword->batch-hint tool-call-name)
 
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
@@ -800,6 +800,13 @@
 ;; op-keyword -> tag index automatically.
 (s/def :ext.symbol/tag #{:observation :mutation})
 
+;; High-fan-out batch-hint threshold (Phase 4). When a single display-block
+;; accumulates MORE than this many ops with the same `:op`, the iteration
+;; surfaces a soft "BATCH HINT" note nudging the agent to call the tool once
+;; with a vector argument instead of N times. Optional per-tool override of
+;; the default threshold (`iteration/default-batch-hint-threshold`).
+(s/def :ext.symbol/batch-hint pos-int?)
+
 ;; which engine scopes can bind this symbol.
 ;;   :main     primary model's SCI sandbox (default for everything that
 ;;             existed before this field landed)
@@ -821,6 +828,7 @@
                 :ext.symbol/arglists]
     :opt [:ext.symbol/raw?
           :ext.symbol/tag
+          :ext.symbol/batch-hint
           :ext.symbol/render-fn
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn
@@ -1394,6 +1402,7 @@
         raw?           (assoc :ext.symbol/raw? true)
         source         (assoc :ext.symbol/source source)
         (:tag opts)            (assoc :ext.symbol/tag (:tag opts))
+        (:batch-hint opts)     (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (:render-fn opts)   (assoc :ext.symbol/render-fn (:render-fn opts))
         (:before-fn opts)   (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)    (assoc :ext.symbol/after-fn (:after-fn opts))
@@ -2588,6 +2597,13 @@
             :when tag]
       (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
         (swap! op-keyword->tag assoc op-kw tag)))
+    ;; Index every symbol's optional inline `:ext.symbol/batch-hint`
+    ;; high-fan-out threshold the same way (Phase 4). Advisory only.
+    (doseq [sym-entry (ext-symbols ext)
+            :let [hint (:ext.symbol/batch-hint sym-entry)]
+            :when hint]
+      (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
+        (swap! op-keyword->batch-hint assoc op-kw hint)))
     ;; Compute and store source markers in the sidecar atom. Resolved
     ;; via the helper (see source_markers.clj) which knows how to walk
     ;; both file: and jar: classpath URLs. Failures are logged at :warn
@@ -2964,6 +2980,20 @@
       (str "Unregistered extension op " (pr-str op-keyword)
         " has no mandatory observation/mutation tag")
       {:type :extension/unregistered-op :op op-keyword :allowed op-tags})))
+
+(def ^:private op-keyword->batch-hint
+  "Inverse index from canonical op-keyword to its per-tool high-fan-out
+   batch-hint threshold (`:ext.symbol/batch-hint`). Populated as a
+   side-effect of `register-extension!`. Unlike `:tag`, this is OPTIONAL —
+   tools without an explicit override fall back to the iteration ns default."
+  (atom {}))
+
+(defn op-batch-hint-threshold
+  "The per-tool high-fan-out batch-hint threshold for `op-keyword`, or nil
+   when the tool declared no override (callers fall back to the default).
+   Never throws on unknown ops — the hint is advisory, not load-bearing."
+  [op-keyword]
+  (get @op-keyword->batch-hint op-keyword))
 
 (defn op-presentation
   "Engine-owned presentation metadata for a tool's `:op` keyword:

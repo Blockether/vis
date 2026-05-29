@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.ctx-engine :as ctx-engine]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.iteration :as iteration]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -151,6 +152,9 @@
    :tag             (:tag block)
    :started-at-ms   nil
    :duration-ms     (or (:duration-ms block) 0)
+   ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives
+   ;; the SAME DISPLAY-state ops the live path derives from its `:channel`.
+   :channel         (vec (:channel block))
    :result-render   (form-result-render block)
    :result-kind     (form-result-kind block)
    :result-detail   (form-result-detail block)
@@ -291,6 +295,7 @@
                         [grouped])
                       visible)
         forms       (mapv block->form-record visible)]
+    (iteration/canonicalize
     {:position           (when-let [p (:position it)] (dec (long p)))
      :thinking           (visible-thinking (:thinking it))
      :provider-fallbacks (:llm-routing-trace it)
@@ -302,7 +307,7 @@
      ;; fact panes in the chrome — the chat history shouldn't echo every
      ;; mutation. Provider-error / fallback / consult recaps still flow
      ;; via render.clj's own paths.
-     :recaps             []}))
+     :recaps             []})))
 
 (defn user-message
   "Create a structured user message with timestamp.
