@@ -52,12 +52,12 @@
    collapsible) and would otherwise be miscounted as an op row."
   [lines]
   (filter #(and (or (str/includes? % "▶") (str/includes? % "▼"))
-             (not (str/includes? % "BLOCK - ")))
+             (not (str/includes? % "ITERATION")))
     lines))
 
 (defn- header-of
   [lines]
-  (some #(when (str/includes? % "BLOCK - ") %) lines))
+  (some #(when (str/includes? % "ITERATION") %) lines))
 
 ;; ---------------------------------------------------------------------------
 ;; Sink-entry + entry builders.
@@ -123,9 +123,9 @@
     (it "renders ONE header `1 observation · 3 mutations` with ✓ and four op rows"
       (let [lines (rendered (git-fence-entry))
             hdr   (header-of lines)]
-        (expect (= 1 (count (filter #(str/includes? % "BLOCK - ") lines))))
+        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
         (expect (some? hdr))
-        (expect (str/includes? hdr "t6/i1"))
+        (expect (str/includes? hdr "ITERATION 1"))
         (expect (not (str/includes? hdr "/f1")))
         (expect (str/includes? hdr "1 observation"))
         (expect (str/includes? hdr "3 mutations"))
@@ -175,7 +175,7 @@
     (it "renders ONE header with `2 observations · 1 mutation` and three op rows"
       (let [lines (rendered (nested-let-entry))
             hdr   (header-of lines)]
-        (expect (= 1 (count (filter #(str/includes? % "BLOCK - ") lines))))
+        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
         (expect (str/includes? hdr "2 observations"))
         (expect (str/includes? hdr "1 mutation"))
         (expect (= 3 (count (op-rows lines))))))))
@@ -198,7 +198,7 @@
 
     (it "renders ONE header and ONE op row"
       (let [lines (rendered (def-bind-entry))]
-        (expect (= 1 (count (filter #(str/includes? % "BLOCK - ") lines))))
+        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
         (expect (= 1 (count (op-rows lines))))
         (expect (some #(str/includes? % "CAT") (op-rows lines)))))))
 
@@ -225,7 +225,7 @@
             body  (str/join "\n" lines)]
         (expect (= 0 (count (op-rows lines))))
         ;; No fake op badge, no `3` value body (plain values are hidden).
-        (expect (not (str/includes? body "BLOCK - ")))
+        (expect (not (str/includes? body "ITERATION")))
         (expect (not-any? #(= "3" (str/trim %)) lines))))))
 
 ;; ---------------------------------------------------------------------------
@@ -326,5 +326,5 @@
     (it "renders ONE header annotating `merged 2 fences`"
       (let [lines (rendered (merged-fences-entry))
             hdr   (header-of lines)]
-        (expect (= 1 (count (filter #(str/includes? % "BLOCK - ") lines))))
+        (expect (= 1 (count (filter #(str/includes? % "ITERATION") lines))))
         (expect (str/includes? hdr "merged 2 fences"))))))
