@@ -126,27 +126,16 @@
   [n]
   (apply str (repeat n BOX_H)))
 
-;;; ── Selection marker ("> " cursor) ───────────────────────────
+;;; ── Selection marker (dot cursor component) ─────────────────────
 ;;
-;; Universal cursor glyph for every up/down navigable list in the
+;; Universal cursor marker for every up/down navigable list in the
 ;; TUI: dialogs (select, settings, sessions, file picker,
 ;; resources, providers, models), command palette, slash overlay,
 ;; etc.
 ;;
-;; The previous convention painted the entire selected row in
-;; `dialog-title-bg` (a bright accent stripe) and inverted its fg.
-;; That had three bad properties:
-;;   1. The selected row became a "bright bar" that overpowered the
-;;      surrounding chrome and was hard to read on some themes.
-;;   2. Inline styles (italic descriptions, code chips, link colors)
-;;      had to be re-derived for the inverted palette — several call
-;;      sites just dropped them on the selected row.
-;;   3. There was no consistent marker between rows, so eyes had to
-;;      track BG color jumps instead of a stable left-anchored cue.
-;;
-;; A single `>` glyph avoids all three. Both selected and unselected
-;; states reserve the same display width (2 cols) so column layout
-;; survives navigation.
+;; Selected rows use one left-anchored dot, not row inversion and not
+;; ad-hoc `>` glyphs. Both selected and unselected states reserve the
+;; same display width (2 cols) so column layout survives navigation.
 ;;
 ;; The painter (`draw-selection-marker!`) is defined further down,
 ;; AFTER the `styled` macro is in scope; the constants and the
@@ -154,9 +143,9 @@
 ;; prefix string don't need to load the full painter graph.
 
 (def ^:const SELECTION_GLYPH
-  "Two-col selection marker. Selected rows show `>`+space, unselected
+  "Two-col selection marker. Selected rows show `•`+space, unselected
    rows show two spaces, so the body content stays column-aligned."
-  "> ")
+  "• ")
 
 (def ^:const SELECTION_BLANK "  ")
 
@@ -206,7 +195,7 @@
     g))
 
 (defn draw-selection-marker!
-  "Paint the `>` selection cursor at (col, row) when `selected?` is
+  "Paint the selection marker at (col, row) when `selected?` is
    truthy. Unselected rows get nothing — the surrounding row fill is
    expected to already cover those cells.
 

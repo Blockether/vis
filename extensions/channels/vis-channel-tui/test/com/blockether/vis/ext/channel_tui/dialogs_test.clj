@@ -127,7 +127,7 @@
 
   (testing "resource rows use a single selector, not selector plus bullet"
     (let [resource-row-label (var-get #'dlg/resource-row-label)]
-      (is (= "▸ [Book]" (resource-row-label true "Book" 80)))
+      (is (= "• [Book]" (resource-row-label true "Book" 80)))
       (is (= "  [Book]" (resource-row-label false "Book" 80)))))
 
   (testing "resource mouse open accepts normal down and release-only terminals"
@@ -167,8 +167,37 @@
       (is (= 48 (p/display-width line)))
       (is (str/includes? line "session"))
       (is (str/includes? (table/header-line columns 48) "Kind"))
+      (is (= \┌ (first (table/boxed-border-line [8 27 8] :top))))
+      (is (= \│ (first (table/boxed-row-line [8 27 8] ["Kind" "Name" "Status"] [:left :left :left]))))
       (is (table/row-matches? row "untitled"))
       (is (not (table/row-matches? row "workspace"))))))
+
+(deftest session-dialog-table-model-test
+  (let [items       (dlg/session-dialog-items
+                      [{:id "old"
+                        :title "Old"
+                        :turn-count 1
+                        :created-at #inst "2024-01-01T09:30:00.000Z"
+                        :modified-at #inst "2024-01-01T10:45:00.000Z"}
+                       {:id "new"
+                        :title "New"
+                        :turn-count 2
+                        :created-at #inst "2024-01-02T08:15:00.000Z"
+                        :modified-at #inst "2024-01-02T11:05:00.000Z"}]
+                      "new"
+                      96)
+        header      (dlg/session-dialog-header 96)
+        border-line (var-get #'dlg/session-table-border-line)]
+    (testing "session rows sort by modified-at desc and split date/time columns"
+      (is (= ["new" "old"] (mapv :id items)))
+      (is (str/includes? header "Created at"))
+      (is (str/includes? header "Modified at"))
+      (is (str/includes? (:label (first items)) "2024-01-02"))
+      (is (str/includes? (:label (first items)) "11:05")))
+    (testing "session table uses boxed dialog-style borders with fixed width"
+      (is (= \┌ (first (border-line 96 :top))))
+      (is (= 96 (p/display-width (border-line 96 :top))))
+      (is (= 96 (p/display-width (:label (first items))))))))
 
 (deftest navigator-row-model-test
   (let [all-rows     (var-get #'dlg/navigator-all-rows)
@@ -188,6 +217,7 @@
     (testing "navigator makes entity kind explicit"
       (is (= #{"session" "workspace"} (set (map :kind rows))))
       (is (= "Untitled session" (:label (first rows))))
+      (is (= "s1" (:ctx (first rows))))
       (is (= {:action :switch :id "s1"} (:target (first rows))))
       (is (= [{:action :switch-workspace :workspace-id :main}]
             (mapv :target (visible-rows rows :workspaces "main")))))))
@@ -527,11 +557,13 @@
         (is (str/includes? active-label "●"))
         (is (str/includes? active-label "│ 123e4567 │"))
         (is (str/includes? active-label "│     2 │"))
-        (is (str/includes? active-label "2024-01-03 04:05"))
-        (is (str/includes? active-label "2024-01-01 01:02"))
+        (is (str/includes? active-label "2024-01-03"))
+        (is (str/includes? active-label "04:05"))
+        (is (str/includes? active-label "2024-01-01"))
+        (is (str/includes? active-label "01:02"))
         (is (str/includes? active-label "Title"))
         (is (str/includes? fork-label "[forks:3]"))
-        (is (str/includes? active-label "..."))
+        (is (str/includes? active-label "…"))
         (is (str/includes? inactive-label "│ abcdef00 │"))
         (is (str/includes? inactive-label "│     0 │"))
         (is (str/includes? inactive-label "-"))
