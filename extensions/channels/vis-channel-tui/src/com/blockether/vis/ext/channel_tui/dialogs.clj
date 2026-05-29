@@ -2300,72 +2300,69 @@
             table-body-w (max 1 (- table-w 2))
             scrollbar-col (+ table-x (dec table-w))
             table-widths (table/column-widths navigator-columns (max 1 (- table-body-w 2)))
-            top-row      (+ content-top 2)
+            top-row      (+ content-top 4)
             header-row   (inc top-row)
             sep-row      (inc header-row)
             body-top     (inc sep-row)
-            body-h       (max 1 (- content-h 5))
+            body-h       (max 1 (- content-h 8))
             bottom-row   (+ body-top body-h)
             _            (swap! selected #(clamp % 0 (max 0 (dec total))))
             _            (swap! scroll #(visible-window-start @selected % body-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (p/set-colors! g t/dialog-hint t/dialog-bg)
-        (p/put-str! g (+ left 2) query-row
-          (ellipsize (str p/SELECTION_GLYPH "search: " @query) (max 1 (- inner-w 3))))
+        (let [cursor-pos (draw-text-input-field! g left query-row inner-w @query (count @query))]
+          (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/put-str! g table-x top-row
+            (table/boxed-border-line table-widths :top))
+          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+          (p/styled g [p/BOLD]
+            (p/put-str! g table-x header-row
+              (table/boxed-row-line table-widths (mapv #(or (:label %) "") navigator-columns)
+                (mapv #(or (:align %) :left) navigator-columns))))
+          (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/put-str! g table-x sep-row
+            (table/boxed-border-line table-widths :middle))
 
-        (p/set-colors! g t/dialog-border t/dialog-bg)
-        (p/put-str! g table-x top-row
-          (table/boxed-border-line table-widths :top))
-        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-        (p/styled g [p/BOLD]
-          (p/put-str! g table-x header-row
-            (table/boxed-row-line table-widths (mapv #(or (:label %) "") navigator-columns)
-              (mapv #(or (:align %) :left) navigator-columns))))
-        (p/set-colors! g t/dialog-border t/dialog-bg)
-        (p/put-str! g table-x sep-row
-          (table/boxed-border-line table-widths :middle))
+          (dotimes [i body-h]
+            (let [idx (+ @scroll i)
+                  row (+ body-top i)]
+              (cond
+                (< idx total)
+                (let [entry (nth visible-rows idx)
+                      cells (mapv (fn [{:keys [id render]}]
+                                    (if render (render entry) (get entry id "")))
+                              navigator-columns)]
+                  (table/draw-line! g table-x row table-body-w (= idx @selected)
+                    (table/boxed-row-line table-widths cells
+                      (mapv #(or (:align %) :left) navigator-columns)))
+                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                  (p/draw-selection-marker! g (inc left) row (= idx @selected)))
 
-        (dotimes [i body-h]
-          (let [idx (+ @scroll i)
-                row (+ body-top i)]
-            (cond
-              (< idx total)
-              (let [entry (nth visible-rows idx)
-                    cells (mapv (fn [{:keys [id render]}]
-                                  (if render (render entry) (get entry id "")))
-                            navigator-columns)]
-                (table/draw-line! g table-x row table-body-w (= idx @selected)
-                  (table/boxed-row-line table-widths cells
-                    (mapv #(or (:align %) :left) navigator-columns)))
-                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                (p/draw-selection-marker! g (inc left) row (= idx @selected)))
+                (and (zero? total) (zero? i))
+                (do
+                  (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/fill-rect! g table-x row table-body-w 1)
+                  (p/put-str! g table-x row
+                    (table/boxed-row-line table-widths ["" "No matches" "" ""]
+                      (repeat :left))))
 
-              (and (zero? total) (zero? i))
-              (do
-                (p/set-colors! g t/dialog-hint t/dialog-bg)
-                (p/fill-rect! g table-x row table-body-w 1)
-                (p/put-str! g table-x row
-                  (table/boxed-row-line table-widths ["" "No matches" "" ""]
-                    (repeat :left))))
+                :else
+                (do
+                  (p/set-colors! g t/dialog-fg t/dialog-bg)
+                  (p/fill-rect! g table-x row table-body-w 1)))))
 
-              :else
-              (do
-                (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (p/fill-rect! g table-x row table-body-w 1)))))
+          (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/put-str! g table-x bottom-row
+            (table/boxed-border-line table-widths :bottom))
 
-        (p/set-colors! g t/dialog-border t/dialog-bg)
-        (p/put-str! g table-x bottom-row
-          (table/boxed-border-line table-widths :bottom))
+          (scrollbar/draw! g
+            {:col scrollbar-col :top body-top :track-h body-h
+             :total-h total :inner-h body-h :scroll @scroll})
 
-        (scrollbar/draw! g
-          {:col scrollbar-col :top body-top :track-h body-h
-           :total-h total :inner-h body-h :scroll @scroll})
-
-        (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] ["Enter" "open"] ["Tab" "filter"] ["type" "search"] ["Esc" "cancel"]])
-        (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
+          (draw-hint-bar! g left hint-row inner-w
+            [["↑/↓" "move"] ["Enter" "open"] ["Tab" "filter"] ["type" "search"] ["Esc" "cancel"]])
+          (.setCursorPosition screen cursor-pos)
+          (.refresh screen Screen$RefreshType/DELTA))
 
         (let [key (read-modal-key! screen)]
           (when key
