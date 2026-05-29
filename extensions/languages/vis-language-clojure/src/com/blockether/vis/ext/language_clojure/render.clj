@@ -1,39 +1,40 @@
 (ns com.blockether.vis.ext.language-clojure.render
-  "Channel IR renderers for `clj/*` tools.
+  "Channel renderers for `clj/*` tools.
 
-   Engine contract for `:render-fn` (mirrors foundation-core):
+   Engine contract for `:render-fn` (the `{:summary :display}` contract,
+   `:com.blockether.vis.internal.extension/render-fn-result`):
 
-     (fn [result] [:ir {} <block> ...])
+     (fn [result] {:summary <summary> :display <ir>})
 
-   `result` is the raw map returned to SCI as `:result`. The MODEL
-   sees that same map via `pr-str` of the SCI return value — these
-   renderers ONLY shape the TUI / channel preview, never what the
-   LLM reads.
+   `summary` is EITHER a zone map `{:left <ir-or-string> :center? … :right? …}`
+   (used when the result has a natural label + right-anchored metric — counts,
+   durations, byte deltas, ports) OR a single `[:p ...]`-bearing IR root whose
+   first `[:strong ...]` is the badge label. `display` is the full canonical
+   `[:ir ...]` body these renderers used to return (code blocks, listings).
 
-   Style follows `extensions/common/vis-foundation-core/.../editing/core.clj`:
-   tiny IR vector builders (`[:ir]`, `[:p]`, `[:c]`, `[:code]`) and a
-   single `bounded-render-text` cap on free-form text bodies. Lists
-   render as text code blocks so previews stay compact and scrollable."
+   `result` is the raw map returned to SCI as `:result`. The MODEL sees that
+   same map via `pr-str` — these renderers ONLY shape the TUI / channel
+   preview, never what the LLM reads.
+
+   IR builders come from the engine extension namespace so the emitted shape is
+   exactly the canonical one the contract spec validates. Lists render as text
+   code blocks so previews stay compact and scrollable."
   (:require
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [com.blockether.vis.internal.extension :as extension]))
 
 ;; ---------------------------------------------------------------------------
-;; IR helpers (local; the foundation-core ones are private)
+;; IR helpers (canonical engine builders)
 ;; ---------------------------------------------------------------------------
 
-(defn- ir-code [s] [:c {} (str s)])
-(defn- ir-strong [s] [:strong {} (str s)])
-(defn- ir-code-block [lang body]
-  [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-(defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
-(defn- ir-p [& parts]
-  (into [:p {}] (map ir-inline (filter some? parts))))
-(defn- ir-root [& blocks]
-  (into [:ir {}] (filter some? blocks)))
+(def ^:private ir-code extension/ir-code)
+(def ^:private ir-strong extension/ir-strong)
+(def ^:private ir-code-block extension/ir-code-block)
+(def ^:private ir-p extension/ir-p)
+(def ^:private ir-root extension/ir-root)
 
 (def ^:private preview-cap
-  "Soft byte ceiling on free-form preview bodies. Same intent as
-   foundation-core's `bounded-render-text`: protect the TUI from
+  "Soft byte ceiling on free-form preview bodies. Protect the TUI from
    pasting an entire 200 KB outline into a channel."
   32000)
 
@@ -51,54 +52,65 @@
 (defn render-ports
   "Preview for `(clj/ports)`.
 
-   When the workspace has exactly ZERO or ONE nREPL port the badge
-   line already carries the essential info (`default=7888`) and the
-   per-source listing only adds the `.nrepl-port` path — noise the
-   user has to scan past. Drop the body in that case so the row
-   reads as a single badge headline, consistent with `TITLE` /
-   `TASK` / `SPEC` recap rows.
+   Summary is a zone badge: `PORTS` label on the left, the visible count
+   right-anchored, default port in the center when known. With ZERO or ONE
+   port the display is just the badge headline (the count + default already
+   carry everything — the per-source `.nrepl-port` path is noise). With TWO
+   or more ports the display lists each port→source so the user can see which
+   file the default came from.
 
-   With TWO or more ports the listing disambiguates which file the
-   default came from, so it's worth showing.
-
-   The model still sees the full `:ports` vector via the SCI return
-   value — this trim only shapes the channel preview."
+   The model still sees the full `:ports` vector via the SCI return value —
+   this trim only shapes the channel preview."
   [{:keys [default ports]}]
   (let [n (count ports)]
-    (cond-> (ir-root
-              (ir-p (ir-strong "PORTS")
-                "  " n " visible"
-                (when default (str "  default=" default))))
-      (> n 1)
-      (conj (ir-code-block "text"
-              (str/join "\n"
-                (map (fn [{:keys [port source]}]
-                       (str port "  " source))
-                  ports)))))))
+    {:summary (cond-> {:left  (ir-strong "PORTS")
+                       :right (str n " visible")}
+                default (assoc :center (ir-code (str "default=" default))))
+     :display (if (> n 1)
+                (ir-root
+                  (ir-p (ir-strong "PORTS") "  " n " visible"
+                    (when default (str "  default=" default)))
+                  (ir-code-block "text"
+                    (str/join "\n"
+                      (map (fn [{:keys [port source]}]
+                             (str port "  " source))
+                        ports))))
+                (ir-root
+                  (ir-p (ir-strong "PORTS") "  " n " visible"
+                    (when default (str "  default=" default)))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/eval
 ;; ---------------------------------------------------------------------------
 
 (defn render-eval
+  "Preview for `(clj/eval …)`.
+
+   Summary is a zone badge: `EVAL` / `TIMEOUT` / `ERROR` label, ns in the
+   center, port + elapsed ms right-anchored. Display carries the value, any
+   `:out` / `:err` capture and the exception class."
   [{:keys [value out err ns status ex root-ex ms port timed-out?]}]
   (let [bad?  (or timed-out? ex root-ex (contains? status "error"))
         badge (cond timed-out? "TIMEOUT"
                 bad?       "ERROR"
-                :else      "EVAL")]
-    (ir-root
-      (ir-p (ir-strong badge)
-        "  :" port
-        (when ns (str "  ns=" ns))
-        (when (number? ms) (str "  " ms "ms")))
-      (when value (ir-code-block "clojure" (cap value)))
-      (when (and out (seq out))
-        (ir-code-block "text" (str ":out\n" (cap out))))
-      (when (and err (seq err))
-        (ir-code-block "text" (str ":err\n" (cap err))))
-      (when ex
-        (ir-p (ir-strong "ex") "  " (ir-code (str ex))
-          (when root-ex (str "  root=" root-ex)))))))
+                :else      "EVAL")
+        right (str ":" port (when (number? ms) (str "  " ms "ms")))]
+    {:summary (cond-> {:left  (ir-strong badge)
+                       :right right}
+                ns (assoc :center (ir-code (str "ns=" ns))))
+     :display (ir-root
+                (ir-p (ir-strong badge)
+                  "  :" port
+                  (when ns (str "  ns=" ns))
+                  (when (number? ms) (str "  " ms "ms")))
+                (when value (ir-code-block "clojure" (cap value)))
+                (when (and out (seq out))
+                  (ir-code-block "text" (str ":out\n" (cap out))))
+                (when (and err (seq err))
+                  (ir-code-block "text" (str ":err\n" (cap err))))
+                (when ex
+                  (ir-p (ir-strong "ex") "  " (ir-code (str ex))
+                    (when root-ex (str "  root=" root-ex)))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/outline
@@ -118,24 +130,37 @@
     (when doc (str "  ; " doc))))
 
 (defn render-outline
+  "Preview for `(clj/outline …)`.
+
+   Summary is a zone badge: `OUTLINE` (or `OUTLINE!` on error) label, the
+   file path in the center, the form count (or error string) right-anchored.
+   Display carries the ns line, kind counts and the per-form listing."
   [{:keys [path bytes ns counts forms total error]}]
-  (ir-root
-    (ir-p (ir-strong (if error "OUTLINE!" "OUTLINE"))
-      "  " (ir-code (or path "?"))
-      (cond
-        error (str "  " error)
-        :else (str "  " total " form" (when (not= total 1) "s")
-                (when bytes (str "  " bytes "B")))))
-    (when ns
-      (ir-p "ns " (ir-code (:name ns))
-        (when (:doc ns) (str "  ; " (:doc ns)))))
-    (when (seq counts)
-      (ir-p (str/join "  "
-              (sort (map (fn [[k v]] (str v "×" (subs (str k) 1)))
-                      counts)))))
-    (when (seq forms)
-      (ir-code-block "text"
-        (cap (str/join "\n" (map outline-row forms)))))))
+  {:summary (let [label (if error "OUTLINE!" "OUTLINE")]
+              (cond-> {:left (ir-strong label)}
+                path  (assoc :center (ir-code path))
+                true  (assoc :right
+                        (if error
+                          (str error)
+                          (str total " form" (when (not= total 1) "s")
+                            (when bytes (str "  " bytes "B")))))))
+   :display (ir-root
+              (ir-p (ir-strong (if error "OUTLINE!" "OUTLINE"))
+                "  " (ir-code (or path "?"))
+                (cond
+                  error (str "  " error)
+                  :else (str "  " total " form" (when (not= total 1) "s")
+                          (when bytes (str "  " bytes "B")))))
+              (when ns
+                (ir-p "ns " (ir-code (:name ns))
+                  (when (:doc ns) (str "  ; " (:doc ns)))))
+              (when (seq counts)
+                (ir-p (str/join "  "
+                        (sort (map (fn [[k v]] (str v "×" (subs (str k) 1)))
+                                counts)))))
+              (when (seq forms)
+                (ir-code-block "text"
+                  (cap (str/join "\n" (map outline-row forms))))))})
 
 ;; ---------------------------------------------------------------------------
 ;; clj/find
@@ -150,39 +175,62 @@
     (when doc (str "  ; " doc))))
 
 (defn render-find
+  "Preview for `(clj/find …)`.
+
+   Summary is a zone badge: `FIND` label, the scanned/elapsed stats in the
+   center, the match count right-anchored. Display carries the match listing."
   [{:keys [matches scanned truncated? elapsed-ms]}]
   (let [n (count matches)]
-    (ir-root
-      (ir-p (ir-strong "FIND")
-        "  " n " match" (when (not= n 1) "es")
-        "  scanned=" scanned
-        "  " elapsed-ms "ms"
-        (when truncated? "  (truncated)"))
-      (when (seq matches)
-        (ir-code-block "text"
-          (cap (str/join "\n" (map find-row matches))))))))
+    {:summary {:left   (ir-strong "FIND")
+               :center (ir-code (str "scanned=" scanned "  " elapsed-ms "ms"))
+               :right  (str n " match" (when (not= n 1) "es")
+                         (when truncated? " (truncated)"))}
+     :display (ir-root
+                (ir-p (ir-strong "FIND")
+                  "  " n " match" (when (not= n 1) "es")
+                  "  scanned=" scanned
+                  "  " elapsed-ms "ms"
+                  (when truncated? "  (truncated)"))
+                (when (seq matches)
+                  (ir-code-block "text"
+                    (cap (str/join "\n" (map find-row matches))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/edit
 ;; ---------------------------------------------------------------------------
 
 (defn render-edit
+  "Preview for `(clj/edit …)`.
+
+   On success the summary is a zone badge: `EDIT` label, the edit-op + target
+   in the center, the byte delta (`+N` / `-N`) right-anchored. On failure the
+   summary is `EDIT FAILED` with the error string right-anchored. Display
+   carries the full headline either way."
   [{:keys [status path edit-op target error bytes delta]}]
   (cond
     (= :error status)
-    (ir-root
-      (ir-p (ir-strong "EDIT FAILED")
-        "  " (ir-code (or error "unknown"))
-        (when target (str "  target=" target))))
+    {:summary {:left  (ir-strong "EDIT FAILED")
+               :right (ir-code (or error "unknown"))}
+     :display (ir-root
+                (ir-p (ir-strong "EDIT FAILED")
+                  "  " (ir-code (or error "unknown"))
+                  (when target (str "  target=" target))))}
 
     :else
     (let [{:keys [before after]} (or bytes {})]
-      (ir-root
-        (ir-p (ir-strong "EDIT")
-          "  " (ir-code (str edit-op))
-          "  " (ir-code (str target))
-          "  → " (or path "?")
-          (when (and before after)
-            (str "  " before "B→" after "B"
-              (when delta
-                (str "  Δ=" (if (pos? delta) "+" "") delta)))))))))
+      {:summary (cond-> {:left   (ir-strong "EDIT")
+                         :center (ir-code (str edit-op "  " target))}
+                  (and before after)
+                  (assoc :right
+                    (str before "B→" after "B"
+                      (when delta
+                        (str "  Δ=" (if (pos? delta) "+" "") delta)))))
+       :display (ir-root
+                  (ir-p (ir-strong "EDIT")
+                    "  " (ir-code (str edit-op))
+                    "  " (ir-code (str target))
+                    "  → " (or path "?")
+                    (when (and before after)
+                      (str "  " before "B→" after "B"
+                        (when delta
+                          (str "  Δ=" (if (pos? delta) "+" "") delta))))))})))

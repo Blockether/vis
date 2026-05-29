@@ -41,7 +41,7 @@
       (expect (= :v/session-state (:symbol result)))
       (expect (map? (:result result)))))
 
-  (it "renders channel output as a badged SESSION IR (no pr-str data dump)"
+  (it "renders channel output as a {:summary :display} contract (no pr-str data dump)"
     (let [render-channel @#'introspection/session-state-channel
           result {:session-id #uuid "fc9d9b41-05d9-4099-83e8-c9abeb1ce08a"
                   :session-index [{:id 1} {:id 2}]
@@ -54,16 +54,55 @@
                   :llm-diagnostics [{} {}]
                   :transcript {:turns [{:iterations [{} {}]}]
                                :totals {:tokens {:input 10} :cost-usd 0.01}}}
-          ir (render-channel result)
-          rendered (pr-str ir)
+          rendered-result (render-channel result)
+          display (:display rendered-result)
+          summary-rendered (pr-str (:summary rendered-result))
+          display-rendered (pr-str display)
           has-session-badge? (some #(and (vector? %)
                                       (= :strong (first %))
-                                      (= "SESSION" (last %)))
-                               (tree-seq sequential? seq ir))]
-      (expect (= :ir (first ir)))
+                                      (clojure.string/includes? (pr-str %) "SESSION"))
+                               (tree-seq sequential? seq
+                                 (extension/summary->ir (:summary rendered-result))))]
+      (expect (extension/render-fn-result? rendered-result))
+      ;; display is the full IR body
+      (expect (= :ir (first display)))
+      ;; summary is a labelled zone badge with the right-anchored failure count
       (expect has-session-badge?)
-      ;; header carries turn / iter / failure stats inline
-      (expect (clojure.string/includes? rendered "1 turn"))
-      (expect (clojure.string/includes? rendered "2 iter"))
-      (expect (clojure.string/includes? rendered "failures=1"))
-      (expect (not (clojure.string/includes? rendered ":llm-raw-response-preview"))))))
+      (expect (clojure.string/includes? summary-rendered "1 turn"))
+      (expect (clojure.string/includes? summary-rendered "2 iter"))
+      (expect (clojure.string/includes? summary-rendered "failures=1"))
+      ;; full data still lives in the display, not a raw pr-str dump
+      (expect (not (clojure.string/includes? display-rendered ":llm-raw-response-preview"))))))
+
+(defdescribe render-fn-contract-test
+  (it "every introspection render-fn returns the {:summary :display} contract"
+    (let [doc-result    {:symbol 'git/diff :resolved-symbol 'vis.ext.git/diff
+                         :found? true :doc "diff docs" :arglists '([])}
+          src-result    {:symbol 'git/diff :resolved-symbol 'vis.ext.git/diff
+                         :found? true :source "(defn diff [] nil)" :source-length 18}
+          meta-result   {:symbol 'git/diff :resolved-symbol 'vis.ext.git/diff
+                         :found? true :metadata {:ns 'vis.ext.git :name 'diff}}
+          apropos-result {:query "diff" :count 2
+                          :matches [{:symbol 'git/diff :doc "diff docs" :arglists '([])}
+                                    {:symbol 'git/status :doc "status docs"}]}
+          report-result "# Report\n\nsome markdown body\n"
+          channels {:symbol-doc    [@#'introspection/symbol-doc-channel doc-result]
+                    :symbol-source [@#'introspection/symbol-source-channel src-result]
+                    :symbol-meta   [@#'introspection/symbol-meta-channel meta-result]
+                    :apropos       [@#'introspection/apropos-channel apropos-result]
+                    :report        [@#'introspection/session-report-channel report-result]}]
+      (doseq [[_label [render-fn arg]] channels]
+        (let [r (render-fn arg)]
+          (expect (extension/render-fn-result? r))
+          (expect (some? (:summary r)))
+          (expect (vector? (:display r)))
+          (expect (= :ir (first (:display r))))))))
+
+  (it "not-found render results still conform to the contract"
+    (let [missing {:symbol 'no/such :found? false :message "Symbol not found."}]
+      (doseq [render-fn [@#'introspection/symbol-doc-channel
+                         @#'introspection/symbol-source-channel
+                         @#'introspection/symbol-meta-channel]]
+        (let [r (render-fn missing)]
+          (expect (extension/render-fn-result? r))
+          (expect (= :ir (first (:display r)))))))))

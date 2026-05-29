@@ -3,11 +3,17 @@
 
    Engine contract for `:render-fn`:
 
-     (fn [result] [:ir {} <block> ...])
+     (fn [result] {:summary <ir-or-zones> :display <ir>})
 
    `result` is the unwrapped `:result` map. The MODEL sees the same
    map via `tool-result->public-value`; these renderers shape ONLY
    the channel/TUI preview.
+
+   `:summary` is the single badge/op row. Where a result has a
+   natural label + right-anchored metric (counts, durations, line
+   counts, sha) we use a zone map `{:left … :center? … :right?}`;
+   otherwise a single `[:p …]` IR paragraph whose first `[:strong …]`
+   is the label. `:display` is the full expanded IR body.
 
    Style follows the rest of the foundation surface
    (`foundation-core/editing`, `foundation-git/render`,
@@ -15,21 +21,20 @@
    stats, optional `[:code {:lang \"text\"}]` body for free-form
    lists, soft byte cap on body."
   (:require
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [com.blockether.vis.internal.extension :as ext]))
 
 ;; ---------------------------------------------------------------------------
-;; IR builders
+;; IR builders (canonical helpers from the engine)
 ;; ---------------------------------------------------------------------------
 
-(defn- ir-code [s] [:c {} (str s)])
-(defn- ir-strong [s] [:strong {} (str s)])
-(defn- ir-code-block [lang body]
-  [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-(defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
-(defn- ir-p [& parts]
-  (into [:p {}] (map ir-inline (filter some? parts))))
-(defn- ir-root [& blocks]
-  (into [:ir {}] (filter some? blocks)))
+(def ^:private ir-code ext/ir-code)
+(def ^:private ir-strong ext/ir-strong)
+(defn- ir-code-block
+  ([body] (ext/ir-code-block "text" body))
+  ([lang body] (ext/ir-code-block lang body)))
+(def ^:private ir-p ext/ir-p)
+(def ^:private ir-root ext/ir-root)
 
 (def ^:private preview-cap 32000)
 
@@ -51,33 +56,38 @@
            created updated message]}]
   (cond
     (and configured? already-configured?)
-    (ir-root
-      (ir-p (ir-strong "BRIDGE READY")
-        "  " (ir-code (or profile-path "?"))
-        (when workspace-root (str "  @ " workspace-root)))
-      (when message (ir-p message)))
+    {:summary {:left  (ir-strong "BRIDGE READY")
+               :right (ir-code (or profile-path "?"))}
+     :display (ir-root
+                (ir-p (ir-strong "BRIDGE READY")
+                  "  " (ir-code (or profile-path "?"))
+                  (when workspace-root (str "  @ " workspace-root)))
+                (when message (ir-p message)))}
 
     configured?
     (let [nc (count-of created)
           nu (count-of updated)]
-      (ir-root
-        (ir-p (ir-strong "BRIDGE INIT")
-          "  " (ir-code (or profile-path "?"))
-          (when workspace-root (str "  @ " workspace-root))
-          (when (pos? (+ nc nu))
-            (str "  created=" nc "  updated=" nu)))
-        (when (seq created)
-          (ir-code-block "text"
-            (cap (str "created:\n" (str/join "\n" (map #(str "  + " %) created))))))
-        (when (seq updated)
-          (ir-code-block "text"
-            (cap (str "updated:\n" (str/join "\n" (map #(str "  ~ " %) updated))))))))
+      {:summary {:left  (ir-strong "BRIDGE INIT")
+                 :right (str "+" nc " created  ~" nu " updated")}
+       :display (ir-root
+                  (ir-p (ir-strong "BRIDGE INIT")
+                    "  " (ir-code (or profile-path "?"))
+                    (when workspace-root (str "  @ " workspace-root))
+                    (when (pos? (+ nc nu))
+                      (str "  created=" nc "  updated=" nu)))
+                  (when (seq created)
+                    (ir-code-block "text"
+                      (cap (str "created:\n" (str/join "\n" (map #(str "  + " %) created))))))
+                  (when (seq updated)
+                    (ir-code-block "text"
+                      (cap (str "updated:\n" (str/join "\n" (map #(str "  ~ " %) updated)))))))})
 
     :else
-    (ir-root
-      (ir-p (ir-strong "BRIDGE !INIT")
-        (when workspace-root (str "  @ " workspace-root)))
-      (when message (ir-p message)))))
+    {:summary {:left (ir-strong "BRIDGE !INIT")}
+     :display (ir-root
+                (ir-p (ir-strong "BRIDGE !INIT")
+                  (when workspace-root (str "  @ " workspace-root)))
+                (when message (ir-p message)))}))
 
 ;; ---------------------------------------------------------------------------
 ;; br/profile
@@ -86,20 +96,25 @@
 (defn render-profile
   [{:keys [configured? summary profile-path policy-path policy-loaded? message]}]
   (if-not configured?
-    (ir-root
-      (ir-p (ir-strong "NO PROFILE"))
-      (when message (ir-p message)))
+    {:summary {:left (ir-strong "NO PROFILE")}
+     :display (ir-root
+                (ir-p (ir-strong "NO PROFILE"))
+                (when message (ir-p message)))}
     (let [proj (:project summary)
           version (:version summary)
           name'   (:name summary)]
-      (ir-root
-        (ir-p (ir-strong "PROFILE")
-          (when name' (str "  " name'))
-          (when version (str "  v" version))
-          (when proj (str "  proj=" proj))
-          "  policy=" (if policy-loaded? "yes" "no"))
-        (when profile-path (ir-p "profile: " (ir-code profile-path)))
-        (when policy-path  (ir-p "policy: "  (ir-code policy-path)))))))
+      {:summary {:left   (ir-strong "PROFILE")
+                 :center (ir-code (or name' proj "?"))
+                 :right  (str (when version (str "v" version "  "))
+                           "policy=" (if policy-loaded? "yes" "no"))}
+       :display (ir-root
+                  (ir-p (ir-strong "PROFILE")
+                    (when name' (str "  " name'))
+                    (when version (str "  v" version))
+                    (when proj (str "  proj=" proj))
+                    "  policy=" (if policy-loaded? "yes" "no"))
+                  (when profile-path (ir-p "profile: " (ir-code profile-path)))
+                  (when policy-path  (ir-p "policy: "  (ir-code policy-path))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; br/check
@@ -118,9 +133,10 @@
            evidence-receipts message]}]
   (cond
     (not configured?)
-    (ir-root
-      (ir-p (ir-strong "NO PROFILE"))
-      (when message (ir-p message)))
+    {:summary {:left (ir-strong "NO PROFILE")}
+     :display (ir-root
+                (ir-p (ir-strong "NO PROFILE"))
+                (when message (ir-p message)))}
 
     :else
     (let [n-req  (count-of required-obligations)
@@ -131,25 +147,29 @@
                    (zero? ic)         "BRIDGE OK"
                    (pos? ic)          "BRIDGE FAIL"
                    :else              "BRIDGE")]
-      (ir-root
-        (ir-p (ir-strong badge)
-          (when status (str "  " (name status)))
-          "  issues=" ic
-          "  required=" n-req
-          "  recommended=" n-rec
-          "  receipts=" n-rec')
-        (when-let [proj (:project status-summary)]
-          (ir-p (str "project: " proj)))
-        (when (seq required-obligations)
-          (ir-code-block "text"
-            (cap (str "required:\n"
-                   (str/join "\n" (map #(str "  - " (obligation-row %))
-                                    required-obligations))))))
-        (when (seq recommended-obligations)
-          (ir-code-block "text"
-            (cap (str "recommended:\n"
-                   (str/join "\n" (map #(str "  - " (obligation-row %))
-                                    recommended-obligations))))))))))
+      {:summary (cond-> {:left  (ir-strong badge)
+                         :right (str "issues=" ic "  required=" n-req
+                                  "  recommended=" n-rec "  receipts=" n-rec')}
+                  status (assoc :center (ir-code (name status))))
+       :display (ir-root
+                  (ir-p (ir-strong badge)
+                    (when status (str "  " (name status)))
+                    "  issues=" ic
+                    "  required=" n-req
+                    "  recommended=" n-rec
+                    "  receipts=" n-rec')
+                  (when-let [proj (:project status-summary)]
+                    (ir-p (str "project: " proj)))
+                  (when (seq required-obligations)
+                    (ir-code-block "text"
+                      (cap (str "required:\n"
+                             (str/join "\n" (map #(str "  - " (obligation-row %))
+                                              required-obligations))))))
+                  (when (seq recommended-obligations)
+                    (ir-code-block "text"
+                      (cap (str "recommended:\n"
+                             (str/join "\n" (map #(str "  - " (obligation-row %))
+                                              recommended-obligations)))))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; br/next
@@ -166,24 +186,29 @@
   [{:keys [issue-count actions next-step status-summary configured? message]}]
   (cond
     (not configured?)
-    (ir-root
-      (ir-p (ir-strong "NO PROFILE"))
-      (when message (ir-p message)))
+    {:summary {:left (ir-strong "NO PROFILE")}
+     :display (ir-root
+                (ir-p (ir-strong "NO PROFILE"))
+                (when message (ir-p message)))}
 
     :else
-    (let [n (count-of actions)
-          ic (or issue-count 0)]
-      (ir-root
-        (ir-p (ir-strong (if (zero? ic) "BRIDGE OK" "NEXT"))
-          "  " n " suggestion" (when (not= 1 n) "s")
-          "  issues=" ic)
-        (when next-step
-          (ir-p "next: " (ir-code (get-in next-step [:op :call] ""))))
-        (when (seq actions)
-          (ir-code-block "text"
-            (cap (str/join "\n" (map #(str "  → " (action-line %)) actions)))))
-        (when-let [proj (:project status-summary)]
-          (ir-p (str "project: " proj)))))))
+    (let [n  (count-of actions)
+          ic (or issue-count 0)
+          badge (if (zero? ic) "BRIDGE OK" "NEXT")]
+      {:summary {:left   (ir-strong badge)
+                 :center (ir-code (str n " suggestion" (when (not= 1 n) "s")))
+                 :right  (str "issues=" ic)}
+       :display (ir-root
+                  (ir-p (ir-strong badge)
+                    "  " n " suggestion" (when (not= 1 n) "s")
+                    "  issues=" ic)
+                  (when next-step
+                    (ir-p "next: " (ir-code (get-in next-step [:op :call] ""))))
+                  (when (seq actions)
+                    (ir-code-block "text"
+                      (cap (str/join "\n" (map #(str "  → " (action-line %)) actions)))))
+                  (when-let [proj (:project status-summary)]
+                    (ir-p (str "project: " proj))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; br/list-evidence
@@ -199,19 +224,22 @@
   [{:keys [configured? commands profile-path message]}]
   (cond
     (not configured?)
-    (ir-root
-      (ir-p (ir-strong "NO PROFILE"))
-      (when message (ir-p message)))
+    {:summary {:left (ir-strong "NO PROFILE")}
+     :display (ir-root
+                (ir-p (ir-strong "NO PROFILE"))
+                (when message (ir-p message)))}
 
     :else
     (let [n (count-of commands)]
-      (ir-root
-        (ir-p (ir-strong "EVIDENCE")
-          "  " n " command" (when (not= 1 n) "s")
-          (when profile-path (str "  " profile-path)))
-        (when (seq commands)
-          (ir-code-block "text"
-            (cap (str/join "\n" (map evidence-row commands)))))))))
+      {:summary {:left  (ir-strong "EVIDENCE")
+                 :right (str n " command" (when (not= 1 n) "s"))}
+       :display (ir-root
+                  (ir-p (ir-strong "EVIDENCE")
+                    "  " n " command" (when (not= 1 n) "s")
+                    (when profile-path (str "  " profile-path)))
+                  (when (seq commands)
+                    (ir-code-block "text"
+                      (cap (str/join "\n" (map evidence-row commands))))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; br/run-evidence
@@ -223,15 +251,23 @@
         ok?   (= "passed" status)
         bad?  (= "failed" status)
         badge (cond ok? "EVIDENCE OK" bad? "EVIDENCE FAIL" :else "EVIDENCE")]
-    (ir-root
-      (ir-p (ir-strong badge)
-        (when id (str "  " id))
-        (when status (str "  " status))
-        (when (number? duration-ms) (str "  " duration-ms "ms"))
-        (when (number? exit-code)   (str "  exit=" exit-code)))
-      (when receipt-path (ir-p "receipt: " (ir-code receipt-path)))
-      (when profile-path (ir-p "profile: " (ir-code profile-path)))
-      (when (and stdout (seq stdout))
-        (ir-code-block "text" (str ":stdout\n" (cap stdout))))
-      (when (and stderr (seq stderr))
-        (ir-code-block "text" (str ":stderr\n" (cap stderr)))))))
+    {:summary (let [right (str/join "  "
+                            (remove nil?
+                              [(when status status)
+                               (when (number? duration-ms) (str duration-ms "ms"))
+                               (when (number? exit-code) (str "exit=" exit-code))]))]
+                (cond-> {:left (ir-strong badge)}
+                  id          (assoc :center (ir-code id))
+                  (seq right) (assoc :right right)))
+     :display (ir-root
+                (ir-p (ir-strong badge)
+                  (when id (str "  " id))
+                  (when status (str "  " status))
+                  (when (number? duration-ms) (str "  " duration-ms "ms"))
+                  (when (number? exit-code)   (str "  exit=" exit-code)))
+                (when receipt-path (ir-p "receipt: " (ir-code receipt-path)))
+                (when profile-path (ir-p "profile: " (ir-code profile-path)))
+                (when (and stdout (seq stdout))
+                  (ir-code-block "text" (str ":stdout\n" (cap stdout))))
+                (when (and stderr (seq stderr))
+                  (ir-code-block "text" (str ":stderr\n" (cap stderr)))))}))

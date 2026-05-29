@@ -2429,55 +2429,62 @@
 ;; ---------------------------------------------------------------------------
 ;; Per-symbol renderers
 ;;
-;; Engine contract:
-;;   render-fn -> (fn [result] [:ir ...])
+;; Engine contract ({:summary :display}, Phase 1 hard cut):
+;;   render-fn -> (fn [result] {:summary <ir-or-zones> :display <ir>})
 ;;
-;; `result` is the raw payload returned to SCI. Engine handles
-;; `:success? false` separately — error fns are optional and fall back to
-;; `default-error-ir`. The MODEL surface is the per-iteration trailer
-;; (real SCI values via pr-str); there is no second model-side render.
+;; `result` is the raw payload returned to SCI. `:summary` is the single
+;; badge row — a zone map {:left :center? :right?} when the result has a
+;; natural label + right-anchored metric, else a one-paragraph IR whose
+;; first [:strong …] is the label. `:display` is the full expanded IR body
+;; (the document these fns used to return). Engine handles `:success? false`
+;; separately — error fns are optional and fall back to `default-error-result`
+;; (which already returns the contract). The MODEL surface is the per-iteration
+;; trailer (real SCI values via pr-str); there is no second model-side render.
 ;; ---------------------------------------------------------------------------
 
 (defn- channel-render-cat
-  "Channel preview: numbered-line-block + badge header. Reads the
-   plain map directly; no handle/deref."
+  "Channel preview. Summary is a zone badge: `CAT` label, the path
+   centered, the line count + pagination state anchored right. Display
+   is the numbered-line block. Reads the plain map directly; no
+   handle/deref."
   [{:keys [path next-offset truncated? lines]}]
   (let [lines      (vec lines)
         line-count (count lines)
         first-ln   (ffirst lines)
-        body       (numbered-line-block lines)]
-    (ir-root
-      (ir-p (ir-strong "CAT")
-        "  " (ir-code (or path "?"))
-        "  " line-count " line" (when (not= 1 line-count) "s")
-        (when first-ln (str "  from=" first-ln))
-        (cond
-          next-offset (str "  next-offset=" next-offset
-                        (when truncated? "  (byte-cap)"))
-          truncated?  "  (byte-cap)"
-          :else       "  (eof)"))
-      (ir-code-block "text" (bounded-render-text body)))))
+        body       (numbered-line-block lines)
+        state      (cond
+                     next-offset (str "next-offset=" next-offset
+                                   (when truncated? " (byte-cap)"))
+                     truncated?  "(byte-cap)"
+                     :else       "(eof)")]
+    {:summary {:left   (ir-strong "CAT")
+               :center (ir-code (or path "?"))
+               :right  (str line-count " line" (when (not= 1 line-count) "s")
+                         (when first-ln (str "  from=" first-ln))
+                         "  " state)}
+     :display (ir-root
+                (ir-code-block "text" (bounded-render-text body)))}))
 
 (defn- channel-render-ls
-  "Channel preview: flat path list with badge header. Directory
-   rows get a trailing `/`, file rows get a `(NB)` size suffix.
-   `:truncated?` surfaces an inline note. Pure projection of
-   `(:entries r)`."
+  "Channel preview. Summary is a zone badge: `LS` label, the path
+   centered, file/dir counts anchored right. Display is the flat path
+   list — directory rows get a trailing `/`, file rows a `(NB)` size
+   suffix. Pure projection of `(:entries r)`."
   [{:keys [path entries entry-count file-count dir-count truncated?
            depth limit]}]
-  (ir-root
-    (ir-p (ir-strong "LS")
-      "  " (ir-code (or path "?"))
-      "  " entry-count " entr" (if (= 1 entry-count) "y" "ies")
-      "  files=" (or file-count 0)
-      "  dirs=" (or dir-count 0)
-      (when (and depth (not= depth 10)) (str "  depth=" depth))
-      (when truncated?
-        (str "  truncated" (when limit (str "=" limit)))))
-    (when (seq entries)
-      (ir-code-block "text"
-        (bounded-render-text
-          (str/join "\n" (map flat-entry-line entries)))))))
+  {:summary {:left   (ir-strong "LS")
+             :center (ir-code (or path "?"))
+             :right  (str entry-count " entr" (if (= 1 entry-count) "y" "ies")
+                       "  files=" (or file-count 0)
+                       "  dirs=" (or dir-count 0)
+                       (when (and depth (not= depth 10)) (str "  depth=" depth))
+                       (when truncated?
+                         (str "  truncated" (when limit (str "=" limit)))))}
+   :display (ir-root
+              (when (seq entries)
+                (ir-code-block "text"
+                  (bounded-render-text
+                    (str/join "\n" (map flat-entry-line entries))))))})
 
 (defn- render-rg-hit-block
   "Render one content-mode hit with optional :before / :after context.
@@ -2493,60 +2500,63 @@
     [head (str/join "\n" body-lines)]))
 
 (defn- channel-render-rg
-  "Channel preview — mode-aware with badge header. Content mode
-   renders each hit with its `:before` / `:after` context (when
-   present) so the trailer reads like a miniature grep -C output.
-   `:files-only` shows distinct paths. `:counts` shows per-file
-   totals."
+  "Channel preview — mode-aware with a zone badge. The label varies by
+   mode (`RG` / `RG files` / `RG counts`), the match/file tally is
+   anchored right. Content-mode display renders each hit with its
+   `:before` / `:after` context (when present) so the body reads like a
+   miniature grep -C output; `:files-only` shows distinct paths;
+   `:counts` shows per-file totals."
   [{:keys [mode hits files counts truncated-by hit-count file-count
            total-matches]}]
   (case mode
     :files-only
-    (ir-root
-      (ir-p (ir-strong "RG files")
-        "  " (or file-count (count files)) " file"
-        (when (not= 1 (or file-count (count files))) "s")
-        "  truncated-by=" (name (or truncated-by :none)))
-      (when (seq files)
-        (ir-code-block "text"
-          (bounded-render-text (str/join "\n" files)))))
+    (let [n (or file-count (count files))]
+      {:summary {:left  (ir-strong "RG files")
+                 :right (str n " file" (when (not= 1 n) "s")
+                          "  truncated-by=" (name (or truncated-by :none)))}
+       :display (ir-root
+                  (when (seq files)
+                    (ir-code-block "text"
+                      (bounded-render-text (str/join "\n" files)))))})
 
     :counts
-    (ir-root
-      (ir-p (ir-strong "RG counts")
-        "  " (or file-count (count counts)) " file"
-        (when (not= 1 (or file-count (count counts))) "s")
-        (when total-matches (str "  total=" total-matches))
-        "  truncated-by=" (name (or truncated-by :none)))
-      (when (seq counts)
-        (ir-code-block "text"
-          (bounded-render-text
-            (str/join "\n"
-              (map (fn [{:keys [path count]}] (format "%-50s %d" path count))
-                counts))))))
+    (let [n (or file-count (count counts))]
+      {:summary {:left  (ir-strong "RG counts")
+                 :right (str n " file" (when (not= 1 n) "s")
+                          (when total-matches (str "  total=" total-matches))
+                          "  truncated-by=" (name (or truncated-by :none)))}
+       :display (ir-root
+                  (when (seq counts)
+                    (ir-code-block "text"
+                      (bounded-render-text
+                        (str/join "\n"
+                          (map (fn [{:keys [path count]}] (format "%-50s %d" path count))
+                            counts))))))})
 
     ;; default: :content (or unset — legacy maps without :mode)
-    (ir-root
-      (ir-p (ir-strong "RG")
-        "  " (or hit-count (count hits)) " hit"
-        (when (not= 1 (or hit-count (count hits))) "s")
-        "  truncated-by=" (name (or truncated-by :none)))
-      (when (seq hits)
-        (let [rendered (mapv render-rg-hit-block hits)
-              any-context? (some #(or (seq (:before %)) (seq (:after %))) hits)]
-          (if any-context?
-            ;; Context-rich: one labelled block per hit.
-            (apply ir-root
-              (mapcat (fn [[head body]]
-                        [(ir-p (ir-code head))
-                         (ir-code-block "text" (bounded-render-text body))])
-                rendered))
-            ;; Plain: flat one-line-per-hit block, like the old renderer.
-            (ir-code-block "text"
-              (bounded-render-text
-                (str/join "\n"
-                  (map (fn [{:keys [path line text]}]
-                         (str path ":" line " " text)) hits))))))))))
+    (let [n (or hit-count (count hits))]
+      {:summary {:left  (ir-strong "RG")
+                 :right (str n " hit" (when (not= 1 n) "s")
+                          "  truncated-by=" (name (or truncated-by :none)))}
+       :display
+       (if (seq hits)
+         (let [rendered (mapv render-rg-hit-block hits)
+               any-context? (some #(or (seq (:before %)) (seq (:after %))) hits)]
+           (if any-context?
+             ;; Context-rich: one labelled block per hit.
+             (apply ir-root
+               (mapcat (fn [[head body]]
+                         [(ir-p (ir-code head))
+                          (ir-code-block "text" (bounded-render-text body))])
+                 rendered))
+             ;; Plain: flat one-line-per-hit block, like the old renderer.
+             (ir-root
+               (ir-code-block "text"
+                 (bounded-render-text
+                   (str/join "\n"
+                     (map (fn [{:keys [path line text]}]
+                            (str path ":" line " " text)) hits)))))))
+         (ir-root))})))
 
 (defn- channel-render-patch
   "Channel preview: badge header + (capped) unified diff per file.
@@ -2562,23 +2572,24 @@
   (let [files   (if (sequential? result) result [result])
         changed (count (filter :changed? files))
         nf      (count files)]
-    (apply ir-root
-      (ir-p (ir-strong "PATCH")
-        "  " nf " file" (when (not= 1 nf) "s")
-        (when (pos? changed) (str "  changed=" changed)))
-      (mapcat
-        (fn [{:keys [path op diff changed? passes indent-delta]}]
-          (let [header (str (name (or op :update))
-                         " " (or path "?")
-                         (when (seq passes)
-                           (str " [fuzzy: " (str/join "," (map name passes)) "]"))
-                         (when indent-delta
-                           (str " [indentΔ " (if (pos? indent-delta) "+" "")
-                             indent-delta "]"))
-                         (when (false? changed?) " (no-op)"))]
-            (cond-> [(ir-p (ir-code header))]
-              diff (conj (ir-code-block "diff" (bounded-render-text diff))))))
-        files))))
+    {:summary {:left  (ir-strong "PATCH")
+               :right (str nf " file" (when (not= 1 nf) "s")
+                        (when (pos? changed) (str "  changed=" changed)))}
+     :display
+     (apply ir-root
+       (mapcat
+         (fn [{:keys [path op diff changed? passes indent-delta]}]
+           (let [header (str (name (or op :update))
+                          " " (or path "?")
+                          (when (seq passes)
+                            (str " [fuzzy: " (str/join "," (map name passes)) "]"))
+                          (when indent-delta
+                            (str " [indentΔ " (if (pos? indent-delta) "+" "")
+                              indent-delta "]"))
+                          (when (false? changed?) " (no-op)"))]
+             (cond-> [(ir-p (ir-code header))]
+               diff (conj (ir-code-block "diff" (bounded-render-text diff))))))
+         files))}))
 
 ;; ---------------------------------------------------------------------------
 ;; Mutation tool renderers — strict map shape only.
@@ -2593,35 +2604,49 @@
 
 (defn- channel-render-create-dirs
   [{:keys [path]}]
-  (ir-root (ir-p (ir-strong "MKDIR") "  " (ir-code path))))
+  {:summary {:left  (ir-strong "MKDIR")
+             :right (ir-code path)}
+   :display (ir-root (ir-p (ir-strong "MKDIR") "  " (ir-code path)))})
 
 (defn- channel-render-copy
   [{:keys [src dest path]}]
   (let [target (or dest path)]
-    (ir-root (ir-p (ir-strong "COPY")
-               (when src (str "  " src))
-               "  → " (ir-code target)))))
+    {:summary (cond-> {:left  (ir-strong "COPY")
+                       :right (ir-code target)}
+                src (assoc :center (ir-code src)))
+     :display (ir-root (ir-p (ir-strong "COPY")
+                         (when src (str "  " src))
+                         "  → " (ir-code target)))}))
 
 (defn- channel-render-move
   [{:keys [src dest path]}]
   (let [target (or dest path)]
-    (ir-root (ir-p (ir-strong "MOVE")
-               (when src (str "  " src))
-               "  → " (ir-code target)))))
+    {:summary (cond-> {:left  (ir-strong "MOVE")
+                       :right (ir-code target)}
+                src (assoc :center (ir-code src)))
+     :display (ir-root (ir-p (ir-strong "MOVE")
+                         (when src (str "  " src))
+                         "  → " (ir-code target)))}))
 
 (defn- channel-render-delete
   [{:keys [path]}]
-  (ir-root (ir-p (ir-strong "DELETE") "  " (ir-code path))))
+  {:summary {:left  (ir-strong "DELETE")
+             :right (ir-code path)}
+   :display (ir-root (ir-p (ir-strong "DELETE") "  " (ir-code path)))})
 
 (defn- channel-render-delete-if-exists
   [{:keys [path deleted?]}]
-  (ir-root (ir-p (ir-strong (if deleted? "DELETE" "ABSENT"))
-             "  " (ir-code path))))
+  (let [label (if deleted? "DELETE" "ABSENT")]
+    {:summary {:left  (ir-strong label)
+               :right (ir-code path)}
+     :display (ir-root (ir-p (ir-strong label) "  " (ir-code path)))}))
 
 (defn- channel-render-exists?
   [{:keys [path exists?]}]
-  (ir-root (ir-p (ir-strong (if exists? "EXISTS" "MISSING"))
-             "  " (ir-code path))))
+  (let [label (if exists? "EXISTS" "MISSING")]
+    {:summary {:left  (ir-strong label)
+               :right (ir-code path)}
+     :display (ir-root (ir-p (ir-strong label) "  " (ir-code path)))}))
 
 ;; =============================================================================
 ;; Symbol declarations

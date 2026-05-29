@@ -152,7 +152,7 @@
   (str "Database schema mismatch: local migrations changed since this database was created. "
     "Close all Vis processes, remove ~/.vis/vis.mdb, then restart Vis to recreate it from packaged migration resources."))
 
-;; Phase B: JEBAC LEGACY. When the packaged V1__schema.sql checksum no
+;; Phase B: no legacy fallback. When the packaged V1__schema.sql checksum no
 ;; longer matches the recorded one on disk (i.e. we changed schema in
 ;; source without bumping the version), nuke the whole `~/.vis/vis.mdb`
 ;; directory and let the next open-attempt rebuild from V1 fresh. This
@@ -455,7 +455,7 @@
     (catch Throwable e
       ;; Phase B: on checksum mismatch for the canonical ~/.vis/vis.mdb
       ;; path, nuke and retry once. The DB is a forensics/replay store,
-      ;; not the source of truth; schema-rewrites are JEBAC LEGACY and
+      ;; not the source of truth; schema-rewrites drop legacy state and
       ;; the rebuild is cheap (Flyway re-runs V1 from packaged resources).
       (if (and (migration-checksum-mismatch? e)
             (string? db-spec)

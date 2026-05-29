@@ -121,19 +121,22 @@
   (cond
     error nil
     (seq channel)
-    ;; Per-form sink entries: walk each, surface pre-rendered IR on
-    ;; success, format the error map on failure. Sort by `:position`
-    ;; so racy futures land in canonical source order.
+    ;; Per-form sink entries: each carries the `{:summary :display}`
+    ;; render contract. Flatten to summary-led IR (badge first, body
+    ;; after) on success; on failure flatten the default error contract.
+    ;; Sort by `:position` so racy futures land in canonical source order.
     (extension/combine-render-values
       (map (fn [{:keys [success? result error]}]
              (if success?
-               result
-               (extension/default-error-ir
-                 {:success? false :result nil :info {} :error error})))
+               (extension/render-fn-result->ir result)
+               (extension/render-fn-result->ir
+                 (extension/default-error-result
+                   {:success? false :result nil :info {} :error error}))))
         (sort-by :position channel)))
     (= :vis/answer result)           nil
     (runtime-ref? result)            "<legacy runtime value; not restorable>"
-    (extension/tool-result? result)  (extension/render-tool-result result)
+    (extension/tool-result? result)  (extension/render-fn-result->ir
+                                       (extension/render-tool-result result))
     :else                            (fmt/bounded-value-str result)))
 
 (defn- block->form-record

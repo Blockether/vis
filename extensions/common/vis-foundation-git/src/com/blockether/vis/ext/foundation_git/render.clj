@@ -1,22 +1,29 @@
 (ns com.blockether.vis.ext.foundation-git.render
   "Channel IR renderers for `git/*` tools.
 
-   Engine contract for `:render-fn` (mirrors foundation-core/editing):
+   Engine contract for `:render-fn` / `:render-error-fn` (Phase 1 hard
+   cut, mirrors every other extension):
 
-     (fn [result] [:ir {} <block> ...])
+     (fn [result] {:summary <ir-or-zones> :display <ir>})
 
    `result` is the raw map returned to SCI as `:result`. The MODEL
    sees the same map (via `pr-str` of the unwrapped SCI return) —
    these renderers ONLY shape the channel preview, never what the
    LLM reads.
 
-   Style follows `foundation-core/editing/core.clj`: tiny IR vector
-   builders (`[:ir]`, `[:p]`, `[:c]`, `[:code]`, `[:strong]`) and a
-   single soft byte cap on free-form bodies. Bullet decoration is
-   left to the channel: we render rows as plain text inside
-   `[:code {:lang \"text\"}]` blocks so previews stay copy-pasteable.
+   `:summary` is the single badge/op row. Where the result has a
+   natural label + right-anchored metric (counts, +N/-M, line counts,
+   sha) we emit a zone map `{:left <label-ir> :center? … :right? …}`;
+   otherwise a single `[:p ...]` IR paragraph whose first `[:strong]`
+   is the badge label. `:display` is the full expanded body these
+   renderers historically returned — code blocks, numstat tables,
+   per-file patches.
 
-   Status badges use `[:strong]` so the channel can bold them
+   Style: tiny IR vector builders (`[:ir]`, `[:p]`, `[:c]`, `[:code]`,
+   `[:strong]`) and a single soft byte cap on free-form bodies.
+   Bullet decoration is left to the channel: rows render as plain text
+   inside `[:code {:lang \"text\"}]` blocks so previews stay
+   copy-pasteable. Status badges use `[:strong]` so channels bold them
    (TUI / Telegram both honour the marker)."
   (:require
    [clojure.string :as str]))
@@ -26,7 +33,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- ir-code [s] [:c {} (str s)])
-(defn- ir-strong [s] [:strong {} (str s)])
+(defn- ir-strong [s] [:strong {} [:span {} (str s)]])
 (defn- ir-code-block [lang body]
   [:code (cond-> {} lang (assoc :lang lang)) (str body)])
 (defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
@@ -58,18 +65,26 @@
 
 (defn render-status
   [{:keys [branch head clean? entries]}]
-  (let [n (count entries)]
-    (ir-root
-      (ir-p (ir-strong (if clean? "CLEAN" "DIRTY"))
-        "  " (ir-code (or branch "?"))
-        (when head (str "  @" (short-sha head)))
-        (when-not clean? (str "  " n " entr" (if (= n 1) "y" "ies"))))
-      (when (seq entries)
-        (ir-code-block "text"
-          (cap (str/join "\n"
-                 (map (fn [{:keys [status file]}]
-                        (str status " " file))
-                   entries))))))))
+  (let [n     (count entries)
+        label (if clean? "CLEAN" "DIRTY")]
+    {:summary
+     (cond-> {:left  (ir-strong label)
+              :center (ir-code (or branch "?"))}
+       head        (assoc :center
+                     (ir-p (ir-code (or branch "?")) " @" (short-sha head)))
+       (not clean?) (assoc :right (str n " entr" (if (= n 1) "y" "ies"))))
+     :display
+     (ir-root
+       (ir-p (ir-strong label)
+         "  " (ir-code (or branch "?"))
+         (when head (str "  @" (short-sha head)))
+         (when-not clean? (str "  " n " entr" (if (= n 1) "y" "ies"))))
+       (when (seq entries)
+         (ir-code-block "text"
+           (cap (str/join "\n"
+                  (map (fn [{:keys [status file]}]
+                         (str status " " file))
+                    entries))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/diff
@@ -82,31 +97,38 @@
 
 (defn render-diff
   [{:keys [branch head kind from to path stat files porcelain]}]
-  (let [nf  (:files stat)
-        np  (:+ stat)
-        nm  (:- stat)
-        body (str/join "\n" (map diff-row files))
+  (let [nf    (:files stat)
+        np    (:+ stat)
+        nm    (:- stat)
+        scope (or branch (name (or kind :workspace)))
+        range (str (or (short-sha from) (str from)) ".."
+                (or (short-sha to) (if to (str to) "WT")))
+        body  (str/join "\n" (map diff-row files))
         patches (->> files
                   (filter :patch)
                   (mapcat (fn [{:keys [file patch]}]
-                            [[:p {} [:strong {} (str "── " file " ──")]]
+                            [(ir-p (ir-strong (str "── " file " ──")))
                              (ir-code-block "diff" (cap patch))])))]
-    (apply ir-root
-      (ir-p (ir-strong "DIFF")
-        "  " (ir-code (or branch (name (or kind :workspace))))
-        "  " (or (short-sha from) (str from)) ".."
-        (or (short-sha to) (if to (str to) "WT"))
-        (when path (str "  path=" path))
-        (when head (str "  @" (short-sha head))))
-      (ir-p (str nf " file" (when (not= 1 nf) "s")
-              "  +" np "  −" nm))
-      (when (seq files)  (ir-code-block "text" (cap body)))
-      (when (seq porcelain)
-        (ir-code-block "text"
-          (cap (str/join "\n"
-                 (map (fn [{:keys [status file]}] (str status " " file))
-                   porcelain)))))
-      patches)))
+    {:summary
+     {:left   (ir-strong "DIFF")
+      :center (ir-p (ir-code scope) " " range)
+      :right  (str nf " file" (when (not= 1 nf) "s") "  +" np "  −" nm)}
+     :display
+     (apply ir-root
+       (ir-p (ir-strong "DIFF")
+         "  " (ir-code scope)
+         "  " range
+         (when path (str "  path=" path))
+         (when head (str "  @" (short-sha head))))
+       (ir-p (str nf " file" (when (not= 1 nf) "s")
+               "  +" np "  −" nm))
+       (when (seq files)  (ir-code-block "text" (cap body)))
+       (when (seq porcelain)
+         (ir-code-block "text"
+           (cap (str/join "\n"
+                  (map (fn [{:keys [status file]}] (str status " " file))
+                    porcelain)))))
+       patches)}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/log
@@ -121,13 +143,18 @@
 (defn render-log
   [{:keys [branch commits]}]
   (let [n (count commits)]
-    (ir-root
-      (ir-p (ir-strong "LOG")
-        "  " (ir-code (or branch "?"))
-        "  " n " commit" (when (not= 1 n) "s"))
-      (when (seq commits)
-        (ir-code-block "text"
-          (cap (str/join "\n" (map log-row commits))))))))
+    {:summary
+     {:left   (ir-strong "LOG")
+      :center (ir-code (or branch "?"))
+      :right  (str n " commit" (when (not= 1 n) "s"))}
+     :display
+     (ir-root
+       (ir-p (ir-strong "LOG")
+         "  " (ir-code (or branch "?"))
+         "  " n " commit" (when (not= 1 n) "s"))
+       (when (seq commits)
+         (ir-code-block "text"
+           (cap (str/join "\n" (map log-row commits))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/show
@@ -139,28 +166,34 @@
         nf    (or (:files stat) (count files))
         np    (or (:+ stat) 0)
         nm    (or (:- stat) 0)
+        sha*  (or short-sha (when sha (subs sha 0 (min 8 (count sha)))) "?")
         body* (str/join "\n" (map diff-row files))
         patches (->> files
                   (filter :patch)
                   (mapcat (fn [{:keys [file patch]}]
                             [(ir-p (ir-strong (str "── " file " ──")))
                              (ir-code-block "diff" (cap patch))])))]
-    (apply ir-root
-      (ir-p (ir-strong "SHOW")
-        "  " (ir-code (or short-sha (when sha (subs sha 0 (min 8 (count sha)))) "?"))
-        "  " (or author "?")
-        (when email (str " <" email ">"))
-        (when at (str "  " at)))
-      (when subject (ir-p (ir-strong subject)))
-      (when (and body (seq (str/trim body)))
-        (ir-code-block "text" (cap body)))
-      (ir-p (str nf " file" (when (not= 1 nf) "s")
-              "  +" np "  −" nm
-              (when (and committer (not= committer author))
-                (str "  committer=" committer))))
-      (when (seq files)
-        (ir-code-block "text" (cap body*)))
-      patches)))
+    {:summary
+     {:left   (ir-strong "SHOW")
+      :center (ir-p (ir-code sha*) " " (or subject author "?"))
+      :right  (str nf " file" (when (not= 1 nf) "s") "  +" np "  −" nm)}
+     :display
+     (apply ir-root
+       (ir-p (ir-strong "SHOW")
+         "  " (ir-code sha*)
+         "  " (or author "?")
+         (when email (str " <" email ">"))
+         (when at (str "  " at)))
+       (when subject (ir-p (ir-strong subject)))
+       (when (and body (seq (str/trim body)))
+         (ir-code-block "text" (cap body)))
+       (ir-p (str nf " file" (when (not= 1 nf) "s")
+               "  +" np "  −" nm
+               (when (and committer (not= committer author))
+                 (str "  committer=" committer))))
+       (when (seq files)
+         (ir-code-block "text" (cap body*)))
+       patches)}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/blame
@@ -174,16 +207,25 @@
 
 (defn render-blame
   [{:keys [path head total ignored-revs lines]}]
-  (ir-root
-    (ir-p (ir-strong "BLAME")
-      "  " (ir-code (or path "?"))
-      (when head (str "  @" (short-sha head)))
-      "  " total " line" (when (not= 1 total) "s")
-      (when (seq ignored-revs)
-        (str "  ignored=" (count ignored-revs))))
-    (when (seq lines)
-      (ir-code-block "text"
-        (cap (str/join "\n" (map blame-row lines)))))))
+  {:summary
+   {:left   (ir-strong "BLAME")
+    :center (if head
+              (ir-p (ir-code (or path "?")) " @" (short-sha head))
+              (ir-code (or path "?")))
+    :right  (str total " line" (when (not= 1 total) "s")
+              (when (seq ignored-revs)
+                (str "  ignored=" (count ignored-revs))))}
+   :display
+   (ir-root
+     (ir-p (ir-strong "BLAME")
+       "  " (ir-code (or path "?"))
+       (when head (str "  @" (short-sha head)))
+       "  " total " line" (when (not= 1 total) "s")
+       (when (seq ignored-revs)
+         (str "  ignored=" (count ignored-revs))))
+     (when (seq lines)
+       (ir-code-block "text"
+         (cap (str/join "\n" (map blame-row lines))))))})
 
 ;; ---------------------------------------------------------------------------
 ;; git/merge-* ops
@@ -192,43 +234,60 @@
 (defn render-merge-status
   [{:keys [in-progress? branch head merge-head conflicts]}]
   (if-not in-progress?
-    (ir-root (ir-p (ir-strong "NO MERGE") "  working tree is not mid-merge"))
+    {:summary {:left (ir-strong "NO MERGE")
+               :right "working tree is not mid-merge"}
+     :display (ir-root (ir-p (ir-strong "NO MERGE") "  working tree is not mid-merge"))}
     (let [n (count conflicts)]
-      (ir-root
-        (ir-p (ir-strong "MERGING")
-          "  " (ir-code (or branch "?"))
-          (when head (str "  HEAD=" (short-sha head)))
-          (when merge-head (str "  MERGE_HEAD=" (short-sha merge-head))))
-        (ir-p (str n " conflict" (when (not= 1 n) "s")
-                (when (zero? n) " — ready for (git/merge-continue!)")))
-        (when (seq conflicts)
-          (ir-code-block "text"
-            (cap (str/join "\n"
-                   (map (fn [{:keys [path state]}]
-                          (str (or state "UU") " " path))
-                     conflicts)))))))))
+      {:summary
+       {:left   (ir-strong "MERGING")
+        :center (ir-code (or branch "?"))
+        :right  (str n " conflict" (when (not= 1 n) "s"))}
+       :display
+       (ir-root
+         (ir-p (ir-strong "MERGING")
+           "  " (ir-code (or branch "?"))
+           (when head (str "  HEAD=" (short-sha head)))
+           (when merge-head (str "  MERGE_HEAD=" (short-sha merge-head))))
+         (ir-p (str n " conflict" (when (not= 1 n) "s")
+                 (when (zero? n) " — ready for (git/merge-continue!)")))
+         (when (seq conflicts)
+           (ir-code-block "text"
+             (cap (str/join "\n"
+                    (map (fn [{:keys [path state]}]
+                           (str (or state "UU") " " path))
+                      conflicts))))))})))
 
 (defn render-merge-op
   "Generic single-path op renderer. Used by accept-ours / accept-theirs /
    mark-resolved — all of which return `{:path :op}`."
   [{:keys [path op]}]
-  (ir-root
-    (ir-p (ir-strong (str/upper-case (name (or op :op))))
-      "  " (ir-code (or path "?")))))
+  (let [label (str/upper-case (name (or op :op)))]
+    {:summary {:left (ir-strong label)
+               :right (ir-code (or path "?"))}
+     :display (ir-root
+                (ir-p (ir-strong label)
+                  "  " (ir-code (or path "?"))))}))
 
 (defn render-merge-continue
   [{:keys [result head message]}]
-  (ir-root
-    (ir-p (ir-strong "MERGED")
-      "  " (ir-code (or (short-sha head) "?"))
-      (when message (str "  msg=\"" message "\""))
-      (when (and result (not= :continued result))
-        (str "  result=" (name result))))))
+  {:summary
+   {:left  (ir-strong "MERGED")
+    :right (ir-code (or (short-sha head) "?"))}
+   :display
+   (ir-root
+     (ir-p (ir-strong "MERGED")
+       "  " (ir-code (or (short-sha head) "?"))
+       (when message (str "  msg=\"" message "\""))
+       (when (and result (not= :continued result))
+         (str "  result=" (name result)))))})
 
 (defn render-merge-abort
   [{:keys [result]}]
-  (ir-root
-    (ir-p (ir-strong "ABORTED")
-      "  HEAD restored"
-      (when (and result (not= :aborted result))
-        (str "  result=" (name result))))))
+  {:summary {:left (ir-strong "ABORTED")
+             :right "HEAD restored"}
+   :display
+   (ir-root
+     (ir-p (ir-strong "ABORTED")
+       "  HEAD restored"
+       (when (and result (not= :aborted result))
+         (str "  result=" (name result)))))})

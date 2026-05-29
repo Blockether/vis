@@ -1,28 +1,47 @@
 (ns com.blockether.vis.ext.foundation-git.render-test
   "Channel renderer shape tests for the `git/*` surface.
 
-   These tests pin the IR shape (`[:ir]` root + paragraphs + code
-   blocks + `[:strong]` badges) so the foundation-git preview stays
-   structurally identical to the foundation-core editing previews."
+   Every `render-*` fn returns the Phase 1 `{:summary :display}`
+   contract (`::extension/render-fn-result`). These tests pin that
+   contract: `:summary` is IR-or-zones, `:display` is the full
+   `[:ir]` body (paragraphs + code blocks + `[:strong]` badges). The
+   badge label is the first `[:strong]` in the summary."
   (:require
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.ext.foundation-git.render :as gr]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- ir? [x] (and (vector? x) (= :ir (first x))))
+
+(defn- contract? [v]
+  (and (extension/render-fn-result? v)
+    (some? (:summary v))
+    (some? (:display v))))
+
+;; The badge label is the first `[:strong]` of the summary. After
+;; normalization a `[:strong]` wraps `[:span {} text]`; match the text
+;; anywhere inside a strong node.
 (defn- strong-in? [v needle]
-  (boolean
-    (re-find (re-pattern (str "\\[:strong \\{\\} \"" needle "\"\\]"))
-      (pr-str v))))
+  (let [s (pr-str (extension/summary->ir (:summary v)))]
+    (boolean (re-find (re-pattern (str "\\[:strong \\{\\} \\[:span \\{\\} \"" needle "\"\\]\\]")) s))))
+
+;; Full rendered text across both summary and display, for free-form
+;; body assertions (file names, counts, patch text).
+(defn- text-of [v]
+  (str (pr-str (extension/summary->ir (:summary v)))
+    (pr-str (:display v))))
 
 (defdescribe render-status-test
   (it "labels a clean tree CLEAN and a dirty tree DIRTY"
     (let [clean (gr/render-status {:branch "main" :head "abcdef1234" :clean? true :entries []})
           dirty (gr/render-status {:branch "main" :head "abcdef1234" :clean? false
                                    :entries [{:status "M" :file "x.clj"}]})]
-      (expect (ir? clean))
+      (expect (contract? clean))
+      (expect (contract? dirty))
+      (expect (ir? (:display clean)))
       (expect (strong-in? clean "CLEAN"))
       (expect (strong-in? dirty "DIRTY"))
-      (expect (re-find #"x\.clj" (pr-str dirty))))))
+      (expect (re-find #"x\.clj" (text-of dirty))))))
 
 (defdescribe render-diff-test
   (it "renders header + stat + numstat table"
@@ -32,10 +51,11 @@
                              :files [{:file "a.clj" :+ 3 :- 0}
                                      {:file "b.clj" :+ 2 :- 1}]
                              :porcelain []})
-          s (pr-str v)]
-      (expect (ir? v))
+          s (text-of v)]
+      (expect (contract? v))
+      (expect (ir? (:display v)))
       (expect (strong-in? v "DIFF"))
-      (expect (re-find #"2 files" s))
+      (expect (re-find #"2 file" s))
       (expect (re-find #"\+5" s))
       (expect (re-find #"a\.clj" s))))
 
@@ -46,7 +66,8 @@
                :files [{:file "a.clj" :+ 1 :- 0
                         :patch "diff --git a/a.clj b/a.clj\n+(def x 1)\n"}]
                :porcelain []})]
-      (expect (re-find #"diff --git" (pr-str v))))))
+      (expect (contract? v))
+      (expect (re-find #"diff --git" (pr-str (:display v)))))))
 
 (defdescribe render-log-test
   (it "renders a row per commit"
@@ -54,7 +75,8 @@
               {:branch "main"
                :commits [{:short-sha "abc1234" :author "Vi" :at "2025-01-01" :subject "init"}
                          {:short-sha "def5678" :author "Vi" :at "2025-01-02" :subject "feat"}]})
-          s (pr-str v)]
+          s (text-of v)]
+      (expect (contract? v))
       (expect (strong-in? v "LOG"))
       (expect (re-find #"abc1234" s))
       (expect (re-find #"def5678" s))
@@ -68,7 +90,8 @@
                :subject "subj" :body "body\nmore"
                :files [{:file "a.clj" :+ 2 :- 1}]
                :stat {:files 1 :+ 2 :- 1}})
-          s (pr-str v)]
+          s (text-of v)]
+      (expect (contract? v))
       (expect (strong-in? v "SHOW"))
       (expect (re-find #"subj" s))
       (expect (re-find #"body" s))
@@ -80,7 +103,8 @@
               {:path "x.clj" :head "abcdef0" :total 2 :ignored-revs []
                :lines [{:line 1 :short-sha "aaa1111" :author "A" :at "2025-01-01" :content "(ns x)"}
                        {:line 2 :short-sha "bbb2222" :author "B" :at "2025-01-02" :content "(def y 1)"}]})
-          s (pr-str v)]
+          s (text-of v)]
+      (expect (contract? v))
       (expect (strong-in? v "BLAME"))
       (expect (re-find #"x\.clj" s))
       (expect (re-find #"\(def y 1\)" s)))))
@@ -88,13 +112,15 @@
 (defdescribe render-merge-status-test
   (it "says NO MERGE outside of a merge"
     (let [v (gr/render-merge-status {:in-progress? false})]
+      (expect (contract? v))
       (expect (strong-in? v "NO MERGE"))))
 
   (it "says MERGING with a conflict listing when in-progress"
     (let [v (gr/render-merge-status
               {:in-progress? true :branch "feature" :head "aaa1111" :merge-head "bbb2222"
                :conflicts [{:path "x.clj" :state "UU"}]})
-          s (pr-str v)]
+          s (text-of v)]
+      (expect (contract? v))
       (expect (strong-in? v "MERGING"))
       (expect (re-find #"x\.clj" s))
       (expect (re-find #"1 conflict" s))))
@@ -102,18 +128,21 @@
   (it "calls out 'ready for git/merge-continue!' when no conflicts remain"
     (let [v (gr/render-merge-status
               {:in-progress? true :branch "f" :head "a" :merge-head "b" :conflicts []})]
-      (expect (re-find #"ready for" (pr-str v))))))
+      (expect (contract? v))
+      (expect (re-find #"ready for" (pr-str (:display v)))))))
 
 (defdescribe render-merge-op-test
   (it "renders op + path as a single line"
     (let [v (gr/render-merge-op {:path "x.clj" :op :git/merge-accept-ours})]
+      (expect (contract? v))
       (expect (strong-in? v "MERGE-ACCEPT-OURS"))
-      (expect (re-find #"x\.clj" (pr-str v))))))
+      (expect (re-find #"x\.clj" (text-of v))))))
 
 (defdescribe render-merge-continue-test
   (it "renders the new head and message"
     (let [v (gr/render-merge-continue {:result :continued :head "abc1234" :message "merge-resolve"})
-          s (pr-str v)]
+          s (text-of v)]
+      (expect (contract? v))
       (expect (strong-in? v "MERGED"))
       (expect (re-find #"abc1234" s))
       (expect (re-find #"merge-resolve" s)))))
@@ -121,4 +150,5 @@
 (defdescribe render-merge-abort-test
   (it "labels an aborted merge"
     (let [v (gr/render-merge-abort {:result :aborted})]
+      (expect (contract? v))
       (expect (strong-in? v "ABORTED")))))

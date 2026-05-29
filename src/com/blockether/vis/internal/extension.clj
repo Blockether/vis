@@ -75,6 +75,158 @@
             separators (repeat [[:p {} [:span {} ""]]])]
         (into [:ir {}] (mapcat identity (butlast (interleave blocks separators))))))))
 
+;; ---------------------------------------------------------------------------
+;; IR builder helpers for `:render-fn` / `:render-error-fn` authors.
+;;
+;; Tool authors hand-build canonical channel IR. These thin constructors keep
+;; render-fns readable and consistent without forcing authors to remember the
+;; `[tag attrs & children]` shape. Every builder returns canonical IR nodes;
+;; `ir-root` wraps blocks into the `[:ir ...]` document the contract requires.
+;; ---------------------------------------------------------------------------
+
+(defn ir-root
+  "Canonical IR document `[:ir {} & blocks]`. Wrap your blocks before returning
+   them as `:display` (or as plain-IR `:summary`)."
+  [& blocks]
+  (into [:ir {}] blocks))
+
+(defn ir-p
+  "One paragraph block `[:p {} & inlines]`. Children may be strings or inline
+   IR nodes (`ir-strong`, `ir-code`, plain text)."
+  [& inlines]
+  (into [:p {}]
+    (map (fn [x] (if (string? x) [:span {} x] x)) inlines)))
+
+(defn ir-strong
+  "Bold inline `[:strong {} [:span {} text]]`. In a summary, the FIRST
+   `ir-strong` is the row label by convention (no `:label` field)."
+  [text]
+  [:strong {} [:span {} (str text)]])
+
+(defn ir-code
+  "Inline code span `[:c {} text]`."
+  [text]
+  [:c {} (str text)])
+
+(defn ir-code-block
+  "Fenced code block `[:code {:lang lang} text]`. `lang` defaults to `\"text\"`."
+  ([text] (ir-code-block "text" text))
+  ([lang text] [:code {:lang (or lang "text")} (str text)]))
+
+;; ---------------------------------------------------------------------------
+;; `:render-fn` / `:render-error-fn` contract — {:summary :display}
+;;
+;; Every observed tool's renderer returns this map. No legacy raw-IR return.
+;;   :summary — the single visual badge row. EITHER canonical IR (one [:p ...]
+;;              paragraph, first [:strong ...] = label) OR a zone map
+;;              {:left <ir-or-string> :center? <ir-or-string>
+;;               :right? <ir-or-string>} painted left … (center) … right.
+;;   :display — canonical channel IR ([:ir ...]); the full expanded body.
+;; ---------------------------------------------------------------------------
+
+(defn render-value-or-string?
+  "Zone payloads accept a plain string, a full `[:ir ...]` document, or a
+   single IR/hiccup node (inline like `(ir-strong …)` / `(ir-code …)` or a
+   block). Zones are flattened into a paragraph by `summary->ir`, so the
+   common case is an inline node such as the label."
+  [x]
+  (or (string? x)
+    (render-value? x)
+    (and (vector? x) (keyword? (first x)))))
+
+(s/def :render.zone/left   render-value-or-string?)
+(s/def :render.zone/center render-value-or-string?)
+(s/def :render.zone/right  render-value-or-string?)
+(s/def :render/zones
+  (s/keys :req-un [:render.zone/left]
+    :opt-un [:render.zone/center :render.zone/right]))
+
+(s/def :render/summary
+  (s/or :ir    render-value?
+    :zones :render/zones))
+
+(s/def :render/display render-value?)
+
+(s/def ::render-fn-result
+  (s/keys :req-un [:render/summary :render/display]))
+
+(defn render-fn-result?
+  "True when `x` conforms to the `{:summary :display}` render contract."
+  [x]
+  (s/valid? ::render-fn-result x))
+
+(defn render-zones?
+  "True when `summary` is a zone map (`{:left … :center? … :right? …}`)
+   rather than plain IR."
+  [summary]
+  (and (map? summary) (s/valid? :render/zones summary)))
+
+(defn assert-render-fn-result!
+  "Throw unless `result` conforms to `::render-fn-result`. `label`
+   (`:render-fn` / `:render-error-fn`) and `sym` flow into the error for
+   actionable diagnostics. Returns `result` on success."
+  [result sym label]
+  (when-not (render-fn-result? result)
+    (throw (ex-info (str label " for symbol '" sym
+                      "' must return {:summary <ir-or-zones> :display <ir>}, got "
+                      (pr-str result))
+             {:type    :extension/render-non-contract
+              :symbol  sym
+              :label   label
+              :value   result
+              :explain (s/explain-data ::render-fn-result result)})))
+  result)
+
+(defn summary->ir
+  "Normalize a `:summary` (plain IR or a zone map) into a single canonical
+   `[:p ...]`-bearing IR root for channels that paint a flat badge row.
+
+   Zone maps flatten left → center → right, separated by a single space
+   span, preserving the first-[:strong]-is-label convention (a string
+   `:left` is wrapped verbatim, an IR `:left` keeps its own [:strong]).
+   Plain-IR summaries pass through `normalize-render-value`."
+  [summary]
+  (if (render-zones? summary)
+    (let [zone->inlines
+          (fn [z]
+            (cond
+              (nil? z)         nil
+              (string? z)      [[:span {} z]]
+              ;; full [:ir ...] document → lift inline children out of its
+              ;; paragraph blocks
+              (render-value? z)
+              (let [blocks (drop 2 (normalize-render-value z))]
+                (mapcat (fn [b]
+                          (if (and (vector? b) (= :p (first b)))
+                            (drop 2 b)
+                            [b]))
+                  blocks))
+              ;; bare inline/block IR node ((ir-strong …), (ir-code …), …)
+              (and (vector? z) (keyword? (first z)))
+              [z]
+              :else            [[:span {} (str z)]]))
+          sep   [[:span {} "  "]]
+          parts (->> [(:left summary) (:center summary) (:right summary)]
+                  (map zone->inlines)
+                  (remove nil?)
+                  (remove empty?))
+          inlines (mapcat identity (butlast (interleave parts (repeat sep))))]
+      (normalize-render-value (into [:ir {} (into [:p {}] inlines)])))
+    (normalize-render-value summary)))
+
+(defn render-fn-result->ir
+  "Flatten one `{:summary :display}` value into a single canonical IR root
+   whose FIRST block is the summary paragraph (badge row) and whose
+   remaining blocks are the `:display` body. Channels that paint a
+   summary-then-body stack (TUI collapse, Telegram) consume this directly;
+   the first block is guaranteed to be the badge by construction, not by
+   sniffing."
+  [{:keys [summary display]}]
+  (let [summary-ir (summary->ir summary)
+        display-ir (normalize-render-value display)]
+    (into (vec (take 2 summary-ir))
+      (concat (drop 2 summary-ir) (drop 2 display-ir)))))
+
 ;; =============================================================================
 ;; Tool-result contract
 ;; =============================================================================
@@ -146,19 +298,30 @@
 (s/def :ext.sink/form      non-blank-string?)
 (s/def :ext.sink/form-idx  (s/and integer? (complement neg?)))
 (s/def :ext.sink/success?  boolean?)
-(s/def :ext.sink/result    (s/nilable render-value?))
+;; The sink `:result` now carries the FULL `{:summary :display}` render
+;; contract value, not bare IR. `:summary` is the badge row (IR or zones);
+;; `:display` is the expanded body IR. Renderers read both directly — the
+;; "first paragraph = summary" heuristic is gone.
+(s/def :ext.sink/result    (s/nilable ::render-fn-result))
 (s/def :ext.sink/error     ::error)           ; ::error is itself nilable per its spec
 (s/def :ext.sink/symbol    (s/nilable (s/or :kw keyword? :sym symbol?)))
 (s/def :ext.sink/tag       (s/nilable keyword?))
+;; Canonical op keyword for the call (e.g. `:git/status`), plus wall-clock
+;; lifecycle stamps so renderers can show real durations without reaching
+;; back into the envelope metadata.
+(s/def :ext.sink/op             (s/nilable keyword?))
+(s/def :ext.sink/started-at-ms  (s/nilable (s/and integer? (complement neg?))))
+(s/def :ext.sink/finished-at-ms (s/nilable (s/and integer? (complement neg?))))
 
 (s/def ::sink-entry
   (s/and
     (s/keys :req-un [:ext.sink/position :ext.sink/form
                      :ext.sink/success? :ext.sink/result :ext.sink/error]
-      :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag])
+      :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag
+               :ext.sink/op :ext.sink/started-at-ms :ext.sink/finished-at-ms])
     (fn [{:keys [success? result error]}]
       (if success?
-        (and (render-value? result) (nil? error))
+        (and (render-fn-result? result) (nil? error))
         (and (nil? result) (some? error))))))
 
 (defn assert-sink-entry!
@@ -612,8 +775,14 @@
 (s/def :ext.symbol/on-error-fn fn?)
 
 ;; Renderer for this symbol's runtime channel result (TUI, Telegram, ...).
-;; Receives only the unwrapped `:result` value. Returns answer IR.
-;; Mandatory for observed fn-symbols; raw helpers skip rendering.
+;; Receives only the unwrapped `:result` value. MUST return the
+;; `{:summary <ir-or-zones> :display <ir>}` contract (`::render-fn-result`):
+;;   :summary — the badge row, EITHER canonical IR (one [:p ...]; first
+;;              [:strong ...] = label) OR a zone map
+;;              {:left … :center? … :right?}.
+;;   :display — canonical channel IR ([:ir ...]); the full expanded body.
+;; Returning bare IR is invalid and rejected on first call. Mandatory for
+;; observed fn-symbols; raw helpers skip rendering.
 ;;
 ;; NOTE: there is intentionally no model-facing renderer. The RLM reads
 ;; the actual SCI form value out of the per-iteration trailer; no per-tool
@@ -621,7 +790,8 @@
 (s/def :ext.symbol/render-fn fn?)
 
 ;; Optional override for failure rendering. Receives the tool-result
-;; envelope only. When absent, the engine uses `default-error-ir`.
+;; envelope only. MUST return the same `{:summary :display}` contract as
+;; `:render-fn`. When absent, the engine uses `default-error-result`.
 (s/def :ext.symbol/render-error-fn fn?)
 
 ;; Op classification carried INLINE on the symbol entry — every
@@ -1499,7 +1669,17 @@
 (defn- validate-symbol-renderers!
   "Fail closed: every observed tool owns its channel rendering. The model-
    facing surface is the trailer (real SCI form values); no second
-   model-side render is required or accepted."
+   model-side render is required or accepted.
+
+   Presence of `:render-fn` is checked here at register time. The SHAPE of
+   its return value — the `{:summary :display}` contract (`::render-fn-result`)
+   — is enforced at the single call site `render-value` via
+   `assert-render-fn-result!`, which runs on every sink write and throws a
+   hard `:extension/render-non-contract` error. We do NOT smoke-call the
+   render-fn at register time with a sentinel payload: render-fns are written
+   against their tool's concrete result shape and a fabricated value would
+   spuriously fail. The first real call validates; there is no legacy
+   raw-IR fallback path."
   [ext]
   (doseq [sym-entry (ext-symbols ext)
           :when    (and (:ext.symbol/fn sym-entry)
@@ -1731,18 +1911,13 @@
       [:span {} " has no registered channel renderer; payload omitted."]]]))
 
 (defn- render-value
-  "Run symbol-owned render fn for sink recording."
+  "Run symbol-owned render fn for sink recording. Returns the validated
+   `{:summary :display}` contract value."
   [sym-entry value]
-  (let [rendered ((:ext.symbol/render-fn sym-entry) value)]
-    (when-not (render-value? rendered)
-      (throw (ex-info (str ":render-fn for symbol '"
-                        (:ext.symbol/symbol sym-entry)
-                        "' must return IR, got " (pr-str (type rendered)))
-               {:type :extension/render-non-ir
-                :symbol (:ext.symbol/symbol sym-entry)
-                :label :render-fn
-                :value rendered})))
-    (normalize-render-value rendered)))
+  (assert-render-fn-result!
+    ((:ext.symbol/render-fn sym-entry) value)
+    (:ext.symbol/symbol sym-entry)
+    :render-fn))
 
 (defn- write-sink-entries!
   "After a tool symbol's `invoke-symbol-wrapper` produces a final
@@ -1771,13 +1946,18 @@
           form-str (sink-form-string ext sym-entry args)
           sym-id   (:ext.symbol/symbol sym-entry)
           sym-tag  (:ext.symbol/tag sym-entry)
+          op       (keyword (tool-call-name ext sym-id))
+          metadata (:metadata result)
           base     (cond-> {:position position :form form-str}
                      (some? sym-id)  (assoc :symbol sym-id)
-                     (some? sym-tag) (assoc :tag sym-tag))]
+                     (some? sym-tag) (assoc :tag sym-tag)
+                     (some? op)      (assoc :op op)
+                     (some? (:started-at-ms metadata))  (assoc :started-at-ms (:started-at-ms metadata))
+                     (some? (:finished-at-ms metadata)) (assoc :finished-at-ms (:finished-at-ms metadata)))]
       (if (:success? result)
         (let [unwrapped (:result result)
-              ir       (render-value sym-entry unwrapped)]
-          (record-render-entry! (assoc base :success? true :result ir :error nil)))
+              rendered  (render-value sym-entry unwrapped)]
+          (record-render-entry! (assoc base :success? true :result rendered :error nil)))
         (record-render-entry! (assoc base :success? false :result nil :error (:error result))))))
   result)
 
@@ -2604,38 +2784,57 @@
       :else
       {:type "unknown" :message (str error)})))
 
-(defn default-error-ir
+(defn default-error-result
   "Engine fallback used by `render-tool-result` when a symbol does
-   not declare `:ext.symbol/render-error-fn`. Returns canonical IR
-   and includes rendered source context when `:error :block` is present."
+   not declare `:ext.symbol/render-error-fn`. Returns the canonical
+   `{:summary :display}` render contract.
+
+   `:summary` is a zone map `{:left **ERROR** :right <type>}` so channels
+   paint a labelled badge with the error class anchored right. `:display`
+   is the full error IR: the headline plus rendered source context when
+   `:error :block` is present."
   [tool-result]
   (let [op                  (:symbol tool-result)
         error               (:error tool-result)
         {:keys [type message]} (format-error-fields error)
-        context-ir          (when (:block error) (render-error-context (:block error)))]
-    (render/->ast
-      (into [:ir {}
-             [:p {}
-              [:strong {} [:span {} "ERROR"]]
-              (when op [:span {} (str " " op)])
-              [:span {} (str " — " type)]
-              (when (seq message) [:span {} (str ": " message)])]]
-        (when context-ir (drop 2 context-ir))))))
+        context-ir          (when (:block error) (render-error-context (:block error)))
+        display-ir          (render/->ast
+                              (into [:ir {}
+                                     [:p {}
+                                      [:strong {} [:span {} "ERROR"]]
+                                      (when op [:span {} (str " " op)])
+                                      [:span {} (str " — " type)]
+                                      (when (seq message) [:span {} (str ": " message)])]]
+                                (when context-ir (drop 2 context-ir))))]
+    {:summary (cond-> {:left (ir-strong "ERROR")}
+                (seq type) (assoc :right type))
+     :display display-ir}))
+
+(defn default-error-ir
+  "Deprecated shim retained for callers that still expect a flat IR for the
+   default error. Returns `(:display (default-error-result …))`. New code
+   should consume `default-error-result` and read `:summary` / `:display`."
+  [tool-result]
+  (:display (default-error-result tool-result)))
 
 (defn render-tool-result
-  "Render a tool-result for runtime channels (TUI, telegram, ...). Successful
-   results use the registered symbol renderer. Missing renderer means payload
-   omitted, never pr-str dumped."
+  "Render a tool-result for runtime channels (TUI, telegram, ...) as the
+   canonical `{:summary :display}` contract. Successful results use the
+   registered `:render-fn`; failures use the symbol's `:render-error-fn`
+   (validated against the same contract) or `default-error-result`.
+   Missing renderer means payload omitted, never pr-str dumped."
   [tool-result]
   (if-not (:success? tool-result)
     (if-let [sym-entry (tool-result-symbol-entry tool-result)]
       (if-let [f (:ext.symbol/render-error-fn sym-entry)]
-        (normalize-render-value (f tool-result))
-        (default-error-ir tool-result))
-      (default-error-ir tool-result))
+        (assert-render-fn-result! (f tool-result)
+          (:ext.symbol/symbol sym-entry) :render-error-fn)
+        (default-error-result tool-result))
+      (default-error-result tool-result))
     (if-let [sym-entry (tool-result-symbol-entry tool-result)]
       (render-value sym-entry (:result tool-result))
-      (missing-tool-renderer-ir tool-result))))
+      {:summary (ir-root (ir-p (ir-strong "TOOL")))
+       :display (missing-tool-renderer-ir tool-result)})))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.
