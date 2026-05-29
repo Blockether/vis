@@ -73,12 +73,10 @@
        head        (assoc :center
                      (ir-p (ir-code (or branch "?")) " @" (short-sha head)))
        (not clean?) (assoc :right (str n " entr" (if (= n 1) "y" "ies"))))
+     ;; Body ONLY — label / branch / @head / count are already on the summary
+     ;; op-row; repeating them here renders the header twice.
      :display
      (ir-root
-       (ir-p (ir-strong label)
-         "  " (ir-code (or branch "?"))
-         (when head (str "  @" (short-sha head)))
-         (when-not clean? (str "  " n " entr" (if (= n 1) "y" "ies"))))
        (when (seq entries)
          (ir-code-block "text"
            (cap (str/join "\n"
@@ -153,11 +151,9 @@
      {:left   (ir-strong "LOG")
       :center (ir-code (or branch "?"))
       :right  (str n " commit" (when (not= 1 n) "s"))}
+     ;; Body ONLY — LOG / branch / count are already on the summary op-row.
      :display
      (ir-root
-       (ir-p (ir-strong "LOG")
-         "  " (ir-code (or branch "?"))
-         "  " n " commit" (when (not= 1 n) "s"))
        (when (seq commits)
          (ir-code-block "text"
            (cap (str/join "\n" (map log-row commits))))))}))
@@ -181,24 +177,23 @@
      {:left   (ir-strong "SHOW")
       :center (ir-p (ir-code sha*) " " (or subject author "?"))
       :right  (str nf " file" (when (not= 1 nf) "s") "  +" np "  −" nm)}
+     ;; Body ONLY — SHOW, sha, subject and the +/- counts are on the summary
+     ;; op-row. The display adds the author/date (and committer when it
+     ;; differs), the commit message body, the file stat, and the patches.
      :display
      (apply ir-root
-       (ir-p (ir-strong "SHOW")
-         "  " (ir-code sha*)
-         "  " (or author "?")
-         (when email (str " <" email ">"))
-         (when at (str "  " at)))
-       (when subject (ir-p (ir-strong subject)))
-       (when (and body (seq (str/trim body)))
-         (ir-code-block "text" (cap body)))
-       (ir-p (str nf " file" (when (not= 1 nf) "s")
-               "  +" np "  −" nm
-               (when (and committer (not= committer author))
-                 (str "  committer=" committer))))
-       (when (seq files)
-         (ir-code-block "text" (cap body*)))
-       (when (seq (str/trim patch-text))
-         (ir-code-block "diff" (cap patch-text))))}))
+       (concat
+         [(ir-p (str (or author "?")
+                  (when email (str " <" email ">"))
+                  (when at (str "  " at))
+                  (when (and committer (not= committer author))
+                    (str "  committer=" committer))))]
+         (when (and body (seq (str/trim body)))
+           [(ir-code-block "text" (cap body))])
+         (when (seq files)
+           [(ir-code-block "text" (cap body*))])
+         (when (seq (str/trim patch-text))
+           [(ir-code-block "diff" (cap patch-text))])))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/blame
@@ -220,14 +215,9 @@
     :right  (str total " line" (when (not= 1 total) "s")
               (when (seq ignored-revs)
                 (str "  ignored=" (count ignored-revs))))}
+   ;; Body ONLY — BLAME / path / @head / line count are on the summary op-row.
    :display
    (ir-root
-     (ir-p (ir-strong "BLAME")
-       "  " (ir-code (or path "?"))
-       (when head (str "  @" (short-sha head)))
-       "  " total " line" (when (not= 1 total) "s")
-       (when (seq ignored-revs)
-         (str "  ignored=" (count ignored-revs))))
      (when (seq lines)
        (ir-code-block "text"
          (cap (str/join "\n" (map blame-row lines))))))})
@@ -239,28 +229,32 @@
 (defn render-merge-status
   [{:keys [in-progress? branch head merge-head conflicts]}]
   (if-not in-progress?
+    ;; Nothing to expand — the summary op-row already says it all.
     {:summary {:left (ir-strong "NO MERGE")
                :right "working tree is not mid-merge"}
-     :display (ir-root (ir-p (ir-strong "NO MERGE") "  working tree is not mid-merge"))}
+     :display (ir-root)}
     (let [n (count conflicts)]
       {:summary
        {:left   (ir-strong "MERGING")
         :center (ir-code (or branch "?"))
         :right  (str n " conflict" (when (not= 1 n) "s"))}
+       ;; Body ONLY — MERGING / branch / conflict count are on the summary.
        :display
-       (ir-root
-         (ir-p (ir-strong "MERGING")
-           "  " (ir-code (or branch "?"))
-           (when head (str "  HEAD=" (short-sha head)))
-           (when merge-head (str "  MERGE_HEAD=" (short-sha merge-head))))
-         (ir-p (str n " conflict" (when (not= 1 n) "s")
-                 (when (zero? n) " — ready for (git/merge-continue!)")))
-         (when (seq conflicts)
-           (ir-code-block "text"
-             (cap (str/join "\n"
-                    (map (fn [{:keys [path state]}]
-                           (str (or state "UU") " " path))
-                      conflicts))))))})))
+       (apply ir-root
+         (concat
+           (when (or head merge-head)
+             [(ir-p (str/join "  "
+                      (remove nil?
+                        [(when head (str "HEAD=" (short-sha head)))
+                         (when merge-head (str "MERGE_HEAD=" (short-sha merge-head)))])))])
+           (when (zero? n)
+             [(ir-p "ready for (git/merge-continue!)")])
+           (when (seq conflicts)
+             [(ir-code-block "text"
+                (cap (str/join "\n"
+                       (map (fn [{:keys [path state]}]
+                              (str (or state "UU") " " path))
+                         conflicts))))])))})))
 
 (defn render-merge-op
   "Generic single-path op renderer. Used by accept-ours / accept-theirs /
@@ -269,30 +263,30 @@
   (let [label (str/upper-case (name (or op :op)))]
     {:summary {:left (ir-strong label)
                :right (ir-code (or path "?"))}
-     :display (ir-root
-                (ir-p (ir-strong label)
-                  "  " (ir-code (or path "?"))))}))
+     ;; Label + path are on the summary op-row; nothing more to expand.
+     :display (ir-root)}))
 
 (defn render-merge-continue
   [{:keys [result head message]}]
   {:summary
    {:left  (ir-strong "MERGED")
     :right (ir-code (or (short-sha head) "?"))}
+   ;; Body ONLY — MERGED + sha are on the summary op-row.
    :display
-   (ir-root
-     (ir-p (ir-strong "MERGED")
-       "  " (ir-code (or (short-sha head) "?"))
-       (when message (str "  msg=\"" message "\""))
-       (when (and result (not= :continued result))
-         (str "  result=" (name result)))))})
+   (apply ir-root
+     (let [extra (str/join "  "
+                   (remove nil?
+                     [(when message (str "msg=\"" message "\""))
+                      (when (and result (not= :continued result))
+                        (str "result=" (name result)))]))]
+       (when (seq extra) [(ir-p extra)])))})
 
 (defn render-merge-abort
   [{:keys [result]}]
   {:summary {:left (ir-strong "ABORTED")
              :right "HEAD restored"}
+   ;; Body ONLY — ABORTED + "HEAD restored" are on the summary op-row.
    :display
-   (ir-root
-     (ir-p (ir-strong "ABORTED")
-       "  HEAD restored"
-       (when (and result (not= :aborted result))
-         (str "  result=" (name result)))))})
+   (apply ir-root
+     (when (and result (not= :aborted result))
+       [(ir-p (str "result=" (name result)))]))})
