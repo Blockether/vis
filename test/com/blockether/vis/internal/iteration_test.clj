@@ -50,8 +50,8 @@
                :success? true
                :error    nil
                :result   {:summary (extension/ir-root
-                                    (extension/ir-p (extension/ir-strong "PATCH")
-                                      "  +24 -8"))
+                                     (extension/ir-p (extension/ir-strong "PATCH")
+                                       "  +24 -8"))
                           :display (extension/ir-root
                                      (extension/ir-p (extension/ir-strong "PATCH")))}}
         channel (conj cats patch)]
