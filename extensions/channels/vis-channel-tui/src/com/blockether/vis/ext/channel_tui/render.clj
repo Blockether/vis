@@ -3246,8 +3246,13 @@
   [entry {:keys [session-id detail-expansions session-turn-id
                  iteration-number max-w]}]
   (let [block (iteration/iteration-entry->display-block entry)
-        scope (:scope block)
         ops   (:aggregated-ops block)
+        ;; Op-row disclosure node ids share the block's collapse key scheme:
+        ;; keyed on the UNIQUE iteration-number (never the fragile display-block
+        ;; `:scope`, which can be duplicated/nil on the rebuild path) and
+        ;; carrying the `:t<frag>` token the bubble render cache scopes on.
+        block-id (str "iter" iteration-number
+                   (when session-turn-id (str ":t" (short-id-fragment session-turn-id))))
         ;; Align summary columns: widest label across the individual op rows.
         label-w (->> ops
                   (remove :aggregate)
@@ -3261,13 +3266,13 @@
                      :detail-expansions detail-expansions
                      :session-turn-id   session-turn-id
                      :iteration-number  iteration-number
-                     :block-scope       scope
+                     :block-scope       block-id
                      :max-w             max-w}
                     op)
                   (op-row-entries
                     {:session-id        session-id
                      :detail-expansions detail-expansions
-                     :block-scope       scope
+                     :block-scope       block-id
                      :max-w             max-w
                      :label-w           label-w}
                     op))))
@@ -3767,37 +3772,25 @@
    ✓ ✗ ↻ ⊘ ⏱. The line is painted on the iteration-header marker band so
    it reads as the card's title. Returns nil when the iteration carries no
    ops to count (plain-value-only / pure-thinking iterations stay headerless)."
-  ^String [entry fill-w now-ms]
+  ^String [entry fill-w _now-ms]
   (let [block   (iteration/iteration-entry->display-block entry)
         ops     (:ops block)
         counts  (:counts block)]
     (when (seq ops)
-      (let [scope   (or (:scope block) "")
-            status  (:status block)
-            ;; A still-running block shows live elapsed; otherwise the
-            ;; recorded duration.
-            running? (= :running status)
-            dur-ms  (if (and running? now-ms)
-                      (let [started (some :started-at-ms (:forms block))]
-                        (when started (max 0 (- (long now-ms) (long started)))))
-                      (:duration-ms block))
-            dur-str (some-> dur-ms vis/format-duration)
-            glyph   (get iteration/status-glyph status "✓")
-            status-text (str/trim (str glyph (when dur-str (str " " dur-str))))
-            counts-w (max 8 (- fill-w 24))
+      (let [counts-w    (max 8 fill-w)
             counts-text (block-counts-text counts counts-w)
-            merged  (:merged-fences block)
-            ;; Human label: "ITERATION <M>" (the iteration number within the
-            ;; turn) — the turn number lives in the parent TURN header. Drop
-            ;; the raw `tN/iM` scope token from the card title.
-            iter-m  (or (second (re-find #"/i(\d+)" (str scope))) "?")
-            left    (str "ITERATION " iter-m
-                      (when (and merged (> merged 1))
-                        (str "  merged " merged " fences")))
-            mid     (when (seq counts-text) (str " | " counts-text))
-            head    (str left mid " | ")
-            pad     (max 1 (- fill-w (p/display-width head) (p/display-width status-text)))]
-        (str iteration-hdr-marker head (repeat-str \space pad) status-text " ")))))
+            merged      (:merged-fences block)
+            ;; The block IS the code-block grouping unit — no "ITERATION N"
+            ;; label, no status glyph, no duration. Aggregate status + total
+            ;; time live on the parent TURN header; per-op status shows on the
+            ;; op rows. The card title is just the op counts (the collapsed
+            ;; one-line summary of what the block did).
+            label       (cond-> (if (seq counts-text) counts-text "code")
+                          (and merged (> merged 1))
+                          (str "  ·  merged " merged " fences"))
+            head        (str label " ")
+            pad         (max 1 (- fill-w (p/display-width head)))]
+        (str iteration-hdr-marker head (repeat-str \space pad) " ")))))
 
 (defn- block-batch-hint-lines
   "Phase-4 high-fan-out soft warnings for a block. When the agent ran the
@@ -4167,9 +4160,20 @@
         ;; Collapsing it folds the code body + op rows away, leaving just the
         ;; card title with a ▶. Default OPEN (content visible) until the user
         ;; collapses it.
-        block-scope   (when (seq block-header)
-                        (:scope (iteration/iteration-entry->display-block entry)))
-        block-node    (when block-scope (str block-scope ":block"))
+        ;; Disclosure node id for the block-collapse toggle. Keyed on the
+        ;; iteration-number (UNIQUE within the turn) — NOT the display-block
+        ;; `:scope`, which is fragile: the resume/rebuild path copies whatever
+        ;; the persisted envelope carried, so two blocks can share a scope (or
+        ;; both be nil). A shared node-id makes one click collapse the wrong
+        ;; block. The `:t<frag>` token is also REQUIRED: `turn-detail-expansions-key`
+        ;; scopes the bubble's render cache to nodes carrying this turn's
+        ;; fragment — without it a click toggles `:detail-expansions` but the
+        ;; cache key never changes, so the cached bubble is served stale and the
+        ;; block never visibly collapses.
+        block-node    (when (seq block-header)
+                        (str "iter" iteration-number ":block"
+                          (when session-turn-id
+                            (str ":t" (short-id-fragment session-turn-id)))))
         block-open?   (if (and block-node session-id)
                         (detail-expanded? detail-expansions session-id block-node true)
                         true)
@@ -4424,31 +4428,50 @@
                              (render!))))]
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
       (let [iter-lines (coalesce-bubble-blanks (mapcat iter-entry-fn visible-iterations))
-            ;; Turn grouping: a turn (one user msg → done) owns N iterations.
-            ;; Prepend a collapsible `▶/▼ TURN tN · M iterations` header that
-            ;; folds the whole turn's iteration cards away. Turn number comes
-            ;; from any iteration's scope (`tN/iM`). Default open.
-            turn-scope (some (fn [[_ e]]
-                               (:scope (iteration/iteration-entry->display-block e)))
+            ;; Turn grouping: a turn (one user msg → done) owns N code blocks.
+            ;; Prepend a collapsible `▶/▼ TURN N  │  <status> <total>` header
+            ;; that folds the whole turn's code blocks away. The TURN header is
+            ;; the SINGLE place that carries the aggregate status mark and the
+            ;; total wall-clock — the green blocks underneath carry neither.
+            ;; Turn number comes from any iteration's scope (`tN/iM`).
+            blocks     (keep (fn [[_ e]] (iteration/iteration-entry->display-block e))
                          visible-iterations)
+            turn-scope (some :scope blocks)
             turn-n     (some-> turn-scope (str/split #"/") first)]
         (if-not turn-n
           iter-lines
-          (let [n-iters    (count visible-iterations)
-                turn-node  (str turn-n ":turn")
-                turn-open? (if session-id
-                             (detail-expanded? detail-expansions session-id turn-node true)
-                             true)
-                chevron    (if turn-open? "▼ " "▶ ")
-                turn-hdr   {:line (str iteration-hdr-marker chevron "TURN "
-                                    (str/replace turn-n #"^t" "")
-                                    "  │  " n-iters " iteration"
-                                    (when (not= 1 n-iters) "s"))
-                            :meta (when session-id
-                                    {:kind       :toggle-details
-                                     :session-id (str session-id)
-                                     :node-id    turn-node
-                                     :collapsed? (not turn-open?)})}]
+          (let [statuses    (set (map :status blocks))
+                running?    (boolean (some iteration-running? (map second visible-iterations)))
+                dur-ms      (if (and running? now-ms)
+                              (let [started (some (fn [[_ e]]
+                                                    (some :started-at-ms (:forms e)))
+                                              visible-iterations)]
+                                (when started (max 0 (- (long now-ms) (long started)))))
+                              (reduce + 0 (keep :duration-ms blocks)))
+                agg-status  (cond
+                              (contains? statuses :error)     :error
+                              (contains? statuses :cancelled) :cancelled
+                              (contains? statuses :timeout)   :timeout
+                              (or running? (contains? statuses :running)) :running
+                              :else :ok)
+                glyph       (get iteration/status-glyph agg-status "✓")
+                dur-str     (when (and dur-ms (pos? (long dur-ms))) (vis/format-duration dur-ms))
+                status-text (str/trim (str glyph (when dur-str (str " " dur-str))))
+                turn-node   (str turn-n ":turn"
+                              (when session-turn-id
+                                (str ":t" (short-id-fragment session-turn-id))))
+                turn-open?  (if session-id
+                              (detail-expanded? detail-expansions session-id turn-node true)
+                              true)
+                chevron     (if turn-open? "▼ " "▶ ")
+                turn-hdr    {:line (str iteration-hdr-marker chevron "TURN "
+                                     (str/replace turn-n #"^t" "")
+                                     "  │  " status-text)
+                             :meta (when session-id
+                                     {:kind       :toggle-details
+                                      :session-id (str session-id)
+                                      :node-id    turn-node
+                                      :collapsed? (not turn-open?)})}]
             (if turn-open?
               (into [turn-hdr] iter-lines)
               [turn-hdr])))))))
