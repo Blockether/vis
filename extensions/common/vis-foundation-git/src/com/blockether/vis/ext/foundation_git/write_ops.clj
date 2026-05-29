@@ -808,9 +808,10 @@
      (cond-> {:left (extension/ir-strong label)}
        (and center (not (str/blank? center))) (assoc :center (extension/ir-code center))
        (and right (not (str/blank? (str right)))) (assoc :right (str right)))
+     ;; Body ONLY — the op-row already shows the `label` (+ center/right) from
+     ;; the summary, so repeating it here renders the badge twice.
      :display
      (extension/ir-root
-       (extension/ir-p (extension/ir-strong label))
        (extension/ir-code-block "edn" (pr-str result)))}))
 
 (defn add-tool
