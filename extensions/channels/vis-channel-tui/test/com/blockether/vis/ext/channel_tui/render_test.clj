@@ -2,7 +2,6 @@
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.click-regions :as cr]
-   [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.ext.channel-tui.links :as links]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
@@ -579,12 +578,10 @@
           (expect (or (zero? (dec idx))
                     (not (visually-blank? (nth ln (- idx 2)))))))))))
 
-(defdescribe turn-header-test
-  ;; A turn (one user msg → done) owns N code blocks. The collapsible
-  ;; `TURN N  │  <status> <total>` header is the SINGLE place that carries the
-  ;; aggregate status mark + total wall-clock; the green blocks underneath
-  ;; carry neither (counts label only). Collapse works via `:detail-expansions`
-  ;; — and only because the block/turn node-ids embed the `:t<frag>` token that
+(defdescribe block-collapse-test
+  ;; Code blocks render FLAT — there is no TURN wrapper (it only hid the
+  ;; blocks). Each block is individually collapsible; its toggle is keyed on
+  ;; the iteration-number (unique within the turn) + the `:t<frag>` token that
   ;; `turn-detail-expansions-key` needs to bust the bubble render cache.
   (let [summary (fn [label] [:ir {} [:p {} [:strong {} [:span {} label]]]])
         block   (fn [scope dur ops & {:keys [error]}]
@@ -603,49 +600,22 @@
                                  nil trace 84 {:show-iterations true :show-thinking true} nil false
                                  {:session-id "sid" :session-turn-id stid :detail-expansions dx}))
                     (mapv (comp strip-sentinels strip-ansi))))
-        turn-node  (str "t7:turn:" frag)
-        ;; Block toggle is keyed on the iteration-number (unique within the
-        ;; turn), not the fragile display-block scope.
         block1-node (str "iter1:block:" frag)]
 
-    (it "carries the aggregate status + total duration on the TURN header only"
+    (it "renders code blocks flat with counts-only headers — no TURN header, no status/duration"
       (let [lines (render* {})
-            turn  (first (filter #(str/includes? % "TURN 7") lines))
             blocks (filter #(re-find #"observation|mutation" %) lines)]
-        (expect (some? turn))
-        ;; ✓ + total wall-clock (1.2s + 3.3s = 4.5s).
-        (expect (str/includes? turn "✓"))
-        (expect (str/includes? turn "4.5s"))
-        ;; The green block headers carry counts only — no glyph, no duration.
+        ;; No TURN wrapper at all.
+        (expect (not-any? #(str/includes? % "TURN") lines))
+        (expect (not-any? #(str/includes? % "ITERATION") lines))
+        ;; Green block headers carry counts only — no status glyph, no duration.
         (expect (seq blocks))
         (expect (not-any? #(str/includes? % "✓") blocks))
-        (expect (not-any? #(str/includes? % "4.5s") blocks))
-        (expect (not-any? #(str/includes? % "1.2s") blocks))
-        (expect (not-any? #(str/includes? % "ITERATION") lines))))
+        (expect (not-any? #(str/includes? % "4.5s") lines))
+        (expect (not-any? #(str/includes? % "1.2s") lines))))
 
-    (it "an errored block flips the TURN header glyph to ✗"
-      (let [trace* [(block "t7/i1/f1" 100 [(op-entry 0 :v/cat :observation (summary "CAT") (summary "CAT") false)]
-                      :error {:message "boom"})]
-            lines (->> (:lines (render/format-answer-with-thinking-data*
-                                 nil trace* 84 {:show-iterations true} nil false
-                                 {:session-id "sid" :session-turn-id stid :detail-expansions {}}))
-                    (mapv (comp strip-sentinels strip-ansi)))
-            turn  (first (filter #(str/includes? % "TURN 7") lines))]
-        (expect (some? turn))
-        (expect (str/includes? turn (iteration/status-glyph :error)))))
-
-    (it "collapsing the TURN node folds every block away, leaving just the header"
-      (let [lines (render* {["sid" turn-node] false})
-            turn  (first (filter #(str/includes? % "TURN 7") lines))]
-        (expect (some? turn))
-        (expect (str/includes? turn "▶"))
-        (expect (not-any? #(re-find #"observation|mutation" %) lines))
-        (expect (not-any? #(str/includes? % "STATUS") lines))
-        (expect (not-any? #(str/includes? % "COMMIT") lines))))
-
-    (it "collapsing one block folds its op rows but keeps the turn + sibling block"
+    (it "collapsing one block folds its op rows but keeps the sibling block"
       (let [lines (render* {["sid" block1-node] false})]
-        (expect (some #(str/includes? % "TURN 7") lines))
         ;; Block 1's ops gone...
         (expect (not-any? #(str/includes? % "STATUS") lines))
         (expect (not-any? #(str/includes? % "LS") lines))
@@ -673,15 +643,14 @@
         (expect (not-any? #(str/includes? % "STATUS") lines))
         (expect (some #(str/includes? % "COMMIT") lines))))
 
-    (it "turn-detail-expansions-key captures the turn + block nodes so a click busts the cache"
+    (it "turn-detail-expansions-key captures the block node so a click busts the cache"
       ;; Regression: without the `:t<frag>` token in the node-id the cache key
       ;; never changed on click, so the cached bubble was served stale and the
       ;; block never visibly collapsed.
       (let [k (#'render/turn-detail-expansions-key
                {:session-id "sid" :session-turn-id stid
-                :detail-expansions {[ "sid" turn-node] false
-                                    [ "sid" block1-node] false}})]
-        (expect (= [[block1-node false] [turn-node false]] k))))))
+                :detail-expansions {["sid" block1-node] false}})]
+        (expect (= [[block1-node false]] k))))))
 
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
