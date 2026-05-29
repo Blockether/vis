@@ -2,6 +2,7 @@
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+   [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.ext.channel-tui.links :as links]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
@@ -202,18 +203,20 @@
                                        :success? true :silent? false}]}
                              80 1 {:session-id "s"
                                    :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                                   ;; Phase-5 disclosure node id: `<block-scope>:op<position>`.
-                                   :detail-expansions {["s" "t24/i1:op0"] true}})
+                                   ;; Op-row disclosure node id: `iter<N>:t<frag>:op<position>`.
+                                   ;; Keyed on the unique iteration-number + turn fragment.
+                                   :detail-expansions {["s" "iter1:t123e4567:op0"] true}})
             expanded-body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) expanded-lines))]
         (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▼") expanded-lines))
         (expect (str/includes? expanded-body "LS"))
         (expect (str/includes? expanded-body ".gitignore")))))
 
-  (it "carries status+duration in the BLOCK header, not a per-form footer, and no scope stamp"
-    ;; Phase-5: the per-form footer (status glyph + duration + scope stamp) is
-    ;; GONE. Status + duration live in the card header, labelled `ITERATION <M>`
-    ;; (the turn number lives in the parent TURN header; never `/fK`/`/bK`).
-    ;; The op row carries the tool summary.
+  (it "labels the BLOCK header by op counts only — no status glyph, no duration, no scope stamp"
+    ;; The block IS the code-block grouping unit. Its header carries ONLY the
+    ;; op counts (the collapsed one-line summary). The aggregate status mark and
+    ;; total duration live on the parent TURN header, never on the green block;
+    ;; per-op status shows on the op rows. No `ITERATION N`, no `/fK`/`/bK`
+    ;; scope stamp, no per-form footer.
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file  changed=1"]]]
           lines (format-iteration-entry
                   {:iteration 0
@@ -230,26 +233,24 @@
                             :success? true :silent? false}]}
                   70 1 {:band-w 74})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          header  (first (filter #(str/includes? % "ITERATION") visible))
+          header  (first (filter #(str/includes? % "1 mutation") visible))
           op-line (first (filter #(str/includes? % "PATCH") visible))]
-      ;; Header carries status + duration.
+      ;; Header is the counts label.
       (expect (some? header))
-      (expect (str/includes? header "✓"))
-      (expect (str/includes? header "12ms"))
-      (expect (str/includes? header "ITERATION 1"))
-      ;; Block-level scope only — never the per-form `/f1` or `/b1` tail.
+      (expect (str/includes? header "1 mutation"))
+      ;; No status glyph, no duration, no ITERATION word, no scope stamp.
+      (expect (not-any? #(str/includes? % "ITERATION") visible))
+      (expect (not (str/includes? header "✓")))
+      (expect (not-any? #(str/includes? % "12ms") visible))
       (expect (not (str/includes? header "/f1")))
       (expect (not-any? #(str/includes? % "t24/i1/b1") visible))
-      ;; The op row paints the tool summary; the `✓ 12ms` status appears ONCE
-      ;; (in the header) — no duplicate per-form footer row.
+      ;; The op row paints the tool summary.
       (expect (some? op-line))
-      (expect (str/includes? op-line "▶"))
-      (expect (= 1 (count (filter #(str/includes? % "✓ 12ms") visible))))))
+      (expect (str/includes? op-line "▶"))))
 
-  (it "renders a BLOCK header with block-level scope, op counts, and status+duration"
-    ;; Phase-5: one card title per fence. The header sources its scope /
-    ;; counts / status from the canonical iteration-entry ops (the
-    ;; `:channel` sink slice on the form).
+  (it "renders a BLOCK header with op counts only (no scope, no status, no duration)"
+    ;; One card title per fence. The header sources its counts from the
+    ;; canonical iteration-entry ops (the `:channel` sink slice on the form).
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "STATUS"]]]]
           ok-entry (fn [pos op tag]
                      {:position pos :form (str "(" (name op) ")")
@@ -271,14 +272,14 @@
                             :success? true :silent? false}]}
                   80 4 {})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          header  (first (filter #(str/includes? % "ITERATION") visible))]
+          header  (first (filter #(str/includes? % "observation") visible))]
       (expect (some? header))
-      (expect (str/includes? header "ITERATION 3"))
+      (expect (not-any? #(str/includes? % "ITERATION") visible))
       (expect (not (str/includes? header "/f1")))
       (expect (str/includes? header "1 observation"))
       (expect (str/includes? header "1 mutation"))
-      (expect (str/includes? header "✓"))
-      (expect (str/includes? header "812ms"))))
+      (expect (not (str/includes? header "✓")))
+      (expect (not-any? #(str/includes? % "812ms") visible))))
 
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
@@ -577,6 +578,110 @@
           (expect (visually-blank? (nth ln (dec idx))))
           (expect (or (zero? (dec idx))
                     (not (visually-blank? (nth ln (- idx 2)))))))))))
+
+(defdescribe turn-header-test
+  ;; A turn (one user msg → done) owns N code blocks. The collapsible
+  ;; `TURN N  │  <status> <total>` header is the SINGLE place that carries the
+  ;; aggregate status mark + total wall-clock; the green blocks underneath
+  ;; carry neither (counts label only). Collapse works via `:detail-expansions`
+  ;; — and only because the block/turn node-ids embed the `:t<frag>` token that
+  ;; `turn-detail-expansions-key` needs to bust the bubble render cache.
+  (let [summary (fn [label] [:ir {} [:p {} [:strong {} [:span {} label]]]])
+        block   (fn [scope dur ops & {:keys [error]}]
+                  {:position 0 :code "(noop)"
+                   :forms [(cond-> {:scope scope :tag :observation :src "(noop)"
+                                    :duration-ms dur :success? (nil? error) :error error
+                                    :channel ops}
+                             error (assoc :success? false))]})
+        stid    "abcd1234-5678-9999"
+        frag    "tabcd1234"
+        trace   [(block "t7/i1/f1" 1200 [(op-entry 0 :git/status :observation (summary "STATUS") (summary "STATUS") true)
+                                          (op-entry 1 :v/ls :observation (summary "LS") (summary "LS") true)])
+                 (block "t7/i2/f1" 3300 [(op-entry 0 :git/commit! :mutation (summary "COMMIT") (summary "COMMIT") true)])]
+        render* (fn [dx]
+                  (->> (:lines (render/format-answer-with-thinking-data*
+                                 nil trace 84 {:show-iterations true :show-thinking true} nil false
+                                 {:session-id "sid" :session-turn-id stid :detail-expansions dx}))
+                    (mapv (comp strip-sentinels strip-ansi))))
+        turn-node  (str "t7:turn:" frag)
+        ;; Block toggle is keyed on the iteration-number (unique within the
+        ;; turn), not the fragile display-block scope.
+        block1-node (str "iter1:block:" frag)]
+
+    (it "carries the aggregate status + total duration on the TURN header only"
+      (let [lines (render* {})
+            turn  (first (filter #(str/includes? % "TURN 7") lines))
+            blocks (filter #(re-find #"observation|mutation" %) lines)]
+        (expect (some? turn))
+        ;; ✓ + total wall-clock (1.2s + 3.3s = 4.5s).
+        (expect (str/includes? turn "✓"))
+        (expect (str/includes? turn "4.5s"))
+        ;; The green block headers carry counts only — no glyph, no duration.
+        (expect (seq blocks))
+        (expect (not-any? #(str/includes? % "✓") blocks))
+        (expect (not-any? #(str/includes? % "4.5s") blocks))
+        (expect (not-any? #(str/includes? % "1.2s") blocks))
+        (expect (not-any? #(str/includes? % "ITERATION") lines))))
+
+    (it "an errored block flips the TURN header glyph to ✗"
+      (let [trace* [(block "t7/i1/f1" 100 [(op-entry 0 :v/cat :observation (summary "CAT") (summary "CAT") false)]
+                      :error {:message "boom"})]
+            lines (->> (:lines (render/format-answer-with-thinking-data*
+                                 nil trace* 84 {:show-iterations true} nil false
+                                 {:session-id "sid" :session-turn-id stid :detail-expansions {}}))
+                    (mapv (comp strip-sentinels strip-ansi)))
+            turn  (first (filter #(str/includes? % "TURN 7") lines))]
+        (expect (some? turn))
+        (expect (str/includes? turn (iteration/status-glyph :error)))))
+
+    (it "collapsing the TURN node folds every block away, leaving just the header"
+      (let [lines (render* {["sid" turn-node] false})
+            turn  (first (filter #(str/includes? % "TURN 7") lines))]
+        (expect (some? turn))
+        (expect (str/includes? turn "▶"))
+        (expect (not-any? #(re-find #"observation|mutation" %) lines))
+        (expect (not-any? #(str/includes? % "STATUS") lines))
+        (expect (not-any? #(str/includes? % "COMMIT") lines))))
+
+    (it "collapsing one block folds its op rows but keeps the turn + sibling block"
+      (let [lines (render* {["sid" block1-node] false})]
+        (expect (some #(str/includes? % "TURN 7") lines))
+        ;; Block 1's ops gone...
+        (expect (not-any? #(str/includes? % "STATUS") lines))
+        (expect (not-any? #(str/includes? % "LS") lines))
+        ;; ...sibling block 2 still open.
+        (expect (some #(str/includes? % "COMMIT") lines))
+        (expect (some #(str/includes? % "1 mutation") lines))))
+
+    (it "blocks that SHARE a display-block scope still collapse independently"
+      ;; Regression for the rebuild-path bug: the engine/resume can stamp the
+      ;; SAME `:scope` (or nil) on two iterations of one turn. When the toggle
+      ;; was keyed on scope, collapsing one block hid the OTHER. Keyed on the
+      ;; iteration-number, each block folds on its own.
+      (let [dup (fn [label] [:ir {} [:p {} [:strong {} [:span {} label]]]])
+            same-scope-trace
+            [(block "t7/i1/f1" 100 [(op-entry 0 :git/status :observation (dup "STATUS") (dup "STATUS") true)])
+             (block "t7/i1/f1" 100 [(op-entry 0 :git/commit! :mutation (dup "COMMIT") (dup "COMMIT") true)])]
+            render-dup (fn [dx]
+                         (->> (:lines (render/format-answer-with-thinking-data*
+                                        nil same-scope-trace 84 {:show-iterations true} nil false
+                                        {:session-id "sid" :session-turn-id stid :detail-expansions dx}))
+                           (mapv (comp strip-sentinels strip-ansi))))
+            ;; Collapse ONLY iteration 1.
+            lines (render-dup {["sid" (str "iter1:block:" frag)] false})]
+        ;; Block 1's op gone, block 2's op still shown.
+        (expect (not-any? #(str/includes? % "STATUS") lines))
+        (expect (some #(str/includes? % "COMMIT") lines))))
+
+    (it "turn-detail-expansions-key captures the turn + block nodes so a click busts the cache"
+      ;; Regression: without the `:t<frag>` token in the node-id the cache key
+      ;; never changed on click, so the cached bubble was served stale and the
+      ;; block never visibly collapsed.
+      (let [k (#'render/turn-detail-expansions-key
+               {:session-id "sid" :session-turn-id stid
+                :detail-expansions {[ "sid" turn-node] false
+                                    [ "sid" block1-node] false}})]
+        (expect (= [[block1-node false] [turn-node false]] k))))))
 
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
@@ -2323,7 +2428,7 @@
   (describe "100-cat doseq fan-out"
     (it "header counts are REAL — 100 observations, not the aggregated 1"
       (let [lines (rendered-lines (fanout-entry* 100))
-            hdr   (some #(when (str/includes? % "ITERATION 1") %) lines)]
+            hdr   (some #(when (str/includes? % "100 observations") %) lines)]
         (expect (some? hdr))
         (expect (str/includes? hdr "100 observations"))))
 
