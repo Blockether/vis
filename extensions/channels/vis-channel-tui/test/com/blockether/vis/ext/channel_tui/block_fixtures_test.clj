@@ -47,9 +47,13 @@
    (mapv clean (format-iteration-entry entry 80 1 opts))))
 
 (defn- op-rows
-  "Visible `▶`/`▼` op rows in a rendered frame."
+  "Visible `▶`/`▼` op rows in a rendered frame. Excludes the BLOCK header,
+   which now also carries a ▶/▼ disclosure chevron (the whole block is
+   collapsible) and would otherwise be miscounted as an op row."
   [lines]
-  (filter #(or (str/includes? % "▶") (str/includes? % "▼")) lines))
+  (filter #(and (or (str/includes? % "▶") (str/includes? % "▼"))
+             (not (str/includes? % "BLOCK - ")))
+    lines))
 
 (defn- header-of
   [lines]
@@ -132,7 +136,20 @@
           (expect (some #(str/includes? % "STATUS") rows))
           (expect (some #(str/includes? % "ADD") rows))
           (expect (some #(str/includes? % "COMMIT") rows))
-          (expect (some #(str/includes? % "PUSH") rows)))))))
+          (expect (some #(str/includes? % "PUSH") rows)))))
+
+    (it "collapses the whole block (code + op rows) when the header toggle is off"
+      ;; The BLOCK header is a disclosure toggle keyed on `<scope>:block`.
+      ;; Collapsed → only the header (with ▶) survives; code body + op rows fold away.
+      (let [lines (rendered (git-fence-entry)
+                    {:session-id "s1"
+                     :detail-expansions {["s1" "t6/i1:block"] false}})]
+        ;; Header still present...
+        (expect (some? (header-of lines)))
+        ;; ...but every op row is gone, and the code body is folded.
+        (expect (zero? (count (op-rows lines))))
+        (expect (not (some #(str/includes? % "STATUS") lines)))
+        (expect (not (some #(str/includes? % "git/status") lines)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 2 — nested `let`: (let [a (v/cat) b (v/cat)] (v/patch)).

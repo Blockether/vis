@@ -1866,7 +1866,18 @@
                     (str/starts-with? line iteration-hdr-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (p/put-str! g x y (subs line 1)))
+                      (p/put-str! g x y (subs line 1))
+                      ;; BLOCK header is a disclosure toggle: clicking it
+                      ;; collapses/expands the whole card (code + op rows).
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col x :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)}))))
 
               ;; ── Iteration recap — triple-zone paint ──
               ;;
@@ -4148,13 +4159,30 @@
         ;; `BLOCK - <scope> | <counts> | <status+duration>`. Painted above
         ;; the body; absent for plain-value-only / pure-thinking iterations.
         block-header  (block-header-line entry fill-w now-ms)
+        ;; The BLOCK header is a disclosure toggle keyed on the block scope.
+        ;; Collapsing it folds the code body + op rows away, leaving just the
+        ;; card title with a ▶. Default OPEN (content visible) until the user
+        ;; collapses it.
+        block-scope   (when (seq block-header)
+                        (:scope (iteration/iteration-entry->display-block entry)))
+        block-node    (when block-scope (str block-scope ":block"))
+        block-open?   (if (and block-node session-id)
+                        (detail-expanded? detail-expansions session-id block-node true)
+                        true)
+        block-chevron (if block-open? "▼ " "▶ ")
         ;; Phase-4 high-fan-out soft warnings ride directly under the header
-        ;; on the same band; only meaningful when there is a header to ride.
-        batch-hints   (when (seq block-header) (block-batch-hint-lines entry fill-w))
+        ;; on the same band; only meaningful with a header AND when expanded.
+        batch-hints   (when (and (seq block-header) block-open?)
+                        (block-batch-hint-lines entry fill-w))
         header-lines  (if (seq block-header)
                         (-> [(line-entry (str iteration-pad-marker ""))
-                             (line-entry block-header)]
-                          (into batch-hints))
+                             {:line (str iteration-hdr-marker block-chevron (subs block-header 1))
+                              :meta (when (and session-id block-node)
+                                      {:kind       :toggle-details
+                                       :session-id (str session-id)
+                                       :node-id    block-node
+                                       :collapsed? (not block-open?)})}]
+                          (into (or batch-hints [])))
                         [])
         ;; Phase-5 BLOCK op rows: ONE `▶ <LABEL> <summary>` row per op
         ;; (long same-op runs collapse to `▶ OP × N (…)`), painted ONCE per
@@ -4162,7 +4190,7 @@
         ;; the block's "what changed" section. Only meaningful when the block
         ;; carries ops (a header is present); plain-value / pure-thinking
         ;; blocks have none.
-        op-rows       (when (seq block-header)
+        op-rows       (when (and (seq block-header) block-open?)
                         (block-op-row-entries
                           entry
                           {:session-id        session-id
@@ -4187,8 +4215,10 @@
     ;; zero gap between the thinking band and the code (the
     ;; thinking pad is the bottom \"band edge\"; the code chrome
     ;; takes over immediately).
+    ;; When the BLOCK is collapsed, fold the code body + op rows away —
+    ;; only the header (▶) and any thinking/error rows remain.
     (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
-      (into body)
+      (into (if block-open? body []))
       (into (or op-rows-block [])))))
 
 (defn format-iteration-entry
