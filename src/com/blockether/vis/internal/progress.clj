@@ -80,7 +80,8 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.format :as fmt]))
+   [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.iteration :as iteration]))
 
 (defn- empty-iteration-entry [iteration]
   ;; Per-iteration timeline entry. `:forms` is the canonical per-form
@@ -341,6 +342,11 @@
      :scope           (or (:scope chunk) (:scope prev-form))
      :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
      :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
+     ;; Carry the raw sink slice so the shared `iteration/entry-ops`
+     ;; derives DISPLAY-state ops identically to the resume path (which
+     ;; keeps `:channel` on its restored blocks). `:result-render` stays
+     ;; the pre-combined IR the legacy per-form body painter consumes.
+     :channel         (vec (:channel chunk))
      :result-render   (when-not (or errored? answer-slot?) (format-form-result chunk))
      :result-kind     (form-result-kind chunk)
      :result-detail   (form-result-detail chunk)
@@ -571,7 +577,18 @@
   ([] (make-progress-tracker nil))
   ([{:keys [on-update]}]
    (let [timeline (atom (sorted-map))
-         as-vec   #(vec (vals %))]
+         ;; Canonicalize every entry as it leaves the tracker: layer the
+         ;; shared block-level fields (`:scope` `:code` `:ops` `:status`
+         ;; `:duration-ms` `:error` + 0-based `:position`) on top of the
+         ;; raw per-iteration accumulation. Stored entries stay raw so the
+         ;; chunk reducer keeps its transient bookkeeping; consumers
+         ;; (renderer, parity test) see the SAME canonical shape the resume
+         ;; path produces.
+         canon    (fn [iteration entry]
+                    (iteration/canonicalize
+                      (assoc entry :position (when (integer? iteration)
+                                               (max 0 (dec (long iteration)))))))
+         as-vec   #(vec (map (fn [[it entry]] (canon it entry)) %))]
      {:on-chunk     (fn [chunk]
                       ;; Loop emits a mix of chunk shapes: per-iteration
                       ;; lifecycle chunks (`:reasoning`, `:form-result`,
