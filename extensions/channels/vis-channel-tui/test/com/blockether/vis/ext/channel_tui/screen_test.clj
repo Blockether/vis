@@ -631,16 +631,19 @@
                           "\u241B[31mok\u241B[0m"))
           (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
 
-  (it "whole trace bubble copy includes huge tool result bodies inline"
-    ;; Per user directive: collapsible disclosure was removed. Plain
-    ;; `:value` form results no longer paint at all; only `:tool` kind
-    ;; renders through the channel-render path, and its body is fully
-    ;; visible (and copyable) without any `chars hidden` summary.
+  (it "whole trace bubble copy includes huge tool op display bodies inline"
+    ;; Phase-5: tool output paints as a BLOCK op row whose `:display` IR is
+    ;; fully visible (and copyable) when expanded — no `chars hidden` summary.
     (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
+          summary     [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file"]]]
+          display     [:ir {} [:p {} [:span {} huge-result]]]
           trace       [{:forms [{:code          "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
-                                 :result-render huge-result
+                                 :channel       [{:position 0 :form "(v/patch)" :symbol :v/patch :op :v/patch
+                                                  :tag :mutation :success? true :error nil
+                                                  :result {:summary summary :display display}}]
+                                 :result-render summary
                                  :result-kind   :tool
-                                 :result-detail {:op :v/patch :tag :mutation}
+                                 :result-detail nil
                                  :duration-ms   1
                                  :success?      true
                                  :silent?       false}]}]
@@ -650,7 +653,8 @@
                          :traces trace
                          :ir [:ir {} [:p {} [:span {} "done"]]]}
                         96 {:show-iterations true}
-                        {:session-id "session"})]
+                        {:session-id "session"
+                         :detail-expansions {:vis.channel-tui/expand-all-details? true}})]
       (expect (str/includes? copied "abcdefghij"))
       (expect (not (str/includes? copied "chars hidden")))))
 

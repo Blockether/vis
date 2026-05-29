@@ -294,6 +294,10 @@
                                             (assoc :duration-ms (:duration-ms it)))]
                         [grouped])
                       visible)
+        ;; `:forms` are the PERSISTED proof envelopes (model-facing, one per
+        ;; top-level form). `iteration/canonicalize` derives the DISPLAY-state
+        ;; `:ops` from each envelope's `:channel` sink slice — `:ops` is what
+        ;; the renderer paints as block op rows; `:forms` stays proof-granular.
         forms       (mapv block->form-record visible)]
     (iteration/canonicalize
     {:position           (when-let [p (:position it)] (dec (long p)))

@@ -151,6 +151,50 @@
         (finally
           (extension/deregister-extension! "test.renderer")))))
 
+  (it "HARD-rejects a render-fn that returns non-`{:summary :display}` at register time when a sample is declared"
+    ;; Phase 7: with `:render-sample` present, register-extension! smoke-calls
+    ;; the render-fn and refuses the extension if it returns bare IR (not the
+    ;; `{:summary :display}` contract). This is a register-time gate, not only
+    ;; a sink-write assertion.
+    (let [bad-entry (extension/symbol #'demo-symbol-fn
+                      {:symbol 'demo
+                       :tag :observation
+                       ;; legacy bare-IR return — invalid contract.
+                       :render-fn (fn [_] [:ir {} [:p {} [:span {} "raw"]]])
+                       :render-sample {:result {:secret "payload"}}})]
+      (expect (= :extension/render-non-contract
+                (try
+                  (extension/register-extension!
+                    {:ext/name "test.bad-renderer"
+                     :ext/kind "test"
+                     :ext/description "Test bad renderer."
+                     :ext/sci {:ext.sci/ns 'test.bad-renderer
+                               :ext.sci/alias 'test.bad-renderer
+                               :ext.sci/symbols [bad-entry]}})
+                  nil
+                  (catch clojure.lang.ExceptionInfo e
+                    (:type (ex-data e)))
+                  (finally
+                    (extension/deregister-extension! "test.bad-renderer")))))))
+
+  (it "accepts a render-fn that returns the contract when smoke-called with the sample"
+    (let [good-entry (extension/symbol #'demo-symbol-fn
+                       {:symbol 'demo
+                        :tag :observation
+                        :render-fn (fn [_] {:summary [:ir {} [:p {} [:strong {} [:span {} "OK"]]]]
+                                            :display [:ir {} [:p {} [:span {} "ok body"]]]})
+                        :render-sample {:result {:secret "payload"}}})]
+      (try
+        (expect (some? (extension/register-extension!
+                         {:ext/name "test.good-renderer"
+                          :ext/kind "test"
+                          :ext/description "Test good renderer."
+                          :ext/sci {:ext.sci/ns 'test.good-renderer
+                                    :ext.sci/alias 'test.good-renderer
+                                    :ext.sci/symbols [good-entry]}})))
+        (finally
+          (extension/deregister-extension! "test.good-renderer")))))
+
   ;; Channel entries must carry `:form-idx` so the rebuild path can
   ;; partition the fence's render sink back onto per-form envelopes.
   ;; Without it, a multi-form fence (\"three v/ls calls in three
