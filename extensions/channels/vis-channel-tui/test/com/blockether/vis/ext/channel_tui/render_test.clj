@@ -2161,7 +2161,7 @@
       ;; Suggestion rows are inset to the same column span as the
       ;; title accent stripe (margin-left = margin-right = pad).
       ;; The body fill on every row uses the normal `dialog-bg`
-      ;; palette — selection is signalled by the `>` glyph in the
+      ;; palette — selection is signalled by the dot marker in the
       ;; left margin, NOT by a full-row accent stripe.
       (expect (some #(and (= first-sug (:row %))
                        (= pad (:col %))
@@ -2169,21 +2169,21 @@
                        (= t/dialog-bg (:bg %)))
                 @fills))
 
-      ;; The selected row carries a BOLD `> ` cursor glyph at the
-      ;; FIRST col of the inset body (col `pad`), painted in
-      ;; `dialog-hint-key` on `dialog-bg` so the marker reads as
-      ;; INSIDE the menu rather than floating in the terminal margin.
-      ;; The non-selected row gets nothing painted in that column.
+      ;; The selected row carries a BOLD dot marker at the FIRST col
+      ;; of the inset body (col `pad`), painted in `dialog-hint-key`
+      ;; on `dialog-bg` so marker reads INSIDE menu rather than
+      ;; floating in terminal margin. Non-selected row gets nothing
+      ;; painted in that column.
       (expect (some #(and (= first-sug (:row %))
                        (= pad (:col %))
-                       (= "> " (:text %))
+                       (= p/SELECTION_GLYPH (:text %))
                        (= t/dialog-hint-key (:fg %))
                        (= t/dialog-bg (:bg %))
                        (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                 @puts))
       (expect (not-any? #(and (= (inc first-sug) (:row %))
                            (= pad (:col %))
-                           (= "> " (:text %)))
+                           (= p/SELECTION_GLYPH (:text %)))
                 @puts))
 
       ;; Each suggestion row paints a markdown-style chip:

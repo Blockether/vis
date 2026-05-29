@@ -1982,40 +1982,61 @@
     "-"))
 
 (def ^:private session-table-headers
-  ["" "ID" "Turns" "Modified" "Created" "Title"])
+  ["" "ID" "Title" "Turns" "Created at" "Time" "Modified at" "Time"])
 
 (def ^:private session-table-aligns
-  [:left :left :right :left :left :left])
+  [:left :left :left :right :left :left :left :left])
+
+(defn- format-session-day
+  [v]
+  (if-let [date (date-value v)]
+    (let [fmt (SimpleDateFormat. "yyyy-MM-dd" Locale/ROOT)]
+      (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
+      (.format fmt date))
+    "-"))
+
+(defn- format-session-time
+  [v]
+  (if-let [date (date-value v)]
+    (let [fmt (SimpleDateFormat. "HH:mm" Locale/ROOT)]
+      (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
+      (.format fmt date))
+    "-"))
 
 (defn- session-table-widths
-  "Column widths for the session table. Total rendered row width equals
-   `table-w`, including inter-cell separators and one outer space each side."
+  "Column widths for the boxed session table. Total rendered row width equals
+   `table-w`, including side borders, inter-cell separators, and padding."
   [table-w]
   (let [n         (count session-table-headers)
-        overhead  (dec (* 3 n))
+        overhead  (inc (* 3 n))
         available (max n (- table-w overhead))]
-    (if (>= available 56)
-      (let [active-w   1
-            id-w       8
-            turns-w    5
-            modified-w 16
-            created-w  16
-            title-w    (max 1 (- available active-w id-w turns-w modified-w created-w))]
-        [active-w id-w turns-w modified-w created-w title-w])
-      (let [active-w   1
-            id-w       (max 1 (min 8 (quot available 6)))
-            turns-w    (max 1 (min 5 (quot available 6)))
-            modified-w (max 1 (min 10 (quot available 4)))
-            created-w  (max 1 (min 10 (quot available 4)))
-            title-w    (max 1 (- available active-w id-w turns-w modified-w created-w))]
-        [active-w id-w turns-w modified-w created-w title-w]))))
+    (if (>= available 70)
+      (let [active-w 1
+            id-w     8
+            title-w  (max 10 (- available active-w id-w 5 10 5 11 5))
+            turns-w  5
+            created-w 10
+            modified-w 11
+            time-w   5]
+        [active-w id-w title-w turns-w created-w time-w modified-w time-w])
+      (let [active-w 1
+            id-w     (max 1 (min 8 (quot available 8)))
+            turns-w  (max 1 (min 5 (quot available 8)))
+            created-w (max 1 (min 10 (quot available 7)))
+            modified-w (max 1 (min 11 (quot available 7)))
+            time-w   (max 1 (min 5 (quot available 12)))
+            title-w  (max 1 (- available active-w id-w turns-w created-w time-w modified-w time-w))]
+        [active-w id-w title-w turns-w created-w time-w modified-w time-w]))))
+
+(defn- session-table-border-line
+  [body-w kind]
+  (table/boxed-border-line (session-table-widths body-w) kind))
 
 (defn- session-table-row-label
-  "Format one fixed-width session table row with real cell separators.
-   Width math is terminal columns, not Java chars, so CJK/emoji titles cannot
-   shift later rows."
+  "Format one fixed-width boxed session table row. Width math is terminal
+   columns, not Java chars, so CJK/emoji titles cannot shift later rows."
   [cells body-w]
-  (table-row-line (session-table-widths body-w) cells session-table-aligns))
+  (table/boxed-row-line (session-table-widths body-w) cells session-table-aligns))
 
 (defn session-dialog-label
   "Format one fixed-width session table row. Columns are intentionally
@@ -2025,39 +2046,44 @@
     (session-table-row-label
       [(if active? "●" "")
        (short-session-id session)
+       (session-title session)
        (str (long (or turn-count 0)))
-       (format-session-date modified-at)
-       (format-session-date created-at)
-       (session-title session)]
+       (format-session-day created-at)
+       (format-session-time created-at)
+       (format-session-day modified-at)
+       (format-session-time modified-at)]
       body-w)))
 
 (defn session-dialog-header
   [body-w]
   (session-table-row-label session-table-headers body-w))
 
+(defn- session-dialog-sort-key
+  [{:keys [modified-at created-at]}]
+  [(- (long (or (date->millis modified-at) 0)))
+   (- (long (or (date->millis created-at) 0)))])
+
 (defn session-dialog-items
   "Build table rows for existing sessions only. New/fork stay dialog
    options via the N/F shortcuts and command palette; they are not fake table
-   data rows. `sessions` are already sorted by the caller by latest
-   modification date."
+   data rows. Rows are sorted by Modified at desc, then Created at desc."
   ([sessions active-id]
    (session-dialog-items sessions active-id session-dialog-content-w))
   ([sessions active-id body-w]
    (mapv (fn [session]
            {:action :switch
-            :id     (:id session)              ; UUID — downstream (switch-session!) accepts both
+            :id     (str (:id session))        ; downstream (switch-session!) accepts full UUID strings
             :label  (session-dialog-label session active-id body-w)})
-     sessions)))
+     (sort-by session-dialog-sort-key sessions))))
 
 (defn- draw-session-row!
   [g left row inner-w selected? label]
-  ;; Session picker is a TABLE — the table cells must NOT shift
-  ;; between selected and unselected states, so the `> ` cursor glyph
-  ;; is painted by the caller (see the row loop in
-  ;; `session-picker-dialog!`) at `(inc left)`, the inner edge of
-  ;; the dialog frame. The body label sits two cols further in (gutter
-  ;; for marker + 1 col margin) and uses the normal palette, BOLD on
-  ;; selected so the row text echoes the cursor cue.
+  ;; Session picker is a TABLE — cells must NOT shift between selected
+  ;; and unselected states, so the dot marker is painted by caller (see
+  ;; row loop in `session-picker-dialog!`) at `(inc left)`, inner edge
+  ;; of dialog frame. Body label sits two cols further in (gutter for
+  ;; marker + margin) and uses normal palette, BOLD on selected so row
+  ;; text echoes marker cue.
   (p/set-colors! g t/dialog-fg t/dialog-bg)
   (p/fill-rect! g (inc left) row inner-w 1)
   (let [body-x (+ left 1 p/SELECTION_WIDTH)
@@ -2082,44 +2108,51 @@
             bounds  (draw-dialog-chrome! g cols rows "Sessions"
                       session-dialog-content-h)
             {:keys [left inner-w]} bounds
-            ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
-            ;; inner area for the selection gutter (`>` + 1 margin
-            ;; col); see `draw-list-item!` for the layout map.
+            ;; Reserve `p/SELECTION_WIDTH` cols at start of inner area
+            ;; for dot marker gutter. Table itself is boxed; marker stays
+            ;; outside table so columns never shift.
             body-w  (max 1 (- inner-w 4 p/SELECTION_WIDTH))
             items   (session-dialog-items sessions active-id body-w)
             total   (count items)
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
-            header-row content-top
-            body-top   (+ content-top 2)
-            body-h     (max 1 (- content-h 2))
+            table-x (+ left 1 p/SELECTION_WIDTH)
+            table-top content-top
+            header-row (inc table-top)
+            sep-row    (inc header-row)
+            body-top   (inc sep-row)
+            body-h     (max 1 (- content-h 4))
+            bottom-row (+ body-top body-h)
             visible    (min total body-h)
             _       (swap! selected #(clamp % 0 (max 0 (dec total))))
             _       (swap! scroll #(visible-window-start @selected % body-h total))]
 
-        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-        (p/enable! g p/BOLD)
-        (p/fill-rect! g (inc left) header-row inner-w 1)
-        ;; Header (and the separator below) sit at the same x as the
-        ;; row body — just past the selection gutter.
-        (p/put-str! g (+ left 1 p/SELECTION_WIDTH) header-row
-          (session-dialog-header body-w))
-        (p/clear-styles! g)
         (p/set-colors! g t/dialog-border t/dialog-bg)
-        (p/fill-rect! g (inc left) (inc header-row) inner-w 1)
-        (p/put-str! g (+ left 1 p/SELECTION_WIDTH) (inc header-row)
-          (file-picker-table-border-line (session-table-widths body-w) :middle))
+        (p/fill-rect! g (inc left) table-top inner-w 1)
+        (p/put-str! g table-x table-top (session-table-border-line body-w :top))
+        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+        (p/styled g [p/BOLD]
+          (p/fill-rect! g (inc left) header-row inner-w 1)
+          (p/put-str! g table-x header-row (session-dialog-header body-w)))
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/fill-rect! g (inc left) sep-row inner-w 1)
+        (p/put-str! g table-x sep-row (session-table-border-line body-w :middle))
 
-        (dotimes [i visible]
+        (dotimes [i body-h]
           (let [idx (+ @scroll i)
                 row (+ body-top i)]
-            (when (< idx total)
-              (draw-session-row! g left row inner-w (= idx @selected)
-                (:label (nth items idx)))
-              ;; `> ` cursor glyph in the dialog padding column,
-              ;; outside the table body — same convention as the
-              ;; file picker.
-              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-              (p/draw-selection-marker! g (inc left) row (= idx @selected)))))
+            (if (< idx total)
+              (do
+                (draw-session-row! g left row inner-w (= idx @selected)
+                  (:label (nth items idx)))
+                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                (p/draw-selection-marker! g (inc left) row (= idx @selected)))
+              (do
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g (inc left) row inner-w 1)))))
+
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/fill-rect! g (inc left) bottom-row inner-w 1)
+        (p/put-str! g table-x bottom-row (session-table-border-line body-w :bottom))
 
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter" "select"] ["N" "new"] ["F" "fork"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
@@ -2193,7 +2226,7 @@
     {:id       (str "session:" id)
      :kind     "session"
      :label    (session-title session)
-     :ctx      (str (navigator-short-id id) " | " (format-session-date (:modified-at session)))
+     :ctx      (navigator-short-id id)
      :status   (str (when active? "focused ")
                  (long (or (:turn-count session) 0)) " turns")
      :target   {:action :switch :id id}}))
@@ -2289,7 +2322,7 @@
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (p/set-colors! g t/dialog-hint t/dialog-bg)
         (p/put-str! g (+ left 2) query-row
-          (ellipsize (str "> search: " @query) (max 1 (- inner-w 3))))
+          (ellipsize (str p/SELECTION_GLYPH "search: " @query) (max 1 (- inner-w 3))))
 
         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
         (p/styled g [p/BOLD]
