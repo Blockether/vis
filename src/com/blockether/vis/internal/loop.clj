@@ -1359,12 +1359,17 @@
    Nested answer fences often yield MULTIPLE extracted Clojure blocks: the
    torn leading `(done ...)` plus example snippets from the answer body. In
    that shape the leading answer is authoritative; executing sibling snippets
-   is exactly the failure loop this recovery prevents."
+   is exactly the failure loop this recovery prevents.
+
+   Some extractors reject the whole response as malformed before surfacing
+   the torn leading block. Raw recovery still applies in that empty-block
+   shape."
   [ask-result]
   (let [blocks (vec (:blocks ask-result))
         first-block (first blocks)]
-    (if (and first-block
-          (direct-answer-block-recoverable? first-block))
+    (cond
+      (and first-block
+        (direct-answer-block-recoverable? first-block))
       (if-let [source (raw-response->direct-answer-source (:raw ask-result))]
         (if-not (:parse-error (parse-top-level-forms source))
           (assoc ask-result
@@ -1373,6 +1378,18 @@
             :all-blocks (or (:all-blocks ask-result) blocks))
           ask-result)
         ask-result)
+
+      (empty? blocks)
+      (if-let [source (raw-response->direct-answer-source (:raw ask-result))]
+        (if-not (:parse-error (parse-top-level-forms source))
+          (assoc ask-result
+            :blocks [{:lang "clojure" :source source}]
+            :vis/recovered-direct-answer? true
+            :all-blocks (or (:all-blocks ask-result) blocks))
+          ask-result)
+        ask-result)
+
+      :else
       ask-result)))
 
 ;; `normalized-code-source` removed: `code-entries-preflight` now computes
