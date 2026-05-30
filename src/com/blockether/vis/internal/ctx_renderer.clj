@@ -146,19 +146,28 @@
   "Sealed zprint config — every value the renderer emits flows through this.
    No commas (bare EDN), deterministic key order (sort?), preserve namespace
    keywords (no shortening)."
-  {:width  WIDTH
-   :map    {:comma? false :sort? true}
-   ;; zprint's default list hang splits `(v/cat "..." :range 1 140)`
-   ;; after `:range` even when the whole call fits inside WIDTH. CTX trailer
-   ;; forms are code handles first; keep compact tool calls readable.
-   :fn-map {"v/cat" :none}
-   :style  :community})
+  {:width WIDTH
+   :map   {:comma? false :sort? true}
+   :style :community})
+
+(defn- compact-form-head-opts
+  "Return zprint opts that classify this trailer form's head as `:none`.
+   zprint otherwise hangs many unknown/namespaced calls (`v/*`, `clj/*`,
+   `git/*`, extension aliases) even when they fit. Derive from actual form,
+   never from a stale global allowlist."
+  [form]
+  (if-let [head (and (seq? form) (symbol? (first form)) (first form))]
+    (let [heads (cond-> [(str head)]
+                  (namespace head) (conj (name head)))]
+      (update ZP_OPTS :fn-map merge (zipmap heads (repeat :none))))
+    ZP_OPTS))
 
 (defn- zp
   "Render any Clojure value to a multi-line bare-EDN string. Trim trailing
    newline. This is the renderer's ONLY printer surface — see ns docstring."
-  [v]
-  (str/trim-newline (fmt/safe-zprint-str v ZP_OPTS)))
+  ([v] (zp v ZP_OPTS))
+  ([v opts]
+   (str/trim-newline (fmt/safe-zprint-str v opts))))
 
 ;; =============================================================================
 ;; Indent helpers (no value-string surgery — only structural padding)
@@ -252,7 +261,7 @@
    matters is the model's job, not the renderer's."
   [form indent]
   (let [proj     (presentation-form form)
-        map-text (zp proj)]
+        map-text (zp proj (compact-form-head-opts (:form proj)))]
     (str (pad indent) (indent-rest map-text indent))))
 
 (defn- render-trailer-pin
