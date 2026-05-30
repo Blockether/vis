@@ -1111,13 +1111,68 @@
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-optional-keys))
 
-(defn- coerce-patch-edits
+(def ^:private patch-group-required-keys #{:path :edits})
+(def ^:private patch-group-optional-keys #{:expected-mtime :expected-size})
+(def ^:private patch-group-allowed-keys
+  (set/union patch-group-required-keys patch-group-optional-keys))
+
+(defn- grouped-patch-edit?
+  [edit]
+  (and (map? edit) (contains? edit :edits)))
+
+(defn- expand-patch-group
+  [{:keys [path edits expected-mtime expected-size] :as group}]
+  (let [missing (seq (remove #(contains? group %) patch-group-required-keys))
+        unknown (seq (remove patch-group-allowed-keys (keys group)))]
+    (when missing
+      (throw (ex-info "v/patch grouped edit missing required keys"
+               {:type :ext.foundation.editing/invalid-patch-edit-group
+                :missing (vec missing)
+                :edit group})))
+    (when unknown
+      (throw (ex-info "v/patch grouped edit has unknown keys"
+               {:type :ext.foundation.editing/invalid-patch-edit-group
+                :unknown (vec unknown)
+                :allowed (vec patch-group-allowed-keys)
+                :edit group})))
+    (when-not (sequential? edits)
+      (throw (ex-info "v/patch grouped :edits must be a vector/seq of edit maps"
+               {:type :ext.foundation.editing/invalid-patch-edit-group
+                :edits edits})))
+    (when (empty? edits)
+      (throw (ex-info "v/patch grouped :edits must not be empty"
+               {:type :ext.foundation.editing/invalid-patch-edit-group
+                :edit group})))
+    (mapv (fn [edit]
+            (when-not (map? edit)
+              (throw (ex-info "v/patch grouped :edits entries must be maps"
+                       {:type :ext.foundation.editing/invalid-patch-edit
+                        :edit edit})))
+            (when (contains? edit :path)
+              (throw (ex-info "v/patch grouped :edits inherit :path; do not repeat it per edit"
+                       {:type :ext.foundation.editing/invalid-patch-edit
+                        :edit edit})))
+            (cond-> (assoc edit :path path)
+              (some? expected-mtime) (assoc :expected-mtime expected-mtime)
+              (some? expected-size) (assoc :expected-size expected-size)))
+      edits)))
+
+(defn- normalize-patch-edits-input
   [edits]
   (let [edits (if (map? edits) [edits] edits)]
     (when-not (sequential? edits)
-      (throw (ex-info "v/patch expects a map or vector of edit maps"
+      (throw (ex-info "v/patch expects a map, grouped map, or vector of edit maps/groups"
                {:type :ext.foundation.editing/invalid-patch-edits
                 :got  (type edits)})))
+    (mapcat (fn [edit]
+              (if (grouped-patch-edit? edit)
+                (expand-patch-group edit)
+                [edit]))
+      edits)))
+
+(defn- coerce-patch-edits
+  [edits]
+  (let [edits (normalize-patch-edits-input edits)]
     (mapv (fn [edit]
             (when-not (map? edit)
               (throw (ex-info "v/patch edit must be a map"
@@ -2242,13 +2297,18 @@
       indent-delta  (assoc :indent-delta indent-delta))))
 
 (defn- patch-tool
-  "Surgical file editing. Single input shape: a vector of edit maps (a
-   single map is auto-wrapped). Each edit map carries:
+  "Surgical file editing. Input is either edit maps or grouped same-file maps.
 
+   Edit map:
      {:path P :search S :replace R
       :after \"context\"?  :before \"context\"?
       :nth :first|:last|:all|N?
       :expected-mtime MS?  :expected-size BYTES?}
+
+   Grouped same-file map (preferred for several changes to one file):
+     {:path P
+      :edits [{:search S1 :replace R1}
+              {:search S2 :replace R2}]}
 
    Replaces the FIRST occurrence by default. Use `:nth`, `:after` /
    `:before` anchors, or extend `:search` with context to target a
@@ -2872,7 +2932,8 @@
      "    (v/cat path :range start end)"
      "    (v/cat path :ranges [[start end] ...])"
      "  Patch surgically, then use the returned diff as write evidence:"
-     "    (v/patch [{:path P :search S :replace R}])"
+     "    (v/patch {:path P :edits [{:search S1 :replace R1} {:search S2 :replace R2}]})"
+     "    (v/patch [{:path P1 :search S :replace R} {:path P2 :search S :replace R}])"
      "  Create/replace whole files only when full content is known:"
      "    (v/write {:path P :content S})"
      ""
