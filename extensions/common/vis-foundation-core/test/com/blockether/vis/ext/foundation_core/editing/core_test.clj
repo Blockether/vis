@@ -687,7 +687,30 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(cat-tool path :range -1 5)))
       (expect (throws? clojure.lang.ExceptionInfo
-                #(cat-tool path :not-range 1 5))))))
+                #(cat-tool path :not-range 1 5)))))
+
+  (it "(v/cat path :ranges [[start end] ...]) reads several ranges in one result"
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
+          path (write-temp! "range/multi.txt" (str body "\n"))
+          cat-tool (private-fn "cat-tool")
+          out (-> (cat-tool path :ranges [[2 4] [10 12]]) :result)]
+      (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]
+                  [10 "L10"] [11 "L11"] [12 "L12"]]
+                (:lines out)))
+      (expect (= [[2 4] [10 12]] (mapv :range (:ranges out))))
+      (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]]
+                (-> out :ranges first :lines)))
+      (expect (nil? (:next-offset out)))))
+
+  (it ":ranges rejects empty or malformed range specs"
+    (let [path (write-temp! "range/bad-multi.txt" "a\nb\nc\n")
+          cat-tool (private-fn "cat-tool")]
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(cat-tool path :ranges [])))
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(cat-tool path :ranges [[2 1]])))
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(cat-tool path :ranges [1 2 3]))))))
 
 (defdescribe vis-cat-line-passthrough-test
   ;; Regression: an earlier `max-line-length` (2000) cap rewrote every
@@ -781,6 +804,26 @@
       (expect (= :ir (first display)))
       (expect (string/includes? body "100: hundred"))
       (expect (string/includes? body "101: hundred-one"))))
+
+  (it "v/cat multi-range summary and display stay one CAT result"
+    (let [channel-render-cat (private-fn "channel-render-cat")
+          r {:vis.op :v/cat
+             :path "src/demo.clj"
+             :lines [[2 "b"] [3 "c"] [10 "j"]]
+             :ranges [{:range [2 3] :lines [[2 "b"] [3 "c"]]}
+                      {:range [10 10] :lines [[10 "j"]]}]
+             :truncated? false}
+          out (channel-render-cat r)
+          flat (extension/summary->ir (:summary out))
+          text (apply str (filter string? (tree-seq sequential? seq flat)))
+          body (last (first (filter #(and (vector? %) (= :code (first %)))
+                              (tree-seq sequential? seq (:display out)))))]
+      (expect (string/includes? text "3 lines"))
+      (expect (string/includes? text "ranges=2-3,10-10"))
+      (expect (string/includes? body "-- range 2-3 --"))
+      (expect (string/includes? body "2: b"))
+      (expect (string/includes? body "-- range 10-10 --"))
+      (expect (string/includes? body "10: j"))))
 
   (it "v/ls renderer conforms to ::render-fn-result with a zone summary"
     (let [render (private-fn "channel-render-ls")
