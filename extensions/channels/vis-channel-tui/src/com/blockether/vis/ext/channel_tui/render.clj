@@ -2536,11 +2536,10 @@
 
 (defn- form-error-headline
   [error]
-  (let [headline (or (error-trace-headline error)
-                   (:message error)
-                   (some-> (:type error) str)
-                   "unknown error")]
-    (str "ERROR — " headline)))
+  (or (:message error)
+    (error-trace-headline error)
+    (some-> (:type error) str)
+    "unknown error"))
 
 (defn- inline-error-context-lines
   "Babashka-style code context for form eval errors. Kept inside the
@@ -2555,14 +2554,10 @@
     (when (and (string? source) (not (str/blank? source)))
       (let [lines      (vec (str/split source #"\n" -1))
             total      (count lines)
-            gutter-w   (count (str total))
-            fmt-line   (fn [idx0]
-                         (format (str " %" gutter-w "d: %s")
-                           (inc idx0) (nth lines idx0)))
+            fmt-line   (fn [idx0] (nth lines idx0))
             arrow-line (when (and arrow-row arrow-col
                                (<= 1 arrow-row total))
-                         (str (apply str (repeat (+ gutter-w 3) \space))
-                           (apply str (repeat (max 0 (dec (long arrow-col))) \space))
+                         (str (apply str (repeat (max 0 (dec (long arrow-col))) \space))
                            "^---"))
             arrow-idx0 (when arrow-line (dec (long arrow-row)))]
         (vec
@@ -2594,6 +2589,11 @@
   (when (form-error-only-iteration? entry)
     (-> entry :forms first :error)))
 
+(defn- error-map-signature
+  [err]
+  (when (map? err)
+    [(:type err) (:message err) (get-in err [:data :raw-data])]))
+
 (defn error-signature
   "Stable comparison key for two trace `:error` maps. Returns nil for
    non-error iterations (so they never collapse).
@@ -2608,7 +2608,34 @@
    the iteration-level collapser uses."
   [entry]
   (when-let [err (or (:error entry) (form-error-only-error entry))]
-    [(:type err) (:message err) (get-in err [:data :raw-data])]))
+    (error-map-signature err)))
+
+(defn- inline-form-error-signatures
+  [forms]
+  (->> forms
+    (keep (fn [{:keys [code error]}]
+            (when (and (map? error)
+                    (not (str/blank? (str code))))
+              (error-map-signature error))))
+    set))
+
+(defn- inline-rendered-form-error?
+  [forms error]
+  (contains? (inline-form-error-signatures forms) (error-map-signature error)))
+
+(defn- duplicate-inline-error-op?
+  [inline-sigs {:keys [status error]}]
+  (and (= :error status)
+    (contains? inline-sigs (error-map-signature error))))
+
+(defn- all-ops-inline-error-duplicates?
+  [entry]
+  (let [block       (iteration/iteration-entry->display-block entry)
+        ops         (:ops block)
+        inline-sigs (inline-form-error-signatures (:forms block))]
+    (and (seq ops)
+      (seq inline-sigs)
+      (every? #(duplicate-inline-error-op? inline-sigs %) ops))))
 
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
@@ -3193,9 +3220,11 @@
    row order matches the block's source order. Returns a flat vec of
    `{:line :meta}` entries (possibly empty)."
   [entry {:keys [session-id detail-expansions session-turn-id
-                 iteration-number max-w]}]
+                 iteration-number max-w skip-error-signatures]}]
   (let [block (iteration/iteration-entry->display-block entry)
-        ops   (:aggregated-ops block)
+        ops   (->> (:aggregated-ops block)
+                (remove #(duplicate-inline-error-op? skip-error-signatures %))
+                vec)
         ;; Op-row disclosure node ids share the block's collapse key scheme:
         ;; keyed on the UNIQUE iteration-number (never the fragile display-block
         ;; `:scope`, which can be duplicated/nil on the rebuild path) and
@@ -3689,73 +3718,6 @@
                   (recap-row-entries text pad-w)))
         segments))))
 
-(defn- block-counts-text
-  "Width-responsive op-count phrase for the BLOCK header.
-     full ≥ 50 cols : `2 observations · 1 mutation`
-     compact ≥ 36   : `2 obs · 1 mut`
-     narrow         : `O2 M1`
-   Counts are always REAL (no aggregation bias); omit a zero side."
-  ^String [{:keys [observations mutations]} avail-w]
-  (let [obs (long (or observations 0))
-        mut (long (or mutations 0))
-        plural (fn [n word] (str n " " word (when (not= 1 n) "s")))
-        full   (->> [(when (pos? obs) (plural obs "observation"))
-                     (when (pos? mut) (plural mut "mutation"))]
-                 (remove nil?) (str/join " · "))
-        compact (->> [(when (pos? obs) (str obs " obs"))
-                      (when (pos? mut) (str mut " mut"))]
-                  (remove nil?) (str/join " · "))
-        narrow  (->> [(when (pos? obs) (str "O" obs))
-                      (when (pos? mut) (str "M" mut))]
-                  (remove nil?) (str/join " "))]
-    (cond
-      (str/blank? full) ""
-      (and (>= avail-w 50) (<= (count full) avail-w)) full
-      (and (>= avail-w 36) (<= (count compact) avail-w)) compact
-      :else narrow)))
-
-(defn- block-header-line
-  "The Phase-5 BLOCK header row:
-     BLOCK - <counts>
-   The line is painted on the iteration-header marker band so it reads as
-   the card's title. Returns nil when the iteration carries no ops to count
-   (plain-value-only / pure-thinking iterations stay headerless)."
-  ^String [entry fill-w]
-  (let [block   (iteration/iteration-entry->display-block entry)
-        ops     (:ops block)
-        counts  (:counts block)]
-    (when (seq ops)
-      (let [counts-w    (max 8 fill-w)
-            counts-text (block-counts-text counts counts-w)
-            merged      (:merged-fences block)
-            ;; The block IS the code-block grouping unit — no "ITERATION N"
-            ;; label, no status glyph, no duration. Aggregate status + total
-            ;; time live on the parent TURN header; per-op status shows on the
-            ;; op rows. The card title is just the op counts (the collapsed
-            ;; one-line summary of what the block did).
-            label       (cond-> (if (seq counts-text) counts-text "code")
-                          (and merged (> merged 1))
-                          (str "  ·  merged " merged " fences"))
-            head        (str label " ")
-            pad         (max 1 (- fill-w (p/display-width head)))]
-        (str iteration-hdr-marker head (repeat-str \space pad) " ")))))
-
-(defn- block-batch-hint-lines
-  "Phase-4 high-fan-out soft warnings for a block. When the agent ran the
-   SAME tool more than its threshold times in one block, the iteration
-   surfaces a `BATCH HINT  call (cat [...]) once instead of N times` note.
-
-   Rendered as block-level annotation rows riding the iteration-header marker
-   band (the same band the BLOCK header uses), so the hint reads as part of
-   the card title rather than resurrecting the removed RECAP rail. Returns a
-   vec of line-entries (possibly empty)."
-  [entry fill-w]
-  (let [block (iteration/iteration-entry->display-block entry)]
-    (mapv (fn [{:keys [text]}]
-            {:line (str iteration-hdr-marker " " (ellipsize-cols text fill-w) " ")
-             :meta nil})
-      (:batch-hints block))))
-
 (defn- format-iteration-entry-entries
   [entry
    code-width iteration-number
@@ -3848,7 +3810,8 @@
                        [(line-entry (str thinking-marker ""))]))))))
         error-lines
         (fn []
-          (when (map? error)
+          (when (and (map? error)
+                  (not (inline-rendered-form-error? forms error)))
             (let [repeat-count      (max 1 (long (or repeat-count 1)))
                   badge             (when (> repeat-count 1) (str "  x " repeat-count))
                   data              (:data error)
@@ -3859,7 +3822,7 @@
                   err-message       (or (:message error) (str (:type error)) "unknown error")
                   err-headline      (if (> repeat-count 1)
                                       (str "ERROR x " repeat-count ": " err-message)
-                                      (vis/format-error err-message))
+                                      err-message)
                   raw               (some-> (get-in error [:data :raw-data]) str str/trim)
                   recv              (get-in error [:data :received-type])
                   body              (some-> (:body data) str str/trim)
@@ -4069,61 +4032,25 @@
         body (or block-code-body [])
         trailing-errors (error-lines)
         thinking-body (or (thinking-lines thinking) [])
-        ;; Phase-5 BLOCK header: one card title per code fence / merged
-        ;; code-entry, sourced from the canonical iteration-entry's ops.
-        ;; Counts-only block header. Painted above the body; absent for
-        ;; plain-value-only / pure-thinking iterations.
-        block-header  (block-header-line entry fill-w)
-        ;; The BLOCK header is a disclosure toggle keyed on the block scope.
-        ;; Collapsing it folds the code body + op rows away, leaving just the
-        ;; card title with a ▶. Default OPEN (content visible) until the user
-        ;; collapses it.
-        ;; Disclosure node id for the block-collapse toggle. Keyed on the
-        ;; iteration-number (UNIQUE within the turn) — NOT the display-block
-        ;; `:scope`, which is fragile: the resume/rebuild path copies whatever
-        ;; the persisted envelope carried, so two blocks can share a scope (or
-        ;; both be nil). A shared node-id makes one click collapse the wrong
-        ;; block. The `:t<frag>` token is also REQUIRED: `turn-detail-expansions-key`
-        ;; scopes the bubble's render cache to nodes carrying this turn's
-        ;; fragment — without it a click toggles `:detail-expansions` but the
-        ;; cache key never changes, so the cached bubble is served stale and the
-        ;; block never visibly collapses.
-        block-node    (when (seq block-header)
-                        (str "iter" iteration-number ":block"
-                          (when session-turn-id
-                            (str ":t" (short-id-fragment session-turn-id)))))
-        block-open?   (if (and block-node session-id)
-                        (detail-expanded? detail-expansions session-id block-node true)
-                        true)
-        block-chevron (if block-open? "▼ " "▶ ")
-        ;; Phase-4 high-fan-out soft warnings ride directly under the header
-        ;; on the same band; only meaningful with a header AND when expanded.
-        batch-hints   (when (and (seq block-header) block-open?)
-                        (block-batch-hint-lines entry fill-w))
-        header-lines  (if (seq block-header)
-                        (-> [(line-entry (str iteration-pad-marker ""))
-                             {:line (str iteration-hdr-marker block-chevron (subs block-header 1))
-                              :meta (when (and session-id block-node)
-                                      {:kind       :toggle-details
-                                       :session-id (str session-id)
-                                       :node-id    block-node
-                                       :collapsed? (not block-open?)})}]
-                          (into (or batch-hints [])))
-                        [])
-        ;; Phase-5 BLOCK op rows: ONE `▶ <LABEL> <summary>` row per op
-        ;; (long same-op runs collapse to `▶ OP × N (…)`), painted ONCE per
-        ;; block from the canonical `:ops` and placed BELOW the code body —
-        ;; the block's "what changed" section. Only meaningful when the block
-        ;; carries ops (a header is present); plain-value / pure-thinking
-        ;; blocks have none.
-        op-rows       (when (and (seq block-header) block-open?)
+        ;; Block count headers (`1 observation · 2 mutations`) and their
+        ;; block-level collapse toggle are intentionally gone. Code body always
+        ;; stays visible; op rows below it remain the only compact tool-output
+        ;; controls.
+        inline-error-sigs (inline-form-error-signatures forms)
+        hide-dup-error-ops? (all-ops-inline-error-duplicates? entry)
+        header-lines []
+        ;; Phase-5 op rows: ONE `▶ <LABEL> <summary>` row per op (long same-op
+        ;; runs collapse to `▶ OP × N (…)`), painted ONCE per block from the
+        ;; canonical `:ops` and placed BELOW the code body.
+        op-rows       (when-not hide-dup-error-ops?
                         (block-op-row-entries
                           entry
                           {:session-id        session-id
                            :detail-expansions detail-expansions
                            :session-turn-id   session-turn-id
                            :iteration-number  iteration-number
-                           :max-w             fill-w}))
+                           :max-w             fill-w
+                           :skip-error-signatures inline-error-sigs}))
         op-rows-block (when (seq op-rows)
                         (-> [(line-entry (str iteration-pad-marker ""))]
                           (into op-rows)
@@ -4141,10 +4068,8 @@
     ;; zero gap between the thinking band and the code (the
     ;; thinking pad is the bottom \"band edge\"; the code chrome
     ;; takes over immediately).
-    ;; When the BLOCK is collapsed, fold the code body + op rows away —
-    ;; only the header (▶) and any thinking/error rows remain.
     (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
-      (into (if block-open? body []))
+      (into body)
       (into (or op-rows-block [])))))
 
 (defn format-iteration-entry

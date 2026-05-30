@@ -208,11 +208,10 @@
         (expect (str/includes? expanded-body "LS"))
         (expect (str/includes? expanded-body ".gitignore")))))
 
-  (it "labels the BLOCK header by op counts only — no status glyph, no duration, no scope stamp"
-    ;; The block IS the code-block grouping unit. Its header carries ONLY the
-    ;; op counts (the collapsed one-line summary). Per-form timing never shows
-    ;; on the green block; per-op status shows on op rows. No `ITERATION N`,
-    ;; no `/fK`/`/bK` scope stamp, no timed per-form footer.
+  (it "does not render a BLOCK count header or block-level collapse toggle"
+    ;; The block header was removed: no `1 mutation` / `2 observations`, no
+    ;; block-level ▶/▼ wrapper, no `ITERATION N`, no `/fK`/`/bK` scope stamp,
+    ;; no timed per-form footer. Per-op status still shows on op rows.
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file  changed=1"]]]
           lines (format-iteration-entry
                   {:iteration 0
@@ -229,24 +228,19 @@
                             :success? true :silent? false}]}
                   70 1 {})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          header  (first (filter #(str/includes? % "1 mutation") visible))
           op-line (first (filter #(str/includes? % "PATCH") visible))]
-      ;; Header is the counts label.
-      (expect (some? header))
-      (expect (str/includes? header "1 mutation"))
-      ;; No status glyph, no duration, no ITERATION word, no scope stamp.
+      (expect (not-any? #(str/includes? % "1 mutation") visible))
       (expect (not-any? #(str/includes? % "ITERATION") visible))
-      (expect (not (str/includes? header "✓")))
       (expect (not-any? #(str/includes? % "12ms") visible))
-      (expect (not (str/includes? header "/f1")))
+      (expect (not-any? #(str/includes? % "/f1") visible))
       (expect (not-any? #(str/includes? % "t24/i1/b1") visible))
       ;; The op row paints the tool summary.
       (expect (some? op-line))
       (expect (str/includes? op-line "▶"))))
 
-  (it "renders a BLOCK header with op counts only (no scope, no status, no duration)"
-    ;; One card title per fence. The header sources its counts from the
-    ;; canonical iteration-entry ops (the `:channel` sink slice on the form).
+  (it "omits observation/mutation count headers while keeping op rows"
+    ;; No card title/count row. Tool rows still source from canonical
+    ;; iteration-entry ops (the `:channel` sink slice on the form).
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "STATUS"]]]]
           ok-entry (fn [pos op tag]
                      {:position pos :form (str "(" (name op) ")")
@@ -267,15 +261,13 @@
                             :error nil :started-at-ms nil :duration-ms 812
                             :success? true :silent? false}]}
                   80 4 {})
-          visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
-          header  (first (filter #(str/includes? % "observation") visible))]
-      (expect (some? header))
+          visible (mapv (comp strip-sentinels strip-ansi body-of) lines)]
       (expect (not-any? #(str/includes? % "ITERATION") visible))
-      (expect (not (str/includes? header "/f1")))
-      (expect (str/includes? header "1 observation"))
-      (expect (str/includes? header "1 mutation"))
-      (expect (not (str/includes? header "✓")))
-      (expect (not-any? #(str/includes? % "812ms") visible))))
+      (expect (not-any? #(str/includes? % "/f1") visible))
+      (expect (not-any? #(str/includes? % "1 observation") visible))
+      (expect (not-any? #(str/includes? % "1 mutation") visible))
+      (expect (not-any? #(str/includes? % "812ms") visible))
+      (expect (some #(str/includes? % "▶ STATUS") visible))))
 
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
@@ -287,12 +279,72 @@
                   80 1 {})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
           body (str/join "\n" visible)
-          error-line (first (filter #(str/includes? % "ERROR — clojure.lang.ExceptionInfo") lines))]
-      (expect (str/includes? body " 1: (def git-diff-doc"))
+          error-line (first (filter #(str/includes? % "Unable to resolve symbol") lines))]
+      (expect (str/includes? body "(def git-diff-doc"))
+      (expect (not (str/includes? body " 1:")))
       (expect (str/includes? body "^---"))
-      (expect (str/includes? body "ERROR — clojure.lang.ExceptionInfo: Unable to resolve symbol: 'v/git-diff"))
+      (expect (str/includes? body "Unable to resolve symbol: 'v/git-diff"))
+      (expect (not (str/includes? body "Error: Unable")))
+      (expect (not (str/includes? body "ERROR — clojure.lang.ExceptionInfo")))
       (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote code)) body))))
       (expect (= p/MARKER_CODE_ERR (marker-of error-line)))))
+
+  (it "does not repeat the same form eval error as card error and op row"
+    (let [code "(clj/eval {:code \"(+ 1 2)\"})"
+          msg  "nREPL connect failed on localhost:7888 — is the REPL running? Try (clj/ports)."
+          err  {:type :clojure.lang/exception-info
+                :message msg
+                :trace (str "clojure.lang.ExceptionInfo: " msg)
+                :block {:source code :row 1 :col 2}}
+          lines (format-iteration-entry {:iteration 0
+                                         :error err
+                                         :forms [{:code code :comment nil :render-segments nil
+                                                  :channel [{:position 0 :symbol :clj/eval :op :clj/eval
+                                                             :tag :observation :success? false
+                                                             :error err :result nil}]
+                                                  :result-render nil :result-kind :error
+                                                  :result-detail nil :error err
+                                                  :started-at-ms nil :duration-ms 1
+                                                  :success? false :silent? false}]}
+                  100 1 {})
+          visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          body (str/join "\n" visible)]
+      (expect (str/includes? body "(clj/eval"))
+      (expect (not (str/includes? body " 1:")))
+      (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote msg)) body))))
+      (expect (not (str/includes? body "ERROR:")))
+      (expect (not (str/includes? body "ERROR —")))
+      (expect (not (str/includes? body "▶ ERROR")))))
+
+  (it "keeps other op rows while hiding duplicate inline error op rows"
+    (let [code "(v/cat \"src/com/blockether/vis/internal/ctx/render.clj\")"
+          msg  "File not found: /Users/fierycod/vis/src/com/blockether/vis/internal/ctx/render.clj"
+          err  {:type :clojure.lang/exception-info
+                :message msg
+                :trace (str "clojure.lang.ExceptionInfo: " msg)
+                :block {:source code :row 1 :col 1}}
+          rg-summary [:ir {} [:p {} [:strong {} [:span {} "RG files"]]
+                              [:span {} "  250 files"]]]
+          rg-display [:ir {} [:p {} [:span {} "truncated-by=limit"]]]
+          lines (format-iteration-entry {:iteration 0
+                                         :error err
+                                         :forms [{:code code :comment nil :render-segments nil
+                                                  :channel [(op-entry 0 :rg/files :observation rg-summary rg-display true)
+                                                            {:position 1 :symbol :v/cat :op :v/cat
+                                                             :tag :observation :success? false
+                                                             :error err :result nil}]
+                                                  :result-render nil :result-kind :error
+                                                  :result-detail nil :error err
+                                                  :started-at-ms nil :duration-ms 1
+                                                  :success? false :silent? false}]}
+                  110 1 {})
+          visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          body (str/join "\n" visible)]
+      (expect (str/includes? body "▶ RG files"))
+      (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote msg)) body))))
+      (expect (not (str/includes? body "▶ ERROR")))
+      (expect (not (str/includes? body "▼ ERROR")))
+      (expect (not (str/includes? body "ERROR —")))))
 
   (it "omits success status footer and keeps only code band edges"
     (with-raw-code-on
@@ -574,10 +626,9 @@
                     (not (visually-blank? (nth ln (- idx 2)))))))))))
 
 (defdescribe block-collapse-test
-  ;; Code blocks render FLAT — there is no TURN wrapper (it only hid the
-  ;; blocks). Each block is individually collapsible; its toggle is keyed on
-  ;; the iteration-number (unique within the turn) + the `:t<frag>` token that
-  ;; `turn-detail-expansions-key` needs to bust the bubble render cache.
+  ;; Code blocks render FLAT — there is no TURN wrapper and no block-level
+  ;; count header / collapse toggle. Tool op rows still own their own detail
+  ;; disclosures.
   (let [summary (fn [label] [:ir {} [:p {} [:strong {} [:span {} label]]]])
         block   (fn [scope dur ops & {:keys [error]}]
                   {:position 0 :code "(noop)"
@@ -597,32 +648,30 @@
                     (mapv (comp strip-sentinels strip-ansi))))
         block1-node (str "iter1:block:" frag)]
 
-    (it "renders code blocks flat with counts-only headers — no TURN header, no status/duration"
-      (let [lines (render* {})
-            blocks (filter #(re-find #"observation|mutation" %) lines)]
-        ;; No TURN wrapper at all.
+    (it "renders code blocks flat with no count headers, status, or duration"
+      (let [lines (render* {})]
+        ;; No TURN / ITERATION / count wrapper at all.
         (expect (not-any? #(str/includes? % "TURN") lines))
         (expect (not-any? #(str/includes? % "ITERATION") lines))
-        ;; Green block headers carry counts only — no status glyph, no duration.
-        (expect (seq blocks))
-        (expect (not-any? #(str/includes? % "✓") blocks))
+        (expect (not-any? #(str/includes? % "observation") lines))
+        (expect (not-any? #(str/includes? % "mutation") lines))
         (expect (not-any? #(str/includes? % "4.5s") lines))
-        (expect (not-any? #(str/includes? % "1.2s") lines))))
+        (expect (not-any? #(str/includes? % "1.2s") lines))
+        ;; Op rows still show.
+        (expect (some #(str/includes? % "STATUS") lines))
+        (expect (some #(str/includes? % "LS") lines))
+        (expect (some #(str/includes? % "COMMIT") lines))))
 
-    (it "collapsing one block folds its op rows but keeps the sibling block"
+    (it "block-level collapse keys are ignored because blocks are not collapsible"
       (let [lines (render* {["sid" block1-node] false})]
-        ;; Block 1's ops gone...
-        (expect (not-any? #(str/includes? % "STATUS") lines))
-        (expect (not-any? #(str/includes? % "LS") lines))
-        ;; ...sibling block 2 still open.
+        (expect (some #(str/includes? % "STATUS") lines))
+        (expect (some #(str/includes? % "LS") lines))
         (expect (some #(str/includes? % "COMMIT") lines))
-        (expect (some #(str/includes? % "1 mutation") lines))))
+        (expect (not-any? #(str/includes? % "1 mutation") lines))))
 
-    (it "blocks that SHARE a display-block scope still collapse independently"
-      ;; Regression for the rebuild-path bug: the engine/resume can stamp the
-      ;; SAME `:scope` (or nil) on two iterations of one turn. When the toggle
-      ;; was keyed on scope, collapsing one block hid the OTHER. Keyed on the
-      ;; iteration-number, each block folds on its own.
+    (it "shared display-block scopes do not matter because block collapse is gone"
+      ;; Regression coverage kept simpler: same scopes no longer create any
+      ;; shared collapse state because no block collapse node is emitted.
       (let [dup (fn [label] [:ir {} [:p {} [:strong {} [:span {} label]]]])
             same-scope-trace
             [(block "t7/i1/f1" 100 [(op-entry 0 :git/status :observation (dup "STATUS") (dup "STATUS") true)])
@@ -632,20 +681,17 @@
                                         nil same-scope-trace 84 {:show-iterations true} nil false
                                         {:session-id "sid" :session-turn-id stid :detail-expansions dx}))
                            (mapv (comp strip-sentinels strip-ansi))))
-            ;; Collapse ONLY iteration 1.
             lines (render-dup {["sid" (str "iter1:block:" frag)] false})]
-        ;; Block 1's op gone, block 2's op still shown.
-        (expect (not-any? #(str/includes? % "STATUS") lines))
+        (expect (some #(str/includes? % "STATUS") lines))
         (expect (some #(str/includes? % "COMMIT") lines))))
 
-    (it "turn-detail-expansions-key captures the block node so a click busts the cache"
-      ;; Regression: without the `:t<frag>` token in the node-id the cache key
-      ;; never changed on click, so the cached bubble was served stale and the
-      ;; block never visibly collapsed.
-      (let [k (#'render/turn-detail-expansions-key
+    (it "turn-detail-expansions-key still captures op-row nodes for tool details"
+      (let [op-node (str "iter1:" frag ":op0")
+            k (#'render/turn-detail-expansions-key
                {:session-id "sid" :session-turn-id stid
-                :detail-expansions {["sid" block1-node] false}})]
-        (expect (= [[block1-node false]] k))))))
+                :detail-expansions {["sid" block1-node] false
+                                    ["sid" op-node] true}})]
+        (expect (= [[block1-node false] [op-node true]] k))))))
 
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
@@ -2366,8 +2412,8 @@
 ;; ── Phase-4 high-fan-out policy (BLOCK revamp) ──────────────────────────────
 ;;
 ;; A `doseq` fan-out runs the SAME tool many times in one block. The renderer
-;; must: keep the header counts REAL, collapse the same-op run into ONE
-;; synthetic `▶ CAT × N` row, and surface the soft BATCH HINT note.
+;; must collapse the same-op run into ONE synthetic `▶ CAT × N` row without
+;; resurrecting block count headers.
 
 (defn- cat-sink-entry*
   [position file]
@@ -2390,11 +2436,10 @@
 
 (defdescribe phase4-high-fan-out-render-test
   (describe "100-cat doseq fan-out"
-    (it "header counts are REAL — 100 observations, not the aggregated 1"
-      (let [lines (rendered-lines (fanout-entry* 100))
-            hdr   (some #(when (str/includes? % "100 observations") %) lines)]
-        (expect (some? hdr))
-        (expect (str/includes? hdr "100 observations"))))
+    (it "does not emit high-fan-out count headers"
+      (let [lines (rendered-lines (fanout-entry* 100))]
+        (expect (not-any? #(str/includes? % "100 observations") lines))
+        (expect (not-any? #(str/includes? % "observations") lines))))
 
     (it "emits ONE synthetic grouped row `▶ CAT × 100 (…)`"
       (let [lines (rendered-lines (fanout-entry* 100))
@@ -2411,10 +2456,9 @@
         (expect (some #(str/includes? % "▼ CAT × 100") lines))
         (expect (= 100 (count per-op)))))
 
-    (it "surfaces the soft BATCH HINT note"
+    (it "does not surface the retired soft BATCH HINT header note"
       (let [lines (rendered-lines (fanout-entry* 100))]
-        (expect (some #(str/includes? % "BATCH HINT  call (cat [...]) once instead of 100 times")
-                  lines)))))
+        (expect (not-any? #(str/includes? % "BATCH HINT") lines)))))
 
   (describe "below-threshold block"
     (it "stays headerless of any grouped row or batch hint"
