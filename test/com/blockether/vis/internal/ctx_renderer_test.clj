@@ -121,18 +121,38 @@
       (it "keeps `:form (v/ls \".\" :depth 1)` as native list inside the map"
         (expect (str/includes? out ":form (v/ls \".\" :depth 1)")))
 
-      (it "keeps short v/cat :range forms on one line"
-        (let [ctx (assoc base-ctx
-                    :session/trailer
-                    [{:scope "t2/i1"
-                      :forms [{:scope "t2/i1/f1"
-                               :tag :observation
-                               :form '(v/cat "src/com/blockether/vis/internal/loop.clj" :range 4380 4525)
-                               :result {:ok true}}]}])
-              out (render ctx)]
-          (expect (str/includes?
-                    out
-                    ":form (v/cat \"src/com/blockether/vis/internal/loop.clj\" :range 4380 4525)"))))
+      (it "keeps short tool/trailer forms on one line across arbitrary aliases"
+        (let [forms   ['(v/cat "src/com/blockether/vis/internal/loop.clj" :range 4380 4525)
+                       '(v/rg {:any ["title"] :paths ["src"] :limit 20})
+                       '(v/patch [{:path "x" :search "a" :replace "b"}])
+                       '(clj/eval {:code "(+ 1 2)" :timeout-ms 1000})
+                       '(git/status)
+                       '(br/check)
+                       '(search/web "zprint fn-map")
+                       '(made-up.alias/do-thing "x" :range 1 2)
+                       '(task-set! :ship {:status :done})]
+              needles [":form (v/cat \"src/com/blockether/vis/internal/loop.clj\" :range 4380 4525)"
+                       ":form (v/rg {:any [\"title\"] :paths [\"src\"] :limit 20})"
+                       ":form (v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
+                       ":form (clj/eval {:code \"(+ 1 2)\" :timeout-ms 1000})"
+                       ":form (git/status)"
+                       ":form (br/check)"
+                       ":form (search/web \"zprint fn-map\")"
+                       ":form (made-up.alias/do-thing \"x\" :range 1 2)"
+                       ":form (task-set! :ship {:status :done})"]
+              ctx     (assoc base-ctx
+                        :session/trailer
+                        [{:scope "t2/i1"
+                          :forms (mapv (fn [idx form]
+                                         {:scope (str "t2/i1/f" idx)
+                                          :tag :observation
+                                          :form form
+                                          :result {:ok true}})
+                                   (range 1 (inc (count forms)))
+                                   forms)}])
+              out     (render ctx)]
+          (doseq [needle needles]
+            (expect (str/includes? out needle)))))
 
       (it "strips all noise keys (:channel :src :form-idx :position :success? :symbol)"
         (let [pin-region (subs out (str/index-of out ":session/trailer"))]
