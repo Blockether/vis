@@ -6,7 +6,7 @@
 
    1. **ONE printer.** Every Clojure VALUE the renderer emits goes through
       `zp` — a single locked entry into `safe-zprint-str` with a sealed
-      `ZP_OPTS` config (no commas, sorted keys, width 80). No `pr-str`, no
+      `ZP_OPTS` config (no commas, sorted keys, width 100). No `pr-str`, no
       `pprint`, no ad-hoc string concat for value bodies.
 
    2. **Top-level structure is hand-assembled.** The renderer interleaves
@@ -146,9 +146,13 @@
   "Sealed zprint config — every value the renderer emits flows through this.
    No commas (bare EDN), deterministic key order (sort?), preserve namespace
    keywords (no shortening)."
-  {:width WIDTH
-   :map   {:comma? false :sort? true}
-   :style :community})
+  {:width  WIDTH
+   :map    {:comma? false :sort? true}
+   ;; zprint's default list hang splits `(v/cat "..." :range 1 140)`
+   ;; after `:range` even when the whole call fits inside WIDTH. CTX trailer
+   ;; forms are code handles first; keep compact tool calls readable.
+   :fn-map {"v/cat" :none}
+   :style  :community})
 
 (defn- zp
   "Render any Clojure value to a multi-line bare-EDN string. Trim trailing
