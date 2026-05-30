@@ -389,7 +389,9 @@
       (expect (string/includes? prompt "(v/ls \".\" {:depth 2})"))
       (expect (string/includes? prompt "(v/rg {:any [P] :files-only? true})"))
       (expect (string/includes? prompt "400-500 line range"))
-      (expect (string/includes? prompt "(v/patch [{:path P :search S :replace R}])"))
+      (expect (string/includes? prompt "(v/cat path :ranges [[start end] ...])"))
+      (expect (string/includes? prompt "(v/patch {:path P :edits"))
+      (expect (string/includes? prompt "(v/patch [{:path P1 :search S :replace R}"))
       (expect (string/includes? prompt "diff is evidence"))
       (expect (not (string/includes? prompt "kwargs")))
       (expect (not (string/includes? prompt "BOTH")))
@@ -1259,6 +1261,30 @@
       (expect (= 1 (count (:plans r))))
       (expect (= "alpha\nbeta\n" (-> r :plans first :before)))
       (expect (= "FIRST\nbeta\n" (-> r :plans first :after)))))
+
+  (it "grouped same-file patch map applies several edits without repeating :path"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-grouped.txt" "alpha\nbeta\ngamma\n")
+          r     (patch {:path p
+                        :edits [{:search "alpha" :replace "ALPHA"}
+                                {:search "beta" :replace "BETA"}]})]
+      (expect (true? (:success? r)))
+      (expect (= "ALPHA\nBETA\ngamma\n" (slurp p)))
+      (expect (= 1 (count (:plans r))))
+      (expect (= "alpha\nbeta\ngamma\n" (-> r :plans first :before)))
+      (expect (= "ALPHA\nBETA\ngamma\n" (-> r :plans first :after)))))
+
+  (it "grouped same-file patch rejects per-edit :path and preserves all-or-nothing"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-grouped-bad.txt" "alpha\nbeta\n")
+          err   (try (patch {:path p :edits [{:path p :search "alpha" :replace "ALPHA"}]})
+                  nil (catch clojure.lang.ExceptionInfo e e))
+          r     (patch {:path p
+                        :edits [{:search "alpha" :replace "ALPHA"}
+                                {:search "missing" :replace "x"}]})]
+      (expect (some? err))
+      (expect (false? (:success? r)))
+      (expect (= "alpha\nbeta\n" (slurp p)))))
 
   (it "long :search is bounded in the previewed failure trailer"
     (let [patch (private-fn "patch-safe")
