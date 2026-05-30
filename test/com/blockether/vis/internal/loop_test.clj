@@ -670,6 +670,34 @@
         (finally
           (lp/dispose-environment! env)))))
 
+  (it "recovers direct answers when nested answer fences make extraction return no blocks"
+    (let [env    (lp/create-environment ::router {:db :memory})
+          answer (str "TTL lookup needed.\n\n"
+                   "```clojure\n"
+                   "(entry-due-for-archive? entry turn)\n"
+                   "```\n"
+                   "Use archived introspection later.")
+          raw    (str "```clojure\n"
+                   "(v/rg {:any [\"ttl-for\"] :paths [\"src\"]})\n"
+                   "(done {:answer " (pr-str answer) "})\n"
+                   "```")]
+      (try
+        (with-redefs [svar/ask-code! (fn [_ _]
+                                       {:blocks []
+                                        :all-blocks []
+                                        :saw-fence? true
+                                        :malformed? true
+                                        :raw raw
+                                        :tokens {}})]
+          (let [result (lp/run-iteration env []
+                         {:iteration 0
+                          :resolved-model {:provider :test :name "test"}})]
+            (expect (= answer (get-in result [:final-result :answer :answer])))
+            (expect (= 1 (count (:llm-executable-blocks result))))
+            (expect (nil? (get-in result [:blocks 0 :error])))))
+        (finally
+          (lp/dispose-environment! env)))))
+
   (it "recovers malformed done answers with trailer-summarize tail"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
