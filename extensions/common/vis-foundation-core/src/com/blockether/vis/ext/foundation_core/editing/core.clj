@@ -479,6 +479,44 @@
              {:type :ext.foundation.editing/invalid-cat-args
               :limit n}))))
 
+(defn- validate-cat-range!
+  [start end]
+  (when-not (and (integer? start) (integer? end)
+              (pos? start) (pos? end)
+              (<= start end))
+    (throw (ex-info "v/cat :range/:ranges start/end must be positive ints with start <= end"
+             {:type :ext.foundation.editing/invalid-cat-args
+              :start start :end end}))))
+
+(defn- normalize-cat-ranges
+  [ranges]
+  (let [pairs (cond
+                (and (vector? ranges)
+                  (= 2 (count ranges))
+                  (every? integer? ranges))
+                [ranges]
+
+                (sequential? ranges)
+                (vec ranges)
+
+                :else
+                (throw (ex-info "v/cat :ranges expects [[start end] ...]"
+                         {:type :ext.foundation.editing/invalid-cat-args
+                          :ranges ranges})))]
+    (when (empty? pairs)
+      (throw (ex-info "v/cat :ranges expects at least one range"
+               {:type :ext.foundation.editing/invalid-cat-args
+                :ranges ranges})))
+    (mapv (fn [pair]
+            (when-not (and (sequential? pair) (= 2 (count pair)))
+              (throw (ex-info "v/cat :ranges entries must be [start end] pairs"
+                       {:type :ext.foundation.editing/invalid-cat-args
+                        :range pair})))
+            (let [[start end] (vec pair)]
+              (validate-cat-range! start end)
+              [(long start) (long end)]))
+      pairs)))
+
 (defn- read-file
   "Read a window of a text file as pure structured data.
 
@@ -557,6 +595,28 @@
                      new-bytes
                      (inc read-count)
                      nil)))))))))))
+
+(defn- read-file-ranges
+  "Read several inclusive 1-based line ranges from one file. Result keeps both
+   a flat `:lines` view for simple model filtering and per-range windows for
+   channel display / diagnostics."
+  [path ranges]
+  (let [pairs   (normalize-cat-ranges ranges)
+        windows (mapv (fn [[start end]]
+                        (let [n   (inc (- end start))
+                              out (read-file path start n)]
+                          (assoc (select-keys out [:lines :next-offset :eof? :truncated?])
+                            :range [start end])))
+                  pairs)
+        f       (ensure-existing-file! (safe-path path))]
+    {:path        (rel-path f)
+     :lines       (vec (mapcat :lines windows))
+     :ranges      windows
+     :next-offset nil
+     :eof?        (every? :eof? windows)
+     :truncated?  (boolean (some :truncated? windows))
+     :mtime       (.lastModified f)
+     :size        (.length f)}))
 
 (defn- tail-file
   "Read the last n lines of a text file. Streams once via a fixed-size
@@ -1799,6 +1859,8 @@
      (v/cat path :range start end)      — INCLUSIVE 1-based line range [start, end].
                                           Pick when you know both endpoints
                                           (e.g., a v/rg hit + :context window).
+     (v/cat path :ranges [[s e] ...])   — several inclusive ranges from one file;
+                                          use this instead of repeated same-file cats.
      (v/cat path :tail)                 — LAST 2000 lines.
      (v/cat path :tail n)               — LAST n lines.
 
@@ -1839,30 +1901,38 @@
         :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path arg n]
-   (when-not (= arg :tail)
-     (throw (ex-info "v/cat 3-arity must use :tail; for head/range use (v/cat path :range start end)"
+   (case arg
+     :tail
+     (let [out (tail-file path n)]
+       (tool-success
+         {:op :v/cat
+          :path path
+          :kind :file
+          :result (assoc out :vis.op :v/cat)
+          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
+          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+
+     :ranges
+     (let [out (read-file-ranges path n)]
+       (tool-success
+         {:op :v/cat
+          :path path
+          :kind :file
+          :result (assoc out :vis.op :v/cat)
+          :metadata {:truncated? (:truncated? out)
+                     :ranges (mapv :range (:ranges out))}
+          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+
+     (throw (ex-info "v/cat 3-arity must use :tail or :ranges; for one range use (v/cat path :range start end)"
               {:type :ext.foundation.editing/invalid-cat-args
-               :got arg})))
-   (let [out (tail-file path n)]
-     (tool-success
-       {:op :v/cat
-        :path path
-        :kind :file
-        :result (assoc out :vis.op :v/cat)
-        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
-        :presentation {:kind :source :path (:path out) :line-key :lines}})))
+               :got arg}))))
   ([path range-kw start end]
    ;; (v/cat path :range start end) — INCLUSIVE start..end (both 1-based).
    (when-not (= range-kw :range)
      (throw (ex-info "v/cat 4-arity must use :range as the second arg"
               {:type :ext.foundation.editing/invalid-cat-args
                :got range-kw})))
-   (when-not (and (integer? start) (integer? end)
-               (pos? start) (pos? end)
-               (<= start end))
-     (throw (ex-info "v/cat :range start/end must be positive ints with start <= end"
-              {:type :ext.foundation.editing/invalid-cat-args
-               :start start :end end})))
+   (validate-cat-range! start end)
    (let [n (inc (- (long end) (long start)))
          out (read-file path start n)]
      (tool-success
@@ -2426,6 +2496,16 @@
     (map (fn [[ln s]] (str ln ": " s)))
     (str/join "\n")))
 
+(defn- numbered-range-block
+  [ranges]
+  (->> ranges
+    (map (fn [{:keys [range lines]}]
+           (let [[start end] range]
+             (str "-- range " start "-" end " --"
+               (when (seq lines)
+                 (str "\n" (numbered-line-block lines)))))))
+    (str/join "\n\n")))
+
 ;; ---------------------------------------------------------------------------
 ;; Per-symbol renderers
 ;;
@@ -2447,20 +2527,29 @@
    centered, the line count + pagination state anchored right. Display
    is the numbered-line block. Reads the plain map directly; no
    handle/deref."
-  [{:keys [path next-offset truncated? lines]}]
-  (let [lines      (vec lines)
-        line-count (count lines)
-        first-ln   (ffirst lines)
-        body       (numbered-line-block lines)
-        state      (cond
-                     next-offset (str "next-offset=" next-offset
-                                   (when truncated? " (byte-cap)"))
-                     truncated?  "(byte-cap)"
-                     :else       "(eof)")]
+  [{:keys [path next-offset truncated? lines ranges]}]
+  (let [lines        (vec lines)
+        ranges       (vec ranges)
+        range-labels (mapv (fn [{:keys [range]}]
+                             (let [[start end] range]
+                               (str start "-" end)))
+                       ranges)
+        line-count   (count lines)
+        first-ln     (ffirst lines)
+        body         (if (seq ranges)
+                       (numbered-range-block ranges)
+                       (numbered-line-block lines))
+        state        (cond
+                       (seq ranges) (str "ranges=" (str/join "," range-labels)
+                                      (when truncated? "  (byte-cap)"))
+                       next-offset  (str "next-offset=" next-offset
+                                      (when truncated? " (byte-cap)"))
+                       truncated?   "(byte-cap)"
+                       :else        "(eof)")]
     {:summary {:left   (ir-strong "CAT")
                :center (ir-code (or path "?"))
                :right  (str line-count " line" (when (not= 1 line-count) "s")
-                         (when first-ln (str "  from=" first-ln))
+                         (when (and first-ln (empty? ranges)) (str "  from=" first-ln))
                          "  " state)}
      :display (ir-root
                 (ir-code-block "text" (bounded-render-text body)))}))
@@ -2779,8 +2868,9 @@
      "    (v/rg {:any [P] :files-only? true})"
      "  Open normal source files whole by default:"
      "    (v/cat path)"
-     "  For known large files only, use one 400-500 line range:"
+     "  For known large files only, use one 400-500 line range or one multi-range call:"
      "    (v/cat path :range start end)"
+     "    (v/cat path :ranges [[start end] ...])"
      "  Patch surgically, then use the returned diff as write evidence:"
      "    (v/patch [{:path P :search S :replace R}])"
      "  Create/replace whole files only when full content is known:"
