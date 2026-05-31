@@ -250,19 +250,28 @@
     (expect (= 32 (coalesced-drag-scroll-amount 4 99)))))
 
 (defdescribe slash-menu-test
-  (it "slash-spec->menu-command adapts a slash spec into the legacy menu shape"
-    ;; Declarative slash specs feed the TUI palette through an
-    ;; adapter. `:id` is `(keyword "slash" name)` so the
+  (it "slash-spec->menu-command adapts a top-level slash spec"
+    ;; `:id` carries the full dot-separated path so the
     ;; `run-command!` dispatcher can detect a slash entry by its
-    ;; namespace and resubmit through the engine slash registry.
+    ;; `:slash/spec` key and resubmit through the engine slash registry.
     (let [adapted (slash-spec->menu-command
                     {:slash/name "workspace"
                      :slash/doc  "Workspace ops"})]
-      (expect (= :slash/workspace (:id adapted)))
+      (expect (= :workspace (:id adapted)))
       (expect (= "/workspace"    (:slash/text adapted)))
       (expect (= "Workspace ops" (:label adapted)))))
 
-  (it "registry-slash-commands collects only TUI-available visible top-level slashes"
+  (it "slash-spec->menu-command adapts a nested slash spec"
+    (let [adapted (slash-spec->menu-command
+                    {:slash/name "new"
+                     :slash/parent ["workspace"]
+                     :slash/doc  "Create workspace"})]
+      (expect (= :workspace.new (:id adapted)))
+      (expect (= "/workspace new"   (:slash/text adapted)))
+      (expect (= "Create workspace" (:label adapted)))
+      (expect (= "workspace new"    (:slash/name adapted)))))
+
+  (it "registry-slash-commands lists children but hides their group root"
     (with-redefs [vis/registered-slashes
                   (constantly
                     [{:slash/name "workspace" :slash/doc "Workspace ops"}
@@ -276,8 +285,11 @@
                       :slash/hidden? true}
                      {:slash/name "broken" :slash/doc "Broken availability"
                       :slash/availability-fn (fn [_ctx] (throw (ex-info "boom" {})))}])]
+      ;; `workspace` is a group root (parent of `apply`); its run-fn only
+      ;; reprints the child list the palette already shows, so it is
+      ;; suppressed. The child `workspace.apply` and the leaf `voice` stay.
       (let [ids (mapv :id (registry-slash-commands))]
-        (expect (= #{:slash/workspace :slash/voice} (set ids))))))
+        (expect (= #{:workspace.apply :voice} (set ids))))))
 
   (it "menu-commands keeps slash registry for typed slash suggestions"
     (with-redefs [vis/registered-slashes
@@ -285,7 +297,7 @@
                     [{:slash/name "voice" :slash/doc "Voice toggle"}])]
       (let [ids (mapv :id (menu-commands nil))]
         (expect (some #{:new-session} ids))
-        (expect (some #{:slash/voice} ids)))))
+        (expect (some #{:voice} ids)))))
 
   (it "Ctrl+K palette gets no registry slash roots by default"
     (with-redefs [vis/registered-slashes
