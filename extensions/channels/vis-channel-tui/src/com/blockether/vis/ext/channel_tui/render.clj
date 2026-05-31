@@ -4062,8 +4062,7 @@
             (let [n0 (int (.charAt line 0))]
               (cond
                 ;; Pure terminal-bg / outer-margin family.
-                (or (= n0 0x206C)         ; MARKER_ITERATION_PAD
-                  (= n0 0x206A))          ; MARKER_CODE_PAD (running/neutral code-bg pad)
+                (= n0 0x206C)                ; MARKER_ITERATION_PAD
                 :gap
                 ;; Thinking pad — NEVER coalesce; flushes via the
                 ;; explicit branch below.
