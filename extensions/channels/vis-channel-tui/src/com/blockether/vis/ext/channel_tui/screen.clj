@@ -1054,30 +1054,65 @@
                                  :height
                                  long),
                         :messages-scroll messages-scroll}}))
-    (when live-entry
-      (let [clip (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))
-            y0 (max 0 (min (long (:top live-entry)) (long (or (:top old-entry) (:top live-entry)))))
-            y1 (min inner-h
-                 (max (+ (long (:top live-entry)) (long (:height live-entry)))
-                   (+ (long (or (:top old-entry) (:top live-entry)))
-                     (long (or (:height old-entry) (:height live-entry))))))]
-        (when (< y0 y1)
-          (p/set-colors! clip t/text-fg t/terminal-bg)
-          (p/fill-rect! clip 0 y0 cols (- y1 y0)))
-        (render/draw-chat-bubble! clip
-          (:projected live-entry)
-          (:top live-entry)
-          render/MESSAGE_MARGIN_LEFT
-          bubble-w
-          {:viewport-top text-top, :viewport-h inner-h})))
-    ;; Chrome refresh - cheap text writes, kept inside the partial
-    ;; path so notification banners and footer status update on
-    ;; every spinner tick instead of waiting for the next full
-    ;; frame. Click regions are NOT re-committed (no begin/commit
-    ;; pair here), so the prior full frame's `regions-atom` keeps
-    ;; serving lookups; header click rectangles registered there
-    ;; remain valid the whole turn.
-    (header/draw-header! g db header-top cols)
+    ;; ── Click-region republish (live-aware) ────────────────────
+    ;; The previous frame's `regions-atom` is used by `cr/lookup` while
+    ;; partial frames tick. That works for STABLE bubbles (their pixels
+    ;; aren't repainted, so old regions still match what's on screen),
+    ;; but the LIVE bubble grows: every new iteration shifts its
+    ;; toggle-details / link rows down, so a region registered at the
+    ;; previous full frame ends up pointing at the wrong row. The user
+    ;; clicks the disclosure they SEE and nothing happens.
+    ;;
+    ;; Fix: stage a fresh frame. Carry over every region NOT painted
+    ;; by something we're about to repaint (header chrome + the live
+    ;; bubble's previous row range). Then re-paint live bubble + header
+    ;; and commit. Stable transcript bubbles keep their previous-frame
+    ;; regions verbatim because we don't touch their rows here.
+    (let [prev-live-entry old-entry
+          prev-text-top   (long (or (:text-top previous-layout) text-top))
+          live-row-band   (when prev-live-entry
+                            (let [lo (+ prev-text-top (long (:top prev-live-entry)))
+                                  hi (+ lo (long (:height prev-live-entry)))]
+                              [lo hi]))
+          header-rows-n   (long (header/header-rows db))
+          carry-over      (vec
+                            (remove
+                              (fn [{:keys [bounds]}]
+                                (let [row (long (:row bounds))]
+                                  (or
+                                    ;; header re-registers below
+                                    (< row header-rows-n)
+                                    ;; live bubble re-registers below
+                                    (and live-row-band
+                                      (>= row (first live-row-band))
+                                      (< row (second live-row-band))))))
+                              (cr/current)))]
+      (cr/begin-frame!)
+      (doseq [r carry-over] (cr/register! r))
+      (when live-entry
+        (let [clip (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))
+              y0 (max 0 (min (long (:top live-entry)) (long (or (:top old-entry) (:top live-entry)))))
+              y1 (min inner-h
+                   (max (+ (long (:top live-entry)) (long (:height live-entry)))
+                     (+ (long (or (:top old-entry) (:top live-entry)))
+                       (long (or (:height old-entry) (:height live-entry))))))]
+          (when (< y0 y1)
+            (p/set-colors! clip t/text-fg t/terminal-bg)
+            (p/fill-rect! clip 0 y0 cols (- y1 y0)))
+          (render/draw-chat-bubble! clip
+            (:projected live-entry)
+            (:top live-entry)
+            render/MESSAGE_MARGIN_LEFT
+            bubble-w
+            {:viewport-top text-top, :viewport-h inner-h})))
+      ;; Chrome refresh - cheap text writes, kept inside the partial
+      ;; path so notification banners and footer status update on
+      ;; every spinner tick instead of waiting for the next full
+      ;; frame. Header re-registers its click rectangles into the
+      ;; staged frame above so they survive the upcoming
+      ;; `cr/commit-frame!`.
+      (header/draw-header! g db header-top cols)
+      (cr/commit-frame!))
     (let [[cx cy]
           (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
       (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
