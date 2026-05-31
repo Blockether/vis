@@ -226,7 +226,7 @@
     (testing "session label + its 1:1 workspace context"
       (let [r1 (first rows)]
         (is (= "Untitled session" (:label r1)))
-        (is (= "main │ /repo" (:ctx r1)))
+        (is (= "main · repo" (:ctx r1)))
         (is (= "focused 2 turns" (:status r1)))))
     (testing "ctx falls back to a short id when no workspace is bound"
       (is (= "s2" (:ctx (second rows)))))
