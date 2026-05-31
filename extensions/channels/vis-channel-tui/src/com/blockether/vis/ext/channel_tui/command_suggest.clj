@@ -66,10 +66,10 @@
 
 (defn enrich
   [cmd]
-  (let [name (command-name cmd)]
+  (let [name (or (:slash/name cmd) (command-name cmd))]
     (assoc cmd
       :slash/name name
-      :slash/usage (usage cmd)
+      :slash/usage (or (:slash/usage cmd) (usage cmd))
       :slash/search (str/lower-case
                       (str name " " (:label cmd) " " (:doc cmd))))))
 
