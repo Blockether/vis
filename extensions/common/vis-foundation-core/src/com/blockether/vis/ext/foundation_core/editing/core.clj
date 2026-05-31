@@ -179,7 +179,10 @@
   [args]
   (let [spec (first args)]
     (when (map? spec)
-      (let [paths (:paths spec)]
+      (let [paths (cond
+                    (contains? spec :paths) (:paths spec)
+                    (contains? spec :files) (:files spec)
+                    :else nil)]
         (cond
           (nil? paths) ["."]
           (sequential? paths) paths
@@ -813,7 +816,8 @@
 (defn- coerce-rg-spec
   "Coerce the single public v/rg spec map. Exactly one of :all or :any
    is required. Every public collection field is a vector; no shorthand
-   arities or scalar paths.
+   arities or scalar paths. Accepts compatibility alias :files for :paths,
+   but docs/prompt keep advertising canonical :paths only.
 
    Optional keys (all default to off):
      :limit       max hits / files / count entries (default 250)
@@ -829,7 +833,7 @@
     (throw (ex-info "v/rg takes one spec map: {:all [...] :paths [...]}."
              {:type :ext.foundation.editing/invalid-rg-spec
               :got  (type spec)})))
-  (let [allowed-keys #{:all :any :paths :include :exclude :hidden? :respect-gitignore?
+  (let [allowed-keys #{:all :any :paths :files :include :exclude :hidden? :respect-gitignore?
                        :limit :context :before :after :files-only? :counts? :regex?}
         unknown-keys (seq (remove allowed-keys (keys spec)))
         _ (when unknown-keys
@@ -855,9 +859,14 @@
                                           :field k
                                           :got v})))
                               v))
+        _ (when (and (contains? spec :paths) (contains? spec :files))
+            (throw (ex-info "v/rg spec must use only one of canonical :paths or compatibility :files."
+                     {:type :ext.foundation.editing/invalid-rg-spec
+                      :spec spec})))
+        path-key (if (contains? spec :files) :files :paths)
         op (if has-all? :all :any)
         needles (vector-of-strings op nil)
-        paths (vector-of-strings :paths ["."])
+        paths (vector-of-strings path-key ["."])
         include (when (contains? spec :include)
                   (vector-of-strings :include nil))
         exclude (when (contains? spec :exclude)
@@ -2066,7 +2075,7 @@
    Recognised keys:
      {:all [\"a\" \"b\"]      — AND: every needle on same line
       :any [\"a\" \"b\"]      — OR: at least one needle on a line
-      :paths [\"src\"]        — search roots (default [\".\"])
+      :paths [\"src\"]        — search roots/files (default [\".\"])
       :include [\"**/*.clj\"] — glob filters (vector)
       :exclude [\"**/test/**\"]
       :hidden? false :respect-gitignore? true
@@ -2074,7 +2083,7 @@
       :context N            — N lines before AND after each hit (alias)
       :before  N            — lines before each hit
       :after   N            — lines after  each hit
-      :files-only? false    — return only distinct paths
+      :files-only? false    — return only distinct paths (no line text)
       :counts?     false    — return per-file match counts
       :regex?      false}   — needles are java.util.regex patterns
    Exactly one of :all/:any. Strings are literal substrings by default;

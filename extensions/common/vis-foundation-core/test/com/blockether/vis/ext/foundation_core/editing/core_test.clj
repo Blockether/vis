@@ -920,6 +920,15 @@
       (expect (= ["needle clj" "needle cljc"]
                 (mapv :text (:hits out))))))
 
+  (it "accepts :files as an alias for :paths"
+    (let [_    (write-temp! "rgfiles/a.clj" "needle alias\n")
+          _    (write-temp! "rgfiles/b.clj" "needle other\n")
+          grep (private-fn "grep-files")
+          file (temp-dir-path "rgfiles/a.clj")
+          out  (grep {:all ["needle"]
+                      :files [file]})]
+      (expect (= ["needle alias"] (mapv :text (:hits out))))))
+
   (it "private grep and public rg use the same single spec-map grammar"
     (let [_ (write-temp! "rgsame/a.clj" "needle same\n")
           spec {:all ["needle"]
