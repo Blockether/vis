@@ -265,6 +265,7 @@
           [input/escape-pattern
            input/alt-enter-pattern
            input/alt-backspace-pattern
+           input/modified-arrow-pattern
            input/paste-start-pattern
            input/paste-end-pattern
            input/sgr-mouse-pattern])))
@@ -282,6 +283,19 @@
           key     (.getNextCharacter decoder false)]
       (expect (= KeyType/Enter (.getKeyType key)))
       (expect (.isAltDown key)))))
+
+(defdescribe modified-arrow-pattern-test
+  (it "decodes xterm modified arrows so Alt+arrow works on macOS terminals"
+    (let [alt-up (let [decoder (custom-decoder (str (char 0x1b) "[1;3A"))]
+                   (.getNextCharacter decoder false))
+          shift-down (let [decoder (custom-decoder (str (char 0x1b) "[1;2B"))]
+                       (.getNextCharacter decoder false))]
+      (expect (= KeyType/ArrowUp (.getKeyType alt-up)))
+      (expect (.isAltDown alt-up))
+      (expect (not (.isShiftDown alt-up)))
+      (expect (= KeyType/ArrowDown (.getKeyType shift-down)))
+      (expect (.isShiftDown shift-down))
+      (expect (not (.isAltDown shift-down))))))
 
 (defdescribe alt-backspace-pattern-test
   (it "ESC+DEL and ESC+Ctrl-H decode as Alt+Backspace"

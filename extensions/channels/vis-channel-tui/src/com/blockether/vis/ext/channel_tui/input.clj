@@ -102,6 +102,78 @@
 ;; to the controlling TTY, so the screen lifecycle owns the on/off
 ;; bracket points.
 
+(defn alt-modifier?
+  "True when Lanterna decoded an Alt/Option modifier."
+  [^KeyStroke key]
+  (.isAltDown key))
+
+(defn shift-modifier?
+  "True when Lanterna decoded a Shift modifier."
+  [^KeyStroke key]
+  (.isShiftDown key))
+
+(defn ctrl-modifier?
+  "True when Lanterna decoded a Ctrl modifier."
+  [^KeyStroke key]
+  (.isCtrlDown key))
+
+(defn alt-char?
+  "True for Alt/Option + character `c`, case-insensitive."
+  [^KeyStroke key c]
+  (and (alt-modifier? key)
+    (= (Character/toLowerCase (.getCharacter key)) c)))
+
+(defn reorder-modifier?
+  "True when a list key should reorder instead of move.
+
+   Alt/Option is the canonical modifier. Shift is accepted too because
+   stock macOS terminal profiles often reserve Option+arrow for OS/editor
+   word movement unless Option is configured as Meta."
+  [^KeyStroke key]
+  (or (alt-modifier? key) (shift-modifier? key)))
+
+(def ^:const reorder-modifier-label "Shift/Alt+↑/↓")
+
+(def ^:private arrow-final->keytype
+  {\A KeyType/ArrowUp
+   \B KeyType/ArrowDown
+   \C KeyType/ArrowRight
+   \D KeyType/ArrowLeft})
+
+(def ^:private modified-arrow-targets
+  (for [modifier (range 2 9)
+        final (keys arrow-final->keytype)]
+    (str (char 0x1b) "[1;" modifier final)))
+
+(defn- modified-arrow-keystroke
+  [^String s]
+  (when-let [final (get s (dec (count s)))]
+    (when-let [ktype (arrow-final->keytype final)]
+      (let [modifier (Character/digit (.charAt s 4) 10)
+            bits (dec modifier)]
+        (when (<= 2 modifier 8)
+          (KeyStroke. ktype
+            (pos? (bit-and bits 4))
+            (pos? (bit-and bits 2))
+            (pos? (bit-and bits 1))))))))
+
+(def modified-arrow-pattern
+  "Decode xterm-style modified arrows (`ESC[1;<mod>A-D`) into Lanterna
+   KeyStrokes with Ctrl/Alt/Shift flags. macOS/iTerm/Terminal commonly
+   use these for Option/Shift arrow combos; Lanterna's stock decoder does
+   not consistently surface Alt+arrow across terminals."
+  (reify CharacterPattern
+    (match [_ seq]
+      (let [s (apply str (map char seq))]
+        (cond
+          (some #(= s %) modified-arrow-targets)
+          (CharacterPattern$Matching. (modified-arrow-keystroke s))
+
+          (some #(str/starts-with? % s) modified-arrow-targets)
+          CharacterPattern$Matching/NOT_YET
+
+          :else nil)))))
+
 (def ^:const PASTE_START_CHAR
   "PUA marker char used as the KeyStroke payload when the bracketed-
    paste START sequence (`ESC[200~`) arrives. Picked from the same
@@ -370,18 +442,20 @@
     (catch Throwable _ nil)))
 
 (defn register-custom-patterns!
-  "Register Escape, Alt+Enter, Alt+Backspace, bracketed-paste, and SGR-mouse patterns on
-   the terminal's input decoder. Without `sgr-mouse-pattern` the
-   stock Lanterna parser handles only legacy X10 mouse events,
-   whose raw-byte coordinate encoding clashes with the JVM's
-   UTF-8 input decoder for any column/row beyond 95 - producing
-   a phantom `mx=65500` from a U+FFFD replacement byte."
+  "Register Escape, Alt+Enter, Alt+Backspace, modified arrows,
+   bracketed-paste, and SGR-mouse patterns on the terminal's input
+   decoder. Without `sgr-mouse-pattern` the stock Lanterna parser
+   handles only legacy X10 mouse events, whose raw-byte coordinate
+   encoding clashes with the JVM's UTF-8 input decoder for any
+   column/row beyond 95 - producing a phantom `mx=65500` from a U+FFFD
+   replacement byte."
   [^UnixTerminal terminal]
   (.addProfile (.getInputDecoder terminal)
     (reify KeyDecodingProfile
       (getPatterns [_] [escape-pattern
                         alt-enter-pattern
                         alt-backspace-pattern
+                        modified-arrow-pattern
                         paste-start-pattern
                         paste-end-pattern
                         sgr-mouse-pattern]))))
