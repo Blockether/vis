@@ -560,7 +560,17 @@
 
     (it "follow-bottom-if-near leaves auto-bottom (nil) untouched"
       (let [r ((ev :follow-bottom-if-near) {:messages-scroll nil} [:follow-bottom-if-near 200 100])]
-        (expect (nil? (:messages-scroll r)))))))
+        (expect (nil? (:messages-scroll r)))))
+
+    (it "follow-bottom-if-near does NOT swallow an in-progress scroll-up"
+      ;; Regression: scroll-up seeds messages-scroll to the bottom and
+      ;; sets a target above it. While that animation runs, re-following
+      ;; would drop the target and snap back down — the user had to
+      ;; "scroll really hard" to escape. An active target = hands off.
+      (let [db {:messages-scroll 100 :messages-scroll-target 80}
+            r  ((ev :follow-bottom-if-near) db [:follow-bottom-if-near 200 100])]
+        (expect (= 100 (:messages-scroll r)))
+        (expect (= 80 (:messages-scroll-target r)))))))
 
 (defdescribe cancel-turn-test
   (it "notifies cancelling instead of relying on footer status"

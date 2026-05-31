@@ -1192,8 +1192,15 @@
   ;; live content scrolls into view. A deliberate scroll-up beyond the
   ;; slack leaves the concrete offset untouched — no yank from history.
   (fn [db [_ total-h inner-h]]
-    (let [scroll (:messages-scroll db)]
-      (if (or (nil? scroll) (nil? total-h) (nil? inner-h))
+    (let [scroll (:messages-scroll db)
+          target (:messages-scroll-target db)]
+      ;; NEVER override an in-progress scroll: when `:messages-scroll-
+      ;; target` is set the user is actively wheeling/keying (e.g. UP,
+      ;; away from the bottom). Re-following here would swallow that
+      ;; intent mid-animation — the user then has to "scroll really
+      ;; hard" to escape the bottom. Only re-arm follow when the view
+      ;; is at rest AND parked within the slack band of the bottom.
+      (if (or (nil? scroll) (some? target) (nil? total-h) (nil? inner-h))
         db
         (let [max-s (max 0 (- (long total-h) (long inner-h)))]
           (if (and (pos? max-s)
