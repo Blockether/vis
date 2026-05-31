@@ -309,11 +309,20 @@
    run paints as ONE synthetic `▶ OP × N` row instead of N individual rows."
   10)
 
-(defn- op-label
-  "Short uppercase label for an op keyword/symbol — the tail name, upcased.
-   `:git/status` → \"STATUS\", `:cat` → \"CAT\"."
+(def ^:private op-friendly-labels
+  "Friendly TUI labels for ops whose raw keyword tail is cryptic.
+   Keys are full op keywords; values are the display string."
+  {:v/cat "READ"
+   :v/rg  "SEARCH"
+   :v/ls  "LIST"})
+
+(defn op-label
+  "Short label for an op keyword/symbol. Prefers `op-friendly-labels`,
+   then falls back to the tail name upcased.
+   `:git/status` → \"STATUS\", `:v/cat` → \"READ\"."
   [op]
-  (-> op name (str/split #"/") last str/upper-case))
+  (or (get op-friendly-labels op)
+      (-> op name (str/split #"/") last str/upper-case)))
 
 (defn- node-text
   "All string leaves under an IR node, joined and trimmed."
