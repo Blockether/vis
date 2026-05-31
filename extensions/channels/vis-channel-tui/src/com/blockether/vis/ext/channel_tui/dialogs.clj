@@ -558,6 +558,12 @@
   [status-label path size-label age-label])
 (defn- file-picker-table-row-line [widths cells] (table/boxed-row-line widths cells (repeat :left)))
 (defn- file-picker-table-border-line [widths kind] (table/boxed-border-line widths kind))
+(defn- reset-picker-cursor!
+  "Reset selection + scroll to top. Used after filter/sort/ignore changes
+   so cursor doesn't dangle past the new result set."
+  [selected scroll]
+  (reset! selected 0)
+  (reset! scroll 0))
 (defn- draw-file-picker-table-line!
   ;; File-picker rows are TABLES; the table body has fixed columns
   ;; (size, modified, name) that must not shift between selected and
@@ -710,21 +716,16 @@
                       KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
                                           (recur))
                       KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                          (reset! selected 0)
-                                          (reset! scroll 0)
+                                          (reset-picker-cursor! selected scroll)
                                           (recur))
                       KeyType/Enter (when (pos? total) (:path (nth items @selected)))
                       KeyType/Character
-                      (let [raw-c (.getCharacter key)
-                            c (Character/toLowerCase raw-c)]
+                      (let [raw-c (.getCharacter key)]
                         (cond (input/alt-char? key \i) (do (swap! include-ignored? not)
-                                                         (reset! selected 0)
-                                                         (reset! scroll 0)
+                                                         (reset-picker-cursor! selected scroll)
                                                          (recur))
-                          (input/alt-char? key \s) (do (swap! sort-mode
-                                                         picker/cycle-sort-mode)
-                                                     (reset! selected 0)
-                                                     (reset! scroll 0)
+                          (input/alt-char? key \s) (do (swap! sort-mode picker/cycle-sort-mode)
+                                                     (reset-picker-cursor! selected scroll)
                                                      (recur))
                           (input/alt-char? key \o)
                           (do (when (pos? total)
@@ -732,8 +733,7 @@
                             (recur))
                           (Character/isISOControl raw-c) (recur)
                           :else (do (swap! query str raw-c)
-                                  (reset! selected 0)
-                                  (reset! scroll 0)
+                                  (reset-picker-cursor! selected scroll)
                                   (recur))))
                       (recur)))))))))
 ;;; ── Text input dialog ───────────────────────────────────────────────────────
@@ -2097,8 +2097,7 @@
                                     (recur))
                 KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
                 KeyType/Character
-                (let [raw-c (.getCharacter key)
-                      c (when raw-c (Character/toLowerCase raw-c))]
+                (let [raw-c (.getCharacter key)]
                   (cond
                     (input/alt-char? key \u)
                     (do (swap! show-empty-untitled? not)
