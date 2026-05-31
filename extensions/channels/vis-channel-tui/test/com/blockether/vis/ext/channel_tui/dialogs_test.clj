@@ -248,8 +248,10 @@
 
 (deftest file-picker-table-test
   (let [table-widths    (var-get #'dlg/file-picker-table-widths)
-        border-line     (var-get #'dlg/file-picker-table-border-line)
-        row-line        (var-get #'dlg/file-picker-table-row-line)
+        boxed-border    (requiring-resolve 'com.blockether.vis.ext.channel-tui.table/boxed-border-line)
+        boxed-row       (requiring-resolve 'com.blockether.vis.ext.channel-tui.table/boxed-row-line)
+        border-line     (fn [widths kind] (boxed-border widths kind))
+        row-line        (fn [widths cells] (boxed-row widths cells (repeat :left)))
         cells           (var-get #'dlg/file-picker-table-cells)
         headers         (var-get #'dlg/file-picker-table-headers)
         content-lines   (var-get #'dlg/file-picker-content-lines)
