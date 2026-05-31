@@ -605,17 +605,16 @@
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query))]
-          (boxed-table/draw!
-            {:g        g
-             :bounds   bounds
-             :top      table-top
-             :body-h   list-h
-             :headers  file-picker-table-headers
-             :widths   widths
-             :total    total
-             :scroll   @scroll
-             :selected @selected
-             :cell-fn  (fn [idx] (file-picker-table-cells (nth items idx)))
+          (boxed-table/draw! g
+            {:bounds      bounds
+             :top         table-top
+             :body-h      list-h
+             :headers     file-picker-table-headers
+             :widths      widths
+             :total       total
+             :scroll      @scroll
+             :selected    @selected
+             :cell-fn     (fn [idx] (file-picker-table-cells (nth items idx)))
              :empty-cells ["" "No matching files." "" ""]})
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) mode-margin-row inner-w 1)
