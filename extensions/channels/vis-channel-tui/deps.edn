@@ -9,7 +9,7 @@
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis          {:local/root "../../.."}
-  ;; Blockether fork of mabe02/lanterna 3.1.5 with four patches on top:
+  ;; Blockether fork of mabe02/lanterna 3.1.5 with five patches on top:
   ;;   1. PR #625 cherry-pick - emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
   ;;   2. BMP `Emoji_Presentation=Yes` width detection - ✅, ⭐, ⚡,
@@ -19,9 +19,15 @@
   ;;      symbols like ☑️, 🏷️, and ❤️ so following whitespace/borders
   ;;      stay aligned in target terminals.
   ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
+  ;;   5. East-Asian-Ambiguous (EAW=A) width - curated text punctuation
+  ;;      and letters (· — … λ “” • ™, Greek, Cyrillic) counted as 2
+  ;;      columns to match ambiguous-wide target terminals, while
+  ;;      structural chrome (box drawing, blocks, shapes, arrows) stays
+  ;;      single-width. Fixes scrollbar/border drift on rows with such
+  ;;      glyphs (the "scrollbar teeth" bug).
   ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.5"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.6"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
