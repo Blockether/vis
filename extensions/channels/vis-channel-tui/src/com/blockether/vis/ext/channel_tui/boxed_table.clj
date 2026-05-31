@@ -84,8 +84,10 @@
 (defn draw!
   "Render a bordered scrollable table in one call.
 
-   Required:
-     :g            TextGraphics
+   Positional arg matches `scrollbar/draw!`:
+     `^TextGraphics g` — the live dialog graphics surface.
+
+   Required opts:
      :bounds       {:left :inner-w} (from `draw-dialog-chrome!`)
      :top          first row to paint (top border lands here)
      :body-h       visible body rows
@@ -96,15 +98,16 @@
      :selected     current selection (0-based row index)
      :cell-fn      (fn [idx] -> seq of strings) for row at absolute idx
 
-   Optional:
-     :empty-cells  per-column cells painted when total = 0; defaults to
-                   blanks with `:empty-message` in column 1
+   Optional opts:
+     :empty-cells   per-column cells painted when total = 0; defaults to
+                    blanks with `:empty-message` in column 1
      :empty-message string shown in the default empty row
-     :aligns       per-column alignment vec (default `(repeat :left)`)
+     :aligns        per-column alignment vec (default `(repeat :left)`)
 
    Returns the full layout map (merge of `layout` + `rows`) so callers
    can place mode lines, hint bars, hit-tests, etc."
-  [{:keys [g bounds top body-h headers widths total scroll selected
+  [^com.googlecode.lanterna.graphics.TextGraphics g
+   {:keys [bounds top body-h headers widths total scroll selected
            cell-fn empty-cells empty-message aligns]
     :or   {empty-message "No items."
            aligns        (repeat :left)}}]
