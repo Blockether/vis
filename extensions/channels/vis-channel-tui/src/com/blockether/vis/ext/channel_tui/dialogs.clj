@@ -1911,19 +1911,21 @@
 ;; emitted both a session row AND a workspace row per entry, so every
 ;; entry showed up twice with a contradictory "Kind".
 (def ^:private navigator-columns
-  [{:id :label, :label "Session", :flex 2}
-   {:id :ctx, :label "Workspace", :width 30} {:id :status, :label "Status", :width 18}])
+  [{:id :label, :label "Session", :flex 1}
+   {:id :ctx, :label "Workspace", :width 28} {:id :status, :label "Status", :width 16}])
 (defn- navigator-short-id [id] (let [s (str id)] (subs s 0 (min 8 (count s)))))
 (defn- navigator-workspace-context
-  "`branch │ root` summary for the workspace bound to a session, falling
-   back to a short id when no VCS context is known."
+  "Compact `branch · repo` summary for the workspace bound to a session
+   (root trimmed to its last path segment so the column stays terse),
+   falling back to a short id when no VCS context is known."
   [ws id]
   (let [w (or (:workspace ws) ws)
         branch (or (:branch w) (:vcs/ref w))
-        root (or (:root w) (:workspace/root w))]
-    (cond (and branch root) (str branch " │ " root)
+        root (or (:root w) (:workspace/root w))
+        root-name (when root (last (remove str/blank? (str/split (str root) #"/"))))]
+    (cond (and branch root-name) (str branch " · " root-name)
       branch (str branch)
-      root (str root)
+      root-name root-name
       :else (navigator-short-id id))))
 (defn- navigator-workspace-index
   "session-id (string) -> workspace entry, honoring the 1:1 model so each
@@ -1973,16 +1975,27 @@
             ;; available height) and center it, so the bottom border is
             ;; glued to the last row instead of floating below a band of
             ;; empty rows.
+            ;; Size the body to the actual row count (capped at the
+            ;; available height) and center the block so the table's
+            ;; bottom border is glued to the last row. With nothing to
+            ;; show we skip the table chrome entirely and render a single
+            ;; quiet line — an empty grid is just noise.
+            table? (pos? total)
             full-h (:content-h (dialog-layout bounds))
             body-h (clamp (max 1 total) 1 (max 1 (- full-h 8)))
-            content-count (+ body-h 8)
+            content-count (if table? (+ body-h 8) 6)
             {:keys [content-top content-h hint-row]} (dialog-layout bounds content-count)
             query-row content-top
-            table-x (+ left 1 p/SELECTION_WIDTH)
-            table-w (max 1 (- inner-w 1 p/SELECTION_WIDTH))
+            ;; Table is inset one column on each side, exactly matching the
+            ;; query box (`draw-text-input-field!` also draws at left+2).
+            ;; The selection marker lives INSIDE the table's left padding,
+            ;; so there is no external gutter to widen the footprint.
+            table-x (+ left 2)
+            table-w (max 1 (- inner-w 2))
             table-body-w (max 1 (- table-w 2))
             scrollbar-col (+ table-x (dec table-w))
             table-widths (table/column-widths navigator-columns (max 1 table-body-w))
+            aligns (mapv #(or (:align %) :left) navigator-columns)
             top-row (+ content-top 4)
             header-row (inc top-row)
             sep-row (inc header-row)
@@ -1992,63 +2005,46 @@
             _ (swap! scroll #(visible-window-start @selected % body-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        ;; Align the query box to the table: same left edge (`table-x`)
-        ;; and same width (`table-w`) so the input and table read as one
-        ;; column, with the selection gutter to the left of both.
-        (let [cursor-pos (draw-text-input-field! g (+ left 1) query-row (+ table-w 2) @query (count @query))]
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
-          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-          (p/styled g
-            [p/BOLD]
-            (p/put-str! g
-              table-x
-              header-row
-              (table/boxed-row-line table-widths
-                (mapv #(or (:label %) "") navigator-columns)
-                (mapv #(or (:align %) :left)
-                  navigator-columns))))
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
-          (dotimes [i body-h]
-            (let [idx (+ @scroll i)
-                  row (+ body-top i)]
-              (cond (< idx total) (let [entry (nth visible-rows idx)
-                                        cells (mapv (fn [{:keys [id render]}]
-                                                      (if render (render entry) (get entry id "")))
-                                                navigator-columns)]
-                                    (table/draw-line! g
-                                      table-x
-                                      row
-                                      table-body-w
-                                      (= idx @selected)
-                                      (table/boxed-row-line table-widths
-                                        cells
-                                        (mapv #(or (:align %)
-                                                 :left)
-                                          navigator-columns)))
-                                    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                                    (p/draw-selection-marker! g (inc left) row (= idx @selected)))
-                (and (zero? total) (zero? i)) (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                                                (p/fill-rect! g table-x row table-body-w 1)
-                                                (p/put-str! g
-                                                  table-x
-                                                  row
-                                                  (table/boxed-row-line
-                                                    table-widths
-                                                    ["" "No matches" "" ""]
-                                                    (repeat :left))))
-                :else (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                        (p/fill-rect! g table-x row table-body-w 1)))))
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/put-str! g table-x bottom-row (table/boxed-border-line table-widths :bottom))
-          (scrollbar/draw! g
-            {:col scrollbar-col,
-             :top body-top,
-             :track-h body-h,
-             :total-h total,
-             :inner-h body-h,
-             :scroll @scroll})
+        (let [cursor-pos (draw-text-input-field! g left query-row inner-w @query (count @query))]
+          (if-not table?
+            ;; Empty state: no skeleton table, just a quiet centered line.
+            (let [msg (if (str/blank? @query) "No sessions yet" "No matches")
+                  msg-x (+ table-x (max 0 (quot (- table-w (count msg)) 2)))]
+              (p/set-colors! g t/dialog-hint t/dialog-bg)
+              (p/put-str! g msg-x (+ content-top 5) msg))
+            (do
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
+              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+              (p/styled g [p/BOLD]
+                (p/put-str! g table-x header-row
+                  (table/boxed-row-line table-widths
+                    (mapv #(or (:label %) "") navigator-columns) aligns)))
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
+              (dotimes [i body-h]
+                (let [idx (+ @scroll i)
+                      row (+ body-top i)
+                      selected? (= idx @selected)
+                      entry (nth visible-rows idx)
+                      cells (mapv (fn [{:keys [id]}] (str (get entry id ""))) navigator-columns)]
+                  ;; Draw at the FULL boxed-row width (`table-w`) so the
+                  ;; last column and right border are not clipped to "…".
+                  (table/draw-line! g table-x row table-w selected?
+                    (table/boxed-row-line table-widths cells aligns))
+                  (when selected?
+                    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                    (p/styled g [p/BOLD] (p/put-str! g (inc table-x) row "›")))))
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/put-str! g table-x bottom-row (table/boxed-border-line table-widths :bottom))
+              (when (> total body-h)
+                (scrollbar/draw! g
+                  {:col scrollbar-col,
+                   :top body-top,
+                   :track-h body-h,
+                   :total-h total,
+                   :inner-h body-h,
+                   :scroll @scroll}))))
           (draw-hint-bar! g
             left
             hint-row
