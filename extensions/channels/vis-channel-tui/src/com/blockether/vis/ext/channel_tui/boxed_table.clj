@@ -1,0 +1,157 @@
+(ns com.blockether.vis.ext.channel-tui.boxed-table
+  "Bordered, scrollable, single-selection data table for TUI dialogs.
+
+   Composes the lower-level `table` border/row primitives with
+   `scrollbar` so callers don't repeat the same boilerplate (top
+   border + header row + middle separator + N body rows + selection
+   marker gutter + scrollbar) at every dialog site.
+
+   Geometry rules
+   --------------
+   Given a dialog `bounds` ({:left :inner-w}) the layout reserves:
+
+     col `left+1`            → selection dot marker (outside table)
+     col `left+2`            → margin between marker and table body
+     cols `left+3 .. R-1`    → boxed table (own `│` borders included)
+     col `R`                 → scrollbar (right of right table border)
+
+   where `R = left + inner-w - 1`. This guarantees the scrollbar never
+   overpaints the table's right `│` border.
+
+   Row layout (relative to caller-provided `:top`)
+   -----------------------------------------------
+     top+0  ┌── top border ──┐
+     top+1  │ header row     │
+     top+2  ├── separator  ──┤
+     top+3  │ first body row │
+     …
+     top+2+body-h │ last body row │
+
+   The bottom border is NOT drawn by this component; callers usually
+   follow the body with a divider + status/mode line and don't want a
+   closing `└┘` cap. Add one yourself if you need it."
+  (:require [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
+            [com.blockether.vis.ext.channel-tui.table :as table]
+            [com.blockether.vis.ext.channel-tui.theme :as t]))
+
+(defn layout
+  "Compute table geometry inside a dialog `bounds` ({:left :inner-w}).
+   Pure: no drawing. Useful for mouse hit-testing before `draw!`."
+  [{:keys [left inner-w]}]
+  (let [table-x (+ left 1 p/SELECTION_WIDTH)
+        table-w (max 1 (- inner-w 2 p/SELECTION_WIDTH))]
+    {:marker-col      (inc left)
+     :table-x         table-x
+     :table-w         table-w
+     :table-content-w (max 1 (- table-w 2))
+     :scrollbar-col   (+ table-x table-w)}))
+
+(defn rows
+  "Resolve the absolute row indices for each painted line, given the
+   caller-supplied `top` and `body-h`."
+  [top body-h]
+  (let [body-top (+ top 3)]
+    {:border-top top
+     :header     (+ top 1)
+     :separator  (+ top 2)
+     :body-top   body-top
+     :body-end   (+ body-top body-h)}))
+
+(defn hit-row
+  "Map a mouse `(mx, my)` into a body row index, or nil if outside the
+   table body. `geom` is `(layout bounds)`, `top` and `body-h` match the
+   `draw!` call, `scroll` is the current scroll offset."
+  [{:keys [table-x table-content-w]} top body-h scroll mx my]
+  (let [{:keys [body-top]} (rows top body-h)]
+    (when (and (>= mx table-x)
+            (< mx (+ table-x table-content-w))
+            (>= my body-top)
+            (< my (+ body-top body-h)))
+      (+ scroll (- my body-top)))))
+
+(defn- empty-row-cells
+  "Default empty-state cells: blank in every column except the second
+   one which carries `message`. Falls back to first column when there
+   is only one column."
+  [widths message]
+  (let [n (count widths)]
+    (cond
+      (zero? n) []
+      (= 1 n)   [message]
+      :else     (assoc (vec (repeat n "")) 1 message))))
+
+(defn draw!
+  "Render a bordered scrollable table in one call.
+
+   Required:
+     :g            TextGraphics
+     :bounds       {:left :inner-w} (from `draw-dialog-chrome!`)
+     :top          first row to paint (top border lands here)
+     :body-h       visible body rows
+     :headers      vector of header strings (count must match :widths)
+     :widths       per-column widths in cells (from caller's sizing fn)
+     :total        total row count in the data set
+     :scroll       current scroll offset (0-based row index)
+     :selected     current selection (0-based row index)
+     :cell-fn      (fn [idx] -> seq of strings) for row at absolute idx
+
+   Optional:
+     :empty-cells  per-column cells painted when total = 0; defaults to
+                   blanks with `:empty-message` in column 1
+     :empty-message string shown in the default empty row
+     :aligns       per-column alignment vec (default `(repeat :left)`)
+
+   Returns the full layout map (merge of `layout` + `rows`) so callers
+   can place mode lines, hint bars, hit-tests, etc."
+  [{:keys [g bounds top body-h headers widths total scroll selected
+           cell-fn empty-cells empty-message aligns]
+    :or   {empty-message "No items."
+           aligns        (repeat :left)}}]
+  (let [{:keys [marker-col table-x table-content-w scrollbar-col]
+         :as   geom} (layout bounds)
+        row-ix     (rows top body-h)
+        {:keys [border-top header separator body-top]} row-ix
+        aligns     (vec (take (count widths) aligns))
+        empty-cells (or empty-cells (empty-row-cells widths empty-message))]
+    ;; Chrome
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/put-str! g table-x border-top (table/boxed-border-line widths :top))
+    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+    (p/put-str! g table-x header
+      (table/boxed-row-line widths headers aligns))
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/put-str! g table-x separator (table/boxed-border-line widths :middle))
+    ;; Body
+    (dotimes [i body-h]
+      (let [idx (+ scroll i)
+            row (+ body-top i)]
+        (cond
+          (< idx total)
+          (do
+            (table/draw-line! g table-x row table-content-w
+              (= idx selected)
+              (table/boxed-row-line widths (cell-fn idx) aligns))
+            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+            (p/draw-selection-marker! g marker-col row (= idx selected)))
+
+          (and (zero? total) (zero? i))
+          (do
+            (p/set-colors! g t/dialog-hint t/dialog-bg)
+            (p/fill-rect! g table-x row table-content-w 1)
+            (p/put-str! g table-x row
+              (table/boxed-row-line widths empty-cells aligns)))
+
+          :else
+          (do
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
+            (p/fill-rect! g table-x row table-content-w 1)))))
+    ;; Scrollbar (own column outside table's right `│` border)
+    (scrollbar/draw! g
+      {:col      scrollbar-col
+       :top      body-top
+       :track-h  body-h
+       :total-h  total
+       :inner-h  body-h
+       :scroll   scroll})
+    (merge geom row-ix)))

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs
   (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.boxed-table :as boxed-table]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
@@ -556,24 +557,12 @@
 (defn- file-picker-table-cells
   [{:keys [status-label path size-label age-label]}]
   [status-label path size-label age-label])
-(defn- file-picker-table-row-line [widths cells] (table/boxed-row-line widths cells (repeat :left)))
-(defn- file-picker-table-border-line [widths kind] (table/boxed-border-line widths kind))
 (defn- reset-picker-cursor!
   "Reset selection + scroll to top. Used after filter/sort/ignore changes
    so cursor doesn't dangle past the new result set."
   [selected scroll]
   (reset! selected 0)
   (reset! scroll 0))
-(defn- draw-file-picker-table-line!
-  ;; File-picker rows are TABLES; the table body has fixed columns
-  ;; (size, modified, name) that must not shift between selected and
-  ;; unselected states. The dot marker is therefore painted by the
-  ;; caller in the dialog's left padding column (outside the
-  ;; table-x origin) via `p/draw-selection-marker!`. This function
-  ;; just paints the table body in the normal palette — BOLD on the
-  ;; selected row so the cursor cue carries onto the row text too.
-  [g x row table-w selected? line]
-  (table/draw-line! g x row table-w selected? line))
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
    the selected relative path, Esc cancels. `Alt+I` toggles ignored files;
@@ -602,76 +591,32 @@
             {:keys [content-top content-h hint-row]} (dialog-layout bounds content-lines)
             _ (swap! selected #(clamp % 0 (max 0 (dec total))))
             table-top (+ content-top 4)
-            table-header (+ content-top 5)
-            table-sep (+ content-top 6)
-            list-top (+ content-top 7)
             list-h (file-picker-table-body-height content-h)
+            list-top (+ table-top 3)
             mode-margin-row (+ list-top list-h)
             mode-border-row (inc mode-margin-row)
             mode-row (inc mode-border-row)
             _ (swap! scroll #(visible-window-start @selected % list-h total))
             mode-line (str "Ignored: " (if @include-ignored? "on" "off")
                         "   Sort: " (picker/sort-label @sort-mode @query))
-            ;; `table-x` is shifted right by `p/SELECTION_WIDTH` so the
-            ;; first 2 cols of the dialog inner area form the selection
-            ;; gutter: col `left+1` holds the dot marker, col
-            ;; `left+2` is the margin between marker and table body.
-            ;; The table itself starts at `left+3`. We reserve one
-            ;; extra col on the right for the scrollbar so it sits
-            ;; outside the table's right `│` border instead of
-            ;; painting over it.
-            table-x (+ left 1 p/SELECTION_WIDTH)
-            table-w (max 1 (- inner-w 2 p/SELECTION_WIDTH))
-            table-content-w (max 1 (- table-w 2))
-            scrollbar-col (+ table-x table-w)
+            geom (boxed-table/layout bounds)
+            {:keys [table-content-w]} geom
             widths (file-picker-table-widths table-content-w)]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query))]
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/put-str! g table-x table-top (file-picker-table-border-line widths :top))
-          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-          (p/put-str! g
-            table-x
-            table-header
-            (file-picker-table-row-line widths file-picker-table-headers))
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/put-str! g table-x table-sep (file-picker-table-border-line widths :middle))
-          (dotimes [i list-h]
-            (let [idx (+ @scroll i)
-                  row (+ list-top i)]
-              (cond (< idx total) (do (draw-file-picker-table-line! g
-                                        table-x
-                                        row
-                                        table-content-w
-                                        (= idx @selected)
-                                        (file-picker-table-row-line
-                                          widths
-                                          (file-picker-table-cells
-                                            (nth items idx))))
-                                      ;; Dot marker in the dialog padding column, outside
-                                      ;; table body. Anchored at `(+ left 1)`
-                                      ;; so it sits one col inside the dialog frame and
-                                      ;; one col before the table content begins.
-                                    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                                    (p/draw-selection-marker! g (inc left) row (= idx @selected)))
-                (and (zero? total) (zero? i))
-                (do (p/set-colors! g t/dialog-hint t/dialog-bg)
-                  (p/fill-rect! g table-x row table-content-w 1)
-                  (p/put-str! g
-                    table-x
-                    row
-                    (file-picker-table-row-line widths
-                      ["" "No matching files." "" ""])))
-                :else (do (p/set-colors! g t/dialog-fg t/dialog-bg)
-                        (p/fill-rect! g table-x row table-content-w 1)))))
-          (scrollbar/draw! g
-            {:col scrollbar-col,
-             :top list-top,
-             :track-h list-h,
-             :total-h total,
-             :inner-h list-h,
-             :scroll @scroll})
+          (boxed-table/draw!
+            {:g        g
+             :bounds   bounds
+             :top      table-top
+             :body-h   list-h
+             :headers  file-picker-table-headers
+             :widths   widths
+             :total    total
+             :scroll   @scroll
+             :selected @selected
+             :cell-fn  (fn [idx] (file-picker-table-cells (nth items idx)))
+             :empty-cells ["" "No matching files." "" ""]})
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) mode-margin-row inner-w 1)
           (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -695,11 +640,7 @@
                     pos (.getPosition ma)
                     mx (.getColumn pos)
                     my (.getRow pos)
-                    hit-idx (when (and (>= mx table-x)
-                                    (< mx (+ table-x table-content-w))
-                                    (>= my list-top)
-                                    (< my (+ list-top list-h)))
-                              (+ @scroll (- my list-top)))]
+                    hit-idx (boxed-table/hit-row geom table-top list-h @scroll mx my)]
                 (cond (= atype MouseActionType/SCROLL_UP)
                   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                   (= atype MouseActionType/SCROLL_DOWN)
