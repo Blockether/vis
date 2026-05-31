@@ -771,7 +771,7 @@
            :scroll  @scroll})
 
         (dlg/draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
+          [["↑/↓" "move"] [input/reorder-modifier-label "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -811,7 +811,7 @@
                   {:models (vec @models)}
 
                   (= ktype KeyType/ArrowUp)
-                  (if (.isAltDown key)
+                  (if (input/reorder-modifier? key)
                     (do (when (pos? @selected)
                           (swap! models swap-items @selected (dec @selected))
                           (swap! selected dec))
@@ -820,7 +820,7 @@
                       (recur)))
 
                   (= ktype KeyType/ArrowDown)
-                  (if (.isAltDown key)
+                  (if (input/reorder-modifier? key)
                     (do (when (< @selected (dec total))
                           (swap! models swap-items @selected (inc @selected))
                           (swap! selected inc))
@@ -1315,7 +1315,7 @@
             :scroll  @scroll})
 
          (dlg/draw-hint-bar! g left hint-row inner-w
-           [["↑/↓" "move"] ["Alt+↑/↓" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
+           [["↑/↓" "move"] [input/reorder-modifier-label "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
 
@@ -1364,9 +1364,9 @@
                      (vis/save-config! cfg)
                      cfg)
 
-                   ;; ↑/↓ navigate, Alt+↑/↓ reorder
+                   ;; ↑/↓ navigate, Shift/Alt+↑/↓ reorder
                    (= ktype KeyType/ArrowUp)
-                   (if (.isAltDown key)
+                   (if (input/reorder-modifier? key)
                      (do (when (pos? @selected)
                            (swap! items swap-items @selected (dec @selected))
                            (swap! selected dec))
@@ -1375,7 +1375,7 @@
                        (recur)))
 
                    (= ktype KeyType/ArrowDown)
-                   (if (.isAltDown key)
+                   (if (input/reorder-modifier? key)
                      (do (when (< @selected (dec total))
                            (swap! items swap-items @selected (inc @selected))
                            (swap! selected inc))

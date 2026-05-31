@@ -717,16 +717,16 @@
                       KeyType/Character
                       (let [raw-c (.getCharacter key)
                             c (Character/toLowerCase raw-c)]
-                        (cond (and (.isAltDown key) (= c \i)) (do (swap! include-ignored? not)
-                                                                (reset! selected 0)
-                                                                (reset! scroll 0)
-                                                                (recur))
-                          (and (.isAltDown key) (= c \s)) (do (swap! sort-mode
-                                                                picker/cycle-sort-mode)
-                                                            (reset! selected 0)
-                                                            (reset! scroll 0)
-                                                            (recur))
-                          (and (.isAltDown key) (= c \o))
+                        (cond (input/alt-char? key \i) (do (swap! include-ignored? not)
+                                                         (reset! selected 0)
+                                                         (reset! scroll 0)
+                                                         (recur))
+                          (input/alt-char? key \s) (do (swap! sort-mode
+                                                         picker/cycle-sort-mode)
+                                                     (reset! selected 0)
+                                                     (reset! scroll 0)
+                                                     (recur))
+                          (input/alt-char? key \o)
                           (do (when (pos? total)
                                 (open-picker-item! (nth items @selected) workspace-root))
                             (recur))
@@ -1712,10 +1712,19 @@
                  (recur))))))))))
 ;;; ── Session picker ─────────────────────────────────────────────────────
 (defn- short-session-id [session] (let [id (str (:id session))] (subs id 0 (min 8 (count id)))))
+(def ^:private untitled-session-title "Untitled session")
+(defn- untitled-session-title?
+  [title]
+  (or (str/blank? (str title))
+    (#{"untitled" "untitled session"} (str/lower-case (str/trim (str title))))))
+(defn- empty-untitled-session?
+  [{:keys [title turn-count]}]
+  (and (not (pos? (long (or turn-count 0))))
+    (untitled-session-title? title)))
 (defn- session-title
   [session]
   (let [title (:title session)
-        base-title (if (and (string? title) (not (str/blank? title))) title "Untitled session")
+        base-title (if (untitled-session-title? title) untitled-session-title (str title))
         fork-count (long (or (:fork-count session) 0))]
     (cond-> base-title (pos? fork-count) (str " [forks:" fork-count "]"))))
 (def ^:private session-dialog-content-w 96)
@@ -1943,9 +1952,12 @@
      :target {:action :switch, :id id}}))
 (defn- navigator-all-rows
   "Sessions arrive newest-modified-first from `tui-session-summaries`; keep
-   that order so the navigator reads top-to-bottom by recency."
-  [{:keys [sessions active-session-id]}]
-  (mapv #(navigator-session-row active-session-id %) sessions))
+   that order so the navigator reads top-to-bottom by recency. Empty untitled
+   shells are hidden by default; Alt+U in the navigator reveals them."
+  [{:keys [sessions active-session-id show-empty-untitled?]}]
+  (->> sessions
+    (remove #(and (not show-empty-untitled?) (empty-untitled-session? %)))
+    (mapv #(navigator-session-row active-session-id %))))
 (defn- navigator-visible-rows
   [rows query]
   (vec (filter #(table/row-matches? % query) rows)))
@@ -1956,6 +1968,11 @@
   (first
     (reduce (fn [[acc off] w] [(conj acc [off (long w)]) (+ off (long w) 3)])
       [[] 2] widths)))
+(defn- navigator-with-selection-gutter
+  "Reserve the shared selection-prefix gutter at the head of the first cell.
+   `p/draw-selection-marker!` paints into that gutter on selected rows."
+  [cells]
+  (update (vec cells) 0 #(str (p/selection-prefix false) %)))
 (defn- draw-navigator-row!
   "Draw one boxed row with frame + separators in the shared dialog border
    color and cell text in `text-fg` (bolded when `bold?`). Painting every
@@ -1976,15 +1993,16 @@
   (let [query (atom "")
         selected (atom 0)
         scroll (atom 0)
-        rows (navigator-all-rows opts)]
+        show-empty-untitled? (atom (boolean (:show-empty-untitled? opts)))]
     (loop []
-      (let [visible-rows (navigator-visible-rows rows @query)
+      (let [rows (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
+            visible-rows (navigator-visible-rows rows @query)
             total (count visible-rows)
             size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols (.getColumns size)
             rows-n (.getRows size)
             g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows-n "Go To"
+            bounds (draw-dialog-chrome! g cols rows-n "Sessions"
                      (navigator-content-w cols) (default-content-height rows-n))
             {:keys [left inner-w]} bounds
             ;; Input is pinned to a FIXED top position (no vertical
@@ -2017,7 +2035,11 @@
         (let [cursor-pos (draw-text-input-field! g left query-row inner-w @query (count @query))]
           (if-not table?
             ;; Empty state: no skeleton table, just a quiet line below input.
-            (let [msg (if (str/blank? @query) "No sessions yet" "No matches")
+            (let [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
+                  msg (cond
+                        (not (str/blank? @query)) "No matches"
+                        (and (pos? hidden-count) (not @show-empty-untitled?)) "Only empty untitled sessions hidden"
+                        :else "No sessions yet")
                   msg-x (+ table-x (max 0 (quot (- table-w (count msg)) 2)))]
               (p/set-colors! g t/dialog-hint t/dialog-bg)
               (p/put-str! g msg-x (+ content-top 5) msg))
@@ -2025,7 +2047,8 @@
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
               (draw-navigator-row! g table-x header-row table-widths
-                (mapv #(or (:label %) "") navigator-columns) aligns t/dialog-hint-key true)
+                (navigator-with-selection-gutter (mapv #(or (:label %) "") navigator-columns))
+                aligns t/dialog-hint-key true)
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
               (dotimes [i body-h]
@@ -2033,12 +2056,12 @@
                       row (+ body-top i)
                       selected? (= idx @selected)
                       entry (nth visible-rows idx)
-                      cells (mapv (fn [{:keys [id]}] (str (get entry id ""))) navigator-columns)]
+                      cells (navigator-with-selection-gutter
+                              (mapv (fn [{:keys [id]}] (str (get entry id ""))) navigator-columns))]
                   (draw-navigator-row! g table-x row table-widths cells aligns t/dialog-fg selected?)
-                  ;; Circle marker INSIDE the table's left padding.
-                  (when selected?
-                    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                    (p/styled g [p/BOLD] (p/put-str! g (inc table-x) row "●")))))
+                  ;; Shared cursor marker, painted by the project-wide primitive into
+                  ;; the reserved `p/selection-prefix` first-cell gutter.
+                  (p/draw-selection-marker! g (+ table-x 2) row selected? t/dialog-hint-key)))
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x bottom-row (table/boxed-border-line table-widths :bottom))
               (when (> total body-h)
@@ -2053,7 +2076,9 @@
             left
             hint-row
             inner-w
-            [["↑/↓" "move"] ["Enter" "open"] ["type" "search"] ["Esc" "cancel"]])
+            [["↑/↓" "move"] ["Enter" "open"] ["type" "search"]
+             ["Alt+U" (if @show-empty-untitled? "hide empty" "show empty")]
+             ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
           (.refresh screen Screen$RefreshType/DELTA))
         (let [key (read-modal-key! screen)]
@@ -2072,10 +2097,19 @@
                                     (recur))
                 KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
                 KeyType/Character
-                (let [raw-c (.getCharacter key)]
-                  (if (and raw-c (not (Character/isISOControl raw-c)))
+                (let [raw-c (.getCharacter key)
+                      c (when raw-c (Character/toLowerCase raw-c))]
+                  (cond
+                    (input/alt-char? key \u)
+                    (do (swap! show-empty-untitled? not)
+                      (reset! selected 0)
+                      (reset! scroll 0)
+                      (recur))
+
+                    (and raw-c (not (input/alt-modifier? key)) (not (Character/isISOControl raw-c)))
                     (do (swap! query str raw-c) (reset! selected 0) (reset! scroll 0) (recur))
-                    (recur)))
+
+                    :else (recur)))
                 (recur)))))))))
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 (def palette-commands
