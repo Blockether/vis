@@ -28,8 +28,6 @@
    self-asserted — the engine stamps `:done-born` and surfaces a soft
    terminal-dep warning, but does not verify or revert."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.consult :as consult]
-            [com.blockether.vis.internal.consult-engine :as consult-engine]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.env-digest :as env-digest]
             [com.blockether.vis.internal.extension :as extension]
@@ -168,18 +166,7 @@
    'task-depends! (fn task-depends! [k deps]               (apply-and-record! env :task-depends! [k deps]))
    'fact-depends! (fn fact-depends! [k deps]               (apply-and-record! env :fact-depends! [k deps]))
    'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
-   'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))
-   ;; Secondary-model consultation (async cross-iter). The model
-   ;; declares an intent; the engine processes it between iters in
-   ;; parallel and appends the resolved entry as a synthetic trailer
-   ;; pin in the next iter. Embedded context (system prompt + user
-   ;; request + ctx snapshot) is invisible to the primary.
-   'consult-request!         (fn consult-request! [id preference arg]
-                               (consult/request-consult! env id preference arg))
-   'consult-promote!         (fn consult-promote! [id fact-key]
-                               (consult/promote-consult! env id fact-key))
-   'consult-dismiss!         (fn consult-dismiss! [id]
-                               (consult/dismiss-consult! env id))})
+   'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
@@ -207,23 +194,10 @@
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`.
 
-   Two gates fire here:
-
-   - Consult gate (engine-internal): when `:engine/pending-consults`
-     is non-empty, `eng/apply-done` returns `:blocked? true` plus a
-     `:done-blocked-by-pending-consults` warning. Promote/dismiss
-     the pending consult on the next iter before retrying.
-
-   - Title gate (Phase D, integration-layer): on turn 1 the loop
-     refuses to ship the answer until the model has set a session
-     title. The engine is NOT called when this gate fires - the
-     loop returns `:blocked? true` + `:done-blocked-by-missing-title`
-     warning directly. Skipped when `:skip-title-gate?` true.
-
    When the payload carries `:trailer-drop`, `:trailer-summarize`,
    or `:archive`, the engine applies them as part of the same swap.
 
-   Returns the intent map plus `:blocked? true|false`."
+   Returns the intent map plus warnings."
   [{:keys [ctx-atom] :as env} {:keys [answer answer-summary
                                       user-request turn-summary
                                       trailer-drop trailer-summarize archive]}]
@@ -275,69 +249,6 @@
      :archive archive
      :blocked? @blocked?
      :warnings @warns}))
-
-(defn process-pending-consults!
-  "Parallel runner. Drains `:engine/pending-consults` atomically,
-   spawns one future per intent dispatching to
-   `consult-engine/run-consult!`, awaits all futures, and appends each
-   resolved entry as a synthetic trailer pin on the current iter's
-   `:forms` (via `consult/append-resolution-pin!`).
-
-   Returns the vec of processed ids (or nil when nothing was pending).
-   Called from the iter-end pass in `loop.clj`.
-
-   Optional `on-chunk` callback: when supplied, fires a `:phase
-   :consult-resolved` chunk per resolved consult so channels (TUI,
-   Telegram) can render the result inline in the iter transcript.
-   The chunk carries the entry map as `:result` plus the synthetic
-   pin scope as `:scope`.
-
-   Test hook: env may carry `:consult-runner` `[env intent] → entry-map`
-   to override the default runner (used by integration tests).
-
-   Thread-isolation: each consult future sees only the request-time
-   ctx snapshot pinned on the intent map, never the live ctx-atom."
-  ([env] (process-pending-consults! env nil))
-  ([env on-chunk]
-   (when-let [ctx-atom (:ctx-atom env)]
-     (let [intents (consult/clear-pending! ctx-atom)]
-       (when (seq intents)
-         ;; Emit `:phase :consult-requested` per intent BEFORE we fire
-         ;; futures so channels can render a pending pill while the
-         ;; side-thread call is in flight.
-         (when on-chunk
-           (let [cursor (-> ctx-atom deref :session/scope)
-                 iter   (:iter cursor)
-                 turn   (:turn cursor)]
-             (doseq [intent intents]
-               (on-chunk {:phase           :consult-requested
-                          :iteration-count iter
-                          :id              (:id intent)
-                          :preference      (:preference intent)
-                          :focus           (:focus intent)
-                          :question        (:question intent)
-                          :scope           (str "t" turn "/i" iter
-                                             "/c-" (name (:id intent)))}))))
-         (let [runner   (or (:consult-runner env)
-                          consult-engine/run-consult!)
-               futures  (mapv (fn [intent]
-                                (future (runner env intent)))
-                          intents)
-               results  (mapv deref futures)]
-           (doseq [r results]
-             (consult/append-resolution-pin! ctx-atom r)
-             (when on-chunk
-               (let [cursor (-> ctx-atom deref :session/scope)
-                     iter    (:iter cursor)
-                     id-name (name (:id r))
-                     scope   (str "t" (:turn cursor) "/i" iter "/c-" id-name)]
-                 (on-chunk {:phase           :consult-resolved
-                            :iteration-count iter
-                            :scope           scope
-                            :id              (:id r)
-                            :tag             :consult
-                            :result          r}))))
-           (mapv :id results)))))))
 
 (defn stamp-cursor
   "Return a ctx map with both `:session/turn` and `:session/scope` synced

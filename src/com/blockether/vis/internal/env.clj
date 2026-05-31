@@ -16,10 +16,8 @@
    [clojure+.walk]
    [edamame.core :as edamame]
    [com.blockether.vis.internal.format :as fmt]
-   [sci.addons.future :as sci-future]
    [sci.core :as sci]
-   [sci.impl.resolve]
-   [taoensso.telemere :as tel]))
+   [sci.impl.resolve]))
 
 ;; =============================================================================
 ;; SCI impl monkey-patch — runtime-resolution LRU only
@@ -370,76 +368,67 @@
   "Creates the SCI sandbox context with all available bindings.
 
    Params:
-   `custom-bindings` - Map of symbol->value for custom bindings (can be nil)
-   `scope` - `:main` (default, primary agent sandbox) or
-            `:consult` (mini-SCI sandbox for the consult engine on a side
-            thread). Only `:consult` installs the `sci.addons.future`
-            namespace (`future`, `future?`, `realized?`, `deref`); primary's
-            sandbox is async-by-design (cross-iter `consult-request!`), so
-            it has no need for in-fence futures. Removing them shrinks the
-            primary symbol surface and removes a class of footgun (deref of
-            unrealized future = blocked iter)."
-  ([custom-bindings] (create-sci-context custom-bindings :main))
-  ([custom-bindings scope]
-   (let [base-bindings {;; I/O side-effect fns are banned: the model returns DATA;
+   `custom-bindings` - Map of symbol->value for custom bindings (can be nil)."
+  [custom-bindings]
+  (let [base-bindings {;; I/O side-effect fns are banned: the model returns DATA;
                        ;; the transcript renders results; there is no stdout
                        ;; channel. Calling any of these throws a descriptive
                        ;; ex-info so the next iteration corrects itself.
-                        'println banned-io
-                        'print   banned-io
-                        'prn     banned-io
-                        'pr      banned-io
-                        'printf  banned-io
-                        'pprint  banned-io
-                        'tap>    banned-io
-                        'flush   banned-io
-                        'newline banned-io
+                       'println banned-io
+                       'print   banned-io
+                       'prn     banned-io
+                       'pr      banned-io
+                       'printf  banned-io
+                       'pprint  banned-io
+                       'tap>    banned-io
+                       'flush   banned-io
+                       'newline banned-io
                        ;; LLM footgun shadows: auto-promote string->Pattern so
                        ;; (re-find "HITL" s), (re-seq "\\d+" s), etc. stop
                        ;; throwing ClassCastException late inside lazy seqs.
-                        're-find safe-re-find
-                        're-seq safe-re-seq
-                        're-matches safe-re-matches
+                       're-find safe-re-find
+                       're-seq safe-re-seq
+                       're-matches safe-re-matches
                        ;; `slurp` is BANNED. File reads go through the
                        ;; sanctioned `v/` filesystem surface (`v/cat`
                        ;; for full-file acquisition). `slurp` bypasses
                        ;; the prompt's path-policy and encourages
                        ;; ad-hoc I/O.
-                        'slurp banned-slurp}
-         all-bindings (merge EXTRA_BINDINGS base-bindings
-                        (or custom-bindings {}))
-         str-ns  (sci/create-ns 'clojure.string nil)
-         set-ns  (sci/create-ns 'clojure.set nil)
-         walk-ns   (sci/create-ns 'clojure.walk nil)
-         c+walk-ns (sci/create-ns 'clojure+.walk nil)
-         plus-ns   (sci/create-ns 'clojure+.core nil)
-         spec-ns (sci/create-ns 'clojure.spec.alpha nil)
+                       'slurp banned-slurp}
+        all-bindings (merge EXTRA_BINDINGS base-bindings
+                       (or custom-bindings {}))
+        str-ns  (sci/create-ns 'clojure.string nil)
+        set-ns  (sci/create-ns 'clojure.set nil)
+        walk-ns   (sci/create-ns 'clojure.walk nil)
+        c+walk-ns (sci/create-ns 'clojure+.walk nil)
+        plus-ns   (sci/create-ns 'clojure+.core nil)
+        spec-ns (sci/create-ns 'clojure.spec.alpha nil)
         ;; Patch clojure.string/split so string delimiters auto-promote to
         ;; Patterns. The original raises a late ClassCastException when an
         ;; LLM passes a string, usually after the cast hides inside a lazy
         ;; seq that only realizes during answer assembly.
-         str-ns-copied (assoc (sci/copy-ns clojure.string str-ns)
-                         'split (sci/new-var 'split safe-split {:ns str-ns}))
+        str-ns-copied (assoc (sci/copy-ns clojure.string str-ns)
+                        'split (sci/new-var 'split safe-split {:ns str-ns}))
 
-         sandbox-ns (sci/create-ns 'sandbox nil)
-         sci-config {:namespaces {'sandbox (merge all-bindings
-                                             {'cond+ (sci/copy-var clojure+.core/cond+ sandbox-ns)
-                                              'if+ (sci/new-var 'if+
-                                                     (fn [_ _ bindings then & [else]]
-                                                       (list 'let [(first bindings) (second bindings)]
-                                                         (list 'if (first bindings) then else)))
-                                                     {:macro true})
-                                              'when+ (sci/new-var 'when+
-                                                       (fn [_ _ bindings & body]
-                                                         (list 'let [(first bindings) (second bindings)]
-                                                           (cons 'when (cons (first bindings) body))))
-                                                       {:macro true})})
-                                  'clojure.core MODERN_CORE_BINDINGS
-                                  'clojure.string str-ns-copied
-                                  'clojure.set (sci/copy-ns clojure.set set-ns)
-                                  'clojure.walk (sci/copy-ns clojure+.walk walk-ns)
-                                  'clojure+.walk (sci/copy-ns clojure+.walk c+walk-ns)
-                                  'clojure+.core (sci/copy-ns clojure+.core plus-ns)
+        sandbox-ns (sci/create-ns 'sandbox nil)
+        sci-config {:namespaces {'sandbox (merge all-bindings
+                                            {'cond+ (sci/copy-var clojure+.core/cond+ sandbox-ns)
+                                             'if+ (sci/new-var 'if+
+                                                    (fn [_ _ bindings then & [else]]
+                                                      (list 'let [(first bindings) (second bindings)]
+                                                        (list 'if (first bindings) then else)))
+                                                    {:macro true})
+                                             'when+ (sci/new-var 'when+
+                                                      (fn [_ _ bindings & body]
+                                                        (list 'let [(first bindings) (second bindings)]
+                                                          (cons 'when (cons (first bindings) body))))
+                                                      {:macro true})})
+                                 'clojure.core MODERN_CORE_BINDINGS
+                                 'clojure.string str-ns-copied
+                                 'clojure.set (sci/copy-ns clojure.set set-ns)
+                                 'clojure.walk (sci/copy-ns clojure+.walk walk-ns)
+                                 'clojure+.walk (sci/copy-ns clojure+.walk c+walk-ns)
+                                 'clojure+.core (sci/copy-ns clojure+.core plus-ns)
                                                     ;; clojure.spec.alpha - LLMs reach for s/def / s/valid? /
                                                     ;; s/keys / s/and / s/conform reflexively when given a
                                                     ;; data-shape problem. Pre-fix, none of those resolved in
@@ -458,51 +447,51 @@
                                                     ;; macros expand to symbols that don't exist in the SCI
                                                     ;; namespace and `(s/def ::id int?)` throws "Unable to
                                                     ;; resolve symbol: clojure.spec.alpha/def-impl".
-                                  'clojure.spec.alpha (sci/copy-ns clojure.spec.alpha spec-ns
-                                                        {:exclude-when-meta []})
-                                  'fast-edn.core (ns->sci-map 'fast-edn.core)
-                                  'clojure.edn (ns->sci-map 'fast-edn.core)
+                                 'clojure.spec.alpha (sci/copy-ns clojure.spec.alpha spec-ns
+                                                       {:exclude-when-meta []})
+                                 'fast-edn.core (ns->sci-map 'fast-edn.core)
+                                 'clojure.edn (ns->sci-map 'fast-edn.core)
                                                     ;; Sandbox pretty-printing shares the SAME global zprint gate
                                                     ;; as the TUI render path (`format/format-clojure`). Without
                                                     ;; that, a model calling `(pp/pprint-str x)` could race the
                                                     ;; renderer formatting a code block and trip zprint's global
                                                     ;; re-entrancy guard (`Attempted to run zprint with type ...`).
-                                  'zprint.core {'zprint-str      fmt/safe-zprint-str
-                                                'zprint          fmt/safe-zprint
-                                                'czprint-str     fmt/safe-czprint-str
-                                                'czprint         fmt/safe-czprint
-                                                'zprint-file-str fmt/safe-zprint-file-str
-                                                'set-options!    fmt/safe-set-zprint-options!
-                                                'configure-all!  fmt/safe-configure-zprint!}
-                                  'clojure.pprint {'pprint     fmt/safe-pprint
-                                                   'pprint-str fmt/safe-pprint-str}
+                                 'zprint.core {'zprint-str      fmt/safe-zprint-str
+                                               'zprint          fmt/safe-zprint
+                                               'czprint-str     fmt/safe-czprint-str
+                                               'czprint         fmt/safe-czprint
+                                               'zprint-file-str fmt/safe-zprint-file-str
+                                               'set-options!    fmt/safe-set-zprint-options!
+                                               'configure-all!  fmt/safe-configure-zprint!}
+                                 'clojure.pprint {'pprint     fmt/safe-pprint
+                                                  'pprint-str fmt/safe-pprint-str}
 
-                                  'charred.api (ns->sci-map 'charred.api)}
-                     :ns-aliases {'str 'clojure.string
-                                  'edn 'fast-edn.core
-                                  'zp 'zprint.core
-                                  'pprint 'clojure.pprint
-                                  'pp 'clojure.pprint
-                                  'set 'clojure.set
-                                  'walk 'clojure.walk
-                                  'c+walk 'clojure+.walk
-                                  'json 'charred.api
-                                  'c+ 'clojure+.core
-                                  's 'clojure.spec.alpha}
-                     :classes {'java.lang.Character Character
-                               'java.lang.Math Math
-                               'java.lang.String String
-                               'java.lang.StringBuilder java.lang.StringBuilder
-                               'java.lang.Integer Integer
-                               'java.lang.Long Long
-                               'java.lang.Double Double
-                               'java.lang.Float Float
-                               'java.lang.Byte java.lang.Byte
-                               'java.lang.Short java.lang.Short
-                               'java.lang.Boolean Boolean
-                               'java.lang.Comparable java.lang.Comparable
-                               'java.lang.Number java.lang.Number
-                               'java.lang.Exception java.lang.Exception
+                                 'charred.api (ns->sci-map 'charred.api)}
+                    :ns-aliases {'str 'clojure.string
+                                 'edn 'fast-edn.core
+                                 'zp 'zprint.core
+                                 'pprint 'clojure.pprint
+                                 'pp 'clojure.pprint
+                                 'set 'clojure.set
+                                 'walk 'clojure.walk
+                                 'c+walk 'clojure+.walk
+                                 'json 'charred.api
+                                 'c+ 'clojure+.core
+                                 's 'clojure.spec.alpha}
+                    :classes {'java.lang.Character Character
+                              'java.lang.Math Math
+                              'java.lang.String String
+                              'java.lang.StringBuilder java.lang.StringBuilder
+                              'java.lang.Integer Integer
+                              'java.lang.Long Long
+                              'java.lang.Double Double
+                              'java.lang.Float Float
+                              'java.lang.Byte java.lang.Byte
+                              'java.lang.Short java.lang.Short
+                              'java.lang.Boolean Boolean
+                              'java.lang.Comparable java.lang.Comparable
+                              'java.lang.Number java.lang.Number
+                              'java.lang.Exception java.lang.Exception
                                                  ;; Throwable + the common JVM runtime exception subclasses
                                                  ;; the model reaches for after `(catch Throwable t ...)` /
                                                  ;; `(catch Exception e ...)`. Pre-fix, only `java.lang.Exception`
@@ -516,110 +505,110 @@
                                                  ;; Allowing Throwable + the common subclasses makes `.getMessage`
                                                  ;; / `.getCause` / `.getClass` / `.getStackTrace` work uniformly
                                                  ;; regardless of the concrete thrown class.
-                               'java.lang.Throwable java.lang.Throwable
-                               'java.lang.Error     java.lang.Error
-                               'java.lang.RuntimeException java.lang.RuntimeException
-                               'java.lang.NullPointerException java.lang.NullPointerException
-                               'java.lang.IllegalArgumentException java.lang.IllegalArgumentException
-                               'java.lang.IllegalStateException    java.lang.IllegalStateException
-                               'java.lang.IndexOutOfBoundsException java.lang.IndexOutOfBoundsException
-                               'java.lang.ArrayIndexOutOfBoundsException java.lang.ArrayIndexOutOfBoundsException
-                               'java.lang.ClassCastException       java.lang.ClassCastException
-                               'java.lang.ArithmeticException      java.lang.ArithmeticException
-                               'java.lang.NumberFormatException    java.lang.NumberFormatException
-                               'java.lang.UnsupportedOperationException java.lang.UnsupportedOperationException
-                               'java.lang.InterruptedException     java.lang.InterruptedException
-                               'java.lang.AssertionError           java.lang.AssertionError
-                               'java.lang.StackOverflowError       java.lang.StackOverflowError
-                               'java.lang.OutOfMemoryError         java.lang.OutOfMemoryError
-                               'java.io.IOException                java.io.IOException
-                               'java.io.FileNotFoundException      java.io.FileNotFoundException
-                               'clojure.lang.ExceptionInfo         clojure.lang.ExceptionInfo
-                               'java.util.Collections java.util.Collections
-                               'java.util.Arrays java.util.Arrays
-                               'java.util.regex.Pattern java.util.regex.Pattern
-                               'java.util.regex.Matcher java.util.regex.Matcher
-                               'java.time.LocalDate java.time.LocalDate
-                               'java.time.Period java.time.Period
-                               'java.time.Instant java.time.Instant
-                               'java.time.LocalDateTime java.time.LocalDateTime
-                               'java.time.format.DateTimeFormatter java.time.format.DateTimeFormatter
-                               'java.util.UUID java.util.UUID
-                               'clojure.lang.PersistentQueue clojure.lang.PersistentQueue
-                               'clojure.lang.BigInt clojure.lang.BigInt
-                               'clojure.lang.Ratio clojure.lang.Ratio
-                               'java.math.BigInteger java.math.BigInteger
-                               'java.math.BigDecimal java.math.BigDecimal
-                               'java.util.Base64 java.util.Base64
-                               'java.net.URLEncoder java.net.URLEncoder
-                               'java.net.URLDecoder java.net.URLDecoder
-                               'java.util.Map java.util.Map
-                               'java.util.List java.util.List
-                               'java.util.HashMap java.util.HashMap
-                               'java.util.LinkedHashMap java.util.LinkedHashMap
-                               'java.util.ArrayList java.util.ArrayList
-                               'java.util.Random java.util.Random}
-                     :imports '{Boolean java.lang.Boolean
-                                Byte java.lang.Byte
-                                Character java.lang.Character
-                                Comparable java.lang.Comparable
-                                Double java.lang.Double
-                                Exception java.lang.Exception
+                              'java.lang.Throwable java.lang.Throwable
+                              'java.lang.Error     java.lang.Error
+                              'java.lang.RuntimeException java.lang.RuntimeException
+                              'java.lang.NullPointerException java.lang.NullPointerException
+                              'java.lang.IllegalArgumentException java.lang.IllegalArgumentException
+                              'java.lang.IllegalStateException    java.lang.IllegalStateException
+                              'java.lang.IndexOutOfBoundsException java.lang.IndexOutOfBoundsException
+                              'java.lang.ArrayIndexOutOfBoundsException java.lang.ArrayIndexOutOfBoundsException
+                              'java.lang.ClassCastException       java.lang.ClassCastException
+                              'java.lang.ArithmeticException      java.lang.ArithmeticException
+                              'java.lang.NumberFormatException    java.lang.NumberFormatException
+                              'java.lang.UnsupportedOperationException java.lang.UnsupportedOperationException
+                              'java.lang.InterruptedException     java.lang.InterruptedException
+                              'java.lang.AssertionError           java.lang.AssertionError
+                              'java.lang.StackOverflowError       java.lang.StackOverflowError
+                              'java.lang.OutOfMemoryError         java.lang.OutOfMemoryError
+                              'java.io.IOException                java.io.IOException
+                              'java.io.FileNotFoundException      java.io.FileNotFoundException
+                              'clojure.lang.ExceptionInfo         clojure.lang.ExceptionInfo
+                              'java.util.Collections java.util.Collections
+                              'java.util.Arrays java.util.Arrays
+                              'java.util.regex.Pattern java.util.regex.Pattern
+                              'java.util.regex.Matcher java.util.regex.Matcher
+                              'java.time.LocalDate java.time.LocalDate
+                              'java.time.Period java.time.Period
+                              'java.time.Instant java.time.Instant
+                              'java.time.LocalDateTime java.time.LocalDateTime
+                              'java.time.format.DateTimeFormatter java.time.format.DateTimeFormatter
+                              'java.util.UUID java.util.UUID
+                              'clojure.lang.PersistentQueue clojure.lang.PersistentQueue
+                              'clojure.lang.BigInt clojure.lang.BigInt
+                              'clojure.lang.Ratio clojure.lang.Ratio
+                              'java.math.BigInteger java.math.BigInteger
+                              'java.math.BigDecimal java.math.BigDecimal
+                              'java.util.Base64 java.util.Base64
+                              'java.net.URLEncoder java.net.URLEncoder
+                              'java.net.URLDecoder java.net.URLDecoder
+                              'java.util.Map java.util.Map
+                              'java.util.List java.util.List
+                              'java.util.HashMap java.util.HashMap
+                              'java.util.LinkedHashMap java.util.LinkedHashMap
+                              'java.util.ArrayList java.util.ArrayList
+                              'java.util.Random java.util.Random}
+                    :imports '{Boolean java.lang.Boolean
+                               Byte java.lang.Byte
+                               Character java.lang.Character
+                               Comparable java.lang.Comparable
+                               Double java.lang.Double
+                               Exception java.lang.Exception
                                                   ;; Mirror of the new exception classes added to `:classes` above.
                                                   ;; Without these the model can call `(catch java.lang.Throwable t ...)`
                                                   ;; via the FQN but the more idiomatic `(catch Throwable t ...)` /
                                                   ;; `(catch NullPointerException e ...)` short forms wouldn't resolve.
-                                Throwable                       java.lang.Throwable
-                                Error                           java.lang.Error
-                                RuntimeException                java.lang.RuntimeException
-                                NullPointerException            java.lang.NullPointerException
-                                IllegalArgumentException        java.lang.IllegalArgumentException
-                                IllegalStateException           java.lang.IllegalStateException
-                                IndexOutOfBoundsException       java.lang.IndexOutOfBoundsException
-                                ArrayIndexOutOfBoundsException  java.lang.ArrayIndexOutOfBoundsException
-                                ClassCastException              java.lang.ClassCastException
-                                ArithmeticException             java.lang.ArithmeticException
-                                NumberFormatException           java.lang.NumberFormatException
-                                UnsupportedOperationException   java.lang.UnsupportedOperationException
-                                InterruptedException            java.lang.InterruptedException
-                                AssertionError                  java.lang.AssertionError
-                                StackOverflowError              java.lang.StackOverflowError
-                                OutOfMemoryError                java.lang.OutOfMemoryError
-                                IOException                     java.io.IOException
-                                FileNotFoundException           java.io.FileNotFoundException
-                                ExceptionInfo                   clojure.lang.ExceptionInfo
-                                Float java.lang.Float
-                                Integer java.lang.Integer
-                                Long java.lang.Long
-                                Math java.lang.Math
-                                Number java.lang.Number
-                                Short java.lang.Short
-                                String java.lang.String
-                                StringBuilder java.lang.StringBuilder
-                                Arrays java.util.Arrays
-                                Collections java.util.Collections
-                                UUID java.util.UUID
-                                Pattern java.util.regex.Pattern
-                                Matcher java.util.regex.Matcher
-                                LocalDate java.time.LocalDate
-                                LocalDateTime java.time.LocalDateTime
-                                Instant java.time.Instant
-                                DateTimeFormatter java.time.format.DateTimeFormatter
-                                Period java.time.Period
-                                PersistentQueue clojure.lang.PersistentQueue
-                                BigInt clojure.lang.BigInt
-                                Ratio clojure.lang.Ratio
-                                BigInteger java.math.BigInteger
-                                BigDecimal java.math.BigDecimal
-                                Base64 java.util.Base64
-                                URLEncoder java.net.URLEncoder
-                                URLDecoder java.net.URLDecoder
-                                Map java.util.Map
-                                List java.util.List
-                                HashMap java.util.HashMap
-                                LinkedHashMap java.util.LinkedHashMap
-                                ArrayList java.util.ArrayList
-                                Random java.util.Random}
+                               Throwable                       java.lang.Throwable
+                               Error                           java.lang.Error
+                               RuntimeException                java.lang.RuntimeException
+                               NullPointerException            java.lang.NullPointerException
+                               IllegalArgumentException        java.lang.IllegalArgumentException
+                               IllegalStateException           java.lang.IllegalStateException
+                               IndexOutOfBoundsException       java.lang.IndexOutOfBoundsException
+                               ArrayIndexOutOfBoundsException  java.lang.ArrayIndexOutOfBoundsException
+                               ClassCastException              java.lang.ClassCastException
+                               ArithmeticException             java.lang.ArithmeticException
+                               NumberFormatException           java.lang.NumberFormatException
+                               UnsupportedOperationException   java.lang.UnsupportedOperationException
+                               InterruptedException            java.lang.InterruptedException
+                               AssertionError                  java.lang.AssertionError
+                               StackOverflowError              java.lang.StackOverflowError
+                               OutOfMemoryError                java.lang.OutOfMemoryError
+                               IOException                     java.io.IOException
+                               FileNotFoundException           java.io.FileNotFoundException
+                               ExceptionInfo                   clojure.lang.ExceptionInfo
+                               Float java.lang.Float
+                               Integer java.lang.Integer
+                               Long java.lang.Long
+                               Math java.lang.Math
+                               Number java.lang.Number
+                               Short java.lang.Short
+                               String java.lang.String
+                               StringBuilder java.lang.StringBuilder
+                               Arrays java.util.Arrays
+                               Collections java.util.Collections
+                               UUID java.util.UUID
+                               Pattern java.util.regex.Pattern
+                               Matcher java.util.regex.Matcher
+                               LocalDate java.time.LocalDate
+                               LocalDateTime java.time.LocalDateTime
+                               Instant java.time.Instant
+                               DateTimeFormatter java.time.format.DateTimeFormatter
+                               Period java.time.Period
+                               PersistentQueue clojure.lang.PersistentQueue
+                               BigInt clojure.lang.BigInt
+                               Ratio clojure.lang.Ratio
+                               BigInteger java.math.BigInteger
+                               BigDecimal java.math.BigDecimal
+                               Base64 java.util.Base64
+                               URLEncoder java.net.URLEncoder
+                               URLDecoder java.net.URLDecoder
+                               Map java.util.Map
+                               List java.util.List
+                               HashMap java.util.HashMap
+                               LinkedHashMap java.util.LinkedHashMap
+                               ArrayList java.util.ArrayList
+                               Random java.util.Random}
                                                ;; `slurp` intentionally NOT denied at the SCI level: we
                                                ;; shadow it in sandbox bindings with `banned-slurp`,
                                                ;; which throws a descriptive ex-info pointing at the
@@ -635,24 +624,20 @@
                                        ;; `*out*` / `*err*` are denied: the sandbox
                                        ;; has no I/O channel. Model returns data;
                                        ;; transcript renders results.
-                     :deny '[ns eval load-string load-file
-                             read-string
-                             spit
-                             intern
-                             sh
-                             *in* *out* *err* *command-line-args*]}
-        ;; only consult mini-SCI gets sci-future bindings
-        ;; (parallel search/web + search/papers calls in one consult
-        ;; fence). Primary is async-by-design; no future in primary.
-         sci-ctx (sci/init (cond-> sci-config
-                             (= scope :consult) sci-future/install))]
+                    :deny '[ns eval load-string load-file
+                            read-string
+                            spit
+                            intern
+                            sh
+                            *in* *out* *err* *command-line-args*]}
+        sci-ctx (sci/init sci-config)]
     ;; SCI preloads a few convenience namespaces. Keep model-facing
     ;; introspection and file access on sanctioned `v/` tools instead.
-     (swap! (:env sci-ctx)
-       (fn [sci-env]
-         (-> sci-env
-           (update :namespaces dissoc 'clojure.repl 'clojure.java.io)
-           (update :ns-aliases dissoc 'repl 'io))))
+    (swap! (:env sci-ctx)
+      (fn [sci-env]
+        (-> sci-env
+          (update :namespaces dissoc 'clojure.repl 'clojure.java.io)
+          (update :ns-aliases dissoc 'repl 'io))))
     ;; REPL-style recovery bindings: `*1` `*2` `*3` carry the last three
     ;; evaluated form values (most recent first); `*e` carries the most
     ;; recent uncaught exception. The iteration loop pushes onto the
@@ -661,16 +646,15 @@
     ;; symbols, but they are interned BEFORE `:initial-ns-keys` so the
     ;; baseline filter excludes them from the live-vars line (they're noise to
     ;; the model's user-binding view).
-     (sci/eval-string+ sci-ctx
-       (str "(def *1 \"previous eval result\" nil) "
-         "(def *2 \"second-previous eval result\" nil) "
-         "(def *3 \"third-previous eval result\" nil) "
-         "(def *e \"most recent uncaught exception\" nil)")
-       {:ns sandbox-ns})
-     {:sci-ctx sci-ctx
-      :sandbox-ns sandbox-ns
-      :scope scope
-      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))})))
+    (sci/eval-string+ sci-ctx
+      (str "(def *1 \"previous eval result\" nil) "
+        "(def *2 \"second-previous eval result\" nil) "
+        "(def *3 \"third-previous eval result\" nil) "
+        "(def *e \"most recent uncaught exception\" nil)")
+      {:ns sandbox-ns})
+    {:sci-ctx sci-ctx
+     :sandbox-ns sandbox-ns
+     :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
 
 ;; Engine-owned sandbox names. `ctx` is the only model-visible engine context
 ;; value; it is rebound by the loop and hidden from live user defs.

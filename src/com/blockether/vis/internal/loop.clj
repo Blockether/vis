@@ -11,7 +11,6 @@
    [com.blockether.svar.internal.util :as util]
    [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.config :as config]
-   [com.blockether.vis.internal.consult :as consult]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
@@ -3173,11 +3172,8 @@
                       ;; 11d4f817.
                       cancel-token (assoc :cancel-token cancel-token)
                       cancel-atom  (assoc :cancel-atom  cancel-atom)
-                      ;; Phase H: per-turn context surfaced for the
-                      ;; (consult-* …) SCI fns. Engine embeds these
-                      ;; into the consultant call so the primary model
-                      ;; never re-passes them — they are state, not
-                      ;; bindings.
+                      ;; Per-turn context surfaced to engine hooks and
+                      ;; render-time diagnostics.
                       true (assoc :turn/user-request user-request
                              :turn/system-prompt system-prompt))
         resolved-model (resolve-effective-model (:router environment))
@@ -3932,12 +3928,16 @@
                         _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
                         ;; =====================================================
                         ;; CTX engine end-of-iter pipeline (D11/D12).
-                        ;; Flat: advance-iter, then process consults, with
-                        ;; phase timing + state logged to telemere so the
-                        ;; run is replayable from ~/.vis/vis.log alone.
+                        ;; Advance the trailer and log enough state for replay
+                        ;; from ~/.vis/vis.log alone.
                         ;; =====================================================
                         ctx-atom-ref (:ctx-atom environment)
                         advance-iter-start-ms (System/currentTimeMillis)
+                        hook-tasks-pre    (when ctx-atom-ref
+                                            (into {}
+                                              (for [[k v] (:session/tasks @ctx-atom-ref)
+                                                    :when (= :hook (:source v))]
+                                                [k (select-keys v [:status :done-born])])))
                         _ (when ctx-atom-ref
                             (swap! ctx-atom-ref
                               (fn [c]
@@ -3947,34 +3947,6 @@
                         advance-iter-duration-ms (- (System/currentTimeMillis) advance-iter-start-ms)
                         trailer-after-pin (when ctx-atom-ref (:session/trailer @ctx-atom-ref))
                         form-results-map  (when ctx-atom-ref (ctx-loop/trailer->form-results (or trailer-after-pin [])))
-                        hook-tasks-pre    (when ctx-atom-ref
-                                            (into {}
-                                              (for [[k v] (:session/tasks @ctx-atom-ref)
-                                                    :when (= :hook (:source v))]
-                                                [k (select-keys v [:status :done-born])])))
-                        _ (when ctx-atom-ref
-                            (tel/log! {:level :info :id ::iter-end-pre-consults
-                                       :data {:iteration iteration
-                                              :cursor cursor
-                                              :pinned-forms (count forms-vec)
-                                              :trailer-entries (count (or trailer-after-pin []))
-                                              :form-result-scopes (vec (sort (keys (or form-results-map {}))))
-                                              :hook-tasks-pre hook-tasks-pre
-                                              :advance-iter-ms advance-iter-duration-ms}}
-                              "CTX iter-end: trailer pinned; about to process consults"))
-                        consult-start-ms (System/currentTimeMillis)
-                        _ (when ctx-atom-ref
-                            ;; Drain :engine/pending-consults declared
-                            ;; via (consult-request! …) inside this
-                            ;; iter's fence. Each pending intent runs
-                            ;; in parallel on a side thread; each
-                            ;; result lands as a synthetic trailer pin
-                            ;; on the current iter and fires a
-                            ;; :phase :consult-resolved chunk for the
-                            ;; channel. Done is refused while pending
-                            ;; consults exist.
-                            (ctx-loop/process-pending-consults! environment on-chunk))
-                        consult-duration-ms (- (System/currentTimeMillis) consult-start-ms)
                         hook-tasks-post   (when ctx-atom-ref
                                             (into {}
                                               (for [[k v] (:session/tasks @ctx-atom-ref)
@@ -3982,13 +3954,18 @@
                                                 [k (select-keys v [:status :done-born])])))
                         warnings-post     (when ctx-atom-ref (:engine/warnings @ctx-atom-ref))
                         _ (when ctx-atom-ref
-                            (tel/log! {:level :info :id ::iter-end-post-consults
+                            (tel/log! {:level :info :id ::iter-end-ctx
                                        :data {:iteration iteration
+                                              :cursor cursor
+                                              :pinned-forms (count forms-vec)
+                                              :trailer-entries (count (or trailer-after-pin []))
+                                              :form-result-scopes (vec (sort (keys (or form-results-map {}))))
+                                              :hook-tasks-pre hook-tasks-pre
                                               :hook-tasks-post hook-tasks-post
                                               :hook-tasks-changed? (not= hook-tasks-pre hook-tasks-post)
                                               :warnings warnings-post
-                                              :consult-ms consult-duration-ms}}
-                              "CTX iter-end: consults processed"))
+                                              :advance-iter-ms advance-iter-duration-ms}}
+                              "CTX iter-end: trailer pinned"))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
@@ -4892,21 +4869,17 @@
       (sci/new-var sym val meta-map))))
 
 (defn- extension-namespace-bindings
-  ;; primary's SCI namespace gets ONLY symbols whose
-  ;; `:ext.symbol/engine-scope` contains `:main` (default for legacy
-  ;; symbols, so existing extensions keep working unchanged). Consult
-  ;; mini-SCI builds its own bindings via `wrap-extension ext env :consult`
-  ;; in the consult engine path.
+  ;; Primary SCI namespace gets every extension symbol.
   [environment ns-sym alias-sym active-exts]
   (let [ext-ns (sci/create-ns ns-sym)]
     (loop [remaining active-exts
            bindings  {}
            owners    {}]
       (if-let [ext (first remaining)]
-        (let [wrapped (extension/wrap-extension ext environment :main)
+        (let [wrapped (extension/wrap-extension ext environment)
               entry-by-sym (into {}
                              (map (juxt :ext.symbol/symbol identity))
-                             (extension/ext-symbols-in-scope ext :main))
+                             (extension/ext-symbols ext))
               ns-bindings (into {}
                             (map (fn [[sym val]]
                                    [sym (sci-binding-var ext-ns sym val
@@ -5200,32 +5173,10 @@
                                                               :trailer-drop      trailer-drop
                                                               :trailer-summarize trailer-summarize
                                                               :archive           archive})]
-                                     ;; Consult gate: when consults declared
-                                     ;; earlier in this iter are still pending,
-                                     ;; the engine refuses close. We surface the
-                                     ;; refusal as a value the model sees on the
-                                     ;; next iter (NOT :vis/answer); the loop
-                                     ;; forces a fresh iter so the primary can
-                                     ;; promote/dismiss the resolved trailer pin
-                                     ;; before retrying.
-                                     (if (:blocked? done-ret)
-                                       ;; Phase D: distinguish refusal reason so the model
-                                       ;; sees a precise hint (consults vs missing title).
-                                       (let [warnings (:warnings done-ret)
-                                             title-block? (some #(= :done-blocked-by-missing-title (:code %))
-                                                            warnings)]
-                                         (if title-block?
-                                           {:vis/done-blocked? true
-                                            :reason :missing-title
-                                            :hint "done refused: session title is blank on turn 1. Emit (set-session-title! \"...\") as a top-level form BEFORE (done ...). The title labels the session in the channel UI and indexes it in history."}
-                                           {:vis/done-blocked? true
-                                            :reason :pending-consults
-                                            :hint "done refused: consults pending this iter; promote/dismiss the resolved trailer pin before retrying"}))
-                                       (do
-                                         (reset! answer-atom
-                                           {:value    value
-                                            :position (:form-idx @turn-state-atom)})
-                                         :vis/answer))))
+                                     (reset! answer-atom
+                                       {:value    value
+                                        :position (:form-idx @turn-state-atom)})
+                                     :vis/answer))
         ;; SCI binding for the session title:
         ;;   `(set-session-title! \"...\")` - writes the title through
         ;;                              to DB, syncs the in-memory
@@ -5348,15 +5299,7 @@
               :answer-atom                       answer-atom
               :session-title-atom           session-title-atom
               :extensions                        (atom [])
-              :active-extensions                 (atom [])
-              ;; Phase H: secondary-model consultation. Per-session
-              ;; budget atom + the :consult map from vis config (or
-              ;; nil → consult fallback to its DEFAULT_PREFERENCE_MAP).
-              ;; The consult layer reads ctx-atom directly when it
-              ;; needs to render a projection for the consultant.
-              :consult-config                    (some-> (config/load-config-raw)
-                                                   :consult)
-              :consult-budget-atom               (consult/fresh-budget-atom))]
+              :active-extensions                 (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
     ;; Restore the CTX engine state when resuming. SCI defs do NOT
