@@ -206,21 +206,33 @@
                                 :sessions [{:id "s1"
                                             :title nil
                                             :turn-count 2
+                                            :modified-at 0}
+                                           {:id "s2"
+                                            :title "Second"
+                                            :turn-count 5
                                             :modified-at 0}]
                                 :db {:workspaces [{:id :main
-                                                   :label "Main"
-                                                   :active? true
-                                                   :workspace {:kind :trunk
-                                                               :branch "main"
-                                                               :state :active
-                                                               :root "/repo"}}]}})]
-    (testing "navigator makes entity kind explicit"
-      (is (= #{"session" "workspace"} (set (map :kind rows))))
-      (is (= "Untitled session" (:label (first rows))))
-      (is (= "s1" (:ctx (first rows))))
-      (is (= {:action :switch :id "s1"} (:target (first rows))))
-      (is (= [{:action :switch-workspace :workspace-id :main}]
-            (mapv :target (visible-rows rows :workspaces "main")))))))
+                                                   :session {:id "s1"}
+                                                   :branch "main"
+                                                   :root "/repo"}]
+                                     :workspace-locals {}}})]
+    ;; 1:1 session<->workspace: one unified row per session, NOT a
+    ;; duplicated session row + workspace row with a contradictory :kind.
+    (testing "one unified row per session, no :kind / :switch-workspace"
+      (is (= 2 (count rows)))
+      (is (every? #(not (contains? % :kind)) rows))
+      (is (= [{:action :switch :id "s1"} {:action :switch :id "s2"}]
+            (mapv :target rows))))
+    (testing "session label + its 1:1 workspace context"
+      (let [r1 (first rows)]
+        (is (= "Untitled session" (:label r1)))
+        (is (= "main │ /repo" (:ctx r1)))
+        (is (= "focused 2 turns" (:status r1)))))
+    (testing "ctx falls back to a short id when no workspace is bound"
+      (is (= "s2" (:ctx (second rows)))))
+    (testing "visible-rows filters by query only"
+      (is (= 1 (count (visible-rows rows "second"))))
+      (is (= 2 (count (visible-rows rows "")))))))
 
 (deftest file-picker-table-test
   (let [table-widths    (var-get #'dlg/file-picker-table-widths)

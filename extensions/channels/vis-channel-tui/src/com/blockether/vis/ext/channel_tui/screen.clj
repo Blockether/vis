@@ -1807,16 +1807,6 @@
                        (vis/notify! "No current session to fork"
                          :level :warn
                          :ttl-ms copy-success-ttl-ms))
-                     (= :switch-workspace (:action choice))
-                     (let [target-id (:workspace-id choice)
-                           before    (:active-workspace-id @state/app-db)]
-                       (state/dispatch [:select-workspace-index
-                                        (first (keep-indexed
-                                                 (fn [idx entry]
-                                                   (when (= (:id entry) target-id) idx))
-                                                 (:workspaces @state/app-db)))])
-                       (when-not (= before (:active-workspace-id @state/app-db))
-                         (refresh-active-workspace! true)))
                      (= :switch (:action choice))
                      (let [target-id (:id choice)]
                        (when-not (= (str target-id) (current-session-id))
