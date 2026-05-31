@@ -1221,7 +1221,11 @@
       ;; the dispatch (and its render-version bump) fires only on the
       ;; single frame that actually flips concrete -> follow, never as
       ;; a per-tick busy loop.
-      (when (:loading? db)
+      (when (and (:loading? db)
+              ;; Don't interfere while a scroll animation is running:
+              ;; the user is actively moving (likely UP, off the bottom)
+              ;; and re-following would swallow it.
+              (not (scroll-anim-active? db)))
         (let [s  (:messages-scroll db)
               ly (:layout db)]
           (when (and (some? s) ly (:total-h ly) (:inner-h ly))
