@@ -26,10 +26,12 @@
      top+3  │ first body row │
      …
      top+2+body-h │ last body row │
+     top+3+body-h └── bottom ──┘  (only when `:closed? true`)
 
-   The bottom border is NOT drawn by this component; callers usually
-   follow the body with a divider + status/mode line and don't want a
-   closing `└┘` cap. Add one yourself if you need it."
+   By default the table is open at the bottom; callers usually follow
+   the body with a divider + status line and don't want a closing
+   `└┘` cap. Pass `:closed? true` to draw the closing border (matches
+   the navigator-style boxed picker)."
   (:require [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.table :as table]
@@ -103,14 +105,17 @@
                     blanks with `:empty-message` in column 1
      :empty-message string shown in the default empty row
      :aligns        per-column alignment vec (default `(repeat :left)`)
+     :closed?       when true, paint a closing `└──┘` border one row
+                    below the last body row (default false)
 
    Returns the full layout map (merge of `layout` + `rows`) so callers
    can place mode lines, hint bars, hit-tests, etc."
   [^com.googlecode.lanterna.graphics.TextGraphics g
    {:keys [bounds top body-h headers widths total scroll selected
-           cell-fn empty-cells empty-message aligns]
+           cell-fn empty-cells empty-message aligns closed?]
     :or   {empty-message "No items."
-           aligns        (repeat :left)}}]
+           aligns        (repeat :left)
+           closed?       false}}]
   (let [{:keys [marker-col table-x table-content-w scrollbar-col]
          :as   geom} (layout bounds)
         row-ix     (rows top body-h)
@@ -149,6 +154,11 @@
           (do
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g table-x row table-content-w 1)))))
+    ;; Optional closing border (matches navigator-style boxed picker)
+    (when closed?
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/put-str! g table-x (+ body-top body-h)
+        (table/boxed-border-line widths :bottom)))
     ;; Scrollbar (own column outside table's right `│` border)
     (scrollbar/draw! g
       {:col      scrollbar-col

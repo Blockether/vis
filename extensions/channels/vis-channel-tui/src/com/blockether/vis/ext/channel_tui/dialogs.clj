@@ -521,7 +521,6 @@
               KeyType/ArrowDown (do (swap! scroll inc) (recur))
               (recur))))))))
 ;;; ── File picker dialog ──────────────────────────────────────────────────────
-(def ^:private file-picker-max-visible 10)
 (defn- open-picker-item!
   ([item] (open-picker-item! item workspace/*workspace-root*))
   ([{:keys [path]} workspace-root]
@@ -535,10 +534,6 @@
              :target path,
              :error (.getMessage t)}))))))
 (def ^:private file-picker-table-headers ["Status" "File" "Size" "Modified"])
-(defn- file-picker-content-lines [] (+ 10 file-picker-max-visible))
-(defn- file-picker-table-body-height
-  [content-h]
-  (max 1 (min file-picker-max-visible (- content-h 10))))
 (defn- file-picker-table-widths
   [table-w]
   (let [overhead (inc (* 3 (count file-picker-table-headers)))
@@ -581,24 +576,17 @@
                     {:include-ignored? @include-ignored?,
                      :sort-mode @sort-mode})
             total (count items)
-            content-lines (file-picker-content-lines)
             size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols (.getColumns size)
             rows (.getRows size)
             g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Attach File" content-lines)
+            bounds (draw-dialog-chrome! g cols rows "Attach File" nil)
             {:keys [left inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds content-lines)
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             _ (swap! selected #(clamp % 0 (max 0 (dec total))))
             table-top (+ content-top 4)
-            list-h (file-picker-table-body-height content-h)
-            list-top (+ table-top 3)
-            mode-margin-row (+ list-top list-h)
-            mode-border-row (inc mode-margin-row)
-            mode-row (inc mode-border-row)
+            list-h (max 1 (- content-h 8))
             _ (swap! scroll #(visible-window-start @selected % list-h total))
-            mode-line (str "Ignored: " (if @include-ignored? "on" "off")
-                        "   Sort: " (picker/sort-label @sort-mode @query))
             geom (boxed-table/layout bounds)
             {:keys [table-content-w]} geom
             widths (file-picker-table-widths table-content-w)]
@@ -614,20 +602,22 @@
              :total       total
              :scroll      @scroll
              :selected    @selected
+             :closed?     true
              :cell-fn     (fn [idx] (file-picker-table-cells (nth items idx)))
              :empty-cells ["" "No matching files." "" ""]})
-          (p/set-colors! g t/dialog-fg t/dialog-bg)
-          (p/fill-rect! g (inc left) mode-margin-row inner-w 1)
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/put-str! g (inc left) mode-border-row (p/horiz-line inner-w))
-          (p/set-colors! g t/dialog-hint t/dialog-bg)
-          (p/put-str! g (+ left 2) mode-row (ellipsize mode-line (max 1 (- inner-w 2))))
+          ;; Footer carries every modifier so the dialog body stays
+          ;; pure table. Pairs follow navigator's pattern: the key in
+          ;; bold + the CURRENT effective action label, so the user
+          ;; can see at a glance whether ignored is on/off and which
+          ;; sort mode is active.
           (draw-hint-bar! g
             left
             hint-row
             inner-w
-            [["type" "filter"] ["Alt+I" "ignored"] ["Alt+S" "sort"] ["Alt+O" "open"]
-             ["↑/↓" "move"] ["Enter" "attach"] ["Esc" "cancel"]])
+            [["type" "filter"] ["↑/↓" "move"] ["Enter" "attach"]
+             ["Alt+I" (str "ignored " (if @include-ignored? "on" "off"))]
+             ["Alt+S" (str "sort " (picker/sort-label @sort-mode @query))]
+             ["Alt+O" "open"] ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
