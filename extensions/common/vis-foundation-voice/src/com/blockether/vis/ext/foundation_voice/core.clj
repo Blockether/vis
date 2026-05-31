@@ -728,6 +728,7 @@
      [{:slash/name     "voice"
        :slash/doc      "Toggle voice recording (TUI)."
        :slash/usage    "/voice"
+       :slash/hidden?  true
        :slash/requires #{:channel}
        :slash/availability-fn (fn [{ch :channel/id}] (= :tui ch))
        :slash/run-fn   voice-toggle-recording!}]}))

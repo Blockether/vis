@@ -808,7 +808,21 @@
                  inner-h
                  {:progress progress, :loading? loading?, :progress-extra progress-extra}
                  {:session-id (get-in db [:session :id]),
-                  :detail-expansions (:detail-expansions db)})
+                  :detail-expansions (:detail-expansions db)
+                  ;; Previous frame's cumulative offsets let `layout`
+                  ;; anchor the scroll to the message that was at the
+                  ;; top of the viewport, so estimate->real height
+                  ;; corrections (which move `total-h`) don't lurch the
+                  ;; viewport / scrollbar thumb mid-scroll.
+                  :prev-offsets (get-in db [:layout :offsets])})
+        ;; Persist the anchor-corrected scroll so the input thread's
+        ;; wheel/drag math and the next layout share the same offset.
+        ;; nil = auto-bottom (never written back). Skip the dispatch
+        ;; when unchanged to avoid churning render versions.
+        anchored-scroll (:anchored-scroll layout)
+        _ (when (and (some? anchored-scroll)
+                  (not= anchored-scroll messages-scroll))
+            (state/dispatch [:set-scroll anchored-scroll]))
         total-h (long (:total-h layout))
         text-top (+ messages-top render/MESSAGE_MARGIN_TOP)
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
@@ -1026,7 +1040,11 @@
                  inner-h
                  {:progress progress, :loading? loading?, :progress-extra progress-extra}
                  {:session-id (get-in db [:session :id]),
-                  :detail-expansions (:detail-expansions db)})
+                  :detail-expansions (:detail-expansions db)
+                  ;; Anchor for paint parity with the full-frame path.
+                  ;; This partial path doesn't republish `:offsets`, so
+                  ;; the next full frame persists the corrected scroll.
+                  :prev-offsets (get-in db [:layout :offsets])})
         ;; In-session search consumes its pending scroll target
         ;; here — the layout's `:offsets` vec gives the Y of any
         ;; message-idx in O(1). One-shot: clear pending so subsequent
@@ -1197,6 +1215,20 @@
       ;; then satisfy the `(not= last-v version)` check and the
       ;; full-frame branch fires — no missed frames mid-anim.
       (when (scroll-anim-active? db) (state/dispatch [:tick-scroll-anim]))
+      ;; Stick-to-bottom: while a turn streams, if the user is parked
+      ;; within a few rows of the bottom, re-arm auto-follow (nil) so
+      ;; the growing live bubble stays in view. Gated tightly here so
+      ;; the dispatch (and its render-version bump) fires only on the
+      ;; single frame that actually flips concrete -> follow, never as
+      ;; a per-tick busy loop.
+      (when (:loading? db)
+        (let [s  (:messages-scroll db)
+              ly (:layout db)]
+          (when (and (some? s) ly (:total-h ly) (:inner-h ly))
+            (let [max-s (max 0 (- (long (:total-h ly)) (long (:inner-h ly))))]
+              (when (and (pos? max-s)
+                      (>= (long s) (- max-s (long state/auto-follow-slack-rows))))
+                (state/dispatch [:follow-bottom-if-near (:total-h ly) (:inner-h ly)]))))))
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version @state/app-db) 0))
               ;; tryLock so a dialog session (which holds the lock for

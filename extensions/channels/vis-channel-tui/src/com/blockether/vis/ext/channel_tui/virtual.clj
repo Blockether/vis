@@ -525,9 +525,14 @@
    plain Object args here - we cast with `long` inside the body."
   [messages bubble-w settings scroll inner-h
    {:keys [progress loading? progress-extra] :or {progress nil loading? false}}
-   & [{:keys [session-id detail-expansions]}]]
+   & [{:keys [session-id detail-expansions prev-offsets]}]]
   (let [bubble-w          (long bubble-w)
         inner-h           (long inner-h)
+        ;; Captured BEFORE the anchoring rebind of `scroll` below so
+        ;; the return map can tell auto-bottom (nil, never persisted)
+        ;; apart from a concrete offset (persisted back so the input
+        ;; thread's next wheel math runs against the anchored value).
+        scroll-given?     (some? scroll)
         detail-expansions detail-expansions
         ;; Pre-pass: squash maximal runs of consecutive assistant
         ;; messages that are made up entirely of the same provider
@@ -548,6 +553,43 @@
                    (range n) messages)
         est-off  (vec (reductions + 0 (map long est)))
         est-tot  (long (peek est-off))
+        ;; ── Scroll anchoring ──────────────────────────────────────
+        ;; `scroll` is an ABSOLUTE row offset. Off-screen heights are
+        ;; estimates until a bubble is measured (visible) or warmed;
+        ;; trace-bubble estimates systematically OVER-shoot, so as the
+        ;; user scrolls UP into never-measured bubbles `total-h`
+        ;; shrinks by a large amount and a fixed `scroll` suddenly
+        ;; points at a different turn — the viewport (and scrollbar
+        ;; thumb) lurch, worst near the top of a long reopened session
+        ;; where the most unmeasured content gets corrected at once.
+        ;;
+        ;; Fix: pin the scroll to the message that was at the top of
+        ;; the viewport last frame. Given the PREVIOUS frame's
+        ;; cumulative `offsets`, find that anchor message and shift
+        ;; `scroll` by however much the content ABOVE it changed height
+        ;; between frames (`est-off[anchor] - prev-off[anchor]`). The
+        ;; anchor message then stays visually put regardless of how the
+        ;; off-screen estimate ↔ real corrections move `total-h`.
+        ;;
+        ;; nil scroll = auto-bottom: never anchored (always tracks the
+        ;; latest message). Guarded on offsets-vec shape so an append
+        ;; (n changed) skips anchoring and falls through to the raw
+        ;; value rather than mis-indexing.
+        anchored
+        (when (and (some? scroll) (pos? n)
+                (vector? prev-offsets)
+                (= (long (count prev-offsets)) (inc n)))
+          (let [s   (long scroll)
+                idx (long
+                      (loop [i 0]
+                        (cond
+                          (>= i (dec n)) (dec n)
+                          (> (long (nth prev-offsets (inc i))) s) i
+                          :else (recur (inc i)))))
+                delta (- (long (nth est-off idx))
+                        (long (nth prev-offsets idx)))]
+            (max 0 (+ s delta))))
+        scroll   (if (some? anchored) anchored scroll)
         scroll-1 (long (or scroll (max 0 (- est-tot inner-h))))
         eff-1    (long (min scroll-1 (max 0 (- est-tot inner-h))))
         ;; Pass 1b ── candidate visible idxs from estimates.
@@ -691,7 +733,12 @@
      :eff-scroll eff-2
      :heights    heights'
      :offsets    offsets'
-     :visible    visible-set}))
+     :visible    visible-set
+     ;; Clamped, anchor-corrected absolute scroll the caller should
+     ;; write back into app-db (`:set-scroll`) so the input thread and
+     ;; the next layout agree. nil for auto-bottom — never persist that,
+     ;; or auto-bottom stickiness breaks.
+     :anchored-scroll (when scroll-given? eff-2)}))
 
 ;;; ── Background pre-warmer ────────────────────────────────────────────────────
 ;;
