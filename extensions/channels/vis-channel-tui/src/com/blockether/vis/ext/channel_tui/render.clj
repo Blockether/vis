@@ -3494,19 +3494,6 @@
         delay)
       (rate-limit-notice? notice failed-provider why))))
 
-(defn- fallback-recap
-  [notice]
-  (let [text (str/replace (format-fallback-notice notice) #"^[↻↪] " "")]
-    (cond
-      (str/starts-with? text "provider fallback:")
-      (str "Provider fallback:" (subs text (count "provider fallback:")))
-
-      (str/starts-with? text "retry same provider:")
-      (str "Provider retry:" (subs text (count "retry same provider:")))
-
-      :else
-      (str "Provider: " text))))
-
 (defn- consult-recap
   "Project a single resolved consult entry into a multi-line recap
    body. The first line is the CONSULT-tagged header (id + confidence
@@ -3580,70 +3567,6 @@
     (str "CONSULT  " id " " preference " ⟳ pending"
       (when (seq hint) (str " — " hint)))))
 
-(defn- provider-error-recap
-  [error]
-  (let [data (:data error)]
-    (when (and (map? error) (or (:status data) (:body data) (:request-id data) (:request_id data)))
-      (let [status           (:status data)
-            body             (some-> (:body data) str str/trim)
-            provider-message (provider-body-message body)
-            wrapper-message  (:message error)
-            auth?            (auth-provider-error? status provider-message wrapper-message body)
-            rate-limit?      (or (= 429 status)
-                               (rate-limit-text? provider-message)
-                               (rate-limit-text? wrapper-message)
-                               (rate-limit-text? body))
-            msg              (or provider-message
-                               (when-not (generic-provider-wrapper-message? wrapper-message) wrapper-message)
-                               (str (:type error))
-                               "provider error")]
-        (cond
-          auth?
-          (str "Provider auth failed" (when status (str " HTTP " status)) " — " auth-recovery-hint)
-
-          rate-limit?
-          (str "Provider rate-limited" (when status (str " HTTP " status)) " — " rate-limit-recovery-hint)
-
-          :else
-          (str "Provider error" (when status (str " HTTP " status)) ": " msg))))))
-
-(defn- recap-kind-of
-  "Tag a raw recap row with its kind by reading the leading badge
-   token. `nil` for unrecognised rows — the painter falls back to
-   neutral recap styling, same as before."
-  [^String text]
-  (let [token (some-> text (str/split #"\s+" 2) first)]
-    (when (contains? recap-kinds token)
-      (keyword (str/lower-case token)))))
-
-(defn- recap-row-entries
-  "Wrap one recap body to `pad-w` and tag every produced row with
-   `:meta {:kind :recap :recap-kind <kind>}`. The paint dispatch in
-   `paint-iteration!` reads `:recap-kind` to pick the gutter + badge
-   color so each engine event (`TITLE`/`TASK`/`SPEC`/`FACT`/`RECAP`)
-   gets its own accent without touching the marker scheme."
-  [body pad-w]
-  (let [kind (recap-kind-of body)]
-    (mapv (fn [line]
-            {:line (str recap-marker " " line)
-             :meta {:kind :recap :recap-kind kind}})
-      (wrap-text body pad-w))))
-
-(defn- recap-entries
-  [_line-entry recaps fill-w]
-  (when (seq recaps)
-    (let [pad-w (max 1 (dec fill-w))]
-      (vec
-        (mapcat (fn [recap]
-                  ;; Generic `:recaps` strings get a leading `RECAP`
-                  ;; badge so they share the vocabulary with
-                  ;; the engine-mutation recap rows produced by
-                  ;; `render-segment-title-entries`. The painter
-                  ;; reads the kind off `:meta` (see
-                  ;; `recap-row-entries`).
-                  (recap-row-entries (str "RECAP  " recap) pad-w))
-          recaps)))))
-
 (defn- code-source-from-render-segments
   "Stitch the `:code` source the TUI should paint for this block.
 
@@ -3681,43 +3604,6 @@
 
       :else "")))
 
-(defn- segment->recap-text
-  "Compact one-line summary for a single ctx-mutation render segment
-   shown INLINE per form (above the code block).
-
-   Phase H dedup: returns nil for `:task-update` / `:spec-update` /
-   `:fact-update` because those land at iter-bottom as `RECAP Task / Spec
-   / Fact` rows via `chat.clj render-segment-recaps`. Showing them BOTH
-   inline AND in the recap section duplicates every ctx mutation on
-   screen — the same `(task-set! :K {:status :cancelled})` form would
-   produce a TASK badge above the code AND a RECAP Task row below it.
-   The end-of-iter recap is the canonical aggregate; the inline badge
-   was redundant noise.
-
-   `:title` still surfaces inline because the title is a session-level
-   property the user expects to see change in real time, and there is
-   typically only one title change per turn (so no aggregation help)."
-  [{:keys [kind value]}]
-  (case kind
-    :title (if (str/blank? (str value))
-             "TITLE  (cleared)"
-             (str "TITLE  \"" value "\""))
-    nil))
-
-(defn- render-segment-title-entries
-  "Recap rows for ctx-mutation render segments. Covers title /
-   task-set! / spec-set! / fact-set!. Each produced row carries
-   `:meta {:kind :recap :recap-kind <kw>}` so the paint dispatch in
-   `paint-iteration!` can pick a kind-specific gutter / badge color
-   — same vocabulary as foundation tool previews."
-  [_line-entry segments fill-w]
-  (let [pad-w (max 1 (dec fill-w))]
-    (vec
-      (mapcat (fn [seg]
-                (when-let [text (segment->recap-text seg)]
-                  (recap-row-entries text pad-w)))
-        segments))))
-
 (defn- format-iteration-entry-entries
   [entry
    code-width iteration-number
@@ -3726,7 +3612,7 @@
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
-  (let [{:keys [thinking content-stream forms recaps consults pending-consults provider-fallbacks error repeat-count]} entry
+  (let [{:keys [thinking content-stream forms recaps provider-fallbacks error repeat-count]} entry
         ;; Stream provider content alongside reasoning so the bubble
         ;; keeps painting between reasoning end and parsed-form render.
         ;; Once response-parse :done fires, :content-stream is dropped
@@ -3755,7 +3641,7 @@
         ;; :K :cancelled`, SPEC, FACT, TITLE, plus provider / consult
         ;; notices). Provider errors still surface via `error-lines`
         ;; below; these destructured fields are intentionally unused.
-        _ [recaps consults pending-consults provider-fallbacks]
+        _ [recaps provider-fallbacks]
         recap-lines []
         thinking-lines
         (fn [thinking-text-or-texts]
@@ -3901,7 +3787,10 @@
                                       wrapped   (mapcat (fn [line] (wrap-text line comment-w))
                                                   (str/split-lines trimmed))]
                                   (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
-                title-lines   (render-segment-title-entries line-entry render-segments fill-w)
+                ;; Engine-mutation recap rows (TITLE/TASK/SPEC/FACT) were
+                ;; retired alongside the recap rail. Code body + op rows are
+                ;; the only per-form surface now.
+                title-lines   []
                 ;; Hide-by-tag: parse-block-display marks bookkeeping
                 ;; forms (`(def NAME (v/cat …))`, bare `(v/cat …)` tool
                 ;; calls) with `:hidden? true`. The result pane below

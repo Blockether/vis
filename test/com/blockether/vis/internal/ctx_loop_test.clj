@@ -49,11 +49,10 @@
   (describe "SCI bindings build"
     (let [env (mk-env)
           bindings (cl/build-sci-bindings env)]
-      (it "exposes exactly the surviving engine mutators plus the async consult surface"
+      (it "exposes exactly the surviving engine mutators"
         (expect (= #{'task-set! 'fact-set!
                      'task-depends! 'fact-depends!
-                     'fact-contradicts! 'fact-contradicts-remove!
-                     'consult-request! 'consult-promote! 'consult-dismiss!}
+                     'fact-contradicts! 'fact-contradicts-remove!}
                   (set (keys bindings)))))
 
       (it "each binding is a callable function"

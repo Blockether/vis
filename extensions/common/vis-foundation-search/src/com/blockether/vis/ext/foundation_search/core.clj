@@ -1,14 +1,12 @@
 (ns com.blockether.vis.ext.foundation-search.core
-  "`search/` consult-scope research extension.
+  "`search/` research extension.
 
    Three model-facing bindings under alias `search`:
      (search/web    query opts?)  — web search via Exa MCP
      (search/code   query opts?)  — code/doc context via Exa MCP
      (search/papers query opts?)  — arxiv papers (Atom feed)
 
-   All three carry `:engine-scope #{:consult}` so they only resolve
-   inside the consult mini-SCI sandbox. Primary cannot bind them in
-   its own fence; research routes through `(consult-request! …)`.
+   All three bind directly in the primary agent sandbox.
 
    Output shape — parity with the rest of the `:tag :observation`
    tool surface (v/cat, v/ls, v/rg). Every search fn returns the
@@ -583,7 +581,7 @@
 
 (defn- search-failure
   "Failure envelope. Carries a single error-flagged citation on
-   `:result` so consult / model code that already destructures
+   `:result` so model code that already destructures
    `(:citations r)` still sees the failure, AND a structured
    `:error` map so the channel renderer paints the fail card
    from the envelope side."
@@ -908,26 +906,23 @@
    :display (search-display result)})
 
 ;; =============================================================================
-;; Symbol entries (all `:consult`-scope)
+;; Symbol entries
 ;; =============================================================================
 
 (def web-symbol
   (vis/symbol #'web
     {:tag          :observation
-     :render-fn    channel-render-search
-     :engine-scope #{:consult}}))
+     :render-fn    channel-render-search}))
 
 (def code-symbol
   (vis/symbol #'code
     {:tag          :observation
-     :render-fn    channel-render-search
-     :engine-scope #{:consult}}))
+     :render-fn    channel-render-search}))
 
 (def papers-symbol
   (vis/symbol #'papers
     {:tag          :observation
-     :render-fn    channel-render-search
-     :engine-scope #{:consult}}))
+     :render-fn    channel-render-search}))
 
 (def search-symbols
   [web-symbol
@@ -935,7 +930,7 @@
    papers-symbol])
 
 (def search-prompt
-  "Live research lives in `:consult` scope only. Primary cannot bind `search/*` directly. Route research through `(consult-request! :id :preference {:focus [...] :question \"...\"})` and read the synthetic trailer pin that lands in the next iter under `:session/trailer` (`:tag :consult`); promote with `(consult-promote! :id :fact-key)` or drop with `(consult-dismiss! :id)`. The consult LLM has `search/web` (Exa MCP), `search/code` (Exa MCP code context), and `search/papers` (arxiv) in its sandbox and returns cited synthesis.")
+  "Live research tools bind directly in your sandbox: `search/web` (Exa MCP web search), `search/code` (Exa MCP code/doc context), and `search/papers` (arxiv). Call them inline like any other observation tool; each returns `{:citations [...] :citation-count N ...}`. Promote durable findings into a fact with `(fact-set! :K {...})`.")
 
 (def search-env
   [{:name "EXA_API_KEY"

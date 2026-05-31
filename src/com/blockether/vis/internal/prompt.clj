@@ -87,6 +87,12 @@
     "
     Vis — persistent sandboxed Clojure-SCI REPL.
 
+    FENCE RULE (violating this silently drops your work)
+      Each iteration → exactly ONE ```clojure``` fence.
+      Non-clojure fences, bare code, and plain-English blocks
+      are silently DROPPED. Prose belongs in the (done ...) call,
+      NEVER inside a code fence.
+
     ROLES
       YOU     neural front. Fast pattern-match, fallible, no guarantees.
               YOU assert facts and close tasks; correctness is on you.
@@ -184,96 +190,6 @@
           A ↔ B and B ↔ C does NOT imply A ↔ C; declare each pair
           explicitly.
 
-      Secondary consultation (async; cross-iter):
-        (consult-request! :id :preference {:focus [...] :question \"…\"})
-        (consult-promote! :id :fact-key)   ; copy resolved pin → fact
-        (consult-dismiss! :id)             ; drop resolved pin
-
-        — :id is a keyword YOU pick for tracking (e.g. :critique,
-          :research, :sanity).
-        — :preference ∈ #{:fast :balanced :deep}
-            :fast      quick critique / sanity / format check
-            :balanced  mid-range cost/quality middle
-            :deep      hard reasoning, novel decomposition, expert review
-        — :focus OPTIONAL vec of short phrases telling the consultant
-          the specific things you need verified; consultant returns
-          `:focus-met?` vec aligned to your order.
-        — :question REQUIRED non-blank string.
-        — (consult-request! …) returns :vis/silent (no echo).
-
-      ASYNC SEMANTICS  (cross-iter, never blocks this iter)
-        1. Iter N: you emit (consult-request! :K :pref {:focus […]
-           :question \"…\"}). Engine pins the ctx snapshot onto the
-           intent at request time and fires a side-thread future.
-           The form returns :vis/silent.
-        2. Iter N ends. Engine awaits all unresolved consult futures
-           in parallel (wall time ≈ max(durations), not sum). done IS
-           REFUSED in iter N while consults are still pending — the
-           engine forces you to integrate before close.
-        3. Iter N+1: each resolved consult lands as a synthetic
-           trailer pin you read directly under :session/trailer:
-             {:scope \"tN/iM/c-K\" :tag :consult :id :K
-              :src \"(consult-resolved :K)\"
-              :result <entry-map>}
-           Inspect :result inline; no fetch fn needed. Decide:
-             (consult-promote! :K :K-fact) — copies entry → fact, scrubs pin
-             (consult-dismiss! :K)         — drops the pin
-
-      CONSULT EMISSION  (same primitive across both engines)
-        The consult LLM emits one (done {…}) form — SAME form name as
-        your final answer; only the SCHEMA differs. Consult's
-        :content + :citations + :confidence + :focus-met? land on the
-        entry map carried by the trailer pin's :result.
-
-      ENTRY SHAPE (the pin's :result)
-        {:id :K :status :active|:failed
-         :content    \"prose synthesis\"          ; :active only
-         :citations  [{:type :paper|:web|:code|:doc
-                       :url \"…\" :title \"…\"
-                       :excerpt \"…\"} …]         ; :active only
-         :confidence :high|:medium|:low          ; :active only
-         :focus      [\"…\"]                     ; mirrors your :focus
-         :focus-met? [true false …]              ; vec aligned to :focus
-         :preference :fast|:balanced|:deep
-         :duration-ms long
-         :retries    0|1                         ; 0 = first try fit,
-                                                 ; 1 = needed compress
-         :error      :timeout|:exceeds-cap|…     ; :failed only
-         :reason     \"…\"}                      ; :failed only
-
-      INTEGRATION
-        (consult-promote! :K :K-fact)
-          — copies :content + :citations + :focus + :confidence into a
-            new fact under :K-fact (source = :consult); scrubs the
-            trailer pin.
-        (consult-dismiss! :K)
-          — scrubs the trailer pin without promoting.
-        Failed (:status :failed) pins CANNOT be promoted; dismiss or
-        re-issue with a narrower :focus.
-
-      BUDGET + CAPS
-        — session cap default 20 consult intents (warns + skips above).
-        — per-preference :content token cap (jtokkit cl100k_base):
-            :fast 1 000 / :balanced 4 000 / :deep 12 000.
-          On overflow the engine re-prompts the consult LLM ONCE in
-          the same side thread with N (actual)/M (cap)/X (overage).
-          If the retry still overflows the entry lands as
-          :status :failed :error :exceeds-cap :retries 1.
-        — Citation cap: max 15 entries; excerpts tail-clipped at 500
-          tokens.
-
-      USE FOR
-        — background research that can wait one iter (web/papers)
-        — expert delegation when stuck (:deep)
-        — critique of in-progress work BEFORE you commit big direction
-          changes
-        — sanity on a tricky transformation before you commit to it
-      DON'T USE FOR
-        — anything you can answer yourself (budget waste)
-        — same-iter Constitutional check (consult result lands NEXT iter)
-        — re-asking the same question (promote on first accept and
-          reference the resulting fact)
-
       Introspection (lazy; reach evidence the live trailer dropped):
         Use visible trailer :vis/head/:vis/tail first. Do NOT call
         introspect-* merely because :vis/full exists. Call introspect-*
@@ -297,6 +213,8 @@
         Session titles are host-generated; do not spend a form on title setup.
 
     ANSWER  :answer is Markdown. Final user-facing output.
+            Deliver ALL prose via the (done ...) call. The
+            ```clojure``` fence is for eval-able forms ONLY.
 
     DEFS    Only `def` / `defn`. defrecord/deftype/defprotocol/gen-class/
             extend-type/extend-protocol/definterface/reify are NOT bound.
@@ -306,6 +224,10 @@
             clojure.java.process, babashka.process, sh — all unbound;
             don't probe. Filesystem/VCS go through extension tools
             (foundation `v/`, `git/`).
+
+    ERRORS  On form error, read it before retrying. Failed v/patch?
+            Re-cat the region for current text. Same approach failing
+            twice? Change strategy.
     "))
 
 (defn build-system-prompt
@@ -316,124 +238,6 @@
     (str CORE_SYSTEM_PROMPT
       (when (and (string? addendum) (not (str/blank? addendum)))
         (str "\n\n" addendum)))))
-
-;; =============================================================================
-;; - CONSULT_BASE_PROMPT + per-scope prompt assembly
-;;
-;; The consult mini-SCI engine runs on a side thread for a single iter.
-;; It does NOT see the primary FSM, the engine mutators, the spec/task/fact
-;; docs, or any `:ext/prompt` fragment. The consult LLM is a researcher
-;; assembling a focused answer with citations; embedding the primary's
-;; CORE_SYSTEM_PROMPT would waste tokens, confuse the model into emitting
-;; engine forms it cannot run, and break the single-engine guarantee.
-;;
-;; What consult DOES see (assembled by `assemble-consult-prompt-messages`):
-;;   1. CONSULT_BASE_PROMPT - role, answer schema, cap rules
-;;   2. auto-gen symbol docs from every symbol whose
-;;      `:ext.symbol/engine-scope` contains `:consult` (typically
-;;      `search/web`, `search/papers`, read-only `v/cat` / `v/rg`,
-;;      `future`)
-;;
-;; What consult does NOT see:
-;;   - CORE_SYSTEM_PROMPT (task-set!, fact-set!, done, ...)
-;;   - AGENTS.md / CLAUDE.md project rules
-;;   - any extension `:ext/prompt` text (those are primary-facing)
-;; =============================================================================
-
-(def CONSULT_BASE_PROMPT
-  "You are a SECONDARY CONSULTANT serving a primary agent running the Vis
-neurosymbolic engine. The primary owns the user's deliverable; you provide
-ONE focused research synthesis it can integrate.
-
-ROLE
-  Take a single question + a vec of focus points + a ctx snapshot. Return
-  one structured answer the engine can validate. You do NOT iterate, you
-  do NOT mutate the primary's state. Single iter, single fence.
-
-CONTRACT (same emission point as the primary engine: `(done {…})`)
-  You write ONE clojure ```clojure``` fence. The fence MUST end with
-  exactly one `(done {…})` form. No other forms after `(done …)`.
-  Pre-`done` forms may call any binding listed in BINDINGS below; in
-  particular `search/web` and `search/papers` for live evidence. Wrap
-  parallelisable searches in `(future …)` + `deref`.
-
-  The primary uses the SAME `(done {…})` form for its final answer;
-  only the payload shape differs (your schema is below). One form,
-  one mental model across both engines.
-
-DONE SCHEMA (consult flavour)
-  (done
-    {:content    \"prose synthesis (REQUIRED, non-blank)\"
-     :citations  [{:type :paper|:web|:code|:doc
-                   :url \"...\"      ;; either :url
-                   :title \"...\"    ;; or :title required
-                   :excerpt \"...\"} ;; max 500 tokens, optional
-                  …]                 ;; max 15 entries
-     :confidence :high|:medium|:low
-     :focus-met? [true false …]      ;; vec aligned to request :focus order
-     })
-
-TOKEN CAPS (per :preference of the request)
-  :fast     :content  1 000 tokens (~750 words) - quick critique, 1-3 sentences
-  :balanced :content  4 000 tokens (~3 000 words) - solid multi-paragraph analysis
-  :deep     :content 12 000 tokens (~9 000 words) - full synthesis + citations
-  Each :excerpt cap: 500 tokens.
-
-  If you OVERFLOW the cap, the engine re-prompts you in this same
-  side-thread with a compression instruction listing the overage. Be
-  concise on the first try; you only get ONE retry.
-
-STYLE
-  - No bullet padding; dense prose with citations inline.
-  - Quote sources by url+title in :citations rather than embedding URLs
-    in :content.
-  - When focus point K is genuinely unverifiable from your sources, set
-    `:focus-met?` index K false and explain why in :content.")
-
-(defn- consult-symbol-docs-block
-  "auto-generate symbol documentation for every binding the
-   consult LLM can call. Pulls from `:ext.symbol/doc` and
-   `:ext.symbol/arglists` of every symbol with `:consult` in its scope."
-  [active-extensions]
-  (let [lines (for [ext (or active-extensions [])
-                    sym (extension/ext-symbols-in-scope ext :consult)
-                    :let [sym-name (some-> (extension/ext-alias-symbol ext)
-                                     name
-                                     (str "/" (name (:ext.symbol/symbol sym))))
-                          doc     (:ext.symbol/doc sym)
-                          arglists (:ext.symbol/arglists sym)]
-                    :when (and sym-name doc)]
-                (str "  " sym-name " " (pr-str arglists) "\n    " doc))]
-    (when (seq lines)
-      (str "BINDINGS (consult-scope only)\n"
-        (str/join "\n\n" lines)))))
-
-(defn build-consult-system-prompt
-  "assemble the consult mini-SCI system prompt.
-
-   Returns a single string consisting of `CONSULT_BASE_PROMPT` followed by
-   the auto-generated `BINDINGS` block (symbol docs for every symbol whose
-   `:ext.symbol/engine-scope` contains `:consult`).
-
-   Deliberately omits `CORE_SYSTEM_PROMPT`, project rules, and every
-   extension `:ext/prompt` fragment - those are primary-facing."
-  [active-extensions]
-  (let [bindings-block (consult-symbol-docs-block active-extensions)]
-    (str CONSULT_BASE_PROMPT
-      (when bindings-block
-        (str "\n\n" bindings-block)))))
-
-(defn assemble-consult-prompt-messages
-  "assemble the message vector for a single consult LLM call.
-
-   Send order:
-     `CONSULT-SYSTEM`  - CONSULT_BASE_PROMPT + auto-gen BINDINGS block
-     `USER`            - caller-built question + focus + ctx snapshot
-
-   Pure prefix; consult engine appends a user message of its own."
-  [active-extensions]
-  [{:role "system"
-    :content (build-consult-system-prompt active-extensions)}])
 
 (defn- project-instructions-block
   "Inline project rules (AGENTS.md — or CLAUDE.md fallback) as a stable

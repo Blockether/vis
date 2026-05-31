@@ -827,18 +827,6 @@
 ;; the default threshold (`iteration/default-batch-hint-threshold`).
 (s/def :ext.symbol/batch-hint pos-int?)
 
-;; which engine scopes can bind this symbol.
-;;   :main     primary model's SCI sandbox (default for everything that
-;;             existed before this field landed)
-;;   :consult  consultant tool-calling surface ( Model 2)
-;; A symbol may live in either / both. The engine filters bindings + tool
-;; defs by scope; primary cannot call a symbol scoped only to :consult and
-;; vice versa. Existing symbols default to #{:main} via
-;; `default-symbol-scope` in the bindings layer, so this field is OPTIONAL
-;; on the entry side.
-(s/def :ext.symbol/engine-scope
-  (s/and set? seq #(every? #{:main :consult} %)))
-
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
@@ -854,12 +842,11 @@
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn
           :ext.symbol/source
-          :ext.symbol/render-error-fn
-          :ext.symbol/engine-scope]))
+          :ext.symbol/render-error-fn]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc]
-    :opt [:ext.symbol/source :ext.symbol/engine-scope]))
+    :opt [:ext.symbol/source]))
 
 (s/def ::symbol-entry
   (s/or :fn  ::fn-symbol-entry
@@ -1239,33 +1226,6 @@
   [ext]
   (vec (or (get-in ext [:ext/sci :ext.sci/symbols]) [])))
 
-(def ^:private DEFAULT_SYMBOL_SCOPE
-  "scope every legacy symbol lives in when the entry omits
-   `:ext.symbol/engine-scope`. Keeps backward compat — nothing changes
-   for the primary model unless an extension opts a symbol into
-   `:consult` explicitly."
-  #{:main})
-
-(defn ext-symbol-scope
-  "read `:ext.symbol/engine-scope` off a single symbol entry,
-   falling back to `DEFAULT_SYMBOL_SCOPE`. Always returns a non-empty
-   set of scope keywords."
-  [sym-entry]
-  (let [declared (:ext.symbol/engine-scope sym-entry)]
-    (cond
-      (and (set? declared) (seq declared)) declared
-      :else DEFAULT_SYMBOL_SCOPE)))
-
-(defn ext-symbols-in-scope
-  "filter the extension's `:ext.sci/symbols` vec to entries
-   that include `scope` (one of `#{:main :consult}`) in their
-   `:ext.symbol/engine-scope`. Used by the loop to wire primary's SCI
-   bindings (`:main`) and the consult tool-definition surface
-   (`:consult`) from a single registry."
-  [ext scope]
-  (filterv (fn [e] (contains? (ext-symbol-scope e) scope))
-    (ext-symbols ext)))
-
 (defn ext-classes
   [ext]
   (or (get-in ext [:ext/sci :ext.sci/classes]) {}))
@@ -1429,13 +1389,7 @@
         (:before-fn opts)   (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)    (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
-        (:render-error-fn opts) (assoc :ext.symbol/render-error-fn (:render-error-fn opts))
-        ;; Opt `:engine-scope` flows from
-        ;; `(vis/symbol … {:engine-scope #{:main :consult}})` onto the
-        ;; entry's `:ext.symbol/engine-scope`. Default (when omitted)
-        ;; stays `#{:main}` via the `DEFAULT_SYMBOL_SCOPE` fallback in
-        ;; `ext-symbol-scope`, so existing extensions don't have to opt in.
-        (:engine-scope opts) (assoc :ext.symbol/engine-scope (:engine-scope opts))))))
+        (:render-error-fn opts) (assoc :ext.symbol/render-error-fn (:render-error-fn opts))))))
 
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
@@ -2255,30 +2209,25 @@
 
    Value symbols are returned as {sym -> value}.
 
-   optional `scope` (`:main` | `:consult`) filters the
-   wrapped symbols to those whose `:ext.symbol/engine-scope` contains
-   `scope`. Without a scope arg, every symbol is wrapped (legacy)."
-  ([ext env] (wrap-extension ext env nil))
-  ([ext env scope]
-   (let [entries (if scope
-                   (ext-symbols-in-scope ext scope)
-                   (ext-symbols ext))]
-     (into {}
-       (map (fn [sym-entry]
-              (let [sym (:ext.symbol/symbol sym-entry)]
-                (if (contains? sym-entry :ext.symbol/fn)
-                  [sym (if (:ext.symbol/raw? sym-entry)
-                         (fn [& args]
-                           (binding [workspace/*workspace-root* (workspace/workspace-root env)]
-                             (apply (:ext.symbol/fn sym-entry) args)))
-                         (fn [& args]
-                           (let [w (get-log-writer)]
-                             (binding [*out* w
-                                       *err* w
-                                       workspace/*workspace-root* (workspace/workspace-root env)]
-                               (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
-                  [sym (:ext.symbol/val sym-entry)]))))
-       entries))))
+   Returns every extension symbol."
+  [ext env]
+  (let [entries (ext-symbols ext)]
+    (into {}
+      (map (fn [sym-entry]
+             (let [sym (:ext.symbol/symbol sym-entry)]
+               (if (contains? sym-entry :ext.symbol/fn)
+                 [sym (if (:ext.symbol/raw? sym-entry)
+                        (fn [& args]
+                          (binding [workspace/*workspace-root* (workspace/workspace-root env)]
+                            (apply (:ext.symbol/fn sym-entry) args)))
+                        (fn [& args]
+                          (let [w (get-log-writer)]
+                            (binding [*out* w
+                                      *err* w
+                                      workspace/*workspace-root* (workspace/workspace-root env)]
+                              (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
+                 [sym (:ext.symbol/val sym-entry)]))))
+      entries)))
 
 ;; =============================================================================
 ;; Public API - extension builder

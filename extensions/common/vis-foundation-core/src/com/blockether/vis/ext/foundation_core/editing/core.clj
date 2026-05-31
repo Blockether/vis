@@ -2941,7 +2941,8 @@
      "  - One canonical call shape: maps for option-bearing tools."
      "  - Do not assume `src`; root search/listing first."
      "  - Do not re-cat after patch/write; diff is evidence."
-     "  - Side effect in own iteration; done in next iteration."]))
+     "  - Side effect in own iteration; done in next iteration."
+     "  - Paths MUST stay inside workspace root; ../ escapes are rejected."]))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests."

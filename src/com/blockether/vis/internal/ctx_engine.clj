@@ -687,9 +687,9 @@
   (let [cursor    (:session/scope ctx)
         iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
         ;; drop both `(done …)` AND forms whose result is
-        ;; `:vis/silent`. Engine mutators (task-set!, fact-set!,
-        ;; consult-request!, etc.) return `:vis/silent`; their effect lives
-        ;; in ctx subtree mutations, not in the trailer pin log.
+        ;; `:vis/silent`. Engine mutators (task-set!, fact-set!, etc.)
+        ;; return `:vis/silent`; their effect lives in ctx subtree
+        ;; mutations, not in the trailer pin log.
         keepable  (vec (remove (fn [r]
                                  (or (str/starts-with? (str (:src r)) "(done")
                                    (= :vis/silent (:result r))
@@ -1176,73 +1176,39 @@
 
 (declare apply-done-impl)
 
-(defn done-pending-consult-blockers
-  "Return the vec of consult-ids currently in `:engine/pending-consults`.
-   Non-empty => the iter declared consults that have not yet resolved,
-   and `(done …)` must be refused so the primary integrates the
-   result(s) before closing.
-
-   Pure; the integration layer decides whether to short-circuit answer
-   shipping based on this value."
-  [ctx]
-  (mapv :id (or (:engine/pending-consults ctx) [])))
-
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer + entity archive.
-   Returns `{:ctx :warnings}` plus, when refused by the consult gate,
-   `:blocked? true`. The :answer field IS handled here in Phase F: when
-   present + non-blank, the engine auto-writes a `:turn-N-answer` fact
-   under `:session/facts` carrying a one-line `:summary` and the full
-   `:body`. Next turn's `;; ctx` EDN block surfaces that fact inside
-   the cached prefix, so cross-turn answer reference is free — the
-   model reads `(introspect-fact :turn-N-answer)` instead of vis
-   re-sending `previous-turn-context-block` (deprecated).
+   The :answer field IS handled here in Phase F: when present + non-blank,
+   the engine auto-writes a `:turn-N-answer` fact under `:session/facts`
+   carrying a one-line `:summary` and the full `:body`. Next turn's `;; ctx`
+   EDN block surfaces that fact inside the cached prefix, so cross-turn answer
+   reference is free — the model reads `(introspect-fact :turn-N-answer)`
+   instead of vis re-sending `previous-turn-context-block` (deprecated).
 
    `args` map keys:
-     :answer            markdown payload (Phase F: auto-fact + loop ships to channel)
-     :answer-summary    optional one-line summary the model emits; falls
-                        back to the first non-blank paragraph of :answer
-                        when omitted.
-     :trailer-drop?     vec of `tN/iM` scopes to drop verbatim
+     :answer             markdown payload (Phase F: auto-fact + loop ships to channel)
+     :answer-summary     optional one-line summary the model emits; falls
+                         back to the first non-blank paragraph of :answer
+                         when omitted.
+     :trailer-drop?      vec of `tN/iM` scopes to drop verbatim
      :trailer-summarize? vec of `{:scope-start :scope-end :summary}` pins
-     :archive?          `{:facts […] :specs […] :tasks […]}` bulk-flip
-                        to `:archived` terminal; snapshots keep raw,
-                        introspect-archived returns them.
+     :archive?           `{:facts […] :specs […] :tasks […]}` bulk-flip
+                         to `:archived` terminal; snapshots keep raw,
+                         introspect-archived returns them.
 
-   Granular fact/spec/task-archive! mutators do NOT exist — bulk archive
-   only via (done {:archive …}). Close-of-turn is the single
-   authoritative place to retire commitments.
-
-   Consult gate: when `:engine/pending-consults` is non-empty,
-   `(done …)` is REFUSED. The engine returns the ctx unchanged plus
-   `:blocked? true` and a `:done-blocked-by-pending-consults`
-   warning. The integration layer must suppress answer shipping and
-   force a fresh iter so the primary can promote/dismiss + retry.
-
-   The title-missing gate (Phase D) is enforced by the integration
-   layer (ctx-loop / vis loop) where the live session-title atom is
-   reachable. Keeping it outside this pure engine fn lets the unit
-   tests construct ctxs with `:session/turn 1` (the `empty-ctx`
-   default) without the gate firing."
+   Granular fact/spec/task-archive! mutators do NOT exist — bulk archive only
+   via (done {:archive …}). Close-of-turn is the single authoritative place to
+   retire commitments."
   [ctx form-scope {:keys [answer answer-summary user-request turn-summary
                           trailer-drop trailer-summarize archive]}]
-  (let [blockers (done-pending-consult-blockers ctx)]
-    (if (seq blockers)
-      {:ctx      ctx
-       :blocked? true
-       :warnings [(warn :done-blocked-by-pending-consults blockers
-                    (str "done blocked: " (count blockers)
-                      " consult(s) pending this iter ("
-                      (clojure.string/join ", " (map str blockers))
-                      "); await + promote/dismiss before close"))]}
-      (apply-done-impl ctx form-scope
-        {:answer         answer
-         :answer-summary answer-summary
-         :user-request   user-request
-         :turn-summary   turn-summary
-         :trailer-drop   trailer-drop
-         :trailer-summarize trailer-summarize
-         :archive        archive}))))
+  (apply-done-impl ctx form-scope
+    {:answer         answer
+     :answer-summary answer-summary
+     :user-request   user-request
+     :turn-summary   turn-summary
+     :trailer-drop   trailer-drop
+     :trailer-summarize trailer-summarize
+     :archive        archive}))
 
 (defn- first-paragraph-summary
   "Phase F fallback: when the model didn't emit `:answer-summary`,
