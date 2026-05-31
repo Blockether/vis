@@ -1420,6 +1420,12 @@
     (assoc session
       :turn-count (count turns)
       :modified-at modified-at)))
+(defn- empty-untitled-session?
+  [{:keys [title turn-count]}]
+  (and (not (pos? (long (or turn-count 0))))
+    (or (str/blank? (str title))
+      (#{"untitled" "untitled session"}
+       (str/lower-case (str/trim (str title)))))))
 (defn- session-sort-key
   "Default session picker ordering.
 
@@ -1620,7 +1626,7 @@
                                           resumed-from-flag
                                           (if (:resume opts)
                                             ;; --resume: pick up the latest :tui session
-                                            (if-let [latest (first (vis/by-channel :tui))]
+                                            (if-let [latest (first (remove empty-untitled-session? (tui-session-summaries)))]
                                               (or (chat/resume-session (:id latest))
                                                 (chat/make-session config))
                                               (chat/make-session config))

@@ -3,10 +3,12 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
+            [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.provider-anthropic :as anthropic]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (defn- eventually
   [pred]
@@ -27,6 +29,13 @@
     (let [swap-items @#'provider/swap-items]
       (expect (= [:a :c :b :d]
                 (swap-items [:a :b :c :d] 1 2))))))
+
+(defdescribe reorder-modifier-test
+  (it "accepts Shift+arrow as macOS-friendly provider/model reorder modifier"
+    (expect (input/reorder-modifier? (KeyStroke. KeyType/ArrowUp false true false)))
+    (expect (input/reorder-modifier? (KeyStroke. KeyType/ArrowUp false false true)))
+    (expect (input/reorder-modifier? (KeyStroke. KeyType/ArrowUp false true true)))
+    (expect (not (input/reorder-modifier? (KeyStroke. KeyType/ArrowUp false false false))))))
 
 (defdescribe remove-provider-by-id-test
   (it "removes a logged-out provider from the router list"

@@ -202,17 +202,26 @@
 (deftest navigator-row-model-test
   (let [all-rows     (var-get #'dlg/navigator-all-rows)
         visible-rows (var-get #'dlg/navigator-visible-rows)
+        sessions     [{:id "empty"
+                       :title nil
+                       :turn-count 0
+                       :created-at 0
+                       :modified-at 7200000}
+                      {:id "s1"
+                       :title nil
+                       :turn-count 2
+                       :created-at 0
+                       :modified-at 3600000}
+                      {:id "s2"
+                       :title "Second"
+                       :turn-count 5
+                       :created-at 0
+                       :modified-at 0}]
         rows         (all-rows {:active-session-id "s1"
-                                :sessions [{:id "s1"
-                                            :title nil
-                                            :turn-count 2
-                                            :created-at 0
-                                            :modified-at 3600000}
-                                           {:id "s2"
-                                            :title "Second"
-                                            :turn-count 5
-                                            :created-at 0
-                                            :modified-at 0}]})]
+                                :sessions sessions})
+        all-visible  (all-rows {:active-session-id "s1"
+                                :sessions sessions
+                                :show-empty-untitled? true})]
     ;; 1:1 session<->workspace: one unified row per session, NOT a
     ;; duplicated session row + workspace row with a contradictory :kind.
     (testing "one unified row per session, no :kind / :switch-workspace"
@@ -220,6 +229,9 @@
       (is (every? #(not (contains? % :kind)) rows))
       (is (= [{:action :switch :id "s1"} {:action :switch :id "s2"}]
             (mapv :target rows))))
+    (testing "empty untitled shells are hidden by default but revealable"
+      (is (= ["s1" "s2"] (mapv (comp str :id :target) rows)))
+      (is (= ["empty" "s1" "s2"] (mapv (comp str :id :target) all-visible))))
     (testing "title / session / status columns"
       (let [r1 (first rows)]
         (is (= "Untitled session" (:title r1)))
