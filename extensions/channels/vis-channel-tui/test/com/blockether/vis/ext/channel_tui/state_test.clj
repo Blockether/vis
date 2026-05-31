@@ -524,9 +524,43 @@
       (expect (= 155
                 (:messages-scroll
                  (scroll-to-y-fn db [:scroll-to-y 28 0 56 360 56]))))
-      (expect (= 304
+      ;; Dragging the thumb to the very bottom (fraction 1.0 → max-scroll)
+      ;; re-enters FOLLOW mode (nil), so streamed content keeps the
+      ;; latest message in view. Anywhere above bottom stays concrete.
+      (expect (nil?
                 (:messages-scroll
                  (scroll-to-y-fn db [:scroll-to-y 55 0 56 360 56])))))))
+
+(defdescribe follow-bottom-test
+  (let [ev (fn [k] (-> #'state/event-registry deref deref (get k) :fn))]
+    (it "scroll-down to the bottom settles back into FOLLOW (nil)"
+      (let [down ((ev :scroll-down) {:messages-scroll 90} [:scroll-down 30 200 100])
+            tick (ev :tick-scroll-anim)]
+        ;; max-s = 200-100 = 100; 90+30 >= 100 -> bottom branch, follow armed.
+        (expect (true? (:scroll-follow-armed? down)))
+        ;; Step the animation to settle; once current reaches the
+        ;; target the armed follow flips messages-scroll back to nil.
+        (let [settled (loop [d down n 0]
+                        (if (or (nil? (:messages-scroll-target d)) (> n 50))
+                          d (recur (tick d [:tick-scroll-anim]) (inc n))))]
+          (expect (nil? (:messages-scroll settled)))
+          (expect (not (contains? settled :scroll-follow-armed?))))))
+
+    (it "scroll-up clears an armed follow so the view stops chasing bottom"
+      (let [up ((ev :scroll-up) {:messages-scroll 100 :scroll-follow-armed? true}
+                                [:scroll-up 9 200 100])]
+        (expect (not (contains? up :scroll-follow-armed?)))))
+
+    (it "follow-bottom-if-near re-arms follow only when parked at the edge"
+      (let [near ((ev :follow-bottom-if-near) {:messages-scroll 98} [:follow-bottom-if-near 200 100])
+            mid  ((ev :follow-bottom-if-near) {:messages-scroll 50} [:follow-bottom-if-near 200 100])]
+        ;; max-s = 100; slack 4. 98 >= 96 -> follow. 50 < 96 -> untouched.
+        (expect (nil? (:messages-scroll near)))
+        (expect (= 50 (:messages-scroll mid)))))
+
+    (it "follow-bottom-if-near leaves auto-bottom (nil) untouched"
+      (let [r ((ev :follow-bottom-if-near) {:messages-scroll nil} [:follow-bottom-if-near 200 100])]
+        (expect (nil? (:messages-scroll r)))))))
 
 (defdescribe cancel-turn-test
   (it "notifies cancelling instead of relying on footer status"
