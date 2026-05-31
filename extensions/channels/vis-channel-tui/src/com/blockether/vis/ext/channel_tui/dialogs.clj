@@ -616,12 +616,14 @@
             ;; first 2 cols of the dialog inner area form the selection
             ;; gutter: col `left+1` holds the dot marker, col
             ;; `left+2` is the margin between marker and table body.
-            ;; The table itself starts at `left+3` and shrinks by the
-            ;; same gutter so the right edge / scrollbar still align.
+            ;; The table itself starts at `left+3`. We reserve one
+            ;; extra col on the right for the scrollbar so it sits
+            ;; outside the table's right `│` border instead of
+            ;; painting over it.
             table-x (+ left 1 p/SELECTION_WIDTH)
-            table-w (max 1 (- inner-w 1 p/SELECTION_WIDTH))
+            table-w (max 1 (- inner-w 2 p/SELECTION_WIDTH))
             table-content-w (max 1 (- table-w 2))
-            scrollbar-col (+ table-x (dec table-w))
+            scrollbar-col (+ table-x table-w)
             widths (file-picker-table-widths table-content-w)]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
