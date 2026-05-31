@@ -211,7 +211,11 @@
 (def ^:private prompt-text
   (str "Clojure language pack active. Symbols under `clj/`:\n"
     "  (clj/ports)                       — discover running nREPL ports\n"
+    "                                      Returns {:default <int|nil> :ports [{:port :source} ...]}\n"
+    "                                      Extract port with: (:default (clj/ports))\n"
     "  (clj/eval \"...\" | {:code :port? :ns? :timeout-ms?})\n"
+    "                                      :port is optional — auto-discovered from (clj/ports)\n"
+    "                                      when omitted. No need to extract port manually.\n"
     "  (clj/outline \"src/foo.clj\")       — collapsed file catalog\n"
     "  (clj/find {:name regex :kind :defn})\n"
     "  (clj/edit {:path :op :target :code [:match] [:format?]})\n"

@@ -8,7 +8,7 @@
          :source :endpoint?}`
      - parse-arxiv-atom maps arxiv entries into the canonical citation
        shape
-     - all three symbols carry `:engine-scope #{:consult}` AND a
+     - all three symbols ship a
        `:render-fn` (channel-renderable structured output)
      - the channel renderer produces canonical answer-IR (`[:ir ...]`)
        with citation cards, markdown-parsed excerpts, and a failure
@@ -291,12 +291,12 @@ The spec library specifies the structure of data.")
             (expect (str/includes? text "failed"))))))))
 
 (defdescribe engine-scope-test
-  (describe "every search/* symbol is :consult-only AND ships a render-fn"
+  (describe "no search/* symbol declares an engine-scope (single agent surface)"
     (doseq [[label sym-entry] [[:web    search/web-symbol]
                                [:code   search/code-symbol]
                                [:papers search/papers-symbol]]]
-      (it (str (name label) " carries #{:consult}")
-        (expect (= #{:consult} (:ext.symbol/engine-scope sym-entry))))
+      (it (str (name label) " omits :ext.symbol/engine-scope")
+        (expect (nil? (:ext.symbol/engine-scope sym-entry))))
       (it (str (name label) " has a :render-fn (structured-output parity with v/*)")
         (expect (fn? (:ext.symbol/render-fn sym-entry))))
       (it (str (name label) " no longer ships as a :raw? helper")
@@ -309,14 +309,14 @@ The spec library specifies the structure of data.")
                 (get-in search/vis-extension [:ext/sci :ext.sci/alias]))))
     (it "name"
       (expect (= "foundation-search" (:ext/name search/vis-extension))))
-    (it ":consult-only across all symbols"
+    (it "no symbol carries an engine-scope"
       (let [scopes (set (map :ext.symbol/engine-scope search/search-symbols))]
-        (expect (= #{#{:consult}} scopes))))))
+        (expect (= #{nil} scopes))))))
 
 (defdescribe prompt-shape-test
-  (describe "search-prompt advertises consult-routing"
-    (it "mentions consult-request!"
-      (expect (str/includes? search/search-prompt "consult-request!")))
+  (describe "search-prompt advertises direct in-sandbox calls"
+    (it "does not route through consult"
+      (expect (not (str/includes? search/search-prompt "consult"))))
     (it "mentions the three bindings"
       (expect (str/includes? search/search-prompt "search/web"))
       (expect (str/includes? search/search-prompt "search/code"))
