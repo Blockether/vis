@@ -144,7 +144,13 @@
 
 (def ^:const SELECTION_GLYPH
   "Two-col selection marker. Selected rows show `•`+space, unselected
-   rows show two spaces, so the body content stays column-aligned."
+   rows show two spaces, so the body content stays column-aligned.
+
+   The glyph MUST be display-width 1 so glyph+space == 2 cols and
+   exactly fills the reserved gutter. `•` (U+2022) is East-Asian
+   *ambiguous* width; the lanterna fork (>= 3.1.5-vis.7) scores EAW=A
+   as NARROW by default, so `• ` is 2 cols. (A regression in vis.6
+   briefly made it wide — the 'marker eats a character' bug.)"
   "• ")
 
 (def ^:const SELECTION_BLANK "  ")

@@ -1174,6 +1174,33 @@
   (fn [db [_ scroll]]
     (assoc db :messages-scroll scroll)))
 
+(def ^:const auto-follow-slack-rows
+  "How close (in rows) to the bottom still counts as \"following\".
+   The render loop calls `:follow-bottom-if-near` while a turn streams;
+   if the user sits within this many rows of the bottom we flip back to
+   nil = auto-bottom so freshly streamed content keeps the latest
+   message in view. Kept small (a few rows) on purpose: the user can
+   still scroll up even slightly to read history mid-stream and stay
+   put — we only auto-follow when they're genuinely parked at the
+   bottom edge, never from the middle of the scrollback."
+  4)
+
+(reg-event-db :follow-bottom-if-near
+  ;; Dispatched by the render loop while `:loading?` (a turn is
+  ;; producing content). Re-arms auto-bottom FOLLOW (nil) when the user
+  ;; is parked within `auto-follow-slack-rows` of the bottom, so growing
+  ;; live content scrolls into view. A deliberate scroll-up beyond the
+  ;; slack leaves the concrete offset untouched — no yank from history.
+  (fn [db [_ total-h inner-h]]
+    (let [scroll (:messages-scroll db)]
+      (if (or (nil? scroll) (nil? total-h) (nil? inner-h))
+        db
+        (let [max-s (max 0 (- (long total-h) (long inner-h)))]
+          (if (and (pos? max-s)
+                (>= (long scroll) (- max-s (long auto-follow-slack-rows))))
+            (dissoc db :messages-scroll :messages-scroll-target :scroll-follow-armed?)
+            db))))))
+
 (reg-event-db :scroll-to-message
   ;; In-session search lands here after the user picks a hit.
   ;; The painter doesn't get told an exact :messages-scroll Y value
@@ -1203,34 +1230,67 @@
 (defn- clear-anim-when-settled
   "Drop `:messages-scroll-target` when target = current. Keeps the render
    loop's `(scroll-anim-active? db)` check trivial: presence of the key
-   means animation is in progress."
+   means animation is in progress.
+
+   When `:scroll-follow-armed?` is set (the move was a scroll-DOWN that
+   reached the bottom), settling converts the concrete offset back to
+   `nil` = auto-bottom FOLLOW mode. That's how the user re-arms
+   stick-to-bottom: scroll to the bottom and new streamed content
+   keeps pulling the view down again, instead of freezing one row
+   above the last message forever."
   [db]
   (let [t (:messages-scroll-target db)
         c (:messages-scroll db)]
     (if (and (some? t) (= t c))
-      (dissoc db :messages-scroll-target)
+      (if (:scroll-follow-armed? db)
+        (dissoc db :messages-scroll-target :messages-scroll :scroll-follow-armed?)
+        (dissoc db :messages-scroll-target))
       db)))
+
+(defn- seed-auto-bottom
+  "When `:messages-scroll` is nil (auto-bottom) the user is visually
+   pinned to `max-s` (the bottom), but `:tick-scroll-anim` reads
+   `(or :messages-scroll 0)` and would animate from row 0 (the TOP).
+   Seed the current position to `max-s` before an animated move so the
+   first wheel-up off the bottom doesn't flash to the top and scroll
+   back down. No-op once a concrete offset is already set."
+  [db ^long max-s]
+  (cond-> db
+    (nil? (:messages-scroll db)) (assoc :messages-scroll max-s)))
 
 (reg-event-db :scroll-up
   (fn [db [_ amount total-h inner-h]]
     (let [max-s   (max 0 (- total-h inner-h))
           cur-t   (or (:messages-scroll-target db) (:messages-scroll db) max-s)
           new-t   (max 0 (- cur-t amount))]
+      ;; Scrolling UP is an explicit "let me read history" intent: drop
+      ;; any armed follow so the view stops chasing the bottom.
       (clear-anim-when-settled
-        (assoc db :messages-scroll-target new-t)))))
+        (-> db
+          (dissoc :scroll-follow-armed?)
+          (seed-auto-bottom max-s)
+          (assoc :messages-scroll-target new-t))))))
 
 (reg-event-db :scroll-down
   (fn [db [_ amount total-h inner-h]]
     (let [max-s (max 0 (- total-h inner-h))
           cur-t (or (:messages-scroll-target db) (:messages-scroll db) max-s)]
       (if (>= (+ cur-t amount) max-s)
-        ;; Reached bottom: TARGET = nil (auto-bottom). Animation steps
-        ;; current toward `max-s` then snaps to nil at end.
+        ;; Reached the bottom: animate the last step to `max-s`, then
+        ;; `clear-anim-when-settled` flips us back to nil = FOLLOW mode
+        ;; (because `:scroll-follow-armed?` is set). Re-arms stick-to-
+        ;; bottom so subsequent streamed content keeps the latest
+        ;; message in view.
         (-> db
-          (assoc :messages-scroll-target max-s)
+          (seed-auto-bottom max-s)
+          (assoc :messages-scroll-target max-s
+            :scroll-follow-armed? true)
           clear-anim-when-settled)
         (clear-anim-when-settled
-          (assoc db :messages-scroll-target (min max-s (+ cur-t amount))))))))
+          (-> db
+            (dissoc :scroll-follow-armed?)
+            (seed-auto-bottom max-s)
+            (assoc :messages-scroll-target (min max-s (+ cur-t amount)))))))))
 
 (defn- step-toward
   "Compute one animation step from `cur` toward `target`.
@@ -1281,9 +1341,12 @@
             fraction   (max 0.0 (min 1.0 (double (/ relative denom))))
             new-scroll (max 0 (min max-scroll
                                 (long (Math/round (* fraction max-scroll)))))]
+        ;; Drag/click to the very bottom re-enters FOLLOW mode (nil),
+        ;; matching scroll-down; anywhere else is a deliberate concrete
+        ;; position, so drop any armed follow.
         (-> db
-          (assoc :messages-scroll new-scroll)
-          (dissoc :messages-scroll-target))))))
+          (dissoc :messages-scroll-target :scroll-follow-armed?)
+          (assoc :messages-scroll (when (< new-scroll max-scroll) new-scroll)))))))
 
 (defn- turn-extra-body
   [{:keys [settings]}]

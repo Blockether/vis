@@ -520,6 +520,84 @@
         (virtual/invalidate-heights!)
         (expect (zero? (virtual/height-cache-size)))))))
 
+(defdescribe scroll-anchoring-test
+  ;; Regression: long reopened session, fast scroll up. Trace-bubble
+  ;; estimates OVER-shoot real heights (~2.5x), so before the
+  ;; pre-warmer measures the off-screen tail, `total-h` is much larger
+  ;; than reality. As the user scrolls up into never-measured bubbles,
+  ;; each one's estimate collapses to its (smaller) real height and
+  ;; `total-h` shrinks by a large amount. With a fixed absolute scroll
+  ;; and no anchoring, the viewport + scrollbar thumb lurched ("reach
+  ;; the top, thumb snaps to the bottom"). `:prev-offsets` pins the
+  ;; topmost visible message across the correction.
+  (it "keeps the topmost visible message pinned when total-h corrects"
+    (virtual/invalidate-heights!)
+    (render/invalidate-cache!)
+    (let [msgs    (vec (mapcat (fn [i]
+                                 [(user-msg (str "question " i))
+                                  (trace-assistant-msg 8 6 (str "answer " i))])
+                         (range 20)))
+          inner-h 40
+          ;; Frame 1: fresh (everything off-screen estimated). Land
+          ;; the user at a concrete mid scroll and read its layout.
+          frame1  (virtual/layout msgs bubble-w settings 1500 inner-h {})
+          off1    (:offsets frame1)
+          eff1    (:eff-scroll frame1)
+          ;; Identify the message at the top of frame-1's viewport.
+          anchor-idx (long (loop [i 0]
+                             (cond
+                               (>= i (dec (count msgs))) (dec (count msgs))
+                               (> (long (nth off1 (inc i))) eff1) i
+                               :else (recur (inc i)))))
+          anchor-msg (nth msgs anchor-idx)
+          ;; Frame 2: warm EVERY bubble to its real height (simulates
+          ;; the pre-warmer catching up / the user having measured the
+          ;; tail), then re-layout WITH the previous offsets so the
+          ;; anchor is preserved despite total-h shrinking.
+          _ (doseq [i (range (count msgs))]
+              (let [m  (nth msgs i)
+                    pm (project-message m bubble-w settings)]
+                (#'virtual/height-cache-put! m bubble-w settings nil
+                                             (render/bubble-height pm bubble-w))))
+          frame2  (virtual/layout msgs bubble-w settings 1500 inner-h {}
+                    {:prev-offsets off1})
+          off2    (:offsets frame2)
+          eff2    (:eff-scroll frame2)
+          ;; Where does the anchor message sit in each frame's viewport?
+          top1    (- (long (nth off1 anchor-idx)) eff1)
+          top2    (- (long (nth off2 anchor-idx)) eff2)]
+      ;; total-h MUST have shrunk (overshoot corrected) - otherwise the
+      ;; test isn't exercising the bug.
+      (expect (< (:total-h frame2) (:total-h frame1)))
+      ;; The anchor message's screen row stays within a row of where it
+      ;; was - no lurch. Without anchoring `eff2` would clamp to the new
+      ;; (much smaller) max-scroll and the anchor would jump off-screen.
+      (expect (<= (Math/abs (- top2 top1)) 1))
+      ;; And the caller is handed a corrected absolute scroll to persist.
+      (expect (some? (:anchored-scroll frame2)))))
+
+  (it "never anchors auto-bottom (nil scroll stays bottom-pinned)"
+    (virtual/invalidate-heights!)
+    (render/invalidate-cache!)
+    (let [msgs   [(user-msg "q") (trace-assistant-msg 6 4 "a")]
+          frame1 (virtual/layout msgs bubble-w settings nil 20 {})
+          frame2 (virtual/layout msgs bubble-w settings nil 20 {}
+                   {:prev-offsets (:offsets frame1)})]
+      (expect (nil? (:anchored-scroll frame2)))
+      (expect (= (:eff-scroll frame2) (max 0 (- (:total-h frame2) 20))))))
+
+  (it "skips anchoring when the message count changed (append)"
+    (virtual/invalidate-heights!)
+    (render/invalidate-cache!)
+    (let [msgs1  [(user-msg "q") (trace-assistant-msg 3 2 "a")]
+          frame1 (virtual/layout msgs1 bubble-w settings 10 20 {})
+          msgs2  (conj msgs1 (user-msg "q2"))
+          ;; prev-offsets has the wrong length for msgs2 - must not throw
+          ;; or mis-index; falls through to the raw scroll.
+          frame2 (virtual/layout msgs2 bubble-w settings 10 20 {}
+                   {:prev-offsets (:offsets frame1)})]
+      (expect (some? (:eff-scroll frame2))))))
+
 (defdescribe turn-separator-test
   (it "ignores legacy turn-separator settings and reserves no blank row"
     (let [msgs [(user-msg "first")
