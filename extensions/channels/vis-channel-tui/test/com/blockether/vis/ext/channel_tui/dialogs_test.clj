@@ -254,8 +254,6 @@
         row-line        (fn [widths cells] (boxed-row widths cells (repeat :left)))
         cells           (var-get #'dlg/file-picker-table-cells)
         headers         (var-get #'dlg/file-picker-table-headers)
-        content-lines   (var-get #'dlg/file-picker-content-lines)
-        body-height     (var-get #'dlg/file-picker-table-body-height)
         scrollbar-geom  (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
         widths          (table-widths 72)]
     (testing "file picker renders a full boxed table with headers and side borders"
@@ -277,9 +275,7 @@
         (is (str/includes? line "modified"))
         (is (not (str/includes? line "[M]")))))
 
-    (testing "picker body has a constant height and hides unused scrollbar geometry"
-      (is (= 20 (content-lines)))
-      (is (= 10 (body-height 50)))
+    (testing "scrollbar geometry sanity (file picker drives `scrollbar/geometry` per frame)"
       ;; Canonical primitive: 20 items in a 10-row viewport, scroll=5
       ;; ⇒ 1-cell thumb halfway down the 10-row track. Overflow gone
       ;; when total ≤ inner (3 items in a 10-row view).
