@@ -206,16 +206,13 @@
                                 :sessions [{:id "s1"
                                             :title nil
                                             :turn-count 2
-                                            :modified-at 0}
+                                            :created-at 0
+                                            :modified-at 3600000}
                                            {:id "s2"
                                             :title "Second"
                                             :turn-count 5
-                                            :modified-at 0}]
-                                :db {:workspaces [{:id :main
-                                                   :session {:id "s1"}
-                                                   :branch "main"
-                                                   :root "/repo"}]
-                                     :workspace-locals {}}})]
+                                            :created-at 0
+                                            :modified-at 0}]})]
     ;; 1:1 session<->workspace: one unified row per session, NOT a
     ;; duplicated session row + workspace row with a contradictory :kind.
     (testing "one unified row per session, no :kind / :switch-workspace"
@@ -223,13 +220,16 @@
       (is (every? #(not (contains? % :kind)) rows))
       (is (= [{:action :switch :id "s1"} {:action :switch :id "s2"}]
             (mapv :target rows))))
-    (testing "session label + its 1:1 workspace context"
+    (testing "title / session / status columns"
       (let [r1 (first rows)]
-        (is (= "Untitled session" (:label r1)))
-        (is (= "main · repo" (:ctx r1)))
-        (is (= "focused 2 turns" (:status r1)))))
-    (testing "ctx falls back to a short id when no workspace is bound"
-      (is (= "s2" (:ctx (second rows)))))
+        (is (= "Untitled session" (:title r1)))
+        (is (= "s1" (:session r1)))
+        (is (= "focused" (:status r1)))))
+    (testing "non-active session shows its turn count"
+      (is (= "5 turns" (:status (second rows)))))
+    (testing "compact MM-dd HH:mm timestamps (UTC)"
+      (is (= "01-01 00:00" (:created (first rows))))
+      (is (= "01-01 01:00" (:modified (first rows)))))
     (testing "visible-rows filters by query only"
       (is (= 1 (count (visible-rows rows "second"))))
       (is (= 2 (count (visible-rows rows "")))))))
