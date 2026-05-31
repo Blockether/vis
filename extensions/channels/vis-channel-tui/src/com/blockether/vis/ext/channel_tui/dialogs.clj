@@ -1905,135 +1905,97 @@
                                       (recur)))
                 (recur)))))))))
 ;;; ── Global navigator (Ctrl+G) ───────────────────────────────────────────────
-(def ^:private navigator-content-h 16)
+;; One row per session. Per the locked 1:1 session<->workspace model a
+;; session IS its workspace, so the navigator shows a single unified list:
+;; no "Kind" column and no session/workspace mode split. The old design
+;; emitted both a session row AND a workspace row per entry, so every
+;; entry showed up twice with a contradictory "Kind".
 (def ^:private navigator-columns
-  [{:id :kind, :label "Kind", :width 10} {:id :label, :label "Name", :flex 1}
-   {:id :ctx, :label "Context", :width 26} {:id :status, :label "Status", :width 18}])
+  [{:id :label, :label "Session", :flex 2}
+   {:id :ctx, :label "Workspace", :width 30} {:id :status, :label "Status", :width 18}])
 (defn- navigator-short-id [id] (let [s (str id)] (subs s 0 (min 8 (count s)))))
-(defn- navigator-workspace-label
-  [{:keys [label workspace id]}]
-  (or (some-> label
-        str
-        str/trim
-        not-empty)
-    (some-> workspace
-      :label
-      str
-      str/trim
-      not-empty)
-    (some-> workspace
-      :branch
-      str
-      str/trim
-      not-empty)
-    (navigator-short-id id)))
 (defn- navigator-workspace-context
-  [{:keys [workspace], workspace-root :workspace/root}]
-  (let [branch (or (:branch workspace) (:vcs/ref workspace))
-        root (or workspace-root (:root workspace) (:workspace/root workspace))]
-    (cond (and branch root) (str branch " | " root)
-      branch branch
-      root root
-      :else "-")))
-(defn- navigator-workspace-status
-  [{:keys [active? workspace]}]
-  (let [kind (some-> (:kind workspace)
-               name)
-        state (some-> (:state workspace)
-                name)]
-    (str (if active? "focused" "open") (when kind (str " " kind)) (when state (str " " state)))))
+  "`branch │ root` summary for the workspace bound to a session, falling
+   back to a short id when no VCS context is known."
+  [ws id]
+  (let [w (or (:workspace ws) ws)
+        branch (or (:branch w) (:vcs/ref w))
+        root (or (:root w) (:workspace/root w))]
+    (cond (and branch root) (str branch " │ " root)
+      branch (str branch)
+      root (str root)
+      :else (navigator-short-id id))))
+(defn- navigator-workspace-index
+  "session-id (string) -> workspace entry, honoring the 1:1 model so each
+   session row can surface its workspace context without a duplicate row."
+  [db]
+  (into {}
+    (keep (fn [ws]
+            (when-let [sid (some-> (get-in ws [:session :id])
+                             str)]
+              [sid ws])))
+    (concat (:workspaces db) (vals (:workspace-locals db)))))
 (defn- navigator-session-row
-  [active-session-id session]
+  [active-session-id workspaces-by-session session]
   (let [id (:id session)
-        active? (= (str id)
-                  (some-> active-session-id
-                    str))]
+        sid (str id)
+        active? (= sid (some-> active-session-id str))
+        ws (get workspaces-by-session sid)]
     {:id (str "session:" id),
-     :kind "session",
      :label (session-title session),
-     :ctx (navigator-short-id id),
+     :ctx (navigator-workspace-context ws id),
      :status (str (when active? "focused ") (long (or (:turn-count session) 0)) " turns"),
      :target {:action :switch, :id id}}))
-(defn- navigator-workspace-row
-  [entry]
-  (let [id (:id entry)]
-    {:id (str "workspace:" id),
-     :kind "workspace",
-     :label (navigator-workspace-label entry),
-     :ctx (navigator-workspace-context entry),
-     :status (navigator-workspace-status entry),
-     :target {:action :switch-workspace, :workspace-id id}}))
 (defn- navigator-all-rows
   [{:keys [sessions active-session-id db]}]
-  (let [workspaces (vec (:workspaces db))]
-    (vec (concat (map #(navigator-session-row active-session-id %) sessions)
-           (map navigator-workspace-row workspaces)))))
-(defn- navigator-mode-matches?
-  [mode row]
-  (case mode
-    :sessions (= "session" (:kind row))
-    :workspaces (= "workspace" (:kind row))
-    true))
-(defn- navigator-mode-title
-  [mode]
-  (case mode
-    :sessions "Go To - Sessions"
-    :workspaces "Go To - Workspaces"
-    "Go To"))
-(defn- navigator-next-mode
-  [mode]
-  (case mode
-    :all :sessions
-    :sessions :workspaces
-    :all))
-(defn- navigator-prev-mode
-  [mode]
-  (case mode
-    :all :workspaces
-    :workspaces :sessions
-    :all))
+  (let [by-session (navigator-workspace-index db)]
+    (mapv #(navigator-session-row active-session-id by-session %) sessions)))
 (defn- navigator-visible-rows
-  [rows mode query]
-  (->> rows
-    (filter #(navigator-mode-matches? mode %))
-    (filter #(table/row-matches? % query))
-    vec))
+  [rows query]
+  (vec (filter #(table/row-matches? % query) rows)))
 (defn navigator-dialog!
   "Global Ctrl+G picker. Returns a target action map or nil on Esc."
   [^TerminalScreen screen opts]
-  (let [mode (atom :all)
-        query (atom "")
+  (let [query (atom "")
         selected (atom 0)
         scroll (atom 0)
         rows (navigator-all-rows opts)]
     (loop []
-      (let [visible-rows (navigator-visible-rows rows @mode @query)
+      (let [visible-rows (navigator-visible-rows rows @query)
             total (count visible-rows)
             size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols (.getColumns size)
             rows-n (.getRows size)
             g (.newTextGraphics screen)
-            bounds
-            (draw-dialog-chrome! g cols rows-n (navigator-mode-title @mode) navigator-content-h)
+            bounds (draw-dialog-chrome! g cols rows-n "Go To" 0)
             {:keys [left inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+            ;; Size the body to the actual row count (capped at the
+            ;; available height) and center it, so the bottom border is
+            ;; glued to the last row instead of floating below a band of
+            ;; empty rows.
+            full-h (:content-h (dialog-layout bounds))
+            body-h (clamp (max 1 total) 1 (max 1 (- full-h 8)))
+            content-count (+ body-h 8)
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds content-count)
             query-row content-top
             table-x (+ left 1 p/SELECTION_WIDTH)
             table-w (max 1 (- inner-w 1 p/SELECTION_WIDTH))
             table-body-w (max 1 (- table-w 2))
             scrollbar-col (+ table-x (dec table-w))
-            table-widths (table/column-widths navigator-columns (max 1 (- table-body-w 2)))
+            table-widths (table/column-widths navigator-columns (max 1 table-body-w))
             top-row (+ content-top 4)
             header-row (inc top-row)
             sep-row (inc header-row)
             body-top (inc sep-row)
-            body-h (max 1 (- content-h 8))
             bottom-row (+ body-top body-h)
             _ (swap! selected #(clamp % 0 (max 0 (dec total))))
             _ (swap! scroll #(visible-window-start @selected % body-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (let [cursor-pos (draw-text-input-field! g left query-row inner-w @query (count @query))]
+        ;; Align the query box to the table: same left edge (`table-x`)
+        ;; and same width (`table-w`) so the input and table read as one
+        ;; column, with the selection gutter to the left of both.
+        (let [cursor-pos (draw-text-input-field! g (+ left 1) query-row (+ table-w 2) @query (count @query))]
           (p/set-colors! g t/dialog-border t/dialog-bg)
           (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
           (p/set-colors! g t/dialog-hint-key t/dialog-bg)
@@ -2091,8 +2053,7 @@
             left
             hint-row
             inner-w
-            [["↑/↓" "move"] ["Enter" "open"] ["Tab" "filter"] ["type" "search"]
-             ["Esc" "cancel"]])
+            [["↑/↓" "move"] ["Enter" "open"] ["type" "search"] ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
           (.refresh screen Screen$RefreshType/DELTA))
         (let [key (read-modal-key! screen)]
@@ -2101,27 +2062,11 @@
               (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
               (condp = (.getKeyType key)
                 KeyType/Escape nil
-                KeyType/Tab (do (reset! mode (navigator-next-mode @mode))
-                              (reset! selected 0)
-                              (reset! scroll 0)
-                              (recur))
-                KeyType/ReverseTab (do (reset! mode (navigator-prev-mode @mode))
-                                     (reset! selected 0)
-                                     (reset! scroll 0)
-                                     (recur))
                 KeyType/Backspace
-                (do (if (seq @query) (swap! query subs 0 (dec (count @query))) (reset! mode :all))
+                (do (when (seq @query) (swap! query subs 0 (dec (count @query))))
                   (reset! selected 0)
                   (reset! scroll 0)
                   (recur))
-                KeyType/ArrowLeft (do (reset! mode (navigator-prev-mode @mode))
-                                    (reset! selected 0)
-                                    (reset! scroll 0)
-                                    (recur))
-                KeyType/ArrowRight (do (reset! mode (navigator-next-mode @mode))
-                                     (reset! selected 0)
-                                     (reset! scroll 0)
-                                     (recur))
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
                                     (recur))

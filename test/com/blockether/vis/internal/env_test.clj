@@ -2,6 +2,7 @@
   (:require
    [com.blockether.vis.internal.env :as env]
    [lazytest.core :refer [defdescribe describe expect it]]
+   [sci.core :as sci]
    [sci.impl.evaluator]
    [sci.impl.resolve]))
 
