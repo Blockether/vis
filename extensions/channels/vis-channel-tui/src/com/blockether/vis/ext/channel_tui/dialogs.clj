@@ -1911,50 +1911,65 @@
 ;; emitted both a session row AND a workspace row per entry, so every
 ;; entry showed up twice with a contradictory "Kind".
 (def ^:private navigator-columns
-  [{:id :label, :label "Session", :flex 1}
-   {:id :ctx, :label "Workspace", :width 28} {:id :status, :label "Status", :width 16}])
-(defn- navigator-short-id [id] (let [s (str id)] (subs s 0 (min 8 (count s)))))
-(defn- navigator-workspace-context
-  "Compact `branch · repo` summary for the workspace bound to a session
-   (root trimmed to its last path segment so the column stays terse),
-   falling back to a short id when no VCS context is known."
-  [ws id]
-  (let [w (or (:workspace ws) ws)
-        branch (or (:branch w) (:vcs/ref w))
-        root (or (:root w) (:workspace/root w))
-        root-name (when root (last (remove str/blank? (str/split (str root) #"/"))))]
-    (cond (and branch root-name) (str branch " · " root-name)
-      branch (str branch)
-      root-name root-name
-      :else (navigator-short-id id))))
-(defn- navigator-workspace-index
-  "session-id (string) -> workspace entry, honoring the 1:1 model so each
-   session row can surface its workspace context without a duplicate row."
-  [db]
-  (into {}
-    (keep (fn [ws]
-            (when-let [sid (some-> (get-in ws [:session :id])
-                             str)]
-              [sid ws])))
-    (concat (:workspaces db) (vals (:workspace-locals db)))))
+  [{:id :title, :label "Title", :flex 1}
+   {:id :session, :label "Session", :width 8}
+   {:id :status, :label "Status", :width 10}
+   {:id :created, :label "Created", :width 12}
+   {:id :modified, :label "Modified", :width 12}])
+(defn- navigator-content-w
+  "Navigator is wider than the default modal footprint — five columns need
+   room for the Title to breathe — but still clamps to the terminal."
+  [cols]
+  (max (default-content-width cols) (min (max 1 (- cols 6)) 104)))
+(defn- navigator-stamp
+  "Compact `MM-dd HH:mm` timestamp (year dropped — these are recent
+   sessions), or `-` when absent."
+  [v]
+  (let [day (format-session-day v)]
+    (if (= day "-") "-" (str (subs day 5) " " (format-session-time v)))))
 (defn- navigator-session-row
-  [active-session-id workspaces-by-session session]
+  "One unified row per session — a session IS its workspace (locked 1:1),
+   so there is no separate workspace row or `kind`. Columns mirror the
+   session picker: title, short id, activity, created/modified stamps."
+  [active-session-id session]
   (let [id (:id session)
-        sid (str id)
-        active? (= sid (some-> active-session-id str))
-        ws (get workspaces-by-session sid)]
+        active? (= (str id) (some-> active-session-id str))]
     {:id (str "session:" id),
-     :label (session-title session),
-     :ctx (navigator-workspace-context ws id),
-     :status (str (when active? "focused ") (long (or (:turn-count session) 0)) " turns"),
+     :title (session-title session),
+     :session (short-session-id session),
+     :status (if active? "focused" (str (long (or (:turn-count session) 0)) " turns")),
+     :created (navigator-stamp (:created-at session)),
+     :modified (navigator-stamp (:modified-at session)),
      :target {:action :switch, :id id}}))
 (defn- navigator-all-rows
-  [{:keys [sessions active-session-id db]}]
-  (let [by-session (navigator-workspace-index db)]
-    (mapv #(navigator-session-row active-session-id by-session %) sessions)))
+  "Sessions arrive newest-modified-first from `tui-session-summaries`; keep
+   that order so the navigator reads top-to-bottom by recency."
+  [{:keys [sessions active-session-id]}]
+  (mapv #(navigator-session-row active-session-id %) sessions))
 (defn- navigator-visible-rows
   [rows query]
   (vec (filter #(table/row-matches? % query) rows)))
+(defn- navigator-cell-spans
+  "[[x-offset col-width] …] for each column inside a `boxed-row-line`, so
+   cell text can be overlaid on a border-colored frame."
+  [widths]
+  (first
+    (reduce (fn [[acc off] w] [(conj acc [off (long w)]) (+ off (long w) 3)])
+      [[] 2] widths)))
+(defn- draw-navigator-row!
+  "Draw one boxed row with frame + separators in the shared dialog border
+   color and cell text in `text-fg` (bolded when `bold?`). Painting every
+   box character one consistent color fixes the gray/black border flicker
+   that came from drawing body rows in the text color."
+  [g x row widths cells aligns text-fg bold?]
+  (p/set-colors! g t/dialog-border t/dialog-bg)
+  (p/put-str! g x row (table/boxed-row-line widths (vec (repeat (count widths) "")) aligns))
+  (p/set-colors! g text-fg t/dialog-bg)
+  (let [draw (fn []
+               (doseq [[i [off w]] (map-indexed vector (navigator-cell-spans widths))]
+                 (p/put-str! g (+ x off) row
+                   (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
+    (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
 (defn navigator-dialog!
   "Global Ctrl+G picker. Returns a target action map or nil on Esc."
   [^TerminalScreen screen opts]
@@ -1969,27 +1984,18 @@
             cols (.getColumns size)
             rows-n (.getRows size)
             g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows-n "Go To" 0)
+            bounds (draw-dialog-chrome! g cols rows-n "Go To"
+                     (navigator-content-w cols) (default-content-height rows-n))
             {:keys [left inner-w]} bounds
-            ;; Size the body to the actual row count (capped at the
-            ;; available height) and center it, so the bottom border is
-            ;; glued to the last row instead of floating below a band of
-            ;; empty rows.
-            ;; Size the body to the actual row count (capped at the
-            ;; available height) and center the block so the table's
-            ;; bottom border is glued to the last row. With nothing to
-            ;; show we skip the table chrome entirely and render a single
-            ;; quiet line — an empty grid is just noise.
+            ;; Input is pinned to a FIXED top position (no vertical
+            ;; centering) so it never jumps as the row count changes
+            ;; while typing. The table grows DOWN from there.
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             table? (pos? total)
-            full-h (:content-h (dialog-layout bounds))
-            body-h (clamp (max 1 total) 1 (max 1 (- full-h 8)))
-            content-count (if table? (+ body-h 8) 6)
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds content-count)
             query-row content-top
             ;; Table is inset one column on each side, exactly matching the
-            ;; query box (`draw-text-input-field!` also draws at left+2).
-            ;; The selection marker lives INSIDE the table's left padding,
-            ;; so there is no external gutter to widen the footprint.
+            ;; query box; the selection marker lives INSIDE the left
+            ;; padding, so there is no external gutter.
             table-x (+ left 2)
             table-w (max 1 (- inner-w 2))
             table-body-w (max 1 (- table-w 2))
@@ -2000,6 +2006,9 @@
             header-row (inc top-row)
             sep-row (inc header-row)
             body-top (inc sep-row)
+            ;; Height = actual row count (capped) so the bottom border is
+            ;; glued to the last row instead of floating below blanks.
+            body-h (clamp total 1 (max 1 (- content-h 8)))
             bottom-row (+ body-top body-h)
             _ (swap! selected #(clamp % 0 (max 0 (dec total))))
             _ (swap! scroll #(visible-window-start @selected % body-h total))]
@@ -2007,7 +2016,7 @@
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (let [cursor-pos (draw-text-input-field! g left query-row inner-w @query (count @query))]
           (if-not table?
-            ;; Empty state: no skeleton table, just a quiet centered line.
+            ;; Empty state: no skeleton table, just a quiet line below input.
             (let [msg (if (str/blank? @query) "No sessions yet" "No matches")
                   msg-x (+ table-x (max 0 (quot (- table-w (count msg)) 2)))]
               (p/set-colors! g t/dialog-hint t/dialog-bg)
@@ -2015,11 +2024,8 @@
             (do
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
-              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-              (p/styled g [p/BOLD]
-                (p/put-str! g table-x header-row
-                  (table/boxed-row-line table-widths
-                    (mapv #(or (:label %) "") navigator-columns) aligns)))
+              (draw-navigator-row! g table-x header-row table-widths
+                (mapv #(or (:label %) "") navigator-columns) aligns t/dialog-hint-key true)
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x sep-row (table/boxed-border-line table-widths :middle))
               (dotimes [i body-h]
@@ -2028,13 +2034,11 @@
                       selected? (= idx @selected)
                       entry (nth visible-rows idx)
                       cells (mapv (fn [{:keys [id]}] (str (get entry id ""))) navigator-columns)]
-                  ;; Draw at the FULL boxed-row width (`table-w`) so the
-                  ;; last column and right border are not clipped to "…".
-                  (table/draw-line! g table-x row table-w selected?
-                    (table/boxed-row-line table-widths cells aligns))
+                  (draw-navigator-row! g table-x row table-widths cells aligns t/dialog-fg selected?)
+                  ;; Circle marker INSIDE the table's left padding.
                   (when selected?
                     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                    (p/styled g [p/BOLD] (p/put-str! g (inc table-x) row "›")))))
+                    (p/styled g [p/BOLD] (p/put-str! g (inc table-x) row "●")))))
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x bottom-row (table/boxed-border-line table-widths :bottom))
               (when (> total body-h)
