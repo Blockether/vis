@@ -234,28 +234,25 @@
     nil))
 (defn- slash-spec->menu-command
   "Adapt a declarative slash spec into the legacy menu-command shape
-   `command_suggest.clj` consumes. Only TOP-LEVEL
-   slashes (`:slash/parent []`) get a palette entry; nested commands
-   stay typed-only (the engine's `slash/dispatch` does longest-prefix
-   resolution regardless of palette discoverability)."
+   `command_suggest.clj` consumes. Both top-level and nested slashes
+   get palette entries. The engine's `slash/dispatch` does longest-prefix
+   resolution regardless of palette discoverability."
   [spec]
-  (let [name (:slash/name spec)
-        path [name]]
-    {:id (keyword "slash" name),
-     ;; Palette label never carries the `/` sigil. Slash is the
-     ;; text-routing convention (`slash/exact-command` needs it to tell
-     ;; commands apart from chat); the visible palette/menu surface
-     ;; treats workspace/voice/etc. as first-class actions. We prefer the
-     ;; human doc, then strip a leading `/` from :slash/usage as a
-     ;; fallback, then fall back to the bare name.
+  (let [name   (:slash/name spec)
+        parent (vec (:slash/parent spec))
+        path   (into parent [name])
+        path-s (str/join " " path)]
+    {:id (keyword (str/join "." path)),
      :label (or (:slash/doc spec)
               (some-> (:slash/usage spec)
                 (clojure.string/replace #"^/+" ""))
               name),
-     :doc (:slash/doc spec),
-     :slash/spec spec,
-     :slash/path path,
-     :slash/text (str "/" name)}))
+     :doc          (:slash/doc spec),
+     :slash/spec   spec,
+     :slash/name   path-s,
+     :slash/path   path,
+     :slash/text   (str "/" path-s),
+     :slash/usage  (or (:slash/usage spec) (str "/" path-s))}))
 (defn- slash-available-in-tui?
   "True when a slash spec is safe to expose in TUI slash UX.
    `registered-slashes` is env-less and includes Telegram-only specs,
@@ -267,14 +264,30 @@
       (try (boolean (available? {:channel/id :tui})) (catch Throwable _ false))
       true)))
 (defn- registry-slash-commands
-  "Top-level slashes harvested from the engine registry for typed `/`
-   suggestions / exact slash submission in the TUI. Hidden specs and
-   non-TUI channel specs stay out; this prevents Telegram menu commands
-   (`/help`, `/models`, ...) from leaking into TUI slash UX."
+  "All slashes harvested from the engine registry for typed `/`
+   suggestions / exact slash submission in the TUI. Both top-level
+   and nested commands are included. Hidden specs and non-TUI channel
+   specs stay out; this prevents Telegram menu commands (`/help`,
+   `/models`, ...) from leaking into TUI slash UX."
   []
-  (try (mapv slash-spec->menu-command
-         (filter (fn [s] (and (empty? (:slash/parent s)) (slash-available-in-tui? s)))
-           (vis/registered-slashes)))
+  (try
+    (let [specs        (filter slash-available-in-tui? (vis/registered-slashes))
+          ;; A spec is a "group root" when some other visible spec
+          ;; names its path as `:slash/parent`. Its own `:slash/run-fn`
+          ;; only prints the subcommand list the palette already shows
+          ;; inline, so suppress the redundant root entry. The engine
+          ;; `slash/dispatch` still resolves a typed `/workspace`
+          ;; (handled as a raw message submission), so the root stays
+          ;; reachable — it just isn't a palette suggestion.
+          parent-paths (into #{}
+                         (keep (fn [s]
+                                 (let [p (vec (:slash/parent s))]
+                                   (when (seq p) p))))
+                         specs)
+          leaf?        (fn [s]
+                         (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
+                           (not (contains? parent-paths path))))]
+      (mapv slash-spec->menu-command (filter leaf? specs)))
     (catch Throwable _t [])))
 (defn- command-palette-extra-commands
   "Extra commands appended to Ctrl+K.
@@ -1137,6 +1150,7 @@
        :heights (:heights layout),
        :offsets (:offsets layout),
        :visible (:visible layout)})))
+
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 (def ^:private spinner-tick-ms
   "How often the live turn frame advances while a turn is in flight. Drives
@@ -2380,8 +2394,9 @@
                                ;; dispatchable command maps are either built-in palette ids
                                ;; (`:new-session`, `:fork-session`, ...) or typed
                                ;; slash suggestions from `vis/registered-slashes`.
-                               ;; Slash entries carry `:id (keyword "slash" name)`
-                               ;; + `:slash/text`; we resubmit as a user message so
+                               ;; Slash entries carry a dotted `:id` (path)
+                               ;; + `:slash/text`; we detect them by `:slash/text`
+                               ;; and resubmit as a user message so
                                ;; `run-turn!` handles them through canonical
                                ;; `slash/dispatch`. Ctrl+K no longer includes those
                                ;; slash roots by default.
@@ -2389,7 +2404,7 @@
                              (let [cmd-id (if (map? cmd) (:id cmd) cmd)
                                    args (or args (:slash/args cmd) "")
                                    cmd-map (when (map? cmd) cmd)]
-                               (cond (and cmd-map (= "slash" (namespace cmd-id)))
+                               (cond (and cmd-map (:slash/text cmd-map))
                                  (when-not (:dialog-open? @state/app-db)
                                    (let [text (cond-> (:slash/text cmd-map)
                                                 (not (str/blank? args))
