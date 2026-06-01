@@ -873,6 +873,12 @@
 (def cherry-pick!-symbol (extension/symbol #'cherry-pick!-tool {:symbol 'cherry-pick! :tag :mutation :render-fn render-edn}))
 (def rebase!-symbol     (extension/symbol #'rebase!-tool     {:symbol 'rebase!     :tag :mutation :render-fn render-edn}))
 
+;; Hidden back-compat aliases: both spellings resolve to the SAME tool, but
+;; only the canonical name (`add`, `commit!`) is advertised in the prompt
+;; symbol catalog. `git/add` ↔ `git/add!` and `git/commit` ↔ `git/commit!`.
+(def add!-symbol        (extension/symbol #'add-tool         {:symbol 'add!        :tag :mutation :render-fn render-edn :hidden? true}))
+(def commit-symbol      (extension/symbol #'commit!-tool     {:symbol 'commit      :tag :mutation :render-fn render-edn :hidden? true}))
+
 (def write-ops-symbols
-  [add-symbol commit!-symbol amend!-symbol push!-symbol fetch!-symbol
+  [add-symbol add!-symbol commit!-symbol commit-symbol amend!-symbol push!-symbol fetch!-symbol
    reset!-symbol branch!-symbol checkout!-symbol cherry-pick!-symbol rebase!-symbol])

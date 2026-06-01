@@ -330,7 +330,9 @@
                        :description (:description info)
                        :kind        (:kind info)
                        :registry-id registry-id
-                       :symbols     (mapv :ext.symbol/symbol (extension/ext-symbols ext))}
+                       :symbols     (mapv :ext.symbol/symbol
+                                      (remove :ext.symbol/hidden?
+                                        (extension/ext-symbols ext)))}
                 (nil? (:alias info)) (dissoc :alias)
                 (nil? (:description info)) (dissoc :description)
                 (nil? (:kind info)) (dissoc :kind)
