@@ -210,11 +210,18 @@
         line   (volatile! init-runs)
         lw     (volatile! init-w)
         prefix-w (volatile! init-w)
+        ;; false until the first flush — i.e. while we are still on the
+        ;; ORIGINAL line, not a wrapped continuation segment. Leading
+        ;; whitespace is meaningful indentation on the first line (source
+        ;; code, the `v/cat` hash gutter's blank-anchor pad) and must
+        ;; survive; only continuation segments drop it on reflow.
+        cont?  (volatile! false)
         flush! (fn []
                  (vswap! out conj {:runs @line})
                  (vreset! line  cont-runs)
                  (vreset! lw    cont-w)
-                 (vreset! prefix-w cont-w))
+                 (vreset! prefix-w cont-w)
+                 (vreset! cont? true))
         push!  (fn [a]
                  (vswap! line conj a)
                  (vswap! lw + (run-width a)))]
@@ -224,9 +231,13 @@
         (flush!)
 
         (str/blank? (:text a))
-        ;; whitespace atom — drop if at start, otherwise add (might overflow,
-        ;; we still keep on the line; trailing ws will be collapsed by render)
-        (when (> @lw @prefix-w)
+        ;; whitespace atom — on a continuation segment, drop it when at
+        ;; the start (reflowed text shouldn't carry indentation). On the
+        ;; FIRST line keep leading whitespace: it is the original line's
+        ;; own indentation (source columns / cat blank-gutter pad), whose
+        ;; loss left-shifts the line and breaks column alignment.
+        ;; Otherwise add it (might overflow; trailing ws collapses in render).
+        (when (or (not @cont?) (> @lw @prefix-w))
           (push! a))
 
         :else
