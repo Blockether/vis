@@ -148,7 +148,10 @@
         (str/lower-case
           (str/join " "
             (keep (fn [[k v]]
-                    (when-not (= k :target)
+                    ;; `:target` is the action payload, not display text;
+                    ;; booleans (e.g. row flags like `:focused?`) are
+                    ;; never meaningful search text.
+                    (when-not (or (= k :target) (boolean? v))
                       (cond
                         (keyword? v) (name v)
                         (nil? v) nil
