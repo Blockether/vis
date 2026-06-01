@@ -56,3 +56,18 @@
                     (catch clojure.lang.ExceptionInfo e
                       (= :clj/nrepl-connect-failed (:type (ex-data e)))))]
       (expect thrown?))))
+
+(defdescribe probe-test
+  (it "reports :up with versions, :clj dialect, and a string cwd against a live server"
+    (with-server
+      (fn [port]
+        (let [r (nc/probe! {:port port :timeout-ms 1000})]
+          (expect (= :up (:status r)))
+          (expect (= :clj (:dialect r)))
+          (expect (string? (get-in r [:versions :clojure])))
+          ;; cwd is best-effort; when present it must be a non-blank string
+          (expect (or (nil? (:cwd r)) (and (string? (:cwd r)) (seq (:cwd r)))))))))
+
+  (it "reports :down on a closed port and never throws"
+    (expect (= {:status :down} (nc/probe! {:port 1 :timeout-ms 200})))
+    (expect (= {:status :down} (nc/probe! {:port nil})))))
