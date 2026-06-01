@@ -15,6 +15,7 @@
    [clojure.set]
    [clojure.string :as string]
    [com.blockether.vis.ext.foundation-core.editing.core :as editing]
+   [com.blockether.vis.ext.foundation-core.editing.patch :as patch]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -764,7 +765,7 @@
       (expect (some? (:summary out)))
       (expect (extension/render-value? (:display out)))))
 
-  (it "v/cat :display is canonical [:ir ...] with a :code block, line-numbered from the first tuple"
+  (it "v/cat :display is canonical [:ir ...] with a :code block, hash-addressed gutter"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "src/demo.clj" [[1 "only-line"]] nil false)
           out (channel-render-cat r)
@@ -774,7 +775,10 @@
       (let [form-sources (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq display))
             body (last (first form-sources))]
         (expect (= 1 (count form-sources)))
-        (expect (string/includes? body "1: only-line")))))
+        ;; Gutter is the content hash, NOT the line number (hashes
+        ;; replace lines as the edit address).
+        (expect (string/includes? body (str (patch/line-hash "only-line") "│ only-line")))
+        (expect (not (string/includes? body "1: only-line"))))))
 
   (it "v/cat summary is a zone badge: CAT label, path centered, line/pagination right"
     (let [channel-render-cat (private-fn "channel-render-cat")
@@ -797,15 +801,15 @@
       (expect (string/includes? text "from=1898"))
       (expect (string/includes? text "next-offset=1928"))))
 
-  (it "v/cat :display uses the absolute line number on each tuple"
+  (it "v/cat :display gutter is the per-line content hash on each tuple"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "f.txt" [[100 "hundred"] [101 "hundred-one"]] 102 false)
           display (:display (channel-render-cat r))
           body (last (first (filter #(and (vector? %) (= :code (first %)))
                               (tree-seq sequential? seq display))))]
       (expect (= :ir (first display)))
-      (expect (string/includes? body "100: hundred"))
-      (expect (string/includes? body "101: hundred-one"))))
+      (expect (string/includes? body (str (patch/line-hash "hundred") "│ hundred")))
+      (expect (string/includes? body (str (patch/line-hash "hundred-one") "│ hundred-one")))))
 
   (it "v/cat multi-range summary and display stay one CAT result"
     (let [channel-render-cat (private-fn "channel-render-cat")
@@ -823,9 +827,9 @@
       (expect (string/includes? text "3 lines"))
       (expect (string/includes? text "ranges=2-3,10-10"))
       (expect (string/includes? body "-- range 2-3 --"))
-      (expect (string/includes? body "2: b"))
+      (expect (string/includes? body (str (patch/line-hash "b") "│ b")))
       (expect (string/includes? body "-- range 10-10 --"))
-      (expect (string/includes? body "10: j"))))
+      (expect (string/includes? body (str (patch/line-hash "j") "│ j")))))
 
   (it "v/ls renderer conforms to ::render-fn-result with a zone summary"
     (let [render (private-fn "channel-render-ls")
@@ -921,10 +925,9 @@
                 (mapv :text (:hits out))))))
 
   (it "accepts :files as an alias for :paths"
-    (let [_    (write-temp! "rgfiles/a.clj" "needle alias\n")
+    (let [file (write-temp! "rgfiles/a.clj" "needle alias\n")
           _    (write-temp! "rgfiles/b.clj" "needle other\n")
           grep (private-fn "grep-files")
-          file (temp-dir-path "rgfiles/a.clj")
           out  (grep {:all ["needle"]
                       :files [file]})]
       (expect (= ["needle alias"] (mapv :text (:hits out))))))
@@ -1777,3 +1780,48 @@
       (expect (string? (get-in out [:error :trace])))
       (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
       (expect (not (contains? out :markdown))))))
+
+(defdescribe vis-patch-hashline-test
+  ;; End-to-end content-addressed editing: read hashes from v/cat, then
+  ;; patch by :from-hash / :to-hash. The hash anchors come straight from
+  ;; the read's `:hashes` map (same value rendered in the cat gutter),
+  ;; and self-locate against live disk content on apply.
+  (it "v/patch :from-hash replaces a single content-anchored line"
+    (let [path (write-temp! "hashline/single.txt"
+                 "alpha first\nbeta second\ngamma third\n")
+          read-file (private-fn "read-file")
+          patch (private-fn "patch-safe")
+          hashes (:hashes (read-file path))
+          h2 (get hashes 2)
+          r (patch [{:path path :from-hash h2 :replace "BETA REPLACED"}])]
+      (expect (true? (:success? r)))
+      (expect (= "alpha first\nBETA REPLACED\ngamma third\n" (slurp path)))))
+
+  (it "v/patch :from-hash + :to-hash replaces an inclusive range"
+    (let [path (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")
+          read-file (private-fn "read-file")
+          patch (private-fn "patch-safe")
+          hashes (:hashes (read-file path))
+          r (patch [{:path path
+                     :from-hash (get hashes 1)
+                     :to-hash (get hashes 3)
+                     :replace "X"}])]
+      (expect (true? (:success? r)))
+      (expect (= "X\nd\n" (slurp path)))))
+
+  (it "v/patch refuses a :from-hash that hits >1 identical line"
+    (let [path (write-temp! "hashline/dup.txt" "x\ny\nx\n")
+          read-file (private-fn "read-file")
+          patch (private-fn "patch-safe")
+          hashes (:hashes (read-file path))
+          r (patch [{:path path :from-hash (get hashes 1) :replace "NEW"}])]
+      (expect (false? (:success? r)))
+      (expect (= :hash-ambiguous (-> r :failures first :reason)))
+      ;; file untouched
+      (expect (= "x\ny\nx\n" (slurp path)))))
+
+  (it "v/patch needs EXACTLY ONE of :search or :from-hash"
+    (let [path (write-temp! "hashline/both.txt" "a\n")
+          patch (private-fn "patch-safe")]
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(patch [{:path path :search "a" :from-hash "abc123" :replace "Z"}]))))))
