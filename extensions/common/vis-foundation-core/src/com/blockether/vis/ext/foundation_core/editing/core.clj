@@ -576,6 +576,7 @@
                                (+ (long offset) returned))]
              {:path        (rel-path f)
               :lines       lines
+              :hashes      (into {} (map (fn [[ln t]] [ln (patch/line-hash t)])) lines)
               :next-offset next-offset
               :eof?        eof?
               :truncated?  (= stop :bytes)
@@ -614,6 +615,8 @@
         f       (ensure-existing-file! (safe-path path))]
     {:path        (rel-path f)
      :lines       (vec (mapcat :lines windows))
+     :hashes      (into {} (comp (mapcat :lines)
+                             (map (fn [[ln t]] [ln (patch/line-hash t)]))) windows)
      :ranges      windows
      :next-offset nil
      :eof?        (every? :eof? windows)
@@ -675,6 +678,7 @@
                   numbered     (mapv vector (iterate inc start-line) final-lines)]
               {:path        (rel-path f)
                :lines       numbered
+               :hashes      (into {} (map (fn [[ln t]] [ln (patch/line-hash t)])) numbered)
                :next-offset nil
                :eof?        true
                :truncated?  bytes-truncated?
@@ -1111,17 +1115,20 @@
 (def ^:private patch-required-keys #{:path :replace})
 (def ^:private patch-locator-keys
   "Every edit needs EXACTLY ONE locator: `:search` (text match) or
-   `:lines` (1-based inclusive line range, the hashline form)."
-  #{:search :lines})
+   `:from-hash` (hashline — content-addressed by the per-line hash from
+   `v/cat`). The hashline form re-resolves against LIVE content on every
+   edit, so it stays correct under line drift (insertions above, or
+   earlier edits in the same grouped batch) where raw line numbers would
+   silently target the wrong line."
+  #{:search :from-hash})
 (def ^:private patch-optional-keys
   "Optional keys recognised on exact-replace edit maps.
-   - :after / :before  positional anchors (string; first exact occurrence)
-   - :nth              :first | :last | :all | 1-based positive integer
-   - :from-hash        guard: line-hash of the FIRST line of a :lines range
-   - :to-hash          guard: line-hash of the LAST line of a :lines range
+   - :after / :before  positional anchors (string; first exact occurrence) [:search only]
+   - :nth              :first | :last | :all | 1-based positive integer    [:search only]
+   - :to-hash          end of a hashline range; defaults to :from-hash (single line)
    - :expected-mtime   epoch-ms; fail if file mtime differs (staleness guard)
    - :expected-size    bytes;    fail if file size differs (staleness guard)"
-  #{:after :before :nth :from-hash :to-hash :expected-mtime :expected-size})
+  #{:after :before :nth :to-hash :expected-mtime :expected-size})
 
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-locator-keys patch-optional-keys))
@@ -1202,19 +1209,14 @@
                           :missing (vec missing)
                           :edit edit})))
               (when (not= 1 (count locators))
-                (throw (ex-info "v/patch edit needs EXACTLY ONE of :search or :lines"
+                (throw (ex-info "v/patch edit needs EXACTLY ONE of :search or :from-hash"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :locators (vec locators)
                           :edit edit})))
-              (when (and (:lines edit)
-                      (not (and (sequential? (:lines edit))
-                             (= 2 (count (:lines edit)))
-                             (every? integer? (:lines edit))
-                             (<= 1 (long (first (:lines edit))))
-                             (<= (long (first (:lines edit))) (long (second (:lines edit)))))))
-                (throw (ex-info "v/patch :lines must be [start end], 1-based inclusive, start<=end"
+              (when (and (:to-hash edit) (not (:from-hash edit)))
+                (throw (ex-info "v/patch :to-hash requires :from-hash"
                          {:type :ext.foundation.editing/invalid-patch-edit
-                          :lines (:lines edit) :edit edit})))
+                          :edit edit})))
               (when unknown
                 (throw (ex-info "v/patch edit has unknown keys"
                          {:type :ext.foundation.editing/invalid-patch-edit
@@ -1589,47 +1591,52 @@
                  :message (ex-message e)
                  :data data}}))))
 
-(defn- resolve-lines-edit
-  "Hashline locator: replace the 1-based inclusive line range `[start end]`
-   of `current` with `replace`. Optional `from-hash`/`to-hash` guard the
-   range endpoints against drift (a stale `v/cat` read) by recomputing
-   `patch/line-hash` on the actual first/last line. Returns
-   `{:new-content S}` on success or `{:error {:reason KW …}}`."
-  [^String current [start end] from-hash to-hash ^String replace]
-  (let [lines     (patch/split-content-lines current)
-        n         (count lines)
-        s         (long start)
-        e         (long end)]
+(defn- lines-matching-hash
+  "0-based indices of `lines` whose `patch/line-hash` equals `h`."
+  [lines h]
+  (let [h (str h)]
+    (into [] (keep-indexed (fn [i l] (when (= h (patch/line-hash l)) i))) lines)))
+
+(defn- resolve-hash-edit
+  "Hashline locator: content-addressed line-range replace. Resolves
+   `from-hash` (and `to-hash`, defaulting to `from-hash` for a single
+   line) against the LIVE `current` content by recomputing
+   `patch/line-hash` per line — so the edit lands on the right line even
+   if it drifted since the `v/cat` read. Each hash must match EXACTLY one
+   line; a dup-line collision is refused (use `:search`). Returns
+   `{:new-content S}` or `{:error {:reason KW …}}`."
+  [^String current from-hash to-hash ^String replace]
+  (let [lines    (patch/split-content-lines current)
+        to-hash  (or to-hash from-hash)
+        froms    (lines-matching-hash lines from-hash)
+        tos      (lines-matching-hash lines to-hash)]
     (cond
-      (> e n)
-      {:error {:reason :lines-out-of-range :lines [start end] :file-lines n}}
-
+      (empty? froms)
+      {:error {:reason :hash-not-found :which :from :hash (str from-hash)}}
+      (> (count froms) 1)
+      {:error {:reason :hash-ambiguous :which :from :hash (str from-hash)
+               :lines (mapv inc froms)}}
+      (empty? tos)
+      {:error {:reason :hash-not-found :which :to :hash (str to-hash)}}
+      (> (count tos) 1)
+      {:error {:reason :hash-ambiguous :which :to :hash (str to-hash)
+               :lines (mapv inc tos)}}
+      (< (long (first tos)) (long (first froms)))
+      {:error {:reason :hash-range-inverted
+               :from-line (inc (first froms)) :to-line (inc (first tos))}}
       :else
-      (let [first-line (nth lines (dec s))
-            last-line  (nth lines (dec e))
-            fh-actual  (patch/line-hash first-line)
-            th-actual  (patch/line-hash last-line)]
-        (cond
-          (and from-hash (not= (str from-hash) fh-actual))
-          {:error {:reason :hash-drift :which :from :line start
-                   :expected from-hash :actual fh-actual
-                   :actual-text (search-preview first-line)}}
-
-          (and to-hash (not= (str to-hash) th-actual))
-          {:error {:reason :hash-drift :which :to :line end
-                   :expected to-hash :actual th-actual
-                   :actual-text (search-preview last-line)}}
-
-          :else
-          (let [[char-start char-end] (line-span->char-span current (dec s) e)
-                matched-ends-nl? (and (> char-end 0)
-                                   (= \newline (.charAt current (dec char-end))))
-                replace-ends-nl? (str/ends-with? replace "\n")
-                rewritten (if (and matched-ends-nl? (not replace-ends-nl?))
-                            (str replace "\n") replace)]
-            {:new-content (str (subs current 0 char-start)
-                            rewritten
-                            (subs current char-end))}))))))
+      (let [line-start (long (first froms))
+            line-end   (inc (long (first tos)))
+            [char-start char-end] (line-span->char-span current line-start line-end)
+            matched-ends-nl? (and (> char-end 0)
+                               (= \newline (.charAt current (dec char-end))))
+            replace-ends-nl? (str/ends-with? replace "\n")
+            rewritten (if (and matched-ends-nl? (not replace-ends-nl?))
+                        (str replace "\n") replace)]
+        {:new-content (str (subs current 0 char-start)
+                        rewritten
+                        (subs current char-end))
+         :applied-line (inc line-start)}))))
 
 (defn- patch-analysis
   [edits]
@@ -1639,7 +1646,7 @@
            states {}
            checks []
            failures []]
-      (if-let [{:keys [path search replace after before nth lines from-hash to-hash] :as edit}
+      (if-let [{:keys [path search replace after before nth from-hash to-hash] :as edit}
                (first remaining)]
         (let [resolved (resolve-edit-target path)]
           (if-let [path-error (:error resolved)]
@@ -1658,29 +1665,29 @@
                   replace (str replace)
                   stale   (when-not (contains? states path)
                             (staleness-check file edit))]
-              (if lines
-                ;; ---- hashline locator (:lines range, optional hash guard) ----
-                (let [base-check {:edit-index idx :path rel :lines lines}]
+              (if from-hash
+                ;; ---- hashline locator (content-addressed by line hash) ----
+                (let [base-check {:edit-index idx :path rel
+                                  :from-hash from-hash
+                                  :to-hash (or to-hash from-hash)}]
                   (if stale
                     (let [check (assoc base-check :reason :stale :stale stale)]
                       (recur (inc idx) (next remaining) states
                         (conj checks check) (conj failures check)))
-                    (let [res (resolve-lines-edit current lines from-hash to-hash replace)]
+                    (let [res (resolve-hash-edit current from-hash to-hash replace)]
                       (if-let [err (:error res)]
-                        (let [check (assoc base-check :reason (:reason err) :lines-error err)]
+                        (let [check (assoc base-check :reason (:reason err) :hash-error err)]
                           (recur (inc idx) (next remaining) states
                             (conj checks check) (conj failures check)))
                         (recur (inc idx) (next remaining)
                           (assoc states path {:file file :path rel
                                               :before before-text
                                               :after (:new-content res)})
-                          (conj checks (assoc base-check :pass :line-range
-                                         :applied-positions [(first lines)]))
+                          (conj checks (assoc base-check :pass :hashline
+                                         :applied-positions [(:applied-line res)]))
                           failures)))))
                 ;; ---- text locator (:search), original machinery ----
-                (let [search  (str search)
-                      replace (str replace)
-                      all-positions (find-substring-positions current search)
+                (let [all-positions (find-substring-positions current search)
                       anchor-result (filter-positions-by-anchors all-positions (count search) current
                                       {:after after :before before})
                       filtered-positions (:positions anchor-result)
@@ -1770,9 +1777,19 @@
          :valid? (empty? failures)}))))
 
 (defn- explain-failure
-  [{:keys [edit-index path matches filtered-matches reason anchors nearest stale anchor-error]}]
+  [{:keys [edit-index path matches filtered-matches reason anchors nearest stale anchor-error
+           hash-error]}]
   (let [head (str "edit " edit-index " in " path)]
     (case reason
+      :hash-not-found (str head " failed: " (name (:which hash-error)) "-hash "
+                        (pr-str (:hash hash-error)) " matches no line (the line changed or"
+                        " the file moved). Re-read with v/cat for fresh :hashes.")
+      :hash-ambiguous (str head " failed: " (name (:which hash-error)) "-hash "
+                        (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
+                        " identical lines " (pr-str (:lines hash-error))
+                        " - use :search instead, that line content is not unique.")
+      :hash-range-inverted (str head " failed: :to-hash line " (:to-line hash-error)
+                             " precedes :from-hash line " (:from-line hash-error) ".")
       :stale (str head
                " failed: file changed since :expected-" (name (:reason stale))
                " check (expected " (or (:expected-mtime stale) (:expected-size stale))
@@ -2127,7 +2144,13 @@
 
    Result shape:
      {:vis.op :v/cat :path P :lines [[<line-number> <text>] …]
+      :hashes {<line-number> <hash> …}
       :next-offset N? :eof? B :truncated? B :mtime :size}
+   `:hashes` maps each line number to a stable 6-char content hash (also
+   shown in the gutter as `<ln> <hash>│ text`). Feed a pair to
+   `v/patch` as `{:from-hash H1 :to-hash H2 :replace R}` to edit the line
+   range [H1..H2] without reconstructing the source text — anchors are
+   content-addressed, so they survive line drift.
    `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
    offset arithmetic. Filter content with `(filter (fn [[_ t]] …) :lines)`.
    Each line's text is verbatim — no per-line cap. `:next-offset` is nil
@@ -2505,22 +2528,39 @@
 (defn- patch-tool
   "Surgical file editing. Input is either edit maps or grouped same-file maps.
 
-   Edit map:
+   Every edit carries EXACTLY ONE locator: `:search` (text) or
+   `:from-hash` (hashline). Both forms take `:replace`.
+
+   Text edit:
      {:path P :search S :replace R
       :after \"context\"?  :before \"context\"?
       :nth :first|:last|:all|N?
       :expected-mtime MS?  :expected-size BYTES?}
 
+   Hashline edit (content-addressed — no whitespace reconstruction):
+     {:path P :from-hash H1 :to-hash H2? :replace R}
+   H1/H2 are per-line anchors from the `v/cat` `:hashes` map / gutter
+   (`<ln> <hash>│ text`). The range is the line carrying H1 through the
+   line carrying H2 (inclusive); omit `:to-hash` for a single line. The
+   anchors are re-resolved against LIVE content on every edit, so they
+   stay correct under line drift (insertions above, or earlier edits in
+   the same batch) — unlike raw line numbers. Each hash must match exactly
+   one line; on a dup-line collision the edit fails (use `:search`).
+
    Grouped same-file map (preferred for several changes to one file):
      {:path P
       :edits [{:search S1 :replace R1}
-              {:search S2 :replace R2}]}
+              {:from-hash \"a3f2e9\" :to-hash \"9c1d04\" :replace R2}]}
 
    Replaces the FIRST occurrence by default. Use `:nth`, `:after` /
    `:before` anchors, or extend `:search` with context to target a
-   specific occurrence. Multi-line `:search` gets a 5-pass fuzzy
-   fallback (exact -> rstrip -> unicode -> relative-indent -> trim)
-   when zero exact matches land.
+   specific occurrence. Multi-line `:search` gets fuzzy fallbacks: a
+   5-pass line matcher (exact -> rstrip -> unicode -> relative-indent ->
+   trim) and, when line structure itself drifted (a SEARCH block that
+   joins/splits lines vs the file), a whitespace-agnostic token match
+   (`:ws-agnostic`) that applies only when the token run is unique. A
+   total miss reports the nearest candidate WITH the first differing line
+   so you can fix `:search` in one shot instead of re-reading blind.
 
    Companion primitives — each does ONE thing, no overlap with v/patch:
      v/write    whole-file create or overwrite
@@ -2762,6 +2802,18 @@
     (map (fn [[ln s]] (str ln ": " s)))
     (str/join "\n")))
 
+(defn- hashed-line-block
+  "Like `numbered-line-block` but with the per-line hashline anchor in the
+   gutter: `<ln> <hash>│ <text>`. `hashes` is the `{line-no hash}` map
+   from a `v/cat` result; lines without a hash fall back to plain `:`."
+  [tuples hashes]
+  (->> tuples
+    (map (fn [[ln s]]
+           (if-let [h (get hashes ln)]
+             (str ln " " h "│ " s)
+             (str ln ": " s))))
+    (str/join "\n")))
+
 (defn- numbered-range-block
   [ranges]
   (->> ranges
@@ -2793,7 +2845,7 @@
    centered, the line count + pagination state anchored right. Display
    is the numbered-line block. Reads the plain map directly; no
    handle/deref."
-  [{:keys [path next-offset truncated? lines ranges]}]
+  [{:keys [path next-offset truncated? lines ranges hashes]}]
   (let [lines        (vec lines)
         ranges       (vec ranges)
         range-labels (mapv (fn [{:keys [range]}]
@@ -2804,7 +2856,7 @@
         first-ln     (ffirst lines)
         body         (if (seq ranges)
                        (numbered-range-block ranges)
-                       (numbered-line-block lines))
+                       (hashed-line-block lines hashes))
         state        (cond
                        (seq ranges) (str "ranges=" (str/join "," range-labels)
                                       (when truncated? "  (byte-cap)"))
