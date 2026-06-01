@@ -268,6 +268,7 @@
    to keep a 20-fact session under ~10k tokens total."
   2048)
 (defn- apply-fact-set!
+  "Canonical fact upsert. Relations are DECLARATIVE keys on the map — the\n   map IS the desired state. `:depends-on` and `:contradicts`, when present,\n   REPLACE the entity's full edge set (absent key = leave untouched). For\n   `:contradicts` the symmetric back-links are reconciled: links the new\n   vector drops are removed from BOTH facts; links it adds are written to\n   both. This makes `(fact-set! :K {:contradicts [...]})` the single verb\n   for declaring AND retracting contradictions — no standalone mutator."
   [ctx form-scope [fact-k partial-map]]
   (cond
     (and (contains? partial-map :depends-on)
@@ -282,7 +283,9 @@
                              " would introduce a cycle; write refused"))],
        :stamped? false}
     :else
-      (let [contras (let [c (:contradicts partial-map)] (when (some? c) (if (coll? c) (vec c) [c])))
+      (let [has-contras? (contains? partial-map :contradicts)
+            desired-raw (let [c (:contradicts partial-map)]
+                          (if (coll? c) (vec c) (when (some? c) [c])))
             partial-map (dissoc partial-map :contradicts)
             path [:session/facts fact-k]
             existing (get-in ctx path)
@@ -291,16 +294,33 @@
             content (:content stamped)
             size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
             ctx* (assoc-in ctx path stamped)
-            wanted (remove #{fact-k} contras)
-            present (filter (fn* [p1__52077#] (contains? (:session/facts ctx*) p1__52077#)) wanted)
-            missing (remove (fn* [p1__52078#] (contains? (:session/facts ctx*) p1__52078#)) wanted)
-            ctx** (reduce
-                    (fn [c other]
-                      (-> c
-                          (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
-                          (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
-                    ctx*
-                    present)]
+            wanted (remove #{fact-k} (or desired-raw []))
+            present (set (filter (fn* [p1__52400#] (contains? (:session/facts ctx*) p1__52400#))
+                           wanted))
+            missing (when has-contras?
+                      (remove (fn* [p1__52401#] (contains? (:session/facts ctx*) p1__52401#))
+                        wanted))
+            old-links (if has-contras? (get-in ctx* [:session/facts fact-k :contradicts] #{}) #{})
+            to-add (clojure.set/difference present old-links)
+            to-remove (if has-contras? (clojure.set/difference old-links present) #{})
+            ctx** (as-> ctx* c
+                    (reduce
+                      (fn [c other]
+                        (-> c
+                            (update-in [:session/facts fact-k :contradicts] (fnil disj #{}) other)
+                            (update-in [:session/facts other :contradicts] (fnil disj #{}) fact-k)))
+                      c
+                      to-remove)
+                    (reduce
+                      (fn [c other]
+                        (-> c
+                            (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
+                            (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
+                      c
+                      to-add)
+                    (if (and has-contras? (empty? (get-in c [:session/facts fact-k :contradicts])))
+                      (update-in c [:session/facts fact-k] dissoc :contradicts)
+                      c))]
         {:ctx ctx**,
          :warnings (cond-> []
                      (and size (> size FACT_CONTENT_SOFT_LIMIT))
