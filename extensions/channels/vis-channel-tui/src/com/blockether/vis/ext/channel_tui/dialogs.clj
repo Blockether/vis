@@ -1914,14 +1914,20 @@
 (defn- navigator-session-row
   "One unified row per session — a session IS its workspace (locked 1:1),
    so there is no separate workspace row or `kind`. Columns mirror the
-   session picker: title, short id, activity, created/modified stamps."
+   session picker: title, short id, activity, created/modified stamps.
+
+   `:focused?` marks the session you are CURRENTLY in (the active
+   workspace). The render loop pins it to the top and paints it in the
+   dialog accent + bold so it reads as 'you are here', visually distinct
+   from the switch-to-other rows; its status shows `● focused`."
   [active-session-id session]
   (let [id (:id session)
         active? (= (str id) (some-> active-session-id str))]
     {:id (str "session:" id),
+     :focused? active?,
      :title (session-title session),
      :session (short-session-id session),
-     :status (if active? "focused" (str (long (or (:turn-count session) 0)) " turns")),
+     :status (if active? "● focused" (str (long (or (:turn-count session) 0)) " turns")),
      :created (navigator-stamp (:created-at session)),
      :modified (navigator-stamp (:modified-at session)),
      :target {:action :switch, :id id}}))
@@ -1935,9 +1941,18 @@
    action row mixed in with actual sessions read as just another session
    and pushed the newest real one down."
   [{:keys [sessions active-session-id show-empty-untitled?]}]
-  (->> sessions
-    (remove #(and (not show-empty-untitled?) (empty-untitled-session? %)))
-    (mapv #(navigator-session-row active-session-id %))))
+  (let [focused-id (some-> active-session-id str)
+        focused?   (fn [s] (= (str (:id s)) focused-id))
+        rows (->> sessions
+               ;; Keep the FOCUSED session even when it is an empty
+               ;; untitled shell — you must always see "you are here".
+               (remove #(and (not show-empty-untitled?)
+                          (empty-untitled-session? %)
+                          (not (focused? %))))
+               (mapv #(navigator-session-row active-session-id %)))]
+    ;; Focused row pinned to the top; the rest keep their recency order
+    ;; and read as the "switch to" list below it.
+    (vec (concat (filter :focused? rows) (remove :focused? rows)))))
 (defn- navigator-visible-rows
   [rows query]
   (vec (filter #(table/row-matches? % query) rows)))
@@ -2036,9 +2051,14 @@
                       row (+ body-top i)
                       selected? (= idx @selected)
                       entry (nth visible-rows idx)
+                      ;; The currently-focused session paints in the dialog
+                      ;; accent + bold (always), so it pops as "you are
+                      ;; here" against the plain switch-to rows.
+                      focused? (:focused? entry)
+                      row-fg   (if focused? t/dialog-hint-key t/dialog-fg)
                       cells (navigator-with-selection-gutter
                               (mapv (fn [{:keys [id]}] (str (get entry id ""))) navigator-columns))]
-                  (draw-navigator-row! g table-x row table-widths cells aligns t/dialog-fg selected?)
+                  (draw-navigator-row! g table-x row table-widths cells aligns row-fg (or selected? focused?))
                   ;; Shared cursor marker, painted by the project-wide primitive into
                   ;; the reserved `p/selection-prefix` first-cell gutter.
                   (p/draw-selection-marker! g (+ table-x 2) row selected? t/dialog-hint-key)))
