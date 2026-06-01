@@ -2641,10 +2641,12 @@
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
 (def ^:private reasoning-auto-collapse-line-threshold
-  "Reasoning rows above this count collapse behind a ▶ REASONING badge
-   (default collapsed, expand on click — same affordance as tool op
-   rows). Short reasoning (≤ this many rows) stays inline; a one-liner
-   doesn't earn a disclosure."
+  "Reasoning PREVIEW height. Up to this many rows of reasoning are
+   ALWAYS shown — short reasoning (≤ this many rows) renders inline with
+   no disclosure; longer reasoning shows these first rows as a peek and
+   collapses only the REMAINDER behind a ▶ THINKING `+N more` toggle
+   (same affordance as tool op rows). The opening of the reasoning
+   (usually the plan) stays visible without the full wall of text."
   6)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
@@ -3312,7 +3314,10 @@
 
    Returns the COMPLETE thinking block (badge + padding), so the caller
    uses the result verbatim. Short thinking (≤ threshold rows) or no
-   session context renders inline with no badge."
+   session context renders inline with no badge. Longer thinking keeps
+   the first `reasoning-auto-collapse-line-threshold` rows visible as a
+   PEEK and collapses only the remainder behind the badge — the badge
+   advertises the hidden count as `▶ THINKING  +N more`."
   [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
   (let [entries    (vec entries)
         line-entry (fn [l] {:line l :meta nil})]
@@ -3329,22 +3334,32 @@
             node-id    (detail-node-id detail-ctx)
             expanded?  (detail-expanded? detail-expansions session-id node-id false)
             chevron    (if expanded? "▼" "▶")
+            ;; Full reasoning text is the copy payload for BOTH states
+            ;; (a peek still copies everything the model reasoned).
+            full-copy  (entries->body-text entries)
+            ;; Collapsed shows the first-N PEEK; expanded shows all.
+            preview-n  reasoning-auto-collapse-line-threshold
+            hidden-n   (max 0 (- (count entries) preview-n))
+            shown      (if expanded? entries (vec (take preview-n entries)))
             ;; Same shape as `op-row-entries`: empty marker = plain bg,
-            ;; toggle-details meta with nil color-role.
+            ;; toggle-details meta with nil color-role. The label carries
+            ;; the hidden-row count so the peek reads as "there's more".
+            label      (if (or expanded? (zero? hidden-n))
+                         "THINKING"
+                         (str "THINKING  +" hidden-n " more"))
             badge      {:line (str op-row-marker
-                                (ellipsize-cols (str chevron " THINKING") (max 1 (long (or max-w 1)))))
+                                (ellipsize-cols (str chevron " " label) (max 1 (long (or max-w 1)))))
                         :meta {:kind       :toggle-details
                                :session-id (str session-id)
                                :node-id    (str node-id)
                                :collapsed? (not expanded?)
                                :color-role nil}}]
-        (if expanded?
-          ;; Badge on top, then the (thinking-styled) content below.
-          (into [(line-entry "") badge]
-            (thinking-padded-block
-              (tag-copy-block-body entries node-id (entries->body-text entries))))
-          ;; Collapsed: just the badge, one neutral blank above for breathing room.
-          [(line-entry "") badge])))))
+        ;; Badge on top (op-row affordance), then the thinking band.
+        ;; Collapsed paints the first-N rows as a peek; expanded paints
+        ;; the whole reasoning. One neutral blank above for breathing room.
+        (into [(line-entry "") badge]
+          (thinking-padded-block
+            (tag-copy-block-body shown node-id full-copy)))))))
 
 (defn- markdown-fence-marker-line?
   "True for standalone Markdown fence opener/closer lines. Tool

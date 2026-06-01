@@ -891,7 +891,7 @@
 (defn- arglists-text
   [arglists]
   (when (seq arglists)
-    (str " " (pr-str arglists))))
+    (str " " (str/join " " (map pr-str arglists)))))
 
 (defn- one-line
   [s]
@@ -944,13 +944,16 @@
            (ir-text "  query=") (ir-code (pr-str query))
            (ir-text (str "  " count " match" (when (not= 1 count) "es"))))]
     (when (seq matches)
-      [(into [:ul {}]
+      [(into [:table {}
+              [:tr {}
+               [:th {} (ir-text "symbol")]
+               [:th {} (ir-text "args")]
+               [:th {} (ir-text "doc")]]]
          (map (fn [{:keys [symbol doc arglists]}]
-                [:li {}
-                 (ir-p (ir-code symbol)
-                   (ir-text (str (arglists-text arglists)
-                              (when-let [line (one-line doc)]
-                                (str " — " (truncate-text line 180))))))])
+                [:tr {}
+                 [:td {} (ir-code symbol)]
+                 [:td {} (ir-code (str/trim (or (arglists-text arglists) "")))]
+                 [:td {} (ir-text (or (some-> (one-line doc) (truncate-text 120)) ""))]])
            (take apropos-render-limit matches)))])))
 
 (defn- session-state-ir
