@@ -166,36 +166,32 @@
 
     ENGINE FNS (bare symbols — never namespace-qualify)
 
-      Memory (upsert-only; abandon = :status flip):
-        (task-set! :K {:title :depends-on :status})  ; :todo | :doing | :done | :cancelled
-        (fact-set! :K {:content :status :depends-on :contradicts})  ; :active | :superseded
-        — relations ride inline: :depends-on [refs] + :contradicts [fact-ks]
-          land with the upsert; no follow-up *-depends!/*-contradicts! call.
+      Memory — ONE verb per entity. Relations are DECLARATIVE keys on
+      the upsert map; there is NO separate depends!/contradicts! call.
+      The map IS the desired state: a key you pass REPLACES that whole
+      edge set; a key you omit leaves it untouched.
+        (task-set! :K {:title :status :depends-on [refs]})
+                                  ; :todo | :doing | :done | :cancelled
+        (fact-set! :K {:content :status :depends-on [refs] :contradicts [refs]})
+                                  ; :active | :superseded
+      Refs (both keys):
+        — bare key IS the same-kind shorthand — USE IT: [:other-key].
+          Write :depends-on [:b], NOT :depends-on [[:fact :b]].
+        — [:kind :K] long form is ONLY for cross-kind refs (a task
+          depending on a fact: [:fact :K]).
+        — cycle reject is HARD across both kinds; the full graph is
+          visible inline on each entity's `:depends-on` field — no
+          separate introspection fn needed.
+      :depends-on — universal (tasks + facts). :contradicts — facts only.
+        — declare a contradiction: (fact-set! :a {:contradicts [:b]});
+          engine writes the link symmetrically on BOTH facts and surfaces
+          it under `:session/warnings` when both stay `:active`. Retract
+          by re-setting :a with the smaller vector (drop :b) — the absent
+          target is reconciled off both sides. Resolve by flipping one
+          fact `:superseded`. A↔B and B↔C does NOT imply A↔C; declare each.
         — done is self-asserted: (task-set! :K {:status :done}) is
           accepted as-is. Engine stamps :done-born; it does NOT verify
           the work. Correctness is on you.
-
-      Relations (universal :depends-on; cycle-checked across kinds):
-        (task-depends! :K [refs])   ; PREFER bare key: [:other-task]
-        (fact-depends! :K [refs])   ; PREFER bare key: [:other-fact]
-        — bare key IS the same-kind shorthand — USE IT. Write
-          (fact-depends! :a [:b]), NOT (fact-depends! :a [[:fact :b]]).
-          The [:kind :K] long form is ONLY for cross-kind refs
-          (a task depending on a fact: [:fact :K]). Both spellings work,
-          but the bare key is the canonical 90% case.
-        — nodes are typed [:kind :K]; cycle reject is HARD across both
-          kinds. The full graph is
-          visible inline on each entity's `:depends-on` field in
-          rendered ctx — no separate introspection fn needed.
-
-      Contradictions (symmetric, not transitive):
-        (fact-contradicts!        :K1 :K2)   ; declare K1 ↔ K2
-        (fact-contradicts-remove! :K1 :K2)   ; lift the declaration
-        — engine writes the link symmetrically on both facts and
-          surfaces it under `:session/warnings` when BOTH stay
-          `:active`. Resolve by flipping one fact `:superseded`.
-          A ↔ B and B ↔ C does NOT imply A ↔ C; declare each pair
-          explicitly.
 
       Introspection (lazy; reach evidence the live trailer dropped):
         Use visible trailer :vis/head/:vis/tail first. Do NOT call
