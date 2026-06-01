@@ -2639,6 +2639,12 @@
 
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
+(def ^:private reasoning-auto-collapse-line-threshold
+  "Reasoning rows above this count collapse behind a ▶ REASONING badge
+   (default collapsed, expand on click — same affordance as tool op
+   rows). Short reasoning (≤ this many rows) stays inline; a one-liner
+   doesn't earn a disclosure."
+  2)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
@@ -3276,11 +3282,43 @@
           entries)))))
 
 (defn- maybe-collapse-thinking-entries
-  "Always return reasoning entries inline. Collapsible disclosure was
-   removed per user directive — reasoning stays fully visible whether
-   streaming or finalized."
-  [{:keys [entries]}]
-  (vec entries))
+  "Collapse reasoning behind one clickable ▶ REASONING disclosure row —
+   the SAME affordance as tool op-rows. Default COLLAPSED; click toggles.
+
+   The node id is turn-scoped (`thinking:t<frag>:i<N>:reasoning`) so it
+   matches `turn-detail-expansions-key`, which means a toggle busts the
+   live per-iteration render cache and the badge collapses/expands
+   mid-turn (not just after the turn finishes).
+
+   Short reasoning (≤ threshold rows) stays inline — a one-liner doesn't
+   earn a disclosure. No session-id (tests / non-interactive) ⇒ inline."
+  [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
+  (let [entries (vec entries)]
+    (if (or (nil? session-id)
+          (empty? entries)
+          (<= (count entries) reasoning-auto-collapse-line-threshold))
+      entries
+      (let [detail-ctx {:session-id       session-id
+                        :session-turn-id  session-turn-id
+                        :iteration-number iteration-number
+                        :details-path     nil
+                        :section          :thinking
+                        :kind             :reasoning}
+            node-id    (detail-node-id detail-ctx)
+            expanded?  (detail-expanded? detail-expansions session-id node-id false)
+            summary    (detail-summary-entries
+                         (assoc detail-ctx
+                           :marker          th-md-summary-marker
+                           :max-w           max-w
+                           :summary         "REASONING"
+                           :hidden-entries  entries
+                           :collapsed?      (not expanded?)
+                           :node-id         node-id))]
+        (vec (concat
+               summary
+               (when expanded?
+                 (tag-copy-block-body entries node-id
+                   (entries->body-text entries)))))))))
 
 (defn- markdown-fence-marker-line?
   "True for standalone Markdown fence opener/closer lines. Tool
@@ -3682,15 +3720,18 @@
               ;;   thinking blank row = inside top padding
               ;;   content/summary rows
               ;;   thinking blank row = inside bottom padding
-              (let [preview-entries (if live-preview?
-                                      entries
-                                      (maybe-collapse-thinking-entries
-                                        {:entries              entries
-                                         :session-id      session-id
-                                         :detail-expansions   detail-expansions
-                                         :session-turn-id session-turn-id
-                                         :iteration-number    iteration-number
-                                         :max-w               fill-w}))]
+              ;; Reasoning ALWAYS collapses behind the ▶ REASONING badge —
+              ;; live or finalized — to match the tool op-row affordance.
+              ;; `live-preview?` no longer forces it open; the user expands
+              ;; on demand and the state persists across frames.
+              (let [_ live-preview?
+                    preview-entries (maybe-collapse-thinking-entries
+                                      {:entries              entries
+                                       :session-id      session-id
+                                       :detail-expansions   detail-expansions
+                                       :session-turn-id session-turn-id
+                                       :iteration-number    iteration-number
+                                       :max-w               fill-w})]
                 (vec (concat [(line-entry "")
                               (line-entry (str thinking-marker ""))]
                        preview-entries
