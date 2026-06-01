@@ -938,11 +938,11 @@
               (ir-text (str "  " (or message "symbol not found"))))]))
 
 (defn- apropos-ir
-  [{:keys [query count matches]}]
-  (into [:ir {}
-         (ir-p (ir-strong "APROPOS")
-           (ir-text "  query=") (ir-code (pr-str query))
-           (ir-text (str "  " count " match" (when (not= 1 count) "es"))))]
+  ;; :display carries the table ONLY. The APROPOS / query / N-matches headline
+  ;; lives in apropos-channel's :summary (badge row); repeating it here was the
+  ;; same uncollapsed-label-dup-root duplication fixed for the clojure render fns.
+  [{:keys [matches]}]
+  (into [:ir {}]
     (when (seq matches)
       [(into [:table {}
               [:tr {}
