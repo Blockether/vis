@@ -767,6 +767,32 @@
       (expect (nil? (:trailer-drop? payload)))
       (expect (nil? (:trailer-drop payload)))))
 
+  (it "recovers table-heavy answers and drops nonsensical trailer-summarize? booleans"
+    (let [recover (var-get #'lp/raw-response->direct-answer-source)
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          answer (str "## APROPOS fixed\n\n"
+                   "Table render:\n\n"
+                   "```\n"
+                   "┌─────────────┬───────────┬──────────────┐\n"
+                   "│ symbol      │ args      │ doc          │\n"
+                   "├─────────────┼───────────┼──────────────┤\n"
+                   "│ git/add     │ [arg]     │ Stage paths. │\n"
+                   "│ git/diff    │ [] [opts] │ Diff stat.   │\n"
+                   "└─────────────┴───────────┴──────────────┘\n"
+                   "```\n\n"
+                   "Pushed `28652b8`.")
+          raw (str "```clojure\n"
+                "(done {:answer \"" answer "\"\n"
+                "       :trailer-summarize? true})\n"
+                "```")
+          recovered (recover raw)
+          parsed (parse-forms recovered)
+          payload (second (:form (first (:forms parsed))))]
+      (expect (nil? (:parse-error parsed)))
+      (expect (= answer (:answer payload)))
+      (expect (nil? (:trailer-summarize? payload)))
+      (expect (nil? (:trailer-summarize payload)))))
+
   (it "auto-repairs stray close delimiters before eval"
     (let [parsed ((var-get #'lp/parse-top-level-forms) "(def x 1))")]
       (expect (nil? (:parse-error parsed)))
