@@ -2006,13 +2006,22 @@
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             table? (pos? total)
             query-row content-top
+            ;; Reserve a right-side scrollbar gutter so the bar is a
+            ;; SEPARATE element, not painted on top of the table's right
+            ;; border. `content-w` shrinks BOTH the query box and the
+            ;; table by the gutter so their right edges stay aligned; the
+            ;; bar then floats one blank column clear of that edge.
+            sb-gutter 2
+            content-w (max 1 (- inner-w sb-gutter))
             ;; Table is inset one column on each side, exactly matching the
             ;; query box; the selection marker lives INSIDE the left
             ;; padding, so there is no external gutter.
             table-x (+ left 2)
-            table-w (max 1 (- inner-w 2))
+            table-w (max 1 (- content-w 2))
             table-body-w (max 1 (- table-w 2))
-            scrollbar-col (+ table-x (dec table-w))
+            ;; table-x+table-w-1 is the table's right border; +1 leaves a
+            ;; blank separator column before the bar.
+            scrollbar-col (+ table-x table-w 1)
             table-widths (table/column-widths navigator-columns (max 1 table-body-w))
             aligns (mapv #(or (:align %) :left) navigator-columns)
             top-row (+ content-top 4)
@@ -2027,7 +2036,7 @@
             _ (swap! scroll #(visible-window-start @selected % body-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (let [cursor-pos (draw-text-input-field! g left query-row inner-w @query (count @query))]
+        (let [cursor-pos (draw-text-input-field! g left query-row content-w @query (count @query))]
           (if-not table?
             ;; Empty state: no skeleton table, just a quiet line below input.
             (let [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
