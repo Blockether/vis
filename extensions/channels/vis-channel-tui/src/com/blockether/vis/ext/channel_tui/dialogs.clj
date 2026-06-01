@@ -1505,7 +1505,26 @@
              ;; caps short of `visual-n - visible-h` and the scrollbar thumb
              ;; never reaches the bottom (selectable rows < paint rows).
              selected-visual-end (or (last sel-entry-idxs) selected-visual)
+             ;; Visual index where the intro rows (section / subsection /
+             ;; info-line) that directly precede the selected option begin.
+             ;; The scroll window is selection-driven, so without this the
+             ;; first option pins itself to the top and its SECTION HEADER
+             ;; (a non-selectable row above it) is clipped forever — you can
+             ;; scroll to the first setting but never see its header.
+             header-start (loop [i (dec selected-visual)]
+                            (if (and (>= i 0)
+                                  (contains? #{:section :subsection :info-line}
+                                    (:part (nth entries i))))
+                              (recur (dec i))
+                              (inc i)))
              _ (let [start0 (visible-window-start selected-visual @scroll visible-h visual-n)
+                     ;; Back UP to reveal those intro headers whenever the
+                     ;; option (through its last desc line) still fits in the
+                     ;; viewport from `header-start`.
+                     start0 (if (and (< header-start start0)
+                                  (<= (- selected-visual-end header-start) (dec visible-h)))
+                              header-start
+                              start0)
                      ;; Pull the window down to reveal the selected row's last
                      ;; desc line, but never so far that the option line itself
                      ;; scrolls out of view (cap at `selected-visual`).
