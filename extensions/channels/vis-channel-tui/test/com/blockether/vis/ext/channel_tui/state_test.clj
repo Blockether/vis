@@ -562,6 +562,21 @@
       (let [r ((ev :follow-bottom-if-near) {:messages-scroll nil} [:follow-bottom-if-near 200 100])]
         (expect (nil? (:messages-scroll r)))))
 
+    (it "reanchor-scroll shifts the in-flight target by the same delta"
+      ;; Without shifting the target, the smooth-scroll animation yanks
+      ;; back toward a stale position when total-h corrects mid-scroll —
+      ;; that was the "scroll up a little, jump to the middle" lurch.
+      (let [reanchor (ev :reanchor-scroll)
+            r (reanchor {:messages-scroll 1849 :messages-scroll-target 1840}
+                [:reanchor-scroll 1399 -450])]
+        (expect (= 1399 (:messages-scroll r)))
+        (expect (= 1390 (:messages-scroll-target r))))
+      ;; No active animation -> only messages-scroll moves.
+      (let [reanchor (ev :reanchor-scroll)
+            r (reanchor {:messages-scroll 1849} [:reanchor-scroll 1399 -450])]
+        (expect (= 1399 (:messages-scroll r)))
+        (expect (not (contains? r :messages-scroll-target)))))
+
     (it "follow-bottom-if-near does NOT swallow an in-progress scroll-up"
       ;; Regression: scroll-up seeds messages-scroll to the bottom and
       ;; sets a target above it. While that animation runs, re-following
