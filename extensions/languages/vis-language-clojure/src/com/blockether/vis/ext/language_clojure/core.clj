@@ -27,9 +27,11 @@
    [com.blockether.vis.ext.language-clojure.edit :as edit]
    [com.blockether.vis.ext.language-clojure.find :as cfind]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
+   [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
    [com.blockether.vis.ext.language-clojure.outline :as outline]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.render :as render]
+   [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
    [com.blockether.vis.internal.extension :as extension]))
 
 ;; =============================================================================
@@ -77,17 +79,70 @@
     (throw (ex-info "clj/* tool fired without :workspace/root in env"
              {:type :clj/no-workspace}))))
 
-(defn clj-ports-fn
-  "Return nREPL ports discoverable from the active workspace.
+(defn- resolve-repl-dir
+  "Resolve a `:start`/`:status` target dir against the workspace `root`. A blank
+   dir means the workspace root; a relative dir is taken under root; an absolute
+   dir is used as-is. Returns a canonical path string."
+  ^String [root dir]
+  (let [d (str dir)
+        f (cond
+            (= "" d)                   (io/file root)
+            (.isAbsolute (io/file d))  (io/file d)
+            :else                      (io/file root d))]
+    (.getCanonicalPath f)))
 
-   Returns: {:default <int|nil> :ports [{:port :source} ...]}.
-   :default is the first hit in priority order — workspace
-   `.nrepl-port` wins over home-level fallbacks."
-  [env]
-  (let [hits (vec (ports/discover-all (env-root env)))]
-    (extension/success
-      {:result {:default (some-> hits first :port)
-                :ports   hits}})))
+(defn- coerce-aliases
+  "Accept [:dev :test], :dev, [\"dev\"], or nil → a vec of keywords or nil."
+  [a]
+  (cond
+    (nil? a)         nil
+    (sequential? a)  (mapv keyword a)
+    :else            [(keyword a)]))
+
+(defn clj-repl-fn
+  "Manage a workspace nREPL. Positional op (default `:status`) + optional opts
+   map `{:dir <path> :aliases [:dev :test]}`:
+
+     :status   — managed-process + discovered-port view (always allowed)
+     :start    — self-start a project nREPL subprocess (flag-gated)
+     :restart  — stop then start (flag-gated)
+     :stop     — stop the Vis-managed nREPL (always allowed)
+
+   `:dir` runs the REPL in a subdir (e.g. an extension) instead of the
+   workspace root; `:aliases` become deps.edn aliases / lein profiles. Live
+   nREPL state already rides in ctx under
+   `:session/env :languages :clojure :nrepl`; this tool acts on it."
+  ([env] (clj-repl-fn env :status nil))
+  ([env op] (clj-repl-fn env op nil))
+  ([env op opts]
+   (let [root    (env-root env)
+         op      (cond (keyword? op) op
+                       (string? op)  (keyword op)
+                       :else         :status)
+         opts    (when (map? opts) opts)
+         dir     (resolve-repl-dir root (:dir opts))
+         aliases (coerce-aliases (:aliases opts))]
+     (case op
+       :status  (extension/success {:result (repl-manager/status dir)})
+       :stop    (extension/success {:result (repl-manager/stop! dir)})
+       (:start :restart)
+       (do
+         (when-not (repl-manager/flag-enabled?)
+           (throw (ex-info (str "clj/repl :" (name op) " is disabled — self-start is on by default but "
+                             repl-manager/flag-env " is set to a falsy value. Unset it (or set it truthy) to allow self-start.")
+                    {:type :clj/repl-disabled :flag repl-manager/flag-env :op op})))
+         (when-not (.isDirectory (io/file dir))
+           (throw (ex-info (str "clj/repl :" (name op) " target dir does not exist: " dir)
+                    {:type :clj/bad-args :dir dir})))
+         (extension/success
+           {:result (if (= op :restart)
+                      (do (repl-manager/stop! dir) (repl-manager/start! dir {:aliases aliases}))
+                      (repl-manager/start! dir {:aliases aliases}))}))
+       (throw (ex-info (str "clj/repl unknown op: " (pr-str op))
+                {:type :clj/bad-args :got op
+                 :examples ["(clj/repl)" "(clj/repl :status)" "(clj/repl :start)"
+                            "(clj/repl :start {:dir \"extensions/languages/vis-language-clojure\" :aliases [:dev :test]})"
+                            "(clj/repl :stop)" "(clj/repl :restart)"]}))))))
 
 (defn- coerce-eval-arg
   "Accept the call shapes the model is most likely to type:
@@ -161,8 +216,8 @@
 
 (defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
 
-(def ^{:doc "Discover nREPL ports reachable from the workspace. Returns {:default <int|nil> :ports [{:port :source} ...]}. Priority: workspace `.nrepl-port` then ancestor / home fallbacks. No JVM scan — explicit port files only."
-       :arglists '([])} ports clj-ports-fn)
+(def ^{:doc "Manage a workspace nREPL. Positional op: `:status` (default), `:start`, `:stop`, `:restart`, plus an optional opts map `{:dir <path> :aliases [:dev :test]}`. Live nREPL state (ports/liveness/dialect/cwd) already rides in ctx under `:session/env :languages :clojure :nrepl`, refreshed per turn — read it there. `:start`/`:restart` self-start a project nREPL subprocess (deps.edn→clojure -M:aliases, project.clj→lein with-profile, bb.edn→bb) in `:dir` (default workspace root; use a subdir to run a REPL inside e.g. an extension). Self-start is ON by default; set VIS_CLJ_REPL_AUTOSTART falsy to disable. Returns a status map."
+       :arglists '([] [op] [op opts])} repl clj-repl-fn)
 
 (def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{:code :port? :host? :ns? :timeout-ms?}`. Returns `{:value :values :out :err :ns :status :ex :root-ex :ms :port :host :timed-out?}`. Default port is the first `(clj/ports)` hit; throws `:clj/no-port` when nothing is running."
        :arglists '([arg])} eval clj-eval-fn)
@@ -181,9 +236,9 @@
 ;; return value (`pr-str` of the map) — these renderers shape
 ;; ONLY the channel/TUI preview, never what the LLM reads.
 
-(def ports-symbol
-  (vis/symbol #'ports
-    {:before-fn inject-env :tag :observation :render-fn render/render-ports}))
+(def repl-symbol
+  (vis/symbol #'repl
+    {:before-fn inject-env :tag :mutation :render-fn render/render-repl}))
 
 (def eval-symbol
   (vis/symbol #'eval
@@ -202,20 +257,30 @@
     {:before-fn inject-env :tag :mutation :render-fn render/render-edit}))
 
 (def clj-symbols
-  [ports-symbol eval-symbol outline-symbol find-symbol edit-symbol])
+  [repl-symbol eval-symbol outline-symbol find-symbol edit-symbol])
 
 ;; =============================================================================
 ;; Extension manifest
 ;; =============================================================================
 
 (def ^:private prompt-text
-  (str "Clojure language pack active. Symbols under `clj/`:\n"
-    "  (clj/ports)                       — discover running nREPL ports\n"
-    "                                      Returns {:default <int|nil> :ports [{:port :source} ...]}\n"
-    "                                      Extract port with: (:default (clj/ports))\n"
+  (str "Clojure language pack active.\n"
+    "Live nREPL state — discovered ports, liveness, dialect (clj/cljs) and working\n"
+    "dir — already rides in ctx under `:session/env :languages :clojure :nrepl`,\n"
+    "refreshed every turn. Read it there; there is no ports tool to call.\n\n"
+    "Symbols under `clj/`:\n"
+    "  (clj/repl) | (clj/repl :status|:start|:stop|:restart [opts])\n"
+    "                                      Manage a workspace nREPL. :status (default) +\n"
+    "                                      :stop are always allowed. :start/:restart self-start\n"
+    "                                      a project nREPL subprocess (ON by default; set\n"
+    "                                      " repl-manager/flag-env " falsy to disable).\n"
+    "                                      opts: {:dir <subdir> :aliases [:dev :test]} — run the\n"
+    "                                      REPL in a subdir (e.g. an extension) with deps.edn\n"
+    "                                      aliases / lein profiles. e.g.\n"
+    "                                      (clj/repl :start {:dir \"extensions/...\" :aliases [:dev]})\n"
     "  (clj/eval \"...\" | {:code :port? :ns? :timeout-ms?})\n"
-    "                                      :port is optional — auto-discovered from (clj/ports)\n"
-    "                                      when omitted. No need to extract port manually.\n"
+    "                                      :port is optional — auto-discovered from the\n"
+    "                                      workspace `.nrepl-port` when omitted.\n"
     "  (clj/outline \"src/foo.clj\")       — collapsed file catalog\n"
     "  (clj/find {:name regex :kind :defn})\n"
     "  (clj/edit {:path :op :target :code [:match] [:format?]})\n"
@@ -224,7 +289,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "language-clojure"
-     :ext/description    "Clojure language pack: nREPL eval (clj/eval, clj/ports), structure-aware edits (clj/edit via rewrite-clj), collapsed file view (clj/outline), def search (clj/find). Activates only when the workspace has Clojure sources."
+     :ext/description    "Clojure language pack: live nREPL state in ctx, nREPL eval (clj/eval), flag-gated REPL lifecycle (clj/repl self-start), structure-aware edits (clj/edit via rewrite-clj), collapsed file view (clj/outline), def search (clj/find). Activates only when the workspace has Clojure sources."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -232,7 +297,13 @@
      :ext/activation-fn  activation-fn
      :ext/sci            {:ext.sci/alias 'clj
                           :ext.sci/symbols clj-symbols}
+     :ext/env            [{:name        repl-manager/flag-env
+                           :label       "Self-start nREPL"
+                           :description "Controls whether (clj/repl :start) may launch a project nREPL subprocess (deps.edn→clojure, project.clj→lein, bb.edn→bb). ON by default; set to a falsy value (0/false/no/off) to disable self-start."
+                           :secret?     false
+                           :required?   false}]
      :ext/prompt         (fn [_env] prompt-text)
+     :ext/ctx            nrepl-ctx/contribute
      :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)

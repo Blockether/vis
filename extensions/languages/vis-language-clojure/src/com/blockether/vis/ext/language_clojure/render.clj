@@ -75,6 +75,40 @@
                         ports)))))}))
 
 ;; ---------------------------------------------------------------------------
+;; clj/repl
+;; ---------------------------------------------------------------------------
+
+(defn render-repl
+  "Preview for `(clj/repl …)`.
+
+   Summary is a zone badge: `REPL` (+ a glyph for the action outcome) on the
+   left, the result keyword (+ build tool) in the center, the visible port
+   count right-anchored. Display carries any message and the port→source list."
+  [{:keys [result managed ports tool port message]}]
+  (let [badge   (case result
+                  (:started :already-running) "REPL ↑"
+                  :starting                   "REPL …"
+                  :stopped                    "REPL ✕"
+                  :no-launcher                "REPL ?"
+                  "REPL")
+        running? (boolean (:running managed))
+        n        (count ports)
+        center   (str (when result (subs (str result) 1))
+                   (when-let [t (or tool (:tool managed))] (str " " (name t)))
+                   (when port (str "  :" port))
+                   (when (and (= result :status) running?) "  ●"))]
+    {:summary (cond-> {:left  (ir-strong badge)
+                       :right (str n " port" (when (not= n 1) "s"))}
+                (seq center) (assoc :center (ir-code center)))
+     :display (ir-root
+                (when message (ir-p message))
+                (when (seq ports)
+                  (ir-code-block "text"
+                    (str/join "\n"
+                      (map (fn [{:keys [port source]}] (str port "  " source))
+                        ports)))))}))
+
+;; ---------------------------------------------------------------------------
 ;; clj/eval
 ;; ---------------------------------------------------------------------------
 
