@@ -473,8 +473,9 @@
             @f
             (expect (= "Settings Tabs Cleanup" @(:session-title-atom env)))
             (expect (= router-stub (:router @seen)))
-            (expect (= {:provider :zai-coding-plan :optimize [:cost :speed]}
-                      (get-in @seen [:opts :routing])))
+            (expect (= [:cost :speed] (get-in @seen [:opts :routing :optimize])))
+            (expect (= :zai-coding-plan
+                      (first (get-in @seen [:opts :routing :prefer-providers]))))
             (expect (some? (get-in @seen [:opts :spec])))
             (expect (str/includes? (-> @seen :opts :messages second :content)
                       "Previous title: Old focus"))))
@@ -498,20 +499,22 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "auto-title falls through the provider chain, then uses deterministic fallback when all fail"
+  (it "auto-title declares the preferred plan order, then deterministic fallback when the chain fails"
     (let [router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}
                                    {:id :openai-codex :models [{:name "gpt-5.3-codex"}]}]}
-          tried (atom [])
+          seen (atom nil)
           env (lp/create-environment router-stub {:db :memory :title "Untitled"})]
       (try
+        ;; svar owns the per-provider walk now; the host makes ONE call that
+        ;; declares `:prefer-providers`. A thrown call → deterministic fallback.
         (with-redefs [svar/ask!
                       (fn [_router opts]
-                        (swap! tried conj (get-in opts [:routing :provider]))
+                        (reset! seen opts)
                         (throw (ex-info "Exceptional status code: 400" {})))]
           (let [f (maybe-auto-title! env "1dff1f5a-76dc-431e-ad2b-97af14c731f1 can you check why TUI title is missing?")]
             @f
-            ;; every plan in the chain attempted before deterministic fallback
-            (expect (= [:zai-coding-plan :openai-codex] @tried))
+            (expect (= [:zai-coding-plan :openai-codex]
+                      (take 2 (get-in @seen [:routing :prefer-providers]))))
             (expect (= "can you check why TUI title is" @(:session-title-atom env)))))
         (finally
           (lp/dispose-environment! env)))))
