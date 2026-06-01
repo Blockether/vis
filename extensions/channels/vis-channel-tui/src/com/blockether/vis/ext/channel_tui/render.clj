@@ -2645,7 +2645,7 @@
    (default collapsed, expand on click — same affordance as tool op
    rows). Short reasoning (≤ this many rows) stays inline; a one-liner
    doesn't earn a disclosure."
-  3)
+  6)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
