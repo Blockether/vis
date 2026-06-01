@@ -311,6 +311,27 @@
 (defn- slash-command-for-input
   [screen input-state]
   (slash/exact-command (input/input->text input-state) (menu-commands screen)))
+(defn- navigator-slash-for-input
+  "When the typed text names — by EXACT full slash path — a slash spec that
+   declares `{:slash/ui {:kind :navigator}}`, return that spec. The channel
+   realizes the navigator intent directly (opens the Ctrl+G session/workspace
+   picker) instead of dispatching to the engine, so `/workspace` and
+   `/workspace list` both land in the SAME unified list — no useless answer
+   bubble, identical live vs resume.
+
+   EXACT path only (no longest-prefix fallback): `/workspace new` must still
+   dispatch to the engine even though its parent `/workspace` is a navigator
+   slash. `exact-command` can't be reused here because it keys only on the
+   first token, so nested commands like `workspace list` never match it."
+  [input-state]
+  (when-let [{:keys [path]} (vis/slash-parse (input/input->text input-state))]
+    (let [target (vec path)
+          spec   (some (fn [s]
+                         (when (= target (vec (concat (:slash/parent s) [(:slash/name s)])))
+                           s))
+                   (vis/registered-slashes))]
+      (when (= :navigator (get-in spec [:slash/ui :kind]))
+        spec))))
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
@@ -2682,9 +2703,23 @@
                              ;; Here Enter only runs an exact slash command
                              ;; already present in the input, or submits a
                              ;; normal message.
-                         (do (if-let [cmd (slash-command-for-input screen state)]
-                               (do (run-command! cmd (:slash/args cmd))
+                         (do (cond
+                               ;; Navigator-intent slash (e.g. /workspace,
+                               ;; /workspace list): open the Ctrl+G picker
+                               ;; directly. Typed nested slashes never match
+                               ;; `exact-command`, so this resolves them by
+                               ;; full path against the engine registry.
+                               (navigator-slash-for-input state)
+                               (do (when-not (:dialog-open? @state/app-db)
+                                     (show-sessions!))
                                  (state/dispatch [:reset-input]))
+
+                               (slash-command-for-input screen state)
+                               (let [cmd (slash-command-for-input screen state)]
+                                 (run-command! cmd (:slash/args cmd))
+                                 (state/dispatch [:reset-input]))
+
+                               :else
                                (submit-input! @state/app-db state))
                            (recur))
                          :cancel (do (when (:loading? @state/app-db)
