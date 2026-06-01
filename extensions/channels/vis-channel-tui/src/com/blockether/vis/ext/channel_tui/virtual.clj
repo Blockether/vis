@@ -661,84 +661,106 @@
             (when (and (not loading-bubble?) (nil? window-total-h))
               (height-cache-put! m bubble-w settings detail-expansions real-h))
             {:idx i :projected pm :height real-h}))
-        projected (mapv #(project-idx! % eff-1) cand-idxs)
-        ;; Refine heights vec with real measurements.
-        heights' (reduce
-                   (fn [hs {:keys [^long idx ^long height]}]
-                     (assoc-vec hs idx height 0))
-                   est projected)
-        offsets' (vec (reductions + 0 (map long heights')))
-        total-h' (long (peek offsets'))
-        ;; Re-clamp against the REAL `total-h'`, not the
-        ;; pass-1 `eff-1`. When estimates undershoot the real
-        ;; total, max-scroll grows in pass-2 - piping `eff-1`
-        ;; through `min` here would pin the user above the true
-        ;; bottom. Clamp the ORIGINAL scroll value (or `nil` for
-        ;; auto-bottom) against the refined ceiling.
-        eff-2    (long
-                   (if (nil? scroll)
-                     (max 0 (- total-h' inner-h))
-                     (max 0 (min (long scroll)
-                              (max 0 (- total-h' inner-h))))))
-        ;; Pass 3 ── recovery for messages that are visible at the
-        ;; refined `eff-2` but were missed at the cheap `eff-1`. The
-        ;; failure mode: a fast-growing LIVE bubble (no height cache,
-        ;; cheap estimate undershoots by 10–100× while iterations
-        ;; stream) makes `est-tot < real-tot`, so `eff-1 = min(scroll,
-        ;; est-max-scroll)` can land WELL ABOVE `eff-2 = min(scroll,
-        ;; real-max-scroll)`. Any stable bubble whose interval
-        ;; `[offsets'[i], offsets'[i+1])` intersects the viewport at
-        ;; `eff-2` but not at `eff-1` falls out of `cand-idxs` and is
-        ;; never projected → never painted → the user sees earlier
-        ;; turns blink out mid-stream. Project the missing ones now,
-        ;; merge them into `projected`, and refresh the cumulative
-        ;; offset vec one more time so heights/offsets stay coherent.
-        projected-by-idx (into {} (map (juxt :idx identity) projected))
-        missing-idxs
-        (vec
-          (for [^long i (range n)
-                :let [top    (- (long (nth offsets' i)) eff-2)
-                      height (long (nth heights' i))]
-                :when (and (visible? top height inner-h)
-                        (not (contains? projected-by-idx i)))]
-            i))
-        extra-projected (mapv #(project-idx! % eff-2) missing-idxs)
-        projected-all   (into projected extra-projected)
-        heights''  (reduce
-                     (fn [hs {:keys [^long idx ^long height]}]
-                       (assoc-vec hs idx height 0))
-                     heights' extra-projected)
-        offsets''  (if (seq extra-projected)
-                     (vec (reductions + 0 (map long heights'')))
-                     offsets')
-        total-h''  (long (peek offsets''))
-        eff-3      (long
-                     (if (nil? scroll)
-                       (max 0 (- total-h'' inner-h))
-                       (max 0 (min (long scroll)
-                                (max 0 (- total-h'' inner-h))))))
-        visible-set
-        (mapv
-          (fn [{:keys [^long idx ^long height projected]}]
-            {:idx       idx
-             :height    height
-             :projected projected
-             :top       (- (long (nth offsets'' idx)) eff-3)})
-          projected-all)
-        heights' heights''
-        offsets' offsets''
-        total-h' total-h''
-        eff-2    eff-3]
-    {:total-h    total-h'
-     :eff-scroll eff-2
-     :heights    heights'
-     :offsets    offsets'
-     :visible    visible-set
+        result
+        (if (nil? scroll)
+          ;; ── Auto-bottom: stable real-tail back-walk ──────────────────
+          ;; Pin the visible tail from REAL heights, walking UP from the
+          ;; last message until `inner-h` rows are covered (plus the one
+          ;; partially-visible message that crosses the top edge). The
+          ;; painted `:top`s are differences of real tail heights — the
+          ;; estimate terms for everything above cancel out — so the tail
+          ;; sits rock-still frame-to-frame even while a fast-growing live
+          ;; bubble's cheap estimate undershoots by 10–100×. That kills the
+          ;; eff lurch (the old eff-1→eff-2 two-phase correction) that made
+          ;; the view flicker right as a running op flips to success/error.
+          ;; `total-h'` still folds in estimates for the off-screen messages
+          ;; ABOVE — but those only drive the scrollbar thumb, never the
+          ;; pinned tail.
+          (let [tail (loop [i (dec n) acc-h 0 acc []]
+                       (if (neg? i)
+                         acc
+                         (let [pj     (project-idx! i eff-1)
+                               acc'   (cons pj acc)
+                               acc-h' (+ acc-h (long (:height pj)))]
+                           (if (>= acc-h' inner-h)
+                             acc'
+                             (recur (dec i) acc-h' acc')))))
+                heights' (reduce
+                           (fn [hs {:keys [^long idx ^long height]}]
+                             (assoc-vec hs idx height 0))
+                           est tail)
+                offsets' (vec (reductions + 0 (map long heights')))
+                total-h' (long (peek offsets'))
+                eff      (long (max 0 (- total-h' inner-h)))
+                visible-set
+                (mapv (fn [{:keys [^long idx ^long height projected]}]
+                        {:idx       idx
+                         :height    height
+                         :projected projected
+                         :top       (- (long (nth offsets' idx)) eff)})
+                  tail)]
+            {:total-h total-h' :eff-scroll eff
+             :heights heights' :offsets offsets' :visible visible-set})
+          ;; ── Explicit scroll: estimate-anchored multi-pass ────────────
+          (let [projected (mapv #(project-idx! % eff-1) cand-idxs)
+                ;; Refine heights vec with real measurements.
+                heights' (reduce
+                           (fn [hs {:keys [^long idx ^long height]}]
+                             (assoc-vec hs idx height 0))
+                           est projected)
+                offsets' (vec (reductions + 0 (map long heights')))
+                total-h' (long (peek offsets'))
+                ;; Re-clamp against the REAL `total-h'`, not the pass-1
+                ;; `eff-1`. When estimates undershoot the real total,
+                ;; max-scroll grows in pass-2 - piping `eff-1` through `min`
+                ;; here would pin the user above the true bottom.
+                eff-2    (long (max 0 (min (long scroll)
+                                        (max 0 (- total-h' inner-h)))))
+                ;; Pass 3 ── recovery for messages visible at the refined
+                ;; `eff-2` but missed at the cheap `eff-1`. A stable bubble
+                ;; whose interval intersects the viewport at `eff-2` but not
+                ;; `eff-1` would otherwise never project → blink out.
+                projected-by-idx (into {} (map (juxt :idx identity) projected))
+                missing-idxs
+                (vec
+                  (for [^long i (range n)
+                        :let [top    (- (long (nth offsets' i)) eff-2)
+                              height (long (nth heights' i))]
+                        :when (and (visible? top height inner-h)
+                                (not (contains? projected-by-idx i)))]
+                    i))
+                extra-projected (mapv #(project-idx! % eff-2) missing-idxs)
+                projected-all   (into projected extra-projected)
+                heights''  (reduce
+                             (fn [hs {:keys [^long idx ^long height]}]
+                               (assoc-vec hs idx height 0))
+                             heights' extra-projected)
+                offsets''  (if (seq extra-projected)
+                             (vec (reductions + 0 (map long heights'')))
+                             offsets')
+                total-h''  (long (peek offsets''))
+                eff-3      (long (max 0 (min (long scroll)
+                                          (max 0 (- total-h'' inner-h)))))
+                visible-set
+                (mapv
+                  (fn [{:keys [^long idx ^long height projected]}]
+                    {:idx       idx
+                     :height    height
+                     :projected projected
+                     :top       (- (long (nth offsets'' idx)) eff-3)})
+                  projected-all)]
+            {:total-h total-h'' :eff-scroll eff-3
+             :heights heights'' :offsets offsets'' :visible visible-set}))]
+    {:total-h    (:total-h result)
+     :eff-scroll (:eff-scroll result)
+     :heights    (:heights result)
+     :offsets    (:offsets result)
+     :visible    (:visible result)
      ;; Clamped, anchor-corrected absolute scroll the caller should
      ;; write back into app-db (`:set-scroll`) so the input thread and
      ;; the next layout agree. nil for auto-bottom — never persist that,
      ;; or auto-bottom stickiness breaks.
-     :anchored-scroll (when scroll-given? eff-2)}))
+     :anchored-scroll (when scroll-given? (:eff-scroll result))}))
 
 ;;; ── Background pre-warmer ────────────────────────────────────────────────────
 ;;
