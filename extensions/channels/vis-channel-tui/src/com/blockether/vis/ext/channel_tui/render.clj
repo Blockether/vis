@@ -3300,27 +3300,27 @@
            [(line-entry (str thinking-marker ""))]))))
 
 (defn- maybe-collapse-thinking-entries
-  "Collapse thinking behind one clickable disclosure row rendered EXACTLY
-   like a tool op-row: empty `op-row-marker` (so it inherits the plain
-   bubble bg — no thinking color/italic), a ▶/▼ chevron, and the literal
-   label `THINKING`, sitting on TOP of the thinking content. Default
-   COLLAPSED; click toggles (`:vis.channel-tui/expand-all-details?` or a
-   per-node expansion opens it).
+  "Render reasoning INLINE in the bubble's dim thinking band — it is
+   always part of the message, never hidden behind a top badge. Short
+   reasoning (≤ `reasoning-auto-collapse-line-threshold` rows) paints in
+   full. Longer reasoning PEEKS the first N rows in the band, then a
+   clickable expander sits at the BOTTOM of the band (where the text
+   truncates) so it grows DOWNWARD in place — `▾ THINKING  +N more`
+   when collapsed, `▴ THINKING` when expanded. This matches the natural
+   read-more affordance instead of a top badge that expands away from
+   the chevron.
 
-   The node id is turn-scoped (`thinking:t<frag>:i<N>:reasoning`) so it
-   matches `turn-detail-expansions-key` — a toggle busts the live
-   per-iteration render cache, so the badge collapses/expands mid-turn,
-   not only after the turn finishes.
+   The expander is styled like a tool op-row (plain `op-row-marker` bg,
+   `:toggle-details` meta). The node id is turn-scoped
+   (`thinking:t<frag>:i<N>:reasoning`) so it matches
+   `turn-detail-expansions-key`; a toggle busts the live per-iteration
+   render cache, so it collapses/expands mid-turn. Default COLLAPSED.
+   No `session-id` (e.g. synthetic previews) → full inline, no toggle.
 
-   Returns the COMPLETE thinking block (badge + padding), so the caller
-   uses the result verbatim. Short thinking (≤ threshold rows) or no
-   session context renders inline with no badge. Longer thinking keeps
-   the first `reasoning-auto-collapse-line-threshold` rows visible as a
-   PEEK and collapses only the remainder behind the badge — the badge
-   advertises the hidden count as `▶ THINKING  +N more`."
+   Returns the COMPLETE thinking block (band + optional expander), used
+   verbatim by the caller."
   [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
-  (let [entries    (vec entries)
-        line-entry (fn [l] {:line l :meta nil})]
+  (let [entries (vec entries)]
     (if (or (nil? session-id)
           (empty? entries)
           (<= (count entries) reasoning-auto-collapse-line-threshold))
@@ -3333,7 +3333,8 @@
                         :kind             :reasoning}
             node-id    (detail-node-id detail-ctx)
             expanded?  (detail-expanded? detail-expansions session-id node-id false)
-            chevron    (if expanded? "▼" "▶")
+            ;; Bottom toggle: ▾ reveals more BELOW, ▴ collapses back up.
+            chevron    (if expanded? "▴" "▾")
             ;; Full reasoning text is the copy payload for BOTH states
             ;; (a peek still copies everything the model reasoned).
             full-copy  (entries->body-text entries)
@@ -3341,25 +3342,21 @@
             preview-n  reasoning-auto-collapse-line-threshold
             hidden-n   (max 0 (- (count entries) preview-n))
             shown      (if expanded? entries (vec (take preview-n entries)))
-            ;; Same shape as `op-row-entries`: empty marker = plain bg,
-            ;; toggle-details meta with nil color-role. The label carries
-            ;; the hidden-row count so the peek reads as "there's more".
             label      (if (or expanded? (zero? hidden-n))
                          "THINKING"
                          (str "THINKING  +" hidden-n " more"))
-            badge      {:line (str op-row-marker
+            toggle     {:line (str op-row-marker
                                 (ellipsize-cols (str chevron " " label) (max 1 (long (or max-w 1)))))
                         :meta {:kind       :toggle-details
                                :session-id (str session-id)
                                :node-id    (str node-id)
                                :collapsed? (not expanded?)
                                :color-role nil}}]
-        ;; Badge on top (op-row affordance), then the thinking band.
-        ;; Collapsed paints the first-N rows as a peek; expanded paints
-        ;; the whole reasoning. One neutral blank above for breathing room.
-        (into [(line-entry "") badge]
-          (thinking-padded-block
-            (tag-copy-block-body shown node-id full-copy)))))))
+        ;; Inline band (peek or full) FIRST, expander at the BOTTOM so
+        ;; the disclosure sits at the truncation seam and grows down.
+        (-> (thinking-padded-block
+              (tag-copy-block-body shown node-id full-copy))
+          (conj toggle))))))
 
 (defn- markdown-fence-marker-line?
   "True for standalone Markdown fence opener/closer lines. Tool
@@ -4015,14 +4012,16 @@
                            :iteration-number  iteration-number
                            :max-w             fill-w
                            :skip-error-signatures inline-error-sigs}))
-        ;; Trailing iter-pad only (mirror of block-code-body): the
-        ;; leading pad would re-insert the false gap between the
-        ;; THINKING badge / code body above and the op rows. The
-        ;; code body's own trailing pad already separates code from
-        ;; ops; when there is no code body the op rows sit directly
-        ;; under the THINKING badge, which is the intent.
+        ;; Leading + trailing iter-pad. Unlike the code body (which
+        ;; glues directly under thinking), op rows ALWAYS earn a
+        ;; one-row gap above them: with a code body the leading pad
+        ;; coalesces with the code's trailing pad into a single gap
+        ;; (code↔ops separation); with NO code body (`show-raw-code`
+        ;; OFF — the common case) it is the one blank that keeps the
+        ;; op-row badges from mashing against the THINKING band above.
         op-rows-block (when (seq op-rows)
-                        (-> (vec op-rows)
+                        (-> [(line-entry (str iteration-pad-marker ""))]
+                          (into op-rows)
                           (conj (line-entry (str iteration-pad-marker "")))))]
     ;; Layout: header (optional ITERATION-N label) + recap lines
     ;; (provider-fallback notices, provider-error recap, recap
