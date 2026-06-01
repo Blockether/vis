@@ -1228,7 +1228,6 @@
         (recur (inc i))
         i))))
 
-
 (defn- balanced-done-tail-end
   "Return exclusive end index for the tail after a candidate `:answer` close.
    Tail must close the surrounding `(done { ... })` form. Scans strings so

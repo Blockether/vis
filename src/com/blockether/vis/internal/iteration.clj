@@ -322,7 +322,7 @@
    `:git/status` → \"STATUS\", `:v/cat` → \"READ\"."
   [op]
   (or (get op-friendly-labels op)
-      (-> op name (str/split #"/") last str/upper-case)))
+    (-> op name (str/split #"/") last str/upper-case)))
 
 (defn- node-text
   "All string leaves under an IR node, joined and trimmed."
