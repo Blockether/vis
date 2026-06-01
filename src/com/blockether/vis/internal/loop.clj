@@ -4315,17 +4315,33 @@
     (when-not (auto-title-placeholder? t)
       t)))
 
+(defn- strip-code-fence
+  "Drop a surrounding Markdown code fence so a model that answers with
+   ```text\n<title>\n``` doesn't leak the fence info-string (`text`) as the
+   title. Returns the inner body when fenced, else the input unchanged."
+  [s]
+  (let [t (str/trim (or s ""))]
+    (if (str/starts-with? t "```")
+      (-> t
+        (str/replace #"(?s)\A```[^\n]*\n?" "")
+        (str/replace #"\n?```\s*\z" "")
+        str/trim)
+      t)))
+
 (defn- sanitize-auto-title
   [s]
-  (let [line (-> (or s "")
-               str
-               str/split-lines
+  (let [line (->> (-> (or s "") str strip-code-fence str/split-lines)
+               (map str/trim)
+               (remove str/blank?)
+               ;; skip any stray fence markers left mid-string
+               (remove #(re-matches #"`{3,}.*" %))
                first
-               (or "")
-               (str/replace #"(?i)^\s*(title|new title)\s*[:\-–—]\s*" "")
-               (str/replace #"^[\s\"'`*_#>\-–—]+" "")
-               (str/replace #"[\s\"'`*_#>\-–—.]+$" "")
-               str/trim)
+               (#(or % ""))
+               (#(-> %
+                   (str/replace #"(?i)^\s*(title|new title)\s*[:\-–—]\s*" "")
+                   (str/replace #"^[\s\"'`*_#>\-–—]+" "")
+                   (str/replace #"[\s\"'`*_#>\-–—.]+$" "")
+                   str/trim)))
         clipped (truncate line AUTO_TITLE_MAX_CHARS)]
     (when-not (or (str/blank? clipped)
                 (auto-title-placeholder? clipped))
@@ -4345,34 +4361,86 @@
                 (str/join " "))]
     (sanitize-auto-title words)))
 
+(def ^:private auto-title-spec
+  "Structured-output spec for the title side-channel. Using `ask!` + spec (SAP
+   JSON parsing) instead of `ask-code!` fence extraction removes a whole class
+   of bugs: a model that wraps its answer in a text code fence no longer leaks
+   the fence info-string as the title — SAP reads the JSON title field
+   regardless of surrounding markdown."
+  (svar/spec
+    (svar/field svar/NAME :title
+      svar/TYPE svar/TYPE_STRING
+      svar/CARDINALITY svar/CARDINALITY_ONE
+      svar/DESCRIPTION "Short session title: 3-7 words, a stable noun phrase, no surrounding quotes or markdown.")))
+
 (defn- auto-title-prompt
   [previous-title user-request]
   [{:role "system"
-    :content (str "You generate short chat/session titles. Return ONLY the title text, "
-               "no quotes, no markdown, no prefix. 3-7 words. Prefer stable noun phrases. "
+    :content (str "You generate short chat/session titles. 3-7 words, a stable noun phrase. "
                "Use the user's latest request and the previous title. If the previous title "
-               "still fits, return it unchanged; otherwise update it to reflect the new focus.")}
+               "still fits, keep it unchanged; otherwise update it to reflect the new focus.")}
    {:role "user"
     :content (str "Previous title: " (or (not-empty previous-title) "<none>")
                "\nLatest user request:\n" user-request)}])
 
+(def ^:private AUTO_TITLE_PROVIDER_ORDER
+  "Preferred provider order for the auto-title side-channel. These are all
+   flat-fee coding-plan subscriptions, so per-token `:cost` is the WRONG lens
+   (it would dodge the metered-but-actually-free plans toward $0 Copilot).
+   Instead we pin each plan in this deliberate order and pick its SMALLEST
+   model (`{:provider p :optimize [:cost :speed]}` selects the cheapest +
+   fastest model WITHIN the pinned provider: glm on zai, gpt-5.3-codex on
+   codex, haiku on anthropic, a mini on copilot). Any configured provider not
+   listed here is appended afterwards so the chain still covers the whole
+   fleet. First provider that returns a usable title wins; on failure
+   (model unavailable / endpoint rejects) we fall through to the next."
+  [:zai-coding-plan
+   :openai-codex
+   :anthropic-coding-plan
+   :github-copilot-individual
+   :github-copilot-business
+   :github-copilot-enterprise])
+
+(defn- auto-title-provider-chain
+  "Configured provider ids ordered by `AUTO_TITLE_PROVIDER_ORDER`, with any
+   unlisted providers appended (config order) so the chain is exhaustive."
+  [router]
+  (let [available (mapv :id (:providers router))
+        present   (set available)
+        ranked    (filterv present AUTO_TITLE_PROVIDER_ORDER)
+        rest*     (remove (set AUTO_TITLE_PROVIDER_ORDER) available)]
+    (vec (concat ranked rest*))))
+
 (defn- model-auto-title!
-  "Ask the cheapest routed model for a session title before the main provider
-   call. This removes the old model-visible `(set-session-title! ...)` tax while
-   still using an LLM title that can keep or revise the previous title."
+  "Generate a session title before the main provider call, off the model's
+   visible surface. Walks `auto-title-provider-chain` in order, pinning each
+   provider and selecting its smallest (cheapest+fastest) model; the first one
+   that yields a usable title wins. Returns nil if every provider fails (the
+   caller then keeps the previous title or uses the deterministic fallback)."
   [{:keys [router]} previous-title user-request]
-  (let [resp (svar/ask-code! router
-               (with-default-ask-code-idle-timeout
-                 {:messages            (auto-title-prompt previous-title user-request)
-                  :lang                "text"
-                  :reasoning           :off
-                  :routing             {:optimize :cost}
-                  :code-tail-pointer?  true
-                  :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
-                  :idle-timeout-ms     AUTO_TITLE_IDLE_MS
-                  :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))]
-    (or (sanitize-auto-title (:result resp))
-      (sanitize-auto-title (:raw resp)))))
+  (let [messages (auto-title-prompt previous-title user-request)]
+    (loop [[pid & more] (auto-title-provider-chain router)]
+      (when pid
+        (let [title (try
+                      (let [resp (svar/ask! router
+                                   (with-default-ask-code-idle-timeout
+                                     {:messages            messages
+                                      :spec                auto-title-spec
+                                      :reasoning           :off
+                                      ;; Pin THIS plan, pick its smallest model.
+                                      :routing             {:provider pid
+                                                            :optimize [:cost :speed]}
+                                      :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
+                                      :idle-timeout-ms     AUTO_TITLE_IDLE_MS
+                                      :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))]
+                        (sanitize-auto-title (some-> resp :result :title)))
+                      (catch Throwable t
+                        (tel/log! {:level :debug
+                                   :id ::auto-title-provider-failed
+                                   :data {:provider pid :error (ex-message t)}}
+                          "Auto-title provider failed; trying next in chain")
+                        nil))]
+          (or title (recur more)))))))
 
 (defn- maybe-auto-title!
   "Refresh the session title asynchronously before each normal LLM turn using
