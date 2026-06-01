@@ -585,7 +585,39 @@
       (let [db {:messages-scroll 100 :messages-scroll-target 80}
             r  ((ev :follow-bottom-if-near) db [:follow-bottom-if-near 200 100])]
         (expect (= 100 (:messages-scroll r)))
-        (expect (= 80 (:messages-scroll-target r)))))))
+        (expect (= 80 (:messages-scroll-target r)))))
+
+    (it "scroll-up latches :scroll-pinned-up? so streaming follow hands off"
+      (let [up ((ev :scroll-up) {:messages-scroll 100} [:scroll-up 9 200 100])]
+        (expect (true? (:scroll-pinned-up? up)))))
+
+    (it "follow-bottom-animated EASES to the new bottom after an atomic append"
+      ;; Regression: send / a large tool result appends content in ONE
+      ;; frame. The first follow pulse seeds `:messages-scroll` off the
+      ;; STALE pre-append layout, so it lands > slack rows above the new
+      ;; bottom. Without an explicit scroll-up intent the follow must NOT
+      ;; mistake that for a deliberate scroll-up — it eases down instead
+      ;; of freezing above the just-sent message.
+      (let [animated (ev :follow-bottom-animated)
+            ;; old bottom = 100; new layout total-h 300 inner-h 100 -> max-s 200.
+            r (animated {:messages-scroll 100} [:follow-bottom-animated 300 100])]
+        (expect (= 100 (:messages-scroll r)))
+        (expect (= 200 (:messages-scroll-target r)))))
+
+    (it "follow-bottom-animated HANDS OFF when the user pinned up"
+      (let [animated (ev :follow-bottom-animated)
+            r (animated {:messages-scroll 100 :scroll-pinned-up? true}
+                [:follow-bottom-animated 300 100])]
+        (expect (= 100 (:messages-scroll r)))
+        (expect (not (contains? r :messages-scroll-target)))))
+
+    (it "follow-bottom-animated clears :scroll-pinned-up? once parked at bottom"
+      (let [animated (ev :follow-bottom-animated)
+            ;; scroll == max-s (200) -> caught up branch.
+            r (animated {:messages-scroll 200 :scroll-pinned-up? true}
+                [:follow-bottom-animated 300 100])]
+        (expect (= 200 (:messages-scroll r)))
+        (expect (not (contains? r :scroll-pinned-up?)))))))
 
 (defdescribe cancel-turn-test
   (it "notifies cancelling instead of relying on footer status"
