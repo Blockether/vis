@@ -3281,23 +3281,38 @@
           (collapsible-tool-summary-entry opts first-entry hidden-entries)
           entries)))))
 
+(defn- thinking-padded-block
+  "Wrap reasoning content rows in the thinking-bg top/bottom padding the
+   bubble painter expects (neutral blank above, thinking pad row inside)."
+  [content-entries]
+  (let [line-entry (fn [l] {:line l :meta nil})]
+    (vec (concat [(line-entry "") (line-entry (str thinking-marker ""))]
+           content-entries
+           [(line-entry (str thinking-marker ""))]))))
+
 (defn- maybe-collapse-thinking-entries
-  "Collapse reasoning behind one clickable ▶ REASONING disclosure row —
-   the SAME affordance as tool op-rows. Default COLLAPSED; click toggles.
+  "Collapse thinking behind one clickable disclosure row rendered EXACTLY
+   like a tool op-row: empty `op-row-marker` (so it inherits the plain
+   bubble bg — no thinking color/italic), a ▶/▼ chevron, and the literal
+   label `THINKING`, sitting on TOP of the thinking content. Default
+   COLLAPSED; click toggles (`:vis.channel-tui/expand-all-details?` or a
+   per-node expansion opens it).
 
    The node id is turn-scoped (`thinking:t<frag>:i<N>:reasoning`) so it
-   matches `turn-detail-expansions-key`, which means a toggle busts the
-   live per-iteration render cache and the badge collapses/expands
-   mid-turn (not just after the turn finishes).
+   matches `turn-detail-expansions-key` — a toggle busts the live
+   per-iteration render cache, so the badge collapses/expands mid-turn,
+   not only after the turn finishes.
 
-   Short reasoning (≤ threshold rows) stays inline — a one-liner doesn't
-   earn a disclosure. No session-id (tests / non-interactive) ⇒ inline."
+   Returns the COMPLETE thinking block (badge + padding), so the caller
+   uses the result verbatim. Short thinking (≤ threshold rows) or no
+   session context renders inline with no badge."
   [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
-  (let [entries (vec entries)]
+  (let [entries    (vec entries)
+        line-entry (fn [l] {:line l :meta nil})]
     (if (or (nil? session-id)
           (empty? entries)
           (<= (count entries) reasoning-auto-collapse-line-threshold))
-      entries
+      (thinking-padded-block entries)
       (let [detail-ctx {:session-id       session-id
                         :session-turn-id  session-turn-id
                         :iteration-number iteration-number
@@ -3306,19 +3321,23 @@
                         :kind             :reasoning}
             node-id    (detail-node-id detail-ctx)
             expanded?  (detail-expanded? detail-expansions session-id node-id false)
-            summary    (detail-summary-entries
-                         (assoc detail-ctx
-                           :marker          th-md-summary-marker
-                           :max-w           max-w
-                           :summary         "REASONING"
-                           :hidden-entries  entries
-                           :collapsed?      (not expanded?)
-                           :node-id         node-id))]
-        (vec (concat
-               summary
-               (when expanded?
-                 (tag-copy-block-body entries node-id
-                   (entries->body-text entries)))))))))
+            chevron    (if expanded? "▼" "▶")
+            ;; Same shape as `op-row-entries`: empty marker = plain bg,
+            ;; toggle-details meta with nil color-role.
+            badge      {:line (str op-row-marker
+                                (ellipsize-cols (str chevron " THINKING") (max 1 (long (or max-w 1)))))
+                        :meta {:kind       :toggle-details
+                               :session-id (str session-id)
+                               :node-id    (str node-id)
+                               :collapsed? (not expanded?)
+                               :color-role nil}}]
+        (if expanded?
+          ;; Badge on top, then the (thinking-styled) content below.
+          (into [(line-entry "") badge]
+            (thinking-padded-block
+              (tag-copy-block-body entries node-id (entries->body-text entries))))
+          ;; Collapsed: just the badge, one neutral blank above for breathing room.
+          [(line-entry "") badge])))))
 
 (defn- markdown-fence-marker-line?
   "True for standalone Markdown fence opener/closer lines. Tool
@@ -3712,30 +3731,20 @@
                                       (wrap-text thinking-text fill-w)))))))
                           texts)]
             (when (seq entries)
-              ;; Live reasoning stays visible while it streams; completed
-              ;; reasoning defaults to a compact disclosure so system-like
-              ;; chain-of-thought does not visually merge with the answer.
-              ;; Layout shape mirrors code blocks:
-              ;;   neutral blank row  = outside top margin
-              ;;   thinking blank row = inside top padding
-              ;;   content/summary rows
-              ;;   thinking blank row = inside bottom padding
-              ;; Reasoning ALWAYS collapses behind the ▶ REASONING badge —
-              ;; live or finalized — to match the tool op-row affordance.
-              ;; `live-preview?` no longer forces it open; the user expands
-              ;; on demand and the state persists across frames.
-              (let [_ live-preview?
-                    preview-entries (maybe-collapse-thinking-entries
-                                      {:entries              entries
-                                       :session-id      session-id
-                                       :detail-expansions   detail-expansions
-                                       :session-turn-id session-turn-id
-                                       :iteration-number    iteration-number
-                                       :max-w               fill-w})]
-                (vec (concat [(line-entry "")
-                              (line-entry (str thinking-marker ""))]
-                       preview-entries
-                       [(line-entry (str thinking-marker ""))]))))))
+              ;; THINKING ALWAYS collapses behind the plain ▶ THINKING badge
+              ;; (op-row look) — live or finalized — to match the tool
+              ;; affordance. `live-preview?` no longer forces it open; the
+              ;; user expands on demand and the state persists across frames.
+              ;; `maybe-collapse-thinking-entries` owns the full block
+              ;; (badge + padding), so use its result verbatim.
+              (let [_ live-preview?]
+                (maybe-collapse-thinking-entries
+                  {:entries          entries
+                   :session-id       session-id
+                   :detail-expansions detail-expansions
+                   :session-turn-id  session-turn-id
+                   :iteration-number iteration-number
+                   :max-w            fill-w})))))
         error-lines
         (fn []
           (when (and (map? error)
