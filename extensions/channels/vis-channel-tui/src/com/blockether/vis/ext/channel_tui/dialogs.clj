@@ -1988,6 +1988,10 @@
   (let [query (atom "")
         selected (atom 0)
         scroll (atom 0)
+        ;; Rows between the thumb top and the user's grip point, saved on
+        ;; CLICK_DOWN so a drag keeps the cursor glued to the same spot on
+        ;; the thumb. nil = not dragging.
+        scrollbar-drag-offset (volatile! nil)
         show-empty-untitled? (atom (boolean (:show-empty-untitled? opts)))]
     (loop []
       (let [rows (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
@@ -2097,6 +2101,56 @@
               (modal-wheel-step key)
               (do (swap! selected #(clamp (+ % (modal-wheel-step key)) 0 (max 0 (dec total))))
                 (recur))
+
+              ;; Scrollbar mouse: grab the thumb, jump on a track click, and
+              ;; follow drags. The bar is the only mouse target here; row
+              ;; clicks fall through to the keyboard-driven flow. Dragging
+              ;; also pulls the SELECTION into the new window so the next
+              ;; render's `visible-window-start` doesn't yank scroll back to
+              ;; the (now off-screen) selected row.
+              (and (instance? MouseAction key) (> total body-h)
+                (let [action (.getActionType ^MouseAction key)]
+                  (or (= action MouseActionType/DRAG)
+                    (= action MouseActionType/CLICK_RELEASE)
+                    (and (= action MouseActionType/CLICK_DOWN)
+                      (let [pos (.getPosition ^MouseAction key)]
+                        (scrollbar/on-track? (.getColumn pos) (.getRow pos)
+                          {:col scrollbar-col, :top body-top, :track-h body-h, :x-band 2}))))))
+              (let [^MouseAction ma key
+                    action (.getActionType ma)
+                    pos (.getPosition ma)
+                    mx (.getColumn pos)
+                    my (.getRow pos)
+                    geom (scrollbar/geometry total body-h body-h @scroll)
+                    apply-scroll! (fn [grip]
+                                    (let [ns (or (scrollbar/scroll-from-mouse-y
+                                                   my body-top body-h total body-h grip)
+                                               0)]
+                                      (reset! scroll ns)
+                                      (swap! selected
+                                        #(clamp % ns (min (dec total) (+ ns (dec body-h)))))))]
+                (cond
+                  (= action MouseActionType/CLICK_RELEASE)
+                  (do (vreset! scrollbar-drag-offset nil) (recur))
+
+                  (and (= action MouseActionType/CLICK_DOWN) (some? geom)
+                    (scrollbar/on-thumb? mx my {:col scrollbar-col, :top body-top, :x-band 2} geom))
+                  (let [thumb-top (+ body-top (long (:thumb-top-rel geom)))]
+                    (vreset! scrollbar-drag-offset (- my thumb-top))
+                    (recur))
+
+                  ;; Track click off the thumb: jump-to-position, then arm a
+                  ;; centred grip so an immediate drag tracks naturally.
+                  (= action MouseActionType/CLICK_DOWN)
+                  (let [grip (long (quot (long (or (:thumb-h geom) 1)) 2))]
+                    (vreset! scrollbar-drag-offset grip)
+                    (apply-scroll! grip)
+                    (recur))
+
+                  (and (= action MouseActionType/DRAG) (some? @scrollbar-drag-offset))
+                  (do (apply-scroll! (long @scrollbar-drag-offset)) (recur))
+
+                  :else (recur)))
 
               ;; New session is a MODIFIER (Ctrl+N), not a list row and not a
               ;; bare key — so plain typing (incl. the letter `n`) filters.
