@@ -1108,17 +1108,23 @@
 ;; Thin babashka.fs wrappers
 ;; =============================================================================
 
-(def ^:private patch-required-keys #{:path :search :replace})
+(def ^:private patch-required-keys #{:path :replace})
+(def ^:private patch-locator-keys
+  "Every edit needs EXACTLY ONE locator: `:search` (text match) or
+   `:lines` (1-based inclusive line range, the hashline form)."
+  #{:search :lines})
 (def ^:private patch-optional-keys
   "Optional keys recognised on exact-replace edit maps.
    - :after / :before  positional anchors (string; first exact occurrence)
    - :nth              :first | :last | :all | 1-based positive integer
+   - :from-hash        guard: line-hash of the FIRST line of a :lines range
+   - :to-hash          guard: line-hash of the LAST line of a :lines range
    - :expected-mtime   epoch-ms; fail if file mtime differs (staleness guard)
    - :expected-size    bytes;    fail if file size differs (staleness guard)"
-  #{:after :before :nth :expected-mtime :expected-size})
+  #{:after :before :nth :from-hash :to-hash :expected-mtime :expected-size})
 
 (def ^:private patch-allowed-keys
-  (set/union patch-required-keys patch-optional-keys))
+  (set/union patch-required-keys patch-locator-keys patch-optional-keys))
 
 (def ^:private patch-group-required-keys #{:path :edits})
 (def ^:private patch-group-optional-keys #{:expected-mtime :expected-size})
@@ -1188,12 +1194,27 @@
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
             (let [missing (seq (remove #(contains? edit %) patch-required-keys))
+                  locators (filter #(contains? edit %) patch-locator-keys)
                   unknown (seq (remove patch-allowed-keys (keys edit)))]
               (when missing
                 (throw (ex-info "v/patch edit missing required keys"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :missing (vec missing)
                           :edit edit})))
+              (when (not= 1 (count locators))
+                (throw (ex-info "v/patch edit needs EXACTLY ONE of :search or :lines"
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :locators (vec locators)
+                          :edit edit})))
+              (when (and (:lines edit)
+                      (not (and (sequential? (:lines edit))
+                             (= 2 (count (:lines edit)))
+                             (every? integer? (:lines edit))
+                             (<= 1 (long (first (:lines edit))))
+                             (<= (long (first (:lines edit))) (long (second (:lines edit)))))))
+                (throw (ex-info "v/patch :lines must be [start end], 1-based inclusive, start<=end"
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :lines (:lines edit) :edit edit})))
               (when unknown
                 (throw (ex-info "v/patch edit has unknown keys"
                          {:type :ext.foundation.editing/invalid-patch-edit
@@ -1327,6 +1348,48 @@
              :line-start start
              :line-end   line-end}))))))
 
+(defn- line-span->char-span
+  "Convert a 0-based [line-start line-end) span to a [char-start char-end]
+   substring span in `content`, keeping a trailing `\n` OUTSIDE the
+   replaced region (mirrors `fuzzy-line-match`)."
+  [^String content ^long line-start ^long line-end]
+  (let [char-start   (patch/char-offset-at-line content line-start)
+        char-end-raw (patch/char-offset-at-line content line-end)
+        char-end     (if (and (< char-end-raw (count content))
+                           (pos? char-end-raw)
+                           (= \newline (.charAt content (dec char-end-raw))))
+                       (dec char-end-raw)
+                       char-end-raw)]
+    [char-start char-end]))
+
+(defn- ws-agnostic-match
+  "Whitespace-agnostic fallback used only when exact substring search AND
+   the line-structured `fuzzy-line-match` both return nothing. Folds both
+   sides to a whitespace-free token stream (see `patch/ws-agnostic-line-span`)
+   so a SEARCH block whose line breaks / indentation drifted from the file
+   still locates. Applies ONLY when the token subsequence is unique
+   (`:occurrences` = 1) — ambiguous hits fall through to no-match so the
+   model picks an anchor. Returns the same shape as `fuzzy-line-match`."
+  [^String content ^String search]
+  (when-let [{:keys [line-start line-end occurrences]}
+             (patch/ws-agnostic-line-span content search)]
+    (when (= 1 occurrences)
+      (let [[char-start char-end] (line-span->char-span content line-start line-end)
+            window (subvec (patch/split-content-lines content) line-start line-end)
+            delta  (compute-window-indent-delta
+                     (patch/split-content-lines content)
+                     (patch/split-content-lines search)
+                     line-start)]
+        ;; indent-delta only meaningful when search/window line counts match;
+        ;; ws-agnostic can re-segment, so guard on equal length.
+        {:char-start   char-start
+         :char-end     char-end
+         :pass         :ws-agnostic
+         :indent-delta (if (= (count window) (count (patch/split-content-lines search)))
+                         delta 0)
+         :line-start   line-start
+         :line-end     line-end}))))
+
 (defn- adjust-replace-for-indent
   "For `:relative-indent` fuzzy hits, re-indent the user's `:replace`
    lines so they sit at the file's actual indentation rather than the
@@ -1349,23 +1412,82 @@
       (str (subs s 0 patch-search-preview-chars)
         "...<+" (- (count s) patch-search-preview-chars) " chars>"))))
 
+(defn- first-line-diff
+  "First differing line between SEARCH and the file window it landed on,
+   compared trim-insensitively. Returns `{:search S :file F :at N}` (N is
+   the 1-based offset within the window) or nil when every line matches
+   under trim (i.e. the only drift was whitespace/segmentation)."
+  [search-lines window-lines]
+  (loop [i 0]
+    (cond
+      (and (>= i (count search-lines)) (>= i (count window-lines))) nil
+      (or (>= i (count search-lines)) (>= i (count window-lines)))
+      {:at (inc i)
+       :search (when (< i (count search-lines)) (nth search-lines i))
+       :file   (when (< i (count window-lines)) (nth window-lines i))}
+      (= (str/trim (nth search-lines i)) (str/trim (nth window-lines i)))
+      (recur (inc i))
+      :else {:at (inc i) :search (nth search-lines i) :file (nth window-lines i)})))
+
+(defn- best-similarity-window
+  "Slide a `(count search-lines)`-high window over `lines` and pick the
+   window with the most trim-equal lines. Returns `{:line-start :score}`
+   (0-based) or nil. Used as the last-resort near-miss locator when even
+   the ws-agnostic token match cannot place the SEARCH block."
+  [lines search-lines]
+  (let [plen (count search-lines)
+        n    (count lines)
+        strim (mapv str/trim search-lines)]
+    (when (and (pos? plen) (<= plen n))
+      (let [end (- n plen)]
+        (loop [i 0 best nil best-score -1]
+          (if (> i end)
+            (when (and best (pos? best-score)) {:line-start best :score best-score})
+            (let [score (->> (range plen)
+                          (filter #(= (nth strim %) (str/trim (nth lines (+ i %)))))
+                          count)]
+              (if (> score best-score)
+                (recur (inc i) i score)
+                (recur (inc i) best best-score)))))))))
+
 (defn- nearest-match-context
   "For a failed edit, capture a small around-the-hit window so the model
    can see WHERE on disk its `:search` would have landed (or almost
-   landed). Returns `{:line N :pass KW :context [[ln text] ...]}` or nil.
-   Lines are 1-based; window is ±3 lines around the hit."
+   landed) and WHAT differs. Tries, in order: line-structured fuzzy match,
+   the whitespace-agnostic token span, then a best-similarity window scan.
+   Returns `{:line N :pass KW :context [[ln text]...] :diff {...}
+   :occurrences M?}` or nil. Lines are 1-based; window is ±3 lines."
   [^String content ^String search]
-  (when-let [hit (fuzzy-line-match content search)]
-    (let [lines      (patch/split-content-lines content)
-          start-line (long (:line-start hit))
-          end-line   (long (:line-end hit))
-          ctx-from   (max 0 (- start-line 3))
-          ctx-to     (min (count lines) (+ end-line 3))]
-      {:line (inc start-line)
-       :pass (:pass hit)
-       :indent-delta (:indent-delta hit)
-       :context (mapv (fn [i] [(inc i) (nth lines i)])
-                  (range ctx-from ctx-to))})))
+  (let [lines        (patch/split-content-lines content)
+        search-lines (patch/split-content-lines search)
+        located      (or (when-let [h (fuzzy-line-match content search)]
+                           {:line-start (:line-start h)
+                            :line-end (:line-end h)
+                            :pass (:pass h)
+                            :indent-delta (:indent-delta h)})
+                       (when-let [s (patch/ws-agnostic-line-span content search)]
+                         {:line-start (:line-start s)
+                          :line-end (:line-end s)
+                          :pass :ws-agnostic
+                          :occurrences (:occurrences s)})
+                       (when-let [b (best-similarity-window lines search-lines)]
+                         {:line-start (:line-start b)
+                          :line-end (+ (long (:line-start b)) (count search-lines))
+                          :pass :similarity}))]
+    (when located
+      (let [start-line (long (:line-start located))
+            end-line   (long (:line-end located))
+            ctx-from   (max 0 (- start-line 3))
+            ctx-to     (min (count lines) (+ end-line 3))
+            window     (subvec lines start-line (min (count lines) end-line))
+            diff       (first-line-diff search-lines window)]
+        (cond-> {:line (inc start-line)
+                 :pass (:pass located)
+                 :context (mapv (fn [i] [(inc i) (nth lines i)])
+                            (range ctx-from ctx-to))}
+          (:indent-delta located) (assoc :indent-delta (:indent-delta located))
+          (:occurrences located)  (assoc :occurrences (:occurrences located))
+          diff                    (assoc :diff diff))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
@@ -1467,6 +1589,48 @@
                  :message (ex-message e)
                  :data data}}))))
 
+(defn- resolve-lines-edit
+  "Hashline locator: replace the 1-based inclusive line range `[start end]`
+   of `current` with `replace`. Optional `from-hash`/`to-hash` guard the
+   range endpoints against drift (a stale `v/cat` read) by recomputing
+   `patch/line-hash` on the actual first/last line. Returns
+   `{:new-content S}` on success or `{:error {:reason KW …}}`."
+  [^String current [start end] from-hash to-hash ^String replace]
+  (let [lines     (patch/split-content-lines current)
+        n         (count lines)
+        s         (long start)
+        e         (long end)]
+    (cond
+      (> e n)
+      {:error {:reason :lines-out-of-range :lines [start end] :file-lines n}}
+
+      :else
+      (let [first-line (nth lines (dec s))
+            last-line  (nth lines (dec e))
+            fh-actual  (patch/line-hash first-line)
+            th-actual  (patch/line-hash last-line)]
+        (cond
+          (and from-hash (not= (str from-hash) fh-actual))
+          {:error {:reason :hash-drift :which :from :line start
+                   :expected from-hash :actual fh-actual
+                   :actual-text (search-preview first-line)}}
+
+          (and to-hash (not= (str to-hash) th-actual))
+          {:error {:reason :hash-drift :which :to :line end
+                   :expected to-hash :actual th-actual
+                   :actual-text (search-preview last-line)}}
+
+          :else
+          (let [[char-start char-end] (line-span->char-span current (dec s) e)
+                matched-ends-nl? (and (> char-end 0)
+                                   (= \newline (.charAt current (dec char-end))))
+                replace-ends-nl? (str/ends-with? replace "\n")
+                rewritten (if (and matched-ends-nl? (not replace-ends-nl?))
+                            (str replace "\n") replace)]
+            {:new-content (str (subs current 0 char-start)
+                            rewritten
+                            (subs current char-end))}))))))
+
 (defn- patch-analysis
   [edits]
   (let [edits (coerce-patch-edits edits)]
@@ -1475,7 +1639,8 @@
            states {}
            checks []
            failures []]
-      (if-let [{:keys [path search replace after before nth] :as edit} (first remaining)]
+      (if-let [{:keys [path search replace after before nth lines from-hash to-hash] :as edit}
+               (first remaining)]
         (let [resolved (resolve-edit-target path)]
           (if-let [path-error (:error resolved)]
             (let [check {:edit-index idx
@@ -1492,90 +1657,113 @@
                   search  (str search)
                   replace (str replace)
                   stale   (when-not (contains? states path)
-                            (staleness-check file edit))
-                  all-positions (find-substring-positions current search)
-                  anchor-result (filter-positions-by-anchors all-positions (count search) current
-                                  {:after after :before before})
-                  filtered-positions (:positions anchor-result)
-                  selected (when (nil? (:anchor-error anchor-result))
-                             (select-by-nth filtered-positions nth))
-                  base-check {:edit-index idx
-                              :path rel
-                              :matches (count all-positions)
-                              :filtered-matches (count (or filtered-positions []))
-                              :search-preview (search-preview search)
-                              :anchors (cond-> {}
-                                         after  (assoc :after (search-preview (str after)))
-                                         before (assoc :before (search-preview (str before)))
-                                         nth    (assoc :nth nth))}]
-              (cond
-                stale
-                (let [check (assoc base-check :reason :stale :stale stale)]
-                  (recur (inc idx) (next remaining) states
-                    (conj checks check) (conj failures check)))
+                            (staleness-check file edit))]
+              (if lines
+                ;; ---- hashline locator (:lines range, optional hash guard) ----
+                (let [base-check {:edit-index idx :path rel :lines lines}]
+                  (if stale
+                    (let [check (assoc base-check :reason :stale :stale stale)]
+                      (recur (inc idx) (next remaining) states
+                        (conj checks check) (conj failures check)))
+                    (let [res (resolve-lines-edit current lines from-hash to-hash replace)]
+                      (if-let [err (:error res)]
+                        (let [check (assoc base-check :reason (:reason err) :lines-error err)]
+                          (recur (inc idx) (next remaining) states
+                            (conj checks check) (conj failures check)))
+                        (recur (inc idx) (next remaining)
+                          (assoc states path {:file file :path rel
+                                              :before before-text
+                                              :after (:new-content res)})
+                          (conj checks (assoc base-check :pass :line-range
+                                         :applied-positions [(first lines)]))
+                          failures)))))
+                ;; ---- text locator (:search), original machinery ----
+                (let [search  (str search)
+                      replace (str replace)
+                      all-positions (find-substring-positions current search)
+                      anchor-result (filter-positions-by-anchors all-positions (count search) current
+                                      {:after after :before before})
+                      filtered-positions (:positions anchor-result)
+                      selected (when (nil? (:anchor-error anchor-result))
+                                 (select-by-nth filtered-positions nth))
+                      base-check {:edit-index idx
+                                  :path rel
+                                  :matches (count all-positions)
+                                  :filtered-matches (count (or filtered-positions []))
+                                  :search-preview (search-preview search)
+                                  :anchors (cond-> {}
+                                             after  (assoc :after (search-preview (str after)))
+                                             before (assoc :before (search-preview (str before)))
+                                             nth    (assoc :nth nth))}]
+                  (cond
+                    stale
+                    (let [check (assoc base-check :reason :stale :stale stale)]
+                      (recur (inc idx) (next remaining) states
+                        (conj checks check) (conj failures check)))
 
-                (:anchor-error anchor-result)
-                (let [check (assoc base-check :reason :anchor-not-found
-                              :anchor-error (:anchor-error anchor-result))]
-                  (recur (inc idx) (next remaining) states
-                    (conj checks check) (conj failures check)))
+                    (:anchor-error anchor-result)
+                    (let [check (assoc base-check :reason :anchor-not-found
+                                  :anchor-error (:anchor-error anchor-result))]
+                      (recur (inc idx) (next remaining) states
+                        (conj checks check) (conj failures check)))
 
-                (seq selected)
-                (let [new-content (apply-substring-replacements current selected (count search) replace)
-                      check       (assoc base-check :applied-positions (vec selected) :pass :exact)]
-                  (recur (inc idx) (next remaining)
-                    (assoc states path {:file file
-                                        :path rel
-                                        :before before-text
-                                        :after new-content})
-                    (conj checks check) failures))
+                    (seq selected)
+                    (let [new-content (apply-substring-replacements current selected (count search) replace)
+                          check       (assoc base-check :applied-positions (vec selected) :pass :exact)]
+                      (recur (inc idx) (next remaining)
+                        (assoc states path {:file file
+                                            :path rel
+                                            :before before-text
+                                            :after new-content})
+                        (conj checks check) failures))
 
-                ;; Zero or out-of-range -> try fuzzy if multi-line
-                :else
-                (if-let [fuzzy (and (zero? (count all-positions))
-                                 (not after) (not before) (nil? nth)
-                                 (fuzzy-line-match current search))]
-                  (let [{:keys [char-start char-end pass indent-delta]} fuzzy
-                        rewritten (adjust-replace-for-indent replace indent-delta)
-                        ;; Line-based fuzzy matches whole lines, so the
-                        ;; substring being replaced may include the trailing
-                        ;; `\n` of the last matched line. If the model's
-                        ;; `:replace` did not include a trailing newline
-                        ;; (typical when authoring a SEARCH block by hand),
-                        ;; preserve the line boundary by reapplying it.
-                        matched-ends-with-nl? (and (> char-end 0)
-                                                (= \newline (.charAt current (dec char-end))))
-                        replace-ends-with-nl? (str/ends-with? rewritten "\n")
-                        rewritten (if (and matched-ends-with-nl?
-                                        (not replace-ends-with-nl?))
-                                    (str rewritten "\n")
-                                    rewritten)
-                        new-content (str (subs current 0 char-start)
-                                      rewritten
-                                      (subs current char-end))
-                        check (assoc base-check :pass pass
-                                :indent-delta indent-delta
-                                :applied-positions [char-start])]
-                    (recur (inc idx) (next remaining)
-                      (assoc states path {:file file
-                                          :path rel
-                                          :before before-text
-                                          :after new-content})
-                      (conj checks check) failures))
-                  (let [reason (cond
-                                 (and nth (pos? (count filtered-positions))) :nth-out-of-range
-                                 (and (or after before)
-                                   (pos? (count all-positions))
-                                   (zero? (count filtered-positions)))
-                                 :anchors-exclude-all-matches
-                                 (zero? (count all-positions)) :no-match
-                                 :else :ambiguous-no-anchor)
-                        nearest (when (zero? (count all-positions))
-                                  (nearest-match-context current search))
-                        check (cond-> (assoc base-check :reason reason)
-                                nearest (assoc :nearest nearest))]
-                    (recur (inc idx) (next remaining) states
-                      (conj checks check) (conj failures check))))))))
+                    ;; Zero or out-of-range -> try fuzzy if multi-line
+                    :else
+                    (if-let [fuzzy (and (zero? (count all-positions))
+                                     (not after) (not before) (nil? nth)
+                                     (or (fuzzy-line-match current search)
+                                       (ws-agnostic-match current search)))]
+                      (let [{:keys [char-start char-end pass indent-delta]} fuzzy
+                            rewritten (adjust-replace-for-indent replace indent-delta)
+                            ;; Line-based fuzzy matches whole lines, so the
+                            ;; substring being replaced may include the trailing
+                            ;; `\n` of the last matched line. If the model's
+                            ;; `:replace` did not include a trailing newline
+                            ;; (typical when authoring a SEARCH block by hand),
+                            ;; preserve the line boundary by reapplying it.
+                            matched-ends-with-nl? (and (> char-end 0)
+                                                    (= \newline (.charAt current (dec char-end))))
+                            replace-ends-with-nl? (str/ends-with? rewritten "\n")
+                            rewritten (if (and matched-ends-with-nl?
+                                            (not replace-ends-with-nl?))
+                                        (str rewritten "\n")
+                                        rewritten)
+                            new-content (str (subs current 0 char-start)
+                                          rewritten
+                                          (subs current char-end))
+                            check (assoc base-check :pass pass
+                                    :indent-delta indent-delta
+                                    :applied-positions [char-start])]
+                        (recur (inc idx) (next remaining)
+                          (assoc states path {:file file
+                                              :path rel
+                                              :before before-text
+                                              :after new-content})
+                          (conj checks check) failures))
+                      (let [reason (cond
+                                     (and nth (pos? (count filtered-positions))) :nth-out-of-range
+                                     (and (or after before)
+                                       (pos? (count all-positions))
+                                       (zero? (count filtered-positions)))
+                                     :anchors-exclude-all-matches
+                                     (zero? (count all-positions)) :no-match
+                                     :else :ambiguous-no-anchor)
+                            nearest (when (zero? (count all-positions))
+                                      (nearest-match-context current search))
+                            check (cond-> (assoc base-check :reason reason)
+                                    nearest (assoc :nearest nearest))]
+                        (recur (inc idx) (next remaining) states
+                          (conj checks check) (conj failures check))))))))))
         {:plans (vals states)
          :checks checks
          :failures failures
@@ -1599,8 +1787,17 @@
       :anchors-exclude-all-matches (str head " failed: :after/:before anchors exclude all "
                                      matches " exact match(es).")
       :no-match (cond-> (str head " failed: no exact match.")
-                  nearest (str " Nearest fuzzy candidate at line " (:line nearest)
-                            " (pass " (name (:pass nearest)) ") - inspect context above."))
+                  nearest (str " Nearest candidate at line " (:line nearest)
+                            " (pass " (name (:pass nearest)) ")"
+                            (when-let [occ (:occurrences nearest)]
+                              (when (> (long occ) 1)
+                                (str ", " occ " ambiguous ws-agnostic hits")))
+                            (when-let [d (:diff nearest)]
+                              (str "; first drift at line " (:at d) ": SEARCH "
+                                (pr-str (search-preview (str (:search d))))
+                                " vs FILE "
+                                (pr-str (search-preview (str (:file d))))))
+                            " - inspect context above."))
       :ambiguous-no-anchor (str head " failed: matched " matches
                              " time(s) and no :after/:before/:nth selector.")
       (str head " failed."))))

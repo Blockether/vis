@@ -1541,42 +1541,53 @@
       (expect (not (str/includes? body "REASONING")))
       (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
-  (it "renders every reasoning line inline regardless of length"
-    ;; Per user directive: collapsible disclosure rows were removed.
-    ;; Long reasoning paints in place — no `▸ REASONING` summary,
-    ;; no `lines hidden` hint, no toggle-details click region.
+  (it "collapses long reasoning behind a default-collapsed REASONING badge"
+    ;; Reasoning now collapses like a tool op-row: a ▸ REASONING badge
+    ;; (default COLLAPSED) carrying a :toggle-details region; the body
+    ;; opens on click via :detail-expansions. Same affordance as tools.
     (render/invalidate-cache!)
     (let [cid      "session"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
+          node     "thinking:t123e4567:i1:reasoning"
           thinking (str/join "\n\n" (map #(format "long-reason-%02d detail text" %) (range 1 12)))
-          payload  (render/format-answer-with-thinking-data
-                     [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
-                     96 {:show-thinking true :show-iterations true} nil false
-                     {:session-id cid
-                      :session-turn-id turn-id})
-          body     (strip-ansi (:text payload))]
-      (expect (str/includes? body "long-reason-01"))
-      (expect (str/includes? body "long-reason-11"))
-      (expect (str/includes? body "done"))
-      (expect (not (str/includes? body "REASONING")))
-      (expect (not (str/includes? body "lines hidden")))
-      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
+          render*  (fn [exp]
+                     (render/invalidate-cache!)
+                     (render/format-answer-with-thinking-data
+                       [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
+                       96 {:show-thinking true :show-iterations true} nil false
+                       {:session-id cid :session-turn-id turn-id :detail-expansions exp}))
+          collapsed (render* {})
+          cbody     (strip-ansi (:text collapsed))]
+      ;; Default collapsed: badge + toggle region present, body hidden.
+      (expect (str/includes? cbody "REASONING"))
+      (expect (some #(= :toggle-details (:kind %)) (:line-meta collapsed)))
+      (expect (not (str/includes? cbody "long-reason-06")))
+      (expect (str/includes? cbody "done"))
+      ;; Toggle open: full reasoning visible, answer still present.
+      (let [expanded (render* {[cid node] true})
+            ebody    (strip-ansi (:text expanded))]
+        (expect (str/includes? ebody "long-reason-01"))
+        (expect (str/includes? ebody "long-reason-11"))
+        (expect (str/includes? ebody "done")))))
 
-  (it "renders very long reasoning fully inline with no toggle needed"
-    (render/invalidate-cache!)
+  (it "expands very long reasoning only when the badge is toggled open"
     (let [cid      "session"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
+          node     "thinking:t123e4567:i1:reasoning"
           thinking (str/join "\n\n" (map #(format "line-%02d detail text" %) (range 1 51)))
-          payload  (render/format-answer-with-thinking-data
-                     [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
-                     96 {:show-thinking true :show-iterations true} nil false
-                     {:session-id cid
-                      :session-turn-id turn-id})
-          body     (strip-ansi (:text payload))]
-      (expect (not (str/includes? body "REASONING")))
-      (expect (str/includes? body "line-01"))
-      (expect (str/includes? body "line-25"))
-      (expect (str/includes? body "line-50")))))
+          render*  (fn [exp]
+                     (render/invalidate-cache!)
+                     (render/format-answer-with-thinking-data
+                       [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
+                       96 {:show-thinking true :show-iterations true} nil false
+                       {:session-id cid :session-turn-id turn-id :detail-expansions exp}))
+          cbody    (strip-ansi (:text (render* {})))
+          ebody    (strip-ansi (:text (render* {[cid node] true})))]
+      (expect (str/includes? cbody "REASONING"))
+      (expect (not (str/includes? cbody "line-25")))
+      (expect (str/includes? ebody "line-01"))
+      (expect (str/includes? ebody "line-25"))
+      (expect (str/includes? ebody "line-50")))))
 
 (defdescribe auto-collapse-rendering-test
   (it "hides legacy preview-kind result bodies entirely"
@@ -1686,29 +1697,26 @@
       (expect (not (str/includes? (:text payload) huge-result)))
       (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
-  (it "renders completed reasoning fully inline on the answer view"
-    ;; Per user directive: reasoning never collapses. The baseline
-    ;; render shows every line; the legacy `:detail-expansions` map is
-    ;; ignored because the toggle infrastructure is gone.
-    (render/invalidate-cache!)
-    (let [thinking (str/join "\n\n" (map #(str "line " % " detail text") (range 1 51)))
-          trace    [{:thinking  thinking
-                     :code      []
-                     :results   []
-                     :durations []
-                     :successes []}]
-          opts     {:session-id "session"
-                    :session-turn-id "turn-1"}
-          payload  (render/format-answer-with-thinking-data
-                     [:ir {} [:p {} [:span {} "done"]]] trace 120
-                     {:show-iterations true :show-thinking true}
-                     nil false opts)
-          body     (strip-ansi (:text payload))]
-      (expect (not (str/includes? body "REASONING")))
-      (expect (not (str/includes? body "lines hidden")))
-      (expect (str/includes? body "line 1 "))
-      (expect (str/includes? body "line 25"))
-      (expect (str/includes? body "line 50"))))
+  (it "collapses completed reasoning behind the badge on the answer view"
+    ;; Completed reasoning defaults collapsed; the legacy
+    ;; `:detail-expansions` toggle now drives expansion again.
+    (let [node    "thinking:tturn-1:i1:reasoning"
+          thinking (str/join "\n\n" (map #(str "line " % " detail text") (range 1 51)))
+          trace    [{:thinking thinking :code [] :results [] :durations [] :successes []}]
+          render*  (fn [exp]
+                     (render/invalidate-cache!)
+                     (render/format-answer-with-thinking-data
+                       [:ir {} [:p {} [:span {} "done"]]] trace 120
+                       {:show-iterations true :show-thinking true}
+                       nil false {:session-id "session" :session-turn-id "turn-1"
+                                  :detail-expansions exp}))
+          cbody    (strip-ansi (:text (render* {})))
+          ebody    (strip-ansi (:text (render* {["session" node] true})))]
+      (expect (str/includes? cbody "REASONING"))
+      (expect (not (str/includes? cbody "line 25")))
+      (expect (str/includes? ebody "line 1 "))
+      (expect (str/includes? ebody "line 25"))
+      (expect (str/includes? ebody "line 50"))))
 
   (it "never paints a collapsed summary band"
     (render/invalidate-cache!)
