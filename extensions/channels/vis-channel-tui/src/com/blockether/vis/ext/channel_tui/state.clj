@@ -1225,7 +1225,7 @@
         (let [max-s (max 0 (- (long total-h) (long inner-h)))]
           (if (and (pos? max-s)
                 (>= (long scroll) (- max-s (long auto-follow-slack-rows))))
-            (dissoc db :messages-scroll :messages-scroll-target :scroll-follow-armed?)
+            (dissoc db :messages-scroll :messages-scroll-target :scroll-follow-armed? :scroll-pinned-up?)
             db))))))
 
 (reg-event-db :follow-bottom-animated
@@ -1249,9 +1249,17 @@
           slack  (long auto-follow-slack-rows)]
       (cond
         (not (pos? max-s)) db
-        ;; Deliberately scrolled up to read: concrete offset below the
-        ;; bottom band and no follow-ward target in flight. Hands off.
-        (and (some? scroll)
+        ;; Deliberately scrolled up to read: the user pressed scroll-UP
+        ;; (`:scroll-pinned-up?`) AND is parked below the bottom band
+        ;; with no follow-ward target. The intent flag is load-bearing:
+        ;; without it the positional test ALONE misfired right after an
+        ;; atomic append (send / a large tool result landing in one
+        ;; frame). `:messages-scroll` had just been seeded off the STALE
+        ;; pre-append layout, so it sat > slack rows above the NEW
+        ;; bottom — indistinguishable from a real scroll-up — and the
+        ;; view froze above the just-sent message instead of following.
+        (and (:scroll-pinned-up? db)
+          (some? scroll)
           (< (long scroll) (- max-s slack))
           (or (nil? target) (< (long target) (- max-s slack))))
         db
@@ -1263,7 +1271,8 @@
             (assoc db :messages-scroll cur :messages-scroll-target max-s)
             ;; Caught up / parked at bottom: hold concrete so the NEXT
             ;; growth has somewhere to ease FROM; no target = no churn.
-            (assoc db :messages-scroll cur)))))))
+            ;; Back at the bottom — clear any stale scroll-up intent.
+            (-> db (dissoc :scroll-pinned-up?) (assoc :messages-scroll cur))))))))
 
 (reg-event-db :scroll-to-message
   ;; In-session search lands here after the user picks a hit.
@@ -1274,7 +1283,10 @@
   (fn [db [_ msg-idx]]
     (cond-> db
       (and (integer? msg-idx) (>= msg-idx 0))
-      (assoc :scroll-to-message-pending msg-idx))))
+      ;; A search jump parks the view on a hit (usually above the live
+      ;; edge); latch scroll-up intent so streaming follow won't yank it
+      ;; back to the bottom until the user returns there themselves.
+      (assoc :scroll-to-message-pending msg-idx :scroll-pinned-up? true))))
 
 (reg-event-db :scroll-to-message-resolved
   ;; Painter calls this after consuming `:scroll-to-message-pending`
@@ -1328,10 +1340,13 @@
           cur-t   (or (:messages-scroll-target db) (:messages-scroll db) max-s)
           new-t   (max 0 (- cur-t amount))]
       ;; Scrolling UP is an explicit "let me read history" intent: drop
-      ;; any armed follow so the view stops chasing the bottom.
+      ;; any armed follow so the view stops chasing the bottom, and set
+      ;; `:scroll-pinned-up?` so `:follow-bottom-animated` hands off (the
+      ;; ONLY thing that should stop the auto-follow while a turn streams).
       (clear-anim-when-settled
         (-> db
           (dissoc :scroll-follow-armed?)
+          (assoc :scroll-pinned-up? true)
           (seed-auto-bottom max-s)
           (assoc :messages-scroll-target new-t))))))
 
@@ -1346,13 +1361,17 @@
         ;; bottom so subsequent streamed content keeps the latest
         ;; message in view.
         (-> db
+          (dissoc :scroll-pinned-up?)
           (seed-auto-bottom max-s)
           (assoc :messages-scroll-target max-s
             :scroll-follow-armed? true)
           clear-anim-when-settled)
+        ;; Stepped down but not yet at the bottom — still reading above
+        ;; the live edge, so keep the scroll-up intent latched.
         (clear-anim-when-settled
           (-> db
             (dissoc :scroll-follow-armed?)
+            (assoc :scroll-pinned-up? true)
             (seed-auto-bottom max-s)
             (assoc :messages-scroll-target (min max-s (+ cur-t amount)))))))))
 
@@ -1404,13 +1423,17 @@
             denom      (max 1 (- track-h thumb-h))
             fraction   (max 0.0 (min 1.0 (double (/ relative denom))))
             new-scroll (max 0 (min max-scroll
-                                (long (Math/round (* fraction max-scroll)))))]
+                                (long (Math/round (* fraction max-scroll)))))
+            at-bottom? (>= new-scroll max-scroll)]
         ;; Drag/click to the very bottom re-enters FOLLOW mode (nil),
         ;; matching scroll-down; anywhere else is a deliberate concrete
-        ;; position, so drop any armed follow.
+        ;; position, so drop any armed follow and latch scroll-up intent
+        ;; so the streaming follow hands off there too.
         (-> db
           (dissoc :messages-scroll-target :scroll-follow-armed?)
-          (assoc :messages-scroll (when (< new-scroll max-scroll) new-scroll)))))))
+          (cond-> at-bottom? (dissoc :scroll-pinned-up?))
+          (cond-> (not at-bottom?) (assoc :scroll-pinned-up? true))
+          (assoc :messages-scroll (when-not at-bottom? new-scroll)))))))
 
 (defn- turn-extra-body
   [{:keys [settings]}]
@@ -1503,6 +1526,10 @@
                                          :paste-counter (:paste-counter source-db)}
                        :input-history-index nil
                        :input-history-draft nil
+                       ;; Sending re-pins to the bottom: clear any
+                       ;; scroll-up intent so the streaming follow keeps
+                       ;; the freshly-appended user message in view.
+                       :scroll-pinned-up? false
                        :slash-command-index 0
                        :slash-command-hidden? false))))
            ;; `agent-text` (LLM-facing, with `@path` expanded into a
