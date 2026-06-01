@@ -4401,46 +4401,32 @@
    :github-copilot-business
    :github-copilot-enterprise])
 
-(defn- auto-title-provider-chain
-  "Configured provider ids ordered by `AUTO_TITLE_PROVIDER_ORDER`, with any
-   unlisted providers appended (config order) so the chain is exhaustive."
-  [router]
-  (let [available (mapv :id (:providers router))
-        present   (set available)
-        ranked    (filterv present AUTO_TITLE_PROVIDER_ORDER)
-        rest*     (remove (set AUTO_TITLE_PROVIDER_ORDER) available)]
-    (vec (concat ranked rest*))))
-
 (defn- model-auto-title!
   "Generate a session title before the main provider call, off the model's
-   visible surface. Walks `auto-title-provider-chain` in order, pinning each
-   provider and selecting its smallest (cheapest+fastest) model; the first one
-   that yields a usable title wins. Returns nil if every provider fails (the
-   caller then keeps the previous title or uses the deterministic fallback)."
+   visible surface. A single `ask!` declares the preferred plan order via
+   `:prefer-providers`; svar walks it natively (cheapest+fastest model per
+   plan, falling through on model-unsupported / transient failure) so there is
+   no host-side provider loop. Returns nil if the whole chain fails (the caller
+   then keeps the previous title or uses the deterministic fallback)."
   [{:keys [router]} previous-title user-request]
-  (let [messages (auto-title-prompt previous-title user-request)]
-    (loop [[pid & more] (auto-title-provider-chain router)]
-      (when pid
-        (let [title (try
-                      (let [resp (svar/ask! router
-                                   (with-default-ask-code-idle-timeout
-                                     {:messages            messages
-                                      :spec                auto-title-spec
-                                      :reasoning           :off
-                                      ;; Pin THIS plan, pick its smallest model.
-                                      :routing             {:provider pid
-                                                            :optimize [:cost :speed]}
-                                      :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
-                                      :idle-timeout-ms     AUTO_TITLE_IDLE_MS
-                                      :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))]
-                        (sanitize-auto-title (some-> resp :result :title)))
-                      (catch Throwable t
-                        (tel/log! {:level :debug
-                                   :id ::auto-title-provider-failed
-                                   :data {:provider pid :error (ex-message t)}}
-                          "Auto-title provider failed; trying next in chain")
-                        nil))]
-          (or title (recur more)))))))
+  (let [resp (try
+               (svar/ask! router
+                 (with-default-ask-code-idle-timeout
+                   {:messages            (auto-title-prompt previous-title user-request)
+                    :spec                auto-title-spec
+                    :reasoning           :off
+                    :routing             {:prefer-providers AUTO_TITLE_PROVIDER_ORDER
+                                          :optimize         [:cost :speed]}
+                    :ttft-timeout-ms     AUTO_TITLE_TTFT_MS
+                    :idle-timeout-ms     AUTO_TITLE_IDLE_MS
+                    :semantic-timeout-ms AUTO_TITLE_SEMANTIC_MS}))
+               (catch Throwable t
+                 (tel/log! {:level :debug
+                            :id ::auto-title-call-failed
+                            :data {:error (ex-message t)}}
+                   "Auto-title call failed across all preferred providers")
+                 nil))]
+    (sanitize-auto-title (some-> resp :result :title))))
 
 (defn- maybe-auto-title!
   "Refresh the session title asynchronously before each normal LLM turn using
