@@ -1885,11 +1885,20 @@
 (defn- navigator-all-rows
   "Sessions arrive newest-modified-first from `tui-session-summaries`; keep
    that order so the navigator reads top-to-bottom by recency. Empty untitled
-   shells are hidden by default; Alt+U in the navigator reveals them."
+   shells are hidden by default; Alt+U in the navigator reveals them.
+   A synthetic `+ New Session` action row is always appended at the bottom."
   [{:keys [sessions active-session-id show-empty-untitled?]}]
-  (->> sessions
-    (remove #(and (not show-empty-untitled?) (empty-untitled-session? %)))
-    (mapv #(navigator-session-row active-session-id %))))
+  (conj
+    (->> sessions
+      (remove #(and (not show-empty-untitled?) (empty-untitled-session? %)))
+      (mapv #(navigator-session-row active-session-id %)))
+    {:id      "action:new"
+     :title   "  + New Session"
+     :session ""
+     :status  ""
+     :created ""
+     :modified ""
+     :target  {:action :new}}))
 (defn- navigator-visible-rows
   [rows query]
   (vec (filter #(table/row-matches? % query) rows)))
@@ -2008,7 +2017,7 @@
             left
             hint-row
             inner-w
-            [["↑/↓" "move"] ["Enter" "open"] ["type" "search"]
+            [["↑/↓" "move"] ["Enter" "open"] ["N" "new"] ["type" "search"]
              ["Alt+U" (if @show-empty-untitled? "hide empty" "show empty")]
              ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
@@ -2031,6 +2040,9 @@
                 KeyType/Character
                 (let [raw-c (.getCharacter key)]
                   (cond
+                    (and raw-c (not (input/alt-modifier? key)) (= (Character/toLowerCase raw-c) \n))
+                    {:action :new}
+
                     (input/alt-char? key \u)
                     (do (swap! show-empty-untitled? not)
                       (reset! selected 0)
