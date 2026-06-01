@@ -3,6 +3,7 @@
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -518,106 +519,101 @@
                 (get-in third-cycle [:config :providers 0 :models 0 :name]))))))
 
 (defdescribe scrollbar-state-test
-  (it "maps scrollbar clicks with the same single-cell thumb used by the renderer"
-    (let [scroll-to-y-fn (-> #'state/event-registry deref deref (get :scroll-to-y) :fn)
-          db            {:messages-scroll nil}]
-      (expect (= 155
-                (:messages-scroll
-                 (scroll-to-y-fn db [:scroll-to-y 28 0 56 360 56]))))
-      ;; Dragging the thumb to the very bottom (fraction 1.0 → max-scroll)
-      ;; re-enters FOLLOW mode (nil), so streamed content keeps the
-      ;; latest message in view. Anywhere above bottom stays concrete.
-      (expect (nil?
-                (:messages-scroll
-                 (scroll-to-y-fn db [:scroll-to-y 55 0 56 360 56])))))))
+  (let [scroll-to-y-fn (-> #'state/event-registry deref deref (get :scroll-to-y) :fn)]
+    (it "a scrollbar drag above the bottom parks at the mapped offset (mode :at)"
+      ;; total-h 360, inner-h 56 -> max-s 304; track-h 56, denom 55;
+      ;; mouse-y 28 -> fraction 28/55 -> offset round(.509*304)=155.
+      (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 28 0 56 360 56])]
+        (expect (= {:mode :at, :offset 155} (:scroll r)))))
+    (it "a scrollbar drag to the very bottom re-enters FOLLOW"
+      ;; fraction 1.0 -> offset == max-scroll -> stick-to-bottom again, so
+      ;; streamed content keeps the latest message in view.
+      (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 55 0 56 360 56])]
+        (expect (= scroll/follow (:scroll r)))))))
 
-(defdescribe follow-bottom-test
+;; The scroll model is ONE tagged `:scroll` value (see scroll.clj). These
+;; cover the event wrappers + the re-pin invariant that killed the
+;; "/workspace list flashes to the top then bottom" jump: every transition
+;; REPLACES `:scroll`, so no animation target can dangle across frames.
+(defdescribe scroll-model-test
   (let [ev (fn [k] (-> #'state/event-registry deref deref (get k) :fn))]
-    (it "scroll-down to the bottom settles back into FOLLOW (nil)"
-      (let [down ((ev :scroll-down) {:messages-scroll 90} [:scroll-down 30 200 100])
-            tick (ev :tick-scroll-anim)]
-        ;; max-s = 200-100 = 100; 90+30 >= 100 -> bottom branch, follow armed.
-        (expect (true? (:scroll-follow-armed? down)))
-        ;; Step the animation to settle; once current reaches the
-        ;; target the armed follow flips messages-scroll back to nil.
-        (let [settled (loop [d down n 0]
-                        (if (or (nil? (:messages-scroll-target d)) (> n 50))
-                          d (recur (tick d [:tick-scroll-anim]) (inc n))))]
-          (expect (nil? (:messages-scroll settled)))
-          (expect (not (contains? settled :scroll-follow-armed?))))))
+    (it "scroll-up parks (mode :at) so streaming follow hands off"
+      (let [r ((ev :scroll-up) {:scroll scroll/follow} [:scroll-up 9 200 100])]
+        ;; max-s = 100; ease from the bottom (100) up to 100-9 = 91.
+        (expect (= :at (:mode (:scroll r))))
+        (expect (= 91 (:offset (:scroll r))))))
 
-    (it "scroll-up clears an armed follow so the view stops chasing bottom"
-      (let [up ((ev :scroll-up) {:messages-scroll 100 :scroll-follow-armed? true}
-                                [:scroll-up 9 200 100])]
-        (expect (not (contains? up :scroll-follow-armed?)))))
+    (it "scroll-down landing in the bottom slack band re-arms FOLLOW"
+      (let [r ((ev :scroll-down) {:scroll (scroll/parked 90)} [:scroll-down 30 200 100])]
+        ;; max-s 100; 90+30 within slack of 100 -> follow (eases the rest).
+        (expect (= :follow (:mode (:scroll r))))))
 
-    (it "follow-bottom-if-near re-arms follow only when parked at the edge"
-      (let [near ((ev :follow-bottom-if-near) {:messages-scroll 98} [:follow-bottom-if-near 200 100])
-            mid  ((ev :follow-bottom-if-near) {:messages-scroll 50} [:follow-bottom-if-near 200 100])]
-        ;; max-s = 100; slack 4. 98 >= 96 -> follow. 50 < 96 -> untouched.
-        (expect (nil? (:messages-scroll near)))
-        (expect (= 50 (:messages-scroll mid)))))
+    (it "scroll-down above the slack band stays parked"
+      (let [r ((ev :scroll-down) {:scroll (scroll/parked 10)} [:scroll-down 30 200 100])]
+        (expect (= :at (:mode (:scroll r))))
+        (expect (= 40 (:offset (:scroll r))))))
 
-    (it "follow-bottom-if-near leaves auto-bottom (nil) untouched"
-      (let [r ((ev :follow-bottom-if-near) {:messages-scroll nil} [:follow-bottom-if-near 200 100])]
-        (expect (nil? (:messages-scroll r)))))
+    (it "ease-scroll walks FOLLOW toward the growing bottom (no teleport)"
+      ;; Regression for the streamed big-block "jump jump": a turn appends
+      ;; a tall bubble in one frame. FOLLOW's desired row IS the new bottom,
+      ;; so ease steps the on-screen pos down toward it instead of snapping.
+      (let [r ((ev :ease-scroll) {:scroll (assoc scroll/follow :pos 100)}
+                                 [:ease-scroll 300 100])]
+        ;; max-s 200; step 0.35*(200-100)=35 -> pos 135, still FOLLOW.
+        (expect (= {:mode :follow, :pos 135} (:scroll r)))))
 
-    (it "reanchor-scroll shifts the in-flight target by the same delta"
-      ;; Without shifting the target, the smooth-scroll animation yanks
-      ;; back toward a stale position when total-h corrects mid-scroll —
-      ;; that was the "scroll up a little, jump to the middle" lurch.
-      (let [reanchor (ev :reanchor-scroll)
-            r (reanchor {:messages-scroll 1849 :messages-scroll-target 1840}
-                [:reanchor-scroll 1399 -450])]
-        (expect (= 1399 (:messages-scroll r)))
-        (expect (= 1390 (:messages-scroll-target r))))
-      ;; No active animation -> only messages-scroll moves.
-      (let [reanchor (ev :reanchor-scroll)
-            r (reanchor {:messages-scroll 1849} [:reanchor-scroll 1399 -450])]
-        (expect (= 1399 (:messages-scroll r)))
-        (expect (not (contains? r :messages-scroll-target)))))
+    (it "ease-scroll settles a parked move and drops :pos"
+      (let [r ((ev :ease-scroll) {:scroll {:mode :at, :offset 50, :pos 50}}
+                                 [:ease-scroll 150 100])]
+        (expect (= {:mode :at, :offset 50} (:scroll r)))))
 
-    (it "follow-bottom-if-near does NOT swallow an in-progress scroll-up"
-      ;; Regression: scroll-up seeds messages-scroll to the bottom and
-      ;; sets a target above it. While that animation runs, re-following
-      ;; would drop the target and snap back down — the user had to
-      ;; "scroll really hard" to escape. An active target = hands off.
-      (let [db {:messages-scroll 100 :messages-scroll-target 80}
-            r  ((ev :follow-bottom-if-near) db [:follow-bottom-if-near 200 100])]
-        (expect (= 100 (:messages-scroll r)))
-        (expect (= 80 (:messages-scroll-target r)))))
+    (it "set-scroll snap-parks at an exact row (search jump)"
+      (let [r ((ev :set-scroll) {:scroll scroll/follow} [:set-scroll 42])]
+        (expect (= {:mode :at, :offset 42} (:scroll r)))))
 
-    (it "scroll-up latches :scroll-pinned-up? so streaming follow hands off"
-      (let [up ((ev :scroll-up) {:messages-scroll 100} [:scroll-up 9 200 100])]
-        (expect (true? (:scroll-pinned-up? up)))))
+    (it "reanchor-scroll shifts the parked offset + pos by the same delta"
+      ;; Content above the anchor shrank by 450 rows as estimates resolved;
+      ;; the anchored message must stay visually put.
+      (let [r ((ev :reanchor-scroll) {:scroll {:mode :at, :offset 1840, :pos 1849}}
+                                     [:reanchor-scroll 1399 -450])]
+        (expect (= {:mode :at, :offset 1390, :pos 1399} (:scroll r)))))
 
-    (it "follow-bottom-animated EASES to the new bottom after an atomic append"
-      ;; Regression: send / a large tool result appends content in ONE
-      ;; frame. The first follow pulse seeds `:messages-scroll` off the
-      ;; STALE pre-append layout, so it lands > slack rows above the new
-      ;; bottom. Without an explicit scroll-up intent the follow must NOT
-      ;; mistake that for a deliberate scroll-up — it eases down instead
-      ;; of freezing above the just-sent message.
-      (let [animated (ev :follow-bottom-animated)
-            ;; old bottom = 100; new layout total-h 300 inner-h 100 -> max-s 200.
-            r (animated {:messages-scroll 100} [:follow-bottom-animated 300 100])]
-        (expect (= 100 (:messages-scroll r)))
-        (expect (= 200 (:messages-scroll-target r)))))
+    (it "message-received re-pins to a CLEAN FOLLOW (no dangling ease target)"
+      ;; Regression (/workspace list "flash to top then bottom"): a result
+      ;; lands atomically while an ease was in flight. Replacing the whole
+      ;; `:scroll` with FOLLOW means nothing can dangle, so the view snaps
+      ;; cleanly to the bottom instead of animating up from row 0 first.
+      (let [message-received-fn (ev :message-received)
+            pending-id          "turn-1"
+            db                  {:active-workspace-id :main
+                                 :session {:id "c1"}
+                                 :loading? true
+                                 :messages [{:role :user :text "/workspace list" :client-turn-id pending-id}
+                                            {:role :assistant :pending? true :client-turn-id pending-id}]
+                                 :progress {:iterations []}
+                                 ;; An ease was in flight from the prior frame.
+                                 :scroll {:mode :follow, :pos 80}}
+            {db' :db}           (message-received-fn db
+                                  [:message-received :main
+                                   [:ir {} [:p {} [:span {} "a big table"]]]
+                                   {:client-turn-id pending-id}])]
+        (expect (= scroll/follow (:scroll db')))))
 
-    (it "follow-bottom-animated HANDS OFF when the user pinned up"
-      (let [animated (ev :follow-bottom-animated)
-            r (animated {:messages-scroll 100 :scroll-pinned-up? true}
-                [:follow-bottom-animated 300 100])]
-        (expect (= 100 (:messages-scroll r)))
-        (expect (not (contains? r :messages-scroll-target)))))
-
-    (it "follow-bottom-animated clears :scroll-pinned-up? once parked at bottom"
-      (let [animated (ev :follow-bottom-animated)
-            ;; scroll == max-s (200) -> caught up branch.
-            r (animated {:messages-scroll 200 :scroll-pinned-up? true}
-                [:follow-bottom-animated 300 100])]
-        (expect (= 200 (:messages-scroll r)))
-        (expect (not (contains? r :scroll-pinned-up?)))))))
+    (it "send-message re-pins to a CLEAN FOLLOW"
+      (let [send-message-fn (ev :send-message)
+            db              {:session {:id "c1"}
+                             :active-workspace-id :main
+                             :messages []
+                             :input-history []
+                             :scroll {:mode :at, :offset 80, :pos 80}
+                             :settings {:reasoning-level :balanced
+                                        :openai-codex-verbosity :low}
+                             :pastes {}}]
+        (with-redefs [input/expand-paste-placeholders (fn [text _] text)
+                      input/expand-file-mentions identity
+                      vis/cancellation-token (fn [] :token)]
+          (let [{db' :db} (send-message-fn db [:send-message "hello"])]
+            (expect (= scroll/follow (:scroll db')))))))))
 
 (defdescribe cancel-turn-test
   (it "notifies cancelling instead of relying on footer status"

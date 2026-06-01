@@ -11,6 +11,7 @@
    [com.blockether.vis.ext.channel-tui.chat :as chat]
    [com.blockether.vis.ext.channel-tui.input :as input]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
+   [com.blockether.vis.ext.channel-tui.scroll :as scroll]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
    [com.blockether.vis.ext.channel-tui.selection :as selection]
    [com.blockether.vis.internal.external-opener :as opener]
@@ -146,14 +147,14 @@
 
   (it "does not use partial live repaint for scroll changes during streaming"
     (let [base {:loading? true
-                :messages-scroll nil
+                :scroll scroll/follow
                 :messages [{:role :user :text "old"}
                            {:role :assistant :text "live"}]
                 :input {:lines [""]}
                 :progress {:iterations []}
                 :render-version 1
                 :layout {:total-h 100}}
-          scrolled (assoc base :messages-scroll 20 :render-version 2)]
+          scrolled (assoc base :scroll (scroll/parked 20) :render-version 2)]
       (expect (false? (live-progress-only-change? base scrolled)))
       (expect (false? (boolean (partial-live-frame? base scrolled true {:total-h 100} false))))))
 
