@@ -1483,6 +1483,7 @@
     :tool-color/move t/tool-color-move
     :tool-color/shell t/tool-color-shell
     :tool-color/meta t/tool-color-meta
+    :tool-color/error t/code-error-fg
     nil))
 
 (defn- silent-form-count
@@ -2644,7 +2645,7 @@
    (default collapsed, expand on click — same affordance as tool op
    rows). Short reasoning (≤ this many rows) stays inline; a one-liner
    doesn't earn a disclosure."
-  2)
+  3)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
@@ -3192,7 +3193,9 @@
   (let [node-id   (str block-scope ":op" (:position op))
         expanded? (detail-expanded? detail-expansions session-id node-id false)
         chevron   (if expanded? "▼" "▶")
-        label     (op-row-label op)
+        error?    (= :error (:status op))
+        label     (cond->> (op-row-label op)
+                    error? (str "✗ "))
         gap       3
         ;; chevron(1) + space(1) + label + gap + summary
         label-w   (max (p/display-width label) (long (or label-w 0)))
@@ -3209,7 +3212,7 @@
                      :session-id (str session-id)
                      :node-id    (str node-id)
                      :collapsed? (not expanded?)
-                     :color-role nil})
+                     :color-role (when error? :tool-color/error)})
         body      (when expanded?
                     (or (ir-body-entries (:display op) result-marker max-w)
                       [{:line (str result-marker
