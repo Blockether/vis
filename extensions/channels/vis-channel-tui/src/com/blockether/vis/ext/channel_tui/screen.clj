@@ -2456,7 +2456,19 @@
                              (let [cmd-id (if (map? cmd) (:id cmd) cmd)
                                    args (or args (:slash/args cmd) "")
                                    cmd-map (when (map? cmd) cmd)]
-                               (cond (and cmd-map (:slash/text cmd-map))
+                               (cond
+                                 ;; A slash may declare a channel UI intent
+                                 ;; instead of an engine round-trip. `:navigator`
+                                 ;; opens the Ctrl+G session/workspace picker
+                                 ;; (session == workspace), so `/workspace` and
+                                 ;; `/workspace list` land in the SAME unified
+                                 ;; list — no useless text bubble, and identical
+                                 ;; live vs. resume.
+                                 (= :navigator (get-in cmd-map [:slash/spec :slash/ui :kind]))
+                                 (when-not (:dialog-open? @state/app-db)
+                                   (show-sessions!))
+
+                                 (and cmd-map (:slash/text cmd-map))
                                  (when-not (:dialog-open? @state/app-db)
                                    (let [text (cond-> (:slash/text cmd-map)
                                                 (not (str/blank? args))

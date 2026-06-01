@@ -251,6 +251,10 @@
   [{:slash/name   "workspace"
     :slash/doc    "Workspace operations (see subcommands)."
     :slash/usage  "/workspace <new|commit|apply|discard|list|switch|label> …"
+    ;; Bare `/workspace` opens the unified session/workspace navigator in
+    ;; picker-capable channels (session == workspace); other channels get
+    ;; the subcommand help text from the run-fn below.
+    :slash/ui     {:kind :navigator}
     :slash/run-fn (fn [_ctx]
                     {:slash/status :ok
                      :slash/title  "Workspace commands"
@@ -290,9 +294,16 @@
     :slash/run-fn   handle-discard}
    {:slash/name     "list"
     :slash/parent   ["workspace"]
-    :slash/doc      "List active workspaces for the current repo."
+    :slash/doc      "List workspaces / sessions for the current repo."
     :slash/usage    "/workspace list"
     :slash/requires #{:channel}
+    ;; A session IS its workspace (locked 1:1), so listing workspaces is
+    ;; exactly the Ctrl+G session navigator. In channels that can paint a
+    ;; picker (TUI) this opens it directly — no engine round-trip, no
+    ;; persisted answer bubble (which also fixed the resume-only text dump
+    ;; that read as a wall of `[trunk main]` rows). Channels without a
+    ;; navigator (Telegram) fall back to `handle-list`'s text.
+    :slash/ui       {:kind :navigator}
     :slash/run-fn   handle-list}
    {:slash/name     "switch"
     :slash/parent   ["workspace"]
