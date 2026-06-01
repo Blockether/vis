@@ -55,8 +55,8 @@
   [usd]
   (when (and usd (pos? usd))
     (cond (< usd 0.01) (fmt-double "$%.4f" usd)
-          (< usd 1.0) (fmt-double "$%.3f" usd)
-          :else (fmt-double "$%.2f" usd))))
+      (< usd 1.0) (fmt-double "$%.3f" usd)
+      :else (fmt-double "$%.2f" usd))))
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 (def ^:private default-reasoning-level :balanced)
 (def ^:private default-codex-verbosity :low)
@@ -68,8 +68,8 @@
 (defn- reasoning-effort-configurable?
   [info]
   (and (boolean (:reasoning? info))
-       (not= false (:reasoning-effort? info))
-       (not= :zai-thinking (:reasoning-style info))))
+    (not= false (:reasoning-effort? info))
+    (not= :zai-thinking (:reasoning-style info))))
 (def ^:private git-label "git")
 (defn- git-repo-label [{:keys [repo branch]}] (str "~/" (or repo "?") " (" (or branch "?") ")"))
 (defn- git-dirty-label
@@ -83,10 +83,10 @@
   (let [ahead (long (or ahead 0))
         behind (long (or behind 0))]
     (cond (not upstream?) "(no upstream)"
-          (zero? (+ ahead behind)) "(up to date)"
-          :else (str "commits:"
-                     (when (pos? ahead) (str " ⇡" ahead))
-                     (when (pos? behind) (str " ⇣" behind))))))
+      (zero? (+ ahead behind)) "(up to date)"
+      :else (str "commits:"
+              (when (pos? ahead) (str " ⇡" ahead))
+              (when (pos? behind) (str " ⇣" behind))))))
 (defn- git-footer-spans
   [{:keys [workspace?], :as status}]
   (if workspace?
@@ -119,8 +119,8 @@
 (defn- add-message-cost
   [acc {:keys [cost]}]
   (cond (map? cost) (reduce #(add-cost-slot %1 cost %2) acc session-cost-keys)
-        (number? cost) (update acc :total-cost (fnil + 0.0) (double cost))
-        :else acc))
+    (number? cost) (update acc :total-cost (fnil + 0.0) (double cost))
+    :else acc))
 (defn- session-cost
   "Cumulative session cost across assistant turns. Preserves detailed
    input / cached-input / output / total slots so the footer can show the
@@ -139,9 +139,9 @@
   [acc {:keys [tokens]}]
   (if (map? tokens)
     (-> acc
-        (add-token-slot tokens :input [:input])
-        (add-token-slot tokens :output [:output])
-        (add-token-slot tokens :cached-input [:cached-input :input-cached :cached]))
+      (add-token-slot tokens :input [:input])
+      (add-token-slot tokens :output [:output])
+      (add-token-slot tokens :cached-input [:cached-input :input-cached :cached]))
     acc))
 (defn- session-tokens
   "Cumulative session token usage across assistant turns. Returns nil
@@ -161,15 +161,15 @@
           hours (quot (mod total-seconds 86400) 3600)
           minutes (quot (mod total-seconds 3600) 60)]
       (cond (pos? days) (str days "d" hours "h")
-            (pos? hours) (str hours "h" minutes "m")
-            (pos? minutes) (str minutes "m")
-            :else (str total-seconds "s")))))
+        (pos? hours) (str hours "h" minutes "m")
+        (pos? minutes) (str minutes "m")
+        :else (str total-seconds "s")))))
 (defn- format-absolute-reset
   [now-ms reset-ms]
   (when reset-ms
     (let [zoned (.atZone (Instant/ofEpochMilli (long reset-ms)) (ZoneId/systemDefault))
           formatter (if (and (>= (- (long reset-ms) (long now-ms)) 0)
-                             (< (- (long reset-ms) (long now-ms)) one-week-ms))
+                          (< (- (long reset-ms) (long now-ms)) one-week-ms))
                       short-reset-formatter
                       long-reset-formatter)]
       (.format formatter zoned))))
@@ -178,9 +178,9 @@
   (let [relative (format-relative-reset now-ms reset-ms)
         absolute (format-absolute-reset now-ms reset-ms)]
     (cond (and relative absolute) (str "↺" relative " @ " absolute)
-          relative (str "↺" relative)
-          absolute (str "↺" absolute)
-          :else "↺--")))
+      relative (str "↺" relative)
+      absolute (str "↺" absolute)
+      :else "↺--")))
 (defn- report-for-current-provider
   "Report belonging to `provider`, or nil when the polled report is for
    a different provider (stale after a provider switch). Callers can
@@ -219,7 +219,7 @@
   [now-ms row]
   (let [usage (lfmt/format-limit-usage row)
         reset (some->> (get-in row [:window :resets-at-ms])
-                       (format-reset now-ms))]
+                (format-reset now-ms))]
     (str (lfmt/generic-limit-label row) (when usage (str " " usage)) (when reset (str " " reset)))))
 (defn- generic-limit-sort-key
   [row]
@@ -242,7 +242,7 @@
   (let [report (report-for-current-provider db provider)
         raw-rows (get-in report [:dynamic :limits])
         rows (->> (or (seq (filter lfmt/generic-limit-has-signal? raw-rows)) raw-rows)
-                  (sort-by generic-limit-sort-key))]
+               (sort-by generic-limit-sort-key))]
     (if (seq rows)
       (str/join "  " (map #(format-generic-limit-row now-ms %) (take 2 rows)))
       (limits-status-text db provider))))
@@ -308,14 +308,14 @@
       ;; ── RIGHT ─────────────────────────────────────────────────────────────
       ;; Git lives here. Provider usage moved to the second row so it sits
       ;; directly under the repository state instead of competing with it.
-    )))
+      )))
 (defn- build-usage-segments
   [{:keys [messages]}]
   (let [tokens-str (some-> (session-tokens messages)
-                           fmt/format-tokens
-                           (str/replace #"\s*\([^)]*\)\s*$" ""))
+                     fmt/format-tokens
+                     (str/replace #"\s*\([^)]*\)\s*$" ""))
         cost-str (some-> (session-cost messages)
-                         fmt/format-cost)]
+                   fmt/format-cost)]
     (cond-> []
       tokens-str (conj {:text (str "total " tokens-str),
                         :fg t/footer-fg-muted,
@@ -330,12 +330,12 @@
 (defn- build-limits-segments
   [db now-ms]
   (let [provider (some-> (chosen-model-info)
-                         :provider)
+                   :provider)
         text (when provider (generic-limits-footer-text db provider now-ms))]
     (into (cond-> []
             text (conj
                    {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
-          (build-usage-segments db))))
+      (build-usage-segments db))))
 ;;; ── Footer subtitle (contextual key helpers) ───────────────────────────────
 (defn- input-empty?
   "True when the input editor has no text."
@@ -351,17 +351,17 @@
    one paint surface."
   [{:keys [loading? cancelling? input], :as db} _now-ms]
   (cond cancelling? [(subtitle-segment "Cancelling... please wait" 1)]
-        loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
-        (input-empty? input)
-          (cond-> [(subtitle-segment "Alt+Enter newline" 2) (subtitle-segment "↑↓ history" 2)
-                   (subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
+    loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
+    (input-empty? input)
+    (cond-> [(subtitle-segment "Alt+Enter newline" 2) (subtitle-segment "↑↓ history" 2)
+             (subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
+             (subtitle-segment "Ctrl+K menu" 1)]
+      (workspace-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
+                                                  3)))
+    :else (cond-> [(subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
                    (subtitle-segment "Ctrl+K menu" 1)]
-            (workspace-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
-                                                                        3)))
-        :else (cond-> [(subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
-                       (subtitle-segment "Ctrl+K menu" 1)]
-                (workspace-switching-available? db)
-                  (conj (subtitle-segment "Shift+Tab switch workspace" 3)))))
+            (workspace-switching-available? db)
+            (conj (subtitle-segment "Shift+Tab switch workspace" 3)))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
 ;; Extensions contribute footer / subtitle segments by adding entries to
@@ -452,12 +452,12 @@
   (let [disabled (let [s (get-in db [:settings :contributors-disabled])] (when (set? s) s))]
     (vec (for [{:keys [id], f :fn} (lp/channel-contributions-for :tui slot)
                :when (and (ifn? f)
-                          (or (contains? undisableable id)
-                              (not (and disabled (contains? disabled id)))))
+                       (or (contains? undisableable id)
+                         (not (and disabled (contains? disabled id)))))
                :let [out (try (f db now-ms) (catch Throwable _ nil))
                      segs (cond (sequential? out) out
-                                (map? out) [out]
-                                :else nil)]
+                            (map? out) [out]
+                            :else nil)]
                seg segs
                :let [packed (seg->packed seg row)]
                :when packed]
@@ -498,10 +498,10 @@
                  (and (seq l) (or (seq c) (seq r))) inc
                  (and (seq c) (seq r)) inc)]
     (+ edge-pad
-       (* gap n-gaps)
-       (spans-width l separator)
-       (spans-width c separator)
-       (spans-width r separator))))
+      (* gap n-gaps)
+      (spans-width l separator)
+      (spans-width c separator)
+      (spans-width r separator))))
 (defn- shrink-to-fit
   "Drop highest-:priority segments one at a time until the row fits.
    Tries the wide separator first, then collapses to a narrow one
@@ -510,14 +510,14 @@
   [segments cols]
   (let [fit? (fn [segs sepa] (<= (total-width segs sepa) cols))]
     (cond (fit? segments sep) [segments sep]
-          (fit? segments sep-narrow) [segments sep-narrow]
-          :else (loop [segs segments]
-                  (cond (empty? segs) [segs sep-narrow]
-                        (fit? segs sep-narrow) [segs sep-narrow]
-                        :else (let [worst-priority (apply max (map :priority segs))
+      (fit? segments sep-narrow) [segments sep-narrow]
+      :else (loop [segs segments]
+              (cond (empty? segs) [segs sep-narrow]
+                (fit? segs sep-narrow) [segs sep-narrow]
+                :else (let [worst-priority (apply max (map :priority segs))
                                     ;; Drop one occurrence with the worst priority.
-                                    victim (some #(when (= worst-priority (:priority %)) %) segs)]
-                                (recur (vec (remove #(identical? victim %) segs)))))))))
+                            victim (some #(when (= worst-priority (:priority %)) %) segs)]
+                        (recur (vec (remove #(identical? victim %) segs)))))))))
 ;;; ── Drawing ────────────────────────────────────────────────────────────────
 (defn- draw-spans!
   "Draw spans left-to-right starting at `col`. Each span uses its own
@@ -528,10 +528,10 @@
             (let [c (if (zero? i)
                       c
                       (do (p/clear-styles! g)
-                          (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-                          (let [separator (separator-before s separator)]
-                            (p/put-str! g c row separator)
-                            (+ c (count separator)))))]
+                        (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+                        (let [separator (separator-before s separator)]
+                          (p/put-str! g c row separator)
+                          (+ c (count separator)))))]
               (p/clear-styles! g)
               (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
               (when (:bold? s) (p/enable! g p/BOLD))
@@ -590,8 +590,8 @@
          pad 2
          rule-w (max 0 (- cols (* 2 pad)))
          built-in (if-let [hint (some-> hint
-                                        str/trim
-                                        not-empty)]
+                                  str/trim
+                                  not-empty)]
                     [(subtitle-segment hint 0)]
                     (build-subtitle-segments db now-ms))
          ext-segs (extension-subtitle-segments db now-ms)
@@ -618,9 +618,9 @@
          (p/put-str! g left bottom-row (str p/BOX_BL (p/horiz-line inner-w) p/BOX_BR))
          (when (< right-rule-start rule-end)
            (p/put-str! g
-                       right-rule-start
-                       bottom-row
-                       (p/horiz-line (- rule-end right-rule-start)))))))
+             right-rule-start
+             bottom-row
+             (p/horiz-line (- rule-end right-rule-start)))))))
    ;; Restore neutral state for whatever paints next.
    (p/clear-styles! g)
    (p/set-colors! g t/text-fg t/terminal-bg)))
