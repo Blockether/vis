@@ -476,7 +476,7 @@
     (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= #{:path :lines :next-offset :eof? :truncated? :mtime :size}
+      (expect (= #{:path :lines :hashes :next-offset :eof? :truncated? :mtime :size}
                 (set (keys out))))
       (expect (string? (:path out)))
       (expect (nil? (:next-offset out)))
