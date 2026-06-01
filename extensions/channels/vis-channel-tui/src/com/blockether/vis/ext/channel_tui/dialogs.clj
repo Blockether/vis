@@ -2017,7 +2017,7 @@
             left
             hint-row
             inner-w
-            [["↑/↓" "move"] ["Enter" "open"] ["N" "new"] ["type" "search"]
+            [["↑/↓" "move"] ["Enter" "open"] ["N" "new"]
              ["Alt+U" (if @show-empty-untitled? "hide empty" "show empty")]
              ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
@@ -2028,11 +2028,6 @@
               (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
               (condp = (.getKeyType key)
                 KeyType/Escape nil
-                KeyType/Backspace
-                (do (when (seq @query) (swap! query subs 0 (dec (count @query))))
-                  (reset! selected 0)
-                  (reset! scroll 0)
-                  (recur))
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
                 KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
                                     (recur))
@@ -2048,9 +2043,6 @@
                       (reset! selected 0)
                       (reset! scroll 0)
                       (recur))
-
-                    (and raw-c (not (input/alt-modifier? key)) (not (Character/isISOControl raw-c)))
-                    (do (swap! query str raw-c) (reset! selected 0) (reset! scroll 0) (recur))
 
                     :else (recur)))
                 (recur)))))))))

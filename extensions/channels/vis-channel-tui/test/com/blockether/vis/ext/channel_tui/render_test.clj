@@ -75,6 +75,48 @@
     (expect (= " 1 more " (input-more-hint 5 4)))
     (expect (= " 6 more " (input-more-hint 10 4)))))
 
+(defdescribe live-disclosure-toggle-test
+  (it "toggling a tool badge in the LIVE bubble busts the per-iteration cache"
+    ;; Regression: the live trace projection caches per iteration, keyed
+    ;; on the ITERATION-scoped detail-expansions ('iteration:t..:iN').
+    ;; But tool badge / op-row disclosures are TURN-scoped node ids
+    ;; ('iterN:t..:opM'), so toggling a badge never busted that cache —
+    ;; the badge wouldn't collapse/expand until the whole turn finished.
+    ;; Render the SAME live progress twice WITHOUT clearing the cache
+    ;; (mimicking consecutive live frames); the toggle MUST still change
+    ;; what paints.
+    (let [ls-display [:ir {} [:p {} [:span {} ".gitignore  deps.edn  src"]]]
+          ls-summary [:ir {} [:p {} [:strong {} [:span {} "LS"]]
+                              [:span {} "  3 entries"]]]
+          turn-id    "123e4567-e89b-12d3-a456-426614174000"
+          form       {:code            "(v/ls \".\")"
+                      :comment         nil
+                      :render-segments [{:kind :code :source "(v/ls \".\")"}]
+                      :channel         [(op-entry ls-summary ls-display)]
+                      :result-render   ls-display
+                      :result-kind     :tool
+                      :result-detail   nil
+                      :scope           "t24/i1/f1"
+                      :error nil :started-at-ms nil :duration-ms 1
+                      :success? true :silent? false}
+          progress   {:iterations [{:iteration 0 :forms [form]}]}
+          settings   {:show-thinking true :show-iterations true}
+          extra      (fn [exp] {:session-id        "s"
+                                :session-turn-id   turn-id
+                                :detail-expansions exp
+                                :now-ms 0 :turn-start-ms 0})
+          ;; Op-row node id = iter<N>:t<frag>:op<position> (turn-scoped).
+          node       ["s" "iter1:t123e4567:op0"]
+          body       (fn [o] (str/join "\n"
+                               (map (comp strip-sentinels strip-ansi str)
+                                 (:lines o))))]
+      (render/invalidate-cache!)
+      (let [collapsed (render/progress->lines-data progress 80 settings (extra {}))
+            ;; NO invalidate-cache! here — this is the live-frame path.
+            expanded  (render/progress->lines-data progress 80 settings (extra {node true}))]
+        (expect (not (str/includes? (body collapsed) ".gitignore")))
+        (expect (str/includes? (body expanded) ".gitignore"))))))
+
 (defdescribe live-running-block-test
   (it "renders a block slot with no status footer"
     (with-raw-code-on
