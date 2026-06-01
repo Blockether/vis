@@ -1732,7 +1732,12 @@
                        bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
                        settings (or (:settings @state/app-db) {})
                        warm-opts {:session-id id,
-                                  :detail-expansions (:detail-expansions @state/app-db)}]
+                                  :detail-expansions (:detail-expansions @state/app-db)
+                                  ;; Re-layout as background warm lands so
+                                  ;; total-h SETTLES while idle at auto-bottom
+                                  ;; (thumb pinned to bottom = invisible) instead
+                                  ;; of snapping ~20% on the first wheel-up.
+                                  :on-warm #(state/dispatch [:bump-render-version])}]
                    ;; Head-start warm on the input thread so immediate
                    ;; first-scroll doesn't hit a cold heavy trace bubble.
                    ;; Full history still warms async below.
@@ -1828,7 +1833,12 @@
                            bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
                            settings (or (:settings @state/app-db) {})
                            warm-opts {:session-id id,
-                                      :detail-expansions (:detail-expansions @state/app-db)}]
+                                      :detail-expansions (:detail-expansions @state/app-db)
+                                      ;; See init-path warm-opts: settle total-h
+                                      ;; via render bumps as the background warm
+                                      ;; lands, so a session/workspace switch
+                                      ;; doesn't jump the thumb on first scroll.
+                                      :on-warm #(state/dispatch [:bump-render-version])}]
                        (virtual/pre-warm-recent! history
                          bubble-w
                          settings
