@@ -1488,13 +1488,31 @@
              desc-w (max 1 (- option-w check-w))
              entries (settings-render-entries rows option-w desc-w)
              visual-n (count entries)
+             sel-entry-idxs (keep-indexed (fn [entry-idx {:keys [row-idx]}]
+                                            (when (= row-idx @selected) entry-idx))
+                              entries)
+             ;; Option line of the selected row (first non-description entry).
              selected-visual (or (first (keep-indexed (fn [entry-idx {:keys [row-idx part]}]
                                                         (when (and (= row-idx @selected)
                                                                 (not= part :option-desc))
                                                           entry-idx))
                                           entries))
                                0)
-             _ (swap! scroll #(visible-window-start selected-visual % visible-h visual-n))]
+             ;; Last paint row owned by the selected option, INCLUDING its
+             ;; wrapped description rows. The scroll window must be able to
+             ;; reach this so the trailing desc lines (and, for the bottom-most
+             ;; option, the true content end) come into view — otherwise scroll
+             ;; caps short of `visual-n - visible-h` and the scrollbar thumb
+             ;; never reaches the bottom (selectable rows < paint rows).
+             selected-visual-end (or (last sel-entry-idxs) selected-visual)
+             _ (let [start0 (visible-window-start selected-visual @scroll visible-h visual-n)
+                     ;; Pull the window down to reveal the selected row's last
+                     ;; desc line, but never so far that the option line itself
+                     ;; scrolls out of view (cap at `selected-visual`).
+                     start1 (if (>= selected-visual-end (+ start0 visible-h))
+                              (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
+                              start0)]
+                 (reset! scroll start1))]
          (draw-settings-tabs! g left tabs-row inner-w @active-tab)
          (p/set-colors! g t/dialog-border t/dialog-bg)
          (p/draw-separator! g left right tabs-sep-row)
