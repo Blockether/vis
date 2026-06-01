@@ -1813,8 +1813,12 @@
     (let [path (write-temp! "hashline/dup.txt" "x\ny\nx\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
+          ;; The dup line 'x' is intentionally ABSENT from :hashes (only
+          ;; usable/unique anchors are surfaced), so feed the raw hash.
           hashes (:hashes (read-file path))
-          r (patch [{:path path :from-hash (get hashes 1) :replace "NEW"}])]
+          r (patch [{:path path :from-hash (patch/line-hash "x") :replace "NEW"}])]
+      (expect (nil? (get hashes 1)))      ;; ambiguous line omitted from the map
+      (expect (= (patch/line-hash "y") (get hashes 2))) ;; unique line kept
       (expect (false? (:success? r)))
       (expect (= :hash-ambiguous (-> r :failures first :reason)))
       ;; file untouched

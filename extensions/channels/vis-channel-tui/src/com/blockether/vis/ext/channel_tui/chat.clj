@@ -320,6 +320,13 @@
    (and every downstream consumer) sees the same shape it sees for
    assistant answers.
 
+   Unlike model answers, user input is line-oriented: every literal
+   newline the user typed or pasted is intent (code, line-numbered
+   dumps, stack traces). We lift with `{:soft-break :hard}` so bare
+   newlines become `[:br]` and the bubble preserves the exact line
+   structure instead of collapsing pasted lines into one wrapped wall
+   of text (CommonMark prose soft-break semantics).
+
    The message carries ONLY `:ir` — every consumer that needs a
    string projection computes it on demand (and caches the result
    client-side, e.g. via `virtual.clj` projection) instead of us
@@ -327,7 +334,7 @@
   ([text] (user-message text (java.util.Date.)))
   ([text timestamp]
    {:role      :user
-    :ir        (vis/markdown->ir text)
+    :ir        (vis/markdown->ir text {:soft-break :hard})
     ;; Keep the raw text so resume paths (input-history arrow cycling in
     ;; state/:init-session, search, etc.) can recover the exact string
     ;; the user typed without re-rendering IR back to markdown.
