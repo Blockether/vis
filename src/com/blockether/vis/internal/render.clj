@@ -567,6 +567,17 @@
 ;; inline parser walks inline-children which may contain nested inlines.
 (declare ^:private cm->blocks ^:private cm->inlines)
 
+(def ^:dynamic *soft-break*
+  "How a CommonMark SoftLineBreak (a bare `\n` between two non-blank
+   lines) is lifted into IR. CommonMark prose semantics collapse a soft
+   break to a single space, which is correct for model-authored answers
+   and thinking. User-typed / pasted input is line-oriented (an input
+   box, not a prose document): a literal newline is intent, so we lift
+   it to `[:br]` to preserve the pasted shape (code, line-numbered
+   dumps, tables). Bound to `:hard` via `(markdown->ir text {:soft-break
+   :hard})`. Default `:space` keeps every existing caller unchanged."
+  :space)
+
 (defn- cm->inline-node [^Node n]
   (cond
     (instance? Text n)             [:span {} (.getLiteral ^Text n)]
@@ -577,7 +588,9 @@
     (instance? Link n)             (into [:a {:href (.getDestination ^Link n)}] (cm->inlines n))
     (instance? Image n)            [:img {:src (.getDestination ^Image n)
                                           :alt (.getTitle ^Image n)}]
-    (instance? SoftLineBreak n)    [:span {} " "]                    ; soft → single space
+    (instance? SoftLineBreak n)    (if (= :hard *soft-break*)
+                                     [:br {}]                        ; user input → preserve newline
+                                     [:span {} " "])                  ; prose → single space
     (instance? HardLineBreak n)    [:br {}]
     (instance? HtmlInline n)       [:span {} (.getLiteral ^HtmlInline n)]
     :else                          [:span {} ""]))
@@ -666,23 +679,30 @@
 
    Implementation: commonmark-java parser + GFM tables / strikethrough
    extensions, then a faithful Node→IR walker. Soft line breaks collapse
-   to a single space; hard line breaks become `[:br]`."
-  [text]
-  (cond
-    (canonical? text)
-    text   ; identity-preserving fast path
+   to a single space; hard line breaks become `[:br]`.
 
-    (or (nil? text) (= "" text))
-    [:ir {}]
+   `opts` (2-arity) currently understands `{:soft-break :hard}`, which
+   lifts every bare newline to `[:br]` instead of a space — used for
+   line-oriented user/pasted input so the rendered bubble keeps the
+   exact line structure the user typed. Default keeps prose semantics."
+  ([text] (markdown->ir text nil))
+  ([text {:keys [soft-break]}]
+   (cond
+     (canonical? text)
+     text   ; identity-preserving fast path
 
-    (string? text)
-    (let [doc    (.parse md-parser ^String text)
-          blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
-      (->ast (into [:ir {}] blocks)))
+     (or (nil? text) (= "" text))
+     [:ir {}]
 
-    :else
-    ;; non-string, non-canonical — best-effort coerce via ->ast
-    (->ast text)))
+     (string? text)
+     (binding [*soft-break* (or soft-break *soft-break*)]
+       (let [doc    (.parse md-parser ^String text)
+             blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
+         (->ast (into [:ir {}] blocks))))
+
+     :else
+     ;; non-string, non-canonical — best-effort coerce via ->ast
+     (->ast text))))
 
 ;; =============================================================================
 ;; Walker helpers (canonical inputs)

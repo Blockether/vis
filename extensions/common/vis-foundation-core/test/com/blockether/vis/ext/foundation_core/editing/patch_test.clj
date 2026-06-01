@@ -106,9 +106,15 @@
     (expect (= (patch/line-hash "hello") (patch/line-hash "  hello  ")))
     (expect (= (patch/line-hash "x") (patch/line-hash "x"))))
 
-  (it "lines->hashes maps every tuple's line-number to its content hash"
+  (it "lines->hashes maps unique non-blank tuples to their content hash"
     (expect (= {1 (patch/line-hash "a") 2 (patch/line-hash "b")}
               (patch/lines->hashes [[1 "a"] [2 "b"]]))))
+
+  (it "lines->hashes OMITS blank lines and duplicate (ambiguous) lines"
+    ;; dup 'x' (lines 1,3) and the blank line 4 can't be hash-addressed,
+    ;; so they never appear in the map — only the unique 'y' survives.
+    (expect (= {2 (patch/line-hash "y")}
+              (patch/lines->hashes [[1 "x"] [2 "y"] [3 "x"] [4 "   "]]))))
 
   (it "render-hashline-block renders a `<hash>| text` gutter, no line numbers"
     (let [out (patch/render-hashline-block [[7 "alpha"] [8 "beta"]])]
@@ -117,6 +123,18 @@
                 out))
       ;; line numbers (7/8) are NOT in the gutter
       (expect (not (re-find #"\b7\b" out)))))
+
+  (it "render-hashline-block blanks the gutter on blank + duplicate lines, kept aligned"
+    (let [out   (patch/render-hashline-block [[1 "dup"] [2 "uniq"] [3 "dup"] [4 ""]])
+          lines (clojure.string/split-lines out)]
+      ;; unique line shows its hash
+      (expect (= (str (patch/line-hash "uniq") "│ uniq") (nth lines 1)))
+      ;; duplicate + blank lines get a 6-space aligned gutter, no hash
+      (expect (= "      │ dup" (nth lines 0)))
+      (expect (= "      │ dup" (nth lines 2)))
+      (expect (= "      │ " (nth lines 3)))
+      ;; every gutter column lines up: `│` at the same index on every row
+      (expect (apply = (map #(clojure.string/index-of % "│") lines)))))
 
   (it "render-hashline-range-block headers each window then the hash gutter"
     (let [out (patch/render-hashline-range-block
