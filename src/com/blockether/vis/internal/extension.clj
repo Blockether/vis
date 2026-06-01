@@ -827,6 +827,12 @@
 ;; the default threshold (`iteration/default-batch-hint-threshold`).
 (s/def :ext.symbol/batch-hint pos-int?)
 
+;; Hidden alias symbols still bind into SCI but are omitted from the
+;; model-facing prompt symbol catalog (see prompt.clj). Used for back-compat
+;; aliases like git/add! ↔ git/add and git/commit ↔ git/commit! so both
+;; spellings resolve while only the canonical name is advertised.
+(s/def :ext.symbol/hidden? boolean?)
+
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
@@ -835,6 +841,7 @@
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists]
     :opt [:ext.symbol/raw?
+          :ext.symbol/hidden?
           :ext.symbol/tag
           :ext.symbol/batch-hint
           :ext.symbol/render-sample
@@ -1381,6 +1388,7 @@
                            :doc      doc
                            :arglists arglists}
         raw?           (assoc :ext.symbol/raw? true)
+        (:hidden? opts)  (assoc :ext.symbol/hidden? true)
         source         (assoc :ext.symbol/source source)
         (:tag opts)            (assoc :ext.symbol/tag (:tag opts))
         (:batch-hint opts)     (assoc :ext.symbol/batch-hint (:batch-hint opts))
