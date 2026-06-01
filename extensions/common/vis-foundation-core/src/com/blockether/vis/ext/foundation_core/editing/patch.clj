@@ -14,7 +14,12 @@
                               -> {:start :pass :indent-delta?} or nil
      split-content-lines      string -> vec of lines (no trailing \\n element)
      char-offset-at-line      content line-idx -> char offset
-     apply-indent-delta       delta lines -> re-indented lines"
+     apply-indent-delta       delta lines -> re-indented lines
+
+   It also owns the reusable HASHLINE layer (content-addressed editing):
+     line-hash / lines->hashes              text -> 6-hex anchor / {ln hash}
+     render-hashline-block / -range-block   tuples -> `<hash>| text` gutter
+     indices-matching-hash / resolve-hash-edit  self-locating range replace"
   (:require
    [clojure.string :as str]))
 
@@ -315,15 +320,127 @@
              :occurrences (count hits)}))))))
 
 ;; =============================================================================
-;; line-hash — stable per-line anchor for hashline edits
+;; Hashline layer — the single, reusable hash-addressed editing surface.
+;;
+;; vis edits by CONTENT HASH, not by line number. This block owns every
+;; reusable piece so callers never recompute the scheme:
+;;
+;;   line-hash                text            -> 6-hex content anchor
+;;   lines->hashes            [[ln text]…]    -> {ln hash}        (model map)
+;;   render-hashline-block    [[ln text]…]    -> "<hash>│ text…"   (gutter)
+;;   render-hashline-range-block ranges       -> headered gutter blocks
+;;   indices-matching-hash    lines hash      -> [0-based idx …]
+;;   resolve-hash-edit        content h h2 rep -> {:new-content}|{:error}
+;;
+;; The gutter the reader SEES is the edit address — `v/patch :from-hash`
+;; resolves the same `line-hash` against live content. Line numbers live
+;; only in the CAT summary / range headers (navigation), never the gutter:
+;; hashes replace them.
 ;; =============================================================================
 
 (defn line-hash
   "Stable 6-hex-char content hash of `line` (trimmed). Deterministic
    across JVM runs because it folds `String/hashCode` (spec'd algorithm).
-   Identical trimmed lines share a hash — the line NUMBER disambiguates in
-   `v/cat` output; `v/patch` hash anchors require file-wide uniqueness or
-   fall back to an explicit `:from-line`/`:to-line`."
+   Identical trimmed lines share a hash — a dup-line collision makes a
+   `:from-hash` anchor ambiguous and `resolve-hash-edit` refuses it (the
+   caller falls back to `:search`)."
   [^String line]
   (let [h (.hashCode (str/trim (str line)))]
     (format "%06x" (bit-and h 0xffffff))))
+
+(defn lines->hashes
+  "`{line-number hash}` map for a vec of `[line-number text]` tuples.
+   The canonical `:hashes` payload `v/cat` returns — the SINGLE place this
+   map is built (read-file / read-file-ranges / tail-file all route here)."
+  [tuples]
+  (into {} (map (fn [[ln t]] [ln (line-hash t)])) tuples))
+
+(def ^:const hashline-gutter
+  "Separator between the hash anchor and the line text in rendered output."
+  "│ ")
+
+(defn render-hashline-block
+  "Render `[line-number text]` tuples as the canonical hash gutter:
+   `<hash>│ <text>`, one line per tuple. The hash is derived from the
+   text itself (`line-hash`) so this needs no external `:hashes` map and
+   stays the single source of truth for the cat body — whole-file, range
+   window and tail all render through here."
+  [tuples]
+  (->> tuples
+    (map (fn [[_ln s]] (str (line-hash s) hashline-gutter s)))
+    (str/join "\n")))
+
+(defn render-hashline-range-block
+  "Render `:ranges` windows (`[{:range [start end] :lines [[ln text]…]}…]`)
+   as `-- range S-E --` headers followed by the canonical hash gutter for
+   each window. Same body format as `render-hashline-block`, so multi-range
+   reads carry hash anchors exactly like a whole-file read."
+  [ranges]
+  (->> ranges
+    (map (fn [{:keys [range lines]}]
+           (let [[start end] range]
+             (str "-- range " start "-" end " --"
+               (when (seq lines)
+                 (str "\n" (render-hashline-block lines)))))))
+    (str/join "\n\n")))
+
+(defn- line-span->char-span
+  "Convert a 0-based [line-start line-end) span to a [char-start char-end]
+   substring span in `content`, keeping a trailing `\n` OUTSIDE the
+   replaced region."
+  [^String content ^long line-start ^long line-end]
+  (let [char-start   (char-offset-at-line content line-start)
+        char-end-raw (char-offset-at-line content line-end)
+        char-end     (if (and (< char-end-raw (count content))
+                           (pos? char-end-raw)
+                           (= \newline (.charAt content (dec char-end-raw))))
+                       (dec char-end-raw)
+                       char-end-raw)]
+    [char-start char-end]))
+
+(defn indices-matching-hash
+  "0-based indices of `lines` whose `line-hash` equals `h`."
+  [lines h]
+  (let [h (str h)]
+    (into [] (keep-indexed (fn [i l] (when (= h (line-hash l)) i))) lines)))
+
+(defn resolve-hash-edit
+  "Content-addressed line-range replace. Resolves `from-hash` (and
+   `to-hash`, defaulting to `from-hash` for a single line) against the
+   LIVE `current` content by recomputing `line-hash` per line — so the
+   edit lands on the right line even if it drifted since the `v/cat` read.
+   Each hash must match EXACTLY one line; a dup-line collision is refused
+   (use `:search`). Returns `{:new-content S :applied-line N}` or
+   `{:error {:reason KW …}}`."
+  [^String current from-hash to-hash ^String replace]
+  (let [lines    (split-content-lines current)
+        to-hash  (or to-hash from-hash)
+        froms    (indices-matching-hash lines from-hash)
+        tos      (indices-matching-hash lines to-hash)]
+    (cond
+      (empty? froms)
+      {:error {:reason :hash-not-found :which :from :hash (str from-hash)}}
+      (> (count froms) 1)
+      {:error {:reason :hash-ambiguous :which :from :hash (str from-hash)
+               :lines (mapv inc froms)}}
+      (empty? tos)
+      {:error {:reason :hash-not-found :which :to :hash (str to-hash)}}
+      (> (count tos) 1)
+      {:error {:reason :hash-ambiguous :which :to :hash (str to-hash)
+               :lines (mapv inc tos)}}
+      (< (long (first tos)) (long (first froms)))
+      {:error {:reason :hash-range-inverted
+               :from-line (inc (first froms)) :to-line (inc (first tos))}}
+      :else
+      (let [line-start (long (first froms))
+            line-end   (inc (long (first tos)))
+            [char-start char-end] (line-span->char-span current line-start line-end)
+            matched-ends-nl? (and (> (long char-end) 0)
+                               (= \newline (.charAt current (dec (long char-end)))))
+            replace-ends-nl? (str/ends-with? replace "\n")
+            rewritten (if (and matched-ends-nl? (not replace-ends-nl?))
+                        (str replace "\n") replace)]
+        {:new-content (str (subs current 0 char-start)
+                        rewritten
+                        (subs current char-end))
+         :applied-line (inc line-start)}))))
