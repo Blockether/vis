@@ -423,6 +423,19 @@
             ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
             ;; calls expected.
             (expect (zero? @calls))))))
+    (it "fires :on-warm at least once when warming completes"
+      ;; The render-version bump hook: callers wire :on-warm to
+      ;; settle total-h via a re-layout. Must fire at least once
+      ;; (the final settle) even for a sub-batch session.
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [hits (atom 0)
+            t (virtual/pre-warm! [(plain-assistant-msg "a")
+                                  (plain-assistant-msg "b")]
+                bubble-w settings
+                {:on-warm (fn [] (swap! hits inc))})]
+        (.join ^Thread t 5000)
+        (expect (pos? @hits))))
     (it "stop-pre-warm! is safe on nil and on already-finished threads"
       (expect (nil? (virtual/stop-pre-warm! nil)))
       (let [t (virtual/pre-warm! [(plain-assistant-msg "x")] bubble-w settings)]

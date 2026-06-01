@@ -861,20 +861,42 @@
    Settings parity with `layout`: pass the SAME settings map so the
    cached entries match the keys subsequent layout passes will
    look up. Mismatched settings = wasted compute (the layout pass
-   will format again with different cache keys)."
-  ^Thread [messages bubble-w settings & [{:keys [session-id detail-expansions]}]]
+   will format again with different cache keys).
+
+   `:on-warm` (0-arg fn, optional) fires on the worker thread as
+   heights land in the sticky cache — periodically (every
+   `warm-bump-every` bubbles) AND once when the whole session is
+   warmed. Callers wire this to a render-version bump so `total-h`
+   SETTLES to its fully-measured value while the user is still idle
+   at auto-bottom (where the thumb is pinned to the bottom, so the
+   settle is invisible) instead of snapping in one ~20% step on the
+   first wheel-up. Without it the background warm populates the
+   cache silently and the correction is deferred — and applied all
+   at once — to the next render the user happens to trigger by
+   scrolling. See the `:caveat` note at the top of this ns."
+  ^Thread [messages bubble-w settings & [{:keys [session-id detail-expansions on-warm]}]]
   (let [n (long (count messages))]
     (when (pos? n)
       (let [bubble-w (long bubble-w)
+            warm-bump-every 8
+            on-warm (when (fn? on-warm) on-warm)
+            fire-warm! (fn [] (when on-warm (try (on-warm) (catch Throwable _ nil))))
             t (Thread.
                 ^Runnable
                 (fn []
                   (try
-                    (loop [i (dec n)]
+                    (loop [i (dec n)
+                           since-bump 0]
                       (when (and (>= i 0) (not (.isInterrupted (Thread/currentThread))))
                         (warm-message-height!
                           messages i bubble-w settings session-id detail-expansions)
-                        (recur (dec i))))
+                        (if (>= (inc since-bump) warm-bump-every)
+                          (do (fire-warm!) (recur (dec i) 0))
+                          (recur (dec i) (inc since-bump)))))
+                    ;; Final settle: ensure the LAST batch (< warm-bump-every
+                    ;; bubbles) also triggers one re-layout so total-h reaches
+                    ;; its terminal value. Skipped on interrupt below.
+                    (fire-warm!)
                     (catch InterruptedException _
                       ;; Cooperative cancellation - nothing to do.
                       nil)
