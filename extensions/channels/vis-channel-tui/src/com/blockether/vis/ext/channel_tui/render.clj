@@ -3200,21 +3200,25 @@
         ;; 0 hits, single-port PORTS, edit with no path, …).
         display-body (ir-body-entries (:display op) result-marker max-w)
         has-body?    (boolean (seq display-body))
-        chevron      (cond (not has-body?) " "
-                       expanded?       "▼"
-                       :else           "▶")
+        ;; A non-collapsible row (no body to reveal) reserves NO disclosure
+        ;; column: there is no chevron to align to, so padding the label in
+        ;; from the left is dead space. Collapsible rows keep `chevron + space`.
+        prefix    (cond (not has-body?) ""
+                    expanded?           "▼ "
+                    :else               "▶ ")
+        prefix-w  (long (p/display-width prefix))
         error?    (= :error (:status op))
         label     (cond->> (op-row-label op)
                     error? (str "✗ "))
         gap       3
-        ;; chevron(1) + space(1) + label + gap + summary
+        ;; prefix (chevron+space, or empty) + label + gap + summary
         label-w   (max (p/display-width label) (long (or label-w 0)))
-        head-w    (+ 2 label-w gap)
+        head-w    (+ prefix-w label-w gap)
         sum-w     (max 0 (- (long max-w) head-w))
         summary   (op-row-summary op sum-w)
         label-pad (max 0 (- label-w (p/display-width label)))
         line      (ellipsize-cols
-                    (str chevron " " label (repeat-str \space label-pad)
+                    (str prefix label (repeat-str \space label-pad)
                       (repeat-str \space gap) summary)
                     max-w)
         meta      (when (and has-body? session-id node-id)
