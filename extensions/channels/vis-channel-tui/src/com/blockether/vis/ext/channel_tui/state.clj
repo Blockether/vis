@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.util.concurrent Executors ScheduledExecutorService
             ScheduledFuture TimeUnit]))
@@ -73,7 +74,7 @@
    :workspace/root
    :title
    :messages
-   :messages-scroll
+   :scroll
    :input
    :input-history
    :input-history-index
@@ -99,7 +100,7 @@
    :workspace/root nil
    :title nil
    :messages []
-   :messages-scroll nil
+   :scroll scroll/follow
    :input (input/empty-input)
    :input-history []
    :input-history-index nil
@@ -180,7 +181,7 @@
 ;; {:config     nil              ;; provider config map or nil
 ;;  :session nil            ;; {:id session-id} or nil - handle to the shared sessions cache
 ;;  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
-;;  :messages-scroll nil              ;; row offset into bubbles, nil = auto-bottom
+;;  :scroll {:mode :follow}      ;; scroll variant (see scroll.clj): :follow|:at
 ;;  :input      {:lines [""] :crow 0 :ccol 0}
 ;;  :input-history []            ;; persisted user queries for this session
 ;;  :input-history-index nil     ;; nil = editing live draft, 0 = newest history entry
@@ -718,7 +719,7 @@
                     :session nil
                     :title      nil
                     :messages   []
-                    :messages-scroll nil
+                    :scroll     scroll/follow
                     :input      (input/empty-input)
                     :input-history []
                     :input-history-index nil
@@ -943,7 +944,7 @@
         (assoc :session session
           :title nil
           :messages (or history [])
-          :messages-scroll nil
+          :scroll scroll/follow
           :input (input/empty-input)
           :input-history user-history
           :input-history-index nil
@@ -1060,7 +1061,7 @@
   (let [visible-text (input/expand-paste-placeholders text pastes)]
     (-> db
       (assoc :messages (drop-pending-turn-messages (:messages db))
-        :messages-scroll nil
+        :scroll scroll/follow
         :input (text->input-state text)
         :input-history-index nil
         :input-history-draft nil
@@ -1170,109 +1171,41 @@
   (fn [db [_ id]]
     (update db :pastes dissoc id)))
 
+;; -- Messages-area scroll ---------------------------------------------------
+;;
+;; All scroll state is ONE workspace-local tagged value, `:scroll` (see
+;; `scroll.clj` for the variant + transition algebra). These events are
+;; thin wrappers: each REPLACES `:scroll` with the next variant, so nothing
+;; can dangle across frames. The render loop reads it back via
+;; `scroll/layout-offset` (what row to paint) and drives the animation with
+;; `:ease-scroll`.
+
 (reg-event-db :set-scroll
-  (fn [db [_ scroll]]
-    (assoc db :messages-scroll scroll)))
+  ;; Search jump / `:scroll-to-message` resolution: snap-park at an exact
+  ;; row (already clamped by the painter). No ease - the jump is the point.
+  (fn [db [_ offset]]
+    (assoc db :scroll (scroll/parked offset))))
 
 (reg-event-db :reanchor-scroll
-  ;; Scroll-anchoring write-back from the render thread. `anchored` is
-  ;; the corrected absolute offset; `delta` is how far it moved the
-  ;; current scroll (content above the anchor changed height as
-  ;; off-screen estimates resolved to real heights).
-  ;;
-  ;; Crucially we shift the in-flight `:messages-scroll-target` by the
-  ;; SAME delta. The target lives in the same absolute coordinate, so
-  ;; if we re-anchored `:messages-scroll` but left the target alone the
-  ;; smooth-scroll animation would yank back toward a now-stale
-  ;; position — that produced the \"scroll up a little, jump to the
-  ;; middle\" lurch when leaving auto-bottom into still-estimated
-  ;; scrollback.
+  ;; Scroll-anchoring write-back from the render thread. `anchored` is the
+  ;; corrected absolute on-screen row; `delta` is how far content ABOVE the
+  ;; anchor changed height as off-screen estimates resolved. Shift the
+  ;; concrete fields so the anchored message stays visually put (no lurch).
+  ;; FOLLOW-at-bottom feeds nil to the layout and never dispatches this.
   (fn [db [_ anchored delta]]
-    (let [delta (long (or delta 0))]
-      (cond-> (assoc db :messages-scroll anchored)
-        (and (some? (:messages-scroll-target db)) (not (zero? delta)))
-        (update :messages-scroll-target
-          (fn [t] (max 0 (+ (long t) delta))))))))
+    (assoc db :scroll (scroll/reanchor (:scroll db) (long anchored) (long (or delta 0))))))
 
-(def ^:const auto-follow-slack-rows
-  "How close (in rows) to the bottom still counts as \"following\".
-   The render loop calls `:follow-bottom-if-near` while a turn streams;
-   if the user sits within this many rows of the bottom we flip back to
-   nil = auto-bottom so freshly streamed content keeps the latest
-   message in view. Kept small (a few rows) on purpose: the user can
-   still scroll up even slightly to read history mid-stream and stay
-   put — we only auto-follow when they're genuinely parked at the
-   bottom edge, never from the middle of the scrollback."
-  4)
-
-(reg-event-db :follow-bottom-if-near
-  ;; Dispatched by the render loop while `:loading?` (a turn is
-  ;; producing content). Re-arms auto-bottom FOLLOW (nil) when the user
-  ;; is parked within `auto-follow-slack-rows` of the bottom, so growing
-  ;; live content scrolls into view. A deliberate scroll-up beyond the
-  ;; slack leaves the concrete offset untouched — no yank from history.
+(reg-event-db :ease-scroll
+  ;; Render-loop pulse: advance the on-screen position one ease-out step
+  ;; toward where the current intent WANTS it (bottom in FOLLOW, the parked
+  ;; offset in AT). This single event subsumes the old tick-scroll-anim +
+  ;; follow-bottom-animated + follow-bottom-if-near trio: in FOLLOW the
+  ;; desired row simply IS the growing bottom, so streamed content eases in
+  ;; for free, and a user parked above (mode :at) is never yanked because
+  ;; their desired row is fixed.
   (fn [db [_ total-h inner-h]]
-    (let [scroll (:messages-scroll db)
-          target (:messages-scroll-target db)]
-      ;; NEVER override an in-progress scroll: when `:messages-scroll-
-      ;; target` is set the user is actively wheeling/keying (e.g. UP,
-      ;; away from the bottom). Re-following here would swallow that
-      ;; intent mid-animation — the user then has to "scroll really
-      ;; hard" to escape the bottom. Only re-arm follow when the view
-      ;; is at rest AND parked within the slack band of the bottom.
-      (if (or (nil? scroll) (some? target) (nil? total-h) (nil? inner-h))
-        db
-        (let [max-s (max 0 (- (long total-h) (long inner-h)))]
-          (if (and (pos? max-s)
-                (>= (long scroll) (- max-s (long auto-follow-slack-rows))))
-            (dissoc db :messages-scroll :messages-scroll-target :scroll-follow-armed? :scroll-pinned-up?)
-            db))))))
-
-(reg-event-db :follow-bottom-animated
-  ;; Render-loop pulse while a turn streams. Replaces the instant nil
-   ;; auto-bottom snap with an EASED follow: keep `:messages-scroll`
-   ;; concrete and re-target it at the current bottom each frame, so
-   ;; `:tick-scroll-anim` walks the view down over a few frames instead
-   ;; of teleporting when a whole code block lands at once (the
-   ;; "jump jump"). No `:scroll-follow-armed?` here on purpose: arming
-   ;; would let `clear-anim-when-settled` flip back to nil between
-   ;; blocks, and the very next block would snap again. Staying concrete
-   ;; at the bottom keeps every growth animated.
-   ;;
-   ;; Following is abandoned the moment the user scrolls beyond the slack
-   ;; band (reading history mid-stream) — their concrete offset is left
-   ;; untouched and no target is injected, so they don't get yanked back.
-  (fn [db [_ total-h inner-h]]
-    (let [max-s  (max 0 (- (long total-h) (long inner-h)))
-          scroll (:messages-scroll db)
-          target (:messages-scroll-target db)
-          slack  (long auto-follow-slack-rows)]
-      (cond
-        (not (pos? max-s)) db
-        ;; Deliberately scrolled up to read: the user pressed scroll-UP
-        ;; (`:scroll-pinned-up?`) AND is parked below the bottom band
-        ;; with no follow-ward target. The intent flag is load-bearing:
-        ;; without it the positional test ALONE misfired right after an
-        ;; atomic append (send / a large tool result landing in one
-        ;; frame). `:messages-scroll` had just been seeded off the STALE
-        ;; pre-append layout, so it sat > slack rows above the NEW
-        ;; bottom — indistinguishable from a real scroll-up — and the
-        ;; view froze above the just-sent message instead of following.
-        (and (:scroll-pinned-up? db)
-          (some? scroll)
-          (< (long scroll) (- max-s slack))
-          (or (nil? target) (< (long target) (- max-s slack))))
-        db
-        ;; Following. Seed a concrete position (current bottom when we
-        ;; were in pure nil auto-bottom) and ease toward the live bottom.
-        :else
-        (let [cur (long (or scroll max-s))]
-          (if (> max-s cur)
-            (assoc db :messages-scroll cur :messages-scroll-target max-s)
-            ;; Caught up / parked at bottom: hold concrete so the NEXT
-            ;; growth has somewhere to ease FROM; no target = no churn.
-            ;; Back at the bottom — clear any stale scroll-up intent.
-            (-> db (dissoc :scroll-pinned-up?) (assoc :messages-scroll cur))))))))
+    (let [max-s (max 0 (- (long total-h) (long inner-h)))]
+      (assoc db :scroll (scroll/ease (:scroll db) max-s)))))
 
 (reg-event-db :scroll-to-message
   ;; In-session search lands here after the user picks a hit.
@@ -1283,10 +1216,10 @@
   (fn [db [_ msg-idx]]
     (cond-> db
       (and (integer? msg-idx) (>= msg-idx 0))
-      ;; A search jump parks the view on a hit (usually above the live
-      ;; edge); latch scroll-up intent so streaming follow won't yank it
-      ;; back to the bottom until the user returns there themselves.
-      (assoc :scroll-to-message-pending msg-idx :scroll-pinned-up? true))))
+      ;; The resolution dispatches `:set-scroll`, which parks (mode :at) on
+      ;; the hit. Parking IS the scroll-up intent now, so streaming follow
+      ;; hands off automatically until the user scrolls back to the bottom.
+      (assoc :scroll-to-message-pending msg-idx))))
 
 (reg-event-db :scroll-to-message-resolved
   ;; Painter calls this after consuming `:scroll-to-message-pending`
@@ -1294,146 +1227,35 @@
   (fn [db _]
     (dissoc db :scroll-to-message-pending)))
 
-;; Smooth scroll: wheel and arrow-key events update `:messages-scroll-target`
-;; (where the user WANTS to be); the render loop ticks `:tick-scroll-anim`
-;; periodically to step `:messages-scroll` (where the user IS) toward target,
-;; producing animation across frames instead of a single jarring jump.
-;;
-;; Direct setters (`:set-scroll`, `:scroll-to-y`, `:scroll-to-message`) skip
-;; the target layer and snap both target + current to the same value, so
-;; scrollbar drag stays responsive and resume / search-jump don't fade-in.
-
-(defn- clear-anim-when-settled
-  "Drop `:messages-scroll-target` when target = current. Keeps the render
-   loop's `(scroll-anim-active? db)` check trivial: presence of the key
-   means animation is in progress.
-
-   When `:scroll-follow-armed?` is set (the move was a scroll-DOWN that
-   reached the bottom), settling converts the concrete offset back to
-   `nil` = auto-bottom FOLLOW mode. That's how the user re-arms
-   stick-to-bottom: scroll to the bottom and new streamed content
-   keeps pulling the view down again, instead of freezing one row
-   above the last message forever."
-  [db]
-  (let [t (:messages-scroll-target db)
-        c (:messages-scroll db)]
-    (if (and (some? t) (= t c))
-      (if (:scroll-follow-armed? db)
-        (dissoc db :messages-scroll-target :messages-scroll :scroll-follow-armed?)
-        (dissoc db :messages-scroll-target))
-      db)))
-
-(defn- seed-auto-bottom
-  "When `:messages-scroll` is nil (auto-bottom) the user is visually
-   pinned to `max-s` (the bottom), but `:tick-scroll-anim` reads
-   `(or :messages-scroll 0)` and would animate from row 0 (the TOP).
-   Seed the current position to `max-s` before an animated move so the
-   first wheel-up off the bottom doesn't flash to the top and scroll
-   back down. No-op once a concrete offset is already set."
-  [db ^long max-s]
-  (cond-> db
-    (nil? (:messages-scroll db)) (assoc :messages-scroll max-s)))
-
 (reg-event-db :scroll-up
+  ;; Wheel / arrow / PageUp: park `amount` rows above the current row and
+  ;; ease there. Scrolling up is always a deliberate read-history intent
+  ;; (mode :at), so the streaming follow hands off automatically.
   (fn [db [_ amount total-h inner-h]]
-    (let [max-s   (max 0 (- total-h inner-h))
-          cur-t   (or (:messages-scroll-target db) (:messages-scroll db) max-s)
-          new-t   (max 0 (- cur-t amount))]
-      ;; Scrolling UP is an explicit "let me read history" intent: drop
-      ;; any armed follow so the view stops chasing the bottom, and set
-      ;; `:scroll-pinned-up?` so `:follow-bottom-animated` hands off (the
-      ;; ONLY thing that should stop the auto-follow while a turn streams).
-      (clear-anim-when-settled
-        (-> db
-          (dissoc :scroll-follow-armed?)
-          (assoc :scroll-pinned-up? true)
-          (seed-auto-bottom max-s)
-          (assoc :messages-scroll-target new-t))))))
+    (let [max-s (max 0 (- (long total-h) (long inner-h)))]
+      (assoc db :scroll (scroll/up (:scroll db) (long amount) max-s)))))
 
 (reg-event-db :scroll-down
+  ;; Wheel / arrow / PageDown: ease `amount` rows down; landing within the
+  ;; slack band of the bottom re-arms FOLLOW.
   (fn [db [_ amount total-h inner-h]]
-    (let [max-s (max 0 (- total-h inner-h))
-          cur-t (or (:messages-scroll-target db) (:messages-scroll db) max-s)]
-      (if (>= (+ cur-t amount) max-s)
-        ;; Reached the bottom: animate the last step to `max-s`, then
-        ;; `clear-anim-when-settled` flips us back to nil = FOLLOW mode
-        ;; (because `:scroll-follow-armed?` is set). Re-arms stick-to-
-        ;; bottom so subsequent streamed content keeps the latest
-        ;; message in view.
-        (-> db
-          (dissoc :scroll-pinned-up?)
-          (seed-auto-bottom max-s)
-          (assoc :messages-scroll-target max-s
-            :scroll-follow-armed? true)
-          clear-anim-when-settled)
-        ;; Stepped down but not yet at the bottom — still reading above
-        ;; the live edge, so keep the scroll-up intent latched.
-        (clear-anim-when-settled
-          (-> db
-            (dissoc :scroll-follow-armed?)
-            (assoc :scroll-pinned-up? true)
-            (seed-auto-bottom max-s)
-            (assoc :messages-scroll-target (min max-s (+ cur-t amount)))))))))
+    (let [max-s (max 0 (- (long total-h) (long inner-h)))]
+      (assoc db :scroll (scroll/down (:scroll db) (long amount) max-s)))))
 
-(defn- step-toward
-  "Compute one animation step from `cur` toward `target`.
-   Ease-out: bigger steps when far, smaller as we close in. Snaps when
-   within one row so the loop terminates cleanly."
-  ^long [^long cur ^long target]
-  (let [diff (- target cur)]
-    (cond
-      (zero? diff)        cur
-      (= 1 (Math/abs diff)) target
-      :else
-      (let [step (long (Math/max 1 (long (Math/ceil (* 0.35 (Math/abs diff))))))]
-        (if (pos? diff)
-          (Math/min target (+ cur step))
-          (Math/max target (- cur step)))))))
-
-(reg-event-db :tick-scroll-anim
-  ;; Render loop pulse: walk current scroll one ease-out step toward
-  ;; target. Idempotent when no animation is pending (target=current
-  ;; → key already dropped by `clear-anim-when-settled`).
-  (fn [db _]
-    (let [target (:messages-scroll-target db)]
-      (if (nil? target)
-        db
-        (let [cur     (long (or (:messages-scroll db) 0))
-              t-long  (long target)
-              new-cur (step-toward cur t-long)]
-          (clear-anim-when-settled
-            (assoc db :messages-scroll new-cur)))))))
-
-;; Scrollbar mouse drag/click. Mirrors the thumb-positioning math in
-;; `render/draw-messages-area!` so a click on the bar lands the thumb
-;; top at the cursor row, and a drag follows the cursor. `bar-top` is
-;; the row of the topmost track cell; `track-h` is the track length
-;; in rows; `total-h`/`inner-h` are the layout sizes the render thread
-;; published into app-db.
 (reg-event-db :scroll-to-y
-  ;; Scrollbar drag / track click: direct snap. Drag must follow the
-  ;; cursor 1:1, so we bypass the target-interpolation layer and snap
-  ;; both fields to the same value (animation would lag the thumb).
+  ;; Scrollbar drag / track click: map the cursor row to an offset and SNAP
+  ;; (1:1, no ease - animation would lag the thumb). The very bottom
+  ;; re-enters FOLLOW. Mirrors the thumb math in `scrollbar/geometry`:
+  ;; `bar-top` is the top track row, `track-h` the track length, and
+  ;; `total-h`/`inner-h` the layout sizes the render thread published.
   (fn [db [_ mouse-y bar-top track-h total-h inner-h]]
-    (if (or (<= total-h inner-h) (<= track-h 0))
+    (if (or (<= (long total-h) (long inner-h)) (<= (long track-h) 0))
       db
-      (let [thumb-h    1
-            max-scroll (max 0 (- total-h inner-h))
-            relative   (- mouse-y bar-top)
-            denom      (max 1 (- track-h thumb-h))
-            fraction   (max 0.0 (min 1.0 (double (/ relative denom))))
-            new-scroll (max 0 (min max-scroll
-                                (long (Math/round (* fraction max-scroll)))))
-            at-bottom? (>= new-scroll max-scroll)]
-        ;; Drag/click to the very bottom re-enters FOLLOW mode (nil),
-        ;; matching scroll-down; anywhere else is a deliberate concrete
-        ;; position, so drop any armed follow and latch scroll-up intent
-        ;; so the streaming follow hands off there too.
-        (-> db
-          (dissoc :messages-scroll-target :scroll-follow-armed?)
-          (cond-> at-bottom? (dissoc :scroll-pinned-up?))
-          (cond-> (not at-bottom?) (assoc :scroll-pinned-up? true))
-          (assoc :messages-scroll (when-not at-bottom? new-scroll)))))))
+      (let [max-s    (max 0 (- (long total-h) (long inner-h)))
+            denom    (max 1 (- (long track-h) 1))
+            fraction (max 0.0 (min 1.0 (double (/ (- (long mouse-y) (long bar-top)) denom))))
+            offset   (long (Math/round (* fraction (double max-s))))]
+        (assoc db :scroll (scroll/to-y offset max-s))))))
 
 (defn- turn-extra-body
   [{:keys [settings]}]
@@ -1516,7 +1338,11 @@
                      (update :input-history (fn [xs]
                                               (let [xs (vec (or xs []))]
                                                 (if (= visible-text (last xs)) xs (conj xs visible-text)))))
-                     (assoc :messages-scroll nil :loading? true
+                     ;; Sending re-pins to the bottom: one atomic FOLLOW
+                     ;; reset replaces the whole `:scroll` value, so no
+                     ;; in-flight animation target can dangle and flash the
+                     ;; view to the top of the freshly-appended message.
+                     (assoc :scroll scroll/follow :loading? true
                        :cancel-token token
                        :cancelling? false
                        :progress {:iterations []}
@@ -1526,10 +1352,6 @@
                                          :paste-counter (:paste-counter source-db)}
                        :input-history-index nil
                        :input-history-draft nil
-                       ;; Sending re-pins to the bottom: clear any
-                       ;; scroll-up intent so the streaming follow keeps
-                       ;; the freshly-appended user message in view.
-                       :scroll-pinned-up? false
                        :slash-command-index 0
                        :slash-command-hidden? false))))
            ;; `agent-text` (LLM-facing, with `@path` expanded into a
@@ -1651,8 +1473,14 @@
                                messages'      (replace-pending-assistant (:messages workspace) response)
                                still-pending? (boolean (some pending-assistant-message? messages'))
                                workspace'     (cond-> (assoc workspace
+                                                        ;; Re-pin to the bottom by REPLACING `:scroll` with a
+                                                        ;; fresh FOLLOW. A result can land atomically while an
+                                                        ;; ease was in flight (e.g. a `/workspace list` table);
+                                                        ;; replacing the whole value means no animation target
+                                                        ;; can dangle, so the view snaps cleanly to the bottom
+                                                        ;; instead of flashing to the top first.
                                                         :messages messages'
-                                                        :messages-scroll nil
+                                                        :scroll scroll/follow
                                                         :loading? still-pending?
                                                         :cancelling? false)
                                                 (not still-pending?)
