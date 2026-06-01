@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.provider :as provider]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
@@ -753,7 +754,7 @@
    layout calculation and the actual draw - the old code path computed
    it twice per frame, which doubled cost on long traces."
   [^TerminalScreen screen cols rows
-   {:keys [messages messages-scroll input progress loading? cancelling? turn-start-ms settings
+   {:keys [messages input progress loading? cancelling? turn-start-ms settings
            slash-command-index],
     :as db} now-ms]
   (let [now-ms (long now-ms)
@@ -784,6 +785,12 @@
         ;; mismatch. Use the const, never the value.
         bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
         inner-h (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
+        ;; Derive the concrete layout offset from the `:scroll` variant. nil
+        ;; = FOLLOW settled at the bottom (auto-bottom, never anchored); a
+        ;; number = parked or mid-ease. `prev-max-s` from the previously
+        ;; published layout is good enough to tell "settled" from "easing".
+        prev-max-s (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
+        messages-scroll (scroll/layout-offset (:scroll db) prev-max-s)
         ;; `:viewport-rows` lets the live progress bubble truncate its
         ;; iteration trace to what actually fits on screen instead of
         ;; formatting all 15-of-N iterations every spinner tick. Off-screen
@@ -1001,7 +1008,7 @@
    begin/commit a new region pass here, so transcript chrome stays
    clickable too."
   [^TerminalScreen screen cols rows
-   {:keys [messages messages-scroll input progress loading? cancelling? turn-start-ms settings],
+   {:keys [messages input progress loading? cancelling? turn-start-ms settings],
     :as db} now-ms previous-layout]
   (let [g (.newTextGraphics screen)
         text-rows (input-text-rows input cols)
@@ -1025,6 +1032,10 @@
         messages-bottom subtitle-row
         bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
         inner-h (max 0 (- messages-bottom messages-top 2))
+        ;; Same `:scroll`-variant → concrete-offset derivation as the
+        ;; full-frame path (see `render-frame!`).
+        prev-max-s (max 0 (- (long (or (:total-h (:layout db)) inner-h)) inner-h))
+        messages-scroll (scroll/layout-offset (:scroll db) prev-max-s)
         text-top (+ messages-top render/MESSAGE_MARGIN_TOP)
         header-top 0
         ;; Footer is two rows tall (model + limits). Shortcut chrome is a
@@ -1181,21 +1192,23 @@
    values make streamed reasoning feel frozen, lower values waste work."
   80)
 (def ^:private scroll-anim-tick-ms
-  "Frame budget for smooth-scroll interpolation: when
-   `:messages-scroll-target` is set, the render loop wakes every N ms
-   to dispatch `:tick-scroll-anim` (steps `:messages-scroll` toward
-   target by one ease-out step) and repaint. 16ms = ~60fps, which is
-   the largest tick that still reads as continuous motion on the
-   terminal cell grid. Bigger ticks make the animation feel chunky;
-   smaller ticks burn CPU for no perceptual gain."
+  "Frame budget for smooth-scroll interpolation: while an ease is in
+   flight the render loop wakes every N ms to dispatch `:ease-scroll`
+   (steps the on-screen `:scroll` `:pos` toward its desired row) and
+   repaint. 16ms = ~60fps, the largest tick that still reads as
+   continuous motion on the terminal cell grid. Bigger ticks feel
+   chunky; smaller ticks burn CPU for no perceptual gain."
   16)
 (defn- scroll-anim-active?
-  "True when `:messages-scroll-target` differs from `:messages-scroll`
-   AND animation hasn't snapped both fields together yet. The state
-   reducer (`state/clear-anim-when-settled`) drops the target key the
-   moment they match, so presence of the key alone is enough."
+  "True when the `:scroll` ease hasn't reached its desired row yet, using
+   the previously published layout's max-scroll. Drives the fast tick
+   cadence; settles to false so an idle view stops repainting."
   [db]
-  (some? (:messages-scroll-target db)))
+  (let [ly (:layout db)
+        total-h (long (or (:total-h ly) 0))
+        inner-h (long (or (:inner-h ly) 0))
+        max-s (max 0 (- total-h inner-h))]
+    (scroll/animating? (:scroll db) max-s)))
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and
    only paints when `:render-version` advances, the terminal gets
@@ -1212,27 +1225,19 @@
          last-hover nil
          was-blocked? false]
     (let [db @state/app-db]
-      ;; Tick scroll animation BEFORE acquiring draw-lock so the
-      ;; re-read inside the try/let below sees the freshly stepped
-      ;; `:messages-scroll` and the frame paints the new offset.
-      ;; The dispatch bumps `:render-version`; this iteration will
-      ;; then satisfy the `(not= last-v version)` check and the
-      ;; full-frame branch fires — no missed frames mid-anim.
-      (when (scroll-anim-active? db) (state/dispatch [:tick-scroll-anim]))
-      ;; Stick-to-bottom: while a turn streams, EASE the view toward the
-      ;; growing bottom (animated follow) instead of nil's instant snap.
-      ;; `:follow-bottom-animated` keeps `:messages-scroll` concrete and
-      ;; re-targets it at the live bottom every frame; the tick above
-      ;; walks it down over a few frames, so a whole code block landing
-      ;; at once scrolls in smoothly rather than teleporting. The event
-      ;; itself guards "user scrolled up to read" (hands off beyond the
-      ;; slack band), so it is safe to pulse every loading frame — we do
-      ;; NOT gate on `scroll-anim-active?` here, because the follow must
-      ;; keep chasing the bottom WHILE the ease animation is in flight.
-      (when (:loading? db)
-        (let [ly (:layout db)]
-          (when (and ly (:total-h ly) (:inner-h ly))
-            (state/dispatch [:follow-bottom-animated (:total-h ly) (:inner-h ly)]))))
+      ;; Advance the scroll ease BEFORE acquiring draw-lock so the re-read
+      ;; inside the try/let below paints the freshly stepped offset. One
+      ;; `:ease-scroll` covers BOTH smooth wheel/key animation AND
+      ;; stick-to-bottom follow: in FOLLOW the desired row is the growing
+      ;; bottom, so streamed content eases in; in AT the user's parked row
+      ;; is fixed, so they're never yanked. Pulse it while a turn streams
+      ;; (content grows every frame) OR whenever an ease is still in
+      ;; flight; idle + settled dispatches nothing, so the view stops
+      ;; repainting instead of livelocking on render-version bumps.
+      (let [ly (:layout db)]
+        (when (and ly (:total-h ly) (:inner-h ly)
+                (or (:loading? db) (scroll-anim-active? db)))
+          (state/dispatch [:ease-scroll (:total-h ly) (:inner-h ly)])))
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version @state/app-db) 0))
               ;; tryLock so a dialog session (which holds the lock for
@@ -2049,7 +2054,8 @@
                            ;; return means there is no overflow — no
                            ;; thumb is painted, and every click below is
                            ;; correctly classified as off-thumb.
-                         geom (scrollbar/geometry total-h inner-h track-h (:messages-scroll db))
+                         geom (scrollbar/geometry total-h inner-h track-h
+                                (scroll/layout-offset (:scroll db) (max 0 (- (long total-h) (long inner-h)))))
                          thumb-top (when geom (+ bar-top (long (:thumb-top-rel geom))))
                          thumb-h (long (or (:thumb-h geom) 0))
                            ;; Hit-zone: the thumb's actual rows, with a
