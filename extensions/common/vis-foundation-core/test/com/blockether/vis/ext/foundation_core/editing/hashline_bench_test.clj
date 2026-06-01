@@ -20,11 +20,15 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- reference-line-hash
-  "The ORIGINAL implementation: java.util.Formatter `%06x` over the
-   trimmed `String/hashCode`. The optimized `patch/line-hash` MUST stay
-   byte-identical to this — hashes are the edit address."
+  "Independent reference: java.util.Formatter over the trimmed
+   `String/hashCode`, at the current `patch/hash-width`. The optimized
+   `patch/line-hash` (toHexString + pad) MUST stay byte-identical to
+   this — hashes are the edit address, so a formatting/masking drift
+   would silently break every anchor."
   [s]
-  (format "%06x" (bit-and (.hashCode (str/trim (str s))) 0xffffff)))
+  (let [w    (long patch/hash-width)
+        mask (long (dec (bit-shift-left 1 (* 4 w))))]
+    (format (str "%0" w "x") (bit-and (.hashCode (str/trim (str s))) mask))))
 
 (defn- file->tuples
   "Load `path` as `[[line-number text] ...]` tuples like `v/cat` produces."

@@ -101,8 +101,9 @@
     (expect (= [""] (patch/split-content-lines "\n")))))
 
 (defdescribe hashline-layer-test
-  (it "line-hash is stable, 6-hex, whitespace-insensitive"
-    (expect (re-matches #"[0-9a-f]{6}" (patch/line-hash "hello")))
+  (it "line-hash is stable, hash-width hex, whitespace-insensitive"
+    (expect (re-matches (re-pattern (str "[0-9a-f]{" patch/hash-width "}"))
+              (patch/line-hash "hello")))
     (expect (= (patch/line-hash "hello") (patch/line-hash "  hello  ")))
     (expect (= (patch/line-hash "x") (patch/line-hash "x"))))
 
@@ -126,15 +127,22 @@
 
   (it "render-hashline-block blanks the gutter on blank + duplicate lines, kept aligned"
     (let [out   (patch/render-hashline-block [[1 "dup"] [2 "uniq"] [3 "dup"] [4 ""]])
-          lines (clojure.string/split-lines out)]
+          lines (clojure.string/split-lines out)
+          blank (apply str (repeat (long patch/hash-width) \space))]
       ;; unique line shows its hash
       (expect (= (str (patch/line-hash "uniq") "│ uniq") (nth lines 1)))
-      ;; duplicate + blank lines get a 6-space aligned gutter, no hash
-      (expect (= "      │ dup" (nth lines 0)))
-      (expect (= "      │ dup" (nth lines 2)))
-      (expect (= "      │ " (nth lines 3)))
+      ;; duplicate + blank lines get a `hash-width`-space aligned gutter, no hash
+      (expect (= (str blank "│ dup") (nth lines 0)))
+      (expect (= (str blank "│ dup") (nth lines 2)))
+      (expect (= (str blank "│ ") (nth lines 3)))
       ;; every gutter column lines up: `│` at the same index on every row
       (expect (apply = (map #(clojure.string/index-of % "│") lines)))))
+
+  (it "line-hash is exactly hash-width hex chars (aligned), zero-padded"
+    (expect (= (long patch/hash-width) (count (patch/line-hash "anything"))))
+    (expect (= (long patch/hash-width) (count (patch/line-hash ""))))
+    (expect (re-matches (re-pattern (str "[0-9a-f]{" patch/hash-width "}"))
+              (patch/line-hash "x"))))
 
   (it "render-hashline-range-block headers each window then the hash gutter"
     (let [out (patch/render-hashline-range-block

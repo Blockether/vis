@@ -325,7 +325,7 @@
 ;; vis edits by CONTENT HASH, not by line number. This block owns every
 ;; reusable piece so callers never recompute the scheme:
 ;;
-;;   line-hash                text            -> 6-hex content anchor
+;;   line-hash                text            -> hash-width-hex anchor
 ;;   lines->hashes            [[ln text]…]    -> {ln hash}        (model map)
 ;;   render-hashline-block    [[ln text]…]    -> "<hash>│ text…"   (gutter)
 ;;   render-hashline-range-block ranges       -> headered gutter blocks
@@ -338,24 +338,53 @@
 ;; hashes replace them.
 ;; =============================================================================
 
+(def hash-width
+  "Hex chars per line anchor. Measured knee of the collision-vs-token
+   curve (loss = usable lines that share a truncated hash and so lose
+   their `:from-hash` anchor):
+
+     width  patch.clj(499)  core.clj(3152)  render.clj(4611)
+       3        16.7%          55.4%           66.2%
+       4         7.9%          22.5%           19.6%
+       5         7.9%          19.5%           15.0%
+       6         7.9%          19.5%           14.7%
+
+   3 is catastrophic — most lines collide and become un-hash-editable.
+   6 == 5 == 4 on normal files (<=~500 lines) and only ~3-5% better on
+   3-4k-line files (range-read those, which shrinks the window and the
+   collisions with it). So 4 (16-bit, 65536 buckets) is the sweet spot —
+   it costs a third fewer tokens than 6 in the gutter AND the `:hashes`
+   payload. Bump this and the mask/pad/gutter-width follow automatically.
+   (The residual loss is mostly GENUINE duplicate lines — closing
+   parens, common idioms — unaddressable by hash at any width.)"
+  4)
+
+(def ^:private hash-mask
+  "Low `hash-width` hex digits as a bit mask: (16^hash-width) - 1."
+  (long (dec (bit-shift-left 1 (* 4 (long hash-width))))))
+
+(def ^:private hash-zero-pad
+  "`hash-width` zero chars, for left-padding a short `Integer/toHexString`."
+  (apply str (repeat (long hash-width) \0)))
+
 (defn line-hash
-  "Stable 6-hex-char content hash of `line` (trimmed). Folds the spec'd
-   `String/hashCode` algorithm over the whitespace-trimmed line, so it is
-   deterministic across JVM runs. Identical trimmed lines share a hash —
-   a dup-line collision makes a `:from-hash` anchor ambiguous and
-   `resolve-hash-edit` refuses it (the caller falls back to `:search`).
+  "Stable `hash-width`-hex-char content hash of `line` (trimmed). Folds
+   the spec'd `String/hashCode` algorithm over the whitespace-trimmed
+   line, so it is deterministic across JVM runs. Identical trimmed lines
+   share a hash — a dup-line collision makes a `:from-hash` anchor
+   ambiguous and `resolve-hash-edit` refuses it (caller falls back to
+   `:search`).
 
    Hot path: runs once per line on every `v/cat` render AND every patch
    resolve. Formats with `Integer/toHexString` + a left-pad rather than
-   java.util.Formatter (format %06x), which benches ~1.5x slower; the
-   trimmed `String/hashCode` is a JIT intrinsic so we lean on it instead
-   of a hand loop. Output is byte-identical to the old
-   format-%06x-over-trimmed-hashCode."
+   java.util.Formatter, which benches ~1.5x slower; the trimmed
+   `String/hashCode` is a JIT intrinsic so we lean on it instead of a
+   hand loop."
   ^String [line]
-  (let [h   (bit-and (.hashCode (str/trim (str line))) 0xffffff)
+  (let [h   (int (bit-and (.hashCode (str/trim (str line))) hash-mask))
         hex (Integer/toHexString h)
         c   (.length hex)]
-    (if (< c 6) (str (subs "000000" c) hex) hex)))
+    (if (< c (long hash-width)) (str (subs hash-zero-pad c) hex) hex)))
 
 (defn- hashed-rows
   "Single hashing pass over `[line-number text]` tuples. Returns
@@ -396,10 +425,10 @@
   "Separator between the hash anchor and the line text in rendered output."
   "│ ")
 
-(def ^:private ^:const hashline-blank-gutter
-  "Aligned placeholder (6 spaces, matching the 6-hex hash width) for lines
-   that are NOT usable hash anchors — keeps the `│` column aligned."
-  "      ")
+(def ^:private hashline-blank-gutter
+  "Aligned placeholder (`hash-width` spaces) for lines that are NOT usable
+   hash anchors — keeps the `│` column aligned with hashed rows."
+  (apply str (repeat (long hash-width) \space)))
 
 (defn render-hashline-block
   "Render `[line-number text]` tuples as the canonical gutter
