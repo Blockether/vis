@@ -339,29 +339,46 @@
 ;; =============================================================================
 
 (defn line-hash
-  "Stable 6-hex-char content hash of `line` (trimmed). Deterministic
-   across JVM runs because it folds `String/hashCode` (spec'd algorithm).
-   Identical trimmed lines share a hash — a dup-line collision makes a
-   `:from-hash` anchor ambiguous and `resolve-hash-edit` refuses it (the
-   caller falls back to `:search`)."
-  [^String line]
-  (let [h (.hashCode (str/trim (str line)))]
-    (format "%06x" (bit-and h 0xffffff))))
+  "Stable 6-hex-char content hash of `line` (trimmed). Folds the spec'd
+   `String/hashCode` algorithm over the whitespace-trimmed line, so it is
+   deterministic across JVM runs. Identical trimmed lines share a hash —
+   a dup-line collision makes a `:from-hash` anchor ambiguous and
+   `resolve-hash-edit` refuses it (the caller falls back to `:search`).
 
-(defn- hash-freqs
-  "hash -> occurrence-count across `tuples` (each `[line-number text]`)."
+   Hot path: runs once per line on every `v/cat` render AND every patch
+   resolve. Formats with `Integer/toHexString` + a left-pad rather than
+   java.util.Formatter (format %06x), which benches ~1.5x slower; the
+   trimmed `String/hashCode` is a JIT intrinsic so we lean on it instead
+   of a hand loop. Output is byte-identical to the old
+   format-%06x-over-trimmed-hashCode."
+  ^String [line]
+  (let [h   (bit-and (.hashCode (str/trim (str line))) 0xffffff)
+        hex (Integer/toHexString h)
+        c   (.length hex)]
+    (if (< c 6) (str (subs "000000" c) hex) hex)))
+
+(defn- hashed-rows
+  "Single hashing pass over `[line-number text]` tuples. Returns
+   `[rows freqs]` where `rows` is a vec of `[line-number text hash]`
+   (`line-hash` computed EXACTLY ONCE per line) and `freqs` is
+   `{hash occurrence-count}`. Shared by `lines->hashes` and
+   `render-hashline-block` so neither recomputes the hash 3x."
   [tuples]
-  (frequencies (map (fn [[_ln s]] (line-hash s)) tuples)))
+  (let [rows  (mapv (fn [[ln s]] [ln s (line-hash s)]) tuples)
+        freqs (persistent!
+                (reduce (fn [m r]
+                          (let [h (nth r 2)]
+                            (assoc! m h (unchecked-inc (long (get m h 0))))))
+                  (transient {}) rows))]
+    [rows freqs]))
 
-(defn- usable-anchor?
-  "A hash is a USABLE edit anchor only when the line is non-blank AND its
-   hash is unique among the rendered lines. Blank/whitespace lines and
-   duplicate content can't be hash-addressed — `resolve-hash-edit` refuses
-   ambiguous hits — so surfacing a hash there is pure noise. `freqs` is
-   `hash-freqs` over the same tuple set."
-  [^String s freqs]
-  (and (not (str/blank? s))
-    (= 1 (long (get freqs (line-hash s) 0)))))
+(defn- row-usable?
+  "A line is a USABLE `:from-hash` anchor only when it is non-blank AND its
+   hash is unique in the set — the only lines `resolve-hash-edit` accepts.
+   `row` is a `[line-number text hash]` from `hashed-rows`."
+  [row freqs]
+  (and (not (str/blank? (nth row 1)))
+    (= 1 (long (get freqs (nth row 2) 0)))))
 
 (defn lines->hashes
   "`{line-number hash}` map of the USABLE anchors in `tuples` (non-blank
@@ -370,11 +387,10 @@
    tail-file all route here). Ambiguous and blank lines are intentionally
    omitted: the model only ever sees hashes it can actually edit by."
   [tuples]
-  (let [freqs (hash-freqs tuples)]
+  (let [[rows freqs] (hashed-rows tuples)]
     (into {}
-      (keep (fn [[ln s]]
-              (when (usable-anchor? s freqs) [ln (line-hash s)])))
-      tuples)))
+      (keep (fn [row] (when (row-usable? row freqs) [(nth row 0) (nth row 2)])))
+      rows)))
 
 (def ^:const hashline-gutter
   "Separator between the hash anchor and the line text in rendered output."
@@ -394,12 +410,13 @@
    contained (derives hashes from the text), the single source of truth
    for the cat body across whole-file, range window and tail reads."
   [tuples]
-  (let [freqs (hash-freqs tuples)]
-    (->> tuples
-      (map (fn [[_ln s]]
-             (if (usable-anchor? s freqs)
-               (str (line-hash s) hashline-gutter s)
-               (str hashline-blank-gutter hashline-gutter s))))
+  (let [[rows freqs] (hashed-rows tuples)]
+    (->> rows
+      (map (fn [row]
+             (let [s (nth row 1)]
+               (if (row-usable? row freqs)
+                 (str (nth row 2) hashline-gutter s)
+                 (str hashline-blank-gutter hashline-gutter s)))))
       (str/join "\n"))))
 
 (defn render-hashline-range-block
@@ -448,7 +465,11 @@
   (let [lines    (split-content-lines current)
         to-hash  (or to-hash from-hash)
         froms    (indices-matching-hash lines from-hash)
-        tos      (indices-matching-hash lines to-hash)]
+        ;; Single-line edit (to == from) is the common case — reuse the
+        ;; one scan instead of hashing every line a second time.
+        tos      (if (= to-hash from-hash)
+                   froms
+                   (indices-matching-hash lines to-hash))]
     (cond
       (empty? froms)
       {:error {:reason :hash-not-found :which :from :hash (str from-hash)}}

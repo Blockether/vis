@@ -392,7 +392,10 @@
       (expect (string/includes? prompt "400-500 line range"))
       (expect (string/includes? prompt "(v/cat path :ranges [[start end] ...])"))
       (expect (string/includes? prompt "(v/patch {:path P :edits"))
-      (expect (string/includes? prompt "(v/patch [{:path P1 :search S :replace R}"))
+      ;; Strategy guidance: both locators documented with their intent.
+      (expect (string/includes? prompt "PATCH STRATEGY"))
+      (expect (string/includes? prompt "(v/patch [{:path P :from-hash H :replace R}])"))
+      (expect (string/includes? prompt ":nth :all"))
       (expect (string/includes? prompt "diff is evidence"))
       (expect (not (string/includes? prompt "kwargs")))
       (expect (not (string/includes? prompt "BOTH")))

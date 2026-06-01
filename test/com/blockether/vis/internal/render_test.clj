@@ -167,3 +167,36 @@
                 "(def r (v/ls \".\"))\n(select-keys r [:entry-count :file-count])")]
       (expect (= 1 (count out)))
       (expect (= :code (-> out first :kind))))))
+
+(defdescribe markdown-soft-break-test
+  (it "prose default collapses a bare newline to a single space (CommonMark)"
+    ;; Model-authored answers / thinking are prose: soft wraps are not
+    ;; intentional breaks, so they join with a space.
+    (expect (= [:ir {} [:p {} [:span {} "line A"] [:span {} " "] [:span {} "line B"]]]
+              (render/markdown->ir "line A\nline B")))
+    (expect (= [:ir {} [:p {} [:span {} "line A"] [:span {} " "] [:span {} "line B"]]]
+              (render/markdown->ir "line A\nline B" nil))))
+
+  (it "`{:soft-break :hard}` lifts every bare newline to [:br] (line-oriented user/paste input)"
+    ;; A pasted code/observation dump must keep its line structure;
+    ;; otherwise consecutive lines merge into one wrapped wall of text.
+    (expect (= [:ir {} [:p {} [:span {} "line A"] [:br {}] [:span {} "line B"]]]
+              (render/markdown->ir "line A\nline B" {:soft-break :hard}))))
+
+  (it "hard-break mode preserves indentation + line breaks of a pasted code dump"
+    (let [ir (render/markdown->ir "2493:    ;; foo\n2494:    (when x)" {:soft-break :hard})
+          [_ _ p] ir]
+      ;; Three inline children: line, [:br], line — no space-join that
+      ;; would mash "2493: ;; foo 2494: (when x)" onto one row.
+      (expect (= [:br {}] (nth p 3)))
+      (expect (str/starts-with? (last (nth p 2)) "2493:"))
+      (expect (str/starts-with? (last (nth p 4)) "2494:"))))
+
+  (it "hard-break mode keeps paragraph breaks (blank line) as separate [:p] blocks"
+    (let [ir (render/markdown->ir "a\nb\n\nc" {:soft-break :hard})]
+      (expect (= 2 (count (filter #(and (vector? %) (= :p (first %))) ir))))))
+
+  (it "both arities are idempotent on canonical IR"
+    (let [canon [:ir {} [:p {} [:span {} "x"]]]]
+      (expect (identical? canon (render/markdown->ir canon)))
+      (expect (identical? canon (render/markdown->ir canon {:soft-break :hard}))))))
