@@ -2268,7 +2268,8 @@
 
    Result shape varies by mode (the tool envelope's `:result` always
    carries `:vis.op :v/rg` plus a `:mode` discriminator):
-     content     (:mode :content)     {:hits [...]  :hit-count N  ...}
+     content     (:mode :content)     {:matches [{:path P :lines [[ln text]...]} ...]  :hit-count N  :file-count N  :first-hit P:L  ...}
+                                     ;; path stated ONCE per file; :lines tuples mirror v/cat's [ln text] shape
      files-only? (:mode :files-only)  {:files [...] :file-count N ...}
      counts?     (:mode :counts)      {:counts [...] :file-count N ...}"
   [& args]
@@ -2305,10 +2306,28 @@
                 :regex?       regex?}
         result (case mode
                  :content
-                 (let [hits (vec (:hits out))]
+                 (let [hits          (vec (:hits out))
+                       ordered-paths (distinct (map :path hits))
+                       by-path       (group-by :path hits)
+                       ;; Group hits by file so the path is stated ONCE per
+                       ;; file instead of once per hit. :lines folds each
+                       ;; hit's context (:before / match / :after) into one
+                       ;; line-sorted, de-duplicated [ln text] vec — the same
+                       ;; tuple shape v/cat emits, so the model reads one
+                       ;; structure, not a flat path-repeating wall.
+                       matches       (mapv (fn [p]
+                                             (let [hs    (get by-path p)
+                                                   lines (->> hs
+                                                           (mapcat (fn [{:keys [line text before after]}]
+                                                                     (concat before [[line text]] after)))
+                                                           (into (sorted-map))
+                                                           (mapv (fn [[ln tx]] [ln tx])))]
+                                               {:path p :lines lines}))
+                                       ordered-paths)]
                    (assoc shared
-                     :hits hits
+                     :matches matches
                      :hit-count (count hits)
+                     :file-count (count matches)
                      :first-hit (when (pos? (count hits))
                                   (let [{:keys [path line]} (nth hits 0)]
                                     (str path ":" line)))
@@ -2348,7 +2367,7 @@
                    (assoc :file-count (:file-count result)
                      :total-matches (:total-matches result)))
        :presentation (case mode
-                       :content    {:kind :search-hits :row-keys [:path :line :text]}
+                       :content    {:kind :search-grouped}
                        :files-only {:kind :search-files}
                        :counts     {:kind :search-counts})})))
 
@@ -2847,7 +2866,7 @@
    `:before` / `:after` context (when present) so the body reads like a
    miniature grep -C output; `:files-only` shows distinct paths;
    `:counts` shows per-file totals."
-  [{:keys [mode hits files counts truncated-by hit-count file-count
+  [{:keys [mode matches files counts truncated-by hit-count file-count
            total-matches]}]
   (case mode
     :files-only
@@ -2874,29 +2893,28 @@
                           (map (fn [{:keys [path count]}] (format "%-50s %d" path count))
                             counts))))))})
 
-    ;; default: :content (or unset — legacy maps without :mode)
-    (let [n (or hit-count (count hits))]
+    ;; default: :content (or unset). Grouped by file: the path is stated
+    ;; ONCE as a header, its matches indented beneath as `  <ln>  <text>` —
+    ;; the same :matches data the model now sees, projected as a grep-style
+    ;; block. No per-hit path repetition on either surface.
+    (let [n  (or hit-count 0)
+          fc (or file-count (count matches))]
       {:summary {:left  (ir-strong "RG")
-                 :right (str n " hit" (when (not= 1 n) "s")
+                 :right (str fc " file" (when (not= 1 fc) "s")
+                          " · " n " hit" (when (not= 1 n) "s")
                           "  truncated-by=" (name (or truncated-by :none)))}
        :display
-       (if (seq hits)
-         (let [rendered (mapv render-rg-hit-block hits)
-               any-context? (some #(or (seq (:before %)) (seq (:after %))) hits)]
-           (if any-context?
-             ;; Context-rich: one labelled block per hit.
-             (apply ir-root
-               (mapcat (fn [[head body]]
-                         [(ir-p (ir-code head))
-                          (ir-code-block "text" (bounded-render-text body))])
-                 rendered))
-             ;; Plain: flat one-line-per-hit block, like the old renderer.
-             (ir-root
-               (ir-code-block "text"
-                 (bounded-render-text
-                   (str/join "\n"
-                     (map (fn [{:keys [path line text]}]
-                            (str path ":" line " " text)) hits)))))))
+       (if (seq matches)
+         (ir-root
+           (ir-code-block "text"
+             (bounded-render-text
+               (str/join "\n\n"
+                 (map (fn [{:keys [path lines]}]
+                        (str/join "\n"
+                          (cons path
+                            (map (fn [[ln text]] (str "  " ln "  " text))
+                              lines))))
+                   matches)))))
          (ir-root))})))
 
 (defn- channel-render-patch

@@ -1190,9 +1190,9 @@
      :answer-summary     optional one-line summary the model emits; falls
                          back to the first non-blank paragraph of :answer
                          when omitted.
-     :trailer-drop?      vec of `tN/iM` scopes to drop verbatim
-     :trailer-summarize? vec of `{:scope-start :scope-end :summary}` pins
-     :archive?           `{:facts […] :specs […] :tasks […]}` bulk-flip
+     :trailer-drop       vec of `tN/iM` scopes to drop verbatim
+     :trailer-summarize  vec of `{:scope-start :scope-end :summary}` pins
+     :archive            `{:facts […] :specs […] :tasks […]}` bulk-flip
                          to `:archived` terminal; snapshots keep raw,
                          introspect-archived returns them.
 

@@ -1228,18 +1228,6 @@
         (recur (inc i))
         i))))
 
-(def ^:private direct-answer-tail-keys
-  #{":trailer-drop" ":trailer-summarize" ":archive"})
-
-(defn- allowed-direct-answer-tail-key?
-  [^String s idx]
-  (boolean
-    (some (fn [k]
-            (and (str/starts-with? (subs s idx) k)
-              (let [j (+ idx (count k))]
-                (or (>= j (count s))
-                  (Character/isWhitespace ^char (nth s j))))))
-      direct-answer-tail-keys)))
 
 (defn- balanced-done-tail-end
   "Return exclusive end index for the tail after a candidate `:answer` close.
@@ -1288,8 +1276,11 @@
   (let [n (count s)
         i (skip-ws s (inc quote-idx))]
     (when (and (< i n)
-            (or (= \} (nth s i))
-              (allowed-direct-answer-tail-key? s i)))
+            ;; Accept either the map close or another keyword entry after
+            ;; :answer. Semantic validation happens after we rebuild a
+            ;; parseable payload; this scanner only finds the candidate
+            ;; boundary in malformed raw provider text.
+            (#{\} \:} (nth s i)))
       (when-let [end (balanced-done-tail-end s i)]
         (str " " (str/trim (subs s i end)))))))
 
@@ -1332,16 +1323,45 @@
       (try (decode (escape-unescaped-quotes body)) (catch Throwable _ nil))
       body)))
 
+(defn- done-payload-from-source
+  [source]
+  (try
+    (let [{:keys [forms parse-error]} (parse-top-level-forms source)
+          form (:form (first forms))]
+      (when (and (nil? parse-error)
+              (turn-answer-call-form? form)
+              (map? (second form)))
+        (second form)))
+    (catch Throwable _ nil)))
+
+(defn- valid-direct-answer-metadata
+  [payload]
+  (cond-> {}
+    (and (vector? (:trailer-drop payload))
+      (every? string? (:trailer-drop payload)))
+    (assoc :trailer-drop (:trailer-drop payload))
+
+    (and (vector? (:trailer-summarize payload))
+      (every? map? (:trailer-summarize payload)))
+    (assoc :trailer-summarize (:trailer-summarize payload))
+
+    (map? (:archive payload))
+    (assoc :archive (:archive payload))))
+
 (defn- raw-response->direct-answer-source
   [raw]
   (when-not (str/blank? raw)
-    (let [m (re-matcher #"(?s)\(done\s*\{\s*:answer\s*\"" raw)]
+    (let [m (re-matcher #"(?s)\(done\s*\{(.*?):answer\s*\"" raw)]
       (when (.find m)
-        (let [body-start (.end m)]
+        (let [prefix     (or (.group m 1) "")
+              body-start (.end m)]
           (when-let [{:keys [idx tail]} (direct-answer-close raw body-start)]
-            (let [body   (subs raw body-start idx)
-                  answer (decode-direct-answer-body body)]
-              (str "(done {:answer " (pr-str answer) tail))))))))
+            (let [body      (subs raw body-start idx)
+                  answer    (decode-direct-answer-body body)
+                  candidate (str "(done {" prefix " :answer " (pr-str answer) tail)
+                  payload   (or (done-payload-from-source candidate) {})
+                  recovered (assoc (valid-direct-answer-metadata payload) :answer answer)]
+              (str "(done " (pr-str recovered) ")"))))))))
 
 (defn- direct-answer-block-recoverable?
   [{:keys [source]}]
