@@ -162,6 +162,21 @@
           (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
           1
           (TerminalPosition. 0 0))))))
+(defn drain-modal-paste!
+  "After a bracketed-paste START keystroke is seen, drain `screen` until
+   PASTE_END and return the pasted text (PUA markers stripped). Lets any
+   modal text input accept clipboard paste without re-implementing the
+   paste state machine. Returns \"\" on a clipboard that yields no chars."
+  ^String [^TerminalScreen screen]
+  (let [sb (StringBuilder.)]
+    (loop []
+      (let [k (read-modal-key! screen)]
+        (cond
+          (nil? k)            (.toString sb)
+          (input/paste-end? k) (.toString sb)
+          :else (do (when-let [ch (input/keystroke->paste-char k)]
+                      (.append sb ^String ch))
+                  (recur)))))))
 (defn draw-hint-bar!
   "Draw hint bar. `hint` can be:
    - a string: rendered as-is
@@ -641,6 +656,16 @@
                     (< hit-idx total))
                   (:path (nth items hit-idx))
                   :else (recur)))
+
+              ;; Clipboard paste → append into the filter query (collapse
+              ;; whitespace; markers never reach the query string).
+              (input/paste-start? key)
+              (do (let [pasted (drain-modal-paste! screen)]
+                    (when (seq pasted)
+                      (swap! query str (str/trim (str/replace pasted #"\s+" " ")))
+                      (reset-picker-cursor! selected scroll)))
+                (recur))
+
               :else (condp = (.getKeyType key)
                       KeyType/Escape nil
                       KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
@@ -1886,19 +1911,15 @@
   "Sessions arrive newest-modified-first from `tui-session-summaries`; keep
    that order so the navigator reads top-to-bottom by recency. Empty untitled
    shells are hidden by default; Alt+U in the navigator reveals them.
-   A synthetic `+ New Session` action row is always appended at the bottom."
+
+   No synthetic `+ New Session` row — creating a session is the `N`
+   modifier (shown in the hint bar), not a list entry. A real-looking
+   action row mixed in with actual sessions read as just another session
+   and pushed the newest real one down."
   [{:keys [sessions active-session-id show-empty-untitled?]}]
-  (conj
-    (->> sessions
-      (remove #(and (not show-empty-untitled?) (empty-untitled-session? %)))
-      (mapv #(navigator-session-row active-session-id %)))
-    {:id      "action:new"
-     :title   "  + New Session"
-     :session ""
-     :status  ""
-     :created ""
-     :modified ""
-     :target  {:action :new}}))
+  (->> sessions
+    (remove #(and (not show-empty-untitled?) (empty-untitled-session? %)))
+    (mapv #(navigator-session-row active-session-id %))))
 (defn- navigator-visible-rows
   [rows query]
   (vec (filter #(table/row-matches? % query) rows)))
@@ -2017,34 +2038,55 @@
             left
             hint-row
             inner-w
-            [["↑/↓" "move"] ["Enter" "open"] ["N" "new"]
+            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+N" "new"]
              ["Alt+U" (if @show-empty-untitled? "hide empty" "show empty")]
              ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
           (.refresh screen Screen$RefreshType/DELTA))
-        (let [key (read-modal-key! screen)]
+        (let [key (read-modal-key! screen)
+              reset-list! (fn [] (reset! selected 0) (reset! scroll 0))]
           (when key
-            (if-let [wheel-step (modal-wheel-step key)]
-              (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
+            (cond
+              (modal-wheel-step key)
+              (do (swap! selected #(clamp (+ % (modal-wheel-step key)) 0 (max 0 (dec total))))
+                (recur))
+
+              ;; New session is a MODIFIER (Ctrl+N), not a list row and not a
+              ;; bare key — so plain typing (incl. the letter `n`) filters.
+              (and (input/ctrl-modifier? key)
+                (= KeyType/Character (.getKeyType key))
+                (some-> (.getCharacter key) Character/toLowerCase (= \n)))
+              {:action :new}
+
+              (input/alt-char? key \u)
+              (do (swap! show-empty-untitled? not) (reset-list!) (recur))
+
+              ;; Clipboard paste → append into the query filter.
+              (input/paste-start? key)
+              (do (let [pasted (drain-modal-paste! screen)]
+                    (when (seq pasted)
+                      (swap! query str (str/replace pasted #"\s+" " "))
+                      (reset-list!)))
+                (recur))
+
+              :else
               (condp = (.getKeyType key)
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                    (recur))
+                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
                 KeyType/Enter (when (pos? total) (:target (nth visible-rows @selected)))
-                KeyType/Character
-                (let [raw-c (.getCharacter key)]
-                  (cond
-                    (and raw-c (not (input/alt-modifier? key)) (= (Character/toLowerCase raw-c) \n))
-                    {:action :new}
-
-                    (input/alt-char? key \u)
-                    (do (swap! show-empty-untitled? not)
-                      (reset! selected 0)
-                      (reset! scroll 0)
-                      (recur))
-
-                    :else (recur)))
+                KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                                    (reset-list!) (recur))
+                ;; Plain printable character → filter query. Skip control
+                ;; chars and Alt/Ctrl-modified keys (those are commands).
+                KeyType/Character (let [c (.getCharacter key)]
+                                    (when (and c
+                                            (not (input/alt-modifier? key))
+                                            (not (input/ctrl-modifier? key))
+                                            (not (Character/isISOControl c)))
+                                      (swap! query str c)
+                                      (reset-list!))
+                                    (recur))
                 (recur)))))))))
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 (def palette-commands
