@@ -818,11 +818,15 @@
         ;; Persist the anchor-corrected scroll so the input thread's
         ;; wheel/drag math and the next layout share the same offset.
         ;; nil = auto-bottom (never written back). Skip the dispatch
-        ;; when unchanged to avoid churning render versions.
+        ;; when unchanged to avoid churning render versions. Pass the
+        ;; delta so an in-flight scroll animation's target re-anchors
+        ;; with the offset (otherwise leaving auto-bottom lurches).
         anchored-scroll (:anchored-scroll layout)
         _ (when (and (some? anchored-scroll)
+                  (some? messages-scroll)
                   (not= anchored-scroll messages-scroll))
-            (state/dispatch [:set-scroll anchored-scroll]))
+            (state/dispatch [:reanchor-scroll anchored-scroll
+                             (- (long anchored-scroll) (long messages-scroll))]))
         total-h (long (:total-h layout))
         text-top (+ messages-top render/MESSAGE_MARGIN_TOP)
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)

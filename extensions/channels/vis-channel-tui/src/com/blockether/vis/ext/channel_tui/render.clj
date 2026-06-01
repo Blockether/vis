@@ -3126,14 +3126,15 @@
 
 (defn- op-row-label
   "The op-row LABEL: the first `[:strong …]` in the op's summary IR, or — for
-   zone summaries — the `:left` zone text. Falls back to the canonical op
-   label (`STATUS`, `CAT`, …) so every row carries a stable prefix."
+   zone summaries — the `:left` zone text. Falls back to the friendly op
+   label from `iteration/op-label` (`READ`, `SEARCH`, …) so every row
+   carries a stable prefix."
   ^String [{:keys [summary op]}]
   (or
     (when (vis/render-zones? summary) (zone-text (:left summary)))
     (ir-strong-text summary)
     (when (some? summary) (ir-inline-text summary))
-    (some-> op name (str/split #"/") last str/upper-case)))
+    (iteration/op-label op)))
 
 (defn- op-row-summary
   "The `<summary-row>` painted to the right of the padded LABEL, sized to

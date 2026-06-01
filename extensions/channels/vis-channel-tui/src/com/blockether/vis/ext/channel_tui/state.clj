@@ -1174,6 +1174,26 @@
   (fn [db [_ scroll]]
     (assoc db :messages-scroll scroll)))
 
+(reg-event-db :reanchor-scroll
+  ;; Scroll-anchoring write-back from the render thread. `anchored` is
+  ;; the corrected absolute offset; `delta` is how far it moved the
+  ;; current scroll (content above the anchor changed height as
+  ;; off-screen estimates resolved to real heights).
+  ;;
+  ;; Crucially we shift the in-flight `:messages-scroll-target` by the
+  ;; SAME delta. The target lives in the same absolute coordinate, so
+  ;; if we re-anchored `:messages-scroll` but left the target alone the
+  ;; smooth-scroll animation would yank back toward a now-stale
+  ;; position — that produced the \"scroll up a little, jump to the
+  ;; middle\" lurch when leaving auto-bottom into still-estimated
+  ;; scrollback.
+  (fn [db [_ anchored delta]]
+    (let [delta (long (or delta 0))]
+      (cond-> (assoc db :messages-scroll anchored)
+        (and (some? (:messages-scroll-target db)) (not (zero? delta)))
+        (update :messages-scroll-target
+          (fn [t] (max 0 (+ (long t) delta))))))))
+
 (def ^:const auto-follow-slack-rows
   "How close (in rows) to the bottom still counts as \"following\".
    The render loop calls `:follow-bottom-if-near` while a turn streams;
