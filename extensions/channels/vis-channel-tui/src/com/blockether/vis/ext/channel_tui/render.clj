@@ -1958,7 +1958,21 @@
                       (p/styled g [p/ITALIC]
                         (p/paint-styled-line! g x y raw
                           t/dialog-hint t/iteration-header-bg
-                          t/code-block-fg t/code-block-bg)))
+                          t/code-block-fg t/code-block-bg))
+                      ;; A thinking-band row may BE the clickable THINKING
+                      ;; disclosure header (kept inside the dim band so the
+                      ;; label reads as part of the thinking bubble, not a
+                      ;; detached op-row). Register the same toggle click
+                      ;; region the op-row branch does.
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register!
+                            {:bounds {:row abs-row :col x :width click-width}
+                             :kind :toggle-details
+                             :session-id (:session-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)}))))
 
               ;; ── Code (success) - light green bg ──
                     (str/starts-with? line code-ok-marker)
@@ -3304,25 +3318,26 @@
            [(line-entry (str thinking-marker ""))]))))
 
 (defn- maybe-collapse-thinking-entries
-  "Render reasoning INLINE in the bubble's dim thinking band — it is
-   always part of the message, never hidden behind a top badge. Short
-   reasoning (≤ `reasoning-auto-collapse-line-threshold` rows) paints in
-   full. Longer reasoning PEEKS the first N rows in the band, then a
-   clickable expander sits at the BOTTOM of the band (where the text
-   truncates) so it grows DOWNWARD in place — `▾ THINKING  +N more`
-   when collapsed, `▴ THINKING` when expanded. This matches the natural
-   read-more affordance instead of a top badge that expands away from
-   the chevron.
+  "Render reasoning INSIDE the bubble's dim thinking band, headed by a
+   `THINKING` label that lives in the SAME band (not a detached op-row),
+   so the label + reasoning read as one cohesive thinking bubble.
 
-   The expander is styled like a tool op-row (plain `op-row-marker` bg,
-   `:toggle-details` meta). The node id is turn-scoped
+   Short reasoning (≤ `reasoning-auto-collapse-line-threshold` rows)
+   paints in full with no disclosure. Longer reasoning shows the
+   clickable header `▶ THINKING  +N more` as the band's TOP line and
+   PEEKS the first N rows below it; clicking expands in place to the
+   full reasoning (`▼ THINKING`). Standard accordion: chevron at the
+   header, content below.
+
+   The header carries `:toggle-details` meta on a `thinking-marker`
+   row — the painter registers the click region for that marker so the
+   dim header is itself the hit target. The node id is turn-scoped
    (`thinking:t<frag>:i<N>:reasoning`) so it matches
    `turn-detail-expansions-key`; a toggle busts the live per-iteration
    render cache, so it collapses/expands mid-turn. Default COLLAPSED.
-   No `session-id` (e.g. synthetic previews) → full inline, no toggle.
+   No `session-id` (e.g. synthetic previews) → full inline, no header.
 
-   Returns the COMPLETE thinking block (band + optional expander), used
-   verbatim by the caller."
+   Returns the COMPLETE thinking band, used verbatim by the caller."
   [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
   (let [entries (vec entries)]
     (if (or (nil? session-id)
@@ -3337,8 +3352,9 @@
                         :kind             :reasoning}
             node-id    (detail-node-id detail-ctx)
             expanded?  (detail-expanded? detail-expansions session-id node-id false)
-            ;; Bottom toggle: ▾ reveals more BELOW, ▴ collapses back up.
-            chevron    (if expanded? "▴" "▾")
+            ;; Accordion header at the TOP of the band: ▶ collapsed,
+            ;; ▼ expanded (content reveals below the header).
+            chevron    (if expanded? "▼" "▶")
             ;; Full reasoning text is the copy payload for BOTH states
             ;; (a peek still copies everything the model reasoned).
             full-copy  (entries->body-text entries)
@@ -3349,18 +3365,26 @@
             label      (if (or expanded? (zero? hidden-n))
                          "THINKING"
                          (str "THINKING  +" hidden-n " more"))
-            toggle     {:line (str op-row-marker
+            ;; Header is a THINKING-MARKER row → painted in the dim
+            ;; band (so it sits INSIDE the bubble), and carries the
+            ;; toggle-details meta the thinking-marker painter now
+            ;; registers as a click region.
+            header     {:line (str thinking-marker
                                 (ellipsize-cols (str chevron " " label) (max 1 (long (or max-w 1)))))
                         :meta {:kind       :toggle-details
                                :session-id (str session-id)
                                :node-id    (str node-id)
                                :collapsed? (not expanded?)
                                :color-role nil}}]
-        ;; Inline band (peek or full) FIRST, expander at the BOTTOM so
-        ;; the disclosure sits at the truncation seam and grows down.
-        (-> (thinking-padded-block
-              (tag-copy-block-body shown node-id full-copy))
-          (conj toggle))))))
+        ;; One neutral blank above, then the dim band: top edge, the
+        ;; THINKING header, reasoning (peek or full), bottom edge — all
+        ;; one thinking bubble.
+        (vec (concat
+               [{:line "" :meta nil}
+                {:line (str thinking-marker "") :meta nil}
+                header]
+               (tag-copy-block-body shown node-id full-copy)
+               [{:line (str thinking-marker "") :meta nil}]))))))
 
 (defn- markdown-fence-marker-line?
   "True for standalone Markdown fence opener/closer lines. Tool
