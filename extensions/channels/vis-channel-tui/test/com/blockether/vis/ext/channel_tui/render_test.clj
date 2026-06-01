@@ -1538,7 +1538,7 @@
       (expect (= p/MARKER_THINKING (second (:lines payload))))
       (expect (str/includes? body "short-reason-01"))
       (expect (str/includes? body "short-reason-10"))
-      (expect (not (str/includes? body "REASONING")))
+      (expect (not (str/includes? body "THINKING")))
       (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "collapses long reasoning behind a default-collapsed REASONING badge"
@@ -1559,7 +1559,7 @@
           collapsed (render* {})
           cbody     (strip-ansi (:text collapsed))]
       ;; Default collapsed: badge + toggle region present, body hidden.
-      (expect (str/includes? cbody "REASONING"))
+      (expect (str/includes? cbody "THINKING"))
       (expect (some #(= :toggle-details (:kind %)) (:line-meta collapsed)))
       (expect (not (str/includes? cbody "long-reason-06")))
       (expect (str/includes? cbody "done"))
@@ -1583,7 +1583,7 @@
                        {:session-id cid :session-turn-id turn-id :detail-expansions exp}))
           cbody    (strip-ansi (:text (render* {})))
           ebody    (strip-ansi (:text (render* {[cid node] true})))]
-      (expect (str/includes? cbody "REASONING"))
+      (expect (str/includes? cbody "THINKING"))
       (expect (not (str/includes? cbody "line-25")))
       (expect (str/includes? ebody "line-01"))
       (expect (str/includes? ebody "line-25"))
@@ -1712,7 +1712,7 @@
                                   :detail-expansions exp}))
           cbody    (strip-ansi (:text (render* {})))
           ebody    (strip-ansi (:text (render* {["session" node] true})))]
-      (expect (str/includes? cbody "REASONING"))
+      (expect (str/includes? cbody "THINKING"))
       (expect (not (str/includes? cbody "line 25")))
       (expect (str/includes? ebody "line 1 "))
       (expect (str/includes? ebody "line 25"))
