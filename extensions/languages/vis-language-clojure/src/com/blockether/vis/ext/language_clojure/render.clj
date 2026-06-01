@@ -66,8 +66,8 @@
     {:summary (cond-> {:left  (ir-strong "PORTS")
                        :right (str n " visible")}
                 default (assoc :center (ir-code (str "default=" default))))
-     :display (when (> n 1)
-                (ir-root
+     :display (ir-root
+                (when (> n 1)
                   (ir-code-block "text"
                     (str/join "\n"
                       (map (fn [{:keys [port source]}]
@@ -191,8 +191,8 @@
     (= :error status)
     {:summary {:left  (ir-strong "EDIT FAILED")
                :right (ir-code (or error "unknown"))}
-     :display (when target
-                (ir-root
+     :display (ir-root
+                (when target
                   (ir-p "target " (ir-code (str target)))))}
 
     :else
@@ -204,6 +204,6 @@
                     (str before "B→" after "B"
                       (when delta
                         (str "  Δ=" (if (pos? delta) "+" "") delta)))))
-       :display (when path
-                  (ir-root
+       :display (ir-root
+                  (when path
                     (ir-p "→ " (ir-code (str path)))))})))
