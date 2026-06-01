@@ -4142,7 +4142,16 @@
                                   (boolean show-silent?)
                                   session-id
                                   session-turn-id
-                                  (relevant-detail-expansions-key detail-scope-opts)]
+                                  ;; Tool-badge / op-row disclosures are keyed
+                                  ;; `iter<N>:t<frag>:op<M>` — scoped by the TURN
+                                  ;; token, NOT the `iteration:t<frag>:i<N>` base
+                                  ;; that `relevant-detail-expansions-key` filters
+                                  ;; on. Using the iteration-scoped key here meant
+                                  ;; toggling a badge in LIVE view never busted
+                                  ;; this cache, so the badge never collapsed/
+                                  ;; expanded until the turn finished. Turn-scoped
+                                  ;; key catches every disclosure in the bubble.
+                                  (turn-detail-expansions-key detail-scope-opts)]
                                inner-opts {:show-header?         show-iteration-headers?
                                            :session-id      session-id
                                            :session-turn-id session-turn-id
