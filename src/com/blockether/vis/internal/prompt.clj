@@ -168,16 +168,23 @@
 
       Memory (upsert-only; abandon = :status flip):
         (task-set! :K {:title :depends-on :status})  ; :todo | :doing | :done | :cancelled
-        (fact-set! :K {:content :status})            ; :active | :superseded
+        (fact-set! :K {:content :status :depends-on :contradicts})  ; :active | :superseded
+        — relations ride inline: :depends-on [refs] + :contradicts [fact-ks]
+          land with the upsert; no follow-up *-depends!/*-contradicts! call.
         — done is self-asserted: (task-set! :K {:status :done}) is
           accepted as-is. Engine stamps :done-born; it does NOT verify
           the work. Correctness is on you.
 
       Relations (universal :depends-on; cycle-checked across kinds):
-        (task-depends! :K [refs])   ; refs: bare key | [:task :K2] | [:fact :K]
-        (fact-depends! :K [refs])   ; fact provenance (derived-from)
-        — nodes are typed [:kind :K]; bare key = same-kind shorthand;
-          cycle reject is HARD across both kinds. The full graph is
+        (task-depends! :K [refs])   ; PREFER bare key: [:other-task]
+        (fact-depends! :K [refs])   ; PREFER bare key: [:other-fact]
+        — bare key IS the same-kind shorthand — USE IT. Write
+          (fact-depends! :a [:b]), NOT (fact-depends! :a [[:fact :b]]).
+          The [:kind :K] long form is ONLY for cross-kind refs
+          (a task depending on a fact: [:fact :K]). Both spellings work,
+          but the bare key is the canonical 90% case.
+        — nodes are typed [:kind :K]; cycle reject is HARD across both
+          kinds. The full graph is
           visible inline on each entity's `:depends-on` field in
           rendered ctx — no separate introspection fn needed.
 

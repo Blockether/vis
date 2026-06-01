@@ -389,8 +389,8 @@
 
     (register-toggle!
       {:id :vis/show-silent :label "Show silent system calls"
-       :description "Include successful :vis/silent forms (title / system bookkeeping) in traces."
-       :default false :owner :vis :group :tui-display :persist? true})
+       :description "Include successful :vis/silent forms (engine/system bookkeeping) in traces. Default ON — engine calls ARE your reasoning trace, not noise; show them."
+       :default true :owner :vis :group :tui-display :persist? true})
 
     (register-toggle!
       {:id :vis/show-timestamps :label "Show per-message timestamps"
