@@ -239,3 +239,91 @@
                       l
                       (subs l (min strip (leading-ws-count l)))))
               lines))))
+
+;; =============================================================================
+;; ws-agnostic token matcher — re-segments across newlines
+;;
+;; The 5-pass `seek-sequence` matcher above is LINE-STRUCTURED: it slides a
+;; window of exactly `(count search-lines)` lines and compares line-for-line.
+;; That cannot match when a SEARCH block joins or splits a line relative to
+;; the file (e.g. authoring `KeyType/Backspace (do …)` on one line when the
+;; file keeps `KeyType/Backspace` on its own line). This token matcher folds
+;; BOTH sides to a whitespace-free token stream so line breaks, indentation
+;; and run-length differences are all irrelevant, then snaps the hit back to
+;; whole-line boundaries so it flows through the same replace machinery.
+;; =============================================================================
+
+(defn line-index-at
+  "0-based line index of char offset `off` in `content` (count of `\n`
+   before it)."
+  ^long [^String content ^long off]
+  (let [lim (min off (count content))]
+    (loop [i 0 ln 0]
+      (if (>= i lim)
+        ln
+        (recur (inc i) (if (= \newline (.charAt content i)) (inc ln) ln))))))
+
+(defn tokenize-with-offsets
+  "Vec of `[token ^long start ^long end]` for every maximal non-whitespace
+   run in `s`. `start`/`end` are raw char offsets (end exclusive)."
+  [^String s]
+  (let [n (count s)]
+    (loop [i 0 acc (transient [])]
+      (if (>= i n)
+        (persistent! acc)
+        (if (Character/isWhitespace (.charAt s i))
+          (recur (inc i) acc)
+          (let [j (loop [k i]
+                    (if (and (< k n) (not (Character/isWhitespace (.charAt s k))))
+                      (recur (inc k))
+                      k))]
+            (recur j (conj! acc [(subs s i j) (long i) (long j)]))))))))
+
+(defn ws-agnostic-line-span
+  "Whitespace-agnostic token-subsequence match. Folds `search` and
+   `content` to whitespace-free token streams and looks for `search`'s
+   tokens as a contiguous subsequence of `content`'s. Because all
+   whitespace (incl. newline structure) is discarded, a SEARCH block whose
+   line breaks drifted from the file still locates.
+
+   Returns `{:line-start <i> :line-end <j> :occurrences <n>}` (0-based,
+   `:line-end` exclusive) snapped to whole lines around the FIRST hit, or
+   nil when zero tokens match. `:occurrences` is the total contiguous-hit
+   count so callers can refuse ambiguous (>1) applies."
+  [^String content ^String search]
+  (let [ct       (tokenize-with-offsets content)
+        st-toks  (mapv first (tokenize-with-offsets search))
+        slen     (count st-toks)]
+    (when (pos? slen)
+      (let [ctoks (mapv first ct)
+            n     (count ctoks)
+            hits  (loop [i 0 acc []]
+                    (if (> i (- n slen))
+                      acc
+                      (recur (inc i)
+                        (if (= st-toks (subvec ctoks i (+ i slen)))
+                          (conj acc i)
+                          acc))))]
+        (when (seq hits)
+          (let [i           (first hits)
+                [_ tstart _] (nth ct i)
+                [_ _ tend]   (nth ct (+ i slen -1))
+                line-start   (line-index-at content tstart)
+                line-end     (inc (line-index-at content (dec (long tend))))]
+            {:line-start line-start
+             :line-end   line-end
+             :occurrences (count hits)}))))))
+
+;; =============================================================================
+;; line-hash — stable per-line anchor for hashline edits
+;; =============================================================================
+
+(defn line-hash
+  "Stable 6-hex-char content hash of `line` (trimmed). Deterministic
+   across JVM runs because it folds `String/hashCode` (spec'd algorithm).
+   Identical trimmed lines share a hash — the line NUMBER disambiguates in
+   `v/cat` output; `v/patch` hash anchors require file-wide uniqueness or
+   fall back to an explicit `:from-line`/`:to-line`."
+  [^String line]
+  (let [h (.hashCode (str/trim (str line)))]
+    (format "%06x" (bit-and h 0xffffff))))
