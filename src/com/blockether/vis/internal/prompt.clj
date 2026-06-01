@@ -209,7 +209,13 @@
         (v/engine-symbol-apropos  \"pattern\")
 
       Control:
-        (done {:answer :trailer-drop? :trailer-summarize?})
+        (done {:answer "Markdown answer"})
+        Optional trailer cleanup metadata:
+          :trailer-drop      ["t<N>/i<M>" ...]
+          :trailer-summarize [{:scope-start "t<N>/i<M>"
+                               :scope-end   "t<N>/i<M>"
+                               :summary     "short recap"} ...]
+        These keys are data, not booleans. Do NOT emit :trailer-drop? true.
         Session titles are host-generated; do not spend a form on title setup.
 
     ANSWER  :answer is Markdown. Final user-facing output.

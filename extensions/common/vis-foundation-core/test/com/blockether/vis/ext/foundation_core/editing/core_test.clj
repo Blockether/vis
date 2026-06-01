@@ -942,11 +942,15 @@
                 :include ["*.clj"]}
           grep (private-fn "grep-files")
           rg (private-fn "rg-tool")
-          ;; rg-tool now returns a plain map as :result; :hits IS the
-          ;; grep payload — no protocol indirection.
-          rg-result (:result (rg spec))]
+          ;; rg-tool groups grep's flat :hits into :matches (path-once) on
+          ;; the model-facing :result — there is no flat :hits vec anymore.
+          rg-result (:result (rg spec))
+          grep-hits (:hits (grep spec))]
       (expect (= :v/rg (:vis.op rg-result)))
-      (expect (= (:hits (grep spec)) (:hits rg-result)))))
+      (expect (vector? (:matches rg-result)))
+      (expect (= (count grep-hits) (:hit-count rg-result)))
+      (expect (= (count (distinct (map :path grep-hits)))
+                (:file-count rg-result)))))
 
   (it "rejects shorthand and unknown keys instead of silently changing grammar"
     (let [grep (private-fn "grep-files")
@@ -1717,39 +1721,41 @@
       (expect (string/includes? deleted "-c"))
       (expect (< (count (string/split-lines changed)) 260))
       (expect (string/includes? changed "diff truncated"))))
-  (it "search-hits renderer formats partial-projection hits without raw EDN fallback"
+  (it "search-grouped renderer formats grouped matches (path once) without raw EDN fallback"
     (let [render-hits (private-fn "channel-render-rg")
           rg-result {:vis.op :v/rg
                      :hit-count 2
+                     :file-count 1
                      :truncated-by :end-of-results
-                     :hits [{:line 462
-                             :text "  (inc (reduce max 0 ...))"}
-                            {:line 472
-                             :text "(defn- workspace-tabs-or-base"}]}
+                     :matches [{:path "src/foo.clj"
+                                :lines [[462 "  (inc (reduce max 0 ...))"]
+                                        [472 "(defn- workspace-tabs-or-base"]]}]}
           out (render-hits rg-result)
           display (:display out)
           joined (string/join "\n" (filter string? (tree-seq sequential? seq display)))]
       (expect (extension/render-fn-result? out))
       (expect (vector? display))
       (expect (= :ir (first display)))
-      (expect (not (string/includes? joined "{:line 462")))
-      (expect (not (string/includes? joined ":text \"")))
-      (expect (string/includes? joined ":462"))
+      (expect (not (string/includes? joined ":lines")))
+      ;; path stated ONCE as a header; line numbers + text indented beneath
+      (expect (string/includes? joined "src/foo.clj"))
+      (expect (string/includes? joined "462"))
       (expect (string/includes? joined "(inc (reduce max 0"))
-      (expect (string/includes? joined ":472"))
+      (expect (string/includes? joined "472"))
       (expect (string/includes? joined "workspace-tabs-or-base"))))
-  (it "search-hits renderer keeps full path:line prefix when path present"
+  (it "search-grouped renderer states the path once as a header row"
     (let [render-hits (private-fn "channel-render-rg")
           rg-result {:vis.op :v/rg
                      :hit-count 1
+                     :file-count 1
                      :truncated-by :end-of-results
-                     :hits [{:path "src/foo.clj"
-                             :line 10
-                             :text "(def x 1)"}]}
+                     :matches [{:path "src/foo.clj"
+                                :lines [[10 "(def x 1)"]]}]}
           out (render-hits rg-result)
-          joined (string/join " " (filter string? (tree-seq sequential? seq (:display out))))]
+          joined (string/join "\n" (filter string? (tree-seq sequential? seq (:display out))))]
       (expect (extension/render-fn-result? out))
-      (expect (string/includes? joined "src/foo.clj:10"))
+      (expect (string/includes? joined "src/foo.clj"))
+      (expect (string/includes? joined "10"))
       (expect (string/includes? joined "(def x 1)")))))
 
 (defdescribe tool-envelope-test

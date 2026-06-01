@@ -1228,6 +1228,43 @@
             (dissoc db :messages-scroll :messages-scroll-target :scroll-follow-armed?)
             db))))))
 
+(reg-event-db :follow-bottom-animated
+  ;; Render-loop pulse while a turn streams. Replaces the instant nil
+   ;; auto-bottom snap with an EASED follow: keep `:messages-scroll`
+   ;; concrete and re-target it at the current bottom each frame, so
+   ;; `:tick-scroll-anim` walks the view down over a few frames instead
+   ;; of teleporting when a whole code block lands at once (the
+   ;; "jump jump"). No `:scroll-follow-armed?` here on purpose: arming
+   ;; would let `clear-anim-when-settled` flip back to nil between
+   ;; blocks, and the very next block would snap again. Staying concrete
+   ;; at the bottom keeps every growth animated.
+   ;;
+   ;; Following is abandoned the moment the user scrolls beyond the slack
+   ;; band (reading history mid-stream) — their concrete offset is left
+   ;; untouched and no target is injected, so they don't get yanked back.
+  (fn [db [_ total-h inner-h]]
+    (let [max-s  (max 0 (- (long total-h) (long inner-h)))
+          scroll (:messages-scroll db)
+          target (:messages-scroll-target db)
+          slack  (long auto-follow-slack-rows)]
+      (cond
+        (not (pos? max-s)) db
+        ;; Deliberately scrolled up to read: concrete offset below the
+        ;; bottom band and no follow-ward target in flight. Hands off.
+        (and (some? scroll)
+          (< (long scroll) (- max-s slack))
+          (or (nil? target) (< (long target) (- max-s slack))))
+        db
+        ;; Following. Seed a concrete position (current bottom when we
+        ;; were in pure nil auto-bottom) and ease toward the live bottom.
+        :else
+        (let [cur (long (or scroll max-s))]
+          (if (> max-s cur)
+            (assoc db :messages-scroll cur :messages-scroll-target max-s)
+            ;; Caught up / parked at bottom: hold concrete so the NEXT
+            ;; growth has somewhere to ease FROM; no target = no churn.
+            (assoc db :messages-scroll cur)))))))
+
 (reg-event-db :scroll-to-message
   ;; In-session search lands here after the user picks a hit.
   ;; The painter doesn't get told an exact :messages-scroll Y value

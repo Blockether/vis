@@ -3191,8 +3191,16 @@
    and the chevron is the only disclosure affordance."
   [{:keys [session-id detail-expansions block-scope max-w label-w]} op]
   (let [node-id   (str block-scope ":op" (:position op))
-        expanded? (detail-expanded? detail-expansions session-id node-id false)
-        chevron   (if expanded? "▼" "▶")
+        expanded?    (detail-expanded? detail-expansions session-id node-id false)
+        ;; No-match / empty-display ops are NOT collapsible: when (:display op)
+        ;; yields no body rows the row paints a plain space instead of a chevron
+        ;; and accepts no toggle click. Applies to every tool uniformly (rg with
+        ;; 0 hits, single-port PORTS, edit with no path, …).
+        display-body (ir-body-entries (:display op) result-marker max-w)
+        has-body?    (boolean (seq display-body))
+        chevron      (cond (not has-body?) " "
+                           expanded?       "▼"
+                           :else           "▶")
         error?    (= :error (:status op))
         label     (cond->> (op-row-label op)
                     error? (str "✗ "))
@@ -3207,17 +3215,13 @@
                     (str chevron " " label (repeat-str \space label-pad)
                       (repeat-str \space gap) summary)
                     max-w)
-        meta      (when (and session-id node-id)
+        meta      (when (and has-body? session-id node-id)
                     {:kind       :toggle-details
                      :session-id (str session-id)
                      :node-id    (str node-id)
                      :collapsed? (not expanded?)
                      :color-role (when error? :tool-color/error)})
-        body      (when expanded?
-                    (or (ir-body-entries (:display op) result-marker max-w)
-                      [{:line (str result-marker
-                                (ellipsize-cols (str "  · " (op-summary-text op)) max-w))
-                        :meta nil}]))]
+        body      (when (and has-body? expanded?) display-body)]
     (cond-> [{:line (str op-row-marker line) :meta meta}]
       (seq body) (into body))))
 
