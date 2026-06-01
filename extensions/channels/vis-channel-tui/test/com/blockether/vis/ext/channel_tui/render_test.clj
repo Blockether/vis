@@ -388,6 +388,33 @@
       (expect (not (str/includes? body "▼ ERROR")))
       (expect (not (str/includes? body "ERROR —")))))
 
+  (it "renders a non-collapsible op row flush-left with no chevron pad"
+    ;; An op whose `:display` yields no body rows (single-port PORTS, rg
+    ;; with 0 hits, …) is NOT collapsible — it must not reserve the
+    ;; disclosure column, so its label sits flush-left instead of being
+    ;; indented under the chevron of its collapsible siblings.
+    (let [rg-summary    [:ir {} [:p {} [:strong {} [:span {} "RG"]] [:span {} "  57 hits"]]]
+          rg-display    [:ir {} [:p {} [:span {} "truncated-by=end-of-results"]]]
+          ports-summary [:ir {} [:p {} [:strong {} [:span {} "PORTS"]] [:span {} "  default=7888"]]]
+          lines (format-iteration-entry
+                  {:iteration 0
+                   :forms [{:code "(rg ...)\n(ports)" :comment nil :render-segments nil
+                            :channel [(op-entry 0 :rg/files :observation rg-summary rg-display true)
+                                      (op-entry 1 :net/ports :observation ports-summary nil true)]
+                            :result-render nil :result-kind :tool :result-detail nil
+                            :error nil :started-at-ms nil :duration-ms 1
+                            :success? true :silent? false}]}
+                  80 1 {})
+          visible    (mapv (comp strip-sentinels strip-ansi body-of) lines)
+          rg-line    (first (filter #(str/includes? % "RG") visible))
+          ports-line (first (filter #(str/includes? % "PORTS") visible))]
+      ;; Collapsible RG keeps the chevron + space prefix.
+      (expect (str/starts-with? rg-line "▶ RG"))
+      ;; Non-collapsible PORTS is flush-left: label first, no chevron pad.
+      (expect (str/starts-with? ports-line "PORTS"))
+      (expect (not (str/includes? ports-line "▶")))
+      (expect (not (str/includes? ports-line "▼")))))
+
   (it "omits success status footer and keeps only code band edges"
     (with-raw-code-on
     ;; Layout (post status-footer removal):
