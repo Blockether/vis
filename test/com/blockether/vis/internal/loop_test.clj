@@ -460,19 +460,22 @@
                 hits))
       (expect (= ctx @seen))))
 
-  (it "auto-title asks the cheap routed model with previous title context"
+  (it "auto-title asks the smallest model of the first-preference plan with previous title context"
     (let [seen (atom nil)
-          env  (lp/create-environment ::router {:db :memory :title "Old focus"})]
+          router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
+          env  (lp/create-environment router-stub {:db :memory :title "Old focus"})]
       (try
-        (with-redefs [svar/ask-code!
+        (with-redefs [svar/ask!
                       (fn [router opts]
                         (reset! seen {:router router :opts opts})
-                        {:result "Settings Tabs Cleanup" :raw ""})]
+                        {:result {:title "Settings Tabs Cleanup"}})]
           (let [f (maybe-auto-title! env "Please clean up duplicated TUI settings tabs")]
             @f
             (expect (= "Settings Tabs Cleanup" @(:session-title-atom env)))
-            (expect (= ::router (:router @seen)))
-            (expect (= {:optimize :cost} (get-in @seen [:opts :routing])))
+            (expect (= router-stub (:router @seen)))
+            (expect (= {:provider :zai-coding-plan :optimize [:cost :speed]}
+                      (get-in @seen [:opts :routing])))
+            (expect (some? (get-in @seen [:opts :spec])))
             (expect (str/includes? (-> @seen :opts :messages second :content)
                       "Previous title: Old focus"))))
         (finally
@@ -480,12 +483,13 @@
 
   (it "auto-title treats Untitled placeholders as missing previous titles"
     (let [seen (atom nil)
-          env  (lp/create-environment ::router {:db :memory :title "Untitled"})]
+          router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
+          env  (lp/create-environment router-stub {:db :memory :title "Untitled"})]
       (try
-        (with-redefs [svar/ask-code!
+        (with-redefs [svar/ask!
                       (fn [_router opts]
                         (reset! seen opts)
-                        {:result "Current Bug Triage" :raw ""})]
+                        {:result {:title "Current Bug Triage"}})]
           (let [f (maybe-auto-title! env "Wez to sprawdz")]
             @f
             (expect (= "Current Bug Triage" @(:session-title-atom env)))
@@ -494,25 +498,32 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "auto-title uses deterministic fallback when cheap routed model fails and title is missing"
-    (let [env (lp/create-environment ::router {:db :memory :title "Untitled"})]
+  (it "auto-title falls through the provider chain, then uses deterministic fallback when all fail"
+    (let [router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}
+                                   {:id :openai-codex :models [{:name "gpt-5.3-codex"}]}]}
+          tried (atom [])
+          env (lp/create-environment router-stub {:db :memory :title "Untitled"})]
       (try
-        (with-redefs [svar/ask-code!
-                      (fn [_router _opts]
+        (with-redefs [svar/ask!
+                      (fn [_router opts]
+                        (swap! tried conj (get-in opts [:routing :provider]))
                         (throw (ex-info "Exceptional status code: 400" {})))]
           (let [f (maybe-auto-title! env "1dff1f5a-76dc-431e-ad2b-97af14c731f1 can you check why TUI title is missing?")]
             @f
+            ;; every plan in the chain attempted before deterministic fallback
+            (expect (= [:zai-coding-plan :openai-codex] @tried))
             (expect (= "can you check why TUI title is" @(:session-title-atom env)))))
         (finally
           (lp/dispose-environment! env)))))
 
   (it "auto-title returns immediately while the cheap model runs in background"
-    (let [env (lp/create-environment ::router {:db :memory :title "Old focus"})]
+    (let [router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
+          env (lp/create-environment router-stub {:db :memory :title "Old focus"})]
       (try
-        (with-redefs [svar/ask-code!
+        (with-redefs [svar/ask!
                       (fn [_router _opts]
                         (Thread/sleep 200)
-                        {:result "Async Title" :raw ""})]
+                        {:result {:title "Async Title"}})]
           (let [start (System/nanoTime)
                 f     (maybe-auto-title! env "rename async")
                 elapsed-ms (/ (- (System/nanoTime) start) 1e6)]
