@@ -348,27 +348,59 @@
   (let [h (.hashCode (str/trim (str line)))]
     (format "%06x" (bit-and h 0xffffff))))
 
-(defn lines->hashes
-  "`{line-number hash}` map for a vec of `[line-number text]` tuples.
-   The canonical `:hashes` payload `v/cat` returns — the SINGLE place this
-   map is built (read-file / read-file-ranges / tail-file all route here)."
+(defn- hash-freqs
+  "hash -> occurrence-count across `tuples` (each `[line-number text]`)."
   [tuples]
-  (into {} (map (fn [[ln t]] [ln (line-hash t)])) tuples))
+  (frequencies (map (fn [[_ln s]] (line-hash s)) tuples)))
+
+(defn- usable-anchor?
+  "A hash is a USABLE edit anchor only when the line is non-blank AND its
+   hash is unique among the rendered lines. Blank/whitespace lines and
+   duplicate content can't be hash-addressed — `resolve-hash-edit` refuses
+   ambiguous hits — so surfacing a hash there is pure noise. `freqs` is
+   `hash-freqs` over the same tuple set."
+  [^String s freqs]
+  (and (not (str/blank? s))
+    (= 1 (long (get freqs (line-hash s) 0)))))
+
+(defn lines->hashes
+  "`{line-number hash}` map of the USABLE anchors in `tuples` (non-blank
+   and unique within the set). The canonical `:hashes` payload `v/cat`
+   returns — the SINGLE place it is built (read-file / read-file-ranges /
+   tail-file all route here). Ambiguous and blank lines are intentionally
+   omitted: the model only ever sees hashes it can actually edit by."
+  [tuples]
+  (let [freqs (hash-freqs tuples)]
+    (into {}
+      (keep (fn [[ln s]]
+              (when (usable-anchor? s freqs) [ln (line-hash s)])))
+      tuples)))
 
 (def ^:const hashline-gutter
   "Separator between the hash anchor and the line text in rendered output."
   "│ ")
 
+(def ^:private ^:const hashline-blank-gutter
+  "Aligned placeholder (6 spaces, matching the 6-hex hash width) for lines
+   that are NOT usable hash anchors — keeps the `│` column aligned."
+  "      ")
+
 (defn render-hashline-block
-  "Render `[line-number text]` tuples as the canonical hash gutter:
-   `<hash>│ <text>`, one line per tuple. The hash is derived from the
-   text itself (`line-hash`) so this needs no external `:hashes` map and
-   stays the single source of truth for the cat body — whole-file, range
-   window and tail all render through here."
+  "Render `[line-number text]` tuples as the canonical gutter
+   `<hash>│ <text>`. A hash is shown ONLY on usable anchors (non-blank,
+   unique within the block, see `usable-anchor?`); every other line gets
+   an aligned blank gutter, so the reader sees a hash exactly where one
+   can be edited by hash — no noise on blank/duplicate lines. Self-
+   contained (derives hashes from the text), the single source of truth
+   for the cat body across whole-file, range window and tail reads."
   [tuples]
-  (->> tuples
-    (map (fn [[_ln s]] (str (line-hash s) hashline-gutter s)))
-    (str/join "\n")))
+  (let [freqs (hash-freqs tuples)]
+    (->> tuples
+      (map (fn [[_ln s]]
+             (if (usable-anchor? s freqs)
+               (str (line-hash s) hashline-gutter s)
+               (str hashline-blank-gutter hashline-gutter s))))
+      (str/join "\n"))))
 
 (defn render-hashline-range-block
   "Render `:ranges` windows (`[{:range [start end] :lines [[ln text]…]}…]`)
