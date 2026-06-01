@@ -3199,8 +3199,8 @@
         display-body (ir-body-entries (:display op) result-marker max-w)
         has-body?    (boolean (seq display-body))
         chevron      (cond (not has-body?) " "
-                           expanded?       "▼"
-                           :else           "▶")
+                       expanded?       "▼"
+                       :else           "▶")
         error?    (= :error (:status op))
         label     (cond->> (op-row-label op)
                     error? (str "✗ "))
@@ -3957,24 +3957,26 @@
                               (when (pos? idx) [(line-entry (str iteration-pad-marker ""))])
                               (form-lines form (inc idx))))
                     (map-indexed vector forms)))]
-            ;; Leading + trailing iter-pad so the iteration's body
-            ;; is separated from the recap above (and from the
-            ;; next iteration below) by a single terminal-bg blank.
-            ;; The coalesce keeps gap blanks separate from colored
-            ;; band-edge pads, so the green code top/bottom edges
-            ;; survive and the user sees:
-            ;;   recap row
-            ;;   [gap]               <- this leading iter-pad
-            ;;   [green code top]
+            ;; TRAILING iter-pad only. It separates this iteration's
+            ;; body from the NEXT iteration below by a single
+            ;; terminal-bg blank (coalesces with the next iteration's
+            ;; leading thinking blank, same `:gap` family).
+            ;;
+            ;; The LEADING iter-pad was removed: it predates the
+            ;; retired RECAP rail (it used to separate the code from a
+            ;; recap row above). With recaps gone it only wedged a
+            ;; blank row between the THINKING band/badge and the code
+            ;; of the SAME iteration, which read as a false section
+            ;; break. Dropping it realises the documented contract
+            ;; ("zero gap between the thinking band and the code"):
+            ;;   [thinking badge / band edge]
+            ;;   [green code top]   <- glued directly under thinking
             ;;   code lines
             ;;   [green code bot]
-            ;;   [gap]
-            ;;   badge / result
-            ;;   [gap]               <- this trailing iter-pad
-            ;;   next iteration ...
+            ;;   [gap]              <- this trailing iter-pad
+            ;;   op rows / next iteration ...
             (when (seq block-code-lines)
-              (-> [(line-entry (str iteration-pad-marker ""))]
-                (into block-code-lines)
+              (-> (vec block-code-lines)
                 (conj (line-entry (str iteration-pad-marker "")))))))
         body (or block-code-body [])
         trailing-errors (error-lines)
@@ -3998,9 +4000,14 @@
                            :iteration-number  iteration-number
                            :max-w             fill-w
                            :skip-error-signatures inline-error-sigs}))
+        ;; Trailing iter-pad only (mirror of block-code-body): the
+        ;; leading pad would re-insert the false gap between the
+        ;; THINKING badge / code body above and the op rows. The
+        ;; code body's own trailing pad already separates code from
+        ;; ops; when there is no code body the op rows sit directly
+        ;; under the THINKING badge, which is the intent.
         op-rows-block (when (seq op-rows)
-                        (-> [(line-entry (str iteration-pad-marker ""))]
-                          (into op-rows)
+                        (-> (vec op-rows)
                           (conj (line-entry (str iteration-pad-marker "")))))]
     ;; Layout: header (optional ITERATION-N label) + recap lines
     ;; (provider-fallback notices, provider-error recap, recap
