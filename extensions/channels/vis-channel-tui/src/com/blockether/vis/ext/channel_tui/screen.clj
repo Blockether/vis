@@ -1219,24 +1219,20 @@
       ;; then satisfy the `(not= last-v version)` check and the
       ;; full-frame branch fires — no missed frames mid-anim.
       (when (scroll-anim-active? db) (state/dispatch [:tick-scroll-anim]))
-      ;; Stick-to-bottom: while a turn streams, if the user is parked
-      ;; within a few rows of the bottom, re-arm auto-follow (nil) so
-      ;; the growing live bubble stays in view. Gated tightly here so
-      ;; the dispatch (and its render-version bump) fires only on the
-      ;; single frame that actually flips concrete -> follow, never as
-      ;; a per-tick busy loop.
-      (when (and (:loading? db)
-              ;; Don't interfere while a scroll animation is running:
-              ;; the user is actively moving (likely UP, off the bottom)
-              ;; and re-following would swallow it.
-              (not (scroll-anim-active? db)))
-        (let [s  (:messages-scroll db)
-              ly (:layout db)]
-          (when (and (some? s) ly (:total-h ly) (:inner-h ly))
-            (let [max-s (max 0 (- (long (:total-h ly)) (long (:inner-h ly))))]
-              (when (and (pos? max-s)
-                      (>= (long s) (- max-s (long state/auto-follow-slack-rows))))
-                (state/dispatch [:follow-bottom-if-near (:total-h ly) (:inner-h ly)]))))))
+      ;; Stick-to-bottom: while a turn streams, EASE the view toward the
+      ;; growing bottom (animated follow) instead of nil's instant snap.
+      ;; `:follow-bottom-animated` keeps `:messages-scroll` concrete and
+      ;; re-targets it at the live bottom every frame; the tick above
+      ;; walks it down over a few frames, so a whole code block landing
+      ;; at once scrolls in smoothly rather than teleporting. The event
+      ;; itself guards "user scrolled up to read" (hands off beyond the
+      ;; slack band), so it is safe to pulse every loading frame — we do
+      ;; NOT gate on `scroll-anim-active?` here, because the follow must
+      ;; keep chasing the bottom WHILE the ease animation is in flight.
+      (when (:loading? db)
+        (let [ly (:layout db)]
+          (when (and ly (:total-h ly) (:inner-h ly))
+            (state/dispatch [:follow-bottom-animated (:total-h ly) (:inner-h ly)]))))
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version @state/app-db) 0))
               ;; tryLock so a dialog session (which holds the lock for

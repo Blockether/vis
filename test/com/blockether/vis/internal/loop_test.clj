@@ -722,6 +722,51 @@
                    :summary "Investigation: no tui code here."}]
                 (:trailer-summarize payload)))))
 
+  (it "recovers direct answers when valid trailer metadata precedes :answer"
+    (let [recover (var-get #'lp/raw-response->direct-answer-source)
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
+          raw (str "```clojure\n"
+                "(done\n {:trailer-drop [\"t39/i1\"]\n  :answer \"" answer "\"})\n"
+                "```")
+          recovered (recover raw)
+          parsed (parse-forms recovered)
+          payload (second (:form (first (:forms parsed))))]
+      (expect (nil? (:parse-error parsed)))
+      (expect (= answer (:answer payload)))
+      (expect (= ["t39/i1"] (:trailer-drop payload)))))
+
+  (it "recovers direct answers with valid trailer metadata after :answer"
+    (let [recover (var-get #'lp/raw-response->direct-answer-source)
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
+          raw (str "```clojure\n"
+                "(done {:answer \"" answer "\"\n"
+                "       :trailer-drop [\"t39/i1\"]})\n"
+                "```")
+          recovered (recover raw)
+          parsed (parse-forms recovered)
+          payload (second (:form (first (:forms parsed))))]
+      (expect (nil? (:parse-error parsed)))
+      (expect (= answer (:answer payload)))
+      (expect (= ["t39/i1"] (:trailer-drop payload)))))
+
+  (it "drops nonsensical trailer-drop? booleans during direct-answer recovery"
+    (let [recover (var-get #'lp/raw-response->direct-answer-source)
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
+          raw (str "```clojure\n"
+                "(done {:answer \"" answer "\"\n"
+                "       :trailer-drop? true})\n"
+                "```")
+          recovered (recover raw)
+          parsed (parse-forms recovered)
+          payload (second (:form (first (:forms parsed))))]
+      (expect (nil? (:parse-error parsed)))
+      (expect (= answer (:answer payload)))
+      (expect (nil? (:trailer-drop? payload)))
+      (expect (nil? (:trailer-drop payload)))))
+
   (it "auto-repairs stray close delimiters before eval"
     (let [parsed ((var-get #'lp/parse-top-level-forms) "(def x 1))")]
       (expect (nil? (:parse-error parsed)))
