@@ -29,6 +29,7 @@
    Failure paths throw `ex-info` with `:type :clj/nrepl-*` so the
    Vis tool wrapper can surface a clean error to the model."
   (:require
+   [clojure.edn :as edn]
    [nrepl.core :as nrepl]
    [nrepl.transport :as transport])
   (:import
@@ -208,3 +209,128 @@
                    {:type :clj/nrepl-eval-failed
                     :host host :port port
                     :cause (.getMessage t)})))))))
+
+;; ---------------------------------------------------------------------------
+;; probe — cheap liveness check (no code execution)
+;; ---------------------------------------------------------------------------
+
+(defn- describe-versions
+  "Pull a flat `{:clojure :clojurescript :nrepl :java}` version-string map out
+   of an nREPL `describe` `:versions` reply. nREPL keys arrive as keywords or
+   strings depending on transport wiring, so read both shapes. Returns nil
+   when no recognisable version is present."
+  [versions]
+  (when (map? versions)
+    (let [vget (fn [k] (or (get versions k) (get versions (name k))))
+          vstr (fn [m] (when (map? m)
+                         (or (get m :version-string) (get m "version-string"))))
+          out  (into {}
+                 (keep (fn [k] (when-let [s (vstr (vget k))] [k s])))
+                 [:clojure :clojurescript :nrepl :java])]
+      (not-empty out))))
+
+(defn- detect-dialect
+  "Best-effort clj vs cljs classification from describe `:versions` + `:ops`.
+   JVM nREPLs report a `:clojure` version; cljs-capable servers (shadow-cljs,
+   piggieback, self-hosted) surface a clojurescript version or cljs/shadow
+   ops. Returns `:cljs`, `:clj`, or `:unknown`."
+  [versions ops]
+  (let [opset    (set (map name (cond
+                                   (map? ops)  (keys ops)
+                                   (coll? ops) ops
+                                   :else       nil)))
+        cljs-op? (boolean (some #(re-find #"(?i)cljs|shadow|piggieback" %) opset))]
+    (cond
+      (:clojurescript versions) :cljs
+      cljs-op?                   :cljs
+      (:clojure versions)        :clj
+      :else                      :unknown)))
+
+(defn- server-cwd
+  "Best-effort working directory of the server JVM via a single
+   `(System/getProperty \"user.dir\")` eval. Returns a path string or nil
+   (e.g. a non-JVM cljs runtime where `System` is undefined). Never throws."
+  [host port timeout-ms]
+  (try
+    (let [r (eval! {:host host :port port
+                    :code "(System/getProperty \"user.dir\")"
+                    :timeout-ms timeout-ms})
+          v (:value r)]
+      (when (string? v)
+        (let [parsed (try (edn/read-string v) (catch Throwable _ nil))]
+          (when (and (string? parsed) (seq parsed)) parsed))))
+    (catch Throwable _ nil)))
+
+(defn probe!
+  "Best-effort liveness probe for the nREPL at `host:port`. Sends a single
+   `describe` op (no code execution) under a SHORT timeout and classifies:
+
+     {:status :up :versions {:clojure ..} :dialect :clj|:cljs :cwd \"/path\"}
+                         — connected and the server answered describe.
+     {:status :unresponsive}
+                         — socket opened but no clean describe reply in budget.
+     {:status :down}     — could not connect (stale `.nrepl-port`, dead proc).
+
+   `:dialect` (clj vs cljs) is read from the describe metadata; `:cwd` is the
+   server JVM's working directory via one tiny eval (nil when unavailable).
+   Both are best-effort and only present when `:up`.
+
+   Never throws. Reuses the cached connection (warming the same pool
+   `eval!` uses). The short `:timeout-ms` (default 100) is passed to
+   `nrepl/client`, which bounds each response read regardless of the
+   cached connection's transport timeout."
+  [{:keys [host port timeout-ms] :or {host "localhost" timeout-ms 100}}]
+  (if-not (pos? (or port 0))
+    {:status :down}
+    (try
+      (let [conn     (connection-for host port timeout-ms)
+            client   (nrepl/client conn timeout-ms)
+            session  (nrepl/client-session client)
+            deadline (+ (System/currentTimeMillis) (long timeout-ms))
+            responses (session {:op "describe"})
+            up       (fn [versions ops]
+                       (cond-> {:status   :up
+                                :versions (or versions {})
+                                :dialect  (detect-dialect (or versions {}) ops)}
+                         true (as-> m
+                                (if-let [cwd (server-cwd host port timeout-ms)]
+                                  (assoc m :cwd cwd)
+                                  m))))]
+        (loop [rs       responses
+               versions nil
+               ops      nil
+               done?    false]
+          (cond
+            done?
+            (up versions ops)
+
+            (empty? rs)
+            (if versions (up versions ops) {:status :unresponsive})
+
+            (> (System/currentTimeMillis) deadline)
+            (if versions (up versions ops) {:status :unresponsive})
+
+            :else
+            (let [msg (first rs)
+                  mg  (fn [k] (or (get msg k) (get msg (keyword k))))
+                  v   (describe-versions (mg "versions"))
+                  o   (mg "ops")
+                  s   (mg "status")
+                  st  (cond
+                        (nil? s)    #{}
+                        (string? s) #{s}
+                        (coll? s)   (set (map str s))
+                        :else       #{(str s)})]
+              (recur (next rs)
+                (or v versions)
+                (or o ops)
+                (contains? st "done"))))))
+      (catch clojure.lang.ExceptionInfo e
+        (if (= :clj/nrepl-connect-failed (:type (ex-data e)))
+          {:status :down}
+          {:status :unresponsive}))
+      (catch IOException _
+        (evict! host port)
+        {:status :down})
+      (catch Throwable _
+        {:status :unresponsive}))))

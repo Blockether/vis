@@ -1,0 +1,95 @@
+(ns com.blockether.vis.ext.language-clojure.nrepl-ctx-test
+  "Unit tests for the `:ext/ctx` nREPL contribution. Discovery and liveness
+   are stubbed so the assertions are deterministic and offline; the real
+   `describe`/eval round-trip is covered in `nrepl-client-test`."
+  (:require
+   [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
+   [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nx]
+   [com.blockether.vis.ext.language-clojure.ports :as ports]
+   [lazytest.core :refer [defdescribe expect it]]))
+
+(defn- reset-cache! []
+  (reset! @#'nx/liveness-cache {:key nil :statuses {}}))
+
+(defn- nrepl-of [contribution]
+  (get-in contribution [:session/env :languages :clojure :nrepl]))
+
+(defdescribe contribute-shape-test
+  (it "nests live nREPL state under :session/env :languages :clojure with via/status/dialect/cwd"
+    (reset-cache!)
+    (with-redefs [ports/discover-all (fn [_] [{:port 7001 :source "/proj/.nrepl-port"}])
+                  nc/probe!          (fn [_] {:status :up
+                                              :versions {:clojure "1.12.4"}
+                                              :dialect :clj
+                                              :cwd "/proj"})]
+      (let [b (nrepl-of (nx/contribute {:workspace/root "/proj"
+                                        :ctx-atom (atom {:session/turn 1})}))
+            p (first (:ports b))]
+        (expect (= 7001 (:default b)))
+        (expect (= :project (:via p)))
+        (expect (= :up (:status p)))
+        (expect (= :clj (:dialect p)))
+        (expect (= "/proj" (:cwd p)))
+        (expect (= {:clojure "1.12.4"} (:versions p))))))
+
+  (it "derives :via per source and falls back :cwd to the source dir for project ports"
+    (reset-cache!)
+    (with-redefs [ports/discover-all (fn [_] [{:port 1 :source "/a/.nrepl-port"}
+                                              {:port 2 :source "/h/.lein/repl-port"}
+                                              {:port 3 :source "/h/.clojure/.nrepl-port"}])
+                  nc/probe!          (fn [_] {:status :up})] ; no :cwd from server
+      (let [ports   (:ports (nrepl-of (nx/contribute {:workspace/root "/a"
+                                                      :ctx-atom (atom {:session/turn 2})})))
+            by-port (into {} (map (juxt :port identity)) ports)]
+        (expect (= :project     (:via (by-port 1))))
+        (expect (= :lein        (:via (by-port 2))))
+        (expect (= :clojure-cli (:via (by-port 3))))
+        ;; project port falls back to its source dir; non-project leave :cwd absent
+        (expect (= "/a" (:cwd (by-port 1))))
+        (expect (nil? (:cwd (by-port 2))))
+        (expect (nil? (:cwd (by-port 3)))))))
+
+  (it "returns {} when no workspace root is on env"
+    (expect (= {} (nx/contribute {}))))
+
+  (it "emits an empty block when nothing is discovered"
+    (reset-cache!)
+    (with-redefs [ports/discover-all (fn [_] [])]
+      (let [b (nrepl-of (nx/contribute {:workspace/root "/proj"
+                                        :ctx-atom (atom {:session/turn 3})}))]
+        (expect (nil? (:default b)))
+        (expect (= [] (:ports b))))))
+
+  (it "never throws — degrades to {} when discovery blows up"
+    (reset-cache!)
+    (with-redefs [ports/discover-all (fn [_] (throw (ex-info "boom" {})))]
+      (expect (= {} (nx/contribute {:workspace/root "/proj"
+                                    :ctx-atom (atom {:session/turn 4})}))))))
+
+(defdescribe per-turn-cache-test
+  (it "probes once per (turn, port-set); re-probes when the turn advances"
+    (reset-cache!)
+    (let [calls (atom 0)]
+      (with-redefs [ports/discover-all (fn [_] [{:port 9999 :source "/p/.nrepl-port"}])
+                    nc/probe!          (fn [_] (swap! calls inc) {:status :up})]
+        (let [e1 {:workspace/root "/p" :ctx-atom (atom {:session/turn 5})}
+              e2 {:workspace/root "/p" :ctx-atom (atom {:session/turn 6})}]
+          (nx/contribute e1) (nx/contribute e1) (nx/contribute e1)
+          (expect (= 1 @calls))
+          (nx/contribute e2)
+          (expect (= 2 @calls))))))
+
+  (it "re-probes within the same turn when the discovered port-set changes"
+    (reset-cache!)
+    (let [calls  (atom 0)
+          ports* (atom [{:port 1 :source "/p/.nrepl-port"}])]
+      (with-redefs [ports/discover-all (fn [_] @ports*)
+                    nc/probe!          (fn [_] (swap! calls inc) {:status :up})]
+        (let [e {:workspace/root "/p" :ctx-atom (atom {:session/turn 7})}]
+          (nx/contribute e)
+          (expect (= 1 @calls))
+          (reset! ports* [{:port 1 :source "/p/.nrepl-port"}
+                          {:port 2 :source "/p/sub/.nrepl-port"}])
+          (nx/contribute e)
+          ;; new port-set → cache miss → both ports re-probed (1 + 2 = 3)
+          (expect (= 3 @calls)))))))
