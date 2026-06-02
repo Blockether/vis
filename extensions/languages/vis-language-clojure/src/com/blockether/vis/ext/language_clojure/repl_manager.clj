@@ -114,6 +114,22 @@
           (Thread/sleep 250)
           (recur))))))
 
+(defn managed-ports
+  "Map of `{port {:managed true :tool :aliases :pid :dir}}` for every currently
+   ALIVE Vis-managed REPL, keyed by the live port each one wrote. Lets ctx mark
+   which ports vis owns (and surface subdir REPLs that workspace-root discovery
+   would otherwise miss). Dead entries are skipped."
+  []
+  (into {}
+    (keep (fn [[dir {:keys [^Process process tool aliases]}]]
+            (when (alive? process)
+              (when-let [port (read-port-file dir)]
+                [port (cond-> {:managed true :dir dir}
+                        tool          (assoc :tool tool)
+                        (seq aliases) (assoc :aliases aliases)
+                        process       (assoc :pid (try (.pid process) (catch Throwable _ nil))))])))
+      @processes)))
+
 (defn status
   "Current managed-process + discovered-port view for `dir`. Always safe."
   [dir]

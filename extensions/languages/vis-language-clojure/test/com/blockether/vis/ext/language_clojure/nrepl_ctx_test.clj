@@ -6,6 +6,7 @@
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nx]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
+   [com.blockether.vis.ext.language-clojure.repl-manager :as rm]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- reset-cache! []
@@ -30,7 +31,10 @@
         (expect (= :up (:status p)))
         (expect (= :clj (:dialect p)))
         (expect (= "/proj" (:cwd p)))
-        (expect (= {:clojure "1.12.4"} (:versions p))))))
+        (expect (= {:clojure "1.12.4"} (:versions p)))
+        ;; not vis-managed (no managed processes) → :managed false, no handle
+        (expect (false? (:managed p)))
+        (expect (nil? (:tool p))))))
 
   (it "derives :via per source and falls back :cwd to the source dir for project ports"
     (reset-cache!)
@@ -41,9 +45,9 @@
       (let [ports   (:ports (nrepl-of (nx/contribute {:workspace/root "/a"
                                                       :ctx-atom (atom {:session/turn 2})})))
             by-port (into {} (map (juxt :port identity)) ports)]
-        (expect (= :project     (:via (by-port 1))))
-        (expect (= :lein        (:via (by-port 2))))
-        (expect (= :clojure-cli (:via (by-port 3))))
+        (expect (= :project      (:via (by-port 1))))
+        (expect (= :lein-home    (:via (by-port 2))))
+        (expect (= :clojure-home (:via (by-port 3))))
         ;; project port falls back to its source dir; non-project leave :cwd absent
         (expect (= "/a" (:cwd (by-port 1))))
         (expect (nil? (:cwd (by-port 2))))
@@ -65,6 +69,35 @@
     (with-redefs [ports/discover-all (fn [_] (throw (ex-info "boom" {})))]
       (expect (= {} (nx/contribute {:workspace/root "/proj"
                                     :ctx-atom (atom {:session/turn 4})}))))))
+
+(defdescribe managed-cross-reference-test
+  (it "stamps :managed + :tool/:pid/:aliases on a vis-managed port"
+    (reset-cache!)
+    (with-redefs [ports/discover-all (fn [_] [{:port 7001 :source "/proj/.nrepl-port"}])
+                  rm/managed-ports   (fn [] {7001 {:managed true :tool :clj
+                                                   :pid 4242 :aliases [:dev]
+                                                   :dir "/proj"}})
+                  nc/probe!          (fn [_] {:status :up})]
+      (let [p (first (:ports (nrepl-of (nx/contribute {:workspace/root "/proj"
+                                                       :ctx-atom (atom {:session/turn 8})}))))]
+        (expect (true? (:managed p)))
+        (expect (= :clj (:tool p)))
+        (expect (= 4242 (:pid p)))
+        (expect (= [:dev] (:aliases p))))))
+
+  (it "surfaces a vis-managed subdir REPL that workspace-root discovery misses"
+    (reset-cache!)
+    (with-redefs [ports/discover-all (fn [_] [])  ; nothing in the project tree
+                  rm/managed-ports   (fn [] {6543 {:managed true :tool :clj
+                                                   :dir "/proj/extensions/foo"}})
+                  nc/probe!          (fn [_] {:status :up})]
+      (let [ports (:ports (nrepl-of (nx/contribute {:workspace/root "/proj"
+                                                    :ctx-atom (atom {:session/turn 9})})))
+            p     (first ports)]
+        (expect (= 1 (count ports)))
+        (expect (= 6543 (:port p)))
+        (expect (true? (:managed p)))
+        (expect (= "/proj/extensions/foo/.nrepl-port" (:source p)))))))
 
 (defdescribe per-turn-cache-test
   (it "probes once per (turn, port-set); re-probes when the turn advances"

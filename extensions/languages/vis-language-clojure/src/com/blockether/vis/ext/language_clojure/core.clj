@@ -265,9 +265,10 @@
 
 (def ^:private prompt-text
   (str "Clojure language pack active.\n"
-    "Live nREPL state — discovered ports, liveness, dialect (clj/cljs) and working\n"
-    "dir — already rides in ctx under `:session/env :languages :clojure :nrepl`,\n"
-    "refreshed every turn. Read it there; there is no ports tool to call.\n\n"
+    "Live nREPL state — ports, liveness, dialect (clj/cljs), working dir, and\n"
+    "whether vis manages each one (:managed, with :tool/:pid/:aliases) — already\n"
+    "rides in ctx under `:session/env :languages :clojure :nrepl`, refreshed every\n"
+    "turn. Read it there; there is no ports tool to call.\n\n"
     "Symbols under `clj/`:\n"
     "  (clj/repl) | (clj/repl :status|:start|:stop|:restart [opts])\n"
     "                                      Manage a workspace nREPL. :status (default) +\n"

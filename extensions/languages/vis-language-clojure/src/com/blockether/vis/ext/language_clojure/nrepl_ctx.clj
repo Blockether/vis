@@ -7,21 +7,30 @@
    polyglot repo accumulates `:languages {:clojure {...} :typescript {...}}`:
 
      :session/env {:languages {:clojure {:nrepl {:default <int|nil>
-                                                 :ports [{:port :source
-                                                          :via :status
-                                                          [:versions]} ...]}}}}
+                                                 :ports [{:port :source :via
+                                                          :status :managed
+                                                          [:dialect :cwd :versions]
+                                                          [:tool :pid :aliases]} ...]}}}}
+
+   `:via` is the SOURCE/scope of the port (not the build tool we can't know for
+   an external REPL): `:project` (a `.nrepl-port` in the project tree),
+   `:lein-home` (`~/.lein/repl-port`), `:clojure-home` (`~/.clojure/.nrepl-port`).
+   `:managed` says whether VIS started this REPL; managed entries also carry the
+   handle to act on them — `:tool` (`:clj`/`:lein`/`:bb`), `:pid`, `:aliases` —
+   and are surfaced even when they live in a subdir that workspace-root
+   discovery wouldn't reach.
 
    Discovery (cheap `.nrepl-port` file reads) runs every render so a REPL
    started mid-turn shows up immediately. The liveness probe (`describe`
    round-trip) is the only network cost, so it is cached per turn AND per
-   discovered port-set — re-probing only when the turn advances or the set
-   of ports changes. All best-effort: any failure degrades to discovery
-   with `:status :unknown` (or an empty contribution) and never blocks the
-   render."
+   port-set — re-probing only when the turn advances or the set of ports
+   changes. All best-effort: any failure degrades to discovery with
+   `:status :unknown` (or an empty contribution) and never blocks the render."
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
-   [com.blockether.vis.ext.language-clojure.ports :as ports]))
+   [com.blockether.vis.ext.language-clojure.ports :as ports]
+   [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]))
 
 (def ^:private probe-timeout-ms 100)
 
@@ -30,13 +39,14 @@
 (defonce ^:private liveness-cache (atom {:key nil :statuses {}}))
 
 (defn- via-of
-  "Best-effort 'how was this REPL started' hint, derived from the
-   `.nrepl-port` source path."
+  "Where the port was discovered (scope), derived from the `.nrepl-port` source
+   path. NOT the build tool — for an external REPL we can't know that. `:tool`
+   is stamped separately only for REPLs vis itself manages."
   [source]
   (let [s (str source)]
     (cond
-      (re-find #"\.lein[/\\]repl-port$" s)        :lein
-      (re-find #"\.clojure[/\\]\.nrepl-port$" s)   :clojure-cli
+      (re-find #"\.lein[/\\]repl-port$" s)        :lein-home
+      (re-find #"\.clojure[/\\]\.nrepl-port$" s)   :clojure-home
       (re-find #"\.nrepl-port$" s)                 :project
       :else                                        :unknown)))
 
@@ -78,24 +88,42 @@
   (some-> source io/file .getParentFile .getAbsolutePath))
 
 (defn- nrepl-block
-  "Build the `:nrepl` map from discovery hits + liveness statuses. Each port
-   carries `:via` (how started), `:status`, `:dialect` (clj/cljs) and `:cwd`
-   (working dir) so the model can tell one REPL from another."
-  [hits statuses]
+  "Build the `:nrepl` map from discovery hits + liveness statuses + the
+   vis-managed index. Each port carries `:via` (scope), `:status`, `:dialect`,
+   `:cwd`, and `:managed` (did vis start it). Managed ports also carry the
+   handle to act on them: `:tool`, `:pid`, `:aliases`."
+  [hits statuses managed]
   {:default (some-> hits first :port)
    :ports   (mapv (fn [{:keys [port source]}]
                     (let [st  (get statuses port {:status :unknown})
                           via (via-of source)
+                          m   (get managed port)
                           cwd (or (:cwd st)
                                 (when (= :project via) (source-dir source)))]
-                      (cond-> {:port   port
-                               :source source
-                               :via    via
-                               :status (:status st)}
+                      (cond-> {:port    port
+                               :source  source
+                               :via     via
+                               :status  (:status st)
+                               :managed (boolean m)}
                         (seq (:versions st)) (assoc :versions (:versions st))
                         (:dialect st)        (assoc :dialect (:dialect st))
-                        cwd                  (assoc :cwd cwd))))
+                        cwd                  (assoc :cwd cwd)
+                        (:tool m)            (assoc :tool (:tool m))
+                        (:pid m)             (assoc :pid (:pid m))
+                        (seq (:aliases m))   (assoc :aliases (:aliases m)))))
               hits)})
+
+(defn- all-hits
+  "Union of file-discovered ports and vis-managed ports. Managed REPLs in a
+   subdir aren't reachable by workspace-root discovery (which only walks UP),
+   so we add them explicitly with a synthesized source so they still surface."
+  [root managed]
+  (let [discovered (vec (ports/discover-all root))
+        seen       (set (map :port discovered))]
+    (into discovered
+      (for [[port info] managed
+            :when       (not (seen port))]
+        {:port port :source (str (io/file (:dir info) ".nrepl-port"))}))))
 
 (defn contribute
   "`:ext/ctx` fn. Returns the `:session/env {:languages {:clojure {:nrepl ...}}}`
@@ -103,10 +131,11 @@
   [env]
   (try
     (if-let [root (:workspace/root env)]
-      (let [hits     (vec (ports/discover-all root))
+      (let [managed  (repl-manager/managed-ports)
+            hits     (all-hits root managed)
             host     "localhost"
             statuses (when (seq hits)
                        (liveness-for host (current-turn env) (map :port hits)))]
-        {:session/env {:languages {:clojure {:nrepl (nrepl-block hits statuses)}}}})
+        {:session/env {:languages {:clojure {:nrepl (nrepl-block hits statuses managed)}}}})
       {})
     (catch Throwable _ {})))
