@@ -1733,15 +1733,23 @@
            ;; already validated above (before Lanterna started), so here we only need the
            ;; pre-resolved value.
            (when-let [config (:config @state/app-db)]
-             (let [{:keys [id history]} (if (:session-id opts)
-                                          resumed-from-flag
-                                          (if (:resume opts)
-                                            ;; --resume: pick up the latest :tui session
-                                            (if-let [latest (first (remove empty-untitled-session? (tui-session-summaries)))]
-                                              (or (chat/resume-session (:id latest))
-                                                (chat/make-session config))
-                                              (chat/make-session config))
-                                            (chat/make-session config)))]
+             (let [{:keys [id history]}
+                   (cond
+                     (:session-id opts)
+                     resumed-from-flag
+
+                     ;; --continue: reopen the most-recent :tui session
+                     (:continue opts)
+                     (if-let [latest (first (remove empty-untitled-session?
+                                              (tui-session-summaries)))]
+                       (or (chat/resume-session (:id latest))
+                         (chat/make-session config))
+                       (chat/make-session config))
+
+                     ;; --resume: start fresh; the session picker opens
+                     ;; before the main loop (see below), like `pi -r`.
+                     :else
+                     (chat/make-session config))]
                (vreset! title-listener-cleanup (init-visible-session! {:id id, :history history}))
                ;; Kick off background pre-warm of the LRU. Walks the
                ;; history bottom-up calling project + bubble-height,
@@ -1955,6 +1963,10 @@
                                                               :active-session-id (current-session-id)
                                                               :db @state/app-db}))]
                                         (switch-session! choice)))))]
+             ;; --resume opens the session picker at startup, like `pi -r`.
+             (when (and (:resume opts)
+                        (not (:dialog-open? @state/app-db)))
+               (show-sessions!))
              (loop []
                ;; Layout fields are populated by the render thread after the first paint. Until
                ;; then, scroll handlers fall back to safe defaults and act as a no-op. Pure
@@ -2764,7 +2776,7 @@
              (when-let [cleanup @ssh-passphrase-cleanup] (try (cleanup) (catch Throwable _ nil)))
              (.stopScreen screen))))))))
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
-(def ^:private tui-usage "vis channels tui [--session-id ID | --resume]")
+(def ^:private tui-usage "vis channels tui [--session-id ID | --resume | --continue]")
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 (defn- flag-value
   [flag more]
@@ -2775,7 +2787,8 @@
 (defn- parse-args
   "Parse `vis channels tui` flags.
      --session-id ID   Resume a session (full UUID or short prefix)
-     --resume               Resume the latest :tui session
+     --resume, -r           Open the session picker at startup
+     --continue, -c         Reopen the most-recent :tui session
 
    Unknown flags and missing flag values throw a `:vis/user-error` ex-info
    so the user sees a clean error instead of the TUI silently swallowing a
@@ -2790,7 +2803,8 @@
         (case arg
           "--session-id" (let [v (flag-value arg more)]
                            (recur (next more) (assoc opts :session-id v)))
-          "--resume" (recur more (assoc opts :resume true))
+          ("--resume" "-r") (recur more (assoc opts :resume true))
+          ("--continue" "-c") (recur more (assoc opts :continue true))
           (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
                    {:vis/user-error true})))))))
 (defn- redirect-stdio-to-log!

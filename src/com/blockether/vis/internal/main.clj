@@ -1527,7 +1527,8 @@
           rows)
         (stdout! (str "\n  " (count rows) " session(s)\n"))
         (stdout! "  Resume with: vis channels tui --session-id <ID>  (full or short)")
-        (stdout! "  Or latest:   vis channels tui --resume")
+        (stdout! "  Pick latest: vis channels tui --continue")
+        (stdout! "  Browse:      vis channels tui --resume")
         (stdout! "  Show:        vis sessions show <ID>")
         (stdout! "  Fork:        vis sessions fork <ID> [--title TITLE]")
         (stdout! "  Export:      vis sessions export <ID> --md"))))
@@ -2649,6 +2650,22 @@
 (defn- strip-global-args [args]
   (vec (remove measure-arg? args)))
 
+(def ^:private session-shortcut-flags
+  ;; Top-level `vis --resume` / `vis --continue` (pi-parity) are
+  ;; ergonomic aliases for the `channels tui` session flags.
+  {"--resume" "--resume" "-r" "--resume"
+   "--continue" "--continue" "-c" "--continue"})
+
+(defn- rewrite-session-shortcuts
+  "Rewrite a leading `--resume`/`-r`/`--continue`/`-c` into
+   `channels tui <flag>` so the session shortcuts work at the root.
+   Only fires when the shortcut is the FIRST token, so flag-shaped
+   one-shot prompts (e.g. `vis --json \"...\"`) are untouched."
+  [args]
+  (if-let [canon (get session-shortcut-flags (first args))]
+    (into ["channels" "tui" canon] (rest args))
+    (vec args)))
+
 (defn- startup-measure? [args]
   (or (some measure-arg? args)
     (truthy-value? (System/getenv "VIS_MEASURE"))
@@ -2718,7 +2735,7 @@
   [& raw-args]
   (let [main-started (System/nanoTime)
         measure?     (startup-measure? raw-args)
-        args         (strip-global-args raw-args)]
+        args         (rewrite-session-shortcuts (strip-global-args raw-args))]
     (when measure?
       (System/setProperty "vis.measure" "1"))
     (try
