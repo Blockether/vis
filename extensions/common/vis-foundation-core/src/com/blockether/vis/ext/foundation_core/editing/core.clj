@@ -2807,9 +2807,13 @@
                        ranges)
         line-count   (count lines)
         first-ln     (ffirst lines)
+        ;; Channel/TUI display is a HUMAN surface — line-number gutter,
+        ;; not the model's `<hash>│` edit-anchor gutter. Humans navigate
+        ;; v/cat output by line number; the hash anchors live in the
+        ;; model-facing `:lines`/`:hashes` payload (Vis session ac065988).
         body         (if (seq ranges)
-                       (patch/render-hashline-range-block ranges)
-                       (patch/render-hashline-block lines))
+                       (patch/render-lineno-range-block ranges)
+                       (patch/render-lineno-block lines))
         state        (cond
                        (seq ranges) (str "ranges=" (str/join "," range-labels)
                                       (when truncated? "  (byte-cap)"))
