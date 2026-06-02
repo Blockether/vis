@@ -3382,7 +3382,11 @@
         (vec (concat
                [{:line "" :meta nil}
                 {:line (str thinking-marker "") :meta nil}
-                header]
+                header
+                ;; One blank band row between the THINKING badge and the
+                ;; reasoning body — a margin INSIDE the dim band so the
+                ;; label doesn't sit flush against the first reasoning line.
+                {:line (str thinking-marker "") :meta nil}]
                (tag-copy-block-body shown node-id full-copy)
                [{:line (str thinking-marker "") :meta nil}]))))))
 

@@ -2832,6 +2832,11 @@
   []
   (when-let [id (current-session-id)]
     (let [^java.io.PrintStream out vis/original-stdout]
+      ;; Lanterna leaves the cursor wherever the alt-screen teardown
+      ;; parked it (rarely column 0), so a bare println lands the
+      ;; banner mid-row and the leading char looks "eaten". Lead with
+      ;; a carriage return to snap back to column 0 first.
+      (.print out "\r")
       (.println out "Resume with:")
       (.println out (str "vis channels tui --session-id " id))
       (.flush out))))
