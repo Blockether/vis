@@ -13,7 +13,7 @@
           :vis/head    first N tokens of pr-str
           :vis/tail    last M tokens of pr-str
           :vis/size    total tokens
-          :vis/full    introspect-form / introspect-fact call string
+          :vis/full    lens / rewind call string (window or restore)
 
      2. PER-TRAILER fold.
         When the WHOLE prompt total exceeds the budget, oldest
@@ -24,7 +24,7 @@
    Hard rules:
      * NEVER an LLM / companion call. Pure deterministic.
      * NEVER drop data. Fold leaves enough scope info that
-       `(introspect-iter ...)` recovers every pin verbatim.
+       `(rewind ...)` re-pins every collapsed iter verbatim.
      * NEVER silent. Every guard fires a warning so the model knows.
 
    Decision authority stays with the model: it can issue its own
@@ -93,7 +93,7 @@
    `(cond-> v over-limit? clip)` helper.
 
    `full-call` is the literal string the model emits to recover the
-   verbatim payload (e.g. an introspect-form invocation).
+   verbatim payload (e.g. a lens / rewind invocation).
 
    Always lossless on disk — head/tail clip is a render-time view, not
    a mutation of CTX or DB row."

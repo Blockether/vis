@@ -340,46 +340,12 @@
       (renderer-fn {:ctx ctx-rendered :warnings warns}))))
 
 ;; =============================================================================
-;; Introspect verbs — model-facing SCI bindings over engine history helpers
-;; =============================================================================
-
-(defn- with-live-history
-  "Build the {turn → ctx} history map used by engine introspect helpers.
-   Combines:
-     - the LIVE ctx-atom value (assigned to the env's :session/turn so the
-       current in-progress turn is reachable via `introspect-ctx-at` and the
-       per-key introspect verbs)
-     - the persisted snapshots loaded via the provided `history-loader`
-   The live value lands LAST (highest turn) so per-key lookups walking
-   reverse find it first."
-  [env history-loader]
-  (let [live  (some-> (:ctx-atom env) deref)
-        live-turn (or (:turn (cursor-snapshot env)) (:session/turn live) 1)
-        loaded (history-loader)
-        history (into {} loaded)]
-    (cond-> history
-      live (assoc live-turn live))))
-
-;; =============================================================================
-;; Per-form / per-iter / per-turn introspection
-;; —
-;; Three drill layers, no overlap:
-;;
-;;   (introspect-turn-list)         — every turn in this session
-;;   (introspect-iter "t<N>/i<M>")  — full :forms vec for one iter
-;;   (introspect-form "t<N>/i<M>/f<K>") — one form envelope
-;;
-;; All DB-backed against `session_turn_iteration.forms` (the per-form
-;; envelope BLOB — single canonical source for what every executed
-;; form returned). The earlier `introspect-turn` / `introspect-iter-
-;; heads` verbs were retired: `introspect-iter` already returns the
-;; full forms vec (including heads), and `introspect-turn-list` covers
-;; the turn-level meta.
+;; rewind / lens / find — model-facing recovery bindings
 ;;
 ;; Scope grammar (matches the engine cursor):
-;;   t<N>            — turn N
 ;;   t<N>/i<M>       — iteration M of turn N
 ;;   t<N>/i<M>/f<K>  — form K (1-based) of iteration M of turn N
+;; All DB-backed against `session_turn_iteration.forms`.
 ;; =============================================================================
 
 (defn- parse-iter-scope [s]
@@ -391,22 +357,6 @@
   (when (string? s)
     (when-let [[_ n m k] (re-matches #"^t([1-9][0-9]*)/i([1-9][0-9]*)/f([1-9][0-9]*)$" s)]
       {:turn (parse-long n) :iter (parse-long m) :form (parse-long k)})))
-
-(defn- one-line
-  "Compact `src` for the head-only views: trim, collapse internal
-   whitespace, cap to ~100 chars so a `turn-list` reply stays scannable."
-  [src]
-  (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
-    (if (> (count s) 100) (str (subs s 0 100) "…") s)))
-
-(defn- turn-summary
-  "Top-level row for `introspect-turn-list`: one entry per turn."
-  [{:keys [position user-request status iteration-count]}]
-  (cond-> {:scope (str "t" position)
-           :turn  position
-           :status status
-           :iteration-count iteration-count}
-    user-request (assoc :user-request (one-line user-request))))
 
 (defn- turn-by-pos
   "Resolve turn position to the persisted turn-soul map (or nil)."
@@ -422,137 +372,115 @@
     (some #(when (= iter-pos (:position %)) %)
       (persistance/db-list-session-turn-iterations (:db-info env) (:id turn)))))
 
-(defn- unavailable-introspect-reason
-  "Classify why a DB-backed iter/form scope cannot be read. The current
-   iteration is not persisted until its whole fence finishes, so same-iter
-   introspection is impossible and should be called out explicitly instead
-   of returning silent nil."
-  [env {:keys [turn iter]}]
-  (let [{ct :turn ci :iter} (cursor-snapshot env)]
-    (cond
-      (or (> turn ct) (and (= turn ct) (> iter ci))) :future-scope
-      (and (= turn ct) (= iter ci))                 :current-iteration-not-persisted
-      :else                                        :scope-not-found)))
-
-(defn- introspect-unavailable
-  [kind scope reason & {:as extra}]
-  (merge
-    {:vis/error :introspect-scope-unavailable
-     :kind      kind
-     :scope     scope
-     :reason    reason
-     :hint      "Only completed iterations are DB-introspectable. Do not introspect the current/future iteration; use visible trailer head/tail first."}
-    extra))
-
 (defn build-introspect-bindings
-  "Return `{'symbol bare-fn}` for the introspect-* verbs the model calls.
-   `history-loader` is a 0-arity thunk that returns the persisted history
-   vec (pairs of `[turn-n ctx]`). The loop passes a thunk that calls
-   `persistance/db-load-ctx-history` against the env's db + session.
+  "Return `{'symbol bare-fn}` for the recovery surface: `rewind` /
+   `lens` / `find` (the old `introspect-*` sprawl + `trailer-find`
+   retired).
 
-   The live ctx-atom is folded in on every call so introspection on the
-   IN-PROGRESS turn also works (otherwise the model could not query its
-   own just-defined tasks/facts from the next iter).
+   - rewind  restore archived/aged data to LIVE: a form/iter scope
+             re-pins into the trailer; an entity key un-archives.
+             Mutates `:ctx-atom`.
+   - lens    read-only char-window over a big value's `pr-str` so the
+             clipped MIDDLE is reachable; stateless cursor.
+   - find    FTS5 over the LIVE (non-summarized) trace; `:match`
+             required, `:limit` default 10, summarized ranges excluded.
 
-   Per-form / per-iter / per-turn verbs read `session_turn_iteration.forms`
-   directly via `persistance/db-list-session-turn-iterations` against the
-   env's `:db-info` + `:session-id` keys."
-  [env history-loader]
-  (let [history #(with-live-history env history-loader)]
-    {'introspect-task     (fn introspect-task     [k]   (eng/introspect-task (history) k))
-     'introspect-fact     (fn introspect-fact     [k]   (eng/introspect-fact (history) k))
-     'introspect-changes  (fn introspect-changes  [turn-key] (eng/introspect-changes (history) turn-key))
-     'introspect-archived (fn introspect-archived [kind] (eng/introspect-archived (history) kind))
-     'introspect-ctx-at   (fn introspect-ctx-at   [turn-key]
-                            (let [t (cond
-                                      (string? turn-key)
-                                      (when-let [[_ n] (re-matches #"^t([1-9][0-9]*)$" turn-key)]
-                                        (parse-long n))
-                                      (number? turn-key) (long turn-key)
-                                      :else nil)]
-                              (when t (eng/introspect-ctx-at (history) t))))
-     'introspect-turn-list
-     (fn introspect-turn-list []
-       (mapv turn-summary
-         (persistance/db-list-session-turns (:db-info env) (:session-id env))))
-     'introspect-iter
-     (fn introspect-iter [scope]
-       (if-let [{:keys [turn iter] :as parsed} (parse-iter-scope scope)]
-         (if-let [it (iter-by-pos env turn iter)]
-           {:scope  scope
-            :status (:status it)
-            :code   (:code it)
-            :forms  (vec (:forms it))}
-           (introspect-unavailable :iter scope
-             (unavailable-introspect-reason env parsed)
-             :parsed parsed))
-         (introspect-unavailable :iter scope :malformed-scope)))
-     'trailer-find
-     ;; Phase F: SQLite FTS5 search over indexed iteration `code`
-     ;; (the whole fence body). Returns iteration scopes ranked by
-     ;; FTS5 BM25 so the model can pull `(introspect-iter scope)`
-     ;; for full forms when it spots a relevant hit.
-     ;;
-     ;; Opts:
-     ;;   :src-matches    FTS5 MATCH query string (required; bare
-     ;;                   tokens are AND-ed, supports prefix `foo*`,
-     ;;                   `"foo OR bar"`, etc.)
-     ;;   :scope-after    "tN/iM" post-filter (only hits strictly
-     ;;                   after this scope are returned)
-     ;;   :limit          int, default 20
-     ;;
-     ;; Returns: vec of `{:scope :preview :rank}` sorted best-first.
-     (fn trailer-find [opts]
-       (let [{:keys [src-matches scope-after limit]} (or opts {})]
-         (when (and (string? src-matches) (not (str/blank? src-matches)))
-           (let [hits   (persistance/db-search (:db-info env) src-matches
+   `_history-loader` is accepted for call-site compatibility and unused
+   (cross-turn snapshot verbs were dropped)."
+  [env _history-loader]
+  (let [db   (:db-info env)
+        sid  (:session-id env)
+        live-ctx (fn [] (some-> (:ctx-atom env) deref))
+        form-envelope (fn [scope]
+                        (when-let [{:keys [turn iter form]} (parse-form-scope scope)]
+                          (when-let [it (iter-by-pos env turn iter)]
+                            (nth (vec (:forms it)) (dec form) nil))))
+        lens-value (fn [addr]
+                     (cond
+                       (string? addr)  (some-> (form-envelope addr) :result)
+                       (keyword? addr) (let [c (live-ctx)]
+                                         (or (get-in c [:session/facts addr :content])
+                                           (get-in c [:session/facts addr])
+                                           (get-in c [:session/tasks addr])))
+                       :else nil))
+        iter-pin (fn [scope only-form?]
+                   (when-let [{:keys [turn iter form]} (or (parse-form-scope scope)
+                                                         (parse-iter-scope scope))]
+                     (when-let [it (iter-by-pos env turn iter)]
+                       (let [forms (vec (:forms it))
+                             pick  (if (and only-form? form)
+                                     (when-let [f (nth forms (dec form) nil)] [f])
+                                     forms)]
+                         (when (seq pick)
+                           {:scope (str "t" turn "/i" iter) :forms (vec pick)})))))]
+    {'rewind
+     (fn rewind [addr]
+       (let [addrs   (if (sequential? addr) addr [addr])
+             results (atom [])]
+         (doseq [a addrs]
+           (cond
+             (string? a)
+             (if-let [pin (iter-pin a (boolean (parse-form-scope a)))]
+               (do (when-let [ca (:ctx-atom env)]
+                     (swap! ca update :session/trailer
+                       (fn [tr] (eng/sort-trailer (conj (vec tr) pin)))))
+                 (swap! results conj {:rewound a :forms (count (:forms pin))}))
+               (swap! results conj {:rewound a :vis/error :scope-not-found}))
+             (keyword? a)
+             (let [out (atom nil)]
+               (when-let [ca (:ctx-atom env)]
+                 (swap! ca (fn [c] (let [r (eng/rewind-entity c a)]
+                                     (reset! out r) (:ctx r)))))
+               (swap! results conj (if (:found? @out)
+                                     {:rewound a :kind (:kind @out)}
+                                     {:rewound a :vis/error :entity-not-found})))
+             :else
+             (swap! results conj {:rewound a :vis/error :bad-address})))
+         {:rewound       @results
+          :trailer-size  (count (:session/trailer (live-ctx)))}))
+     'lens
+     (fn lens
+       ([addr] (lens addr nil))
+       ([addr opts]
+        (let [{:keys [offset limit]} (or opts {})
+              v (lens-value addr)]
+          (if (nil? v)
+            {:vis/error :lens-target-not-found :addr addr
+             :hint "address is a form scope \"tN/iM/fK\" or an existing fact/task key"}
+            (eng/lens-window (pr-str addr) v offset limit)))))
+     'find
+     (fn find [opts]
+       (let [{:keys [match scope-after limit]} (or opts {})]
+         (if (str/blank? (str match))
+           {:vis/error :find-requires-match
+            :hint "(find {:match \"text\"}) — :match is REQUIRED (search, not a lister)"}
+           (let [ranges (eng/summarized-iter-ranges (:session/trailer (live-ctx)))
+                 hits   (persistance/db-search db (str match)
                           {:owner-table "session_turn_iteration"
                            :field       "code"
-                           :limit       (max 1 (long (or limit 20)))})
-                 turns  (or (persistance/db-list-session-turns
-                              (:db-info env) (:session-id env)) [])
-                 turn-by-soul   (into {} (map (juxt :id :position)) turns)
-                 ;; cache iter rows per turn so a multi-hit query does
-                 ;; not refetch the same iteration list.
-                 turn-iter-rows (atom {})
-                 iter-rows-for  (fn [turn-soul-id]
-                                  (or (get @turn-iter-rows turn-soul-id)
-                                    (let [rows (persistance/db-list-session-turn-iterations
-                                                 (:db-info env) turn-soul-id)]
-                                      (swap! turn-iter-rows assoc turn-soul-id rows)
-                                      rows)))
-                 scope-cursor    (when (string? scope-after)
-                                   (parse-iter-scope scope-after))
-                 strictly-after? (fn [{:keys [turn iter]}]
-                                   (or (nil? scope-cursor)
-                                     (> turn (:turn scope-cursor))
-                                     (and (= turn (:turn scope-cursor))
-                                       (> iter (:iter scope-cursor)))))]
+                           :limit       (max 1 (long (or limit 10)))})
+                 turns  (or (persistance/db-list-session-turns db sid) [])
+                 turn-by-soul  (into {} (map (juxt :id :position)) turns)
+                 iter-cache    (atom {})
+                 iter-rows-for (fn [tid]
+                                 (or (get @iter-cache tid)
+                                   (let [rows (persistance/db-list-session-turn-iterations db tid)]
+                                     (swap! iter-cache assoc tid rows) rows)))
+                 cursor (when (string? scope-after) (parse-iter-scope scope-after))
+                 after? (fn [{:keys [turn iter]}]
+                          (or (nil? cursor)
+                            (> turn (:turn cursor))
+                            (and (= turn (:turn cursor)) (> iter (:iter cursor)))))]
              (vec
                (for [{:keys [owner-id snippet rank]} hits
-                     :let [iter-row (some (fn [t]
-                                            (some #(when (= owner-id (:id %)) [t %])
-                                              (iter-rows-for (:id t))))
-                                      turns)
-                           [turn-row iter] iter-row
-                           turn-pos (turn-by-soul (:id turn-row))
-                           iter-pos (:position iter)
-                           scope    (when (and turn-pos iter-pos)
-                                      {:turn turn-pos :iter iter-pos})]
-                     :when (and scope (strictly-after? scope))]
-                 {:scope   (str "t" (:turn scope) "/i" (:iter scope))
-                  :preview snippet
-                  :rank    rank}))))))
-     'introspect-form
-     (fn introspect-form [scope]
-       (if-let [{:keys [turn iter form] :as parsed} (parse-form-scope scope)]
-         (if-let [it (iter-by-pos env turn iter)]
-           (let [forms (vec (:forms it))]
-             (or (nth forms (dec form) nil)
-               (introspect-unavailable :form scope :form-not-found
-                 :parsed parsed
-                 :available-forms (count forms))))
-           (introspect-unavailable :form scope
-             (unavailable-introspect-reason env parsed)
-             :parsed parsed))
-         (introspect-unavailable :form scope :malformed-scope)))}))
+                     :let [pair (some (fn [t] (some #(when (= owner-id (:id %)) [t %])
+                                                (iter-rows-for (:id t)))) turns)
+                           [trow it] pair
+                           tp (turn-by-soul (:id trow))
+                           ip (:position it)
+                           sc (when (and tp ip) (str "t" tp "/i" ip))]
+                     :when (and sc
+                             (after? {:turn tp :iter ip})
+                             (not (eng/scope-in-summarized? ranges sc)))]
+                 {:scope sc :preview snippet :rank rank}))))))}))
+
