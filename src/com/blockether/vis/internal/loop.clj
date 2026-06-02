@@ -5283,36 +5283,10 @@
         ;; per-call DB read only happens when the model actually invokes
         ;; one of the verbs.
         ;;
-        ;; PER-ITER CACHE: the model may call multiple introspect-* verbs
-        ;; inside a single iter (e.g. `(introspect-fact :a)` AND
-        ;; `(introspect-task :b)`). Each call would otherwise hit
-        ;; `db-load-ctx-history` against SQLite. We cache the loaded
-        ;; history per `(turn, iter)` key derived from the loop's running
-        ;; counters; the entry invalidates automatically when the loop
-        ;; advances the iter (because the cache-key changes). Cache lives
-        ;; in this closure — dies with the env.
-        introspect-history-cache (atom {:key nil :value nil})
-        introspect-history-loader
-        (fn []
-          (let [{:keys [turn-position iteration]} @turn-state-atom
-                i-raw   iteration
-                i       (cond (map? i-raw)    (or (:position i-raw) 1)
-                          (number? i-raw) i-raw
-                          :else           1)
-                k       [turn-position i]
-                cached  @introspect-history-cache]
-            (if (= k (:key cached))
-              (:value cached)
-              (let [v (try
-                        (persistance/db-load-ctx-history db-info session-id)
-                        (catch Throwable th
-                          (tel/log! {:level :warn
-                                     :id ::ctx-history-load-failed
-                                     :data {:error (ex-message th)}}
-                            "Failed to load CTX history for introspect-*; falling back to live ctx only")
-                          []))]
-                (reset! introspect-history-cache {:key k :value v})
-                v))))
+        ;; The cross-turn snapshot history loader is gone — rewind/lens/
+        ;; grep read the LIVE ctx-atom + per-form DB rows directly, not a
+        ;; {turn → ctx} history map. The loader arg is kept nil for
+        ;; call-site compatibility.
         env-bindings             (merge
                                    {'done            answer-fn
                                     'set-session-title! session-title-fn}
@@ -5320,7 +5294,7 @@
                                    ;; engine mutator (task/fact + contradicts).
                                    (ctx-loop/build-sci-bindings ctx-loop-env)
                                    (ctx-loop/build-introspect-bindings
-                                     ctx-loop-env introspect-history-loader)
+                                     ctx-loop-env nil)
                                    ;; Bare `doc` / `apropos` SCI system
                                    ;; calls. They need `:sci-ctx`, which is
                                    ;; built AFTER this map, so they read it

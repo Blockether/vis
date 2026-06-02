@@ -105,8 +105,8 @@
 
               ;; ── History loader sees BOTH turns
               (let [history (persistance/db-load-ctx-history db-info session-id)
-                    as-of-1 (eng/introspect-ctx-at history 1)
-                    as-of-2 (eng/introspect-ctx-at history 2)]
+                    as-of-1 (get (into {} history) 1)
+                    as-of-2 (get (into {} history) 2)]
                 (expect (= 2 (count history)))
                 (expect (some? as-of-1))
                 (expect (some? as-of-2))
@@ -158,6 +158,6 @@
 
             ;; History: turn 1 snapshot still carries :old-task
             (let [history (persistance/db-load-ctx-history db-info session-id)
-                  t1-snap (eng/introspect-ctx-at history 1)]
+                  t1-snap (get (into {} history) 1)]
               (expect (some? (get-in t1-snap [:session/tasks :old-task])))))
           (finally (vis/db-dispose-connection! db-info)))))))

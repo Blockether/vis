@@ -201,19 +201,20 @@
         (lens \"t<N>/i<M>/f<K>\")            ; window a big form result
         (lens \"t<N>/i<M>/f<K>\" {:offset 8000})  ; scrub: follow :vis/next
         (lens :K)                          ; window a big fact/task
-          → {:view … :vis/size {:chars :tokens} :vis/next :vis/prev}
-            char-window over pr-str; each window is sized to render
-            verbatim. Read-only; does NOT touch the trailer.
+          → {:view … :vis/window [a b] :vis/size <chars> :vis/next
+             :vis/rewind}. char-window over pr-str; each window renders
+            verbatim. Read-only. :vis/rewind re-pins the WHOLE form.
         (rewind \"t<N>/i<M>/f<K>\")          ; re-pin ONE form into trailer
         (rewind \"t<N>/i<M>\")              ; re-pin a whole iter
         (rewind :K)                        ; un-archive a fact/task to live
         (rewind [\"t2/i3/f1\" :auth])        ; mixed
           restore-to-live; inverse of :summarize. A summary stub names
           its scope; a summary fact lists :summarized-from — rewind those.
-        (find {:match \"v/patch auth\"})     ; FTS5 over LIVE trace; :match
-        (find {:match \"v/rg\" :scope-after \"t2/i1\"})  ; REQUIRED, :limit 10
+        (grep {:match \"v/patch auth\"})     ; FTS5 over LIVE trace; :match
+        (grep {:match \"v/rg\" :scope-after \"t2/i1\"})  ; REQUIRED, :limit 10
           → [{:scope :preview :rank}]. Searches NON-summarized iters
-            only (summarized stuff is already named by its recap).
+            only (summarized stuff is already named by its recap). NOT
+            file search — that's (v/rg …).
         (doc 'sym)        ; QUOTED symbol ('v/cat, not v/cat) — docstring
                           ; + arglists + SOURCE in one call
         (apropos \"text\")  ; fuzzy name/doc search; arg is a plain STRING,
@@ -221,22 +222,27 @@
 
       Control:
         (done {:answer \"Markdown answer\"})
-        CLEAN UP BEFORE YOU CLOSE — ONE verb, :summarize (never drop,
-        always compress N→1). This is YOUR job at done, not an
-        afterthought: the engine only auto-summarizes the oldest pins
-        under raw size pressure.
-          If you MUTATED something this turn, the reads/searches/probes
-          that led up to the change are now stale noise — the file you
-          read no longer says what the pin shows. Collapse that iter
-          range into ONE recap (\"read X, found Y, patched Z, tests
-          pass\"). Likewise fold a cluster of settled facts/tasks into
-          one summary fact. If nothing changed and the trailer is small,
-          summarize nothing.
+        SUMMARIZE AS YOU GO — ONE verb, :summarize (never drop, always
+        compress N→1). Call (summarize {…}) MID-TURN the moment a chunk
+        of trailer is no longer relevant; do NOT hoard it until done.
+        The engine only auto-summarizes oldest pins under raw size
+        pressure — you do the meaningful compaction.
+          Trigger: you MUTATED something, or finished a line of probing.
+          The reads/searches that led there are now stale noise — the
+          file you read no longer says what the pin shows. Collapse that
+          iter range. Likewise fold a cluster of settled facts/tasks.
+          Each :summary MUST say: which FORMS/scopes, WHAT was done, and
+          WHY it is being summarized (why no longer relevant). e.g.
+          \"t3/i2-i5: read auth.clj + grepped token check, patched expiry
+          to <=, tests pass — exploration done, raw reads no longer
+          needed\". A bare \"explored auth\" is useless.
+        Mid-turn:  (summarize {:trailer […] :facts […] :tasks […]})
+        At close:  (done {:answer … :summarize {… same shape …}})
           :summarize {:trailer [{:scope-start \"t<N>/i<M>\"
                                  :scope-end   \"t<N>/i<M>\"
-                                 :summary \"read X, patched Y, tests pass\"} ...]
-                      :facts   [{:keys [:a :b] :into :k :summary \"recap\"} ...]
-                      :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap\"} ...]}
+                                 :summary \"t3/i2-i5: read X, patched Y, why\"} ...]
+                      :facts   [{:keys [:a :b] :into :k :summary \"recap + why\"} ...]
+                      :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap + why\"} ...]}
         trailer range → one recap stub; N facts/tasks → one new summary
         fact, originals → :archived. Nothing is lost: (rewind \"t<N>/i<M>\")
         re-pins archived trace; (rewind :K) un-archives an entity;

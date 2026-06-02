@@ -299,7 +299,9 @@
         (with-db
           #(let [r (lens "t1/i1/f1" {:offset 0 :limit 1000})]
              (expect (= [0 1000] (:vis/window r)))
+             (expect (integer? (:vis/size r)))      ; chars int, not a map
              (expect (some? (:vis/next r)))
+             (expect (some? (:vis/rewind r)))       ; form → restore-whole pointer
              (expect (= 1000 (count (:view r)))))))
 
       (it "rewind \"tN/iM/fK\" re-pins the form into the live trailer"
@@ -314,23 +316,23 @@
           #(expect (= :scope-not-found
                      (:vis/error (first (:rewound (rewind "t9/i9/f9")))))))))))
 
-(defdescribe find-test
-  (describe "find searches live (non-summarized) trace; :match required"
-    (let [{find 'find} (cl/build-introspect-bindings
+(defdescribe grep-test
+  (describe "grep searches live (non-summarized) trace; :match required"
+    (let [{grep 'grep} (cl/build-introspect-bindings
                          {:db-info ::db :session-id "S" :ctx-atom (atom {:session/trailer []})}
                          (constantly []))]
       (it ":match is REQUIRED"
-        (expect (= :find-requires-match (:vis/error (find {}))))
-        (expect (= :find-requires-match (:vis/error (find {:match ""}))))))
+        (expect (= :grep-requires-match (:vis/error (grep {}))))
+        (expect (= :grep-requires-match (:vis/error (grep {:match ""}))))))
 
     (let [turns [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
           iters {"soul-1" [{:id "it-1a" :position 1} {:id "it-1b" :position 2}]
                  "soul-2" [{:id "it-2a" :position 1}]}
-          mk-find (fn [trailer]
+          mk-grep (fn [trailer]
                     (get (cl/build-introspect-bindings
                            {:db-info ::db :session-id "S"
                             :ctx-atom (atom {:session/trailer trailer})}
-                           (constantly [])) 'find))]
+                           (constantly [])) 'grep))]
       (it "joins a hit to its tN/iM scope (default limit 10)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
                       (fn [_db q _opts] (when (= q "v/rg")
@@ -339,7 +341,7 @@
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
-          (let [hits ((mk-find []) {:match "v/rg"})]
+          (let [hits ((mk-grep []) {:match "v/rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
       (it "excludes hits inside a summarized range"
@@ -350,5 +352,19 @@
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
           ;; t1/i2 sits inside the summary stub t1/i1..t1/i3 → excluded
-          (let [hits ((mk-find [{:scope-start "t1/i1" :scope-end "t1/i3" :summary "s"}]) {:match "x"})]
+          (let [hits ((mk-grep [{:scope-start "t1/i1" :scope-end "t1/i3" :summary "s"}]) {:match "x"})]
             (expect (empty? hits))))))))
+
+(defdescribe mid-turn-summarize-test
+  (describe "summarize is callable mid-turn (not only at done)"
+    (let [env (mk-env)
+          {summarize 'summarize} (cl/build-introspect-bindings env (constantly []))]
+      (it "collapses N facts into one summary fact + archives originals NOW"
+        (swap! (:ctx-atom env) update :session/facts merge
+          {:a {:content "alpha" :status :active :born "t1/i1/f1"}
+           :b {:content "beta" :status :active :born "t1/i2/f1"}})
+        (let [r (summarize {:facts [{:keys [:a :b] :into :ab :summary "settled"}]})
+              c @(:ctx-atom env)]
+          (expect (= {:facts [{:keys [:a :b] :into :ab :summary "settled"}]} (:summarized r)))
+          (expect (= "settled" (get-in c [:session/facts :ab :content])))
+          (expect (= :archived (get-in c [:session/facts :a :status]))))))))
