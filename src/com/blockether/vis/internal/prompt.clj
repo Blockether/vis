@@ -193,28 +193,27 @@
           accepted as-is. Engine stamps :done-born; it does NOT verify
           the work. Correctness is on you.
 
-      Recovery — reach evidence the trailer clipped or :summarize
-      compressed. THREE verbs, no overlap:
-        A big result is shown clipped (:vis/head/:vis/tail + :vis/size
-        + :vis/full handle); the MIDDLE is hidden. The handle is a
-        (lens …) call — use it.
-        (lens \"t<N>/i<M>/f<K>\")            ; window a big form result
-        (lens \"t<N>/i<M>/f<K>\" {:offset 8000})  ; scrub: follow :vis/next
-        (lens :K)                          ; window a big fact/task
-          → {:view … :vis/window [a b] :vis/size <chars> :vis/next
-             :vis/rewind}. char-window over pr-str; each window renders
-            verbatim. Read-only. :vis/rewind re-pins the WHOLE form.
-        (rewind \"t<N>/i<M>/f<K>\")          ; re-pin ONE form into trailer
-        (rewind \"t<N>/i<M>\")              ; re-pin a whole iter
-        (rewind :K)                        ; un-archive a fact/task to live
-        (rewind [\"t2/i3/f1\" :auth])        ; mixed
-          restore-to-live; inverse of :summarize. A summary stub names
-          its scope; a summary fact lists :summarized-from — rewind those.
-        (grep {:match \"v/patch auth\"})     ; FTS5 over LIVE trace; :match
-        (grep {:match \"v/rg\" :scope-after \"t2/i1\"})  ; REQUIRED, :limit 10
-          → [{:scope :preview :rank}]. Searches NON-summarized iters
-            only (summarized stuff is already named by its recap). NOT
-            file search — that's (v/rg …).
+      Recovery — ONE verb, (recall …): pull back evidence the trailer
+      clipped or :summarize compressed. Dispatches on arg shape.
+        Every fact/task carries a stable :id — :t<N>/<key> (its birth
+        turn + key). Reusing a key in a later turn yields a DISTINCT id,
+        so :ids never resolve to the wrong version.
+      RESTORE — bring something back to LIVE (mutates; :why REQUIRED):
+        (recall {:ids [:t3/auth :t2/setup]
+                 :why \"need the auth decision + setup back\"})
+          → those entities restored INTO :session/facts/:session/tasks,
+            each stamped :recalled {:scope :why}.
+        (recall {:scopes [\"t4/i2\"] :why \"re-examine patch attempts\"})
+          → a summarized iter re-pinned INTO the trailer.
+      WINDOW — read a stored value, scrollable (no mutation, no :why):
+        (recall \"t<N>/i<M>/f<K>\")          ; window a stored form result
+        (recall \"t<N>/i<M>/f<K>\" {:offset 8000})  ; scroll: follow :vis/next
+        (recall :K)                        ; window a stored fact/task
+          → {:view … :vis/window [a b] :vis/size <chars> :vis/next}
+      SEARCH — find a scope/id you don't have:
+        (recall {:match \"v/patch auth\" :scope-after \"t2/i1\"})
+          → [{:scope :preview :rank}]. :match REQUIRED, :limit 10. Over
+            NON-summarized iters only. HISTORY search, NOT files (v/rg …).
         (doc 'sym)        ; QUOTED symbol ('v/cat, not v/cat) — docstring
                           ; + arglists + SOURCE in one call
         (apropos \"text\")  ; fuzzy name/doc search; arg is a plain STRING,
@@ -244,9 +243,9 @@
                       :facts   [{:keys [:a :b] :into :k :summary \"recap + why\"} ...]
                       :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap + why\"} ...]}
         trailer range → one recap stub; N facts/tasks → one new summary
-        fact, originals → :archived. Nothing is lost: (rewind \"t<N>/i<M>\")
-        re-pins archived trace; (rewind :K) un-archives an entity;
-        (lens …) windows a big value. :summarize is data, not a boolean.
+        fact, originals → :archived. Nothing is lost: (recall \"t<N>/i<M>\")
+        windows archived trace, (recall :K) windows an archived entity,
+        (recall {:match …}) finds a scope. :summarize is data, not a boolean.
         Do NOT emit :summarize? true.
         Session titles are host-generated; do not spend a form on title setup.
 

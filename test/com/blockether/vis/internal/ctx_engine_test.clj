@@ -219,9 +219,8 @@
     (it ":observation for everything else"
       (expect (= :observation (eng/classify-form-tag "(+ 1 2)")))
       (expect (= :observation (eng/classify-form-tag "(v/cat \"src/x.clj\")")))
-      (expect (= :observation (eng/classify-form-tag "(lens \"t1/i1/f1\")")))
-      (expect (= :observation (eng/classify-form-tag "(rewind \"t1/i1/f1\")")))
-      (expect (= :observation (eng/classify-form-tag "(find {:match \"x\"})")))
+      (expect (= :observation (eng/classify-form-tag "(recall \"t1/i1/f1\")")))
+      (expect (= :observation (eng/classify-form-tag "(recall {:match \"x\"})")))
       (expect (= :observation (eng/classify-form-tag "42")))
       (expect (= :observation (eng/classify-form-tag ":kw")))
       (expect (= :observation (eng/classify-form-tag ""))))
@@ -738,6 +737,27 @@
 ;; =============================================================================
 ;; Task done semantics — self-asserted, no validator, no reversion
 ;; =============================================================================
+
+(defdescribe entity-id-test
+  (describe "entity-id + :id stamping (turn-qualified stable ids)"
+    (it "entity-id derives :t<N>/key from the birth scope"
+      (expect (= :t3/auth (eng/entity-id "t3/i2/f1" :auth)))
+      (expect (= :t12/setup (eng/entity-id "t12/i1/f4" :setup))))
+
+    (it "task-set! stamps :id on creation (turn from the form-scope)"
+      (let [{ctx' :ctx} (eng/apply-mutator (eng/empty-ctx "s") "t3/i1/f1"
+                          :task-set! [:swap {:title "x" :status :todo}])]
+        (expect (= :t3/swap (get-in ctx' [:session/tasks :swap :id])))))
+
+    (it "fact-set! stamps :id on creation; update does NOT re-stamp"
+      (let [{c1 :ctx} (eng/apply-mutator (eng/empty-ctx "s") "t3/i1/f1"
+                        :fact-set! [:auth {:content "v1"}])
+            {c2 :ctx} (eng/apply-mutator c1 "t5/i2/f1"
+                        :fact-set! [:auth {:content "v2"}])]
+        (expect (= :t3/auth (get-in c1 [:session/facts :auth :id])))
+        ;; same logical entity — :id stays the turn-3 birth id
+        (expect (= :t3/auth (get-in c2 [:session/facts :auth :id])))
+        (expect (= "v2" (get-in c2 [:session/facts :auth :content])))))))
 
 (defdescribe task-done-self-asserted-test
   (describe "task-set! :status :done is accepted as-is and stamps :done-born"
