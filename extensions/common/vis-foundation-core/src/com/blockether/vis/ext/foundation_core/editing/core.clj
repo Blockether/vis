@@ -836,7 +836,7 @@
     (throw (ex-info "v/rg takes one spec map: {:all [...] :paths [...]}."
              {:type :ext.foundation.editing/invalid-rg-spec
               :got  (type spec)})))
-  (let [allowed-keys #{:all :any :paths :files :include :exclude :hidden? :respect-gitignore?
+  (let [allowed-keys #{:all :any :paths :files :include :glob :exclude :hidden? :respect-gitignore?
                        :limit :context :before :after :files-only? :counts? :regex?}
         unknown-keys (seq (remove allowed-keys (keys spec)))
         _ (when unknown-keys
@@ -870,10 +870,29 @@
         op (if has-all? :all :any)
         needles (vector-of-strings op nil)
         paths (vector-of-strings path-key ["."])
-        include (when (contains? spec :include)
-                  (vector-of-strings :include nil))
-        exclude (when (contains? spec :exclude)
-                  (vector-of-strings :exclude nil))
+        ;; :glob is an undocumented ripgrep-muscle-memory alias for
+        ;; :include. Kept out of the docstring on purpose; negation
+        ;; (!pat) still goes through :exclude.
+        _ (when (and (contains? spec :include) (contains? spec :glob))
+            (throw (ex-info "v/rg spec must use only one of :include or :glob."
+                     {:type :ext.foundation.editing/invalid-rg-spec
+                      :spec spec})))
+        include-key (cond (contains? spec :include) :include
+                          (contains? spec :glob)    :glob
+                          :else                     nil)
+        include-raw (when include-key
+                      (vector-of-strings include-key nil))
+        exclude-raw (when (contains? spec :exclude)
+                      (vector-of-strings :exclude nil))
+        ;; ripgrep muscle-memory: a leading ! on an include/glob
+        ;; pattern is a negation -> peel it into :exclude (sans !).
+        ;; Kept undocumented alongside :glob; canonical path stays
+        ;; :include / :exclude.
+        bang? (fn [s] (str/starts-with? s "!"))
+        include (filterv (complement bang?) (or include-raw []))
+        exclude (into (vec (or exclude-raw []))
+                  (comp (filter bang?) (map #(subs % 1)))
+                  (or include-raw []))
         nonneg-int! (fn [k]
                       (when (contains? spec k)
                         (let [v (get spec k)]
