@@ -219,7 +219,9 @@
     (it ":observation for everything else"
       (expect (= :observation (eng/classify-form-tag "(+ 1 2)")))
       (expect (= :observation (eng/classify-form-tag "(v/cat \"src/x.clj\")")))
-      (expect (= :observation (eng/classify-form-tag "(introspect-form \"t1/i1/f1\")")))
+      (expect (= :observation (eng/classify-form-tag "(lens \"t1/i1/f1\")")))
+      (expect (= :observation (eng/classify-form-tag "(rewind \"t1/i1/f1\")")))
+      (expect (= :observation (eng/classify-form-tag "(find {:match \"x\"})")))
       (expect (= :observation (eng/classify-form-tag "42")))
       (expect (= :observation (eng/classify-form-tag ":kw")))
       (expect (= :observation (eng/classify-form-tag ""))))

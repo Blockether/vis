@@ -92,14 +92,13 @@
   "Replace `(:content fact)` with a safe-guard head+tail stub when its
    token weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass
    through. Mirrors the engine's `:fact-content-too-large` write-time
-   warning. Full content stays in CTX + DB; `(introspect-fact :K)`
-   recovers it verbatim."
+   warning. Full content stays in CTX + DB; `(lens :K)` windows it."
   [fact-k fact]
   (if-let [content (:content fact)]
     (assoc fact :content
       (safe-guards/clip-value content
         FACT_CONTENT_TOKEN_LIMIT
-        (str "(introspect-fact " fact-k ")")))
+        (str "(lens " fact-k ")")))
     fact))
 
 (defn- bound-facts
@@ -118,7 +117,8 @@
    token weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error`,
    `:src`, `:scope`, `:tag` pass through. Full result stays on the
    envelope (CTX) and in DB (`session_turn_iteration.forms`);
-   `(introspect-form \"<scope>\")` returns the original payload.
+   `(lens \"<scope>\")` windows the original payload (and
+   `(rewind \"<scope>\")` re-pins the whole form into the trailer).
 
    This is THE fix for the c8dc39b1 / 1a9a61ee trailer-bloat class:
    `(def x (v/cat huge-file))` no longer rides every later prompt
@@ -135,7 +135,7 @@
     (assoc form :result
       (safe-guards/clip-value (:result form)
         FORM_RESULT_TOKEN_LIMIT
-        (str "(introspect-form " (pr-str (:scope form)) ")")))
+        (str "(lens " (pr-str (:scope form)) ")")))
     form))
 
 ;; =============================================================================

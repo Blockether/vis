@@ -2,7 +2,6 @@
   "Tests for the loop integration adapter — scope synthesis, ctx atom
    swapping, mutator binding wiring (tasks + facts model)."
   (:require
-   [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.ctx-loop :as cl]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.persistance]
@@ -220,96 +219,6 @@
         (expect (some? (get-in ctx [:session/tasks :swap :done-born])))))))
 
 ;; =============================================================================
-;; Introspect verb bindings
-;; =============================================================================
-
-(defdescribe introspect-bindings-test
-  (describe "build-introspect-bindings"
-    (let [env (mk-env)
-          {tk 'task-set!} (cl/build-sci-bindings env)
-          _   (tk :swap {:title "CAS rewrite" :status :doing})
-          ;; History loader returns a vec of [turn ctx] pairs as if loaded
-          ;; from persistance. We fake one prior turn snapshot.
-          prior-ctx (-> (eng/empty-ctx "test-session")
-                      (assoc :session/turn 1)
-                      (assoc-in [:session/facts :rl-bug]
-                        {:content "old race fact" :born "t1/i1/f1"}))
-          history-loader (constantly [[1 prior-ctx]])
-          {itask 'introspect-task
-           ifact 'introspect-fact
-           iarch 'introspect-archived
-           ictx  'introspect-ctx-at}
-          (cl/build-introspect-bindings env history-loader)]
-
-      (it "introspect-task finds task in LIVE ctx"
-        (let [r (itask :swap)]
-          (expect (= "CAS rewrite" (:title r)))))
-
-      (it "introspect-fact finds fact from PRIOR turn (history)"
-        (let [r (ifact :rl-bug)]
-          (expect (= "old race fact" (:content r)))))
-
-      (it "introspect-archived enumerates entries missing from latest"
-        ;; the LIVE ctx (treated as latest turn 2 from env atoms) has no
-        ;; :rl-bug; turn 1 had it → archived
-        (let [arch (iarch :facts)]
-          (expect (some #(= :rl-bug (:key %)) arch))))
-
-      (it "introspect-ctx-at \"t1\" returns the turn 1 snapshot"
-        (let [snap (ictx "t1")]
-          (expect (= "old race fact"
-                    (get-in snap [:session/facts :rl-bug :content])))))
-
-      (it "introspect-ctx-at \"t99\" → nil for unknown turn"
-        (expect (nil? (ictx "t99"))))
-
-      (it "introspect-ctx-at malformed string → nil"
-        (expect (nil? (ictx "bogus"))))
-
-      (it "introspect-ctx-at accepts integer too"
-        (expect (= "old race fact"
-                  (get-in (ictx 1) [:session/facts :rl-bug :content])))))))
-
-(defdescribe db-backed-introspect-diagnostics-test
-  (describe "introspect-form / introspect-iter diagnostics"
-    (let [env (assoc (mk-env) :db-info ::db :session-id "S")
-          turns [{:id "soul-1" :position 1}
-                 {:id "soul-2" :position 2}]
-          iters-by-soul {"soul-1" [{:id "it-1" :position 1 :status "done"
-                                    :code "(+ 1 2)"
-                                    :forms [{:scope "t1/i1/f1"
-                                             :tag :observation
-                                             :src "(+ 1 2)"
-                                             :result 3}]}]
-                         ;; current cursor is t2/i3 from mk-env; no row exists
-                         ;; until the whole fence finishes.
-                         "soul-2" []}
-          bindings (cl/build-introspect-bindings env (constantly []))
-          introspect-form (get bindings 'introspect-form)
-          introspect-iter (get bindings 'introspect-iter)
-          with-db (fn [f]
-                    (with-redefs [com.blockether.vis.internal.persistance/db-list-session-turns
-                                  (constantly turns)
-                                  com.blockether.vis.internal.persistance/db-list-session-turn-iterations
-                                  (fn [_db soul-id] (get iters-by-soul soul-id))]
-                      (f)))]
-      (it "returns completed prior form payloads"
-        (with-db
-          #(expect (= 3 (:result (introspect-form "t1/i1/f1"))))))
-
-      (it "current-iteration introspect returns explicit diagnostic, not nil"
-        (with-db
-          #(let [r (introspect-form "t2/i3/f1")]
-             (expect (= :introspect-scope-unavailable (:vis/error r)))
-             (expect (= :current-iteration-not-persisted (:reason r))))))
-
-      (it "malformed iter scope returns explicit diagnostic, not nil"
-        (with-db
-          #(let [r (introspect-iter "bogus")]
-             (expect (= :introspect-scope-unavailable (:vis/error r)))
-             (expect (= :malformed-scope (:reason r)))))))))
-
-;; =============================================================================
 ;; trailer→form-results projection
 ;; =============================================================================
 
@@ -343,72 +252,103 @@
         (expect (= "boom" (:message (:error (get fr "t1/i2/f1")))))))))
 
 ;; =============================================================================
-;; Phase F: trailer-find — FTS5 query → ranked iteration scopes.
-;;
-;; Composition test only — the actual SQLite FTS5 semantics live in the
-;; persistance suite. Here we wire mocked db-search + db-list-* and assert
-;; that trailer-find joins the hits with turn positions and applies the
-;; declared filters.
+;; rewind / lens / find — recovery surface
 ;; =============================================================================
 
-(defdescribe trailer-find-test
-  (describe "trailer-find composes db-search hits into iter scopes"
-    (let [history-loader (constantly [])
-          bindings (cl/build-introspect-bindings
-                     {:db-info ::db :session-id "S"}
-                     history-loader)
-          trailer-find (get bindings 'trailer-find)]
-      (it "is exposed under the 'trailer-find binding"
-        (expect (some? trailer-find)))
+(defdescribe rewind-lens-entity-test
+  (describe "rewind / lens over live entities"
+    (let [env (mk-env)
+          {tk 'task-set!} (cl/build-sci-bindings env)
+          _ (tk :swap {:title "CAS rewrite" :status :doing})
+          {rewind 'rewind lens 'lens} (cl/build-introspect-bindings env (constantly []))]
 
-      (it "returns nil/empty when :src-matches is blank or missing"
+      (it "lens :K windows a live entity's value"
+        (let [r (lens :swap)]
+          (expect (= ":swap" (:vis/lens r)))
+          (expect (string? (:view r)))))
+
+      (it "lens unknown key → :lens-target-not-found"
+        (expect (= :lens-target-not-found (:vis/error (lens :nope)))))
+
+      (it "rewind :K un-archives an archived fact to live (:archived-from)"
+        (swap! (:ctx-atom env) assoc-in [:session/facts :old]
+          {:content "x" :status :archived :archived-from :active})
+        (let [r (rewind :old)]
+          (expect (= [:old] (mapv :rewound (:rewound r))))
+          (expect (= :active (get-in @(:ctx-atom env) [:session/facts :old :status])))))
+
+      (it "rewind missing key → :entity-not-found"
+        (expect (= :entity-not-found (:vis/error (first (:rewound (rewind :ghost))))))))))
+
+(defdescribe rewind-lens-form-test
+  (describe "rewind / lens over DB-backed forms"
+    (let [env  (assoc (mk-env) :db-info ::db :session-id "S")
+          big  (apply str (repeat 4000 "y"))
+          turns [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
+          iters {"soul-1" [{:id "it-1" :position 1 :status "done" :code "(+ 1 2)"
+                            :forms [{:scope "t1/i1/f1" :tag :observation :src "(+ 1 2)" :result big}]}]
+                 "soul-2" []}
+          {rewind 'rewind lens 'lens} (cl/build-introspect-bindings env (constantly []))
+          with-db (fn [f]
+                    (with-redefs [com.blockether.vis.internal.persistance/db-list-session-turns
+                                  (constantly turns)
+                                  com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                                  (fn [_db sid] (get iters sid))]
+                      (f)))]
+      (it "lens \"tN/iM/fK\" windows a big form result with a cursor"
+        (with-db
+          #(let [r (lens "t1/i1/f1" {:offset 0 :limit 1000})]
+             (expect (= [0 1000] (:vis/window r)))
+             (expect (some? (:vis/next r)))
+             (expect (= 1000 (count (:view r)))))))
+
+      (it "rewind \"tN/iM/fK\" re-pins the form into the live trailer"
+        (with-db
+          #(let [r (rewind "t1/i1/f1")]
+             (expect (= 1 (:forms (first (:rewound r)))))
+             (expect (some (fn [p] (= "t1/i1" (:scope p)))
+                       (:session/trailer @(:ctx-atom env)))))))
+
+      (it "rewind unknown scope → :scope-not-found"
+        (with-db
+          #(expect (= :scope-not-found
+                     (:vis/error (first (:rewound (rewind "t9/i9/f9")))))))))))
+
+(defdescribe find-test
+  (describe "find searches live (non-summarized) trace; :match required"
+    (let [{find 'find} (cl/build-introspect-bindings
+                         {:db-info ::db :session-id "S" :ctx-atom (atom {:session/trailer []})}
+                         (constantly []))]
+      (it ":match is REQUIRED"
+        (expect (= :find-requires-match (:vis/error (find {}))))
+        (expect (= :find-requires-match (:vis/error (find {:match ""}))))))
+
+    (let [turns [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
+          iters {"soul-1" [{:id "it-1a" :position 1} {:id "it-1b" :position 2}]
+                 "soul-2" [{:id "it-2a" :position 1}]}
+          mk-find (fn [trailer]
+                    (get (cl/build-introspect-bindings
+                           {:db-info ::db :session-id "S"
+                            :ctx-atom (atom {:session/trailer trailer})}
+                           (constantly [])) 'find))]
+      (it "joins a hit to its tN/iM scope (default limit 10)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
-                      (constantly [])]
-          (expect (nil? (trailer-find nil)))
-          (expect (nil? (trailer-find {:src-matches ""}))))))
-
-    (let [;; mock 2 turns × 2 iters; an FTS5 hit on iter-2 of turn-1
-          turns [{:id "soul-1" :position 1}
-                 {:id "soul-2" :position 2}]
-          iters-by-soul {"soul-1" [{:id "it-1a" :position 1}
-                                   {:id "it-1b" :position 2}]
-                         "soul-2" [{:id "it-2a" :position 1}]}
-          bindings (cl/build-introspect-bindings
-                     {:db-info ::db :session-id "S"}
-                     (constantly []))
-          trailer-find (get bindings 'trailer-find)]
-
-      (it "joins owner-id to a turn+iter position and emits the tN/iM scope"
-        (with-redefs [com.blockether.vis.internal.persistance/db-search
-                      (fn [_db q _opts]
-                        (when (= q "v/rg")
-                          [{:owner-table "session_turn_iteration"
-                            :owner-id    "it-1b"
-                            :field       "code"
-                            :snippet     "(v/rg […])"
-                            :rank        -1.234}]))
-                      com.blockether.vis.internal.persistance/db-list-session-turns
-                      (constantly turns)
+                      (fn [_db q _opts] (when (= q "v/rg")
+                                          [{:owner-table "session_turn_iteration" :owner-id "it-1b"
+                                            :field "code" :snippet "(v/rg …)" :rank -1.2}]))
+                      com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
-                      (fn [_db soul-id] (get iters-by-soul soul-id))]
-          (let [hits (trailer-find {:src-matches "v/rg" :limit 20})]
-            (expect (= 1 (count hits)))
-            (expect (= "t1/i2" (:scope (first hits))))
-            (expect (= "(v/rg […])" (:preview (first hits)))))))
+                      (fn [_db sid] (get iters sid))]
+          (let [hits ((mk-find []) {:match "v/rg"})]
+            (expect (= ["t1/i2"] (mapv :scope hits))))))
 
-      (it ":scope-after filters out hits at or before the cursor"
+      (it "excludes hits inside a summarized range"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
-                      (constantly
-                        [{:owner-table "session_turn_iteration"
-                          :owner-id    "it-1a" :field "code"
-                          :snippet "old hit" :rank -2.0}
-                         {:owner-table "session_turn_iteration"
-                          :owner-id    "it-2a" :field "code"
-                          :snippet "new hit" :rank -3.0}])
-                      com.blockether.vis.internal.persistance/db-list-session-turns
-                      (constantly turns)
+                      (constantly [{:owner-table "session_turn_iteration" :owner-id "it-1b"
+                                    :field "code" :snippet "x" :rank -1.0}])
+                      com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
-                      (fn [_db soul-id] (get iters-by-soul soul-id))]
-          (let [hits (trailer-find {:src-matches "x" :scope-after "t1/i1"})]
-            ;; t1/i1 itself filtered; t2/i1 kept (turn>cursor.turn)
-            (expect (= ["t2/i1"] (mapv :scope hits)))))))))
+                      (fn [_db sid] (get iters sid))]
+          ;; t1/i2 sits inside the summary stub t1/i1..t1/i3 → excluded
+          (let [hits ((mk-find [{:scope-start "t1/i1" :scope-end "t1/i3" :summary "s"}]) {:match "x"})]
+            (expect (empty? hits))))))))
