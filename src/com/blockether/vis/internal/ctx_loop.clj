@@ -373,17 +373,14 @@
       (persistance/db-list-session-turn-iterations (:db-info env) (:id turn)))))
 
 (defn build-introspect-bindings
-  "Return `{'symbol bare-fn}` for the recovery surface: `rewind` /
-   `lens` / `find` (the old `introspect-*` sprawl + `trailer-find`
-   retired).
+  "Return `{'symbol bare-fn}` for the recovery surface: `summarize`
+   (mid-turn compaction) + `recall` (the single recovery verb; the old
+   `introspect-*` sprawl + rewind/lens/grep retired).
 
-   - rewind  restore archived/aged data to LIVE: a form/iter scope
-             re-pins into the trailer; an entity key un-archives.
-             Mutates `:ctx-atom`.
-   - lens    read-only char-window over a big value's `pr-str` so the
-             clipped MIDDLE is reachable; stateless cursor.
-   - find    FTS5 over the LIVE (non-summarized) trace; `:match`
-             required, `:limit` default 10, summarized ranges excluded.
+   `recall` dispatches on arg shape — by ADDRESS (form scope / entity
+   key) it char-windows the stored value (scrollable, read-only); by
+   CONTENT (`{:match …}`) it FTS5-searches the live (non-summarized)
+   trace and returns scopes (`:match` required, `:limit` default 10).
 
    `_history-loader` is accepted for call-site compatibility and unused
    (cross-turn snapshot verbs were dropped)."
@@ -395,7 +392,7 @@
                         (when-let [{:keys [turn iter form]} (parse-form-scope scope)]
                           (when-let [it (iter-by-pos env turn iter)]
                             (nth (vec (:forms it)) (dec form) nil))))
-        lens-value (fn [addr]
+        addr-value (fn [addr]
                      (cond
                        (string? addr)  (some-> (form-envelope addr) :result)
                        (keyword? addr) (let [c (live-ctx)]
@@ -403,42 +400,15 @@
                                            (get-in c [:session/facts addr])
                                            (get-in c [:session/tasks addr])))
                        :else nil))
-        iter-pin (fn [scope only-form?]
-                   (when-let [{:keys [turn iter form]} (or (parse-form-scope scope)
-                                                         (parse-iter-scope scope))]
+        iter-pin (fn [scope]
+                   ;; build a trailer pin re-materialising ALL forms of an
+                   ;; iter scope "tN/iM" (for recall {:scopes …}).
+                   (when-let [{:keys [turn iter]} (parse-iter-scope scope)]
                      (when-let [it (iter-by-pos env turn iter)]
-                       (let [forms (vec (:forms it))
-                             pick  (if (and only-form? form)
-                                     (when-let [f (nth forms (dec form) nil)] [f])
-                                     forms)]
-                         (when (seq pick)
-                           {:scope (str "t" turn "/i" iter) :forms (vec pick)})))))]
-    {'rewind
-     (fn rewind [addr]
-       (let [addrs   (if (sequential? addr) addr [addr])
-             results (atom [])]
-         (doseq [a addrs]
-           (cond
-             (string? a)
-             (if-let [pin (iter-pin a (boolean (parse-form-scope a)))]
-               (do (when-let [ca (:ctx-atom env)]
-                     (swap! ca update :session/trailer
-                       (fn [tr] (eng/sort-trailer (conj (vec tr) pin)))))
-                 (swap! results conj {:rewound a :forms (count (:forms pin))}))
-               (swap! results conj {:rewound a :vis/error :scope-not-found}))
-             (keyword? a)
-             (let [out (atom nil)]
-               (when-let [ca (:ctx-atom env)]
-                 (swap! ca (fn [c] (let [r (eng/rewind-entity c a)]
-                                     (reset! out r) (:ctx r)))))
-               (swap! results conj (if (:found? @out)
-                                     {:rewound a :kind (:kind @out)}
-                                     {:rewound a :vis/error :entity-not-found})))
-             :else
-             (swap! results conj {:rewound a :vis/error :bad-address})))
-         {:rewound       @results
-          :trailer-size  (count (:session/trailer (live-ctx)))}))
-     'summarize
+                       (let [forms (vec (:forms it))]
+                         (when (seq forms)
+                           {:scope (str "t" turn "/i" iter) :forms forms})))))]
+    {'summarize
      ;; Mid-turn compression: collapse irrelevant trailer ranges /
      ;; settled facts+tasks NOW (same {:trailer :facts :tasks} shape and
      ;; engine fn as `(done {:summarize …})`) so stale forms don't ride
@@ -456,49 +426,86 @@
          {:summarized   (select-keys (or spec {}) [:trailer :facts :tasks])
           :warnings     (vec (:warnings @out))
           :trailer-size (count (:session/trailer (live-ctx)))}))
-     'lens
-     (fn lens
-       ([addr] (lens addr nil))
-       ([addr opts]
-        (let [{:keys [offset limit]} (or opts {})
-              v (lens-value addr)]
-          (if (nil? v)
-            {:vis/error :lens-target-not-found :addr addr
-             :hint "address is a form scope \"tN/iM/fK\" or an existing fact/task key"}
-            (eng/lens-window (pr-str addr) v offset limit)))))
-     'grep
-     (fn grep [opts]
-       (let [{:keys [match scope-after limit]} (or opts {})]
-         (if (str/blank? (str match))
-           {:vis/error :grep-requires-match
-            :hint "(grep {:match \"text\"}) — :match is REQUIRED (search, not a lister)"}
-           (let [ranges (eng/summarized-iter-ranges (:session/trailer (live-ctx)))
-                 hits   (persistance/db-search db (str match)
-                          {:owner-table "session_turn_iteration"
-                           :field       "code"
-                           :limit       (max 1 (long (or limit 10)))})
-                 turns  (or (persistance/db-list-session-turns db sid) [])
-                 turn-by-soul  (into {} (map (juxt :id :position)) turns)
-                 iter-cache    (atom {})
-                 iter-rows-for (fn [tid]
-                                 (or (get @iter-cache tid)
-                                   (let [rows (persistance/db-list-session-turn-iterations db tid)]
-                                     (swap! iter-cache assoc tid rows) rows)))
-                 cursor (when (string? scope-after) (parse-iter-scope scope-after))
-                 after? (fn [{:keys [turn iter]}]
-                          (or (nil? cursor)
-                            (> turn (:turn cursor))
-                            (and (= turn (:turn cursor)) (> iter (:iter cursor)))))]
-             (vec
-               (for [{:keys [owner-id snippet rank]} hits
-                     :let [pair (some (fn [t] (some #(when (= owner-id (:id %)) [t %])
-                                                (iter-rows-for (:id t)))) turns)
-                           [trow it] pair
-                           tp (turn-by-soul (:id trow))
-                           ip (:position it)
-                           sc (when (and tp ip) (str "t" tp "/i" ip))]
-                     :when (and sc
-                             (after? {:turn tp :iter ip})
-                             (not (eng/scope-in-summarized? ranges sc)))]
-                 {:scope sc :preview snippet :rank rank}))))))}))
+     'recall
+     ;; ONE recovery verb. Pull something that already exists back from
+     ;; execution memory — dispatched on arg shape:
+     ;;   RESTORE  {:ids [:t3/auth …] :why "…"}   entity → live subtree
+     ;;            {:scopes ["t4/i2" …] :why "…"} iter   → trailer
+     ;;            (:why REQUIRED; stamps :recalled so it's clear WHY)
+     ;;   SEARCH   {:match "…"}                    → [{:scope :preview :rank}]
+     ;;   WINDOW   "tN/iM/fK" / :K [{:offset N}]   → scrollable slice
+     (fn recall
+       ([arg] (recall arg nil))
+       ([arg opts]
+        (cond
+          ;; --- restore mode (entities → subtree, scopes → trailer) ----
+          (and (map? arg) (or (contains? arg :ids) (contains? arg :scopes)))
+          (let [{:keys [ids scopes why]} arg]
+            (if (str/blank? (str why))
+              {:vis/error :recall-requires-why
+               :hint "(recall {:ids […] :why \"…\"}) — :why is REQUIRED to restore (say why it's back)"}
+              (let [scope (synthesize-scope env)
+                    ids-out    (atom [])
+                    scopes-out (atom [])]
+                (doseq [id (or ids [])]
+                  (let [out (atom nil)]
+                    (when-let [ca (:ctx-atom env)]
+                      (swap! ca (fn [c] (let [r (eng/recall-entity c id scope (str why))]
+                                          (reset! out r) (:ctx r)))))
+                    (swap! ids-out conj (if (:found? @out)
+                                          {:id id :restored (:kind @out) :key (:key @out)}
+                                          {:id id :vis/error :not-found}))))
+                (doseq [sc (or scopes [])]
+                  (if-let [pin (iter-pin sc)]
+                    (do (when-let [ca (:ctx-atom env)]
+                          (swap! ca update :session/trailer
+                            (fn [tr] (eng/sort-trailer (conj (vec tr) pin)))))
+                      (swap! scopes-out conj {:scope sc :forms (count (:forms pin))}))
+                    (swap! scopes-out conj {:scope sc :vis/error :scope-not-found})))
+                {:recalled {:ids @ids-out :scopes @scopes-out}
+                 :why why
+                 :trailer-size (count (:session/trailer (live-ctx)))})))
+          ;; --- search mode -------------------------------------------
+          (and (map? arg) (contains? arg :match))
+          (let [{:keys [match scope-after limit]} arg]
+            (if (str/blank? (str match))
+              {:vis/error :recall-requires-match
+               :hint "(recall {:match \"text\"}) — :match is REQUIRED for search"}
+              (let [ranges (eng/summarized-iter-ranges (:session/trailer (live-ctx)))
+                    hits   (persistance/db-search db (str match)
+                             {:owner-table "session_turn_iteration"
+                              :field       "code"
+                              :limit       (max 1 (long (or limit 10)))})
+                    turns  (or (persistance/db-list-session-turns db sid) [])
+                    turn-by-soul  (into {} (map (juxt :id :position)) turns)
+                    iter-cache    (atom {})
+                    iter-rows-for (fn [tid]
+                                    (or (get @iter-cache tid)
+                                      (let [rows (persistance/db-list-session-turn-iterations db tid)]
+                                        (swap! iter-cache assoc tid rows) rows)))
+                    cursor (when (string? scope-after) (parse-iter-scope scope-after))
+                    after? (fn [{:keys [turn iter]}]
+                             (or (nil? cursor)
+                               (> turn (:turn cursor))
+                               (and (= turn (:turn cursor)) (> iter (:iter cursor)))))]
+                (vec
+                  (for [{:keys [owner-id snippet rank]} hits
+                        :let [pair (some (fn [t] (some #(when (= owner-id (:id %)) [t %])
+                                                   (iter-rows-for (:id t)))) turns)
+                              [trow it] pair
+                              tp (turn-by-soul (:id trow))
+                              ip (:position it)
+                              sc (when (and tp ip) (str "t" tp "/i" ip))]
+                        :when (and sc
+                                (after? {:turn tp :iter ip})
+                                (not (eng/scope-in-summarized? ranges sc)))]
+                    {:scope sc :preview snippet :rank rank})))))
+          ;; --- window mode -------------------------------------------
+          :else
+          (let [{:keys [offset limit]} (or opts {})
+                v (addr-value arg)]
+            (if (nil? v)
+              {:vis/error :recall-target-not-found :addr arg
+               :hint "address is a form scope \"tN/iM/fK\" or an existing fact/task key"}
+              (eng/recall-window (pr-str arg) v offset limit))))))}))
 

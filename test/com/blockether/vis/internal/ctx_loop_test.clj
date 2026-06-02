@@ -252,87 +252,90 @@
         (expect (= "boom" (:message (:error (get fr "t1/i2/f1")))))))))
 
 ;; =============================================================================
-;; rewind / lens / find — recovery surface
+;; recall — the single recovery verb (window by address / search by content)
 ;; =============================================================================
 
-(defdescribe rewind-lens-entity-test
-  (describe "rewind / lens over live entities"
+(defdescribe recall-window-entity-test
+  (describe "recall by entity address windows a live value"
     (let [env (mk-env)
           {tk 'task-set!} (cl/build-sci-bindings env)
           _ (tk :swap {:title "CAS rewrite" :status :doing})
-          {rewind 'rewind lens 'lens} (cl/build-introspect-bindings env (constantly []))]
+          {recall 'recall} (cl/build-introspect-bindings env (constantly []))]
 
-      (it "lens :K windows a live entity's value"
-        (let [r (lens :swap)]
-          (expect (= ":swap" (:vis/lens r)))
+      (it "recall :K windows a stored entity's value"
+        (let [r (recall :swap)]
+          (expect (= ":swap" (:vis/recall r)))
           (expect (string? (:view r)))))
 
-      (it "lens unknown key → :lens-target-not-found"
-        (expect (= :lens-target-not-found (:vis/error (lens :nope)))))
+      (it "recall unknown key → :recall-target-not-found"
+        (expect (= :recall-target-not-found (:vis/error (recall :nope))))))))
 
-      (it "rewind :K un-archives an archived fact to live (:archived-from)"
-        (swap! (:ctx-atom env) assoc-in [:session/facts :old]
-          {:content "x" :status :archived :archived-from :active})
-        (let [r (rewind :old)]
-          (expect (= [:old] (mapv :rewound (:rewound r))))
-          (expect (= :active (get-in @(:ctx-atom env) [:session/facts :old :status])))))
+(defdescribe recall-restore-test
+  (describe "recall {:ids … :why …} restores entities to live (why required)"
+    (let [env (mk-env)
+          {recall 'recall} (cl/build-introspect-bindings env (constantly []))]
 
-      (it "rewind missing key → :entity-not-found"
-        (expect (= :entity-not-found (:vis/error (first (:rewound (rewind :ghost))))))))))
+      (it ":why is REQUIRED to restore"
+        (expect (= :recall-requires-why (:vis/error (recall {:ids [:t3/auth]})))))
 
-(defdescribe rewind-lens-form-test
-  (describe "rewind / lens over DB-backed forms"
+      (it "restores an archived entity by stable :id, stamping :recalled"
+        (swap! (:ctx-atom env) assoc-in [:session/facts :auth]
+          {:content "JWT" :status :archived :id :t3/auth :born "t3/i1/f1"})
+        (let [r (recall {:ids [:t3/auth] :why "need auth decision"})
+              live @(:ctx-atom env)]
+          (expect (= :fact (:restored (first (get-in r [:recalled :ids])))))
+          (expect (= :active (get-in live [:session/facts :auth :status])))
+          (expect (= "need auth decision" (get-in live [:session/facts :auth :recalled :why])))))
+
+      (it "unknown :id → :not-found in the report"
+        (let [r (recall {:ids [:t9/ghost] :why "x"})]
+          (expect (= :not-found (:vis/error (first (get-in r [:recalled :ids]))))))))))
+
+(defdescribe recall-window-form-test
+  (describe "recall by form scope windows a DB-backed result"
     (let [env  (assoc (mk-env) :db-info ::db :session-id "S")
           big  (apply str (repeat 4000 "y"))
           turns [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
           iters {"soul-1" [{:id "it-1" :position 1 :status "done" :code "(+ 1 2)"
                             :forms [{:scope "t1/i1/f1" :tag :observation :src "(+ 1 2)" :result big}]}]
                  "soul-2" []}
-          {rewind 'rewind lens 'lens} (cl/build-introspect-bindings env (constantly []))
+          {recall 'recall} (cl/build-introspect-bindings env (constantly []))
           with-db (fn [f]
                     (with-redefs [com.blockether.vis.internal.persistance/db-list-session-turns
                                   (constantly turns)
                                   com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                                   (fn [_db sid] (get iters sid))]
                       (f)))]
-      (it "lens \"tN/iM/fK\" windows a big form result with a cursor"
+      (it "recall \"tN/iM/fK\" windows a big form result with a cursor"
         (with-db
-          #(let [r (lens "t1/i1/f1" {:offset 0 :limit 1000})]
+          #(let [r (recall "t1/i1/f1" {:offset 0 :limit 1000})]
              (expect (= [0 1000] (:vis/window r)))
              (expect (integer? (:vis/size r)))      ; chars int, not a map
-             (expect (some? (:vis/next r)))
-             (expect (some? (:vis/rewind r)))       ; form → restore-whole pointer
+             (expect (some? (:vis/next r)))         ; scroll continue-call
+             (expect (nil? (:vis/rewind r)))        ; rewind is GONE
              (expect (= 1000 (count (:view r)))))))
 
-      (it "rewind \"tN/iM/fK\" re-pins the form into the live trailer"
+      (it "recall unknown scope → :recall-target-not-found"
         (with-db
-          #(let [r (rewind "t1/i1/f1")]
-             (expect (= 1 (:forms (first (:rewound r)))))
-             (expect (some (fn [p] (= "t1/i1" (:scope p)))
-                       (:session/trailer @(:ctx-atom env)))))))
+          #(expect (= :recall-target-not-found
+                     (:vis/error (recall "t9/i9/f9")))))))))
 
-      (it "rewind unknown scope → :scope-not-found"
-        (with-db
-          #(expect (= :scope-not-found
-                     (:vis/error (first (:rewound (rewind "t9/i9/f9")))))))))))
-
-(defdescribe grep-test
-  (describe "grep searches live (non-summarized) trace; :match required"
-    (let [{grep 'grep} (cl/build-introspect-bindings
-                         {:db-info ::db :session-id "S" :ctx-atom (atom {:session/trailer []})}
-                         (constantly []))]
-      (it ":match is REQUIRED"
-        (expect (= :grep-requires-match (:vis/error (grep {}))))
-        (expect (= :grep-requires-match (:vis/error (grep {:match ""}))))))
+(defdescribe recall-search-test
+  (describe "recall {:match …} searches live (non-summarized) trace"
+    (let [{recall 'recall} (cl/build-introspect-bindings
+                             {:db-info ::db :session-id "S" :ctx-atom (atom {:session/trailer []})}
+                             (constantly []))]
+      (it ":match is REQUIRED in search mode"
+        (expect (= :recall-requires-match (:vis/error (recall {:match ""}))))))
 
     (let [turns [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
           iters {"soul-1" [{:id "it-1a" :position 1} {:id "it-1b" :position 2}]
                  "soul-2" [{:id "it-2a" :position 1}]}
-          mk-grep (fn [trailer]
-                    (get (cl/build-introspect-bindings
-                           {:db-info ::db :session-id "S"
-                            :ctx-atom (atom {:session/trailer trailer})}
-                           (constantly [])) 'grep))]
+          mk-recall (fn [trailer]
+                      (get (cl/build-introspect-bindings
+                             {:db-info ::db :session-id "S"
+                              :ctx-atom (atom {:session/trailer trailer})}
+                             (constantly [])) 'recall))]
       (it "joins a hit to its tN/iM scope (default limit 10)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
                       (fn [_db q _opts] (when (= q "v/rg")
@@ -341,7 +344,7 @@
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
-          (let [hits ((mk-grep []) {:match "v/rg"})]
+          (let [hits ((mk-recall []) {:match "v/rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
       (it "excludes hits inside a summarized range"
@@ -352,7 +355,7 @@
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
           ;; t1/i2 sits inside the summary stub t1/i1..t1/i3 → excluded
-          (let [hits ((mk-grep [{:scope-start "t1/i1" :scope-end "t1/i3" :summary "s"}]) {:match "x"})]
+          (let [hits ((mk-recall [{:scope-start "t1/i1" :scope-end "t1/i3" :summary "s"}]) {:match "x"})]
             (expect (empty? hits))))))))
 
 (defdescribe mid-turn-summarize-test

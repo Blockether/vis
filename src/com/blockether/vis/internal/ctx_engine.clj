@@ -227,6 +227,17 @@
    task `:depends-on [:other-task]` normalizes via `[:task :other-task]`."
   [ctx task-k deps]
   (new-cycle-on-node? ctx :task task-k deps))
+(defn entity-id
+  "Stable, turn-qualified entity id derived from the birth form-scope.
+   `(entity-id \"t3/i2/f1\" :auth)` => `:t3/auth`. The birth turn makes
+   the id unique across turns, so reusing a key in a later turn yields a
+   DISTINCT id (`:t5/auth`) that can't clobber the earlier one — and
+   `recall` always resolves to the exact version. Falls back to the bare
+   key when the scope can't be parsed."
+  [form-scope k]
+  (if-let [{:keys [turn]} (parse-scope-form form-scope)]
+    (keyword (str "t" turn "/" (name k)))
+    k))
 (defn- apply-task-set!
   [ctx form-scope [task-k partial-map]]
   (let [path [:session/tasks task-k]
@@ -257,7 +268,8 @@
        :stamped? false}
       hook-repeat? {:ctx ctx, :warnings [], :stamped? false}
       :else (let [merged (cond-> (merge existing partial-map)
-                           (nil? existing) (assoc :born form-scope))
+                           (nil? existing) (assoc :born form-scope
+                                             :id (entity-id form-scope task-k)))
                   stamped (stamp-or-clear-done-born merged form-scope task-terminal?)]
               {:ctx (assoc-in ctx path stamped), :warnings [], :stamped? true}))))
 (def ^:private FACT_CONTENT_SOFT_LIMIT
@@ -289,7 +301,9 @@
           partial-map (dissoc partial-map :contradicts)
           path [:session/facts fact-k]
           existing (get-in ctx path)
-          merged (cond-> (merge existing partial-map) (nil? existing) (assoc :born form-scope))
+          merged (cond-> (merge existing partial-map)
+                   (nil? existing) (assoc :born form-scope
+                                     :id (entity-id form-scope fact-k)))
           stamped (stamp-or-clear-done-born merged form-scope fact-terminal?)
           content (:content stamped)
           size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
@@ -956,10 +970,10 @@
       n-iters
       " iter(s), "
       n-forms
-      " form(s); reach details via (rewind \""
+      " form(s); reach details via (recall \""
       s
       "\")"
-      (when (not= s e) (str " … (rewind \"" e "\")"))
+      (when (not= s e) (str " … (recall \"" e "\")"))
       ".")))
 (defn make-summary-stub
   "Build the summary stub for an oldest-batch summarization.
@@ -1020,7 +1034,7 @@
                         (case source
                           :companion-llm "companion-LLM summary"
                           "engine fallback summary")
-                        ". Full data via (rewind \""
+                        ". Full data via (recall \""
                         scope-start
                         "\")."))]}))))
 (defn- apply-entity-archive
@@ -1031,7 +1045,7 @@
    There is NO `:specs` subtree in the engine — only `:session/facts`
    and `:session/tasks` exist, so this primitive handles those two.
 
-   Snapshots keep the raw entity; `(rewind :K)` restores it to live. Live ctx GC removes archived entries at the next turn boundary
+   Snapshots keep the raw entity; `(recall :K)` windows it. Live ctx GC removes archived entries at the next turn boundary
    without waiting for TTL. Returns `{:ctx :warnings}`."
   [ctx _form-scope archive-map]
   (let [{:keys [facts tasks]} (or archive-map {})
@@ -1042,13 +1056,7 @@
                          exists? (some? (get-in ctx [subtree k]))]
                      {:kind kind, :k k, :subtree subtree, :exists? exists?}))
         ctx-with-status (reduce (fn [acc {:keys [k subtree exists?]}]
-                                  ;; stamp the prior status as :archived-from
-                                  ;; so `rewind` can restore it exactly.
-                                  (cond-> acc
-                                    exists?
-                                    (-> (assoc-in [subtree k :archived-from]
-                                          (get-in acc [subtree k :status] :active))
-                                      (assoc-in [subtree k :status] :archived))))
+                                  (cond-> acc exists? (assoc-in [subtree k :status] :archived)))
                           ctx
                           outcomes)
         ctx' ctx-with-status
@@ -1138,12 +1146,12 @@
                      :tasks   [{:keys [k…] :into key? :summary str} …]}`
                  trailer range → one recap stub pin; N facts/tasks →
                  one new summary FACT, originals flipped `:archived`
-                 (recoverable via (rewind :K)). No `:specs`
+                 (recoverable via (recall :K)). No `:specs`
                  (no such subtree).
 
    Nothing is ever hard-deleted — summarize compresses, the raw data
-   stays in the DB (trailer pins via rewind scope, entities via
-   rewind key). Close-of-turn is the single authoritative
+   stays in the DB (trailer pins + entities recoverable via recall).
+   Close-of-turn is the single authoritative
    place to retire commitments. The engine ALSO auto-summarizes oldest
    trailer pins under size pressure (`ensure-prompt-under-budget!`),
    using the same stub mechanism; this arg is the model's override."
@@ -1261,64 +1269,59 @@
                                       (second auto-fact-entry)))]
     {:ctx ctx-final, :warnings (vec summarize-warns)}))
 ;; =============================================================================
-;; rewind / lens / find — the recovery + window + discovery surface
+;; recall — the single recovery verb (replaces the introspect-* sprawl)
 ;;
-;; ONE coherent loop replacing the old introspect-* sprawl:
-;;   rewind  restore archived/aged data to LIVE (inverse of :summarize)
-;;   lens    char-window a big value so the clipped MIDDLE is reachable
-;;   find    search the live (non-summarized) trace for a scope
+;;   recall by ADDRESS  → char-window a stored value (clipped MIDDLE reachable)
+;;   recall by CONTENT  → search the live (non-summarized) trace for a scope
 ;; Pure halves live here; the effectful DB/ctx-atom halves live in
 ;; `ctx-loop/build-introspect-bindings`.
 ;; =============================================================================
-(def ^:private LENS_DEFAULT_LIMIT_CHARS
-  "Default lens window in chars (~2000 tok). Bounded so the lens result
-   itself stays under FORM_RESULT_TOKEN_LIMIT and renders verbatim —
-   the window is GUARANTEED visible, never re-clipped."
+(def ^:private RECALL_DEFAULT_LIMIT_CHARS
+  "Default recall window in chars (~2000 tok). Bounded so the recall
+   result itself stays under FORM_RESULT_TOKEN_LIMIT and renders
+   verbatim — the window is GUARANTEED visible, never re-clipped."
   8000)
-(defn lens-window
+(defn recall-window
   "Pure char-window over `(pr-str v)` with a stateless cursor. Returns a
-   self-describing map: the slice plus the exact `(lens … {:offset N})`
-   continue-calls, so the model scrubs a big value the trailer clip
-   would otherwise hide the middle of.
+   self-describing map: the slice plus the exact `(recall … {:offset N})`
+   continue-call, so the model scrubs a big value the trailer clip would
+   otherwise hide the middle of.
 
    `addr-str` is the pr-str of the recovery address (form scope string
-   or entity keyword) echoed into the continue-calls."
-  ([addr-str v] (lens-window addr-str v 0 LENS_DEFAULT_LIMIT_CHARS))
+   or entity keyword) echoed into the continue-call."
+  ([addr-str v] (recall-window addr-str v 0 RECALL_DEFAULT_LIMIT_CHARS))
   ([addr-str v offset limit]
    (let [s     (try (pr-str v) (catch Throwable _ (str v)))
          total (count s)
          off   (max 0 (min (long (or offset 0)) total))
-         lim   (max 1 (long (or limit LENS_DEFAULT_LIMIT_CHARS)))
-         end   (min total (+ off lim))
-         ;; form scopes are pr-str'd strings (start with a quote);
-         ;; entity keys are keywords. Only forms get a :vis/rewind
-         ;; pointer (re-pin the WHOLE form into the trailer).
-         form? (str/starts-with? (str addr-str) "\"")]
-     (cond-> {:vis/lens   addr-str
+         lim   (max 1 (long (or limit RECALL_DEFAULT_LIMIT_CHARS)))
+         end   (min total (+ off lim))]
+     (cond-> {:vis/recall addr-str
               :vis/window [off end]      ; char range of this slice
               :vis/size   total          ; total chars (offset bound)
               :view       (subs s off end)}
-       (< end total) (assoc :vis/next (str "(lens " addr-str " {:offset " end "})"))
-       form?         (assoc :vis/rewind (str "(rewind " addr-str ")"))))))
-(defn rewind-entity
-  "Un-archive entity `k` in the LIVE ctx: flip `:archived` back to the
-   `:archived-from` status stamped at summarize time (fallback :active
-   for a fact, :todo for a task). Returns `{:ctx :found? :kind}`."
-  [ctx k]
-  (let [in-facts? (some? (get-in ctx [:session/facts k]))
-        subtree   (cond in-facts? :session/facts
-                    (some? (get-in ctx [:session/tasks k])) :session/tasks
-                    :else nil)
-        kind      (case subtree :session/facts :fact :session/tasks :task nil)]
+       (< end total) (assoc :vis/next (str "(recall " addr-str " {:offset " end "})"))))))
+(defn recall-entity
+  "Restore the entity whose stable `:id` = `id` back to live: flip
+   `:archived` to `:active` (fact) / `:todo` (task) and stamp
+   `:recalled {:scope <cur> :why <why>}` so the trailer shows WHY it was
+   brought back. Searches facts then tasks by `:id` (live ctx only —
+   covers the same-turn summarize→recall path; cross-turn aged-out
+   entities are reached via `recall {:match …}` → the form that set them).
+   Returns `{:ctx :found? :kind :key}`."
+  [ctx id scope why]
+  (let [match (fn [subtree] (some (fn [[k v]] (when (= id (:id v)) k)) (get ctx subtree)))
+        fk    (match :session/facts)
+        tk    (when-not fk (match :session/tasks))
+        [subtree k kind] (cond fk [:session/facts fk :fact]
+                           tk [:session/tasks tk :task]
+                           :else nil)]
     (if-not subtree
-      {:ctx ctx, :found? false, :kind nil}
-      (let [entry   (get-in ctx [subtree k])
-            restore (or (:archived-from entry) (case kind :fact :active :task :todo))]
-        {:ctx    (-> ctx
-                   (assoc-in [subtree k :status] restore)
-                   (update-in [subtree k] dissoc :archived-from))
-         :found? true
-         :kind   kind}))))
+      {:ctx ctx, :found? false, :kind nil, :key nil}
+      {:ctx    (update-in ctx [subtree k] merge
+                 {:status (case kind :fact :active :task :todo)
+                  :recalled {:scope scope :why why}})
+       :found? true, :kind kind, :key k})))
 (defn summarized-iter-ranges
   "Pure: the `[scope-start scope-end]` iter ranges covered by live
    summary stubs in `trailer`. `find` excludes hits inside these so

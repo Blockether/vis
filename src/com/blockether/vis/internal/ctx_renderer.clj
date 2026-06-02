@@ -92,13 +92,13 @@
   "Replace `(:content fact)` with a safe-guard head+tail stub when its
    token weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass
    through. Mirrors the engine's `:fact-content-too-large` write-time
-   warning. Full content stays in CTX + DB; `(lens :K)` windows it."
+   warning. Full content stays in CTX + DB; `(recall :K)` windows it."
   [fact-k fact]
   (if-let [content (:content fact)]
     (assoc fact :content
       (safe-guards/clip-value content
         FACT_CONTENT_TOKEN_LIMIT
-        (str "(lens " fact-k ")")))
+        (str "(recall " fact-k ")")))
     fact))
 
 (defn- bound-facts
@@ -117,8 +117,8 @@
    token weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error`,
    `:src`, `:scope`, `:tag` pass through. Full result stays on the
    envelope (CTX) and in DB (`session_turn_iteration.forms`);
-   `(lens \"<scope>\")` windows the original payload (and
-   `(rewind \"<scope>\")` re-pins the whole form into the trailer).
+   `(recall \"<scope>\")` windows the original payload (scroll via
+   :vis/next).
 
    This is THE fix for the c8dc39b1 / 1a9a61ee trailer-bloat class:
    `(def x (v/cat huge-file))` no longer rides every later prompt
@@ -135,7 +135,7 @@
     (assoc form :result
       (safe-guards/clip-value (:result form)
         FORM_RESULT_TOKEN_LIMIT
-        (str "(lens " (pr-str (:scope form)) ")")))
+        (str "(recall " (pr-str (:scope form)) ")")))
     form))
 
 ;; =============================================================================
@@ -305,11 +305,15 @@
 (defn- project-fact
   "LLM-facing projection of a fact. Drops engine-internal flags; keeps
    `:content`, `:status`, `:born`, `:depends-on`, `:contradicts` (vec).
-   Raw shape stays in storage; `(lens :K)` windows it."
+   Raw shape stays in storage; `(recall :K)` windows it. `:id` is the
+   stable turn-qualified handle the model passes to `(recall {:ids …})`;
+   `:recalled` shows it was brought back + why."
   [[k f]]
   [k (cond-> {:status (or (:status f) :active)}
+       (:id f)                   (assoc :id (:id f))
        (some? (:content f))      (assoc :content (:content f))
        (:born f)                 (assoc :born (:born f))
+       (:recalled f)             (assoc :recalled (:recalled f))
        (seq (:depends-on f))     (assoc :depends-on (:depends-on f))
        (seq (:contradicts f))    (assoc :contradicts (vec (sort (:contradicts f)))))])
 
@@ -339,7 +343,7 @@
    The model reads pure EDN data, no embedded prose.
 
    Raw entity subtrees (`:session/tasks` / `:session/facts`) ride directly
-   into the prompt when non-empty so `(lens :K)` etc. have their
+   into the prompt when non-empty so `(recall :K)` etc. have their
    canonical sources visible.
 
    Input map keys:
