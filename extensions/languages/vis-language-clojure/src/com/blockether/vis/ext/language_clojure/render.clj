@@ -35,7 +35,7 @@
 
 (def ^:private preview-cap
   "Soft byte ceiling on free-form preview bodies. Protect the TUI from
-   pasting an entire 200 KB outline into a channel."
+   pasting a huge eval value/capture into a channel."
   32000)
 
 (defn- cap [^String s]
@@ -136,78 +136,6 @@
                 (when ex
                   (ir-p (ir-strong "ex") "  " (ir-code (str ex))
                     (when root-ex (str "  root=" root-ex)))))}))
-
-;; ---------------------------------------------------------------------------
-;; clj/outline
-;; ---------------------------------------------------------------------------
-
-(defn- outline-row
-  [{:keys [kind name line arglists doc private? dispatch]}]
-  (str (format "%4d  " (or line 0))
-    (subs (str kind) 1)                  ;; :defn -> "defn"
-    (when private? "-")
-    "  " name
-    (when dispatch (str " " dispatch))
-    (when (seq arglists)
-      (str "  "
-        (str/join " | "
-          (map (fn [args] (str "[" (str/join " " args) "]")) arglists))))
-    (when doc (str "  ; " doc))))
-
-(defn render-outline
-  "Preview for `(clj/outline …)`.
-
-   Summary is a zone badge: `OUTLINE` (or `OUTLINE!` on error) label, the
-   file path in the center, the form count (or error string) right-anchored.
-   Display carries the ns line, kind counts and the per-form listing."
-  [{:keys [path bytes ns counts forms total error]}]
-  {:summary (let [label (if error "OUTLINE!" "OUTLINE")]
-              (cond-> {:left (ir-strong label)}
-                path  (assoc :center (ir-code path))
-                true  (assoc :right
-                        (if error
-                          (str error)
-                          (str total " form" (when (not= total 1) "s")
-                            (when bytes (str "  " bytes "B")))))))
-   :display (ir-root
-              (when ns
-                (ir-p "ns " (ir-code (:name ns))
-                  (when (:doc ns) (str "  ; " (:doc ns)))))
-              (when (seq counts)
-                (ir-p (str/join "  "
-                        (sort (map (fn [[k v]] (str v "×" (subs (str k) 1)))
-                                counts)))))
-              (when (seq forms)
-                (ir-code-block "text"
-                  (cap (str/join "\n" (map outline-row forms))))))})
-
-;; ---------------------------------------------------------------------------
-;; clj/find
-;; ---------------------------------------------------------------------------
-
-(defn- find-row
-  [{:keys [path line kind name dispatch doc]}]
-  (str (format "%-6s " (subs (str kind) 1))
-    name
-    (when dispatch (str " " dispatch))
-    "  " path ":" line
-    (when doc (str "  ; " doc))))
-
-(defn render-find
-  "Preview for `(clj/find …)`.
-
-   Summary is a zone badge: `FIND` label, the scanned/elapsed stats in the
-   center, the match count right-anchored. Display carries the match listing."
-  [{:keys [matches scanned truncated? elapsed-ms]}]
-  (let [n (count matches)]
-    {:summary {:left   (ir-strong "FIND")
-               :center (ir-code (str "scanned=" scanned "  " elapsed-ms "ms"))
-               :right  (str n " match" (when (not= n 1) "es")
-                         (when truncated? " (truncated)"))}
-     :display (ir-root
-                (when (seq matches)
-                  (ir-code-block "text"
-                    (cap (str/join "\n" (map find-row matches))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/edit

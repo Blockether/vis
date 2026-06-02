@@ -7,28 +7,30 @@
 
      (clj/ports)    -> discover nREPL ports (workspace + home)
      (clj/eval ...) -> eval in a running nREPL (per-port conn pool)
-     (clj/outline path)            -> collapsed file view
-     (clj/find {:name regex ...})  -> structured def search
      (clj/edit {:path :op :target :code}) -> rewrite-clj edit
 
    No surface duplicates foundation-core's `v/*`. `v/cat`/`v/rg`/
-   `v/patch` stay the right answer for everything Clojure-agnostic.
+   `v/patch` stay the right answer for everything Clojure-agnostic —
+   including structure exploration: `v/rg` (with `:context`) plus the
+   engine `v/engine-symbol-documentation` / `-source-code` cover def
+   lookup. (The old `clj/outline` / `clj/find` rode a hardcoded
+   def-head allowlist that silently dropped `deftest` and any
+   macro-defined form; removed pending a cross-platform tree-sitter
+   outline.)
 
-   The SCI surface registered here exposes `clj/eval` and `clj/find`.
-   Inside this namespace the matching vars (`eval`, `find`) shadow
-   `clojure.core/eval` and `clojure.core/find`; that is intentional
-   — we never use the core fns here, and `:refer-clojure :exclude`
-   silences the load-time warning so the build log stays clean."
-  (:refer-clojure :exclude [eval find])
+   The SCI surface registered here exposes `clj/eval`. Inside this
+   namespace the matching var (`eval`) shadows `clojure.core/eval`;
+   that is intentional — we never use the core fn here, and
+   `:refer-clojure :exclude` silences the load-time warning so the
+   build log stays clean."
+  (:refer-clojure :exclude [eval])
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-core.environment.languages :as languages]
    [com.blockether.vis.ext.language-clojure.edit :as edit]
-   [com.blockether.vis.ext.language-clojure.find :as cfind]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
-   [com.blockether.vis.ext.language-clojure.outline :as outline]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.render :as render]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
@@ -117,8 +119,8 @@
   ([env op opts]
    (let [root    (env-root env)
          op      (cond (keyword? op) op
-                       (string? op)  (keyword op)
-                       :else         :status)
+                   (string? op)  (keyword op)
+                   :else         :status)
          opts    (when (map? opts) opts)
          dir     (resolve-repl-dir root (:dir opts))
          aliases (coerce-aliases (:aliases opts))]
@@ -175,30 +177,6 @@
                    :ns         ns
                    :timeout-ms (or timeout-ms 30000)})}))))
 
-(defn clj-outline-fn
-  ([env arg]
-   (let [path (cond
-                (string? arg) arg
-                (map? arg)    (:path arg)
-                :else nil)]
-     (when-not (and (string? path) (seq path))
-       (throw (ex-info "clj/outline requires a path string or {:path P}"
-                {:type :clj/bad-args :got arg
-                 :examples ["(clj/outline \"src/foo.clj\")"
-                            "(clj/outline {:path \"src/foo.clj\"})"]})))
-     (extension/success {:result (outline/outline-file (env-root env) path)}))))
-
-(defn clj-find-fn
-  ([env arg]
-   (let [opts (cond
-                (string? arg) {:name arg}
-                (map? arg)    arg
-                :else (throw (ex-info "clj/find requires an opts map or name regex string"
-                               {:type :clj/bad-args :got arg
-                                :examples ["(clj/find \"^make-\")"
-                                           "(clj/find {:name \"render\" :kind :defn})"]})))]
-     (extension/success {:result (cfind/find-defs (env-root env) opts)}))))
-
 (defn clj-edit-fn
   ([env arg]
    (when-not (map? arg)
@@ -222,12 +200,6 @@
 (def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{:code :port? :host? :ns? :timeout-ms?}`. Returns `{:value :values :out :err :ns :status :ex :root-ex :ms :port :host :timed-out?}`. Default port is the first `(clj/ports)` hit; throws `:clj/no-port` when nothing is running."
        :arglists '([arg])} eval clj-eval-fn)
 
-(def ^{:doc "Collapsed view of a Clojure file. Path is workspace-relative or absolute. Returns `{:ns {...} :counts {:defn N ...} :forms [{:kind :name :line :arglists :doc :private? [:dispatch]} ...] :total N :path :bytes}`. Bodies are elided — pair with `v/cat` + `:line` for deep reads."
-       :arglists '([arg])} outline clj-outline-fn)
-
-(def ^{:doc "Structured def search across the workspace. Opts: `{:name regex :kind :defn|#{...} :max-files :deadline-ms :limit}`. Returns `{:matches [{:path :line :kind :name [:dispatch] [:doc]} ...] :scanned :truncated? :elapsed-ms}`. Use for jumping to a def by name; use `v/rg` for content search."
-       :arglists '([arg])} find clj-find-fn)
-
 (def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{:path :op :target :code [:match] [:format?]}`. `:op` ∈ #{:replace :insert-before :insert-after :replace-sexp}. `:target` is a defn/def name string, `[name dispatch]` for defmethod, or the wrapping form name for `:replace-sexp` (use `:match` for the sexp text to swap). Writes only when the result round-trips parse-clean. `:format? true` (default) runs zprint before writing."
        :arglists '([opts])} edit clj-edit-fn)
 
@@ -244,20 +216,12 @@
   (vis/symbol #'eval
     {:before-fn inject-env :tag :mutation :render-fn render/render-eval}))
 
-(def outline-symbol
-  (vis/symbol #'outline
-    {:before-fn inject-env :tag :observation :render-fn render/render-outline}))
-
-(def find-symbol
-  (vis/symbol #'find
-    {:before-fn inject-env :tag :observation :render-fn render/render-find}))
-
 (def edit-symbol
   (vis/symbol #'edit
     {:before-fn inject-env :tag :mutation :render-fn render/render-edit}))
 
 (def clj-symbols
-  [repl-symbol eval-symbol outline-symbol find-symbol edit-symbol])
+  [repl-symbol eval-symbol edit-symbol])
 
 ;; =============================================================================
 ;; Extension manifest
@@ -282,15 +246,14 @@
     "  (clj/eval \"...\" | {:code :port? :ns? :timeout-ms?})\n"
     "                                      :port is optional — auto-discovered from the\n"
     "                                      workspace `.nrepl-port` when omitted.\n"
-    "  (clj/outline \"src/foo.clj\")       — collapsed file catalog\n"
-    "  (clj/find {:name regex :kind :defn})\n"
     "  (clj/edit {:path :op :target :code [:match] [:format?]})\n"
+    "For structure exploration use `v/rg` (with `:context`) + the engine `v/engine-symbol-documentation` / `-source-code` — there is no clj outline/find tool.\n"
     "Use `clj/edit` for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `v/patch` for `.clj/.cljc/.cljs`. Use `clj/eval` to verify behaviour against the running REPL before claiming a fix."))
 
 (def vis-extension
   (vis/extension
     {:ext/name           "language-clojure"
-     :ext/description    "Clojure language pack: live nREPL state in ctx, nREPL eval (clj/eval), flag-gated REPL lifecycle (clj/repl self-start), structure-aware edits (clj/edit via rewrite-clj), collapsed file view (clj/outline), def search (clj/find). Activates only when the workspace has Clojure sources."
+     :ext/description    "Clojure language pack: live nREPL state in ctx, nREPL eval (clj/eval), flag-gated REPL lifecycle (clj/repl self-start), structure-aware edits (clj/edit via rewrite-clj). Activates only when the workspace has Clojure sources."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
