@@ -11,8 +11,8 @@
      • fact contradictions + derive-warnings (vec of short strings)
      • task / fact CRUD via apply-mutator (slimmed shapes)
      • advance-iter trailer behaviour + hook-task lifetimes
-     • form tag classification + blocks->forms projection
-     • diff-ctx / introspect-changes over snapshots"
+     • form tag classification + blocks->forms projection"
+  ;; rewind/lens/grep recovery surface is tested in `ctx-loop-test`.
   (:require
    [clojure.spec.alpha :as s]
    [clojure.spec.gen.alpha :as gen]
@@ -929,71 +929,3 @@
                              (not (re-find #":B" %)))
                   hits))))))
 
-;; =============================================================================
-;; introspect-changes — turn-to-turn delta over snapshots.
-;;
-;; Diff is a pure projection over the persisted snapshots
-;; (session_turn_state.ctx). Returns per-entity change records:
-;;   {:kind :task|:fact :K k :change <:added | :removed | vec>}
-;; Each per-field change is `[field before after]`.
-;; Trailer is intentionally excluded — model already reads it inline.
-;; =============================================================================
-
-(defdescribe diff-ctx-test
-  (describe "diff-ctx returns per-entity change records"
-    (let [before {:session/tasks {:T {:title "impl" :status :todo
-                                      :born "t1/i1/f1"}}
-                  :session/facts {:F {:content "uses literal compare"
-                                      :status :active :born "t1/i1/f1"}}}
-          after  {:session/tasks {:T {:title "impl" :status :doing
-                                      :born "t1/i1/f1"}
-                                  :T2 {:title "new task" :status :todo
-                                       :born "t2/i1/f3"}}
-                  :session/facts {:F {:content "uses bcrypt now"
-                                      :status :superseded :born "t1/i1/f1"
-                                      :done-born "t2/i1/f2"}}}
-          diff (eng/diff-ctx before after)
-          by-key (group-by (juxt :kind :K) diff)]
-
-      (it "captures :added entities"
-        (let [[entry] (get by-key [:task :T2])]
-          (expect (= :added (:change entry)))
-          (expect (= "new task" (get-in entry [:after :title])))))
-
-      (it "captures :status transitions"
-        (let [[entry] (get by-key [:task :T])
-              tuples  (:change entry)
-              status  (some (fn [[f b a]] (when (= f :status) [b a])) tuples)]
-          (expect (= [:todo :doing] status))))
-
-      (it "captures fact :content + :status changes"
-        (let [[entry] (get by-key [:fact :F])
-              tuples  (:change entry)
-              ch (some (fn [[f b a]] (when (= f :content) [b a])) tuples)]
-          (expect (= ["uses literal compare" "uses bcrypt now"] ch)))))))
-
-(defdescribe introspect-changes-test
-  (describe "introspect-changes reads snapshots N-1 and N and diffs them"
-    (let [snap-1 {:session/tasks {:T {:title "x" :status :doing :born "t1/i1/f1"}}}
-          snap-2 {:session/tasks {:T {:title "x" :status :done :born "t1/i1/f1"
-                                      :done-born "t2/i1/f1"}}}
-          history [[1 snap-1] [2 snap-2]]
-          changes (eng/introspect-changes history "t2")]
-
-      (it "returns a vec of change records"
-        (expect (vector? changes))
-        (expect (pos? (count changes))))
-
-      (it "includes the :status flip from :doing to :done"
-        (let [[entry] (filter #(and (= :task (:kind %)) (= :T (:K %))) changes)
-              tuples  (:change entry)]
-          (expect (some (fn [[f b a]]
-                          (and (= f :status) (= :doing b) (= :done a)))
-                    tuples)))))
-
-    (describe "returns nil when snapshot N or N-1 is missing"
-      (let [history [[1 {:session/tasks {}}]]]
-        (it "nil when N doesn't exist"
-          (expect (nil? (eng/introspect-changes history "t5"))))
-        (it "nil when N-1 doesn't exist (e.g. turn 1)"
-          (expect (nil? (eng/introspect-changes history "t1"))))))))

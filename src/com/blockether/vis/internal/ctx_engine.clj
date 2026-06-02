@@ -1031,8 +1031,7 @@
    There is NO `:specs` subtree in the engine — only `:session/facts`
    and `:session/tasks` exist, so this primitive handles those two.
 
-   Snapshots keep the raw entity; `introspect-archived :kind` returns
-   them. Live ctx GC removes archived entries at the next turn boundary
+   Snapshots keep the raw entity; `(rewind :K)` restores it to live. Live ctx GC removes archived entries at the next turn boundary
    without waiting for TTL. Returns `{:ctx :warnings}`."
   [ctx _form-scope archive-map]
   (let [{:keys [facts tasks]} (or archive-map {})
@@ -1124,7 +1123,7 @@
    the engine auto-writes a `:turn-N-answer` fact under `:session/facts`
    carrying a one-line `:summary` and the full `:body`. Next turn's `;; ctx`
    EDN block surfaces that fact inside the cached prefix, so cross-turn answer
-   reference is free — the model reads `(introspect-fact :turn-N-answer)`
+   reference is free — the model reads `(lens :turn-N-answer)`
    instead of vis re-sending `previous-turn-context-block` (deprecated).
 
    `args` map keys:
@@ -1139,12 +1138,12 @@
                      :tasks   [{:keys [k…] :into key? :summary str} …]}`
                  trailer range → one recap stub pin; N facts/tasks →
                  one new summary FACT, originals flipped `:archived`
-                 (recoverable via introspect-archived). No `:specs`
+                 (recoverable via (rewind :K)). No `:specs`
                  (no such subtree).
 
    Nothing is ever hard-deleted — summarize compresses, the raw data
-   stays in the DB (trailer pins via introspect-iter, entities via
-   introspect-archived). Close-of-turn is the single authoritative
+   stays in the DB (trailer pins via rewind scope, entities via
+   rewind key). Close-of-turn is the single authoritative
    place to retire commitments. The engine ALSO auto-summarizes oldest
    trailer pins under size pressure (`ensure-prompt-under-budget!`),
    using the same stub mechanism; this arg is the model's override."
@@ -1291,13 +1290,16 @@
          off   (max 0 (min (long (or offset 0)) total))
          lim   (max 1 (long (or limit LENS_DEFAULT_LIMIT_CHARS)))
          end   (min total (+ off lim))
-         call  (fn [o] (str "(lens " addr-str " {:offset " o "})"))]
+         ;; form scopes are pr-str'd strings (start with a quote);
+         ;; entity keys are keywords. Only forms get a :vis/rewind
+         ;; pointer (re-pin the WHOLE form into the trailer).
+         form? (str/starts-with? (str addr-str) "\"")]
      (cond-> {:vis/lens   addr-str
-              :vis/window [off end]
-              :vis/size   {:chars total :tokens (tokens/count-tokens s)}
+              :vis/window [off end]      ; char range of this slice
+              :vis/size   total          ; total chars (offset bound)
               :view       (subs s off end)}
-       (< end total) (assoc :vis/next (call end))
-       (pos? off)    (assoc :vis/prev (call (max 0 (- off lim))))))))
+       (< end total) (assoc :vis/next (str "(lens " addr-str " {:offset " end "})"))
+       form?         (assoc :vis/rewind (str "(rewind " addr-str ")"))))))
 (defn rewind-entity
   "Un-archive entity `k` in the LIVE ctx: flip `:archived` back to the
    `:archived-from` status stamped at summarize time (fallback :active
@@ -1328,123 +1330,6 @@
   "True when iter-scope `tN/iM` falls inside any summarized `ranges`."
   [ranges scope]
   (boolean (some (fn [[a b]] (iter-in-range? scope a b)) ranges)))
-;; =============================================================================
-;; History introspection — pure fns over a {turn-n → ctx-snapshot} map
-;; =============================================================================
-;;
-;; `history` is a sorted map (or vec of [turn ctx] pairs) representing the
-;; per-turn snapshots loaded from session_turn_state.ctx by the
-;; integration layer (Nippy-decoded). Engine code never persists
-;; here; it's the call site's job to load + pass the history map. These fns
-;; project that data back to the model via the introspect-* surface.
-(defn- snapshots-asc
-  "Return [[turn ctx] …] sorted by turn ascending. Accepts a map or a vec."
-  [history]
-  (cond (map? history) (sort-by key history)
-    (sequential? history) (sort-by first history)
-    :else nil))
-(defn- entity-change-summary
-  "Pure: given a `before` and `after` snapshot of a single entity
-   (`{:status :born :depends-on :title :content …}`), return a vec of
-   `[field before-val after-val]` rows for fields that actually changed."
-  [before after]
-  (let [tracked [:status :title :content :born :done-born :depends-on :hook-id :importance :source
-                 :contradicts]]
-    (vec (for [f tracked :let [b (get before f) a (get after f)] :when (not= b a)] [f b a]))))
-(defn- diff-subtree
-  "Compare two snapshots' entries under `subtree-key` (e.g.
-   `:session/tasks`). Returns a vec of change records:
-     {:kind :task|:fact :K :K
-      :change :added | :removed | [[field b a] …]}"
-  [before after subtree-key kind]
-  (let [bm (or (get before subtree-key) {})
-        am (or (get after subtree-key) {})
-        all-keys (sort (into #{} (concat (keys bm) (keys am))))]
-    (vec (for [k all-keys
-               :let [b (get bm k)
-                     a (get am k)]
-               :when (not= b a)]
-           (cond (nil? b) {:kind kind, :K k, :change :added, :after a}
-             (nil? a) {:kind kind, :K k, :change :removed, :before b}
-             :else (let [fields (entity-change-summary b a)]
-                     (when (seq fields) {:kind kind, :K k, :change fields})))))))
-(defn diff-ctx
-  "Pure: return a vec of change records between two ctx snapshots.
-   Each record: `{:kind ∈ #{:task :fact} :K :change …}`.
-   `:change` is one of `:added` | `:removed` | vec of `[field before
-   after]` tuples. Trailer diffs are intentionally NOT included —
-   trailer is ephemeral; model already reads it inline."
-  [before after]
-  (vec (concat (remove nil? (diff-subtree before after :session/tasks :task))
-         (remove nil? (diff-subtree before after :session/facts :fact)))))
-(defn introspect-changes
-  "Lazy turn-delta introspection. `scope` is a turn key (`\"tN\"`); the
-   engine fetches snapshots N-1 and N from history and returns the
-   diff. Returns nil when N is missing or N-1 doesn't exist (e.g. on
-   turn 1).
-
-   Each entry: `{:kind :task|:fact :K k :change …}`
-   where `:change` is `:added`, `:removed`, or a vec of `[field b a]`
-   field-level transitions (status flip, born stamp, deps reshape, …)."
-  [history turn-key]
-  (let [snaps (snapshots-asc history)
-        n (cond (string? turn-key) (when-let [[_ s] (re-matches #"^t([1-9][0-9]*)$" turn-key)]
-                                     (parse-long s))
-            (number? turn-key) (long turn-key)
-            :else nil)
-        snap-at (fn [t] (some (fn [[k v]] (when (= k t) v)) snaps))]
-    (when n
-      (let [after (snap-at n)
-            before (snap-at (dec n))]
-        (when (and after before) (diff-ctx before after))))))
-(defn introspect-task
-  [history k]
-  (let [snaps (snapshots-asc history)]
-    (some (fn [[turn ctx]]
-            (when-let [entry (get-in ctx [:session/tasks k])] (assoc entry :as-of-turn turn)))
-      (reverse snaps))))
-(defn introspect-fact
-  [history k]
-  (let [snaps (snapshots-asc history)]
-    (some (fn [[turn ctx]]
-            (when-let [entry (get-in ctx [:session/facts k])] (assoc entry :as-of-turn turn)))
-      (reverse snaps))))
-(defn- subtree-key-for-kind
-  [kind]
-  (case kind
-    :tasks :session/tasks
-    :facts :session/facts))
-(defn introspect-archived
-  "Return summaries of entries archived from the LATEST snapshot but present
-   in some earlier one. `kind` is `:tasks`/`:facts`. Each entry:
-     {:key k :as-of-turn N :status …}"
-  [history kind]
-  (let [snaps (snapshots-asc history)
-        subtree (subtree-key-for-kind kind)
-        latest (some-> snaps
-                 last
-                 second
-                 (get subtree)
-                 keys
-                 set)
-        latest (or latest #{})]
-    (vec (for [[turn ctx] (reverse snaps)
-               :let [entries (or (get ctx subtree) {})
-                     k+turn (for [[k v] entries
-                                  :when (not (contains? latest k))]
-                              {:key k, :as-of-turn turn, :status (:status v)})]
-               entry k+turn
-               ;; dedupe: only emit a key the first turn we see it (latest
-               ;; descending), so each archived key shows up once with its
-               ;; latest-known turn.
-               ]
-           entry))))
-(defn introspect-ctx-at
-  "Full CTX snapshot at end of turn N. Nil when turn was never persisted."
-  [history turn-n]
-  (cond (map? history) (get history turn-n)
-    (sequential? history) (some (fn [[t ctx]] (when (= t turn-n) ctx)) history)
-    :else nil))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================

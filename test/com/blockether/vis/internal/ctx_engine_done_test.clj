@@ -176,56 +176,6 @@
           (expect (= ["t1/i1" "t2/i1" "t3/i1"] order)))))))
 
 ;; =============================================================================
-;; History introspection (tasks + facts)
-;; =============================================================================
-
-(defdescribe introspect-history-test
-  (describe "introspect-task / -fact / -ctx-at / -archived"
-    (let [snap-1 (-> (eng/empty-ctx "h")
-                   (assoc-in [:session/tasks :t1]
-                     {:title "first" :status :todo :born "t1/i1/f1"}))
-          snap-2 (-> snap-1
-                   (assoc-in [:session/tasks :t1 :status] :doing)
-                   (assoc-in [:session/tasks :t2]
-                     {:title "second" :status :todo :born "t2/i1/f1"}))
-          snap-3 (-> snap-2
-                   ;; archive t1
-                   (update :session/tasks dissoc :t1))
-          history {1 snap-1 2 snap-2 3 snap-3}]
-
-      (it "introspect-task returns latest snapshot the entry existed in"
-        (let [r (eng/introspect-task history :t1)]
-          (expect (= "first" (:title r)))
-          (expect (= :doing (:status r)))             ; updated in turn 2
-          (expect (= 2 (:as-of-turn r)))))            ; archived in turn 3
-
-      (it "introspect-task returns nil for unknown key"
-        (expect (nil? (eng/introspect-task history :never-existed))))
-
-      (it "introspect-ctx-at returns the full snapshot for the turn"
-        (expect (= snap-2 (eng/introspect-ctx-at history 2)))
-        (expect (nil? (eng/introspect-ctx-at history 99))))
-
-      (it "introspect-archived enumerates tasks missing from latest"
-        (let [arch (eng/introspect-archived history :tasks)
-              keys (set (map :key arch))]
-          (expect (contains? keys :t1))
-          (expect (not (contains? keys :t2)))))))
-
-  (describe "introspect-fact tracks a fact across snapshots"
-    (let [snap-1 (-> (eng/empty-ctx "h")
-                   (assoc-in [:session/facts :f1]
-                     {:content "v1" :status :active :born "t1/i1/f1"}))
-          snap-2 (-> snap-1
-                   (assoc-in [:session/facts :f1 :status] :superseded))
-          history {1 snap-1 2 snap-2}]
-      (it "returns the latest snapshot the fact existed in"
-        (let [r (eng/introspect-fact history :f1)]
-          (expect (= "v1" (:content r)))
-          (expect (= :superseded (:status r)))
-          (expect (= 2 (:as-of-turn r))))))))
-
-;; =============================================================================
 ;; apply-task-set! — hook-task idempotent repeat (D12)
 ;; =============================================================================
 

@@ -438,6 +438,24 @@
              (swap! results conj {:rewound a :vis/error :bad-address})))
          {:rewound       @results
           :trailer-size  (count (:session/trailer (live-ctx)))}))
+     'summarize
+     ;; Mid-turn compression: collapse irrelevant trailer ranges /
+     ;; settled facts+tasks NOW (same {:trailer :facts :tasks} shape and
+     ;; engine fn as `(done {:summarize …})`) so stale forms don't ride
+     ;; every prompt until close-of-turn.
+     (fn summarize [spec]
+       (let [scope (synthesize-scope env)
+             out   (atom nil)]
+         (when-let [ca (:ctx-atom env)]
+           (swap! ca (fn [c]
+                       (let [r (eng/apply-summarize c scope (or spec {}))]
+                         (reset! out r)
+                         (cond-> (:ctx r)
+                           (seq (:warnings r))
+                           (update :engine/warnings (fnil into []) (:warnings r)))))))
+         {:summarized   (select-keys (or spec {}) [:trailer :facts :tasks])
+          :warnings     (vec (:warnings @out))
+          :trailer-size (count (:session/trailer (live-ctx)))}))
      'lens
      (fn lens
        ([addr] (lens addr nil))
@@ -448,12 +466,12 @@
             {:vis/error :lens-target-not-found :addr addr
              :hint "address is a form scope \"tN/iM/fK\" or an existing fact/task key"}
             (eng/lens-window (pr-str addr) v offset limit)))))
-     'find
-     (fn find [opts]
+     'grep
+     (fn grep [opts]
        (let [{:keys [match scope-after limit]} (or opts {})]
          (if (str/blank? (str match))
-           {:vis/error :find-requires-match
-            :hint "(find {:match \"text\"}) — :match is REQUIRED (search, not a lister)"}
+           {:vis/error :grep-requires-match
+            :hint "(grep {:match \"text\"}) — :match is REQUIRED (search, not a lister)"}
            (let [ranges (eng/summarized-iter-ranges (:session/trailer (live-ctx)))
                  hits   (persistance/db-search db (str match)
                           {:owner-table "session_turn_iteration"

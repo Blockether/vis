@@ -305,7 +305,7 @@
 (defn- project-fact
   "LLM-facing projection of a fact. Drops engine-internal flags; keeps
    `:content`, `:status`, `:born`, `:depends-on`, `:contradicts` (vec).
-   Raw shape stays in storage; `(introspect-fact :K)` returns it."
+   Raw shape stays in storage; `(lens :K)` windows it."
   [[k f]]
   [k (cond-> {:status (or (:status f) :active)}
        (some? (:content f))      (assoc :content (:content f))
@@ -339,7 +339,7 @@
    The model reads pure EDN data, no embedded prose.
 
    Raw entity subtrees (`:session/tasks` / `:session/facts`) ride directly
-   into the prompt when non-empty so `(introspect-fact :K)` etc. have their
+   into the prompt when non-empty so `(lens :K)` etc. have their
    canonical sources visible.
 
    Input map keys:
