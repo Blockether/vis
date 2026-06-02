@@ -462,6 +462,32 @@
                  (str "\n" (render-hashline-block lines)))))))
     (str/join "\n\n")))
 
+(defn render-lineno-block
+  "Render `[line-number text]` tuples as a HUMAN line-number gutter
+   `<ln>│ <text>`, line numbers right-aligned to the widest number in
+   the block. Unlike `render-hashline-block` (the MODEL surface, whose
+   gutter is the editable `:from-hash` anchor), this is the channel/TUI
+   display surface: humans navigate by line number, not by content hash."
+  [tuples]
+  (let [tuples (vec tuples)
+        width  (reduce (fn [w [ln _]] (max w (count (str ln)))) 1 tuples)]
+    (->> tuples
+      (map (fn [[ln s]]
+             (str (format (str "%" width "s") (str ln)) hashline-gutter s)))
+      (str/join "\n"))))
+
+(defn render-lineno-range-block
+  "`render-lineno-block` analogue for `:ranges` windows — `-- range S-E --`
+   headers followed by the human line-number gutter for each window."
+  [ranges]
+  (->> ranges
+    (map (fn [{:keys [range lines]}]
+           (let [[start end] range]
+             (str "-- range " start "-" end " --"
+               (when (seq lines)
+                 (str "\n" (render-lineno-block lines)))))))
+    (str/join "\n\n")))
+
 (defn- line-span->char-span
   "Convert a 0-based [line-start line-end) span to a [char-start char-end]
    substring span in `content`, keeping a trailing `\n` OUTSIDE the
