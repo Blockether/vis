@@ -208,8 +208,10 @@
         (introspect-archived      :tasks|:facts)
         (trailer-find {:src-matches \"v/rg\" :limit 20
                        :scope-after \"t1/i3\"})  ; FTS5 search across iter code
-        (doc 'sym)        ; docstring + arglists + SOURCE for one symbol
-        (apropos \"text\")  ; fuzzy name/doc search (plain STRING, not regex)
+        (doc 'sym)        ; QUOTED symbol ('v/cat, not v/cat) — docstring
+                          ; + arglists + SOURCE in one call
+        (apropos \"text\")  ; fuzzy name/doc search; arg is a plain STRING,
+                          ; not a symbol or regex
 
       Control:
         (done {:answer \"Markdown answer\"})
