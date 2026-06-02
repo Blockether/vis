@@ -194,9 +194,9 @@
           the work. Correctness is on you.
 
       Introspection (lazy; reach evidence the live trailer dropped):
-        Use visible trailer :vis/head/:vis/tail first. Do NOT call
-        introspect-* merely because :vis/full exists. Call introspect-*
-        only when missing middle data is required for the next mutation.
+        Prefer visible :vis/head/:vis/tail. Call introspect-* ONLY for data
+        aged out — each call re-pins its result as a NEW form (re-truncated,
+        own :vis/full), so introspecting still-visible data DUPLICATES it.
         Never introspect the current/future iteration; only completed
         iterations are DB-introspectable.
         (introspect-turn-list)
@@ -208,8 +208,9 @@
         (introspect-archived      :tasks|:facts)
         (trailer-find {:src-matches \"v/rg\" :limit 20
                        :scope-after \"t1/i3\"})  ; FTS5 search across iter code
-        (v/engine-symbol-doc / -source / -meta 'sym)
-        (v/engine-symbol-apropos  \"pattern\")
+        (v/engine-symbol-documentation / -source-code / -metadata 'sym)
+        (v/engine-symbol-apropos  \"pattern\")   ; QUOTED sym ('v/rg, not v/rg),
+        ;; exact names -documentation/-source-code/-metadata/-apropos, no -doc alias
 
       Control:
         (done {:answer \"Markdown answer\"})

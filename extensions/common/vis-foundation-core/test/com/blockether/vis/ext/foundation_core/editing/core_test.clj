@@ -768,7 +768,7 @@
       (expect (some? (:summary out)))
       (expect (extension/render-value? (:display out)))))
 
-  (it "v/cat :display is canonical [:ir ...] with a :code block, hash-addressed gutter"
+  (it "v/cat :display is canonical [:ir ...] with a :code block, line-number gutter (human surface)"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "src/demo.clj" [[1 "only-line"]] nil false)
           out (channel-render-cat r)
@@ -778,10 +778,10 @@
       (let [form-sources (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq display))
             body (last (first form-sources))]
         (expect (= 1 (count form-sources)))
-        ;; Gutter is the content hash, NOT the line number (hashes
-        ;; replace lines as the edit address).
-        (expect (string/includes? body (str (patch/line-hash "only-line") "│ only-line")))
-        (expect (not (string/includes? body "1: only-line"))))))
+        ;; Channel/TUI gutter is the LINE NUMBER (human navigation), NOT
+        ;; the model's content-hash edit anchor (Vis session ac065988).
+        (expect (string/includes? body "1│ only-line"))
+        (expect (not (string/includes? body (str (patch/line-hash "only-line") "│ only-line")))))))
 
   (it "v/cat summary is a zone badge: CAT label, path centered, line/pagination right"
     (let [channel-render-cat (private-fn "channel-render-cat")
@@ -804,15 +804,16 @@
       (expect (string/includes? text "from=1898"))
       (expect (string/includes? text "next-offset=1928"))))
 
-  (it "v/cat :display gutter is the per-line content hash on each tuple"
+  (it "v/cat :display gutter is the per-line LINE NUMBER on each tuple"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "f.txt" [[100 "hundred"] [101 "hundred-one"]] 102 false)
           display (:display (channel-render-cat r))
           body (last (first (filter #(and (vector? %) (= :code (first %)))
                               (tree-seq sequential? seq display))))]
       (expect (= :ir (first display)))
-      (expect (string/includes? body (str (patch/line-hash "hundred") "│ hundred")))
-      (expect (string/includes? body (str (patch/line-hash "hundred-one") "│ hundred-one")))))
+      (expect (string/includes? body "100│ hundred"))
+      (expect (string/includes? body "101│ hundred-one"))
+      (expect (not (string/includes? body (str (patch/line-hash "hundred") "│ hundred"))))))
 
   (it "v/cat multi-range summary and display stay one CAT result"
     (let [channel-render-cat (private-fn "channel-render-cat")
@@ -830,9 +831,9 @@
       (expect (string/includes? text "3 lines"))
       (expect (string/includes? text "ranges=2-3,10-10"))
       (expect (string/includes? body "-- range 2-3 --"))
-      (expect (string/includes? body (str (patch/line-hash "b") "│ b")))
+      (expect (string/includes? body "2│ b"))
       (expect (string/includes? body "-- range 10-10 --"))
-      (expect (string/includes? body (str (patch/line-hash "j") "│ j")))))
+      (expect (string/includes? body "10│ j"))))
 
   (it "v/ls renderer conforms to ::render-fn-result with a zone summary"
     (let [render (private-fn "channel-render-ls")
