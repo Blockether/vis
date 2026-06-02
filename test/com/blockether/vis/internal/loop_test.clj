@@ -712,7 +712,7 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "recovers malformed done answers with trailer-summarize tail"
+  (it "recovers malformed done answers with a :summarize tail"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
           answer (str "## Spowiedź + blocker\n\n"
@@ -721,9 +721,9 @@
           bad-src (str "(done {:answer \"## Spowiedź + blocker\\n\\n"
                     "Reguła: przy „znajdź gdzie X siedzi w kodzie\" — LS first.\\n\\n"
                     "Które?\"\n"
-                    "       :trailer-summarize [{:scope-start \"t7/i4\"\n"
-                    "                            :scope-end \"t7/i15\"\n"
-                    "                            :summary \"Investigation: no tui code here.\"}]})")
+                    "       :summarize {:trailer [{:scope-start \"t7/i4\"\n"
+                    "                              :scope-end \"t7/i15\"\n"
+                    "                              :summary \"Investigation: no tui code here.\"}]}})")
           recovered (recover (str "```clojure\n" bad-src "\n```"))
           parsed (parse-forms recovered)
           form (:form (first (:forms parsed)))
@@ -731,57 +731,59 @@
       (expect (some? (:parse-error (parse-forms bad-src))))
       (expect (nil? (:parse-error parsed)))
       (expect (= answer (:answer payload)))
-      (expect (= [{:scope-start "t7/i4"
-                   :scope-end "t7/i15"
-                   :summary "Investigation: no tui code here."}]
-                (:trailer-summarize payload)))))
+      (expect (= {:trailer [{:scope-start "t7/i4"
+                             :scope-end "t7/i15"
+                             :summary "Investigation: no tui code here."}]}
+                (:summarize payload)))))
 
-  (it "recovers direct answers when valid trailer metadata precedes :answer"
+  (it "recovers direct answers when valid :summarize metadata precedes :answer"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
           answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
           raw (str "```clojure\n"
-                "(done\n {:trailer-drop [\"t39/i1\"]\n  :answer \"" answer "\"})\n"
+                "(done\n {:summarize {:trailer [{:scope-start \"t39/i1\" :scope-end \"t39/i1\" :summary \"x\"}]}\n  :answer \"" answer "\"})\n"
                 "```")
           recovered (recover raw)
           parsed (parse-forms recovered)
           payload (second (:form (first (:forms parsed))))]
       (expect (nil? (:parse-error parsed)))
       (expect (= answer (:answer payload)))
-      (expect (= ["t39/i1"] (:trailer-drop payload)))))
+      (expect (= {:trailer [{:scope-start "t39/i1" :scope-end "t39/i1" :summary "x"}]}
+                (:summarize payload)))))
 
-  (it "recovers direct answers with valid trailer metadata after :answer"
-    (let [recover (var-get #'lp/raw-response->direct-answer-source)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
-          raw (str "```clojure\n"
-                "(done {:answer \"" answer "\"\n"
-                "       :trailer-drop [\"t39/i1\"]})\n"
-                "```")
-          recovered (recover raw)
-          parsed (parse-forms recovered)
-          payload (second (:form (first (:forms parsed))))]
-      (expect (nil? (:parse-error parsed)))
-      (expect (= answer (:answer payload)))
-      (expect (= ["t39/i1"] (:trailer-drop payload)))))
-
-  (it "drops nonsensical trailer-drop? booleans during direct-answer recovery"
+  (it "recovers direct answers with valid :summarize metadata after :answer"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
           answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
           raw (str "```clojure\n"
                 "(done {:answer \"" answer "\"\n"
-                "       :trailer-drop? true})\n"
+                "       :summarize {:facts [{:keys [:a :b] :into :ab :summary \"x\"}]}})\n"
                 "```")
           recovered (recover raw)
           parsed (parse-forms recovered)
           payload (second (:form (first (:forms parsed))))]
       (expect (nil? (:parse-error parsed)))
       (expect (= answer (:answer payload)))
-      (expect (nil? (:trailer-drop? payload)))
-      (expect (nil? (:trailer-drop payload)))))
+      (expect (= {:facts [{:keys [:a :b] :into :ab :summary "x"}]}
+                (:summarize payload)))))
 
-  (it "recovers table-heavy answers and drops nonsensical trailer-summarize? booleans"
+  (it "drops nonsensical :summarize? booleans during direct-answer recovery"
+    (let [recover (var-get #'lp/raw-response->direct-answer-source)
+          parse-forms (var-get #'lp/parse-top-level-forms)
+          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
+          raw (str "```clojure\n"
+                "(done {:answer \"" answer "\"\n"
+                "       :summarize? true})\n"
+                "```")
+          recovered (recover raw)
+          parsed (parse-forms recovered)
+          payload (second (:form (first (:forms parsed))))]
+      (expect (nil? (:parse-error parsed)))
+      (expect (= answer (:answer payload)))
+      (expect (nil? (:summarize? payload)))
+      (expect (nil? (:summarize payload)))))
+
+  (it "recovers table-heavy answers and drops nonsensical :summarize? booleans"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
           answer (str "## APROPOS fixed\n\n"
@@ -797,15 +799,15 @@
                    "Pushed `28652b8`.")
           raw (str "```clojure\n"
                 "(done {:answer \"" answer "\"\n"
-                "       :trailer-summarize? true})\n"
+                "       :summarize? true})\n"
                 "```")
           recovered (recover raw)
           parsed (parse-forms recovered)
           payload (second (:form (first (:forms parsed))))]
       (expect (nil? (:parse-error parsed)))
       (expect (= answer (:answer payload)))
-      (expect (nil? (:trailer-summarize? payload)))
-      (expect (nil? (:trailer-summarize payload)))))
+      (expect (nil? (:summarize? payload)))
+      (expect (nil? (:summarize payload)))))
 
   (it "auto-repairs stray close delimiters before eval"
     (let [parsed ((var-get #'lp/parse-top-level-forms) "(def x 1))")]

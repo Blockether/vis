@@ -208,18 +208,23 @@
         (introspect-archived      :tasks|:facts)
         (trailer-find {:src-matches \"v/rg\" :limit 20
                        :scope-after \"t1/i3\"})  ; FTS5 search across iter code
-        (v/engine-symbol-documentation / -source-code / -metadata 'sym)
-        (v/engine-symbol-apropos  \"pattern\")   ; QUOTED sym ('v/rg, not v/rg),
-        ;; exact names -documentation/-source-code/-metadata/-apropos, no -doc alias
+        (doc 'sym)        ; docstring + arglists + SOURCE for one symbol
+        (apropos \"text\")  ; fuzzy name/doc search (plain STRING, not regex)
 
       Control:
         (done {:answer \"Markdown answer\"})
-        Optional trailer cleanup metadata:
-          :trailer-drop      [\"t<N>/i<M>\" ...]
-          :trailer-summarize [{:scope-start \"t<N>/i<M>\"
-                               :scope-end   \"t<N>/i<M>\"
-                               :summary     \"short recap\"} ...]
-        These keys are data, not booleans. Do NOT emit :trailer-drop? true.
+        Optional cleanup — ONE verb, :summarize (never drop, always
+        compress N→1; engine also auto-summarizes oldest pins on size
+        pressure, this is your explicit override):
+          :summarize {:trailer [{:scope-start \"t<N>/i<M>\"
+                                 :scope-end   \"t<N>/i<M>\"
+                                 :summary \"read X, patched Y, tests pass\"} ...]
+                      :facts   [{:keys [:a :b] :into :k :summary \"recap\"} ...]
+                      :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap\"} ...]}
+        trailer range → one recap stub; N facts/tasks → one new summary
+        fact, originals → :archived. Raw data stays in DB (introspect-iter
+        / introspect-archived recover it). :summarize is data, not a
+        boolean. Do NOT emit :summarize? true.
         Session titles are host-generated; do not spend a form on title setup.
 
     ANSWER  :answer is Markdown. Final user-facing output.

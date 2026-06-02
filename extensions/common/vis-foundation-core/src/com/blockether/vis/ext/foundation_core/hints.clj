@@ -190,9 +190,9 @@
          :title (str "Converge now: next request is ~" used " / " limit
                   " input tokens (~" pct "%) of this model's effective window."
                   cumul-clause
-                  " Finalise via `(done {:answer \"…\"})`, or drop/summarise older "
-                  "trailer iters via `(done {:answer … :trailer-summarize [{:scope-start <…> "
-                  ":scope-end <…> :summary …}]})`. Then `(task-set! "
+                  " Finalise via `(done {:answer \"…\"})`, or compress older "
+                  "trailer iters via `(done {:answer … :summarize {:trailer [{:scope-start <…> "
+                  ":scope-end <…> :summary …}]}})`. Then `(task-set! "
                   ":vis.foundation/context-pressure {:status :done})`. "
                   "Avoid dumping more file contents, diffs, or repeated diagnostics. "
                   "Models in this family degrade on long tails beyond ~50% of the window.")}))))

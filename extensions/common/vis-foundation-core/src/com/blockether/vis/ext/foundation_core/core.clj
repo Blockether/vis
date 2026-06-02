@@ -71,7 +71,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), SCI symbol introspection (engine-symbol-{documentation,source-code,metadata,apropos}), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. SCI symbol introspection is an engine system call (`doc` / `apropos`), not a `v/` tool. Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

@@ -107,3 +107,26 @@
       (let [root (tmp-dir)
             abs  (tmp-dir)]
         (expect (= (canon abs) (resolve root abs)))))))
+
+(defdescribe registry-reattach-test
+  ;; The persistent registry is what lets a managed REPL survive a vis restart:
+  ;; managed-ports re-attaches to the recorded PID via ProcessHandle. We stub
+  ;; the registry IO so the user's real ~/.vis file is never touched, and use
+  ;; the current JVM's PID as a guaranteed-alive process.
+  (it "re-attaches a registry entry by live PID (survives restart)"
+    (let [dir    (tmp-dir)
+          my-pid (.pid (java.lang.ProcessHandle/current))]
+      (spit (io/file dir ".nrepl-port") "54321")
+      (with-redefs [rm/read-registry   (fn [] {dir {:pid my-pid :tool :clj :aliases [:dev]}})
+                    rm/write-registry! (fn [_] nil)]
+        (expect (= {:managed true :dir dir :tool :clj :aliases [:dev] :pid my-pid}
+                  (get (rm/managed-ports) 54321))))))
+
+  (it "drops a dead PID and prunes it from the registry"
+    (let [dir   (tmp-dir)
+          wrote (atom :unset)]
+      (spit (io/file dir ".nrepl-port") "55555")
+      (with-redefs [rm/read-registry   (fn [] {dir {:pid 2147483646 :tool :clj}}) ; not a live pid
+                    rm/write-registry! (fn [m] (reset! wrote m))]
+        (expect (empty? (rm/managed-ports)))
+        (expect (= {} @wrote))))))           ; dead entry pruned
