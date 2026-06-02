@@ -193,21 +193,27 @@
           accepted as-is. Engine stamps :done-born; it does NOT verify
           the work. Correctness is on you.
 
-      Introspection (lazy; reach evidence the live trailer dropped):
-        Prefer visible :vis/head/:vis/tail. Call introspect-* ONLY for data
-        aged out — each call re-pins its result as a NEW form (re-truncated,
-        own :vis/full), so introspecting still-visible data DUPLICATES it.
-        Never introspect the current/future iteration; only completed
-        iterations are DB-introspectable.
-        (introspect-turn-list)
-        (introspect-ctx-at        \"t<N>\")
-        (introspect-iter          \"t<N>/i<M>\")
-        (introspect-form          \"t<N>/i<M>/f<K>\")
-        (introspect-task / -fact :K)
-        (introspect-changes       \"t<N>\")    ; delta vec between turn N-1 and N
-        (introspect-archived      :tasks|:facts)
-        (trailer-find {:src-matches \"v/rg\" :limit 20
-                       :scope-after \"t1/i3\"})  ; FTS5 search across iter code
+      Recovery — reach evidence the trailer clipped or :summarize
+      compressed. THREE verbs, no overlap:
+        A big result is shown clipped (:vis/head/:vis/tail + :vis/size
+        + :vis/full handle); the MIDDLE is hidden. The handle is a
+        (lens …) call — use it.
+        (lens \"t<N>/i<M>/f<K>\")            ; window a big form result
+        (lens \"t<N>/i<M>/f<K>\" {:offset 8000})  ; scrub: follow :vis/next
+        (lens :K)                          ; window a big fact/task
+          → {:view … :vis/size {:chars :tokens} :vis/next :vis/prev}
+            char-window over pr-str; each window is sized to render
+            verbatim. Read-only; does NOT touch the trailer.
+        (rewind \"t<N>/i<M>/f<K>\")          ; re-pin ONE form into trailer
+        (rewind \"t<N>/i<M>\")              ; re-pin a whole iter
+        (rewind :K)                        ; un-archive a fact/task to live
+        (rewind [\"t2/i3/f1\" :auth])        ; mixed
+          restore-to-live; inverse of :summarize. A summary stub names
+          its scope; a summary fact lists :summarized-from — rewind those.
+        (find {:match \"v/patch auth\"})     ; FTS5 over LIVE trace; :match
+        (find {:match \"v/rg\" :scope-after \"t2/i1\"})  ; REQUIRED, :limit 10
+          → [{:scope :preview :rank}]. Searches NON-summarized iters
+            only (summarized stuff is already named by its recap).
         (doc 'sym)        ; QUOTED symbol ('v/cat, not v/cat) — docstring
                           ; + arglists + SOURCE in one call
         (apropos \"text\")  ; fuzzy name/doc search; arg is a plain STRING,
@@ -232,9 +238,10 @@
                       :facts   [{:keys [:a :b] :into :k :summary \"recap\"} ...]
                       :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap\"} ...]}
         trailer range → one recap stub; N facts/tasks → one new summary
-        fact, originals → :archived. Raw data stays in DB (introspect-iter
-        / introspect-archived recover it). :summarize is data, not a
-        boolean. Do NOT emit :summarize? true.
+        fact, originals → :archived. Nothing is lost: (rewind \"t<N>/i<M>\")
+        re-pins archived trace; (rewind :K) un-archives an entity;
+        (lens …) windows a big value. :summarize is data, not a boolean.
+        Do NOT emit :summarize? true.
         Session titles are host-generated; do not spend a form on title setup.
 
     ANSWER  :answer is Markdown. Final user-facing output.

@@ -863,7 +863,7 @@
                        :warnings warnings})))
     {:trailer trailer, :warnings []}
     (or summaries [])))
-(defn- sort-trailer
+(defn sort-trailer
   "Sort by composite key: pin :scope, summary :scope-start. Stable order."
   [trailer]
   (vec (sort-by (fn [e]
@@ -956,10 +956,10 @@
       n-iters
       " iter(s), "
       n-forms
-      " form(s); reach details via (introspect-iter \""
+      " form(s); reach details via (rewind \""
       s
       "\")"
-      (when (not= s e) (str " … (introspect-iter \"" e "\")"))
+      (when (not= s e) (str " … (rewind \"" e "\")"))
       ".")))
 (defn make-summary-stub
   "Build the summary stub for an oldest-batch summarization.
@@ -1020,7 +1020,7 @@
                         (case source
                           :companion-llm "companion-LLM summary"
                           "engine fallback summary")
-                        ". Full data via (introspect-iter \""
+                        ". Full data via (rewind \""
                         scope-start
                         "\")."))]}))))
 (defn- apply-entity-archive
@@ -1043,7 +1043,13 @@
                          exists? (some? (get-in ctx [subtree k]))]
                      {:kind kind, :k k, :subtree subtree, :exists? exists?}))
         ctx-with-status (reduce (fn [acc {:keys [k subtree exists?]}]
-                                  (cond-> acc exists? (assoc-in [subtree k :status] :archived)))
+                                  ;; stamp the prior status as :archived-from
+                                  ;; so `rewind` can restore it exactly.
+                                  (cond-> acc
+                                    exists?
+                                    (-> (assoc-in [subtree k :archived-from]
+                                          (get-in acc [subtree k :status] :active))
+                                      (assoc-in [subtree k :status] :archived))))
                           ctx
                           outcomes)
         ctx' ctx-with-status
@@ -1255,6 +1261,73 @@
                     auto-fact-entry (assoc-in [:session/facts (first auto-fact-entry)]
                                       (second auto-fact-entry)))]
     {:ctx ctx-final, :warnings (vec summarize-warns)}))
+;; =============================================================================
+;; rewind / lens / find — the recovery + window + discovery surface
+;;
+;; ONE coherent loop replacing the old introspect-* sprawl:
+;;   rewind  restore archived/aged data to LIVE (inverse of :summarize)
+;;   lens    char-window a big value so the clipped MIDDLE is reachable
+;;   find    search the live (non-summarized) trace for a scope
+;; Pure halves live here; the effectful DB/ctx-atom halves live in
+;; `ctx-loop/build-introspect-bindings`.
+;; =============================================================================
+(def ^:private LENS_DEFAULT_LIMIT_CHARS
+  "Default lens window in chars (~2000 tok). Bounded so the lens result
+   itself stays under FORM_RESULT_TOKEN_LIMIT and renders verbatim —
+   the window is GUARANTEED visible, never re-clipped."
+  8000)
+(defn lens-window
+  "Pure char-window over `(pr-str v)` with a stateless cursor. Returns a
+   self-describing map: the slice plus the exact `(lens … {:offset N})`
+   continue-calls, so the model scrubs a big value the trailer clip
+   would otherwise hide the middle of.
+
+   `addr-str` is the pr-str of the recovery address (form scope string
+   or entity keyword) echoed into the continue-calls."
+  ([addr-str v] (lens-window addr-str v 0 LENS_DEFAULT_LIMIT_CHARS))
+  ([addr-str v offset limit]
+   (let [s     (try (pr-str v) (catch Throwable _ (str v)))
+         total (count s)
+         off   (max 0 (min (long (or offset 0)) total))
+         lim   (max 1 (long (or limit LENS_DEFAULT_LIMIT_CHARS)))
+         end   (min total (+ off lim))
+         call  (fn [o] (str "(lens " addr-str " {:offset " o "})"))]
+     (cond-> {:vis/lens   addr-str
+              :vis/window [off end]
+              :vis/size   {:chars total :tokens (tokens/count-tokens s)}
+              :view       (subs s off end)}
+       (< end total) (assoc :vis/next (call end))
+       (pos? off)    (assoc :vis/prev (call (max 0 (- off lim))))))))
+(defn rewind-entity
+  "Un-archive entity `k` in the LIVE ctx: flip `:archived` back to the
+   `:archived-from` status stamped at summarize time (fallback :active
+   for a fact, :todo for a task). Returns `{:ctx :found? :kind}`."
+  [ctx k]
+  (let [in-facts? (some? (get-in ctx [:session/facts k]))
+        subtree   (cond in-facts? :session/facts
+                    (some? (get-in ctx [:session/tasks k])) :session/tasks
+                    :else nil)
+        kind      (case subtree :session/facts :fact :session/tasks :task nil)]
+    (if-not subtree
+      {:ctx ctx, :found? false, :kind nil}
+      (let [entry   (get-in ctx [subtree k])
+            restore (or (:archived-from entry) (case kind :fact :active :task :todo))]
+        {:ctx    (-> ctx
+                   (assoc-in [subtree k :status] restore)
+                   (update-in [subtree k] dissoc :archived-from))
+         :found? true
+         :kind   kind}))))
+(defn summarized-iter-ranges
+  "Pure: the `[scope-start scope-end]` iter ranges covered by live
+   summary stubs in `trailer`. `find` excludes hits inside these so
+   search stays over NON-summarized trace only."
+  [trailer]
+  (vec (keep (fn [e] (when (:scope-start e) [(:scope-start e) (:scope-end e)]))
+         (or trailer []))))
+(defn scope-in-summarized?
+  "True when iter-scope `tN/iM` falls inside any summarized `ranges`."
+  [ranges scope]
+  (boolean (some (fn [[a b]] (iter-in-range? scope a b)) ranges)))
 ;; =============================================================================
 ;; History introspection — pure fns over a {turn-n → ctx-snapshot} map
 ;; =============================================================================
