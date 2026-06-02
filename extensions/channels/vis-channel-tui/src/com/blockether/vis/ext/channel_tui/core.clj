@@ -22,7 +22,7 @@
             [com.blockether.vis.ext.channel-tui.builtin-hooks :as builtin-hooks]))
 
 (def tui-usage
-  "vis channels tui [--session-id ID | --resume]")
+  "vis channels tui [--session-id ID | --resume | --continue]")
 
 (defn render-for-tui
   "TUI's :channel/messages-renderer-fn.
