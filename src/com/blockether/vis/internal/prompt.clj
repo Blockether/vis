@@ -215,9 +215,17 @@
 
       Control:
         (done {:answer \"Markdown answer\"})
-        Optional cleanup — ONE verb, :summarize (never drop, always
-        compress N→1; engine also auto-summarizes oldest pins on size
-        pressure, this is your explicit override):
+        CLEAN UP BEFORE YOU CLOSE — ONE verb, :summarize (never drop,
+        always compress N→1). This is YOUR job at done, not an
+        afterthought: the engine only auto-summarizes the oldest pins
+        under raw size pressure.
+          If you MUTATED something this turn, the reads/searches/probes
+          that led up to the change are now stale noise — the file you
+          read no longer says what the pin shows. Collapse that iter
+          range into ONE recap (\"read X, found Y, patched Z, tests
+          pass\"). Likewise fold a cluster of settled facts/tasks into
+          one summary fact. If nothing changed and the trailer is small,
+          summarize nothing.
           :summarize {:trailer [{:scope-start \"t<N>/i<M>\"
                                  :scope-end   \"t<N>/i<M>\"
                                  :summary \"read X, patched Y, tests pass\"} ...]
