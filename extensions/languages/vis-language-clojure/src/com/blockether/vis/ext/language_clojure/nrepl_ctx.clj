@@ -28,6 +28,7 @@
    `:status :unknown` (or an empty contribution) and never blocks the render."
   (:require
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]))
@@ -113,10 +114,30 @@
                         (seq (:aliases m))   (assoc :aliases (:aliases m)))))
               hits)})
 
+(defn- under-root?
+  "True when `dir` is the workspace `root` or nested beneath it. Keeps one
+   workspace's ctx from surfacing another workspace's managed REPL (the
+   registry is global)."
+  [root dir]
+  (try
+    (let [r (.getCanonicalPath (io/file root))
+          d (.getCanonicalPath (io/file dir))]
+      (or (= r d) (str/starts-with? d (str r java.io.File/separator))))
+    (catch Throwable _ false)))
+
+(defn- managed-under
+  "The vis-managed index restricted to REPLs at or below `root` (the registry
+   is global; this keeps workspaces isolated)."
+  [root]
+  (into {}
+    (filter (fn [[_ info]] (under-root? root (:dir info))))
+    (repl-manager/managed-ports)))
+
 (defn- all-hits
-  "Union of file-discovered ports and vis-managed ports. Managed REPLs in a
-   subdir aren't reachable by workspace-root discovery (which only walks UP),
-   so we add them explicitly with a synthesized source so they still surface."
+  "Union of file-discovered ports and vis-managed ports (already scoped to this
+   root). Managed REPLs in a subdir aren't reachable by workspace-root discovery
+   (which only walks UP), so we add them explicitly with a synthesized source so
+   they still surface — including after a vis restart."
   [root managed]
   (let [discovered (vec (ports/discover-all root))
         seen       (set (map :port discovered))]
@@ -131,7 +152,7 @@
   [env]
   (try
     (if-let [root (:workspace/root env)]
-      (let [managed  (repl-manager/managed-ports)
+      (let [managed  (managed-under root)
             hits     (all-hits root managed)
             host     "localhost"
             statuses (when (seq hits)

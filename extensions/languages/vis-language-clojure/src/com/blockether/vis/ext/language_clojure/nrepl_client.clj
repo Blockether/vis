@@ -236,9 +236,9 @@
    ops. Returns `:cljs`, `:clj`, or `:unknown`."
   [versions ops]
   (let [opset    (set (map name (cond
-                                   (map? ops)  (keys ops)
-                                   (coll? ops) ops
-                                   :else       nil)))
+                                  (map? ops)  (keys ops)
+                                  (coll? ops) ops
+                                  :else       nil)))
         cljs-op? (boolean (some #(re-find #"(?i)cljs|shadow|piggieback" %) opset))]
     (cond
       (:clojurescript versions) :cljs

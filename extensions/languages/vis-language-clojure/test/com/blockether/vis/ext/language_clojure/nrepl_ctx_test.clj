@@ -19,6 +19,7 @@
   (it "nests live nREPL state under :session/env :languages :clojure with via/status/dialect/cwd"
     (reset-cache!)
     (with-redefs [ports/discover-all (fn [_] [{:port 7001 :source "/proj/.nrepl-port"}])
+                  rm/managed-ports   (fn [] {})
                   nc/probe!          (fn [_] {:status :up
                                               :versions {:clojure "1.12.4"}
                                               :dialect :clj
@@ -41,6 +42,7 @@
     (with-redefs [ports/discover-all (fn [_] [{:port 1 :source "/a/.nrepl-port"}
                                               {:port 2 :source "/h/.lein/repl-port"}
                                               {:port 3 :source "/h/.clojure/.nrepl-port"}])
+                  rm/managed-ports   (fn [] {})
                   nc/probe!          (fn [_] {:status :up})] ; no :cwd from server
       (let [ports   (:ports (nrepl-of (nx/contribute {:workspace/root "/a"
                                                       :ctx-atom (atom {:session/turn 2})})))
@@ -58,7 +60,8 @@
 
   (it "emits an empty block when nothing is discovered"
     (reset-cache!)
-    (with-redefs [ports/discover-all (fn [_] [])]
+    (with-redefs [ports/discover-all (fn [_] [])
+                  rm/managed-ports   (fn [] {})]
       (let [b (nrepl-of (nx/contribute {:workspace/root "/proj"
                                         :ctx-atom (atom {:session/turn 3})}))]
         (expect (nil? (:default b)))
@@ -104,6 +107,7 @@
     (reset-cache!)
     (let [calls (atom 0)]
       (with-redefs [ports/discover-all (fn [_] [{:port 9999 :source "/p/.nrepl-port"}])
+                    rm/managed-ports   (fn [] {})
                     nc/probe!          (fn [_] (swap! calls inc) {:status :up})]
         (let [e1 {:workspace/root "/p" :ctx-atom (atom {:session/turn 5})}
               e2 {:workspace/root "/p" :ctx-atom (atom {:session/turn 6})}]
@@ -117,6 +121,7 @@
     (let [calls  (atom 0)
           ports* (atom [{:port 1 :source "/p/.nrepl-port"}])]
       (with-redefs [ports/discover-all (fn [_] @ports*)
+                    rm/managed-ports   (fn [] {})
                     nc/probe!          (fn [_] (swap! calls inc) {:status :up})]
         (let [e {:workspace/root "/p" :ctx-atom (atom {:session/turn 7})}]
           (nx/contribute e)

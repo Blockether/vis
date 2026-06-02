@@ -253,17 +253,22 @@
         obs2 [{:scope "t1/i2/f1" :tag :observation :src "(v/cat \"b\")" :result "new"}]
         mut3 [{:scope "t1/i3/f1" :tag :mutation :src "(v/patch [])" :result []}]]
 
-    (it "carries observation-only pins while no mutation occurs"
+    (it "carries observation-only pins forward"
       (let [ctx1 (eng/advance-iter base obs1)
             ctx2 (eng/advance-iter ctx1 obs2)]
         (expect (= ["t1/i1" "t1/i2"]
                   (mapv :scope (:session/trailer ctx2))))))
 
-    (it "drops older observation-only pins when a later mutation occurs"
+    (it "KEEPS observation pins even after a later mutation (no auto-prune)"
+      ;; The old `prune-stale-observation-pins` (drop all obs pins on
+      ;; first mutation) was removed — it forced needless re-reads (read
+      ;; file A, patch unrelated B, lose A). Pins now carry forward;
+      ;; size is bounded by the engine's size-triggered auto-summarize
+      ;; and the model's explicit `(done {:summarize …})`.
       (let [ctx1 (eng/advance-iter base obs1)
             ctx2 (eng/advance-iter ctx1 obs2)
             ctx3 (eng/advance-iter ctx2 mut3)]
-        (expect (= ["t1/i3"]
+        (expect (= ["t1/i1" "t1/i2" "t1/i3"]
                   (mapv :scope (:session/trailer ctx3))))))
 
     (it "keeps earlier pins even when the model rebinds the same def"
@@ -272,7 +277,7 @@
       ;; prior attempts MUST stay so the model can see what it tried and
       ;; switch tactic. Collapsing prior pins on rebind hides the loop
       ;; signal and lets the model run rg 20 times without realising.
-      ;; `(done {:trailer-summarize …})` is the only contract for trimming.
+      ;; `(done {:summarize {:trailer …}})` is the only contract for trimming.
       (let [step1 (eng/advance-iter base
                     [{:scope "t1/i1/f1" :tag :mutation
                       :src "(def persist (v/rg {:any [\"a\"]}))"}])

@@ -194,13 +194,13 @@
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`.
 
-   When the payload carries `:trailer-drop`, `:trailer-summarize`,
-   or `:archive`, the engine applies them as part of the same swap.
+   When the payload carries `:summarize` (a `{:trailer … :facts …
+   :tasks …}` map), the engine applies it as part of the same swap.
 
    Returns the intent map plus warnings."
   [{:keys [ctx-atom] :as env} {:keys [answer answer-summary
                                       user-request turn-summary
-                                      trailer-drop trailer-summarize archive]}]
+                                      summarize]}]
   (let [start-ms      (System/nanoTime)
         cursor        (cursor-snapshot env)
         scope         (synthesize-scope env)
@@ -225,9 +225,7 @@
                    :answer-summary answer-summary
                    :user-request   user-request
                    :turn-summary   turn-summary
-                   :trailer-drop   trailer-drop
-                   :trailer-summarize trailer-summarize
-                   :archive        archive})]
+                   :summarize      summarize})]
             (swap! warns into ws)
             (reset! blocked? (boolean blocked))
             (cond-> (dissoc ctx' :session/scope)
@@ -235,18 +233,14 @@
       (tel/log! {:level :info :id ::apply-done
                  :data {:answer-present?   (boolean (not (clojure.string/blank? (str answer))))
                         :answer-summary?   (boolean (not (clojure.string/blank? (str answer-summary))))
-                        :trailer-drop      trailer-drop
-                        :trailer-summarize trailer-summarize
-                        :archive           archive
+                        :summarize         summarize
                         :warnings          @warns
                         :blocked?          @blocked?
                         :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
         "apply-done completed"))
     {:answer answer
      :answer-summary answer-summary
-     :trailer-drop trailer-drop
-     :trailer-summarize trailer-summarize
-     :archive archive
+     :summarize summarize
      :blocked? @blocked?
      :warnings @warns}))
 

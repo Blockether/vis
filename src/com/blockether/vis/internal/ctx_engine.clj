@@ -74,13 +74,13 @@
   (let [pa (parse-scope-form a)
         pb (parse-scope-form b)]
     (cond (and (nil? pa) (nil? pb)) (compare (str a) (str b))
-          (nil? pa) -1
-          (nil? pb) 1
-          :else (let [c1 (compare (:turn pa) (:turn pb))]
-                  (if (zero? c1)
-                    (let [c2 (compare (:iter pa) (:iter pb))]
-                      (if (zero? c2) (compare (:form pa) (:form pb)) c2))
-                    c1)))))
+      (nil? pa) -1
+      (nil? pb) 1
+      :else (let [c1 (compare (:turn pa) (:turn pb))]
+              (if (zero? c1)
+                (let [c2 (compare (:iter pa) (:iter pb))]
+                  (if (zero? c2) (compare (:form pa) (:form pb)) c2))
+                c1)))))
 ;; =============================================================================
 ;; classify-scope — the central pure fn for proof scope orientation
 ;; =============================================================================
@@ -106,18 +106,18 @@
   [scope cursor form-results]
   (let [p (parse-scope-form scope)]
     (cond (nil? p) :malformed
-          (> (:turn p) (:turn cursor)) :future-turn
-          (and (= (:turn p) (:turn cursor)) (> (:iter p) (:iter cursor))) :future-iter
-          (and (= (:turn p) (:turn cursor))
-               (= (:iter p) (:iter cursor))
-               (>= (:form p) (:next-form cursor)))
-            :future-form
-          :else (let [entry (cond (map? form-results) (get form-results scope)
-                                  (set? form-results) (when (contains? form-results scope) {})
-                                  :else nil)]
-                  (cond (nil? entry) :unknown
-                        (some? (:error entry)) :errored
-                        :else :ok)))))
+      (> (:turn p) (:turn cursor)) :future-turn
+      (and (= (:turn p) (:turn cursor)) (> (:iter p) (:iter cursor))) :future-iter
+      (and (= (:turn p) (:turn cursor))
+        (= (:iter p) (:iter cursor))
+        (>= (:form p) (:next-form cursor)))
+      :future-form
+      :else (let [entry (cond (map? form-results) (get form-results scope)
+                          (set? form-results) (when (contains? form-results scope) {})
+                          :else nil)]
+              (cond (nil? entry) :unknown
+                (some? (:error entry)) :errored
+                :else :ok)))))
 ;; =============================================================================
 ;; build-indexes — single source of derived state, used by every other pass
 ;; =============================================================================
@@ -145,23 +145,23 @@
         normalize-ref (fn [default-kind ref]
                         (cond (vector? ref) (let [[kind k] ref]
                                               (when (and (#{:task :fact} kind) (some? k)) [kind k]))
-                              (keyword? ref) [default-kind ref]
-                              :else nil))
+                          (keyword? ref) [default-kind ref]
+                          :else nil))
         edges-from (fn [kind partial-deps]
                      (into #{} (keep (partial normalize-ref kind)) (or partial-deps [])))
         dep-graph (as-> {} g
                     (reduce-kv (fn [acc task-id task]
                                  (assoc acc [:task task-id] (edges-from :task (:depends-on task))))
-                               g
-                               tasks)
+                      g
+                      tasks)
                     (reduce-kv (fn [acc fact-id fact]
                                  (assoc acc [:fact fact-id] (edges-from :fact (:depends-on fact))))
-                               g
-                               facts))
+                      g
+                      facts))
         rev-deps (reduce-kv (fn [acc node deps]
                               (reduce (fn [a d] (update a d (fnil conj #{}) node)) acc deps))
-                            {}
-                            dep-graph)
+                   {}
+                   dep-graph)
         task-status (into {} (map (fn [[k v]] [k (:status v)])) tasks)
         fact-status (into {} (map (fn [[k v]] [k (or (:status v) :active)])) facts)]
     {:dep-graph dep-graph, :rev-deps rev-deps, :task-status task-status, :fact-status fact-status}))
@@ -175,11 +175,11 @@
   (let [color (atom (zipmap (keys dep-graph) (repeat :white)))]
     (letfn [(visit [node path]
               (cond (= :grey (@color node)) (vec (drop-while #(not= % node) (conj path node)))
-                    (= :black (@color node)) nil
-                    :else (do (swap! color assoc node :grey)
-                              (or (some (fn [n] (visit n (conj path node)))
-                                        (sort (or (get dep-graph node) #{})))
-                                  (do (swap! color assoc node :black) nil)))))]
+                (= :black (@color node)) nil
+                :else (do (swap! color assoc node :grey)
+                        (or (some (fn [n] (visit n (conj path node)))
+                              (sort (or (get dep-graph node) #{})))
+                          (do (swap! color assoc node :black) nil)))))]
       (some #(visit % []) (sort (keys dep-graph))))))
 ;; =============================================================================
 ;; Status terminal predicates + done-born stamping
@@ -193,8 +193,8 @@
   (let [terminal-now? (terminal? (:status entry))
         has-stamp? (contains? entry :done-born)]
     (cond (and terminal-now? (not has-stamp?)) (assoc entry :done-born form-scope)
-          (and (not terminal-now?) has-stamp?) (dissoc entry :done-born)
-          :else entry)))
+      (and (not terminal-now?) has-stamp?) (dissoc entry :done-born)
+      :else entry)))
 ;; =============================================================================
 ;; apply-mutator — dispatch + per-mutator handlers
 ;; =============================================================================
@@ -211,16 +211,16 @@
    `(task-set! :T {:depends-on [:other-task]})`."
   [default-kind ref]
   (cond (vector? ref) (let [[kind k] ref] (when (and (#{:task :fact} kind) (some? k)) [kind k]))
-        (keyword? ref) [default-kind ref]
-        :else nil))
+    (keyword? ref) [default-kind ref]
+    :else nil))
 (defn- new-cycle-on-node?
   "Would assigning `:depends-on` `new-deps` to the typed node `[kind k]`
    introduce a cycle in the unified dep-graph?"
   [ctx kind k new-deps]
   (let [normalized (into #{} (keep (partial normalize-dep-ref kind)) (or new-deps []))
         dg (-> (build-indexes ctx)
-               :dep-graph
-               (assoc [kind k] normalized))]
+             :dep-graph
+             (assoc [kind k] normalized))]
     (some? (depends-on-cycle? dg))))
 (defn- new-cycle?
   "Task cycle check. Delegates to the universal `new-cycle-on-node?` so a
@@ -240,21 +240,21 @@
         ;; entries past TTL; once archived the entry is gone from live
         ;; ctx and the next hook fire creates a fresh task.
         hook-repeat? (and (= :hook (:source partial-map))
-                          (= :hook (:source existing))
-                          (or (= (:hook-id partial-map) (:hook-id existing))
-                              (and (nil? (:hook-id partial-map)) (= task-k (:hook-id existing)))))]
+                       (= :hook (:source existing))
+                       (or (= (:hook-id partial-map) (:hook-id existing))
+                         (and (nil? (:hook-id partial-map)) (= task-k (:hook-id existing)))))]
     (cond
       ;; Hard reject cycle BEFORE writing :depends-on
       (and (contains? partial-map :depends-on) (new-cycle? ctx task-k (:depends-on partial-map)))
-        {:ctx ctx,
-         :warnings [(warn :depends-on-cycle
-                          [task-k]
-                          (str "task "
-                               task-k
-                               " :depends-on "
-                               (:depends-on partial-map)
-                               " would introduce a cycle; write refused"))],
-         :stamped? false}
+      {:ctx ctx,
+       :warnings [(warn :depends-on-cycle
+                    [task-k]
+                    (str "task "
+                      task-k
+                      " :depends-on "
+                      (:depends-on partial-map)
+                      " would introduce a cycle; write refused"))],
+       :stamped? false}
       hook-repeat? {:ctx ctx, :warnings [], :stamped? false}
       :else (let [merged (cond-> (merge existing partial-map)
                            (nil? existing) (assoc :born form-scope))
@@ -272,76 +272,76 @@
   [ctx form-scope [fact-k partial-map]]
   (cond
     (and (contains? partial-map :depends-on)
-         (new-cycle-on-node? ctx :fact fact-k (:depends-on partial-map)))
-      {:ctx ctx,
-       :warnings [(warn :depends-on-cycle
-                        [:fact fact-k]
-                        (str "fact "
-                             fact-k
-                             " :depends-on "
-                             (:depends-on partial-map)
-                             " would introduce a cycle; write refused"))],
-       :stamped? false}
+      (new-cycle-on-node? ctx :fact fact-k (:depends-on partial-map)))
+    {:ctx ctx,
+     :warnings [(warn :depends-on-cycle
+                  [:fact fact-k]
+                  (str "fact "
+                    fact-k
+                    " :depends-on "
+                    (:depends-on partial-map)
+                    " would introduce a cycle; write refused"))],
+     :stamped? false}
     :else
-      (let [has-contras? (contains? partial-map :contradicts)
-            desired-raw (let [c (:contradicts partial-map)]
-                          (if (coll? c) (vec c) (when (some? c) [c])))
-            partial-map (dissoc partial-map :contradicts)
-            path [:session/facts fact-k]
-            existing (get-in ctx path)
-            merged (cond-> (merge existing partial-map) (nil? existing) (assoc :born form-scope))
-            stamped (stamp-or-clear-done-born merged form-scope fact-terminal?)
-            content (:content stamped)
-            size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
-            ctx* (assoc-in ctx path stamped)
-            wanted (remove #{fact-k} (or desired-raw []))
-            present (set (filter (fn* [p1__52400#] (contains? (:session/facts ctx*) p1__52400#))
-                           wanted))
-            missing (when has-contras?
-                      (remove (fn* [p1__52401#] (contains? (:session/facts ctx*) p1__52401#))
-                        wanted))
-            old-links (if has-contras? (get-in ctx* [:session/facts fact-k :contradicts] #{}) #{})
-            to-add (clojure.set/difference present old-links)
-            to-remove (if has-contras? (clojure.set/difference old-links present) #{})
-            ctx** (as-> ctx* c
-                    (reduce
-                      (fn [c other]
-                        (-> c
-                            (update-in [:session/facts fact-k :contradicts] (fnil disj #{}) other)
-                            (update-in [:session/facts other :contradicts] (fnil disj #{}) fact-k)))
-                      c
-                      to-remove)
-                    (reduce
-                      (fn [c other]
-                        (-> c
-                            (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
-                            (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
-                      c
-                      to-add)
-                    (if (and has-contras? (empty? (get-in c [:session/facts fact-k :contradicts])))
-                      (update-in c [:session/facts fact-k] dissoc :contradicts)
-                      c))]
-        {:ctx ctx**,
-         :warnings (cond-> []
-                     (and size (> size FACT_CONTENT_SOFT_LIMIT))
-                       (conj (warn :fact-content-too-large
-                                   [fact-k]
-                                   (str "fact "
-                                        fact-k
-                                        " :content is "
-                                        size
-                                        " chars ("
-                                        "> "
-                                        FACT_CONTENT_SOFT_LIMIT
-                                        "); facts ride into every "
-                                        "prompt — keep them small, or summarize and reference "
-                                        "the original form via introspect-form.")))
-                     (seq missing) (conj (warn :fact-contradicts-missing
-                                               [fact-k]
-                                               (str "fact-set! " fact-k
-                                                    " :contradicts references missing fact(s) "
-                                                      (vec missing))))),
-         :stamped? true})))
+    (let [has-contras? (contains? partial-map :contradicts)
+          desired-raw (let [c (:contradicts partial-map)]
+                        (if (coll? c) (vec c) (when (some? c) [c])))
+          partial-map (dissoc partial-map :contradicts)
+          path [:session/facts fact-k]
+          existing (get-in ctx path)
+          merged (cond-> (merge existing partial-map) (nil? existing) (assoc :born form-scope))
+          stamped (stamp-or-clear-done-born merged form-scope fact-terminal?)
+          content (:content stamped)
+          size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
+          ctx* (assoc-in ctx path stamped)
+          wanted (remove #{fact-k} (or desired-raw []))
+          present (set (filter (fn* [p1__52400#] (contains? (:session/facts ctx*) p1__52400#))
+                         wanted))
+          missing (when has-contras?
+                    (remove (fn* [p1__52401#] (contains? (:session/facts ctx*) p1__52401#))
+                      wanted))
+          old-links (if has-contras? (get-in ctx* [:session/facts fact-k :contradicts] #{}) #{})
+          to-add (clojure.set/difference present old-links)
+          to-remove (if has-contras? (clojure.set/difference old-links present) #{})
+          ctx** (as-> ctx* c
+                  (reduce
+                    (fn [c other]
+                      (-> c
+                        (update-in [:session/facts fact-k :contradicts] (fnil disj #{}) other)
+                        (update-in [:session/facts other :contradicts] (fnil disj #{}) fact-k)))
+                    c
+                    to-remove)
+                  (reduce
+                    (fn [c other]
+                      (-> c
+                        (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
+                        (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
+                    c
+                    to-add)
+                  (if (and has-contras? (empty? (get-in c [:session/facts fact-k :contradicts])))
+                    (update-in c [:session/facts fact-k] dissoc :contradicts)
+                    c))]
+      {:ctx ctx**,
+       :warnings (cond-> []
+                   (and size (> size FACT_CONTENT_SOFT_LIMIT))
+                   (conj (warn :fact-content-too-large
+                           [fact-k]
+                           (str "fact "
+                             fact-k
+                             " :content is "
+                             size
+                             " chars ("
+                             "> "
+                             FACT_CONTENT_SOFT_LIMIT
+                             "); facts ride into every "
+                             "prompt — keep them small, or summarize and reference "
+                             "the original form via introspect-form.")))
+                   (seq missing) (conj (warn :fact-contradicts-missing
+                                         [fact-k]
+                                         (str "fact-set! " fact-k
+                                           " :contradicts references missing fact(s) "
+                                           (vec missing))))),
+       :stamped? true})))
 (defn- apply-fact-contradicts!
   "Phase C mutator. Declare a SYMMETRIC contradiction between two
    facts: setting `:K1 ↔ :K2` writes `:contradicts #{:K2}` on K1 AND
@@ -362,23 +362,23 @@
                                 [a]
                                 (str "fact-contradicts! " a " " b " rejects self-contradiction"))],
                    :stamped? false}
-          (not (contains? facts a))
-            {:ctx ctx,
-             :warnings [(warn :fact-contradicts-missing
-                              [a]
-                              (str "fact-contradicts! references missing fact " a))],
-             :stamped? false}
-          (not (contains? facts b))
-            {:ctx ctx,
-             :warnings [(warn :fact-contradicts-missing
-                              [b]
-                              (str "fact-contradicts! references missing fact " b))],
-             :stamped? false}
-          :else {:ctx (-> ctx
-                          (update-in [:session/facts a :contradicts] (fnil conj #{}) b)
-                          (update-in [:session/facts b :contradicts] (fnil conj #{}) a)),
-                 :warnings [],
-                 :stamped? true})))
+      (not (contains? facts a))
+      {:ctx ctx,
+       :warnings [(warn :fact-contradicts-missing
+                    [a]
+                    (str "fact-contradicts! references missing fact " a))],
+       :stamped? false}
+      (not (contains? facts b))
+      {:ctx ctx,
+       :warnings [(warn :fact-contradicts-missing
+                    [b]
+                    (str "fact-contradicts! references missing fact " b))],
+       :stamped? false}
+      :else {:ctx (-> ctx
+                    (update-in [:session/facts a :contradicts] (fnil conj #{}) b)
+                    (update-in [:session/facts b :contradicts] (fnil conj #{}) a)),
+             :warnings [],
+             :stamped? true})))
 (defn- apply-fact-contradicts-remove!
   "Phase C mutator. Symmetric remove of a contradiction declaration.
    No-op when either side is missing the link — idempotent."
@@ -390,8 +390,8 @@
                 (and existing (empty? pruned)) (update-in [:session/facts k] dissoc :contradicts)
                 (and existing (seq pruned)) (assoc-in [:session/facts k :contradicts] pruned))))]
     {:ctx (-> ctx
-              (drop-link a b)
-              (drop-link b a)),
+            (drop-link a b)
+            (drop-link b a)),
      :warnings [],
      :stamped? true}))
 (defn- apply-depends!
@@ -410,26 +410,26 @@
         path [subtree k]
         exists? (some? (get-in ctx path))]
     (cond (not exists?)
-            {:ctx ctx,
-             :warnings
-               [(warn :depends-on-missing-entity
-                      [kind k]
-                      (str (name kind) " " k " does not exist; " (name kind) "-depends! ignored"))],
-             :stamped? false}
-          (new-cycle-on-node? ctx kind k deps)
-            {:ctx ctx,
-             :warnings [(warn :depends-on-cycle
-                              [kind k]
-                              (str (name kind)
-                                   " "
-                                   k
-                                   " :depends-on "
-                                   deps
-                                   " would introduce a cycle; write refused"))],
-             :stamped? false}
-          :else {:ctx (assoc-in ctx (conj path :depends-on) (vec deps)),
-                 :warnings [],
-                 :stamped? true})))
+      {:ctx ctx,
+       :warnings
+       [(warn :depends-on-missing-entity
+          [kind k]
+          (str (name kind) " " k " does not exist; " (name kind) "-depends! ignored"))],
+       :stamped? false}
+      (new-cycle-on-node? ctx kind k deps)
+      {:ctx ctx,
+       :warnings [(warn :depends-on-cycle
+                    [kind k]
+                    (str (name kind)
+                      " "
+                      k
+                      " :depends-on "
+                      deps
+                      " would introduce a cycle; write refused"))],
+       :stamped? false}
+      :else {:ctx (assoc-in ctx (conj path :depends-on) (vec deps)),
+             :warnings [],
+             :stamped? true})))
 (defn apply-mutator
   "Apply a single mutator call to the CTX. Returns
    `{:ctx new-ctx :warnings vec :stamped? bool}`.
@@ -440,22 +440,22 @@
 "
   [ctx form-scope mutator args]
   (cond (malformed-scope? form-scope)
-          {:ctx ctx,
-           :warnings [(warn :malformed-scope
-                            [form-scope]
-                            (str "form-scope " form-scope " is malformed; write refused"))],
-           :stamped? false}
-        :else (case mutator
-                :task-set! (apply-task-set! ctx form-scope args)
-                :fact-set! (apply-fact-set! ctx form-scope args)
-                :task-depends! (apply-depends! ctx form-scope (cons :task args))
-                :fact-depends! (apply-depends! ctx form-scope (cons :fact args))
-                :fact-contradicts! (apply-fact-contradicts! ctx form-scope args)
-                :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
+    {:ctx ctx,
+     :warnings [(warn :malformed-scope
+                  [form-scope]
+                  (str "form-scope " form-scope " is malformed; write refused"))],
+     :stamped? false}
+    :else (case mutator
+            :task-set! (apply-task-set! ctx form-scope args)
+            :fact-set! (apply-fact-set! ctx form-scope args)
+            :task-depends! (apply-depends! ctx form-scope (cons :task args))
+            :fact-depends! (apply-depends! ctx form-scope (cons :fact args))
+            :fact-contradicts! (apply-fact-contradicts! ctx form-scope args)
+            :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
                 ;; unknown mutator: soft warn, no write
-                {:ctx ctx,
-                 :warnings [(warn :unknown-mutator [mutator] (str "unknown mutator " mutator))],
-                 :stamped? false})))
+            {:ctx ctx,
+             :warnings [(warn :unknown-mutator [mutator] (str "unknown mutator " mutator))],
+             :stamped? false})))
 ;; =============================================================================
 ;; derive-warnings — render-time STRUCTURAL passes over indexes
 ;; =============================================================================
@@ -475,11 +475,11 @@
                :let [ref (normalize-dep-ref default-kind raw-dep)]
                :when (and ref (not (ref-exists? ref)))]
            (warn :depends-on-dangling
-                 [default-kind entity-id ref]
-                 (str (name default-kind)
-                      " " entity-id
-                      " :depends-on refs nonexistent " (name (first ref))
-                      " " (second ref)))))))
+             [default-kind entity-id ref]
+             (str (name default-kind)
+               " " entity-id
+               " :depends-on refs nonexistent " (name (first ref))
+               " " (second ref)))))))
 (defn- pass-task-done-deps
   "Structural pass: task :status :done while a :depends-on target is
    non-terminal. Soft only — done is self-asserted and never reverted."
@@ -491,8 +491,8 @@
                :let [dep (get tasks d)]
                :when (and (some? dep) (not (task-terminal? (:status dep))))]
            (warn :task-done-pending-dep
-                 [task-id d]
-                 (str "task " task-id " :done but dep " d " is " (:status dep)))))))
+             [task-id d]
+             (str "task " task-id " :done but dep " d " is " (:status dep)))))))
 (def ^:private rebind-loop-threshold
   "Number of consecutive trailer pins binding the same def-name that
    trigger a `:trailer-rebind-loop` advisory. 3 catches a real loop
@@ -504,8 +504,8 @@
 (defn- form-def-name
   [form]
   (when-let [src (some-> (:src form)
-                         str
-                         str/triml)]
+                   str
+                   str/triml)]
     (when-let [[_ n] (re-find rebind-loop-name-re src)] n)))
 (defn- pin-def-names [entry] (into #{} (keep form-def-name) (:forms entry)))
 (defn- pass-contradicting-facts
@@ -520,9 +520,9 @@
     (vec (for [[k entry] facts
                other (or (:contradicts entry) [])
                :when (and (contains? facts other)
-                          (active? k)
-                          (active? other)
-                          (neg? (compare (str k) (str other))))]
+                       (active? k)
+                       (active? other)
+                       (neg? (compare (str k) (str other))))]
            (warn
              :contradicting-facts
              [k other]
@@ -543,12 +543,12 @@
             common (apply set/intersection name-sets)]
         (for [n (sort common)]
           (warn :trailer-rebind-loop
-                [n]
-                (str "`(def " n
-                     " …)` has been rebound " rebind-loop-threshold
-                     "+ iters in a row." " The current tactic is not converging—switch to a"
-                     " different probe or call `(done {:trailer-summarize …})`"
-                       " before another rebind.")))))))
+            [n]
+            (str "`(def " n
+              " …)` has been rebound " rebind-loop-threshold
+              "+ iters in a row." " The current tactic is not converging—switch to a"
+              " different probe or call `(done {:summarize {:trailer …}})`"
+              " before another rebind.")))))))
 (defn derive-warnings
   "Run the STRUCTURAL invariant passes and return a sorted, deduped vec of
    short warning STRINGS — the `:session/warnings` shape surfaced verbatim
@@ -567,33 +567,25 @@
   ([ctx indexes] (derive-warnings ctx indexes nil))
   ([ctx indexes _form-results]
    (->> (concat (pass-contradicting-facts ctx indexes)
-                (pass-task-depends-on-refs ctx indexes)
-                (pass-task-done-deps ctx indexes)
-                (pass-rebind-loop ctx indexes))
-        distinct
-        (sort-by (juxt :code (comp str :anchor)))
-        (mapv :message))))
+          (pass-task-depends-on-refs ctx indexes)
+          (pass-task-done-deps ctx indexes)
+          (pass-rebind-loop ctx indexes))
+     distinct
+     (sort-by (juxt :code (comp str :anchor)))
+     (mapv :message))))
 ;; =============================================================================
 ;; advance-iter / enter-turn / gc-pass
+;;
+;; NOTE: the old `prune-stale-observation-pins` (drop ALL observation
+;; pins the instant any later iter mutated state) was removed. It was
+;; too blunt — reading file A then patching unrelated file B silently
+;; dropped A's view, forcing a needless re-read. Trailer size is now
+;; governed by ONE engine mechanism: the deterministic, size-triggered
+;; auto-archive in `safe-guards/ensure-prompt-under-budget!` (folds the
+;; OLDEST pins into a recoverable summary stub, never deletes — the
+;; per-form BLOB stays in the DB, reachable via `introspect-iter`). The
+;; model can additionally archive/summarize explicitly at `(done …)`.
 ;; =============================================================================
-(defn- mutation-form? [form] (= :mutation (:tag form)))
-(defn- observation-only-trailer-entry?
-  [entry]
-  (let [forms (:forms entry)] (and (seq forms) (every? #(= :observation (:tag %)) forms))))
-(defn- prune-stale-observation-pins
-  "When current iter mutates state, previous observation-only pins become
-   stale. Keep them while no mutation has happened; drop them at first later
-   mutation so the trailer carries tool observations only as long as their
-   underlying world is unchanged. Mixed pins and summaries stay model-owned."
-  [trailer iter-scope current-forms]
-  (if-not (some mutation-form? current-forms)
-    (vec (or trailer []))
-    (let [current-form-scope (str iter-scope "/f1")]
-      (vec (remove (fn [entry]
-                     (and (observation-only-trailer-entry? entry)
-                          (:scope entry)
-                          (neg? (scope-compare (str (:scope entry) "/f1") current-form-scope))))
-             (or trailer []))))))
 (defn- iteration-lifetime-hook-task?
   "True for hook-tasks declared `:lifetime :iteration`. These are
    hyper-transient signals that evaporate at the next iter boundary,
@@ -620,7 +612,7 @@
    Rebinding the same def is intentional model behaviour (each iter
    refines arguments / inspects shapes). Pins from earlier rebinds stay
    in the trailer so the model can see prior attempts and avoid looping;
-   if a run truly bloats, `(done {:trailer-summarize …})` is the contract
+   if a run truly bloats, `(done {:summarize {:trailer …}})` is the contract
    to collapse the history."
   [ctx form-results-vec]
   (let [cursor (:session/scope ctx)
@@ -631,24 +623,29 @@
         ;; mutations, not in the trailer pin log.
         keepable (vec (remove (fn [r]
                                 (or (str/starts-with? (str (:src r)) "(done")
-                                    (= :vis/silent (:result r))
-                                    (:vis/silent r)))
+                                  (= :vis/silent (:result r))
+                                  (:vis/silent r)))
                         form-results-vec))
-        trailer' (prune-stale-observation-pins (:session/trailer ctx) iter-scope keepable)
+        ;; Observation pins are NO LONGER auto-pruned on mutation
+        ;; (that caused needless re-reads). The trailer carries
+        ;; forward verbatim; size is bounded by the engine's
+        ;; size-triggered auto-archive (`ensure-prompt-under-budget!`)
+        ;; and the model's explicit `(done {:summarize {:trailer …}})`.
+        trailer' (vec (or (:session/trailer ctx) []))
         tasks' (into {}
-                     (for [[k v] (or (:session/tasks ctx) {})
-                           :when (not (iteration-lifetime-hook-task? v))]
-                       [k v]))
+                 (for [[k v] (or (:session/tasks ctx) {})
+                       :when (not (iteration-lifetime-hook-task? v))]
+                   [k v]))
         ctx* (-> ctx
-                 (assoc :session/trailer trailer')
-                 (assoc :session/tasks tasks'))
+               (assoc :session/trailer trailer')
+               (assoc :session/tasks tasks'))
         ctx' (if (seq keepable)
                (update ctx* :session/trailer (fnil conj []) {:scope iter-scope, :forms keepable})
                ctx*)]
     (assoc ctx'
       :session/scope (-> cursor
-                         (update :iter inc)
-                         (assoc :next-form 1)))))
+                       (update :iter inc)
+                       (assoc :next-form 1)))))
 ;; --- GC TTL constants ----------------------------------------------------
 (def ^:private TTL-TASK-DONE 6)
 (def ^:private TTL-TASK-CANCELLED 10)
@@ -691,18 +688,18 @@
   (let [t (:turn (:session/scope ctx))
         gc (fn [subtree etype]
              (into {}
-                   (for [[k v] (or (get ctx subtree) {})
-                         :when (not (entry-due-for-archive? t etype v))]
-                     [k v])))
+               (for [[k v] (or (get ctx subtree) {})
+                     :when (not (entry-due-for-archive? t etype v))]
+                 [k v])))
         gc-tasks (fn []
                    (into {}
-                         (for [[k v] (or (:session/tasks ctx) {})
-                               :when (not (or (entry-due-for-archive? t :task v)
-                                              (turn-lifetime-hook-task? v)))]
-                           [k v])))]
+                     (for [[k v] (or (:session/tasks ctx) {})
+                           :when (not (or (entry-due-for-archive? t :task v)
+                                        (turn-lifetime-hook-task? v)))]
+                       [k v])))]
     (-> ctx
-        (assoc :session/tasks (gc-tasks))
-        (assoc :session/facts (gc :session/facts :fact)))))
+      (assoc :session/tasks (gc-tasks))
+      (assoc :session/facts (gc :session/facts :fact)))))
 (defn enter-turn
   "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
    resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
@@ -720,10 +717,10 @@
   [ctx turn-pos]
   (let [next-turn (long (or turn-pos 1))]
     (-> ctx
-        (assoc :session/turn next-turn)
-        (assoc :session/scope {:turn next-turn, :iter 1, :next-form 1})
-        (assoc :engine/blockers [])
-        gc-pass)))
+      (assoc :session/turn next-turn)
+      (assoc :session/scope {:turn next-turn, :iter 1, :next-form 1})
+      (assoc :engine/blockers [])
+      gc-pass)))
 ;; =============================================================================
 ;; Empty-ctx constructor — used by tests + scenario replayer
 ;; =============================================================================
@@ -775,10 +772,10 @@
   (let [pa (parse-scope-iter a)
         pb (parse-scope-iter b)]
     (cond (and (nil? pa) (nil? pb)) (compare (str a) (str b))
-          (nil? pa) -1
-          (nil? pb) 1
-          :else (let [c (compare (:turn pa) (:turn pb))]
-                  (if (zero? c) (compare (:iter pa) (:iter pb)) c)))))
+      (nil? pa) -1
+      (nil? pb) 1
+      :else (let [c (compare (:turn pa) (:turn pb))]
+              (if (zero? c) (compare (:iter pa) (:iter pb)) c)))))
 (defn iter-in-range?
   "True iff iter-scope `s` falls inside [start, end] inclusive (per iter-compare)."
   [s start end]
@@ -791,14 +788,14 @@
         b-in-a? (and (<= (iter-compare a1 b1) 0) (<= (iter-compare b2 a2) 0))]
     (and overlap? (not a-in-b?) (not b-in-a?))))
 ;; =============================================================================
-;; done handler — apply :trailer-drop + :trailer-summarize
+;; done handler — apply :summarize {:trailer :facts :tasks}
 ;; =============================================================================
 (defn- entry-iter-range
   "Return [start end] iter-scope strings for any trailer entry (pin or summary)."
   [e]
   (cond (contains? e :scope) [(:scope e) (:scope e)]
-        (contains? e :scope-start) [(:scope-start e) (:scope-end e)]
-        :else nil))
+    (contains? e :scope-start) [(:scope-start e) (:scope-end e)]
+    :else nil))
 (defn- entry-contained-by?
   [e [start end]]
   (when-let [[a b] (entry-iter-range e)]
@@ -809,19 +806,7 @@
   (some (fn [e]
           (when (contains? e :scope-start)
             (when (iter-ranges-partial-overlap? (:scope-start e) (:scope-end e) start end) e)))
-        trailer))
-(defn apply-trailer-drop
-  "Remove trailer entries that match any of the supplied scope keys.
-   Pin scope keys are `tN/iM`. Summary scope keys are `tA/iX->tB/iY`."
-  [trailer drops]
-  (let [drop-set (set drops)
-        keep? (fn [e]
-                (cond (contains? e :scope) (not (contains? drop-set (:scope e)))
-                      (contains? e :scope-start) (let [key
-                                                         (str (:scope-start e) "->" (:scope-end e))]
-                                                   (not (contains? drop-set key)))
-                      :else true))]
-    (vec (filter keep? trailer))))
+    trailer))
 (defn apply-trailer-summarize
   "Apply one or more summary directives. For each directive `{:scope-start
    :scope-end :summary}`:
@@ -836,45 +821,45 @@
   (reduce (fn [{:keys [trailer warnings]} {:keys [scope-start scope-end summary]}]
             (cond
               (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
-                {:trailer trailer,
-                 :warnings
-                   (conj
-                     warnings
-                     (warn
-                       :trailer-summarize-bad-scope
-                       [scope-start scope-end]
-                       "trailer-summarize :scope-start / :scope-end must be valid iter-scopes"))}
+              {:trailer trailer,
+               :warnings
+               (conj
+                 warnings
+                 (warn
+                   :trailer-summarize-bad-scope
+                   [scope-start scope-end]
+                   "trailer-summarize :scope-start / :scope-end must be valid iter-scopes"))}
               (pos? (iter-compare scope-start scope-end))
-                {:trailer trailer,
-                 :warnings
-                   (conj
-                     warnings
-                     (warn
-                       :trailer-summarize-inverted
-                       [scope-start scope-end]
-                       (str "trailer-summarize range " scope-start "->" scope-end " is inverted")))}
+              {:trailer trailer,
+               :warnings
+               (conj
+                 warnings
+                 (warn
+                   :trailer-summarize-inverted
+                   [scope-start scope-end]
+                   (str "trailer-summarize range " scope-start "->" scope-end " is inverted")))}
               :else (if-let [conflict (find-overlap-conflict trailer scope-start scope-end)]
                       {:trailer trailer,
                        :warnings (conj warnings
-                                       (warn :trailer-summarize-partial-overlap
-                                             [scope-start scope-end (:scope-start conflict)
-                                              (:scope-end conflict)]
-                                             (str "trailer-summarize "
-                                                  scope-start
-                                                  "->"
-                                                  scope-end
-                                                  " partially overlaps existing summary "
-                                                  (:scope-start conflict)
-                                                  "->"
-                                                  (:scope-end conflict)
-                                                  "; write refused")))}
+                                   (warn :trailer-summarize-partial-overlap
+                                     [scope-start scope-end (:scope-start conflict)
+                                      (:scope-end conflict)]
+                                     (str "trailer-summarize "
+                                       scope-start
+                                       "->"
+                                       scope-end
+                                       " partially overlaps existing summary "
+                                       (:scope-start conflict)
+                                       "->"
+                                       (:scope-end conflict)
+                                       "; write refused")))}
                       {:trailer (-> trailer
-                                    (->> (remove #(entry-contained-by? % [scope-start scope-end])))
-                                    vec
-                                    (conj {:scope-start scope-start,
-                                           :scope-end scope-end,
-                                           :summary summary,
-                                           :born form-scope})),
+                                  (->> (remove #(entry-contained-by? % [scope-start scope-end])))
+                                  vec
+                                  (conj {:scope-start scope-start,
+                                         :scope-end scope-end,
+                                         :summary summary,
+                                         :born form-scope})),
                        :warnings warnings})))
     {:trailer trailer, :warnings []}
     (or summaries [])))
@@ -883,11 +868,11 @@
   [trailer]
   (vec (sort-by (fn [e]
                   (cond (contains? e :scope) [(:scope e) 0]
-                        (contains? e :scope-start) [(:scope-start e) 1]
-                        :else ["" 2]))
-                (fn [[a a-tag] [b b-tag]]
-                  (let [c (iter-compare a b)] (if (zero? c) (compare a-tag b-tag) c)))
-                trailer)))
+                    (contains? e :scope-start) [(:scope-start e) 1]
+                    :else ["" 2]))
+         (fn [[a a-tag] [b b-tag]]
+           (let [c (iter-compare a b)] (if (zero? c) (compare a-tag b-tag) c)))
+         trailer)))
 ;; =============================================================================
 ;; Auto-summarization — PURE helpers (call-site supplies summarizer side-effect)
 ;; =============================================================================
@@ -898,7 +883,7 @@
 ;; either a real companion LLM call (semantic) or a deterministic
 ;; fallback (`dummy-summary-text`). Either way the resulting stub
 ;; shape is identical — same `:scope-start :scope-end :summary :born`
-;; the model already knows from `(done {:trailer-summarize …})`, plus
+;; the model already knows from `(done {:summarize {:trailer …}})`, plus
 ;; `:vis/auto?` / `:vis/summary-source` flags so the model can tell who
 ;; wrote it.
 ;;
@@ -946,8 +931,8 @@
               (cond (<= remaining target-tokens) {:batch (subvec trailer 0 k),
                                                   :kept (subvec trailer k),
                                                   :tokens-freed batch-tokens}
-                    (>= (inc k) n) nil ;; would have to absorb the tail; refuse
-                    :else (recur (inc k) (+ batch-tokens (long (nth sizes k))))))))))))
+                (>= (inc k) n) nil ;; would have to absorb the tail; refuse
+                :else (recur (inc k) (+ batch-tokens (long (nth sizes k))))))))))))
 (defn- batch-scope-range
   "Return `[scope-start scope-end]` covering a batch of pins. Works for
    forms pins (`:scope`) and existing summary stubs (`:scope-start` /
@@ -955,8 +940,8 @@
   [batch]
   (let [scopes (mapcat (fn [p]
                          (cond (:scope p) [(:scope p)]
-                               (:scope-start p) [(:scope-start p) (:scope-end p)]
-                               :else []))
+                           (:scope-start p) [(:scope-start p) (:scope-end p)]
+                           :else []))
                  batch)]
     [(first scopes) (last scopes)]))
 (defn dummy-summary-text
@@ -968,14 +953,14 @@
         n-forms (reduce + 0 (map (fn [p] (count (:forms p []))) batch))
         [s e] (batch-scope-range batch)]
     (str "auto-summarized; "
-         n-iters
-         " iter(s), "
-         n-forms
-         " form(s); reach details via (introspect-iter \""
-         s
-         "\")"
-         (when (not= s e) (str " … (introspect-iter \"" e "\")"))
-         ".")))
+      n-iters
+      " iter(s), "
+      n-forms
+      " form(s); reach details via (introspect-iter \""
+      s
+      "\")"
+      (when (not= s e) (str " … (introspect-iter \"" e "\")"))
+      ".")))
 (defn make-summary-stub
   "Build the summary stub for an oldest-batch summarization.
    `summary-source` is `:companion-llm` (semantic) or `:engine-dummy`
@@ -1025,32 +1010,31 @@
          :batch-size (count batch),
          :scope-range [scope-start scope-end],
          :warnings [(warn :trailer-auto-summarized
-                          [scope-start scope-end]
-                          (str "Trailer auto-summarized: "
-                               (count batch)
-                               " oldest iter(s) ("
-                               scope-start
-                               (when (not= scope-start scope-end) (str " .. " scope-end))
-                               ") collapsed into one "
-                               (case source
-                                 :companion-llm "companion-LLM summary"
-                                 "engine fallback summary")
-                               ". Full data via (introspect-iter \""
-                               scope-start
-                               "\")."))]}))))
-(defn- apply-bulk-archive
-  "bulk-archive entities listed in `(done {:archive {...}})`.
-   `archive-map` keys: `:facts :tasks` → vec of entity keys. Each
-   listed entity gets its `:status` flipped to `:archived` (new terminal
-   status; cleanly distinct from `:done` / `:cancelled` / `:superseded`).
-   Missing entities emit a soft warning and skip.
+                      [scope-start scope-end]
+                      (str "Trailer auto-summarized: "
+                        (count batch)
+                        " oldest iter(s) ("
+                        scope-start
+                        (when (not= scope-start scope-end) (str " .. " scope-end))
+                        ") collapsed into one "
+                        (case source
+                          :companion-llm "companion-LLM summary"
+                          "engine fallback summary")
+                        ". Full data via (introspect-iter \""
+                        scope-start
+                        "\")."))]}))))
+(defn- apply-entity-archive
+  "Flip the listed `:facts` / `:tasks` entity keys to the `:archived`
+   terminal status (distinct from `:done` / `:cancelled` /
+   `:superseded`). Missing entities emit a soft warning and skip.
+
+   There is NO `:specs` subtree in the engine — only `:session/facts`
+   and `:session/tasks` exist, so this primitive handles those two.
 
    Snapshots keep the raw entity; `introspect-archived :kind` returns
    them. Live ctx GC removes archived entries at the next turn boundary
-   without waiting for TTL.
-
-   Returns `{:ctx :warnings}`."
-  [ctx form-scope archive-map]
+   without waiting for TTL. Returns `{:ctx :warnings}`."
+  [ctx _form-scope archive-map]
   (let [{:keys [facts tasks]} (or archive-map {})
         kind->subtree {:fact :session/facts, :task :session/tasks}
         attempts (concat (for [k (or facts [])] [:fact k]) (for [k (or tasks [])] [:task k]))
@@ -1068,8 +1052,65 @@
                      (warn
                        :done-archive-missing-entity
                        [kind k]
-                       (str (name kind) " " k " listed in (done {:archive …}) does not exist"))))]
+                       (str (name kind) " " k " listed in (done {:summarize …}) does not exist"))))]
     {:ctx ctx', :warnings warns}))
+(defn- summarize-entities
+  "Collapse listed entity keys of one `kind` (:fact|:task) into a single
+   new summary FACT, then flip the originals to `:archived`. A settled
+   set of facts/tasks IS knowledge, so the recap always lands as a fact.
+
+   `directives` is a vec of `{:keys [k…] :into key? :summary str}`.
+   `:into` names the summary fact (auto `:summary-tN-<kind>-<n>` when
+   omitted). `start-idx` seeds the auto-key counter. Returns
+   `{:ctx :warnings :next-idx N}`."
+  [ctx form-scope kind directives start-idx]
+  (let [turn (or (:session/turn ctx) 0)]
+    (reduce
+      (fn [{:keys [ctx warnings next-idx]} {ks :keys :keys [into summary]}]
+        (let [summary-text (some-> summary str not-empty)
+              new-key (or into
+                        (keyword (str "summary-t" turn "-" (name kind) "-" next-idx)))
+              {ctx1 :ctx w :warnings}
+              (apply-entity-archive ctx form-scope
+                (case kind :fact {:facts ks} :task {:tasks ks}))]
+          (if-not summary-text
+            {:ctx      ctx1
+             :warnings (conj (vec (concat warnings w))
+                         (warn :done-summarize-missing-text [kind (vec ks)]
+                           (str "summarize entry for " (name kind)
+                             " " (vec ks) " has no :summary text; originals"
+                             " archived but no summary fact written")))
+             :next-idx (inc next-idx)}
+            {:ctx      (assoc-in ctx1 [:session/facts new-key]
+                         {:content         summary-text
+                          :born            form-scope
+                          :status          :active
+                          :source          :done-summarize
+                          :scope           (str "t" turn)
+                          :summarized-from (vec ks)})
+             :warnings (vec (concat warnings w))
+             :next-idx (inc next-idx)})))
+      {:ctx ctx :warnings [] :next-idx start-idx}
+      (or directives []))))
+(defn apply-summarize
+  "`(done {:summarize {:trailer [{:scope-start :scope-end :summary} …]
+   :facts [{:keys :into :summary} …] :tasks […]}})` — compress N→1, never
+   lose data:
+     :trailer  range  → collapsed into one recap stub pin (DB keeps the
+                        raw pins; introspect-iter recovers)
+     :facts    N keys → one new summary FACT, originals → :archived
+     :tasks    N keys → one new summary FACT, originals → :archived
+
+   Returns `{:ctx :warnings}`."
+  [ctx form-scope {:keys [trailer facts tasks]}]
+  (let [{t :trailer w-trailer :warnings}
+        (apply-trailer-summarize (or (:session/trailer ctx) []) (or trailer []) form-scope)
+        ctx-t (assoc ctx :session/trailer t)
+        {ctx-f :ctx w-f :warnings n1 :next-idx}
+        (summarize-entities ctx-t form-scope :fact facts 1)
+        {ctx-k :ctx w-k :warnings}
+        (summarize-entities ctx-f form-scope :task tasks n1)]
+    {:ctx ctx-k, :warnings (vec (concat w-trailer w-f w-k))}))
 (declare apply-done-impl)
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer + entity archive.
@@ -1085,26 +1126,31 @@
      :answer-summary     optional one-line summary the model emits; falls
                          back to the first non-blank paragraph of :answer
                          when omitted.
-     :trailer-drop       vec of `tN/iM` scopes to drop verbatim
-     :trailer-summarize  vec of `{:scope-start :scope-end :summary}` pins
-     :archive            `{:facts […] :specs […] :tasks […]}` bulk-flip
-                         to `:archived` terminal; snapshots keep raw,
-                         introspect-archived returns them.
+     :summarize  the ONE cleanup verb. Compress N→1 across all three
+                 surfaces — never drop, always leave a recap:
+                   `{:trailer [{:scope-start :scope-end :summary} …]
+                     :facts   [{:keys [k…] :into key? :summary str} …]
+                     :tasks   [{:keys [k…] :into key? :summary str} …]}`
+                 trailer range → one recap stub pin; N facts/tasks →
+                 one new summary FACT, originals flipped `:archived`
+                 (recoverable via introspect-archived). No `:specs`
+                 (no such subtree).
 
-   Granular fact/spec/task-archive! mutators do NOT exist — bulk archive only
-   via (done {:archive …}). Close-of-turn is the single authoritative place to
-   retire commitments."
+   Nothing is ever hard-deleted — summarize compresses, the raw data
+   stays in the DB (trailer pins via introspect-iter, entities via
+   introspect-archived). Close-of-turn is the single authoritative
+   place to retire commitments. The engine ALSO auto-summarizes oldest
+   trailer pins under size pressure (`ensure-prompt-under-budget!`),
+   using the same stub mechanism; this arg is the model's override."
   [ctx form-scope
-   {:keys [answer answer-summary user-request turn-summary trailer-drop trailer-summarize archive]}]
+   {:keys [answer answer-summary user-request turn-summary summarize]}]
   (apply-done-impl ctx
-                   form-scope
-                   {:answer answer,
-                    :answer-summary answer-summary,
-                    :user-request user-request,
-                    :turn-summary turn-summary,
-                    :trailer-drop trailer-drop,
-                    :trailer-summarize trailer-summarize,
-                    :archive archive}))
+    form-scope
+    {:answer answer,
+     :answer-summary answer-summary,
+     :user-request user-request,
+     :turn-summary turn-summary,
+     :summarize summarize}))
 (defn- first-paragraph-summary
   "Phase F fallback: when the model didn't emit `:answer-summary`,
    take the first non-blank paragraph (up to ~280 chars) as the
@@ -1114,8 +1160,8 @@
   (when (and answer (not (clojure.string/blank? answer)))
     (let [trimmed (clojure.string/trim answer)
           first-blank (or (clojure.string/index-of trimmed "\n\n")
-                          (clojure.string/index-of trimmed "\r\n\r\n")
-                          (count trimmed))
+                        (clojure.string/index-of trimmed "\r\n\r\n")
+                        (count trimmed))
           para (subs trimmed 0 first-blank)]
       (if (> (count para) 280) (str (subs para 0 277) "…") para))))
 (defn- auto-fact-for-turn-summary
@@ -1148,19 +1194,19 @@
   [ctx form-scope {:keys [user-request answer answer-summary model-summary]}]
   (let [turn-pos (or (:session/turn ctx) 0)
         answer-str (some-> answer
-                           str
-                           clojure.string/trim
-                           not-empty)
+                     str
+                     clojure.string/trim
+                     not-empty)
         question (some-> user-request
-                         str
-                         clojure.string/trim
-                         not-empty)
+                   str
+                   clojure.string/trim
+                   not-empty)
         synopsis (or (some-> answer-summary
-                             str
-                             clojure.string/trim
-                             not-empty)
-                     (some-> answer-str
-                             first-paragraph-summary))
+                       str
+                       clojure.string/trim
+                       not-empty)
+                   (some-> answer-str
+                     first-paragraph-summary))
         ;; A turn is worth recording when EITHER the user got an answer
         ;; OR at least one entity transitioned in this turn (born scope
         ;; or done-born scope starts with t<turn-pos>/).
@@ -1168,11 +1214,11 @@
         any-born? (some (fn [m]
                           (some (fn [[_ entity]]
                                   (or (clojure.string/starts-with? (str (:born entity) "")
-                                                                   turn-prefix)
-                                      (clojure.string/starts-with? (str (:done-born entity) "")
-                                                                   turn-prefix)))
-                                (or m {})))
-                        [(:session/facts ctx) (:session/tasks ctx)])
+                                        turn-prefix)
+                                    (clojure.string/starts-with? (str (:done-born entity) "")
+                                      turn-prefix)))
+                            (or m {})))
+                    [(:session/facts ctx) (:session/tasks ctx)])
         meaningful? (or (some? answer-str) any-born?)
         reserved #{:status :source :scope :born}
         model-extras (when (map? model-summary)
@@ -1187,11 +1233,9 @@
   "– the un-gated core of `apply-done`. Pulled out so the
    gate can short-circuit cleanly; callers must use `apply-done`."
   [ctx form-scope
-   {:keys [answer answer-summary user-request turn-summary trailer-drop trailer-summarize archive]}]
-  (let [start (or (:session/trailer ctx) [])
-        after-drop (apply-trailer-drop start (or trailer-drop []))
-        {:keys [trailer warnings]}
-          (apply-trailer-summarize after-drop (or trailer-summarize []) form-scope)
+   {:keys [answer answer-summary user-request turn-summary summarize]}]
+  (let [{ctx-summ :ctx summarize-warns :warnings}
+        (apply-summarize ctx form-scope (or summarize {}))
         ;; Phase F (redesigned): compact `:turn-N-summary` fact. Carries
         ;; question + 1-paragraph answer synopsis + entity ids born/done
         ;; this turn. The full :answer markdown is NOT stored here
@@ -1201,34 +1245,16 @@
         ;; from the model adds free-form fields (action list,
         ;; what-we-did narrative) merged onto the auto skeleton.
         auto-fact-entry (auto-fact-for-turn-summary ctx
-                                                    form-scope
-                                                    {:user-request user-request,
-                                                     :answer answer,
-                                                     :answer-summary answer-summary,
-                                                     :model-summary turn-summary})
-        sorted (sort-trailer trailer)
-        ;; flag scopes appearing in both drop AND summarize as a soft warn
-        drop-set (set (or trailer-drop []))
-        summarize-keys (set (for [s (or trailer-summarize [])]
-                              (str (:scope-start s) "->" (:scope-end s))))
-        conflict-keys (clojure.set/intersection drop-set summarize-keys)
-        conflict-warns (for [k conflict-keys]
-                         (warn :done-drop-summarize-conflict
-                               [k]
-                               (str "scope " k
-                                    " appears in both :trailer-drop and"
-                                      " :trailer-summarize; drop ignored, summary applied")))
-        ctx-with-trailer (assoc ctx :session/trailer sorted)
-        ;; Apply bulk-archive before the auto-fact lands so archive
-        ;; entities are visible to the meaningfulness check.
-        {ctx-archived :ctx, archive-warns :warnings}
-          (if (map? archive)
-            (apply-bulk-archive ctx-with-trailer form-scope archive)
-            {:ctx ctx-with-trailer, :warnings []})
-        ctx-final (cond-> ctx-archived
+                          form-scope
+                          {:user-request user-request,
+                           :answer answer,
+                           :answer-summary answer-summary,
+                           :model-summary turn-summary})
+        sorted (sort-trailer (:session/trailer ctx-summ))
+        ctx-final (cond-> (assoc ctx-summ :session/trailer sorted)
                     auto-fact-entry (assoc-in [:session/facts (first auto-fact-entry)]
                                       (second auto-fact-entry)))]
-    {:ctx ctx-final, :warnings (vec (concat conflict-warns warnings archive-warns))}))
+    {:ctx ctx-final, :warnings (vec summarize-warns)}))
 ;; =============================================================================
 ;; History introspection — pure fns over a {turn-n → ctx-snapshot} map
 ;; =============================================================================
@@ -1242,8 +1268,8 @@
   "Return [[turn ctx] …] sorted by turn ascending. Accepts a map or a vec."
   [history]
   (cond (map? history) (sort-by key history)
-        (sequential? history) (sort-by first history)
-        :else nil))
+    (sequential? history) (sort-by first history)
+    :else nil))
 (defn- entity-change-summary
   "Pure: given a `before` and `after` snapshot of a single entity
    (`{:status :born :depends-on :title :content …}`), return a vec of
@@ -1266,9 +1292,9 @@
                      a (get am k)]
                :when (not= b a)]
            (cond (nil? b) {:kind kind, :K k, :change :added, :after a}
-                 (nil? a) {:kind kind, :K k, :change :removed, :before b}
-                 :else (let [fields (entity-change-summary b a)]
-                         (when (seq fields) {:kind kind, :K k, :change fields})))))))
+             (nil? a) {:kind kind, :K k, :change :removed, :before b}
+             :else (let [fields (entity-change-summary b a)]
+                     (when (seq fields) {:kind kind, :K k, :change fields})))))))
 (defn diff-ctx
   "Pure: return a vec of change records between two ctx snapshots.
    Each record: `{:kind ∈ #{:task :fact} :K :change …}`.
@@ -1277,7 +1303,7 @@
    trailer is ephemeral; model already reads it inline."
   [before after]
   (vec (concat (remove nil? (diff-subtree before after :session/tasks :task))
-               (remove nil? (diff-subtree before after :session/facts :fact)))))
+         (remove nil? (diff-subtree before after :session/facts :fact)))))
 (defn introspect-changes
   "Lazy turn-delta introspection. `scope` is a turn key (`\"tN\"`); the
    engine fetches snapshots N-1 and N from history and returns the
@@ -1291,8 +1317,8 @@
   (let [snaps (snapshots-asc history)
         n (cond (string? turn-key) (when-let [[_ s] (re-matches #"^t([1-9][0-9]*)$" turn-key)]
                                      (parse-long s))
-                (number? turn-key) (long turn-key)
-                :else nil)
+            (number? turn-key) (long turn-key)
+            :else nil)
         snap-at (fn [t] (some (fn [[k v]] (when (= k t) v)) snaps))]
     (when n
       (let [after (snap-at n)
@@ -1303,13 +1329,13 @@
   (let [snaps (snapshots-asc history)]
     (some (fn [[turn ctx]]
             (when-let [entry (get-in ctx [:session/tasks k])] (assoc entry :as-of-turn turn)))
-          (reverse snaps))))
+      (reverse snaps))))
 (defn introspect-fact
   [history k]
   (let [snaps (snapshots-asc history)]
     (some (fn [[turn ctx]]
             (when-let [entry (get-in ctx [:session/facts k])] (assoc entry :as-of-turn turn)))
-          (reverse snaps))))
+      (reverse snaps))))
 (defn- subtree-key-for-kind
   [kind]
   (case kind
@@ -1323,11 +1349,11 @@
   (let [snaps (snapshots-asc history)
         subtree (subtree-key-for-kind kind)
         latest (some-> snaps
-                       last
-                       second
-                       (get subtree)
-                       keys
-                       set)
+                 last
+                 second
+                 (get subtree)
+                 keys
+                 set)
         latest (or latest #{})]
     (vec (for [[turn ctx] (reverse snaps)
                :let [entries (or (get ctx subtree) {})
@@ -1338,14 +1364,14 @@
                ;; dedupe: only emit a key the first turn we see it (latest
                ;; descending), so each archived key shows up once with its
                ;; latest-known turn.
-              ]
+               ]
            entry))))
 (defn introspect-ctx-at
   "Full CTX snapshot at end of turn N. Nil when turn was never persisted."
   [history turn-n]
   (cond (map? history) (get history turn-n)
-        (sequential? history) (some (fn [[t ctx]] (when (= t turn-n) ctx)) history)
-        :else nil))
+    (sequential? history) (some (fn [[t ctx]] (when (= t turn-n) ctx)) history)
+    :else nil))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================
@@ -1449,7 +1475,7 @@
   ([src head-tag-resolver]
    (let [sym (form-head-symbol src)]
      (or (when (and sym head-tag-resolver) (try (head-tag-resolver sym) (catch Throwable _ nil)))
-         (if (and sym (contains? core-mutation-heads sym)) :mutation :observation)))))
+       (if (and sym (contains? core-mutation-heads sym)) :mutation :observation)))))
 ;; =============================================================================
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
 ;; into the canonical engine envelope shape
@@ -1468,13 +1494,13 @@
   ([v] (realize-trailer-value v 8))
   ([v depth]
    (cond (or (nil? v) (zero? depth)) v
-         (instance? clojure.lang.IDeref v) (try (realize-trailer-value (deref v) (dec depth))
-                                                (catch Throwable _ v))
-         (map? v) (into {} (map (fn [[k val]] [k (realize-trailer-value val (dec depth))])) v)
-         (vector? v) (mapv #(realize-trailer-value % (dec depth)) v)
-         (set? v) (into #{} (map #(realize-trailer-value % (dec depth))) v)
-         (sequential? v) (doall (map #(realize-trailer-value % (dec depth)) v))
-         :else v)))
+     (instance? clojure.lang.IDeref v) (try (realize-trailer-value (deref v) (dec depth))
+                                         (catch Throwable _ v))
+     (map? v) (into {} (map (fn [[k val]] [k (realize-trailer-value val (dec depth))])) v)
+     (vector? v) (mapv #(realize-trailer-value % (dec depth)) v)
+     (set? v) (into #{} (map #(realize-trailer-value % (dec depth))) v)
+     (sequential? v) (doall (map #(realize-trailer-value % (dec depth)) v))
+     :else v)))
 (defn block->envelope
   "Project one loop-side block `{:code :result :error :channel}` plus its
    1-based position and the engine cursor into the per-form envelope
@@ -1527,9 +1553,9 @@
          channel (seq (:channel block))
          parsed-form (parse-form src)
          duration-ms
-           (when-let [envelope (:envelope block)]
-             (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
-               (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
+         (when-let [envelope (:envelope block)]
+           (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
+             (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
      (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src}
        (some? parsed-form) (assoc :form parsed-form)
        (some? duration-ms) (assoc :duration-ms duration-ms)
@@ -1550,4 +1576,4 @@
   ([blocks {:keys [turn iter]} head-tag-resolver]
    (vec (map-indexed (fn [idx block]
                        (block->envelope block (inc idx) {:turn turn, :iter iter} head-tag-resolver))
-                     (or blocks [])))))
+          (or blocks [])))))
