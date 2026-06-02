@@ -78,7 +78,6 @@
   org.commonmark/commonmark-ext-gfm-tables        {:mvn/version "0.24.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.24.0"}
   babashka/process                                {:mvn/version "0.6.25"}
-  org.clojure/clojure                             {:mvn/version "1.12.4"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
   metosin/malli                                   {:mvn/version "0.20.1"}
