@@ -21,6 +21,7 @@
    [com.blockether.vis.internal.parse-diagnose :as pd]
    [com.blockether.vis.internal.paren-repair :as paren-repair]
    [com.blockether.vis.internal.render :as render]
+   [com.blockether.vis.internal.sci-symbols :as sci-symbols]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.slash :as slash]
@@ -1336,16 +1337,8 @@
 (defn- valid-direct-answer-metadata
   [payload]
   (cond-> {}
-    (and (vector? (:trailer-drop payload))
-      (every? string? (:trailer-drop payload)))
-    (assoc :trailer-drop (:trailer-drop payload))
-
-    (and (vector? (:trailer-summarize payload))
-      (every? map? (:trailer-summarize payload)))
-    (assoc :trailer-summarize (:trailer-summarize payload))
-
-    (map? (:archive payload))
-    (assoc :archive (:archive payload))))
+    (map? (:summarize payload))
+    (assoc :summarize (:summarize payload))))
 
 (defn- raw-response->direct-answer-source
   [raw]
@@ -5163,8 +5156,7 @@
         ;; Seeded fresh; reloaded from session_turn_state.ctx (Nippy BLOB)
         ;; on session resume so the model picks up where the last
         ;; (done …) left off. Defined BEFORE answer-fn because answer-fn
-        ;; closes over it when (done …) carries :trailer-drop /
-        ;; :trailer-summarize args.
+        ;; closes over it when (done …) carries a :summarize arg.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
         ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
@@ -5207,9 +5199,7 @@
                                                              (nil? s)                {:answer ""}
                                                              :else                   {:answer (pr-str s)
                                                                                       :vis/coerced? true})
-                                         trailer-drop      (when (map? value) (:trailer-drop value))
-                                         trailer-summarize (when (map? value) (:trailer-summarize value))
-                                         archive           (when (map? value) (:archive value))
+                                         summarize         (when (map? value) (:summarize value))
                                          ;; Phase F (redesigned): extract :answer + optional
                                          ;; :answer-summary + free-form :turn-summary so the engine can
                                          ;; write a compact `:turn-N-summary` fact under :session/facts.
@@ -5243,9 +5233,7 @@
                                                               :turn-summary   turn-summary
                                                               :user-request   user-request
                                                               :session-title  current-title
-                                                              :trailer-drop      trailer-drop
-                                                              :trailer-summarize trailer-summarize
-                                                              :archive           archive})]
+                                                              :summarize         summarize})]
                                      (reset! answer-atom
                                        {:value    value
                                         :position (:form-idx @turn-state-atom)})
@@ -5332,7 +5320,13 @@
                                    ;; engine mutator (task/fact + contradicts).
                                    (ctx-loop/build-sci-bindings ctx-loop-env)
                                    (ctx-loop/build-introspect-bindings
-                                     ctx-loop-env introspect-history-loader))
+                                     ctx-loop-env introspect-history-loader)
+                                   ;; Bare `doc` / `apropos` SCI system
+                                   ;; calls. They need `:sci-ctx`, which is
+                                   ;; built AFTER this map, so they read it
+                                   ;; from `environment-atom` at call time.
+                                   (sci-symbols/build-symbol-bindings
+                                     (fn [] @environment-atom)))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))

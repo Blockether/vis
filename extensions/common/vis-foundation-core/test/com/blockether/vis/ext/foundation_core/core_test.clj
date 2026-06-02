@@ -63,7 +63,7 @@
     (let [doc (:ext/description foundation/vis-extension)]
       (expect (str/includes? doc "session-state"))
       (expect (str/includes? doc "file I/O"))
-      (expect (str/includes? doc "engine-symbol-"))
+      (expect (str/includes? doc "system call"))
       (expect (not (str/includes? doc "vis ext repro")))
       (expect (not (str/includes? doc "file-link")))
       (expect (not (str/includes? doc "answer builders")))))

@@ -230,7 +230,7 @@
 ;;   :scope-start must be ≤ :scope-end per scope comparator.
 ;;   New summary must NOT partially overlap an existing summary;
 ;;   partial overlap is rejected with an explain message at validation time.
-;;   Engine stamps :born to the scope of the (done {:trailer-summarize …}) form.
+;;   Engine stamps :born to the scope of the (done {:summarize {:trailer …}}) form.
 
 (s/def ::trailer-entry
   (s/or :pin     ::trailer-pin

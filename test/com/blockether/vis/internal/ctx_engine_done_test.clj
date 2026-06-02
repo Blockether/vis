@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.ctx-engine-done-test
-  "Tests for the `done` handler: trailer-drop, trailer-summarize, partial
-   overlap detection, the trailer comparator,
-   history introspection, and hook-task idempotent re-emission."
+  "Tests for the `done` handler: the single `:summarize` cleanup verb
+   (trailer ranges + entity collapse), partial overlap detection, the
+   trailer comparator, history introspection, and hook-task idempotent
+   re-emission."
   (:require
    [com.blockether.vis.internal.ctx-engine :as eng]
    [lazytest.core :refer [defdescribe describe expect it]]))
@@ -32,28 +33,6 @@
     (it "rejects out-of-range"
       (expect (not (eng/iter-in-range? "t3/i1" "t3/i2" "t3/i5")))
       (expect (not (eng/iter-in-range? "t4/i1" "t3/i2" "t3/i5"))))))
-
-;; =============================================================================
-;; trailer-drop
-;; =============================================================================
-
-(defdescribe trailer-drop-test
-  (describe "apply-trailer-drop"
-    (it "removes pin entries by exact scope match"
-      (let [tr [(pin "t1/i1" "a") (pin "t2/i1" "b") (pin "t2/i2" "c")]
-            after (eng/apply-trailer-drop tr ["t2/i1"])]
-        (expect (= 2 (count after)))
-        (expect (every? #(not= "t2/i1" (:scope %)) after))))
-
-    (it "removes summary entries by scope-start->scope-end key"
-      (let [tr [(pin "t1/i1" "a") (summary "t2/i1" "t3/i2" "x")]
-            after (eng/apply-trailer-drop tr ["t2/i1->t3/i2"])]
-        (expect (= 1 (count after)))
-        (expect (= "t1/i1" (:scope (first after))))))
-
-    (it "is silent on non-existent scope key"
-      (let [tr [(pin "t1/i1" "a")]]
-        (expect (= tr (eng/apply-trailer-drop tr ["t99/i99"])))))))
 
 ;; =============================================================================
 ;; trailer-summarize: contained absorb + partial overlap reject
@@ -122,31 +101,67 @@
                    (pin "t2/i3" "tests")
                    (pin "t3/i1" "more")]))]
 
-      (it "applies :trailer-drop"
-        (let [{ctx' :ctx} (eng/apply-done ctx "t4/i1/f1"
-                            {:trailer-drop ["t1/i1"]})]
-          (expect (= 4 (count (:session/trailer ctx'))))))
-
-      (it "applies :trailer-summarize"
+      (it "applies :summarize {:trailer …} collapsing a range into one stub"
         (let [{ctx' :ctx ws :warnings}
               (eng/apply-done ctx "t4/i1/f1"
-                {:trailer-summarize
-                 [{:scope-start "t2/i1" :scope-end "t2/i3"
-                   :summary "patch+test cycle"}]})]
+                {:summarize
+                 {:trailer [{:scope-start "t2/i1" :scope-end "t2/i3"
+                             :summary "patch+test cycle"}]}})]
           (expect (empty? ws))
           (expect (= 3 (count (:session/trailer ctx'))))
           (expect (some :scope-start (:session/trailer ctx')))))
 
-      (it "warns on partial-overlap scope between drop and summarize"
+      (it "collapses N facts into one new summary fact and archives originals"
+        (let [ctx-f (-> (eng/empty-ctx)
+                      (assoc :session/turn 4)
+                      (assoc :session/facts
+                        {:a {:content "alpha" :status :active :born "t2/i1/f1"}
+                         :b {:content "beta"  :status :active :born "t2/i2/f1"}}))
+              {ctx' :ctx} (eng/apply-done ctx-f "t4/i1/f1"
+                            {:summarize
+                             {:facts [{:keys [:a :b] :into :ab
+                                       :summary "alpha+beta settled"}]}})]
+          ;; new summary fact exists with the recap content
+          (expect (= "alpha+beta settled" (get-in ctx' [:session/facts :ab :content])))
+          (expect (= [:a :b] (get-in ctx' [:session/facts :ab :summarized-from])))
+          ;; originals flipped :archived
+          (expect (= :archived (get-in ctx' [:session/facts :a :status])))
+          (expect (= :archived (get-in ctx' [:session/facts :b :status])))))
+
+      (it "collapses N tasks into one new summary FACT and archives the tasks"
+        (let [ctx-t (-> (eng/empty-ctx)
+                      (assoc :session/turn 4)
+                      (assoc :session/tasks
+                        {:t1 {:title "one" :status :done :born "t2/i1/f1"}
+                         :t2 {:title "two" :status :done :born "t2/i2/f1"}}))
+              {ctx' :ctx} (eng/apply-done ctx-t "t4/i1/f1"
+                            {:summarize
+                             {:tasks [{:keys [:t1 :t2] :into :setup
+                                       :summary "env wired"}]}})]
+          (expect (= "env wired" (get-in ctx' [:session/facts :setup :content])))
+          (expect (= :archived (get-in ctx' [:session/tasks :t1 :status])))
+          (expect (= :archived (get-in ctx' [:session/tasks :t2 :status])))))
+
+      (it "auto-generates a summary fact key when :into is omitted"
+        (let [ctx-f (-> (eng/empty-ctx)
+                      (assoc :session/turn 7)
+                      (assoc :session/facts
+                        {:a {:content "alpha" :status :active :born "t2/i1/f1"}}))
+              {ctx' :ctx} (eng/apply-done ctx-f "t7/i1/f1"
+                            {:summarize
+                             {:facts [{:keys [:a] :summary "recap"}]}})]
+          (expect (= "recap" (get-in ctx' [:session/facts :summary-t7-fact-1 :content])))))
+
+      (it "warns on partial-overlap between summarize ranges and existing summary"
         (let [ctx-with (-> ctx
                          (assoc :session/trailer
                            [(summary "t2/i1" "t2/i5" "first")
                             (pin "t3/i1" "x")]))
               {ws :warnings}
               (eng/apply-done ctx-with "t9/i1/f1"
-                {:trailer-summarize
-                 [{:scope-start "t2/i3" :scope-end "t3/i1"
-                   :summary "second"}]})]
+                {:summarize
+                 {:trailer [{:scope-start "t2/i3" :scope-end "t3/i1"
+                             :summary "second"}]}})]
           (expect (some #(= :trailer-summarize-partial-overlap (:code %)) ws))))
 
       (it "sorts trailer by (scope-start, kind)"

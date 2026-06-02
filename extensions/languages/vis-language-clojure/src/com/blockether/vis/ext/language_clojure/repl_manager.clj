@@ -11,15 +11,23 @@
    bb.edn deps), not Vis's JVM. The chosen launcher writes `.nrepl-port` on
    boot, which `nrepl-ctx` discovery then surfaces in context automatically.
 
+   Managed REPLs SURVIVE A VIS RESTART: each one is recorded by PID in a
+   persistent registry (`~/.vis/clj-nrepl/managed.edn`). The in-memory atom
+   only caches the `Process` handle for clean teardown in the same session;
+   across a restart we re-attach to the PID via `ProcessHandle`, so a
+   self-started REPL still reads as `:managed` and is still stoppable.
+
    `:status`/`:stop` are always allowed (read + cleanup of a Vis-managed proc).
    Only `:start`/`:restart` require the flag."
   (:require
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.ports :as ports])
   (:import
+   (java.lang ProcessHandle)
    (java.util.concurrent TimeUnit)))
 
 (def flag-env "VIS_CLJ_REPL_AUTOSTART")
@@ -36,11 +44,73 @@
       true
       (not (contains? falsy (str/lower-case (str/trim raw)))))))
 
-;; { workspace-root -> {:process ^Process :cmd [..] :tool kw :started-at ms} }
+;; In-memory cache of THIS session's spawns:
+;; { dir -> {:process ^Process :cmd [..] :tool kw :aliases [..] :started-at ms} }
 ;; defonce so a `(require :reload)` during dev never orphans a live child.
+;; The cross-restart source of truth is the on-disk registry below.
 (defonce ^:private processes (atom {}))
 
 (defn- alive? [^Process p] (boolean (and p (.isAlive p))))
+
+;; ---------------------------------------------------------------------------
+;; PID re-attach — recognise our own REPLs across a vis restart
+;; ---------------------------------------------------------------------------
+
+(defn- handle-of ^ProcessHandle [pid]
+  (when pid (.orElse (ProcessHandle/of (long pid)) nil)))
+
+(defn- pid-alive? [pid]
+  (boolean (some-> (handle-of pid) .isAlive)))
+
+(defn- kill-pid!
+  "Best-effort terminate a process by PID (used when we only have the PID from
+   the registry, e.g. after a vis restart — no `Process` handle to waitFor)."
+  [pid]
+  (when-let [h (handle-of pid)]
+    (try (.destroy h) (catch Throwable _ nil))
+    (try (when (.isAlive h) (.destroyForcibly h)) (catch Throwable _ nil))))
+
+;; ---------------------------------------------------------------------------
+;; Persistent registry — survives a vis/TUI restart
+;; { dir -> {:pid long :tool kw :aliases [..] :started-at ms} }
+;; ---------------------------------------------------------------------------
+
+(def ^:private state-dir
+  (io/file (System/getProperty "user.home") ".vis" "clj-nrepl"))
+
+(def ^:private registry-file (io/file state-dir "managed.edn"))
+
+(defonce ^:private registry-lock (Object.))
+
+(defn- read-registry []
+  (locking registry-lock
+    (try
+      (when (.isFile registry-file)
+        (let [m (edn/read-string (slurp registry-file))]
+          (when (map? m) m)))
+      (catch Throwable _ nil))))
+
+(defn- write-registry! [m]
+  (locking registry-lock
+    (try
+      (.mkdirs state-dir)
+      (spit registry-file (pr-str (or m {})))
+      (catch Throwable _ nil))))
+
+(defn- register! [dir info]
+  (locking registry-lock
+    (write-registry! (assoc (or (read-registry) {}) dir info))))
+
+(defn- unregister! [dir]
+  (locking registry-lock
+    (write-registry! (dissoc (or (read-registry) {}) dir))))
+
+(defn- dir-alive?
+  "Is the REPL for `dir` still running? Prefer this session's `Process`; fall
+   back to the registry PID via `ProcessHandle` (the cross-restart path)."
+  [dir reg-info]
+  (let [proc (:process (get @processes dir))]
+    (if proc (alive? proc) (pid-alive? (:pid reg-info)))))
 
 ;; Kept in sync with the nrepl/nrepl version pinned in this extension's
 ;; deps.edn. Injected via `-Sdeps` so the launcher works even in target
@@ -116,31 +186,42 @@
 
 (defn managed-ports
   "Map of `{port {:managed true :tool :aliases :pid :dir}}` for every currently
-   ALIVE Vis-managed REPL, keyed by the live port each one wrote. Lets ctx mark
-   which ports vis owns (and surface subdir REPLs that workspace-root discovery
-   would otherwise miss). Dead entries are skipped."
+   ALIVE Vis-managed REPL, keyed by the live port each one wrote — sourced from
+   the persistent registry so it survives a vis restart (re-attach by PID).
+   Prunes dead entries from the registry as a side effect. Lets ctx mark which
+   ports vis owns and surface subdir REPLs discovery would otherwise miss."
   []
-  (into {}
-    (keep (fn [[dir {:keys [^Process process tool aliases]}]]
-            (when (alive? process)
+  (let [reg   (or (read-registry) {})
+        alive (into {} (filter (fn [[dir info]] (dir-alive? dir info)) reg))]
+    (when (not= alive reg)
+      (write-registry! alive))
+    (into {}
+      (keep (fn [[dir {:keys [pid tool aliases]}]]
               (when-let [port (read-port-file dir)]
                 [port (cond-> {:managed true :dir dir}
                         tool          (assoc :tool tool)
-                        (seq aliases) (assoc :aliases aliases)
-                        process       (assoc :pid (try (.pid process) (catch Throwable _ nil))))])))
-      @processes)))
+                        (seq aliases) (assoc :aliases (vec aliases))
+                        pid           (assoc :pid pid))])))
+      alive)))
 
 (defn status
-  "Current managed-process + discovered-port view for `dir`. Always safe."
+  "Current managed-process + discovered-port view for `dir`. Always safe.
+   Reflects the persistent registry, so a REPL vis started before a restart
+   still reports as managed + running (re-attached by PID)."
   [dir]
-  (let [{:keys [^Process process tool aliases]} (get @processes dir)]
+  (let [reg-info (get (read-registry) dir)
+        running? (dir-alive? dir reg-info)
+        tool     (:tool reg-info)
+        aliases  (:aliases reg-info)
+        pid      (or (some-> ^Process (:process (get @processes dir)) .pid)
+                   (:pid reg-info))]
     {:result        :status
      :dir           dir
      :flag-enabled? (flag-enabled?)
-     :managed       (cond-> {:running (alive? process)}
-                      tool         (assoc :tool tool)
-                      (seq aliases) (assoc :aliases aliases)
-                      process      (assoc :pid (try (.pid process) (catch Throwable _ nil))))
+     :managed       (cond-> {:running running?}
+                      tool          (assoc :tool tool)
+                      (seq aliases) (assoc :aliases (vec aliases))
+                      (and running? pid) (assoc :pid pid))
      :ports         (vec (ports/discover-all dir))}))
 
 (defn start!
@@ -156,55 +237,67 @@
    when it appears, else :starting (ctx surfaces it next turn)."
   ([dir] (start! dir nil))
   ([dir {:keys [aliases]}]
-   (cond
-     (alive? (:process (get @processes dir)))
-     (assoc (status dir) :result :already-running)
+   (let [reg-info (get (read-registry) dir)]
+     (cond
+       ;; already ours and alive — same session, or re-attached across restart
+       (or (alive? (:process (get @processes dir)))
+         (and reg-info (pid-alive? (:pid reg-info))))
+       (assoc (status dir) :result :already-running)
 
-     :else
-     (let [existing (read-port-file dir)
-           live?    (and existing
-                      (= :up (:status (nrepl-client/probe! {:port existing :timeout-ms 500}))))]
-       (cond
-         live?
-         {:result :already-running :external? true :dir dir :port existing
-          :message "An nREPL is already running in this directory."}
+       :else
+       (let [existing (read-port-file dir)
+             live?    (and existing
+                        (= :up (:status (nrepl-client/probe! {:port existing :timeout-ms 500}))))]
+         (cond
+           ;; a live REPL we don't own (no registry entry) — don't double-start
+           live?
+           {:result :already-running :external? true :dir dir :port existing
+            :message "An nREPL is already running in this directory."}
 
-         :else
-         (if-let [{:keys [tool cmd]} (launcher-for dir aliases)]
-           (do
-             ;; drop a stale port file so wait-for-port only sees the fresh one
-             (when existing (io/delete-file (port-file dir) true))
-             (let [log  (log-file dir)
-                   pb   (doto (ProcessBuilder. ^java.util.List cmd)
-                          (.directory (io/file dir))
-                          (.redirectErrorStream true)
-                          (.redirectOutput log))
-                   proc (.start pb)]
-               (swap! processes assoc dir
-                 {:process proc :cmd cmd :tool tool :aliases (vec aliases)
-                  :started-at (System/currentTimeMillis)})
-               (let [port  (wait-for-port dir 15000)
-                     probe (when port (nrepl-client/probe! {:port port :timeout-ms 500}))]
-                 (cond-> {:tool tool :dir dir :aliases (vec aliases) :cmd cmd
-                          :log  (.getAbsolutePath log)
-                          :pid  (try (.pid proc) (catch Throwable _ nil))}
-                   port       (assoc :result :started :port port :status (:status probe))
-                   (not port) (assoc :result :starting
-                                :message "nREPL launching; the port will appear in ctx shortly.")))))
-           {:result  :no-launcher :dir dir
-            :message "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."}))))))
+           :else
+           (if-let [{:keys [tool cmd]} (launcher-for dir aliases)]
+             (do
+               ;; drop a stale port file so wait-for-port only sees the fresh one
+               (when existing (io/delete-file (port-file dir) true))
+               (let [log  (log-file dir)
+                     pb   (doto (ProcessBuilder. ^java.util.List cmd)
+                            (.directory (io/file dir))
+                            (.redirectErrorStream true)
+                            (.redirectOutput log))
+                     proc (.start pb)
+                     pid  (try (.pid proc) (catch Throwable _ nil))]
+                 (swap! processes assoc dir
+                   {:process proc :cmd cmd :tool tool :aliases (vec aliases)
+                    :started-at (System/currentTimeMillis)})
+                 ;; persist so we still recognise this REPL after a vis restart
+                 (register! dir {:pid pid :tool tool :aliases (vec aliases)
+                                 :started-at (System/currentTimeMillis)})
+                 (let [port  (wait-for-port dir 15000)
+                       probe (when port (nrepl-client/probe! {:port port :timeout-ms 500}))]
+                   (cond-> {:tool tool :dir dir :aliases (vec aliases) :cmd cmd
+                            :log  (.getAbsolutePath log) :pid pid}
+                     port       (assoc :result :started :port port :status (:status probe))
+                     (not port) (assoc :result :starting
+                                  :message "nREPL launching; the port will appear in ctx shortly.")))))
+             {:result  :no-launcher :dir dir
+              :message "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."})))))))
 
 (defn stop!
-  "Stop the Vis-managed nREPL subprocess for `dir` (graceful, then forced).
-   No-op-safe when nothing is managed."
+  "Stop the Vis-managed nREPL for `dir` (graceful, then forced). Uses this
+   session's `Process` when present, else the registry PID (cross-restart
+   path). Always clears the in-memory cache and the registry. No-op-safe."
   [dir]
-  (if-let [{:keys [^Process process]} (get @processes dir)]
-    (do
-      (when (alive? process)
-        (.destroy process)
-        (when-not (.waitFor process 3 TimeUnit/SECONDS)
-          (.destroyForcibly process)))
-      (swap! processes dissoc dir)
-      {:result :stopped :dir dir})
-    {:result  :not-managed :dir dir
-     :message "No Vis-managed nREPL for this directory."}))
+  (let [{:keys [^Process process]} (get @processes dir)
+        reg-info (get (read-registry) dir)]
+    (if (or process reg-info)
+      (do
+        (cond
+          process (do (.destroy process)
+                    (when-not (.waitFor process 3 TimeUnit/SECONDS)
+                      (.destroyForcibly process)))
+          (:pid reg-info) (kill-pid! (:pid reg-info)))
+        (swap! processes dissoc dir)
+        (unregister! dir)
+        {:result :stopped :dir dir})
+      {:result  :not-managed :dir dir
+       :message "No Vis-managed nREPL for this directory."})))

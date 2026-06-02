@@ -3,35 +3,18 @@
    [clojure.string]
    [com.blockether.vis.ext.foundation-core.introspection :as introspection]
    [com.blockether.vis.internal.extension :as extension]
-   [lazytest.core :refer [defdescribe expect it]]
-   [sci.core :as sci]))
+   [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe introspection-public-surface-test
-  (it "exposes session and Clojure symbol introspection symbols"
+  (it "exposes only the session introspection symbols (symbol docs moved to engine `doc`/`apropos`)"
     (let [symbols (set (map :ext.symbol/symbol introspection/all-symbols))]
       (expect (contains? symbols 'session-state))
       (expect (contains? symbols 'session-report))
-      (expect (contains? symbols 'engine-symbol-documentation))
-      (expect (contains? symbols 'engine-symbol-source-code))
-      (expect (contains? symbols 'engine-symbol-metadata))
-      (expect (contains? symbols 'engine-symbol-apropos))
-      (expect (= 6 (count symbols)))))
-
-  (it "documents quoted aliased SCI symbols"
-    (let [git-ns  (sci/create-ns 'vis.ext.git)
-          sci-ctx (sci/init {:namespaces {'vis.ext.git {'diff (sci/new-var 'diff
-                                                                (fn [] nil)
-                                                                {:ns git-ns
-                                                                 :doc "diff docs"
-                                                                 :arglists '([])})}}
-                             :ns-aliases {'git 'vis.ext.git}})
-          tool    @#'introspection/engine-symbol-documentation-tool
-          result  (tool {:sci-ctx sci-ctx} 'git/diff)]
-      (expect (extension/tool-result? result))
-      (expect (get-in result [:result :found?]))
-      (expect (= 'git/diff (get-in result [:result :symbol])))
-      (expect (= 'vis.ext.git/diff (get-in result [:result :resolved-symbol])))
-      (expect (= "diff docs" (get-in result [:result :doc]))))))
+      ;; engine-symbol-* tools were retired in favour of the bare
+      ;; `doc` / `apropos` engine system calls.
+      (expect (not (contains? symbols 'engine-symbol-documentation)))
+      (expect (not (contains? symbols 'engine-symbol-apropos)))
+      (expect (= 2 (count symbols))))))
 
 (defdescribe session-state-envelope-test
   (it "returns a canonical envelope so observed symbol wrapping can unwrap it"
@@ -75,34 +58,12 @@
       (expect (not (clojure.string/includes? display-rendered ":llm-raw-response-preview"))))))
 
 (defdescribe render-fn-contract-test
-  (it "every introspection render-fn returns the {:summary :display} contract"
-    (let [doc-result    {:symbol 'git/diff :resolved-symbol 'vis.ext.git/diff
-                         :found? true :doc "diff docs" :arglists '([])}
-          src-result    {:symbol 'git/diff :resolved-symbol 'vis.ext.git/diff
-                         :found? true :source "(defn diff [] nil)" :source-length 18}
-          meta-result   {:symbol 'git/diff :resolved-symbol 'vis.ext.git/diff
-                         :found? true :metadata {:ns 'vis.ext.git :name 'diff}}
-          apropos-result {:query "diff" :count 2
-                          :matches [{:symbol 'git/diff :doc "diff docs" :arglists '([])}
-                                    {:symbol 'git/status :doc "status docs"}]}
-          report-result "# Report\n\nsome markdown body\n"
-          channels {:symbol-doc    [@#'introspection/symbol-doc-channel doc-result]
-                    :symbol-source [@#'introspection/symbol-source-channel src-result]
-                    :symbol-meta   [@#'introspection/symbol-meta-channel meta-result]
-                    :apropos       [@#'introspection/apropos-channel apropos-result]
-                    :report        [@#'introspection/session-report-channel report-result]}]
+  (it "the surviving introspection render-fns return the {:summary :display} contract"
+    (let [report-result "# Report\n\nsome markdown body\n"
+          channels {:report [@#'introspection/session-report-channel report-result]}]
       (doseq [[_label [render-fn arg]] channels]
         (let [r (render-fn arg)]
           (expect (extension/render-fn-result? r))
           (expect (some? (:summary r)))
           (expect (vector? (:display r)))
-          (expect (= :ir (first (:display r))))))))
-
-  (it "not-found render results still conform to the contract"
-    (let [missing {:symbol 'no/such :found? false :message "Symbol not found."}]
-      (doseq [render-fn [@#'introspection/symbol-doc-channel
-                         @#'introspection/symbol-source-channel
-                         @#'introspection/symbol-meta-channel]]
-        (let [r (render-fn missing)]
-          (expect (extension/render-fn-result? r))
           (expect (= :ir (first (:display r)))))))))

@@ -312,10 +312,10 @@
       (expect (some #(str/includes? % "▶ STATUS") visible))))
 
   (it "renders form eval errors inline with source caret"
-    (let [code "(def git-diff-doc (v/engine-symbol-documentation 'v/git-diff))"
+    (let [code "(def git-diff-doc (doc 'v/git-diff))"
           err  {:message "Unable to resolve symbol: 'v/git-diff"
                 :trace "clojure.lang.ExceptionInfo: Unable to resolve symbol: 'v/git-diff"
-                :block {:source code :row 1 :col 45}}
+                :block {:source code :row 1 :col 24}}
           lines (format-iteration-entry {:iteration 0
                                          :forms [{:code code :comment nil :render-segments nil :result-render nil :result-kind :error :result-detail nil :error err :started-at-ms nil :duration-ms 1 :success? false :silent? false}]}
                   80 1 {})
