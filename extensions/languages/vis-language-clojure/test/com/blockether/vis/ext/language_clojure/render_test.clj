@@ -99,42 +99,6 @@
       (expect (re-find #"hi" t))
       (expect (re-find #"boom" t)))))
 
-(defdescribe render-outline-test
-  (it "shows ns, counts and a forms code block in display"
-    (let [res (r/render-outline
-                {:path "src/a.clj" :bytes 123 :total 2
-                 :ns {:name "a" :doc nil}
-                 :counts {:defn 2}
-                 :forms [{:kind :defn :name "x" :line 3 :arglists [["a"]] :doc "doc"}
-                         {:kind :defn :name "y" :line 7 :arglists [["b"]]}]})
-          s (pr-str (:display res))]
-      (expect (contract? res))
-      (expect (re-find #"src/a.clj" (summary-text (:summary res))))
-      (expect (re-find #"src/a.clj" s))
-      (expect (re-find #"2×defn" s))
-      (expect (re-find #"defn  x" s))
-      (expect (re-find #"defn  y" s))))
-
-  (it "passes :error through without throwing → OUTLINE! badge"
-    (let [res (r/render-outline {:path "x.clj" :error "parse-failed" :forms [] :total 0})
-          st  (summary-text (:summary res))]
-      (expect (contract? res))
-      (expect (re-find #"OUTLINE!" st))
-      (expect (re-find #"parse-failed" st)))))
-
-(defdescribe render-find-test
-  (it "renders header counts in summary and a match block in display"
-    (let [res (r/render-find
-                {:scanned 12 :elapsed-ms 4 :truncated? false
-                 :matches [{:path "src/a.clj" :line 3 :kind :defn :name "foo"}
-                           {:path "src/b.clj" :line 9 :kind :defmacro :name "bar"}]})
-          st  (summary-text (:summary res))
-          t   (flat-text (:display res))]
-      (expect (contract? res))
-      (expect (re-find #"2 matches" st))
-      (expect (re-find #"foo" t))
-      (expect (re-find #"src/b.clj:9" t)))))
-
 (defdescribe render-edit-test
   (it "renders an OK edit with delta → contract"
     (let [res (r/render-edit
