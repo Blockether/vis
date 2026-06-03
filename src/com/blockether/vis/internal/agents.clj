@@ -113,8 +113,7 @@
 (defn- canonical-cwd ^String []
   (try (.getCanonicalPath ^java.io.File (repo-cwd))
     (catch Throwable _
-      (or workspace/*workspace-root*
-        (System/getProperty "user.dir")))))
+      (.getPath (workspace/cwd)))))
 
 (defn- file-marker
   [^java.io.File f]

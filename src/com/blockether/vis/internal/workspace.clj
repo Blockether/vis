@@ -66,7 +66,7 @@
 (defn- file-path ^String [f]
   (.getCanonicalPath (io/file f)))
 
-(defn- trunk-root
+(defn trunk-root
   "The user's real working directory — where they launched `vis`.
    Canonical absolute path. This is *trunk*: never mutated, never
    required to be a git repo. (`bin/vis` preserves the invocation cwd
@@ -205,6 +205,36 @@
 
 (defn- fork-ms-of [ws]
   (some-> (:commit-id ws) str parse-long))
+
+(defn deleted-paths
+  "Repo-relative paths the agent DELETED in the draft: present under
+   `trunk` (skipping `.git`) with an mtime older than `fork-ms` — so they
+   existed at the fork and are not user post-fork additions — yet absent
+   from `clone`. The mtime guard means `apply!` never reverts a file the
+   user added to cwd after forking."
+  [clone trunk fork-ms]
+  (let [troot    (.toPath (io/file trunk))
+        croot    (.toPath (io/file clone))
+        nofollow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])
+        acc      (java.util.ArrayList.)]
+    (Files/walkFileTree
+      troot
+      (proxy [SimpleFileVisitor] []
+        (preVisitDirectory [dir ^BasicFileAttributes _a]
+          (let [rel (.relativize troot ^Path dir)]
+            (if (and (pos? (.getNameCount rel))
+                  (= ".git" (str (.getName rel 0))))
+              FileVisitResult/SKIP_SUBTREE
+              FileVisitResult/CONTINUE)))
+        (visitFile [file ^BasicFileAttributes attrs]
+          (let [rel (.relativize troot ^Path file)]
+            (when (and (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
+                    (not (Files/exists (.resolve croot rel) nofollow)))
+              (.add acc (str rel))))
+          FileVisitResult/CONTINUE)
+        (visitFileFailed [_file _exc]
+          FileVisitResult/CONTINUE)))
+    (vec acc)))
 
 ;; =============================================================================
 ;; Hooks
@@ -404,11 +434,10 @@
 (defn apply!
   "Land the clone's since-fork edits into the user's real cwd (trunk),
    leaving them uncommitted for the user to review/commit themselves.
-   Vis owns no git lifecycle. Returns
-   `{:status :ok :changed [{:status :path}] :landed n :workspace ws}`.
-
-   Note: detects adds + modifications (mtime > fork). Clone-side
-   deletions are not yet propagated — see schema-cleanup follow-up."
+   Vis owns no git lifecycle. Adds/modifications come from the mtime
+   diff; deletions are files that existed at the fork but the agent
+   removed in the draft. Returns
+   `{:status :ok :changed [{:status :path}] :landed n :workspace ws}`."
   [db-info {:keys [workspace-id]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws
@@ -419,14 +448,19 @@
       (when-not fork-ms
         (throw (ex-info "Workspace has no fork timestamp; cannot apply"
                  {:type :workspace/no-baseline :workspace-id workspace-id})))
-      (let [changes (mapv (fn [path]
+      (let [edits   (mapv (fn [path]
                             (let [src    (io/file clone path)
                                   dst    (io/file trunk path)
                                   status (if (.exists dst) :modify :add)]
                               (io/make-parents dst)
                               (Files/copy (.toPath src) (.toPath dst) copy-opts)
                               {:status status :path path}))
-                      (changed-paths clone fork-ms))]
+                      (changed-paths clone fork-ms))
+            deletes (mapv (fn [path]
+                            (.delete (io/file trunk path))
+                            {:status :delete :path path})
+                      (deleted-paths clone trunk fork-ms))
+            changes (into edits deletes)]
         (fire-hook! :on-apply ws {:changed changes})
         {:status    :ok
          :changed   changes
