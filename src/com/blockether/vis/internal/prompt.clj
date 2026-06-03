@@ -137,11 +137,23 @@
 
     ENTITY SHAPES
       :session/scope     {:turn :iter :next-form}
-      :session/utilization {:request-tokens :window-tokens :pct :turn-tokens
-                            :fold-cap}  ; last request's share of the model
-                            ; window. Watch :pct — as it climbs, summarize
-                            ; aggressively + converge. Engine auto-folds
-                            ; the trailer at :fold-cap; don't rely on it.
+      :session/utilization  ; how full the context is. Each key is what
+                            ; it says — do NOT guess:
+        {:last-request-tokens N   ; input size of your most recent call
+         :model-input-limit   N   ; HARD ceiling: a single call bigger
+                                  ;   than this is REJECTED by the provider
+         :pct-of-limit        N   ; last-request / model-input-limit (%).
+                                  ;   THIS is the number to watch.
+         :auto-compress-above N   ; when a call would exceed this, the
+                                  ;   engine folds your OLDEST trailer pins
+                                  ;   into a (recall …) stub. Sits below the
+                                  ;   limit. It's a blunt safety net — do
+                                  ;   NOT lean on it; summarize meaningfully.
+         :turn-total-tokens   N}  ; cumulative input this turn. Billing
+                                  ;   only — NOT a limit; may exceed the
+                                  ;   limit safely (each call still fits).
+        As :pct-of-limit climbs: (summarize …) the stale trailer + settled
+        facts/tasks, then (done …). Don't wait for auto-compress.
       :session/env       {:host :project :extensions}     ; auto digest
       :session/workspace {:workspace/root :workspace/sandbox? :vcs/kind :vcs/ref :vcs/mainline :vcs/head :vcs/dirty? …}
                          (kind-namespaced :git/* :hg/* :jj/* when emitted;
