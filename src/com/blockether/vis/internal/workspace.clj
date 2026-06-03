@@ -2,9 +2,11 @@
   "Rift copy-on-write workspaces, DB-pinned to session_state 1:1.
 
    The user's real cwd is *trunk* — Vis never mutates it, and Vis no
-   longer requires it to be a git repo. Every session works inside a
-   `rift` CoW clone of cwd (APFS `clonefile` / btrfs snapshot; a plain
-   recursive copy is the fallback on unsupported filesystems).
+   longer requires it to be a git repo. A session works in trunk by
+   default; `/draft new` opts into an isolated `rift` CoW clone of cwd
+   (APFS `clonefile` / btrfs snapshot) stored under ~/.vis/drafts. RIFT
+   ONLY — there is no plain-copy fallback; on an unsupported filesystem
+   the clone fails loudly rather than silently degrading to a slow copy.
 
    'What changed since the fork' is computed git-free: `clonefile`
    preserves source mtimes, so files the agent touches in the clone get
@@ -92,8 +94,23 @@
     (str name "-" hash)))
 
 ;; =============================================================================
-;; Clone mechanism — rift CoW with a plain-copy fallback
+;; Clone mechanism — rift CoW only (no fallback)
 ;; =============================================================================
+
+;; Keep vis's draft trees under ~/.vis instead of rift's default ~/.rifts,
+;; so all of a session's visible state lives in one home dir. Only the
+;; CLONE location is relocated (via `:into`); rift's internal registry
+;; stays at its platform default — re-homing it breaks the per-repo rift
+;; marker ("marker does not match the registry"), which silently demotes
+;; every clone to a slow plain copy.
+(defn- draft-store-root
+  "Parent storage dir for `trunk`'s drafts: ~/.vis/drafts/<repo-basename>.
+   Passed to rift `create` as `:into` so clones live here, not in rift's
+   default ~/.rifts. Grouped per-repo so a draft labelled `feature` in one
+   repo never collides with the same label in another."
+  ^File [trunk]
+  (io/file (System/getProperty "user.home") ".vis" "drafts"
+    (.getName (io/file trunk))))
 
 (def ^:private copy-opts
   ^"[Ljava.nio.file.CopyOption;"
@@ -102,76 +119,28 @@
      StandardCopyOption/COPY_ATTRIBUTES
      LinkOption/NOFOLLOW_LINKS]))
 
-(defn- copy-tree!
-  "Recursively copy `src` → `dst` (full tree, INCLUDING `.git`),
-   preserving symlinks/mtimes/permissions. Fallback used when rift's
-   CoW clone is unavailable (Intel mac / non-btrfs Linux / Windows).
-   Slower than `clonefile` but produces an identical working tree and,
-   crucially, preserves source mtimes so the since-fork diff still
-   works. Returns `dst`."
-  [^String src ^String dst]
-  (let [src-path (.toPath (io/file src))
-        dst-path (.toPath (io/file dst))
-        attrs    (make-array FileAttribute 0)
-        nofollow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])]
-    (Files/createDirectories dst-path attrs)
-    (Files/walkFileTree
-      src-path
-      (proxy [SimpleFileVisitor] []
-        (preVisitDirectory [dir ^BasicFileAttributes _a]
-          (let [rel (.relativize src-path ^Path dir)]
-            (when (pos? (.getNameCount rel))
-              (let [target (.resolve dst-path rel)]
-                (when-not (Files/exists target nofollow)
-                  (Files/createDirectories target attrs))))
-            FileVisitResult/CONTINUE))
-        (visitFile [file ^BasicFileAttributes _a]
-          (let [rel    (.relativize src-path ^Path file)
-                target (.resolve dst-path rel)]
-            (when-let [parent (.getParent target)]
-              (when-not (Files/exists parent nofollow)
-                (Files/createDirectories parent attrs)))
-            (Files/copy ^Path file ^Path target copy-opts)
-            FileVisitResult/CONTINUE))
-        (visitFileFailed [_file _exc]
-          FileVisitResult/CONTINUE)))
-    dst))
-
-(defn- delete-tree!
-  [^File f]
-  (when (.isDirectory f)
-    (doseq [c (.listFiles f)] (delete-tree! c)))
-  (.delete f))
-
-(defn- fallback-root
-  [repo-id name]
-  (file-path (io/file (System/getProperty "user.home") ".vis" "workspaces"
-               repo-id name)))
-
 (defn- cow-clone!
-  "Clone `src` tree under `name`, returning the clone's absolute path.
-   Prefers rift's CoW `create`; on a `:rift/error` (unsupported FS /
-   platform) falls back to a plain recursive copy."
-  [src repo-id name]
-  (try
-    (rift/init {:at src})
-    (rift/create {:from src :name name})
-    (catch clojure.lang.ExceptionInfo e
-      (if (= :rift/error (:type (ex-data e)))
-        (let [dst (fallback-root repo-id name)]
-          (.mkdirs (.getParentFile (io/file dst)))
-          (copy-tree! src dst))
-        (throw e)))))
+  "Clone `src` tree under `name` via rift's CoW `create`, returning the
+   clone's absolute path. RIFT ONLY — there is no plain-copy fallback: a
+   draft must be a real copy-on-write clone (instant, near-zero disk) or
+   nothing. On an unsupported FS/platform rift throws and the error
+   propagates so the failure is loud, never a silent slow copy."
+  [src name]
+  (rift/init {:at src})
+  (let [into (draft-store-root src)]
+    ;; rift won't materialise into a non-existent parent — ensure the
+    ;; ~/.vis/drafts/<repo> store dir exists first, else `create` errors.
+    ;; `createDirectories` is idempotent: a no-op when the dir already
+    ;; exists, and throws only on a genuine failure (e.g. permissions).
+    (Files/createDirectories (.toPath into) (make-array FileAttribute 0))
+    (rift/create {:from src :name name :into (str into)})))
 
 (defn- rift-trash!
-  "Trash a clone via rift `remove!` + `gc`; on the plain-copy fallback
-   (or any rift miss) recursively delete the directory."
+  "Trash a clone via rift `remove!` + `gc`. RIFT ONLY — a failure
+   propagates rather than falling back to a manual recursive delete."
   [clone]
-  (try
-    (rift/remove! {:at clone})
-    (rift/gc)
-    (catch Throwable _
-      (try (delete-tree! (io/file clone)) (catch Throwable _ nil)))))
+  (rift/remove! {:at clone})
+  (rift/gc))
 
 ;; =============================================================================
 ;; Since-fork diff — pure mtime, git-free
@@ -389,15 +358,14 @@
 
 (defn- rift-clone-dir
   "Where rift materialises a clone named `name` for `trunk`:
-   ~/.rifts/<repo-basename>/<name>."
+   ~/.vis/drafts/<repo-basename>/<name>."
   [trunk name]
-  (io/file (System/getProperty "user.home") ".rifts"
-    (.getName (io/file trunk)) name))
+  (io/file (draft-store-root trunk) name))
 
 (defn- free-draft-name
   "Draft folder name derived from `label` that doesn't collide with an
    existing rift clone (appends -2, -3, … on collision). So `/draft new
-   feature` lives at ~/.rifts/<repo>/feature."
+   feature` lives at ~/.vis/drafts/<repo>/feature."
   [trunk label]
   (let [base (sanitize-id (or label "draft"))]
     (loop [n base i 2]
@@ -430,14 +398,14 @@
 
 (defn create!
   "Create a DRAFT: a rift CoW clone of the user's cwd whose folder is
-   named after `label` (`/draft new feature` → ~/.rifts/<repo>/feature),
+   named after `label` (`/draft new feature` → ~/.vis/drafts/<repo>/feature),
    and pin it 1:1 to `:session-state-id` (enters the draft). Captures the
    fork timestamp (`fork_ms`) for the since-fork diff. Fires :on-spawn."
   [db-info {:keys [session-state-id label]}]
   (let [trunk   (trunk-root)
         rid     (repo-id-for trunk)
         nm      (free-draft-name trunk label)
-        clone   (cow-clone! trunk rid nm)
+        clone   (cow-clone! trunk nm)
         ;; Capture AFTER the clone returns: cloned files keep their (older)
         ;; source mtime, so only post-fork agent edits exceed this.
         fork-ms (System/currentTimeMillis)
