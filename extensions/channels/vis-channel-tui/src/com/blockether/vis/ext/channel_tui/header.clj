@@ -77,6 +77,18 @@
   [db]
   (vh/title-or-placeholder (:title db)))
 
+(def ^:private title-spinner-frames
+  ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+
+(defn- title-spinner-frame
+  "Braille spinner frame picked by wall-clock so it animates across the
+   render frames the in-flight turn is already driving — auto-title runs
+   DURING that session's turn, so the screen is actively repainting.
+   ~80ms per frame."
+  []
+  (nth title-spinner-frames
+    (mod (quot (System/currentTimeMillis) 80) (count title-spinner-frames))))
+
 (def ^:private active-workspace-states
   "Header strip shows live workspaces only. Merged + discarded rows
    stay in DB for transcript references but never appear in any list,
@@ -116,13 +128,20 @@
         running?  (fn [id]
                     (boolean (if (= id active-id)
                                (:loading? db)
-                               (get-in db [:tab-locals id :loading?]))))]
+                               (get-in db [:tab-locals id :loading?]))))
+        ;; Auto-title generation runs for the ACTIVE session (the host
+        ;; fires it at the start of that session's turn), so the spinner
+        ;; only ever attaches to the active tab.
+        title-loading? (fn [id]
+                         (and (= id active-id) (boolean (:title-loading? db))))]
     (if (seq entries)
-      (mapv #(assoc % :running? (running? (:id %))) entries)
+      (mapv #(assoc % :running? (running? (:id %))
+                      :title-loading? (title-loading? (:id %))) entries)
       [{:id (or (:active-tab-id db) :main)
         :label (title-or-placeholder db)
         :active? true
-        :running? (boolean (:loading? db))}])))
+        :running? (boolean (:loading? db))
+        :title-loading? (boolean (:title-loading? db))}])))
 
 (defn- active-tab-entry-id
   [db entries]
@@ -447,8 +466,14 @@
                             ;; `●` marks a tab whose session has a turn in
                             ;; flight, so concurrent runs are visible even on
                             ;; tabs you're not looking at.
+                            ;; While the host is generating this (active)
+                            ;; tab's title, show an animated spinner instead
+                            ;; of the `●` run-dot; otherwise the dot marks an
+                            ;; in-flight turn so concurrent runs stay visible.
                             label (cond->> (p/tab-display-label entry)
-                                    (:running? entry) (str "● "))
+                                    (and (:running? entry)
+                                      (not (:title-loading? entry))) (str "● ")
+                                    (:title-loading? entry) (str (title-spinner-frame) " "))
                             text (center-padded label cell-w)
                             active? (= (:id entry) active-id)]
                         (recur (inc idx)
