@@ -43,8 +43,8 @@
     (let [base (temp-dir "vis-wctx-changed")]
       (try
         (spit (io/file base "note.txt") "edited\n")
-        ;; commit-id is the fork timestamp; 0 ⇒ every file counts as changed.
-        (let [block (wctx/render-block {:workspace {:id "ws-2" :root base :commit-id "0"}})]
+        ;; fork-ms 0 ⇒ every file counts as changed (mtime > 0).
+        (let [block (wctx/render-block {:workspace {:id "ws-2" :root base :fork-ms 0}})]
           (expect (= 1 (:workspace/changed block)))
           (expect (= ["note.txt"] (:workspace/changed-paths block))))
         (finally (delete-tree! base)))))
@@ -58,15 +58,13 @@
           (expect (nil? (:workspace/changed-paths block))))
         (finally (delete-tree! base)))))
 
-  (it "label + parent lineage"
-    (let [base (temp-dir "vis-wctx-lineage")]
+  (it "surfaces the label"
+    (let [base (temp-dir "vis-wctx-label")]
       (try
-        (let [block (wctx/render-block {:workspace {:id        "ws-3"
-                                                    :root      base
-                                                    :label     "frontend"
-                                                    :parent-id "ws-parent"}})]
-          (expect (= "frontend" (:workspace/label block)))
-          (expect (= "ws-parent" (:workspace/parent-id block))))
+        (let [block (wctx/render-block {:workspace {:id    "ws-3"
+                                                    :root  base
+                                                    :label "frontend"}})]
+          (expect (= "frontend" (:workspace/label block))))
         (finally (delete-tree! base)))))
 
   (it "session-state hydration adds :session/* identity + fork lineage"

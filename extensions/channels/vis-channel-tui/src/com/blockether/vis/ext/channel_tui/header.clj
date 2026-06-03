@@ -519,13 +519,24 @@
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
 
-    ;; LEFT 20%: latest notification, otherwise channel status. No title here.
-    (when (seq left-text)
-      (p/clear-styles! g)
-      (p/set-colors! g (level->fg left-level) t/terminal-bg)
-      (p/enable! g p/BOLD)
-      (p/put-str! g (+ left-x edge-pad) content-row left-text)
-      (p/clear-styles! g))
+    ;; LEFT 20%: latest notification / channel status, otherwise a persistent
+    ;; DRAFT badge. Every session works in an isolated rift clone, so this is
+    ;; the standing reminder that edits land in the draft and the real cwd is
+    ;; untouched until `/draft apply`.
+    (if (seq left-text)
+      (do
+        (p/clear-styles! g)
+        (p/set-colors! g (level->fg left-level) t/terminal-bg)
+        (p/enable! g p/BOLD)
+        (p/put-str! g (+ left-x edge-pad) content-row left-text)
+        (p/clear-styles! g))
+      (let [badge (ellipsize "◆ DRAFT" left-cap)]
+        (when (seq badge)
+          (p/clear-styles! g)
+          (p/set-colors! g (level->fg :info) t/terminal-bg)
+          (p/enable! g p/BOLD)
+          (p/put-str! g (+ left-x edge-pad) content-row badge)
+          (p/clear-styles! g))))
 
     ;; CENTER 60%: one inert title, or a switcher when multiple workspaces exist.
     (if (> (count workspaces) 1)

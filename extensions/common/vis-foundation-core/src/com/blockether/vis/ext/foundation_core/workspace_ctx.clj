@@ -29,7 +29,7 @@
    :session/*    — soul/state linkage + title + fork lineage"
   [{:keys [workspace session-state]}]
   (let [root    (canonical-path (or (:root workspace) (workspace/cwd)))
-        fork-ms (some-> (:commit-id workspace) str parse-long)
+        fork-ms (:fork-ms workspace)
         changed (when (and root fork-ms (.exists (io/file root)))
                   (try (workspace/changed-paths root fork-ms)
                     (catch Throwable _ nil)))]
@@ -37,7 +37,6 @@
              :workspace/sandbox? true
              :vcs/kind           :rift}
       (:id workspace)        (assoc :workspace/id (:id workspace))
-      (:parent-id workspace) (assoc :workspace/parent-id (:parent-id workspace))
       (:label workspace)     (assoc :workspace/label (:label workspace))
       changed                (assoc :workspace/changed (count changed)
                                :workspace/changed-paths (vec (take max-changed (sort changed))))

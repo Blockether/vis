@@ -50,9 +50,8 @@
       (let [db-info (vis/db-create-connection! :memory)]
         (try
           (let [ws (vis/db-workspace-insert! db-info
-                       {:repo-id "test" :repo-root "/tmp" :kind :branch
-                        :branch (str "t-" (subs (str (random-uuid)) 0 8))
-                        :root "/tmp" :state :active :commit-id "0"})
+                       {:repo-id "test" :repo-root "/tmp" :root "/tmp"
+                        :state :active :fork-ms 0})
                 session-id (vis/db-store-session!
                              db-info {:channel :tui :title "integration"
                                       :workspace-id (:id ws)})
@@ -124,9 +123,8 @@
       (let [db-info (vis/db-create-connection! :memory)]
         (try
           (let [ws (vis/db-workspace-insert! db-info
-                       {:repo-id "test" :repo-root "/tmp" :kind :branch
-                        :branch (str "t-" (subs (str (random-uuid)) 0 8))
-                        :root "/tmp" :state :active :commit-id "0"})
+                       {:repo-id "test" :repo-root "/tmp" :root "/tmp"
+                        :state :active :fork-ms 0})
                 session-id (vis/db-store-session!
                              db-info {:channel :tui :title "ttl"
                                       :workspace-id (:id ws)})

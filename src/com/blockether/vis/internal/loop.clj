@@ -5335,8 +5335,7 @@
                 :workspace/root     (:root active-workspace)
                 ;; Every workspace is a rift clone now — always a sandbox.
                 :workspace/sandbox? true
-                :vcs/kind           :rift
-                :vcs/ref            (:branch active-workspace)))
+                :vcs/kind           :rift))
         env (assoc env
               ;; CTX engine atoms — visible to the rest of the loop so the
               ;; renderer / per-iter capture / done snapshot can read and

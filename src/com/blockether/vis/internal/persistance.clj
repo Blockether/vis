@@ -278,7 +278,6 @@
 ;; --- Workspace ---
 (defdelegate db-workspace-insert!            [db-info opts])
 (defdelegate db-workspace-update-state!      [db-info workspace-id new-state])
-(defdelegate db-workspace-update-commit-id!  [db-info workspace-id commit-id])
 ;; Label override + focus stamp + per-repo focus pointer.
 (defdelegate db-workspace-update-label!      [db-info workspace-id label])
 (defdelegate db-workspace-touch-focus!       [db-info workspace-id])
@@ -293,8 +292,6 @@
 (defdelegate db-workspace-for-session        [db-info session-state-id])
 (defdelegate db-session-state-list-for-workspace [db-info workspace-id])
 (defdelegate db-session-state-set-workspace! [db-info session-state-id workspace-id])
-(defdelegate db-session-state-spawn-merge-resolve! [db-info parent-session-state-id])
-(defdelegate db-session-state-merge-resolve-parent [db-info session-state-id])
 
 ;; --- Session lifecycle ---
 (defdelegate db-store-session! [db-info opts])
