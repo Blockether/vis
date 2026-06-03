@@ -204,7 +204,7 @@
     (vec acc)))
 
 (defn- fork-ms-of [ws]
-  (some-> (:commit-id ws) str parse-long))
+  (:fork-ms ws))
 
 (defn deleted-paths
   "Repo-relative paths the agent DELETED in the draft: present under
@@ -316,7 +316,6 @@
                         first)))]
      (or (some-> (:label workspace) str/trim not-empty)
        (some-> hydrated :title str/trim not-empty)
-       (some-> (:branch workspace) str/trim not-empty)
        (some-> (:id workspace) str (subs 0 (min 8 (count (str (:id workspace))))))))))
 
 (defn workspace-with-session
@@ -391,7 +390,7 @@
                   still lands into cwd, and lineage is recorded via
                   `parent_workspace_id` (+ rift `ancestors`).
 
-   Captures the fork timestamp (stored in `commit_id`) for the
+   Captures the fork timestamp (stored in `fork_ms`) for the
    mtime-based since-fork diff. Returns the inserted workspace.
    Fires :on-spawn."
   [db-info {:keys [from session-state-id label]}]
@@ -408,12 +407,9 @@
                   {:id        ws-id
                    :repo-id   rid
                    :repo-root trunk
-                   :kind      :branch
-                   :branch    nm
                    :root      clone
-                   :parent-id (:id from)
                    :state     :active
-                   :commit-id (str fork-ms)})
+                   :fork-ms   fork-ms})
         ws      (if (some-> label str/trim not-empty)
                   (or (p/db-workspace-update-label! db-info ws-id (str/trim label)) ws)
                   ws)]

@@ -601,14 +601,10 @@
              :type       :workspace
              :repo-id    (:repo_id row)
              :repo-root  (:repo_root row)
-             :kind       (->kw-back (:kind row))
              :root       (:root row)
              :state      (->kw-back (:state row))
              :created-at (->date (:created_at row))}
-      (:branch row)              (assoc :branch (:branch row))
-      (:parent_workspace_id row) (assoc :parent-id (->uuid (:parent_workspace_id row)))
-      (:commit_id row)           (assoc :commit-id (:commit_id row))
-      (:merged_at row)           (assoc :merged-at (->date (:merged_at row)))
+      (:fork_ms row)             (assoc :fork-ms (:fork_ms row))
       (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row)))
       ;; Surfaced for the workspace facade's label/focus helpers.
       ;; NULL columns are skipped so callers can
@@ -620,11 +616,10 @@
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
 
-   Required: :repo-id :repo-root :kind :root
-   Optional: :id (defaults to a new UUID), :branch (required when
-             :kind = :branch via DB CHECK), :parent-id, :state (defaults
-             to :active), :commit-id"
-  [db-info {:keys [id repo-id repo-root kind branch root parent-id state commit-id]}]
+   Required: :repo-id :repo-root :root
+   Optional: :id (defaults to a new UUID), :label, :fork-ms, :state
+             (defaults to :active)"
+  [db-info {:keys [id repo-id repo-root root label fork-ms state]}]
   (when (ds db-info)
     (let [ws-id (->id (or id (new-uuid)))
           now   (now-ms)]
@@ -632,55 +627,34 @@
         (fn [tx-info]
           (execute! tx-info
             {:insert-into :workspace
-             :values [{:id                  ws-id
-                       :repo_id             repo-id
-                       :repo_root           repo-root
-                       :kind                (->kw kind)
-                       :branch              branch
-                       :root                root
-                       :parent_workspace_id (some-> parent-id ->ref)
-                       :state               (->kw (or state :active))
-                       :commit_id           commit-id
-                       :created_at          now}]})
+             :values [{:id          ws-id
+                       :repo_id     repo-id
+                       :repo_root   repo-root
+                       :root        root
+                       :label       label
+                       :fork_ms     fork-ms
+                       :state       (->kw (or state :active))
+                       :created_at  now}]})
           (row->workspace
             (query-one! tx-info
               {:select [:*] :from :workspace
                :where  [:= :id ws-id]})))))))
 
 (defn db-workspace-update-state!
-  "Transition `workspace-id` to `new-state`. Sets `merged_at` on :merged
-   and `discarded_at` on :discarded. Returns the updated record."
+  "Transition `workspace-id` to `new-state` (`:active` | `:discarded`).
+   Stamps `discarded_at` on :discarded. Returns the updated record."
   [db-info workspace-id new-state]
   (when (and (ds db-info) workspace-id)
     (let [id  (->ref workspace-id)
           now (now-ms)
           to  (->kw new-state)
           set (cond-> {:state to}
-                (= "merged" to)    (assoc :merged_at now)
                 (= "discarded" to) (assoc :discarded_at now))]
       (sqlite-write-tx! db-info
         (fn [tx-info]
           (execute! tx-info
             {:update :workspace
              :set    set
-             :where  [:= :id id]})
-          (row->workspace
-            (query-one! tx-info
-              {:select [:*] :from :workspace
-               :where  [:= :id id]})))))))
-
-(defn db-workspace-update-commit-id!
-  "Set `commit_id` on `workspace-id`. Called by `workspace/commit!`
-   after a fresh commit lands on the worktree so callers see the new
-   HEAD without re-running `git rev-parse`. Returns the updated record."
-  [db-info workspace-id commit-id]
-  (when (and (ds db-info) workspace-id)
-    (let [id (->ref workspace-id)]
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          (execute! tx-info
-            {:update :workspace
-             :set    {:commit_id commit-id}
              :where  [:= :id id]})
           (row->workspace
             (query-one! tx-info
@@ -814,65 +788,6 @@
            :from     :session_state
            :where    [:= :workspace_id ws-id]
            :order-by [[:version :desc]]})))))
-
-(defn db-session-state-spawn-merge-resolve!
-  "Create a merge-resolve sub-session pinned to the parent's workspace.
-   The new `session_state` row:
-     - Shares `session_soul_id` with the parent (sub-session is a
-       continuation, not a fresh soul).
-     - Pins to the SAME `workspace_id` as the parent (the trunk-side
-       conflict state lives there). The partial UNIQUE index
-       `uq_session_state_workspace` permits this because the new
-       row's `merge_resolve_parent_id` is non-NULL.
-     - Stamps `merge_resolve_parent_id` = parent state id; this is
-       the marker SCI binding lookup checks before exposing the
-       `merge/*` op family.
-     - Inherits provider / model / system-prompt from the parent.
-
-   Returns the new sub-session-state id (UUID)."
-  [db-info parent-session-state-id]
-  (when (and (ds db-info) parent-session-state-id)
-    (sqlite-write-tx! db-info
-      (fn [tx-info]
-        (let [pid (->ref parent-session-state-id)
-              parent (query-one! tx-info
-                       {:select [:*] :from :session_state
-                        :where  [:= :id pid]})]
-          (when-not parent
-            (throw (ex-info "db-session-state-spawn-merge-resolve! parent not found"
-                     {:type :persistance/parent-not-found
-                      :parent-session-state-id parent-session-state-id})))
-          (let [new-id  (new-uuid)
-                now     (now-ms)
-                ver     (inc (long (or (:version parent) 0)))]
-            (execute! tx-info
-              {:insert-into :session_state
-               :values [{:id                       (str new-id)
-                         :session_soul_id          (:session_soul_id parent)
-                         :parent_state_id          (:id parent)
-                         :workspace_id             (:workspace_id parent)
-                         :title                    (str (or (:title parent) "Untitled") " (merge-resolve)")
-                         :version                  ver
-                         :system_prompt            (or (:system_prompt parent) "")
-                         :llm_root_provider        (:llm_root_provider parent)
-                         :llm_root_model           (:llm_root_model parent)
-                         :merge_resolve_parent_id  pid
-                         :created_at               now}]})
-            new-id))))))
-
-(defn db-session-state-merge-resolve-parent
-  "Read `merge_resolve_parent_id` for `session-state-id` or nil.
-   When non-nil, the current session_state is a merge-resolve
-   sub-session. SCI binding lookup uses this to gate the `merge/*`
-   op family."
-  [db-info session-state-id]
-  (when (and (ds db-info) session-state-id)
-    (some-> (query-one! db-info
-              {:select [:merge_resolve_parent_id]
-               :from   :session_state
-               :where  [:= :id (->ref session-state-id)]})
-      :merge_resolve_parent_id
-      ->uuid)))
 
 (defn db-session-state-set-workspace!
   "Pin `session-state-id` to `workspace-id`. Caller guarantees the

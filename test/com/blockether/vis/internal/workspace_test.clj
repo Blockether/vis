@@ -40,11 +40,9 @@
     {:id        (str (random-uuid))
      :repo-id   "rt"
      :repo-root base
-     :kind      :branch
-     :branch    (str "seed-" (subs (str (random-uuid)) 0 8))
      :root      base
      :state     :active
-     :commit-id "0"}))
+     :fork-ms   0}))
 
 (defdescribe cwd-binding-test
   (it "falls back to process cwd when *workspace-root* is unbound (REPL/test convenience)"

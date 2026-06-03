@@ -82,11 +82,9 @@
            {:id        id
             :repo-id   "test"
             :repo-root root
-            :kind      :branch
-            :branch    (str "ws-" (subs id 0 8))
             :root      root
             :state     :active
-            :commit-id "0"}))))
+            :fork-ms   0}))))
 
 (defn store-session!
   "Test wrapper for `vis/db-store-session!` that injects a fresh

@@ -104,6 +104,29 @@
                         :active-id    (:id fresh)
                         :reason       reason}}))))
 
+(defn- handle-label
+  "`/draft label <text>` — name the current draft (or `--clear`)."
+  [ctx]
+  (let [db      (ctx-db ctx)
+        current (session-workspace ctx)
+        argv    (:command/argv ctx)
+        clear?  (boolean (some #{"--clear"} argv))
+        text    (when-not clear? (some-> (str/join " " argv) str/trim not-empty))]
+    (cond
+      (nil? current)
+      (err "No active draft")
+
+      (and (not clear?) (nil? text))
+      (err "/draft label <text>  |  /draft label --clear")
+
+      :else
+      (let [done (workspace/set-label! db {:workspace-id (:id current)
+                                           :label        (when-not clear? text)})]
+        {:slash/status :ok
+         :slash/title  (if clear? "Label cleared" "Draft labelled")
+         :slash/body   (workspace/display-label done)
+         :slash/data   {:workspace-id (:id done) :label (:label done)}}))))
+
 ;; =============================================================================
 ;; Specs vec
 ;; =============================================================================
@@ -113,7 +136,7 @@
    via `:ext/slash-commands`."
   [{:slash/name   "draft"
     :slash/doc    "The session's draft (CoW workspace) — see subcommands."
-    :slash/usage  "/draft <apply | abandon> …"
+    :slash/usage  "/draft <apply | abandon | label> …"
     ;; Bare `/draft` opens the session/draft navigator in picker-capable
     ;; channels (session == draft, 1:1); elsewhere it prints draft status.
     :slash/ui     {:kind :navigator}
@@ -129,4 +152,10 @@
     :slash/doc      "Discard the draft's work and start a fresh clone of cwd."
     :slash/usage    "/draft abandon [reason]"
     :slash/requires #{:session}
-    :slash/run-fn   handle-abandon}])
+    :slash/run-fn   handle-abandon}
+   {:slash/name     "label"
+    :slash/parent   ["draft"]
+    :slash/doc      "Name the current draft (or --clear to reset)."
+    :slash/usage    "/draft label <text>|--clear"
+    :slash/requires #{:session}
+    :slash/run-fn   handle-label}])
