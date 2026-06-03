@@ -187,18 +187,6 @@
                          (state/dispatch [:reset-input]))
         :else (do (state/dispatch [:send-message text]) (state/dispatch [:reset-input]))))))
 
-(defn- parse-tab-command
-  "Recognise the client-side `/open <dir>` command typed into the editor:
-   open a session tab rooted at <dir> (so you can work on another project in
-   its own tab). Handled in the TUI — it manipulates the tab strip — never
-   sent to the engine. The trailing space after `/open` also dismisses the
-   slash-suggestion overlay so Enter reaches this path. A blank new tab is a
-   `New session` (Ctrl+K / Ctrl+G), which now opens its own tab too.
-   Returns {:kind :open :dir <str>} | nil."
-  [text]
-  (let [t (str/trim (or text ""))]
-    (when-let [[_ dir] (re-matches #"(?i)/open\s+(.+)" t)]
-      {:kind :open, :dir (str/trim dir)})))
 (def ^:private copy-success-ttl-ms 1500)
 (def ^:private status-error-ttl-ms 5000)
 (defn- copy-session-id!
@@ -343,7 +331,7 @@
                          (when (= target (vec (concat (:slash/parent s) [(:slash/name s)])))
                            s))
                    (vis/registered-slashes))]
-      (when (= :navigator (get-in spec [:slash/ui :kind]))
+      (when (#{:navigator :dir-picker} (get-in spec [:slash/ui :kind]))
         spec))))
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
@@ -1585,6 +1573,37 @@
         (vis/workspace-for-session db st)))
     (catch Throwable _ nil)))
 
+(defn- abbrev-home
+  "Shorten an absolute path by replacing the user's home dir with `~`."
+  [^String p]
+  (let [home (System/getProperty "user.home")]
+    (if (and p home (str/starts-with? p home)) (str "~" (subs p (count home))) (str p))))
+
+(defn- short-dir
+  "A compact, IDENTIFYING directory label: home-abbreviated, and when still
+   long, keeping the last two path segments (`…/parent/dir`) so two projects
+   never collapse to the same head-truncated prefix in the navigator."
+  [^String p]
+  (when p
+    (let [p (abbrev-home p)]
+      (if (<= (count p) 22)
+        p
+        (let [segs (remove str/blank? (str/split p #"/"))]
+          (if (<= (count segs) 2) p (str "…/" (str/join "/" (take-last 2 segs)))))))))
+
+(defn- enrich-session-row
+  "Attach `:draft-label` + `:work-dir` to a session summary for the navigator,
+   read from the session's pinned workspace. Working dir = the project root
+   the session edits in: for a draft that's the trunk it was cloned from
+   (`:repo-root`); for trunk it's the root itself. `:draft-label` is nil on
+   trunk."
+  [s]
+  (let [ws     (session-workspace (:id s))
+        draft? (some? (:fork-ms ws))]
+    (assoc s
+      :draft-label (when draft? (or (not-empty (:label ws)) "draft"))
+      :work-dir    (short-dir (or (:repo-root ws) (:root ws))))))
+
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
   [{:keys [id history]}]
@@ -1980,12 +1999,12 @@
                            (vis/notify! "Session no longer exists"
                              :level :warn
                              :ttl-ms copy-success-ttl-ms))))))
-                 handle-tab-command!
-                 (fn [{:keys [dir]}]
-                   ;; `/open <dir>`: mint a trunk workspace rooted at <dir>,
-                   ;; create a session pinned to it, and open it in a new tab —
-                   ;; a session in another project, alongside the current ones.
-                   (let [f (java.io.File. ^String dir)]
+                 ;; Mint a trunk workspace rooted at `d`, create a session
+                 ;; pinned to it, and open it in a new tab — a session in
+                 ;; another project, focused, alongside the current ones.
+                 open-dir-tab!
+                 (fn [d]
+                   (let [f (java.io.File. ^String d)]
                      (if (and (.exists f) (.isDirectory f))
                        (when-let [config (:config @state/app-db)]
                          (let [ws (try (vis/workspace-create-trunk-at! (vis/db-info)
@@ -1998,11 +2017,22 @@
                              (open-session-tab! session-result true)
                              (vis/notify! "Could not open a session there"
                                :level :warn :ttl-ms copy-success-ttl-ms))))
-                       (vis/notify! (str "Not a directory: " dir)
+                       (vis/notify! (str "Not a directory: " d)
                          :level :warn :ttl-ms copy-success-ttl-ms))))
+                 ;; `/dir` (a `:slash/ui {:kind :dir-picker}` slash): browse to
+                 ;; a directory in the modal picker, then open a focused session
+                 ;; tab there. Starts at the active tab's working dir.
+                 pick-dir!
+                 (fn []
+                   (when-not (:dialog-open? @state/app-db)
+                     (let [start (or (:workspace/root @state/app-db)
+                                   (System/getProperty "user.dir"))]
+                       (when-let [chosen (with-dialog-lock
+                                           #(dlg/directory-picker-dialog! screen start))]
+                         (open-dir-tab! chosen)))))
                  show-sessions! (fn []
                                   (when-not (:dialog-open? @state/app-db)
-                                    (let [sessions (tui-session-summaries)]
+                                    (let [sessions (mapv enrich-session-row (tui-session-summaries))]
                                       (when-let [choice (with-dialog-lock
                                                           #(dlg/navigator-dialog!
                                                              screen
@@ -2548,6 +2578,11 @@
                                  (when-not (:dialog-open? @state/app-db)
                                    (show-sessions!))
 
+                                 ;; `/dir`: open the directory picker, then a
+                                 ;; focused session tab in the chosen directory.
+                                 (= :dir-picker (get-in cmd-map [:slash/spec :slash/ui :kind]))
+                                 (pick-dir!)
+
                                  (and cmd-map (:slash/text cmd-map))
                                  (when-not (:dialog-open? @state/app-db)
                                    (let [text (cond-> (:slash/text cmd-map)
@@ -2763,24 +2798,19 @@
                              ;; already present in the input, or submits a
                              ;; normal message.
                          (do (cond
-                               ;; Client-side tab commands (`/tab`, `/open
-                               ;; <dir>`): handled in the TUI — they open a new
-                               ;; session tab (optionally rooted in another
-                               ;; directory), never an engine round-trip.
-                               (parse-tab-command (input/input->text state))
-                               (do (when-not (:dialog-open? @state/app-db)
-                                     (handle-tab-command!
-                                       (parse-tab-command (input/input->text state))))
-                                 (state/dispatch [:reset-input]))
-
-                               ;; Navigator-intent slash (e.g. /workspace,
-                               ;; /workspace list): open the Ctrl+G picker
-                               ;; directly. Typed nested slashes never match
-                               ;; `exact-command`, so this resolves them by
-                               ;; full path against the engine registry.
+                               ;; UI-intent slash (e.g. /workspace → navigator,
+                               ;; /dir → directory picker): realize the intent
+                               ;; in the channel instead of dispatching to the
+                               ;; engine. Typed nested slashes never match
+                               ;; `exact-command`, so this resolves them by full
+                               ;; path against the engine registry.
                                (navigator-slash-for-input state)
-                               (do (when-not (:dialog-open? @state/app-db)
-                                     (show-sessions!))
+                               (let [kind (get-in (navigator-slash-for-input state)
+                                            [:slash/ui :kind])]
+                                 (when-not (:dialog-open? @state/app-db)
+                                   (case kind
+                                     :dir-picker (pick-dir!)
+                                     (show-sessions!)))
                                  (state/dispatch [:reset-input]))
 
                                (slash-command-for-input screen state)
