@@ -976,21 +976,25 @@
                            :else []))
                  batch)]
     [(first scopes) (last scopes)]))
+(defn- compact-src
+  "One-line, length-capped form source for the auto-summary listing."
+  [src]
+  (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
+    (if (> (count s) 90) (str (subs s 0 90) "…") s)))
 (defn dummy-summary-text
-  "Deterministic fallback summary string when no companion LLM is
-   available (unconfigured, timed out, errored). Carries enough
-   anchors that the model can recover details via introspection."
+  "Deterministic auto-summary (no companion LLM). Lists WHAT ran — the
+   form SOURCES, no results — so the stub is meaningful on its own; the
+   results stay recoverable via the (recall …) pointers it carries."
   [batch]
-  (let [n-iters (count batch)
-        n-forms (reduce + 0 (map (fn [p] (count (:forms p []))) batch))
+  (let [forms (mapcat #(:forms % []) batch)
+        srcs  (->> forms (keep :src) (map compact-src) (remove str/blank?) vec)
+        shown (take 25 srcs)
+        more  (max 0 (- (count srcs) (count shown)))
         [s e] (batch-scope-range batch)]
-    (str "auto-summarized; "
-      n-iters
-      " iter(s), "
-      n-forms
-      " form(s); reach details via (recall \""
-      s
-      "\")"
+    (str "auto-summarized " (count batch) " iter(s), " (count forms) " form(s). ran: "
+      (str/join " | " shown)
+      (when (pos? more) (str " (+" more " more)"))
+      ". results via (recall \"" s "\")"
       (when (not= s e) (str " … (recall \"" e "\")"))
       ".")))
 (defn make-summary-stub
