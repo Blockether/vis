@@ -72,6 +72,13 @@
     (not= :zai-thinking (:reasoning-style info))))
 (def ^:private git-label "git")
 (defn- git-repo-label [{:keys [repo branch]}] (str "~/" (or repo "?") " (" (or branch "?") ")"))
+(defn- abbreviate-home
+  "Shorten an absolute path by replacing the user's home dir with `~`."
+  [^String path]
+  (let [home (System/getProperty "user.home")]
+    (if (and path home (str/starts-with? path home))
+      (str "~" (subs path (count home)))
+      (str path))))
 (defn- git-dirty-label
   [{:keys [modified created deleted]}]
   (let [changed (+ (long (or modified 0)) (long (or created 0)) (long (or deleted 0)))]
@@ -88,13 +95,14 @@
               (when (pos? ahead) (str " ⇡" ahead))
               (when (pos? behind) (str " ⇣" behind))))))
 (defn- git-footer-spans
-  [{:keys [workspace? draft?], :as status}]
+  [{:keys [workspace? draft? draft-root], :as status}]
   (cond
     ;; In a draft, the clone's internal git details (clone dir name,
-    ;; detached HEAD, no-upstream) are noise — show only that it IS a draft
-    ;; and how many files differ.
+    ;; detached HEAD, no-upstream) are noise — show the draft's location
+    ;; (so the user knows WHERE the isolated tree lives) and how many
+    ;; files differ.
     draft?
-    [{:text "◆ draft",
+    [{:text (str "◆ " (if draft-root (abbreviate-home draft-root) "draft")),
       :fg t/footer-fg-strong,
       :bold? true,
       :region :right,
@@ -294,7 +302,7 @@
                     (cond-> (if ws-root
                               (git/cached-working-tree-status (File. (str ws-root)))
                               (git/cached-working-tree-status))
-                      in-draft? (assoc :draft? true)))]
+                      in-draft? (assoc :draft? true :draft-root (str ws-root))))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
