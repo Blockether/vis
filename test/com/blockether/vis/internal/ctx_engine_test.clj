@@ -740,20 +740,20 @@
 
 (defdescribe utilization-test
   (describe "utilization — last request's share of the context window"
-    (it "computes :pct from request / window"
+    (it "spells out each field; :pct-of-limit = request / limit"
       (let [u (eng/utilization 95000 200000 240000 144000)]
-        (expect (= 95000 (:request-tokens u)))
-        (expect (= 200000 (:window-tokens u)))
-        (expect (= 48 (:pct u)))
-        (expect (= 240000 (:turn-tokens u)))
-        (expect (= 144000 (:fold-cap u)))))
+        (expect (= 95000 (:last-request-tokens u)))
+        (expect (= 200000 (:model-input-limit u)))
+        (expect (= 48 (:pct-of-limit u)))
+        (expect (= 240000 (:turn-total-tokens u)))
+        (expect (= 144000 (:auto-compress-above u)))))
     (it "nil until a request is measured (iter 0 shows nothing)"
       (expect (nil? (eng/utilization 0 200000 0 144000))))
-    (it "omits :pct/:window when the window is unknown"
+    (it "omits :pct-of-limit/:model-input-limit when the window is unknown"
       (let [u (eng/utilization 95000 nil 95000 144000)]
-        (expect (= 95000 (:request-tokens u)))
-        (expect (nil? (:pct u)))
-        (expect (nil? (:window-tokens u)))))))
+        (expect (= 95000 (:last-request-tokens u)))
+        (expect (nil? (:pct-of-limit u)))
+        (expect (nil? (:model-input-limit u)))))))
 
 (defdescribe entity-id-test
   (describe "entity-id + :id stamping (turn-qualified stable ids)"

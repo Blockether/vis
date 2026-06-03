@@ -1372,23 +1372,26 @@
   (boolean (some (fn [[a b]] (iter-in-range? scope a b)) ranges)))
 (defn utilization
   "Pure: the `:session/utilization` map the model reads to see how much
-   of the context window the LAST request consumed.
-     :request-tokens  input tokens of the last provider call
-     :window-tokens   the model's effective input window
-     :pct             request / window, rounded
-     :turn-tokens     cumulative input this turn so far
-     :fold-cap        engine auto-summarize ceiling (informational)
+   of the context window the LAST request consumed. Keys are spelled out
+   so they can't be misread:
+     :last-request-tokens  input size of the most recent model call
+     :model-input-limit    HARD per-call ceiling (provider rejects above)
+     :pct-of-limit         last-request / model-input-limit, rounded
+     :auto-compress-above  engine folds the oldest trailer when a call
+                           would exceed this (soft guardrail, < limit)
+     :turn-total-tokens    cumulative input this turn (billing, NOT a
+                           per-call limit — may exceed the limit safely)
    Returns nil until a request has actually been measured (req <= 0), so
    the first iter of a turn shows nothing rather than a bogus 0%."
   [request-tokens window-tokens turn-tokens fold-cap]
   (let [req (long (or request-tokens 0))
         win (long (or window-tokens 0))]
     (when (pos? req)
-      (cond-> {:request-tokens req
-               :turn-tokens    (long (or turn-tokens 0))
-               :fold-cap       (long (or fold-cap 0))}
-        (pos? win) (assoc :window-tokens win
-                     :pct (long (Math/round (* 100.0 (/ (double req) (double win))))))))))
+      (cond-> {:last-request-tokens req
+               :turn-total-tokens   (long (or turn-tokens 0))
+               :auto-compress-above (long (or fold-cap 0))}
+        (pos? win) (assoc :model-input-limit win
+                     :pct-of-limit (long (Math/round (* 100.0 (/ (double req) (double win))))))))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================
