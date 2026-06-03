@@ -818,8 +818,9 @@
 
 (defn- coerce-rg-spec
   "Coerce the single public v/rg spec map. Exactly one of :all or :any
-   is required. Every public collection field is a vector; no shorthand
-   arities or scalar paths. Accepts compatibility alias :files for :paths,
+   is required. Every public collection field is a vector; a bare string
+   is also accepted and coerced to a 1-element vector (ripgrep/grep
+   muscle-memory like a scalar :glob or :any). Accepts compatibility alias :files for :paths,
    but docs/prompt keep advertising canonical :paths only.
 
    Optional keys (all default to off):
@@ -850,7 +851,11 @@
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         vector-of-strings (fn [k default]
-                            (let [v (if (contains? spec k) (get spec k) default)]
+                            (let [raw (if (contains? spec k) (get spec k) default)
+                                  ;; scalar-tolerant: a bare string coerces to a 1-vec, so
+                                  ;; :glob "x" / :any "x" (ripgrep & grep muscle-memory) just
+                                  ;; works instead of throwing. Vectors pass through unchanged.
+                                  v   (if (string? raw) [raw] raw)]
                               (when-not (and (vector? v) (seq v) (every? string? v))
                                 (throw (ex-info "v/rg spec fields must be non-empty vectors of strings."
                                          {:type :ext.foundation.editing/invalid-rg-spec
