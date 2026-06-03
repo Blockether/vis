@@ -56,3 +56,5 @@ dev/benches/4clojure/autoresearch/
 dev/benches/4clojure/.prompt_sizes.cache.json
 dev/benches/4clojure/.system_prompt_chars.cache.json
 /.bridge/ephemeral/
+# Claude Code local tooling state (machine-local settings + run locks).
+.claude/
