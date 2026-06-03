@@ -1018,9 +1018,16 @@
               :messages (or history [])
               :input-history (history-user-texts history))))))))
 
+(reg-event-db :title-loading
+  ;; Host auto-title generation started (true) or ended (false). Drives the
+  ;; header spinner on the active tab's title. `:set-title` also clears it so
+  ;; the spinner stops the instant a real title lands.
+  (fn [db [_ loading?]]
+    (assoc db :title-loading? (boolean loading?))))
+
 (reg-event-db :set-title
   (fn [db [_ title]]
-    (let [db' (assoc db :title title)
+    (let [db' (assoc db :title title :title-loading? false)
           active-id (current-tab-id db')]
       (cond-> db'
         active-id

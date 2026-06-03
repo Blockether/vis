@@ -484,6 +484,8 @@
 (def set-title!                   lp/set-title!)
 (def add-title-listener!          lp/add-title-listener!)
 (def remove-title-listener!       lp/remove-title-listener!)
+(def add-title-pending-listener!    lp/add-title-pending-listener!)
+(def remove-title-pending-listener! lp/remove-title-pending-listener!)
 (def env-for                      lp/env-for)
 (def send!                        lp/send!)
 (def close!                       lp/close!)

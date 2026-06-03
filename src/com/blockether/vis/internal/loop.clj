@@ -4289,6 +4289,46 @@
                             :error (ex-message t)}
                      :msg (str "Title listener threw: " (ex-message t))}))))))
 
+;; ── Title-PENDING listeners ────────────────────────────────────────────────
+;; A separate channel from the title VALUE listeners above: this one fires
+;; `true` when host auto-title generation STARTS and `false` when it ends,
+;; so a channel can show a "generating title…" spinner. Kept distinct so the
+;; pending signal never gets confused with a real title string.
+
+(defonce ^:private title-pending-listeners
+  ;; {session-id-uuid #{listener-fn ...}}
+  (atom {}))
+
+(defn add-title-pending-listener!
+  "Register `listener-fn` for `session-id`; invoked with a boolean
+   (true when title generation starts, false when it ends). Returns the
+   listener fn for later `remove-title-pending-listener!`."
+  [session-id listener-fn]
+  (let [cid (persistance/->uuid session-id)]
+    (swap! title-pending-listeners update cid (fnil conj #{}) listener-fn))
+  listener-fn)
+
+(defn remove-title-pending-listener!
+  "Deregister a previously added pending listener. Idempotent."
+  [session-id listener-fn]
+  (let [cid (persistance/->uuid session-id)]
+    (swap! title-pending-listeners update cid
+      (fn [existing] (disj (or existing #{}) listener-fn))))
+  nil)
+
+(defn- broadcast-title-pending!
+  "Fire every pending listener for `session-id` with `pending?`.
+   Listeners that throw are swallowed and logged."
+  [session-id pending?]
+  (let [cid (persistance/->uuid session-id)]
+    (doseq [f (get @title-pending-listeners cid)]
+      (try (f (boolean pending?))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::title-pending-listener-failed
+                     :data {:session-id cid
+                            :error (ex-message t)}
+                     :msg (str "Title-pending listener threw: " (ex-message t))}))))))
+
 (defn set-title-with-broadcast!
   "Single mutation point for session titles.
 
@@ -4448,6 +4488,10 @@
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
   (when (and db-info session-id (:router env))
     (future
+      ;; Announce "generating title" so a channel (TUI) can spinner the
+      ;; tab; always clear it in the finally, even when the title is
+      ;; unchanged and no value broadcast fires.
+      (broadcast-title-pending! session-id true)
       (try
         (let [previous (usable-existing-title (some-> session-title-atom deref))
               title    (or (try
@@ -4469,7 +4513,9 @@
                      :id ::auto-title-update-failed
                      :data {:session-id session-id
                             :error (ex-message t)}}
-            "Auto-title update failed; keeping existing title"))))))
+            "Auto-title update failed; keeping existing title"))
+        (finally
+          (broadcast-title-pending! session-id false))))))
 
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
