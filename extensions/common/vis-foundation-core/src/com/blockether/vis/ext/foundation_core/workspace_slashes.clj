@@ -1,19 +1,18 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-slashes
   "Declarative `/draft …` slash tree.
 
-   Surface registered on `vis-foundation-core`'s `:ext/slash-commands`
-   vec. A session IS its draft (a `rift` CoW clone of cwd), locked 1:1,
-   so the family is small:
+   A session IS its draft — a single `rift` CoW clone of cwd, locked 1:1.
+   Exactly one draft is active at a time; there is no parallel/multi-draft
+   juggling (parallelism comes from running multiple sessions, each with
+   its own draft). So the family is tiny:
 
-     /draft [label]        fork a new draft from the current one
-     /draft apply          land this draft's since-fork edits into cwd
-     /draft list           list drafts (== sessions)
-     /draft abandon [sel] <reason>   trash a draft (current or by selector)
+     /draft            show what's in the current draft (or the navigator)
+     /draft apply      land the draft's since-fork changes into cwd
+     /draft abandon [reason]   discard the draft's work, start a fresh clone
 
-   Vis owns no git lifecycle — `apply` copies changed files into the
-   user's real cwd, uncommitted, and the user commits with their own
-   tools. Each handler is `(fn [ctx])` returning a `:slash/*` envelope;
-   handlers are PURE w.r.t. the channel."
+   Vis owns no git lifecycle — `apply` copies the changed files (adds,
+   edits, deletions) into the user's real cwd, uncommitted; the user
+   commits with their own tools. Handlers are PURE w.r.t. the channel."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.workspace :as workspace]))
@@ -43,35 +42,33 @@
 (defn- change-line [{:keys [status path]}]
   (str (case status :add "+ " :modify "~ " :delete "- " "  ") path))
 
+(def ^:private help-body
+  (str "/draft            show the current draft\n"
+    "/draft apply      land the draft's changes into cwd\n"
+    "/draft abandon [reason]   discard the draft, start fresh"))
+
 ;; =============================================================================
 ;; Handlers
 ;; =============================================================================
 
-(defn- handle-new
-  "`/draft [label]` — fork a fresh draft from the current one (clone-of-a-
-   clone) and pin the current session to it. With no current draft (first
-   call in a fresh session) clones cwd directly."
+(defn- handle-status
+  "Bare `/draft` — summarise the current draft (root + since-fork change
+   count). Picker-capable channels open the navigator instead."
   [ctx]
-  (let [db       (ctx-db ctx)
-        state-id (ctx-session-state-id ctx)
-        current  (session-workspace ctx)
-        label    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
-    (if (nil? state-id)
-      (err "Cannot fork: no active session")
-      (let [forked (workspace/create! db {:from             current
-                                          :session-state-id state-id
-                                          :label            label})]
+  (let [db      (ctx-db ctx)
+        current (session-workspace ctx)]
+    (if (nil? current)
+      {:slash/status :ok :slash/title "Draft" :slash/body help-body}
+      (let [st (workspace/status db (:id current))]
         {:slash/status :ok
-         :slash/title  "Draft created"
-         :slash/body   (str (workspace/display-label forked)
-                         (when current
-                           (str " · forked from " (workspace/display-label current))))
-         :slash/data   {:workspace-id (:id forked)
-                        :label        (:label forked)
-                        :parent-id    (:parent-id forked)}}))))
+         :slash/title  (str "Draft · " (workspace/display-label current))
+         :slash/body   (str (:workspace/root st) "\n"
+                         (:workspace/changed st 0) " file(s) changed since fork")
+         :slash/data   {:workspace-id (:id current)
+                        :changed      (:workspace/changed st 0)}}))))
 
 (defn- handle-apply
-  "`/draft apply` — land the draft's since-fork edits into cwd."
+  "`/draft apply` — land the draft's since-fork changes into cwd."
   [ctx]
   (let [db      (ctx-db ctx)
         current (session-workspace ctx)]
@@ -83,51 +80,29 @@
          :slash/body   (->> changed (map change-line) (str/join "\n"))
          :slash/data   {:workspace-id (:id current) :landed landed :changed changed}}))))
 
-(defn- handle-list
-  "`/draft list` — drafts for the current repo (== sessions, 1:1)."
-  [ctx]
-  (let [db      (ctx-db ctx)
-        current (session-workspace ctx)
-        repo-id (or (:repo-id current)
-                  (some-> (workspace/get db (:workspace/id ctx)) :repo-id))
-        active  (when repo-id (workspace/list-active-with-sessions db repo-id))]
-    {:slash/status :ok
-     :slash/title  (str "Drafts (" (count active) ")")
-     :slash/body   (->> active
-                     (map (fn [{:keys [workspace session-state]}]
-                            (str (if (= (:id workspace) (:id current)) "* " "  ")
-                              (workspace/display-label nil workspace session-state))))
-                     (str/join "\n"))
-     :slash/data   {:active active :current-id (:id current)}}))
-
 (defn- handle-abandon
-  "`/draft abandon [selector] <reason>` — trash a draft. With a leading
-   id-prefix / label / clone-name selector, targets that draft; otherwise
-   the current one. Remaining words are the reason (logged into lineage)."
+  "`/draft abandon [reason]` — discard the current draft's work and start
+   a fresh clone of cwd. The session always has exactly one active draft,
+   so abandoning immediately re-mints a clean one. `reason` is logged into
+   the abandoned draft's lineage record."
   [ctx]
-  (let [db         (ctx-db ctx)
-        current    (session-workspace ctx)
-        repo-id    (:repo-id current)
-        argv       (vec (:command/argv ctx))
-        candidates (when repo-id (workspace/list-active db repo-id))
-        selector   (first argv)
-        match      (when selector
-                     (some #(when (or (str/starts-with? (str (:id %)) selector)
-                                    (= selector (:label %))
-                                    (= selector (:branch %)))
-                              %)
-                       candidates))
-        target     (or match current)
-        reason     (str/trim (str/join " " (if match (rest argv) argv)))]
-    (if (nil? target)
-      (err "No draft to abandon")
-      (let [done (workspace/abandon! db {:workspace-id (:id target)
-                                         :reason       (not-empty reason)})]
+  (let [db       (ctx-db ctx)
+        state-id (ctx-session-state-id ctx)
+        current  (session-workspace ctx)
+        reason   (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+    (cond
+      (nil? state-id) (err "No active session")
+      (nil? current)  (err "No active draft")
+      :else
+      (let [done  (workspace/abandon! db {:workspace-id (:id current) :reason reason})
+            fresh (workspace/create! db {:session-state-id state-id})]
         {:slash/status :ok
-         :slash/title  "Draft abandoned"
-         :slash/body   (str (workspace/display-label done)
-                         (when (not-empty reason) (str " — " reason)))
-         :slash/data   {:workspace-id (:id done) :reason (not-empty reason)}}))))
+         :slash/title  "Draft discarded — fresh draft started"
+         :slash/body   (str "Discarded " (workspace/display-label done)
+                         (when reason (str " — " reason)))
+         :slash/data   {:abandoned-id (:id done)
+                        :active-id    (:id fresh)
+                        :reason       reason}}))))
 
 ;; =============================================================================
 ;; Specs vec
@@ -137,36 +112,21 @@
   "Declarative slash specs vec hooked onto foundation-core's manifest
    via `:ext/slash-commands`."
   [{:slash/name   "draft"
-    :slash/doc    "Draft (CoW workspace) operations — see subcommands."
-    :slash/usage  "/draft <[label] | apply | list | abandon> …"
+    :slash/doc    "The session's draft (CoW workspace) — see subcommands."
+    :slash/usage  "/draft <apply | abandon> …"
     ;; Bare `/draft` opens the session/draft navigator in picker-capable
-    ;; channels (session == draft, 1:1); `/draft <label>` forks a new one.
+    ;; channels (session == draft, 1:1); elsewhere it prints draft status.
     :slash/ui     {:kind :navigator}
-    :slash/run-fn (fn [ctx]
-                    (if (seq (:command/argv ctx))
-                      (handle-new ctx)
-                      {:slash/status :ok
-                       :slash/title  "Draft commands"
-                       :slash/body   (str "/draft [label]        fork a new draft from the current one\n"
-                                       "/draft apply          land this draft's changes into cwd\n"
-                                       "/draft list           list drafts\n"
-                                       "/draft abandon [sel] <reason>   trash a draft")}))}
+    :slash/run-fn handle-status}
    {:slash/name     "apply"
     :slash/parent   ["draft"]
-    :slash/doc      "Land this draft's since-fork edits into cwd (uncommitted)."
+    :slash/doc      "Land the draft's since-fork changes into cwd (uncommitted)."
     :slash/usage    "/draft apply"
     :slash/requires #{:session}
     :slash/run-fn   handle-apply}
-   {:slash/name     "list"
-    :slash/parent   ["draft"]
-    :slash/doc      "List drafts / sessions for the current repo."
-    :slash/usage    "/draft list"
-    :slash/requires #{:channel}
-    :slash/ui       {:kind :navigator}
-    :slash/run-fn   handle-list}
    {:slash/name     "abandon"
     :slash/parent   ["draft"]
-    :slash/doc      "Trash a draft (current, or by selector) with an optional reason."
-    :slash/usage    "/draft abandon [id|label] <reason>"
+    :slash/doc      "Discard the draft's work and start a fresh clone of cwd."
+    :slash/usage    "/draft abandon [reason]"
     :slash/requires #{:session}
     :slash/run-fn   handle-abandon}])
