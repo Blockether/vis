@@ -143,7 +143,8 @@
                 ;; engine fold uses the same shape as model-driven
                 ;; trailer-summarize but with :vis/auto? true; pass
                 ;; nil summarizer-fn so the engine falls through to
-                ;; `dummy-summary-text` (mechanical scope-range note).
+                ;; `dummy-summary-text` — a mechanical recap LISTING the
+                ;; folded form sources (what ran) + (recall …) pointers.
                 (let [r (ctx-engine/summarize-trailer-with-companion
                           ctx
                           {:target-tokens target-tokens
