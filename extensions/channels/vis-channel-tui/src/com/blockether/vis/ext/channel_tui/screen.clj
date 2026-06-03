@@ -334,6 +334,20 @@
                    (vis/registered-slashes))]
       (when (#{:navigator :dir-picker} (get-in spec [:slash/ui :kind]))
         spec))))
+(defn- prompt-arg-slash-for-input
+  "When the typed text is EXACTLY a registered slash that declares
+   `:slash/prompt-arg` and carries NO argument, return {:slash-text :prompt}
+   so the channel can pop a text-input for the missing argument instead of
+   running the slash blank. A trailing argument (`/draft new x`) returns nil —
+   that runs normally."
+  [input-state]
+  (let [text (str/trim (input/input->text input-state))]
+    (some (fn [s]
+            (when-let [prompt (:slash/prompt-arg s)]
+              (let [full (str "/" (str/join " " (concat (:slash/parent s) [(:slash/name s)])))]
+                (when (= text full)
+                  {:slash-text full :prompt prompt}))))
+      (vis/registered-slashes))))
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
@@ -1816,6 +1830,12 @@
                          (do (vreset! restore-plan snap) first-session)
                          (chat/make-session config))))]
                (vreset! title-listener-cleanup (init-visible-session! {:id id, :history history}))
+               ;; Record this place's tab set even when there's just the one
+               ;; startup tab — otherwise a single-tab session never persists
+               ;; and a plain relaunch wouldn't restore it. Skip when restoring
+               ;; (the restore block below persists once it reopens every tab,
+               ;; so we don't transiently truncate the saved set to tab 1).
+               (when-not @restore-plan (persist-tabs!))
                ;; Kick off background pre-warm of the LRU. Walks the
                ;; history bottom-up calling project + bubble-height,
                ;; so by the time the user scrolls UP the cache is
@@ -2834,6 +2854,20 @@
                              ;; already present in the input, or submits a
                              ;; normal message.
                          (do (cond
+                               ;; A slash that requires an argument typed with
+                               ;; none (e.g. `/draft new`): pop a text-input for
+                               ;; it, then run the slash with the value. Cancel
+                               ;; (Esc) just clears the editor.
+                               (prompt-arg-slash-for-input state)
+                               (let [{:keys [slash-text prompt]} (prompt-arg-slash-for-input state)]
+                                 (when-not (:dialog-open? @state/app-db)
+                                   (when-let [val (with-dialog-lock
+                                                    #(dlg/text-input-dialog! screen slash-text prompt))]
+                                     (when-not (str/blank? val)
+                                       (state/dispatch [:send-message
+                                                        (str slash-text " " (str/trim val))]))))
+                                 (state/dispatch [:reset-input]))
+
                                ;; UI-intent slash (e.g. /workspace → navigator,
                                ;; /dir → directory picker): realize the intent
                                ;; in the channel instead of dispatching to the
