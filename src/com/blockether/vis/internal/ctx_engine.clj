@@ -664,12 +664,19 @@
 (def ^:private TTL-TASK-DONE 6)
 (def ^:private TTL-TASK-CANCELLED 10)
 (def ^:private TTL-FACT-SUPERSEDED 6)
+(def ^:private TTL-ARCHIVED
+  "Turns an `:archived` entity (summarize'd) lingers in live ctx before
+   gc-pass moves it to `:session/archived`. Short — the summary fact is
+   its visible recap; the original just needs to stay recall-able."
+  1)
 (defn- ttl-for
   [entity-type status]
   (case [entity-type status]
     [:task :done] TTL-TASK-DONE
     [:task :cancelled] TTL-TASK-CANCELLED
+    [:task :archived] TTL-ARCHIVED
     [:fact :superseded] TTL-FACT-SUPERSEDED
+    [:fact :archived] TTL-ARCHIVED
     nil))
 (defn- entry-due-for-archive?
   [current-turn entity-type entry]
@@ -699,21 +706,32 @@
    runs regardless of `:status` because turn-lifetime tasks are
    recreated on demand by the next iter's hook fire."
   [ctx]
-  (let [t (:turn (:session/scope ctx))
-        gc (fn [subtree etype]
-             (into {}
-               (for [[k v] (or (get ctx subtree) {})
-                     :when (not (entry-due-for-archive? t etype v))]
-                 [k v])))
-        gc-tasks (fn []
-                   (into {}
-                     (for [[k v] (or (:session/tasks ctx) {})
-                           :when (not (or (entry-due-for-archive? t :task v)
-                                        (turn-lifetime-hook-task? v)))]
-                       [k v])))]
+  (let [t        (:turn (:session/scope ctx))
+        archived (volatile! (or (:session/archived ctx) {}))
+        ;; entity leaving live keeps its FINAL state in :session/archived
+        ;; keyed by stable :id (+ :vis/kind/:vis/key so `recall` puts it
+        ;; back in the right subtree). NOT rendered to the prompt; O(1)
+        ;; in-memory lookup — no snapshot scan.
+        stash!   (fn [v kind k]
+                   (when-let [id (:id v)]
+                     (vswap! archived assoc id (assoc v :vis/kind kind :vis/key k))))
+        gc-facts (reduce (fn [acc [k v]]
+                           (if (entry-due-for-archive? t :fact v)
+                             (do (stash! v :fact k) acc)
+                             (assoc acc k v)))
+                   {} (or (:session/facts ctx) {}))
+        gc-tasks (reduce (fn [acc [k v]]
+                           (cond
+                             ;; turn-lifetime hook tasks are ephemeral —
+                             ;; dropped, never archived.
+                             (turn-lifetime-hook-task? v) acc
+                             (entry-due-for-archive? t :task v) (do (stash! v :task k) acc)
+                             :else (assoc acc k v)))
+                   {} (or (:session/tasks ctx) {}))]
     (-> ctx
-      (assoc :session/tasks (gc-tasks))
-      (assoc :session/facts (gc :session/facts :fact)))))
+      (assoc :session/tasks gc-tasks)
+      (assoc :session/facts gc-facts)
+      (assoc :session/archived @archived))))
 (defn enter-turn
   "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
    resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
@@ -1047,7 +1065,7 @@
 
    Snapshots keep the raw entity; `(recall :K)` windows it. Live ctx GC removes archived entries at the next turn boundary
    without waiting for TTL. Returns `{:ctx :warnings}`."
-  [ctx _form-scope archive-map]
+  [ctx form-scope archive-map]
   (let [{:keys [facts tasks]} (or archive-map {})
         kind->subtree {:fact :session/facts, :task :session/tasks}
         attempts (concat (for [k (or facts [])] [:fact k]) (for [k (or tasks [])] [:task k]))
@@ -1055,8 +1073,13 @@
                    (let [subtree (kind->subtree kind)
                          exists? (some? (get-in ctx [subtree k]))]
                      {:kind kind, :k k, :subtree subtree, :exists? exists?}))
+        ;; stamp :done-born (the GC clock) so gc-pass can move the
+        ;; archived entity into :session/archived after TTL-ARCHIVED.
         ctx-with-status (reduce (fn [acc {:keys [k subtree exists?]}]
-                                  (cond-> acc exists? (assoc-in [subtree k :status] :archived)))
+                                  (cond-> acc
+                                    exists?
+                                    (update-in [subtree k] assoc
+                                      :status :archived :done-born form-scope)))
                           ctx
                           outcomes)
         ctx' ctx-with-status
@@ -1301,26 +1324,20 @@
               :vis/size   total          ; total chars (offset bound)
               :view       (subs s off end)}
        (< end total) (assoc :vis/next (str "(recall " addr-str " {:offset " end "})"))))))
-(defn id->turn
-  "Parse the birth turn out of a stable entity id `:t<N>/key`
-   (`:t3/auth` => 3). Lets `recall` load the EXACT turn snapshot for a
-   GC'd entity instead of scanning history. nil when not a `t<N>/`-id."
-  [id]
-  (when (keyword? id)
-    (when-let [ns (namespace id)]
-      (when-let [[_ n] (re-matches #"t([1-9][0-9]*)" ns)]
-        (parse-long n)))))
 (defn find-entity-by-id
-  "Locate the entity whose stable `:id` = `id` in `ctx`. Returns
-   `{:subtree :key :kind :entry}` (facts before tasks) or nil. Pure —
-   works on the live ctx OR a loaded DB snapshot."
+  "Locate the entity whose stable `:id` = `id`. Searches LIVE facts then
+   tasks, then `:session/archived` (entities GC'd out of live). Returns
+   `{:source :live|:archived :kind :key :entry}` or nil. Pure."
   [ctx id]
   (or (some (fn [[k v]] (when (= id (:id v))
-                          {:subtree :session/facts :key k :kind :fact :entry v}))
+                          {:source :live :kind :fact :key k :entry v}))
         (:session/facts ctx))
     (some (fn [[k v]] (when (= id (:id v))
-                        {:subtree :session/tasks :key k :kind :task :entry v}))
-      (:session/tasks ctx))))
+                        {:source :live :kind :task :key k :entry v}))
+      (:session/tasks ctx))
+    (when-let [v (get-in ctx [:session/archived id])]
+      {:source :archived :kind (:vis/kind v) :key (:vis/key v)
+       :entry  (dissoc v :vis/kind :vis/key)})))
 (defn restored-entry
   "The entity `entry` flipped back to live (`:active` fact / `:todo`
    task) and stamped `:recalled {:scope :why}` so the render shows WHY
@@ -1329,16 +1346,18 @@
   (merge entry {:status (case kind :fact :active :task :todo)
                 :recalled {:scope scope :why why}}))
 (defn recall-entity
-  "Restore the entity whose stable `:id` = `id` from the LIVE ctx: flip
-   `:archived` back to live and stamp `:recalled`. Returns
-   `{:ctx :found? :kind :key}`. Cross-turn (GC'd) entities are handled
-   by the binding, which scans snapshots newest→oldest (down to the
-   birth turn) for the entity's last-live version."
+  "Restore the entity whose stable `:id` = `id` back to LIVE — from the
+   live subtree (same-turn :archived) OR from `:session/archived`
+   (GC'd in a past turn, final state captured at GC). Re-inserts into
+   `:session/facts`/`:session/tasks`, removes the `:session/archived`
+   copy, and stamps `:recalled {:scope :why}`. All in-memory, O(1) — no
+   snapshot scan. Returns `{:ctx :found? :kind :key}`."
   [ctx id scope why]
-  (if-let [{:keys [subtree key kind]} (find-entity-by-id ctx id)]
-    {:ctx    (update-in ctx [subtree key]
-               (fn [e] (restored-entry e kind scope why)))
-     :found? true, :kind kind, :key key}
+  (if-let [{:keys [source kind key entry]} (find-entity-by-id ctx id)]
+    (let [target (case kind :fact :session/facts :task :session/tasks)]
+      {:ctx    (cond-> (assoc-in ctx [target key] (restored-entry entry kind scope why))
+                 (= source :archived) (update :session/archived dissoc id))
+       :found? true, :kind kind, :key key})
     {:ctx ctx, :found? false, :kind nil, :key nil}))
 (defn summarized-iter-ranges
   "Pure: the `[scope-start scope-end]` iter ranges covered by live
