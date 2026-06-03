@@ -83,29 +83,6 @@
                    reply-markup (assoc "reply_markup" reply-markup))]
      (post-json! token "/sendMessage" payload))))
 
-(defn post-draft-message!
-  "Post a streaming draft message via Bot API 9.3+ `sendMessageDraft`.
-   Used by the live-bubble — draft is purpose-built for streaming:
-
-     - no notification fires while the draft is being edited;
-     - the final message has no `(edited)` tag (draft converts to a
-       real message via the final sendMessage / editMessageText);
-     - higher update frequency tolerated than editMessageText.
-
-   Returns the parsed Telegram resp; caller reads `:result.message_id`
-   to edit later through `edit-message!`.
-
-   Bot API floor: 9.5 (March 2026) opened the method to all bots.
-   Vis targets cloud Telegram so the floor is always met."
-  ([token chat-id text]
-   (post-draft-message! token chat-id text nil))
-  ([token chat-id text {:keys [reply-markup plain?]}]
-   (let [payload (cond-> {"chat_id" chat-id
-                          "text"    text}
-                   (not plain?) (assoc "parse_mode" "HTML")
-                   reply-markup (assoc "reply_markup" reply-markup))]
-     (post-json! token "/sendMessageDraft" payload))))
-
 (defn send-message!
   "Send a text reply.
 
