@@ -27,16 +27,16 @@
                     :message {:chat {:id chat-id}}}})
 
 (defdescribe live-bubble-render-segments-test
-  (it "uses render-segments for the running form preview and hides answer/title source"
-    (let [status-line (private-var 'bubble-form-status-line)]
-      (expect (= "⏳ Running form #1 — (def x 1)"
-                (status-line {:position 0
-                              :code (str "(def x 1)\n"
-                                      "(set-session-title! \"Mixed\")\n"
-                                      "(done [:ir [:p \"Done\"]])")
-                              :render-segments [{:kind :code :source "(def x 1)"}
-                                                {:kind :title :value "Mixed"}
-                                                {:kind :answer-ref}]}))))))
+  (it "uses render-segments for the live-feed step label and hides answer/title source"
+    (let [label-fn (private-var 'form-step-label)]
+      (expect (= "(def x 1)"
+                (label-fn {:position 0
+                           :code (str "(def x 1)\n"
+                                   "(set-session-title! \"Mixed\")\n"
+                                   "(done [:ir [:p \"Done\"]])")
+                           :render-segments [{:kind :code :source "(def x 1)"}
+                                             {:kind :title :value "Mixed"}
+                                             {:kind :answer-ref}]}))))))
 
 (defdescribe bot-menu-test
   ;; The Telegram bot menu is derived from `vis/registered-slashes`
