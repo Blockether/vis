@@ -59,7 +59,13 @@
               {:got-type (some-> ir class .getName)
                :got-preview (let [s (pr-str ir)]
                               (subs s 0 (min 200 (count s))))}))
-     :else (vis/render ir :html opts))))
+     :else (-> (vis/render ir :html opts)
+             ;; Belt-and-suspenders: the block walkers fix the structural
+             ;; spacing, but collapse any residual run of 3+ newlines to a
+             ;; single blank line and trim the edges so stacked blocks read
+             ;; cleanly and the footer attaches without a gap.
+             (str/replace #"\n{3,}" "\n\n")
+             str/trim))))
 
 (defn- send! [token chat-id ir & [opts]]
   ;; STRICT IR rendering chokepoint. String callers must wrap via
@@ -543,7 +549,18 @@
   ;; Keep this RAW Markdown-ish text. `tg/send-message!` owns escaping.
   ;; Pre-escaping here made MarkdownV2 fallback leak literal backslashes
   ;; into chats when an answer body failed Telegram parsing.
-  (let [line (vis/format-meta-line result)]
+  ;;
+  ;; Telegram gets the COMPACT meta line: the per-bucket cost breakdown
+  ;; and cache-write token count are valuable in the CLI/TUI but are just
+  ;; chat noise here, so collapse cost to its total and keep only the
+  ;; input→output token counts before handing off to the shared formatter.
+  (let [compact (cond-> result
+                  (number? (get-in result [:cost :total-cost]))
+                  (assoc :cost (get-in result [:cost :total-cost]))
+
+                  (map? (:tokens result))
+                  (assoc :tokens (select-keys (:tokens result) [:input :output])))
+        line    (vis/format-meta-line compact)]
     (when (seq line)
       (str "\n\n_🤖 " line "_"))))
 
@@ -823,13 +840,6 @@
            :entry entry})
         {:message (str "Unknown model: " selection) :level :warn}))))
 
-(defn- model-list-lines [entries active]
-  (map-indexed
-    (fn [idx entry]
-      (str (inc idx) ". " (when (= entry active) "✅ ")
-        (model-entry-label entry)))
-    entries))
-
 (defn- model-inline-keyboard [entries active]
   {"inline_keyboard"
    (mapv (fn [[idx entry]]
@@ -847,11 +857,13 @@
         entries     (model-cycle-entries base-config)
         active      (active-model-entry base-config)]
     (if (str/blank? (or arg ""))
+      ;; The inline keyboard already lists every model (with ✅ on the
+      ;; active one), so the text body is just a header — enumerating the
+      ;; models in text too is redundant noise on Telegram.
       {:message (vis/markdown->ir
                   (if (seq entries)
-                    (str "Models\nCurrent: " (or (some-> active model-entry-label) "unknown")
-                      "\n\n" (str/join "\n" (model-list-lines entries active))
-                      "\n\nTap a button, or send /models 2, or /models provider/model.")
+                    (str "Models — current: " (or (some-> active model-entry-label) "unknown")
+                      "\nTap a button to switch, or send /models 2 or /models provider/model.")
                     "No models configured"))
        :reply-markup (when (seq entries) (model-inline-keyboard entries active))}
       {:message (vis/markdown->ir (:message (select-model! arg)))})))
@@ -876,6 +888,17 @@
       "/restart - restart the bot in a fresh Java process\n"
       "/export - export this session as Markdown")))
 
+(defn- codex-model-active?
+  "True when the active model belongs to the OpenAI Codex provider.
+   `verbosity` is a Codex-only knob (OpenAI Responses API), so the
+   `/status` line and `/verbosity` chatter are noise for any other
+   provider. The active model is the first model of the first provider
+   (see `active-model-entry`), so we inspect that provider directly."
+  []
+  (let [provider (first (:providers (or (vis/load-config) {})))]
+    (or (= :openai-codex (:id provider))
+      (= :openai-compatible-responses (:api-style provider)))))
+
 (defn- command-status [chat-id]
   (let [{:keys [id title]} (vis/for-telegram-chat! chat-id)
         settings (chat-settings chat-id)]
@@ -884,7 +907,8 @@
         (when-not (str/blank? title) (str " - " title))
         "\nModel: " (model-label)
         "\nReasoning: " (name (:reasoning-level settings))
-        "\nCodex verbosity: " (name (:openai-codex-verbosity settings))
+        (when (codex-model-active?)
+          (str "\nCodex verbosity: " (name (:openai-codex-verbosity settings))))
         "\nVoice mode: " (name (:voice-mode settings))
         "\nIn flight: " (if (in-flight-token chat-id) "yes" "no")))))
 
@@ -1052,9 +1076,16 @@
           true)
 
         :else
-        (let [r           (:result result)
-              body        (or (:slash/body r)
-                            (vis/markdown->ir (or (:slash/title r) "Slash handled")))
+        (let [r            (:result result)
+              raw-body     (:slash/body r)
+              ;; Cross-channel slash run-fns (e.g. /dir) may return a raw
+              ;; string body; render-for-telegram only accepts canonical
+              ;; [:ir ...]. Coerce strings to IR so non-Telegram-native
+              ;; slashes render here instead of throwing.
+              body         (cond
+                             (string? raw-body) (vis/markdown->ir raw-body)
+                             (some? raw-body)   raw-body
+                             :else              (vis/markdown->ir (or (:slash/title r) "Slash handled")))
               reply-markup (get-in r [:slash/data :reply-markup])]
           (send! token chat-id body {:reply-markup reply-markup})
           true)))))
@@ -1303,7 +1334,26 @@
                         []))]
         (cond
           (= updates ::interrupted) :stopped
-          (seq updates) (do (doseq [u updates] (handle-update! token u))
+          (seq updates) (do (doseq [u updates]
+                              ;; A single malformed update or a throwing
+                              ;; command handler must NOT kill the poll
+                              ;; thread: the offset is only advanced after
+                              ;; the doseq, so an escaping exception would
+                              ;; freeze the whole queue on the bad update.
+                              (try
+                                (handle-update! token u)
+                                (catch InterruptedException e (throw e))
+                                (catch Throwable e
+                                  (tel/log! {:level :error :id ::handle-update-error
+                                             :error e
+                                             :data {:update-id (:update_id u)
+                                                    :text      (-> u :message :text)}
+                                             :msg "handle-update! failed; skipping update"})
+                                  (.println ^java.io.PrintStream vis/original-stdout
+                                    (str "[telegram] handle-update! failed on update "
+                                      (:update_id u) " (" (-> u :message :text) "):"))
+                                  (.printStackTrace ^Throwable e
+                                    ^java.io.PrintStream vis/original-stdout))))
                           (recur (inc (apply max (map :update_id updates)))))
           :else         (recur offset))))))
 
