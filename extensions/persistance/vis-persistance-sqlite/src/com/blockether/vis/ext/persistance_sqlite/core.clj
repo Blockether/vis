@@ -2152,6 +2152,29 @@
 ;; directly without registering the extension.
 ;; =============================================================================
 
+(defn db-load-ctx-at-turn
+  "Load the CTX snapshot (Nippy BLOB) for ONE turn POSITION in this
+   session's state chain (latest version of that turn). Targeted
+   single-row read — `recall` uses it to restore an entity GC'd from the
+   live ctx, addressed by the birth turn encoded in its stable id
+   (`:t3/auth` -> turn 3). Returns the decoded CTX map or nil."
+  [db-info session-id turn-position]
+  (when (and (ds db-info) session-id turn-position)
+    (let [state-ids (session-state-chain db-info session-id)]
+      (when (seq state-ids)
+        (when-let [row (first (query! db-info
+                                {:select [:qts.ctx]
+                                 :from   [[:session_turn_state :qts]]
+                                 :join   [[:session_turn_soul :qs]
+                                          [:= :qs.id :qts.session_turn_soul_id]]
+                                 :where  [:and
+                                          [:in :qs.session_state_id state-ids]
+                                          [:= :qs.position (long turn-position)]
+                                          [:<> :qts.ctx nil]]
+                                 :order-by [[:qts.version :desc]]
+                                 :limit  1}))]
+          (<-blob (:ctx row)))))))
+
 (defn db-load-ctx-history
   "Return a sorted-by-turn vec of `[turn-n ctx-map]` pairs for the session.
    Each ctx-map is the Nippy-decoded `:session/turn_state.ctx` for the
