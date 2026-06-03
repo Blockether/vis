@@ -1332,7 +1332,8 @@
   "Restore the entity whose stable `:id` = `id` from the LIVE ctx: flip
    `:archived` back to live and stamp `:recalled`. Returns
    `{:ctx :found? :kind :key}`. Cross-turn (GC'd) entities are handled
-   by the binding via a targeted DB-snapshot load (`id->turn`)."
+   by the binding, which scans snapshots newest→oldest (down to the
+   birth turn) for the entity's last-live version."
   [ctx id scope why]
   (if-let [{:keys [subtree key kind]} (find-entity-by-id ctx id)]
     {:ctx    (update-in ctx [subtree key]
