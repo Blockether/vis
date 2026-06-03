@@ -198,7 +198,7 @@
    :tasks …}` map), the engine applies it as part of the same swap.
 
    Returns the intent map plus warnings."
-  [{:keys [ctx-atom] :as env} {:keys [answer answer-summary
+  [{:keys [ctx-atom] :as env} {:keys [answer
                                       user-request turn-summary
                                       summarize]}]
   (let [start-ms      (System/nanoTime)
@@ -222,7 +222,6 @@
                 {ctx' :ctx ws :warnings blocked :blocked?}
                 (eng/apply-done c+cur scope
                   {:answer         answer
-                   :answer-summary answer-summary
                    :user-request   user-request
                    :turn-summary   turn-summary
                    :summarize      summarize})]
@@ -232,14 +231,12 @@
               (seq ws) (update :engine/warnings (fnil into []) ws)))))
       (tel/log! {:level :info :id ::apply-done
                  :data {:answer-present?   (boolean (not (clojure.string/blank? (str answer))))
-                        :answer-summary?   (boolean (not (clojure.string/blank? (str answer-summary))))
                         :summarize         summarize
                         :warnings          @warns
                         :blocked?          @blocked?
                         :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
         "apply-done completed"))
     {:answer answer
-     :answer-summary answer-summary
      :summarize summarize
      :blocked? @blocked?
      :warnings @warns}))
@@ -478,8 +475,7 @@
             (if (str/blank? (str match))
               {:vis/error :recall-requires-match
                :hint "(recall {:match \"text\"}) — :match is REQUIRED for search"}
-              (let [ranges (eng/summarized-iter-ranges (:session/trailer (live-ctx)))
-                    hits   (persistance/db-search db (str match)
+              (let [hits   (persistance/db-search db (str match)
                              {:owner-table "session_turn_iteration"
                               :field       "code"
                               :limit       (max 1 (long (or limit 10)))})
@@ -503,9 +499,15 @@
                               tp (turn-by-soul (:id trow))
                               ip (:position it)
                               sc (when (and tp ip) (str "t" tp "/i" ip))]
+                        ;; Summarized scopes are INTENTIONALLY still
+                        ;; searchable: summarize compresses the trailer
+                        ;; view, it does not erase the iteration rows.
+                        ;; Search is an explicit recovery pull, so a hit
+                        ;; in a summarized range is exactly what the model
+                        ;; wants — it can then (recall {:scopes …}) to
+                        ;; re-materialise the observation forms from the DB.
                         :when (and sc
-                                (after? {:turn tp :iter ip})
-                                (not (eng/scope-in-summarized? ranges sc)))]
+                                (after? {:turn tp :iter ip}))]
                     {:scope sc :preview snippet :rank rank})))))
           ;; --- window mode -------------------------------------------
           :else

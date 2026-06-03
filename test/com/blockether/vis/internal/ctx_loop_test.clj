@@ -339,7 +339,7 @@
                      (:vis/error (recall "t9/i9/f9")))))))))
 
 (defdescribe recall-search-test
-  (describe "recall {:match …} searches live (non-summarized) trace"
+  (describe "recall {:match …} searches the raw iteration trace (summarized stays searchable)"
     (let [{recall 'recall} (cl/build-introspect-bindings
                              {:db-info ::db :session-id "S" :ctx-atom (atom {:session/trailer []})}
                              (constantly []))]
@@ -365,16 +365,20 @@
           (let [hits ((mk-recall []) {:match "v/rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
-      (it "excludes hits inside a summarized range"
+      (it "INCLUDES hits inside a summarized range (summarized stays searchable)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
                       (constantly [{:owner-table "session_turn_iteration" :owner-id "it-1b"
                                     :field "code" :snippet "x" :rank -1.0}])
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
-          ;; t1/i2 sits inside the summary stub t1/i1..t1/i3 → excluded
+          ;; t1/i2 sits inside the summary stub t1/i1..t1/i3, but search runs
+          ;; over the raw session_turn_iteration rows (NOT the stub), so the
+          ;; observation stays findable — summarizing compresses the prompt
+          ;; view, it never buries the evidence. The model can then
+          ;; (recall {:scopes ["t1/i2"]}) to re-materialise the raw forms.
           (let [hits ((mk-recall [{:scope-start "t1/i1" :scope-end "t1/i3" :summary "s"}]) {:match "x"})]
-            (expect (empty? hits))))))))
+            (expect (= ["t1/i2"] (mapv :scope hits)))))))))
 
 (defdescribe mid-turn-summarize-test
   (describe "summarize is callable mid-turn (not only at done)"
