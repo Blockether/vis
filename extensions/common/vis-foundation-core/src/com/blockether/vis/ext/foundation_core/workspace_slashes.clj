@@ -63,6 +63,13 @@
       (err (str "Already in draft '" (workspace/display-label current)
              "' — /draft apply or /draft abandon it first"))
 
+      ;; A draft MUST be named — an unlabeled draft is anonymous and
+      ;; indistinguishable in the tab strip / draft list. The TUI prompts for
+      ;; the label (see the `:slash/prompt-arg` on this spec); other channels
+      ;; get this explicit nudge instead of a silent "draft" default.
+      (nil? label)
+      (err "Name the draft: /draft new <label>")
+
       :else
       (let [draft (workspace/create! db {:session-state-id state-id :label label})]
         {:slash/status :ok
@@ -148,12 +155,15 @@
     :slash/usage  "/draft <new <label> | apply | abandon>"
     :slash/ui     {:kind :navigator}
     :slash/run-fn handle-status}
-   {:slash/name     "new"
-    :slash/parent   ["draft"]
-    :slash/doc      "Clone cwd into an isolated draft named <label> and enter it."
-    :slash/usage    "/draft new <label>"
-    :slash/requires #{:session}
-    :slash/run-fn   handle-new}
+   {:slash/name       "new"
+    :slash/parent     ["draft"]
+    :slash/doc        "Clone cwd into an isolated draft named <label> and enter it."
+    :slash/usage      "/draft new <label>"
+    ;; Typed with no label, the TUI pops a text-input asking for it rather
+    ;; than creating an anonymous draft.
+    :slash/prompt-arg "Draft label (e.g. feature-x)"
+    :slash/requires   #{:session}
+    :slash/run-fn     handle-new}
    {:slash/name     "apply"
     :slash/parent   ["draft"]
     :slash/doc      "Land the draft's changes into your repo and leave the draft."
