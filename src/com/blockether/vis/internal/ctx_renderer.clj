@@ -359,6 +359,8 @@
       "{" (zp :session/id)    "        " (zp (:session/id ctx))    "\n"
       " " (zp :session/turn)  "      "   (zp (:session/turn ctx))  "\n"
       " " (zp :session/scope) "     "    (zp (:session/scope ctx)) "\n"
+      (when-let [util (:engine/utilization ctx)]
+        (str " " (zp :session/utilization) " " (zp util) "\n"))
       "\n"
       (render-section :session/workspace
         (zp (or (:session/workspace ctx) {})) nil)                "\n\n"

@@ -3499,6 +3499,23 @@
                                        :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
                                        :iter-count (:iter-count @usage-atom)
                                        :context-limit effective-context-limit})
+                    ;; Stamp :engine/utilization onto the ctx so the next
+                    ;; render surfaces :session/utilization (how much of
+                    ;; the window the LAST request used). :engine/* is
+                    ;; stripped before persist, so the transient count
+                    ;; never enters the durable snapshot.
+                    _util-stamp
+                    (when-let [ca (:ctx-atom environment)]
+                      (let [u   @usage-atom
+                            req (if (pos? (long (:iter-count u)))
+                                  (long (:last-iter-input u))
+                                  (long (:input-tokens u)))]
+                        (if-let [util (ctx-engine/utilization
+                                        req effective-context-limit
+                                        (:input-tokens u)
+                                        safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS)]
+                          (swap! ca assoc :engine/utilization util)
+                          (swap! ca dissoc :engine/utilization))))
                     ;; D12: foundation hooks emit hook-task shapes
                     ;; `{:id <kw> :task <task-map>}`. Route each through
                     ;; `apply-mutator :task-set!` so the standard write
