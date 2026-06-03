@@ -381,51 +381,86 @@
 ;; Mutations
 ;; =============================================================================
 
+(defn draft?
+  "A workspace is a DRAFT (rift clone) when it carries a fork timestamp.
+   Trunk workspaces (the real cwd) have none."
+  [ws]
+  (some? (fork-ms-of ws)))
+
+(defn- rift-clone-dir
+  "Where rift materialises a clone named `name` for `trunk`:
+   ~/.rifts/<repo-basename>/<name>."
+  [trunk name]
+  (io/file (System/getProperty "user.home") ".rifts"
+    (.getName (io/file trunk)) name))
+
+(defn- free-draft-name
+  "Draft folder name derived from `label` that doesn't collide with an
+   existing rift clone (appends -2, -3, … on collision). So `/draft new
+   feature` lives at ~/.rifts/<repo>/feature."
+  [trunk label]
+  (let [base (sanitize-id (or label "draft"))]
+    (loop [n base i 2]
+      (if (.exists (rift-clone-dir trunk n))
+        (recur (str base "-" i) (inc i))
+        n))))
+
+(defn- insert-trunk!
+  "Insert a fresh TRUNK workspace row (root = repo_root = cwd, no clone,
+   no fork_ms) and pin it to `session-state-id` when given."
+  [db-info session-state-id]
+  (let [trunk (trunk-root)
+        ws    (p/db-workspace-insert! db-info
+                {:repo-id   (repo-id-for trunk)
+                 :repo-root trunk
+                 :root      trunk
+                 :state     :active})]
+    (when session-state-id
+      (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
+    ws))
+
+(defn ensure-workspace!
+  "Find-or-create the session's workspace. The DEFAULT is TRUNK — the
+   user's real cwd (no clone); the agent works directly in the repo
+   until `/draft new`. Resume returns whatever the session was pinned to
+   (trunk, or an open draft). Idempotent per session-state."
+  [db-info {:keys [session-state-id]}]
+  (or (for-session db-info session-state-id)
+    (insert-trunk! db-info session-state-id)))
+
 (defn create!
-  "Create a rift CoW clone and pin it 1:1 to `:session-state-id`.
-
-   `:from` nil  → clone the user's real cwd (trunk).
-   `:from` ws   → clone-of-a-clone (fork): clones that workspace's tree;
-                  the true `:repo-root` (trunk) is inherited so `apply!`
-                  still lands into cwd, and lineage is recorded via
-                  `parent_workspace_id` (+ rift `ancestors`).
-
-   Captures the fork timestamp (stored in `fork_ms`) for the
-   mtime-based since-fork diff. Returns the inserted workspace.
-   Fires :on-spawn."
-  [db-info {:keys [from session-state-id label]}]
-  (let [trunk   (or (:repo-root from) (trunk-root))
-        src     (or (:root from) trunk)
-        rid     (or (:repo-id from) (repo-id-for trunk))
-        ws-id   (str (UUID/randomUUID))
-        nm      (str (sanitize-id (or label "ws")) "-" (subs ws-id 0 8))
-        clone   (cow-clone! src rid nm)
-        ;; Capture AFTER the clone returns: every cloned file keeps its
-        ;; (older) source mtime, so only post-fork agent edits exceed this.
+  "Create a DRAFT: a rift CoW clone of the user's cwd whose folder is
+   named after `label` (`/draft new feature` → ~/.rifts/<repo>/feature),
+   and pin it 1:1 to `:session-state-id` (enters the draft). Captures the
+   fork timestamp (`fork_ms`) for the since-fork diff. Fires :on-spawn."
+  [db-info {:keys [session-state-id label]}]
+  (let [trunk   (trunk-root)
+        rid     (repo-id-for trunk)
+        nm      (free-draft-name trunk label)
+        clone   (cow-clone! trunk rid nm)
+        ;; Capture AFTER the clone returns: cloned files keep their (older)
+        ;; source mtime, so only post-fork agent edits exceed this.
         fork-ms (System/currentTimeMillis)
         ws      (p/db-workspace-insert! db-info
-                  {:id        ws-id
-                   :repo-id   rid
+                  {:repo-id   rid
                    :repo-root trunk
                    :root      clone
                    :state     :active
                    :fork-ms   fork-ms})
-        ws      (if (some-> label str/trim not-empty)
-                  (or (p/db-workspace-update-label! db-info ws-id (str/trim label)) ws)
-                  ws)]
+        ;; Label = the actual folder name (`nm`), so the displayed `<label>
+        ;; (DRAFT)` always matches the rift dir — including the -2/-3 suffix
+        ;; added when the requested name already exists.
+        ws      (or (p/db-workspace-update-label! db-info (:id ws) nm) ws)]
     (when session-state-id
       (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
     (fire-hook! :on-spawn ws)
     ws))
 
-(defn ensure-workspace!
-  "Find-or-create the rift clone pinned to `:session-state-id`. If the
-   session_state already has a pinned workspace, returns it; otherwise
-   clones cwd and pins it. Idempotent per session-state. Replaces the
-   old trunk-in-place bootstrap — every session now works in a clone."
-  [db-info {:keys [session-state-id]}]
-  (or (for-session db-info session-state-id)
-    (create! db-info {:session-state-id session-state-id})))
+(defn exit-to-trunk!
+  "Repoint `session-state-id` back to a TRUNK workspace (the real cwd),
+   leaving any draft. Returns the trunk workspace now pinned."
+  [db-info session-state-id]
+  (insert-trunk! db-info session-state-id))
 
 (defn apply!
   "Land the clone's since-fork edits into the user's real cwd (trunk),

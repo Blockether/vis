@@ -362,6 +362,10 @@
   (cond
     (and (map? answer) (string? (:answer answer)))      (:answer answer)
     (and (map? answer) (string? (:answer/text answer))) (:answer/text answer)
+    ;; Slash turns return `:answer` as a bare Markdown string (the already
+    ;; rendered `:slash/body`), not the `{:answer …}` map. That IS the
+    ;; markdown to extract — without this every slash renders a blank bubble.
+    (string? answer)                                    answer
     (seq fallback-text)                                 fallback-text
     :else                                               ""))
 

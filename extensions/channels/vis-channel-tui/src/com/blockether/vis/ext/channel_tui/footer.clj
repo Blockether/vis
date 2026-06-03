@@ -88,8 +88,23 @@
               (when (pos? ahead) (str " ⇡" ahead))
               (when (pos? behind) (str " ⇣" behind))))))
 (defn- git-footer-spans
-  [{:keys [workspace?], :as status}]
-  (if workspace?
+  [{:keys [workspace? draft?], :as status}]
+  (cond
+    ;; In a draft, the clone's internal git details (clone dir name,
+    ;; detached HEAD, no-upstream) are noise — show only that it IS a draft
+    ;; and how many files differ.
+    draft?
+    [{:text "◆ draft",
+      :fg t/footer-fg-strong,
+      :bold? true,
+      :region :right,
+      :priority 2}
+     {:text (git-dirty-label status),
+      :fg t/footer-fg-muted,
+      :bold? false,
+      :region :right,
+      :priority 3}]
+    workspace?
     [{:text (str git-label " " (git-repo-label status)),
       :fg t/footer-fg-strong,
       :bold? true,
@@ -105,6 +120,7 @@
       :bold? false,
       :region :right,
       :priority 4}]
+    :else
     [{:text (str "No " git-label),
       :fg t/footer-error-fg,
       :bold? true,
@@ -271,9 +287,14 @@
         reasoning-level (or (:reasoning-level settings) default-reasoning-level)
         codex-provider? (= :openai-codex provider)
         codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)
-        git-spans (git-footer-spans (if-let [root (:workspace/root db)]
-                                      (git/cached-working-tree-status (File. (str root)))
-                                      (git/cached-working-tree-status)))]
+        ws        (:workspace db)
+        ws-root   (:root ws)
+        in-draft? (some? (:fork-ms ws))
+        git-spans (git-footer-spans
+                    (cond-> (if ws-root
+                              (git/cached-working-tree-status (File. (str ws-root)))
+                              (git/cached-working-tree-status))
+                      in-draft? (assoc :draft? true)))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj

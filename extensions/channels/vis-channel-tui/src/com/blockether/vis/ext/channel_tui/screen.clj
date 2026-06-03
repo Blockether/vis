@@ -1561,10 +1561,21 @@
   [session-id]
   (when-let [session (try (vis/by-id session-id) (catch Throwable _ nil))]
     (let [title (:title session)] (when-not (str/blank? (str title)) (str title)))))
+(defn- session-workspace
+  "The rift draft pinned to `session-id` — a workspace record whose
+   `:root` is the clone path. Lets the TUI display layer (footer / badge)
+   reflect the actual draft instead of falling back to trunk."
+  [session-id]
+  (try
+    (when-let [db (vis/db-info)]
+      (when-let [st (vis/db-latest-session-state-id db session-id)]
+        (vis/workspace-for-session db st)))
+    (catch Throwable _ nil)))
+
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
   [{:keys [id history]}]
-  (state/dispatch [:init-session {:id id} history])
+  (state/dispatch [:init-session {:id id} history (session-workspace id)])
   (state/dispatch [:set-title (or (session-db-title id) "")])
   (subscribe-title-listener! id))
 (defn- terminal-ctrl-c-behaviour
