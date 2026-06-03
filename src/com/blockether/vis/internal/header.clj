@@ -46,23 +46,23 @@
 
 ;;; ── Workspace switcher sizing policy ───────────────────────────────────
 
-(def workspace-entry-padding
+(def tab-entry-padding
   "Inner padding (in display cells / spaces) reserved on each side of a
    workspace label so the label never crashes into the cell border."
   1)
 
-(def workspace-entry-target-width
+(def tab-entry-target-width
   "Natural width per workspace entry used to drive the visible-entry
    clamp. Wider → fewer workspaces fit before arrows appear; narrower →
    more workspaces fit but labels truncate sooner."
   14)
 
-(def min-visible-workspace-entries
+(def min-visible-tab-entries
   "Lower clamp for visible workspace count: even on narrowish screens we
    keep at least this many visible (the arrows reach the rest)."
   5)
 
-(def max-visible-workspace-entries
+(def max-visible-tab-entries
   "Upper clamp for visible workspace count: huge screens stop spreading
    past this — past it the centre slot would look like a header full of
    workspaces and nothing else."
@@ -72,18 +72,18 @@
   "How many workspaces to show inside `width` cells.
 
    Policy (identical across channels):
-   - clamp the natural fit `width / workspace-entry-target-width` to
-     `[min-visible-workspace-entries, max-visible-workspace-entries]`,
+   - clamp the natural fit `width / tab-entry-target-width` to
+     `[min-visible-tab-entries, max-visible-tab-entries]`,
    - never exceed `workspace-n` (cannot show what does not exist),
-   - if even `min-visible-workspace-entries` cannot fit the natural
+   - if even `min-visible-tab-entries` cannot fit the natural
      budget, fall back to the natural fit so tiny surfaces degrade
      gracefully."
   [workspace-n width]
   (let [width   (max 0 (long width))
-        natural (max 1 (quot width (long workspace-entry-target-width)))
-        clamped (max (long min-visible-workspace-entries)
-                  (min (long max-visible-workspace-entries) natural))
-        cap     (if (< natural (long min-visible-workspace-entries)) natural clamped)]
+        natural (max 1 (quot width (long tab-entry-target-width)))
+        clamped (max (long min-visible-tab-entries)
+                  (min (long max-visible-tab-entries) natural))
+        cap     (if (< natural (long min-visible-tab-entries)) natural clamped)]
     (min (long workspace-n) (long cap))))
 
 ;;; ── Glyphs ─────────────────────────────────────────────────────────────

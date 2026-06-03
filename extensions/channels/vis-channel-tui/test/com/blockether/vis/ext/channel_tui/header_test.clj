@@ -158,7 +158,7 @@
 
 (defdescribe draw-header-color-test
   (it "renders the lone workspace title as inert center text, not on the left"
-    ;; Fresh session has no `:workspaces` in app-db. The
+    ;; Fresh session has no `:tabs` in app-db. The
     ;; header synthesises one workspace label for the centre slot,
     ;; but does not render a switcher when there is nothing to switch.
     (cr/reset!)
@@ -215,18 +215,18 @@
           (expect (= t/header-fg (:fg title-write)))
           (expect (= t/header-hover-fg (:fg (write-by-text "123e4567")))))))))
 
-(defdescribe draw-header-workspace-entries-test
+(defdescribe draw-header-tab-entries-test
   (it "renders workspace switcher entries in the center header slot without adding rows"
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                  :active-workspace-id :feature
-                  :workspaces [{:id :main :label "Main"}
+                  :active-tab-id :feature
+                  :tabs [{:id :main :label "Main"}
                                {:id :feature :label "Feature" :dirty? true}
                                {:id :verify :label "Verify" :state :running}]}]
-      (expect (= 3 (header/header-rows (assoc db :workspaces [{:id :main}]))))
+      (expect (= 3 (header/header-rows (assoc db :tabs [{:id :main}]))))
       (expect (= 3 (header/header-rows db)))
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
@@ -238,7 +238,7 @@
                                         (not (str/blank? (:text %)))
                                         (< (long (or (:col %) 0)) 16))
                                @writes)
-            layout     (p/tab-layout (:workspaces db) 16 48 :feature {:gap 0})
+            layout     (p/tab-layout (:tabs db) 16 48 :feature {:gap 0})
             expected   (nth layout 1)
             tab-hit    (some #(when (and (= :workspace-entry (:kind %))
                                       (= 1 (:index %)))
@@ -290,8 +290,8 @@
                    (range 1 9))
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                  :active-workspace-id :tab-5
-                  :workspaces tabs}]
+                  :active-tab-id :tab-5
+                  :tabs tabs}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 50)
       (cr/commit-frame!)
@@ -306,15 +306,15 @@
 
   (it "pads workspace labels with breathing room inside each cell"
     ;; With 3 workspaces in a 48-col centre slot each cell is 16 cols wide.
-    ;; workspace-entry-padding=1 reserves a space on each side, so the rendered text
+    ;; tab-entry-padding=1 reserves a space on each side, so the rendered text
     ;; starts and ends with a space even when the label is short.
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                  :active-workspace-id :main
-                  :workspaces [{:id :main :label "Main"}
+                  :active-tab-id :main
+                  :tabs [{:id :main :label "Main"}
                                {:id :two :label "Two"}
                                {:id :three :label "Three"}]}]
       (cr/begin-frame!)
@@ -339,8 +339,8 @@
           g      (dummy-text-graphics writes)
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                  :active-workspace-id :one
-                  :workspaces (mapv (fn [i] {:id (keyword (str "t-" i))
+                  :active-tab-id :one
+                  :tabs (mapv (fn [i] {:id (keyword (str "t-" i))
                                              :label (str "LongTabLabel" i)})
                                 (range 5))}]
       (cr/begin-frame!)
@@ -361,8 +361,8 @@
                    (range 12))
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                  :active-workspace-id :big-0
-                  :workspaces tabs}]
+                  :active-tab-id :big-0
+                  :tabs tabs}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 400)
       (cr/commit-frame!)
@@ -385,8 +385,8 @@
                    (range 8))
           db     {:title "Chat"
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                  :active-workspace-id :narrow-0
-                  :workspaces tabs}]
+                  :active-tab-id :narrow-0
+                  :tabs tabs}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 50)
       (cr/commit-frame!)

@@ -1016,10 +1016,10 @@
 
       KeyType/Tab
       (if (.isShiftDown key)
-        {:action :select-workspace-index :workspace-index :next :state state}
+        {:action :select-tab-index :workspace-index :next :state state}
         {:action :continue :state state})
 
-      KeyType/ReverseTab {:action :select-workspace-index :workspace-index :next :state state}
+      KeyType/ReverseTab {:action :select-tab-index :workspace-index :next :state state}
 
       KeyType/Enter
       (if (.isAltDown key)

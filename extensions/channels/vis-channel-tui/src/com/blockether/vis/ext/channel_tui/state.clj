@@ -68,7 +68,7 @@
 (defn- bump-version [db]
   (update db :render-version (fnil inc 0)))
 
-(def ^:private workspace-state-keys
+(def ^:private tab-state-keys
   [:session
    :workspace
    :workspace/root
@@ -93,7 +93,7 @@
    :detail-expansions
    :mouse-selection])
 
-(defn- empty-workspace-state
+(defn- empty-tab-state
   []
   {:session nil
    :workspace nil
@@ -119,55 +119,55 @@
    :detail-expansions {}
    :mouse-selection nil})
 
-(defn- workspace-snapshot
+(defn- tab-snapshot
   [db]
-  (merge (empty-workspace-state)
-    (select-keys db workspace-state-keys)))
+  (merge (empty-tab-state)
+    (select-keys db tab-state-keys)))
 
-(defn- current-workspace-id
+(defn- current-tab-id
   [db]
-  (or (:active-workspace-id db)
-    (:id (some #(when (:active? %) %) (:workspaces db)))
-    (:id (first (:workspaces db)))))
+  (or (:active-tab-id db)
+    (:id (some #(when (:active? %) %) (:tabs db)))
+    (:id (first (:tabs db)))))
 
-(defn- active-workspace-entry
+(defn- active-tab-entry
   [db]
-  (let [active-id (current-workspace-id db)]
-    (some #(when (= (:id %) active-id) %) (:workspaces db))))
+  (let [active-id (current-tab-id db)]
+    (some #(when (= (:id %) active-id) %) (:tabs db))))
 
 (defn- active-workspace
   [db]
   (or (:workspace db)
-    (some-> (active-workspace-entry db) :workspace)
+    (some-> (active-tab-entry db) :workspace)
     (when-let [root (or (:workspace/root db)
-                      (some-> (active-workspace-entry db) :workspace/root))]
+                      (some-> (active-tab-entry db) :workspace/root))]
       {:workspace/root root})))
 
-(defn- sync-active-workspace
+(defn- sync-active-tab
   [db]
-  (if-let [id (current-workspace-id db)]
-    (assoc-in db [:workspace-locals id] (workspace-snapshot db))
+  (if-let [id (current-tab-id db)]
+    (assoc-in db [:tab-locals id] (tab-snapshot db))
     db))
 
 (defn tab-session-snapshot
   "Ordered open-tab session ids + the active one, for per-place persistence.
    Returns {:active <session-id-str|nil> :sessions [<session-id-str> …]} in
    left-to-right tab order. The active tab's session lives at the db root;
-   every other tab's lives in `:workspace-locals`."
+   every other tab's lives in `:tab-locals`."
   [db]
-  (let [entries   (vec (:workspaces db))
-        active-id (current-workspace-id db)
+  (let [entries   (vec (:tabs db))
+        active-id (current-tab-id db)
         sid       (fn [tab-id]
                     (if (= tab-id active-id)
                       (some-> db :session :id str)
-                      (some-> (get-in db [:workspace-locals tab-id :session :id]) str)))]
+                      (some-> (get-in db [:tab-locals tab-id :session :id]) str)))]
     {:active   (sid active-id)
      :sessions (vec (keep #(sid (:id %)) entries))}))
 
 (defn- finalize-db
   [db]
   (cond-> db
-    (map? db) sync-active-workspace))
+    (map? db) sync-active-tab))
 
 (defn dispatch
   "Dispatch an event vector, e.g. (dispatch [:send-message \"hello\"]).
@@ -594,7 +594,7 @@
   []
   (:provider (current-model-info)))
 
-(def ^:private ^:const max-workspaces 8)
+(def ^:private ^:const max-tabs 8)
 
 (def untitled-session-label
   "Default workspace label for a session without a title yet.
@@ -633,80 +633,80 @@
     (remove transcript-dump-input?)
     vec))
 
-(defn- workspace-number
+(defn- tab-number
   [entry]
   (when-let [[_ n] (some->> entry :id name (re-matches #"tab-(\d+)"))]
     (Long/parseLong n)))
 
-(defn- next-workspace-number
+(defn- next-tab-number
   [entries]
-  (inc (reduce max 0 (keep workspace-number entries))))
+  (inc (reduce max 0 (keep tab-number entries))))
 
-(defn- base-workspace-entry
+(defn- base-tab-entry
   [db]
-  {:id    (or (:active-workspace-id db) :main)
+  {:id    (or (:active-tab-id db) :main)
    :label (let [title (:title db)]
             (if (and (string? title) (not (str/blank? title)))
               title
               untitled-session-label))})
 
-(defn- workspaces-or-base
+(defn- tabs-or-base
   [db]
-  (let [entries (vec (:workspaces db))]
+  (let [entries (vec (:tabs db))]
     (if (seq entries)
       entries
-      [(base-workspace-entry db)])))
+      [(base-tab-entry db)])))
 
-(defn- active-workspace-label
+(defn- active-tab-label
   [db fallback]
   (let [title (:title db)]
     (if (and (string? title) (not (str/blank? title)))
       title
       (or fallback untitled-session-label))))
 
-(defn- ensure-workspaces
+(defn- ensure-tabs
   [db]
-  (let [entries (workspaces-or-base db)
-        active-id (or (current-workspace-id (assoc db :workspaces entries))
+  (let [entries (tabs-or-base db)
+        active-id (or (current-tab-id (assoc db :tabs entries))
                     (:id (first entries)))]
     (assoc db
-      :workspaces (mapv (fn [entry]
+      :tabs (mapv (fn [entry]
                           (cond-> (dissoc entry :active?)
                             (= (:id entry) active-id) (assoc :active? true)))
                     entries)
-      :active-workspace-id active-id)))
+      :active-tab-id active-id)))
 
-(defn- restore-workspace
+(defn- restore-tab
   [db workspace-id]
-  (merge db (or (get-in db [:workspace-locals workspace-id])
-              (empty-workspace-state))))
+  (merge db (or (get-in db [:tab-locals workspace-id])
+              (empty-tab-state))))
 
-(defn- activate-workspace
+(defn- activate-tab
   [db workspace-id]
   (-> db
-    sync-active-workspace
-    (assoc :active-workspace-id workspace-id)
-    (update :workspaces
+    sync-active-tab
+    (assoc :active-tab-id workspace-id)
+    (update :tabs
       (fn [entries]
         (mapv (fn [entry]
                 (cond-> (dissoc entry :active?)
                   (= (:id entry) workspace-id) (assoc :active? true)))
           entries)))
-    (restore-workspace workspace-id)))
+    (restore-tab workspace-id)))
 
-(defn- update-workspace
+(defn- update-tab
   [db workspace-id f]
-  (let [workspace-id (or workspace-id (current-workspace-id db))]
-    (if (and workspace-id (not= workspace-id (current-workspace-id db)))
-      (update-in db [:workspace-locals workspace-id]
+  (let [workspace-id (or workspace-id (current-tab-id db))]
+    (if (and workspace-id (not= workspace-id (current-tab-id db)))
+      (update-in db [:tab-locals workspace-id]
         (fn [snapshot]
-          (workspace-snapshot
-            (f (merge db (or snapshot (empty-workspace-state)))))))
+          (tab-snapshot
+            (f (merge db (or snapshot (empty-tab-state)))))))
       (f db))))
 
-(defn- workspace-session-id
+(defn- tab-session-id
   [db workspace-id]
-  (some-> (get-in db [:workspace-locals workspace-id :session :id]) str))
+  (some-> (get-in db [:tab-locals workspace-id :session :id]) str))
 
 (defn- reasoning-effort-configurable?
   []
@@ -759,9 +759,9 @@
                     :provider-limits nil
                     :channel-status {}
                     :detail-expansions {}
-                    :workspaces []
-                    :active-workspace-id nil
-                    :workspace-locals {}
+                    :tabs []
+                    :active-tab-id nil
+                    :tab-locals {}
                     :dialog-open? false
                   ;; Render thread coordination - see render-monitor docstring.
                     :render-version 0
@@ -876,11 +876,11 @@
     ;; chrome row repainted with its hover background.
     db))
 
-(reg-event-db :create-workspace
+(reg-event-db :create-tab
   (fn [db [_ opts]]
-    (let [db        (-> db ensure-workspaces sync-active-workspace)
-          entries   (vec (:workspaces db))
-          n         (next-workspace-number entries)
+    (let [db        (-> db ensure-tabs sync-active-tab)
+          entries   (vec (:tabs db))
+          n         (next-tab-number entries)
           id        (keyword (str "tab-" n))
           workspace (:workspace opts)
           root      (or (:workspace/root workspace) (:workspace/root opts))
@@ -890,22 +890,22 @@
           entry     (cond-> {:id id :label label :active? true}
                       workspace (assoc :workspace workspace)
                       root      (assoc :workspace/root root))]
-      (if (>= (count entries) max-workspaces)
+      (if (>= (count entries) max-tabs)
         db
         (cond-> (-> db
-                  (assoc :workspaces (conj (mapv #(dissoc % :active?) entries) entry)
-                    :active-workspace-id id)
-                  (merge (empty-workspace-state)))
+                  (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+                    :active-tab-id id)
+                  (merge (empty-tab-state)))
           workspace (assoc :workspace workspace)
           root      (assoc :workspace/root root))))))
 
-(reg-event-db :select-workspace-index
+(reg-event-db :select-tab-index
   (fn [db [_ idx]]
-    (let [db      (-> db ensure-workspaces sync-active-workspace)
-          entries (vec (:workspaces db))
+    (let [db      (-> db ensure-tabs sync-active-tab)
+          entries (vec (:tabs db))
           idx     (if (#{:next :prev} idx)
                     (when (seq entries)
-                      (let [active-id (or (:active-workspace-id db)
+                      (let [active-id (or (:active-tab-id db)
                                         (:id (some #(when (:active? %) %) entries))
                                         (:id (first entries)))
                             current   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) entries))
@@ -914,19 +914,19 @@
                         (mod (+ current delta) (count entries))))
                     idx)]
       (if-let [entry (and (integer? idx) (nth entries idx nil))]
-        (activate-workspace db (:id entry))
+        (activate-tab db (:id entry))
         db))))
 
-(reg-event-db :select-workspace-by-session
+(reg-event-db :select-tab-by-session
   (fn [db [_ session-id]]
     (let [target-id (some-> session-id str)
-          db        (-> db ensure-workspaces sync-active-workspace)
-          entries   (vec (:workspaces db))
+          db        (-> db ensure-tabs sync-active-tab)
+          entries   (vec (:tabs db))
           entry     (when target-id
-                      (some #(when (= target-id (workspace-session-id db (:id %))) %)
+                      (some #(when (= target-id (tab-session-id db (:id %))) %)
                         entries))]
       (if entry
-        (activate-workspace db (:id entry))
+        (activate-tab db (:id entry))
         db))))
 
 (reg-event-db :set-mouse-selection
@@ -961,7 +961,7 @@
   (fn [db [_ session history workspace]]
     (let [user-history (history-user-texts history)]
       (-> db
-        ensure-workspaces
+        ensure-tabs
         (assoc :session session
           ;; The session's current workspace record (trunk or draft) — the
           ;; single source the footer/header read to show trunk vs
@@ -988,29 +988,29 @@
   ;; WITHOUT disturbing the active tab. If a tab is already bound to this
   ;; session, focus it; otherwise mint a new tab and bind it. This is what
   ;; makes sessions run concurrently: opening/switching never resets the
-  ;; running tab — its turn keeps streaming into its own `:workspace-locals`.
+  ;; running tab — its turn keeps streaming into its own `:tab-locals`.
   (fn [db [_ session history workspace]]
     (let [sid      (some-> session :id str)
           ;; Freeze the current tab (incl. any in-flight turn) into its locals
           ;; before we change focus, so its streaming worker keeps updating it.
-          db       (-> db ensure-workspaces sync-active-workspace)
-          entries  (vec (:workspaces db))
+          db       (-> db ensure-tabs sync-active-tab)
+          entries  (vec (:tabs db))
           existing (when sid
-                     (some #(when (= sid (workspace-session-id db (:id %))) %) entries))]
+                     (some #(when (= sid (tab-session-id db (:id %))) %) entries))]
       (if existing
-        (activate-workspace db (:id existing))
-        (let [n     (next-workspace-number entries)
+        (activate-tab db (:id existing))
+        (let [n     (next-tab-number entries)
               id    (keyword (str "tab-" n))
               label (or (some-> workspace :label not-empty) untitled-session-label)
               entry (cond-> {:id id :label label :active? true}
                       workspace        (assoc :workspace workspace)
                       (:root workspace) (assoc :workspace/root (:root workspace)))]
           (-> db
-            (assoc :workspaces (conj (mapv #(dissoc % :active?) entries) entry)
-              :active-workspace-id id)
+            (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+              :active-tab-id id)
             ;; Make the new tab the live root state (a fresh session view);
             ;; finalize-db snapshots this back into the tab's locals.
-            (merge (empty-workspace-state))
+            (merge (empty-tab-state))
             (assoc :session session
               :workspace workspace
               :workspace/root (:root workspace)
@@ -1021,15 +1021,15 @@
 (reg-event-db :set-title
   (fn [db [_ title]]
     (let [db' (assoc db :title title)
-          active-id (current-workspace-id db')]
+          active-id (current-tab-id db')]
       (cond-> db'
         active-id
-        (update :workspaces
+        (update :tabs
           (fn [entries]
             (mapv (fn [entry]
                     (cond-> entry
                       (= (:id entry) active-id)
-                      (assoc :label (active-workspace-label db' (:label entry)))))
+                      (assoc :label (active-tab-label db' (:label entry)))))
               entries)))))))
 
 (reg-event-db :update-input
@@ -1079,7 +1079,7 @@
 
 (reg-event-db :external-input
   (fn [db [_ op text workspace-id]]
-    (update-workspace db workspace-id #(apply-external-input % op text))))
+    (update-tab db workspace-id #(apply-external-input % op text))))
 
 (reg-event-db :channel-status-set
   (fn [db [_ id status]]
@@ -1322,22 +1322,22 @@
   (when (= :openai-codex (current-provider-id))
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
 
-(defn- db-for-workspace
+(defn- db-for-tab
   [db workspace-id]
-  (if (= workspace-id (current-workspace-id db))
+  (if (= workspace-id (current-tab-id db))
     db
-    (merge db (or (get-in db [:workspace-locals workspace-id])
-                (empty-workspace-state)))))
+    (merge db (or (get-in db [:tab-locals workspace-id])
+                (empty-tab-state)))))
 
 (defn- enqueue-message-result
   [db workspace-id text]
-  (let [workspace-id (or workspace-id (current-workspace-id db))
-        source-db    (db-for-workspace db workspace-id)
+  (let [workspace-id (or workspace-id (current-tab-id db))
+        source-db    (db-for-tab db workspace-id)
         entry        {:text          text
                       :pastes        (:pastes source-db)
                       :paste-counter (:paste-counter source-db)
                       :queued-at-ms  (System/currentTimeMillis)}]
-    {:db (update-workspace db workspace-id
+    {:db (update-tab db workspace-id
            (fn [w]
              (-> w
                (update :pending-sends
@@ -1361,8 +1361,8 @@
   ;;      a short read-now directive for the AGENT; the model picks
   ;;      the right tool (`v/cat`, `z/symbols`, etc.) itself.
   (fn [db [_ text workspace-id]]
-    (let [workspace-id (or workspace-id (current-workspace-id db))
-          source-db    (db-for-workspace db workspace-id)
+    (let [workspace-id (or workspace-id (current-tab-id db))
+          source-db    (db-for-tab db workspace-id)
           visible-text (input/expand-paste-placeholders text (:pastes source-db))]
       (cond
         (transcript-dump-input? visible-text)
@@ -1387,7 +1387,7 @@
               reasoning-level (when (reasoning-effort-configurable?)
                                 (get-in db [:settings :reasoning-level]))
               client-turn-id (str (java.util.UUID/randomUUID))]
-          {:db (update-workspace db workspace-id
+          {:db (update-tab db workspace-id
                  (fn [w]
                    (-> w
                      (update :messages conj (assoc (chat/user-message visible-text)
@@ -1437,7 +1437,7 @@
   ;; longer wanted. Cancelling the in-flight turn must NOT auto-drop
   ;; them; that would reintroduce silent loss.
   (fn [db _]
-    (update-workspace db (current-workspace-id db)
+    (update-tab db (current-tab-id db)
       (fn [w] (assoc w :pending-sends [])))))
 
 (reg-event-fx :drain-pending
@@ -1447,7 +1447,7 @@
   ;; mutation: swap! may retry and duplicate provider turns.
   (fn [db [_ workspace-id]]
     (let [head-atom (atom nil)
-          db'       (update-workspace db workspace-id
+          db'       (update-tab db workspace-id
                       (fn [w]
                         (let [q (vec (or (:pending-sends w) []))]
                           (if-let [h (first q)]
@@ -1478,8 +1478,8 @@
   (fn [db [_ a b]]
     (let [[workspace-id iterations] (if (keyword? a)
                                       [a b]
-                                      [(current-workspace-id db) a])]
-      (update-workspace db workspace-id
+                                      [(current-tab-id db) a])]
+      (update-tab db workspace-id
         (fn [workspace]
           (if-not (:loading? workspace)
             workspace
@@ -1490,9 +1490,9 @@
     (let [[workspace-id answer {:keys [model provider llm-selected llm-actual llm-fallback? llm-routing-trace iteration-count duration-ms tokens cost confidence session-turn-id status client-turn-id]}]
           (if (keyword? a)
             [a b c]
-            [(current-workspace-id db) a b])
+            [(current-tab-id db) a b])
           drain? (volatile! false)
-          db'    (update-workspace db workspace-id
+          db'    (update-tab db workspace-id
                    (fn [workspace]
                      (let [trace (get-in workspace [:progress :iterations])
                            cancelled? (= :cancelled status)
@@ -1566,7 +1566,7 @@
              ;; Ring the terminal bell when a turn finishes in a tab that
              ;; ISN'T focused — that's the one case you can't see complete on
              ;; screen, so the background session needs to announce itself.
-             (and (not= workspace-id (current-workspace-id db))
+             (and (not= workspace-id (current-tab-id db))
                (not= :cancelled status))
              (conj [:bell]))})))
 

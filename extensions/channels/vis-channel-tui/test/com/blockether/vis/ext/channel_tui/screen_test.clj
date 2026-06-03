@@ -72,8 +72,8 @@
 (def ^:private copy-bubble!
   (deref #'screen/copy-bubble!))
 
-(def ^:private activate-workspace-entry-hit!
-  (deref #'screen/activate-workspace-entry-hit!))
+(def ^:private activate-tab-entry-hit!
+  (deref #'screen/activate-tab-entry-hit!))
 
 (def ^:private open-click-target!
   (deref #'screen/open-click-target!))
@@ -334,26 +334,26 @@
 
 (defdescribe workspace-entry-click-test
   (it "switches to the clicked workspace and refreshes active session state"
-    (reset! state/app-db {:workspaces [{:id :main :label "Main" :active? true}
+    (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}
                                        {:id :tab-1 :label "Tab 1"}]
-                          :active-workspace-id :main
+                          :active-tab-id :main
                           :session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")
                           :input-history ["main prompt"]
-                          :workspace-locals {:tab-1 {:session {:id "tab-c"}
+                          :tab-locals {:tab-1 {:session {:id "tab-c"}
                                                      :messages [{:role :user :text "tab prompt"}]
                                                      :input (input/paste-text (input/empty-input) "tab draft")
                                                      :input-history ["tab prompt"]}}})
     (let [refreshes (atom [])]
-      (activate-workspace-entry-hit! #(swap! refreshes conj %) {:kind :workspace-entry :index 1})
-      (expect (= :tab-1 (:active-workspace-id @state/app-db)))
+      (activate-tab-entry-hit! #(swap! refreshes conj %) {:kind :workspace-entry :index 1})
+      (expect (= :tab-1 (:active-tab-id @state/app-db)))
       (expect (= {:id "tab-c"} (:session @state/app-db)))
       (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
       (expect (= "tab draft" (input/input->text (:input @state/app-db))))
       (expect (= [false] @refreshes))
 
-      (activate-workspace-entry-hit! #(swap! refreshes conj %) {:kind :workspace-entry :index 1})
+      (activate-tab-entry-hit! #(swap! refreshes conj %) {:kind :workspace-entry :index 1})
       (expect (= [false] @refreshes)))))
 
 (defdescribe terminal-interrupt-test
