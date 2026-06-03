@@ -5238,21 +5238,20 @@
                                                              :else                   {:answer (pr-str s)
                                                                                       :vis/coerced? true})
                                          summarize         (when (map? value) (:summarize value))
-                                         ;; Phase F (redesigned): extract :answer + optional
-                                         ;; :answer-summary + free-form :turn-summary so the engine can
-                                         ;; write a compact `:turn-N-summary` fact under :session/facts.
-                                         ;; The fact carries question + 1-paragraph answer synopsis +
-                                         ;; entity ids born/done this turn (NOT the full answer body;
-                                         ;; that ships separately via the answer channel + DB column).
-                                         ;; Next turn's ;; ctx EDN block surfaces this fact inside the
-                                         ;; cached prefix — replaces the previous-turn-context user-message
-                                         ;; rebuild that assemble-initial-messages used to inject.
+                                         ;; Phase F (redesigned): extract :answer + free-form
+                                         ;; :turn-summary so the engine can write the
+                                         ;; `:turn-N-answer` fact under :session/facts. The fact
+                                         ;; carries the question + the FULL answer markdown verbatim
+                                         ;; under :content (head+tail-clipped in-prompt, recallable in
+                                         ;; full) + entity ids born/done this turn. Next turn's ;; ctx
+                                         ;; EDN block surfaces this fact inside the cached prefix —
+                                         ;; replaces the previous-turn-context user-message rebuild
+                                         ;; that assemble-initial-messages used to inject.
                                          answer-text       (cond
                                                              (and (map? value) (string? (:answer value))) (:answer value)
                                                              (and (map? value) (string? (:answer/text value))) (:answer/text value)
                                                              (string? value) value
                                                              :else nil)
-                                         answer-summary    (when (map? value) (:answer-summary value))
                                          turn-summary      (when (map? value) (:turn-summary value))
                                          ;; Question = the user request that opened this turn. Pulled
                                          ;; from the live turn-state so the fact carries the prompt
@@ -5267,7 +5266,6 @@
                                          current-title   (some-> session-title-atom deref str str/trim not-empty)
                                          done-ret          (ctx-loop/apply-done! done-env
                                                              {:answer         answer-text
-                                                              :answer-summary answer-summary
                                                               :turn-summary   turn-summary
                                                               :user-request   user-request
                                                               :session-title  current-title

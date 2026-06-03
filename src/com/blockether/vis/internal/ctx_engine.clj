@@ -1165,16 +1165,16 @@
   "Process a `(done {…})` form against the ctx trailer + entity archive.
    The :answer field IS handled here in Phase F: when present + non-blank,
    the engine auto-writes a `:turn-N-answer` fact under `:session/facts`
-   carrying a one-line `:summary` and the full `:body`. Next turn's `;; ctx`
-   EDN block surfaces that fact inside the cached prefix, so cross-turn answer
-   reference is free — the model reads `(lens :turn-N-answer)`
-   instead of vis re-sending `previous-turn-context-block` (deprecated).
+   whose `:content` is the FULL answer markdown, verbatim — no lossy
+   synopsis at write-time. The fact rides into next turn's cached `;; ctx`
+   prefix; the renderer head+tail-clips oversized `:content` to a stub with
+   a `(recall :turn-N-answer)` hint, so cross-turn answer reference is a
+   normal fact lookup and the full body is one `recall` away.
 
    `args` map keys:
-     :answer             markdown payload (Phase F: auto-fact + loop ships to channel)
-     :answer-summary     optional one-line summary the model emits; falls
-                         back to the first non-blank paragraph of :answer
-                         when omitted.
+     :answer     markdown payload — stored verbatim as the
+                 `:turn-N-answer` fact `:content`; the loop also ships it
+                 to the channel.
      :summarize  the ONE cleanup verb. Compress N→1 across all three
                  surfaces — never drop, always leave a recap:
                    `{:trailer [{:scope-start :scope-end :summary} …]
@@ -1182,8 +1182,9 @@
                      :tasks   [{:keys [k…] :into key? :summary str} …]}`
                  trailer range → one recap stub pin; N facts/tasks →
                  one new summary FACT, originals flipped `:archived`
-                 (recoverable via (recall :K)). No `:specs`
-                 (no such subtree).
+                 (recoverable via (recall :K)). Answer facts compress the
+                 SAME way — full answers are summarized AFTER the turn, not
+                 truncated at birth. No `:specs` (no such subtree).
 
    Nothing is ever hard-deleted — summarize compresses, the raw data
    stays in the DB (trailer pins + entities recoverable via recall).
@@ -1192,44 +1193,30 @@
    trailer pins under size pressure (`ensure-prompt-under-budget!`),
    using the same stub mechanism; this arg is the model's override."
   [ctx form-scope
-   {:keys [answer answer-summary user-request turn-summary summarize]}]
+   {:keys [answer user-request turn-summary summarize]}]
   (apply-done-impl ctx
     form-scope
     {:answer answer,
-     :answer-summary answer-summary,
      :user-request user-request,
      :turn-summary turn-summary,
      :summarize summarize}))
-(defn- first-paragraph-summary
-  "Phase F fallback: when the model didn't emit `:answer-summary`,
-   take the first non-blank paragraph (up to ~280 chars) as the
-   auto-fact summary. Better than nothing; nudges the model to emit
-   explicit summaries since the auto extraction is necessarily lossy."
-  [^String answer]
-  (when (and answer (not (clojure.string/blank? answer)))
-    (let [trimmed (clojure.string/trim answer)
-          first-blank (or (clojure.string/index-of trimmed "\n\n")
-                        (clojure.string/index-of trimmed "\r\n\r\n")
-                        (count trimmed))
-          para (subs trimmed 0 first-blank)]
-      (if (> (count para) 280) (str (subs para 0 277) "…") para))))
-(defn- auto-fact-for-turn-summary
-  "Phase F: build the `:turn-N-summary` fact — a compact recap of the
-   just-closed turn for cross-turn reference inside the cached `;; ctx`
-   EDN prefix. The full :answer markdown is NOT stored here (ships via
-   the answer channel + `session_turn_state.answer_markdown` column);
-   the fact is the model's lookup index, not the artefact.
+(defn- auto-fact-for-turn-answer
+  "Phase F: build the `:turn-N-answer` fact — the FULL answer for the
+   just-closed turn, stored as a first-class fact so cross-turn reference
+   is a normal fact lookup and compression is the normal `summarize` verb
+   (N answer-facts → 1 recap, originals :archived, recoverable via
+   `recall`). NO lossy synopsis is baked in at write-time; the renderer
+   head+tail-clips oversized `:content` in-prompt with a `(recall …)` hint,
+   while the stored value stays verbatim.
 
-   Auto-derived skeleton (TWO content fields):
+   Content fields:
 
-     :question         user request that started the turn
-     :answer-summary   one-paragraph synopsis (model `:answer-summary`
-                       arg or first paragraph of :answer, 280-char cap)
+     :question   user request that started the turn
+     :content    the FULL answer markdown, verbatim
 
    Model can reconstruct what changed across the turn by walking
-   :session/{facts,specs,tasks} entries whose :born or :done-born
-   starts with the matching scope prefix — no separate event log
-   needed.
+   :session/{facts,tasks} entries whose :born or :done-born starts with
+   the matching scope prefix — no separate event log needed.
 
    Plus engine-owned framing: `:status :active`, `:scope \"tN\"`,
    `:source :done-auto`, `:born <form-scope>`. Reserved keys cannot
@@ -1237,10 +1224,8 @@
 
    Returns `[fact-id fact-value]` or nil when nothing happened
    (no answer AND no entity-level transitions — a fully silent
-   close-of-turn, e.g. cancelled iter that touched nothing).
-
-"
-  [ctx form-scope {:keys [user-request answer answer-summary model-summary]}]
+   close-of-turn, e.g. cancelled iter that touched nothing)."
+  [ctx form-scope {:keys [user-request answer model-summary]}]
   (let [turn-pos (or (:session/turn ctx) 0)
         answer-str (some-> answer
                      str
@@ -1250,12 +1235,6 @@
                    str
                    clojure.string/trim
                    not-empty)
-        synopsis (or (some-> answer-summary
-                       str
-                       clojure.string/trim
-                       not-empty)
-                   (some-> answer-str
-                     first-paragraph-summary))
         ;; A turn is worth recording when EITHER the user got an answer
         ;; OR at least one entity transitioned in this turn (born scope
         ;; or done-born scope starts with t<turn-pos>/).
@@ -1269,35 +1248,33 @@
                             (or m {})))
                     [(:session/facts ctx) (:session/tasks ctx)])
         meaningful? (or (some? answer-str) any-born?)
-        reserved #{:status :source :scope :born}
+        reserved #{:status :source :scope :born :question :content}
         model-extras (when (map? model-summary)
                        (into {} (remove (fn [[k _]] (contains? reserved k)) model-summary)))
-        fact-id (keyword (str "turn-" turn-pos "-summary"))
+        fact-id (keyword (str "turn-" turn-pos "-answer"))
         base (cond->
                {:status :active, :scope (str "t" turn-pos), :source :done-auto, :born form-scope}
-               question (assoc :question question)
-               synopsis (assoc :answer-summary synopsis))]
+               question   (assoc :question question)
+               answer-str (assoc :content answer-str))]
     (when meaningful? [fact-id (merge model-extras base)])))
 (defn- apply-done-impl
   "– the un-gated core of `apply-done`. Pulled out so the
    gate can short-circuit cleanly; callers must use `apply-done`."
   [ctx form-scope
-   {:keys [answer answer-summary user-request turn-summary summarize]}]
+   {:keys [answer user-request turn-summary summarize]}]
   (let [{ctx-summ :ctx summarize-warns :warnings}
         (apply-summarize ctx form-scope (or summarize {}))
-        ;; Phase F (redesigned): compact `:turn-N-summary` fact. Carries
-        ;; question + 1-paragraph answer synopsis + entity ids born/done
-        ;; this turn. The full :answer markdown is NOT stored here
-        ;; (ships via answer channel + DB answer_markdown column);
-        ;; this fact is the cross-turn lookup index that rides inside
-        ;; the cached ;; ctx EDN prefix. Optional `:turn-summary` arg
-        ;; from the model adds free-form fields (action list,
-        ;; what-we-did narrative) merged onto the auto skeleton.
-        auto-fact-entry (auto-fact-for-turn-summary ctx
+        ;; Phase F (redesigned): `:turn-N-answer` fact carries the FULL
+        ;; answer markdown verbatim under :content (head+tail-clipped
+        ;; in-prompt, recallable in full) plus the question + entity ids
+        ;; born/done this turn. Compression is deferred to the normal
+        ;; `summarize` verb — answers are summarized AFTER the turn, never
+        ;; truncated at birth. Optional `:turn-summary` arg from the model
+        ;; adds free-form fields merged onto the auto skeleton.
+        auto-fact-entry (auto-fact-for-turn-answer ctx
                           form-scope
                           {:user-request user-request,
                            :answer answer,
-                           :answer-summary answer-summary,
                            :model-summary turn-summary})
         sorted (sort-trailer (:session/trailer ctx-summ))
         ctx-final (cond-> (assoc ctx-summ :session/trailer sorted)
@@ -1372,17 +1349,6 @@
                  (= source :archived) (update :session/archived dissoc id))
        :found? true, :kind kind, :key key})
     {:ctx ctx, :found? false, :kind nil, :key nil}))
-(defn summarized-iter-ranges
-  "Pure: the `[scope-start scope-end]` iter ranges covered by live
-   summary stubs in `trailer`. `find` excludes hits inside these so
-   search stays over NON-summarized trace only."
-  [trailer]
-  (vec (keep (fn [e] (when (:scope-start e) [(:scope-start e) (:scope-end e)]))
-         (or trailer []))))
-(defn scope-in-summarized?
-  "True when iter-scope `tN/iM` falls inside any summarized `ranges`."
-  [ranges scope]
-  (boolean (some (fn [[a b]] (iter-in-range? scope a b)) ranges)))
 (defn utilization
   "Pure: the `:session/utilization` map the model reads to see how much
    of the context window the LAST request consumed. Keys are spelled out
