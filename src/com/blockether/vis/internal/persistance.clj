@@ -326,7 +326,6 @@
 ;; --- CTX snapshots (per-turn :session/* state, Nippy in session_turn_state.ctx) ---
 (defdelegate db-load-latest-ctx [db-info session-id])
 (defdelegate db-load-ctx-history [db-info session-id])
-(defdelegate db-load-ctx-at-turn [db-info session-id turn-position])
 
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])

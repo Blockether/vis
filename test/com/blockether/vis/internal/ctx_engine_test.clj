@@ -744,16 +744,39 @@
       (expect (= :t3/auth (eng/entity-id "t3/i2/f1" :auth)))
       (expect (= :t12/setup (eng/entity-id "t12/i1/f4" :setup))))
 
-    (it "id->turn parses the birth turn back out for targeted snapshot load"
-      (expect (= 3 (eng/id->turn :t3/auth)))
-      (expect (= 12 (eng/id->turn :t12/setup)))
-      (expect (nil? (eng/id->turn :auth))))
-
-    (it "find-entity-by-id locates across facts+tasks (facts first)"
-      (let [ctx {:session/facts {:a {:id :t1/a}} :session/tasks {:b {:id :t2/b}}}]
-        (expect (= :fact (:kind (eng/find-entity-by-id ctx :t1/a))))
-        (expect (= :task (:kind (eng/find-entity-by-id ctx :t2/b))))
+    (it "find-entity-by-id locates across live facts+tasks AND :session/archived"
+      (let [ctx {:session/facts {:a {:id :t1/a}}
+                 :session/tasks {:b {:id :t2/b}}
+                 :session/archived {:t3/c {:id :t3/c :content "gone"
+                                           :vis/kind :fact :vis/key :c}}}]
+        (expect (= {:source :live :kind :fact} (select-keys (eng/find-entity-by-id ctx :t1/a) [:source :kind])))
+        (expect (= {:source :live :kind :task} (select-keys (eng/find-entity-by-id ctx :t2/b) [:source :kind])))
+        (let [hit (eng/find-entity-by-id ctx :t3/c)]
+          (expect (= :archived (:source hit)))
+          (expect (= :fact (:kind hit)))
+          (expect (= :c (:key hit)))
+          (expect (= "gone" (get-in hit [:entry :content]))))
         (expect (nil? (eng/find-entity-by-id ctx :t9/none)))))
+
+    (it "gc-pass moves an archived entity (past TTL) into :session/archived"
+      (let [ctx {:session/scope {:turn 5}
+                 :session/facts {:auth {:id :t3/auth :content "JWT"
+                                        :status :archived :done-born "t3/i2/f1"}}}
+            gced (eng/gc-pass ctx)]
+        (expect (not (contains? (:session/facts gced) :auth)))
+        (expect (= "JWT" (get-in gced [:session/archived :t3/auth :content])))
+        (expect (= :fact (get-in gced [:session/archived :t3/auth :vis/kind])))))
+
+    (it "recall-entity restores from :session/archived (removes the archived copy)"
+      (let [ctx {:session/facts {}
+                 :session/archived {:t3/auth {:id :t3/auth :content "JWT"
+                                              :vis/kind :fact :vis/key :auth}}}
+            {rc :ctx :keys [found? kind]} (eng/recall-entity ctx :t3/auth "t5/i1/f1" "need it")]
+        (expect found?)
+        (expect (= :fact kind))
+        (expect (= :active (get-in rc [:session/facts :auth :status])))
+        (expect (= "need it" (get-in rc [:session/facts :auth :recalled :why])))
+        (expect (not (contains? (:session/archived rc) :t3/auth)))))
 
     (it "task-set! stamps :id on creation (turn from the form-scope)"
       (let [{ctx' :ctx} (eng/apply-mutator (eng/empty-ctx "s") "t3/i1/f1"
