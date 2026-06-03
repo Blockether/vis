@@ -446,15 +446,31 @@
                :hint "(recall {:ids […] :why \"…\"}) — :why is REQUIRED to restore (say why it's back)"}
               (let [scope (synthesize-scope env)
                     ids-out    (atom [])
-                    scopes-out (atom [])]
+                    scopes-out (atom [])
+                    ;; LIVE first (same-turn :archived). If GC'd, fall
+                    ;; back to a TARGETED snapshot load of the birth turn
+                    ;; encoded in the id (:t3/auth -> turn 3) — O(1), no
+                    ;; history scan — and re-insert into live.
+                    restore-id
+                    (fn [id]
+                      (let [out (atom nil)]
+                        (when-let [ca (:ctx-atom env)]
+                          (swap! ca (fn [c] (let [r (eng/recall-entity c id scope (str why))]
+                                              (reset! out r) (:ctx r)))))
+                        (if (:found? @out)
+                          {:id id :restored (:kind @out) :key (:key @out) :source :live}
+                          (let [turn (eng/id->turn id)
+                                snap (when turn (persistance/db-load-ctx-at-turn db sid turn))
+                                hit  (when snap (eng/find-entity-by-id snap id))]
+                            (if hit
+                              (let [{:keys [subtree key kind entry]} hit]
+                                (when-let [ca (:ctx-atom env)]
+                                  (swap! ca assoc-in [subtree key]
+                                    (eng/restored-entry entry kind scope (str why))))
+                                {:id id :restored kind :key key :source :snapshot})
+                              {:id id :vis/error :not-found})))))]
                 (doseq [id (or ids [])]
-                  (let [out (atom nil)]
-                    (when-let [ca (:ctx-atom env)]
-                      (swap! ca (fn [c] (let [r (eng/recall-entity c id scope (str why))]
-                                          (reset! out r) (:ctx r)))))
-                    (swap! ids-out conj (if (:found? @out)
-                                          {:id id :restored (:kind @out) :key (:key @out)}
-                                          {:id id :vis/error :not-found}))))
+                  (swap! ids-out conj (restore-id id)))
                 (doseq [sc (or scopes [])]
                   (if-let [pin (iter-pin sc)]
                     (do (when-let [ca (:ctx-atom env)]

@@ -1301,27 +1301,44 @@
               :vis/size   total          ; total chars (offset bound)
               :view       (subs s off end)}
        (< end total) (assoc :vis/next (str "(recall " addr-str " {:offset " end "})"))))))
+(defn id->turn
+  "Parse the birth turn out of a stable entity id `:t<N>/key`
+   (`:t3/auth` => 3). Lets `recall` load the EXACT turn snapshot for a
+   GC'd entity instead of scanning history. nil when not a `t<N>/`-id."
+  [id]
+  (when (keyword? id)
+    (when-let [ns (namespace id)]
+      (when-let [[_ n] (re-matches #"t([1-9][0-9]*)" ns)]
+        (parse-long n)))))
+(defn find-entity-by-id
+  "Locate the entity whose stable `:id` = `id` in `ctx`. Returns
+   `{:subtree :key :kind :entry}` (facts before tasks) or nil. Pure —
+   works on the live ctx OR a loaded DB snapshot."
+  [ctx id]
+  (or (some (fn [[k v]] (when (= id (:id v))
+                          {:subtree :session/facts :key k :kind :fact :entry v}))
+        (:session/facts ctx))
+    (some (fn [[k v]] (when (= id (:id v))
+                        {:subtree :session/tasks :key k :kind :task :entry v}))
+      (:session/tasks ctx))))
+(defn restored-entry
+  "The entity `entry` flipped back to live (`:active` fact / `:todo`
+   task) and stamped `:recalled {:scope :why}` so the render shows WHY
+   it came back."
+  [entry kind scope why]
+  (merge entry {:status (case kind :fact :active :task :todo)
+                :recalled {:scope scope :why why}}))
 (defn recall-entity
-  "Restore the entity whose stable `:id` = `id` back to live: flip
-   `:archived` to `:active` (fact) / `:todo` (task) and stamp
-   `:recalled {:scope <cur> :why <why>}` so the trailer shows WHY it was
-   brought back. Searches facts then tasks by `:id` (live ctx only —
-   covers the same-turn summarize→recall path; cross-turn aged-out
-   entities are reached via `recall {:match …}` → the form that set them).
-   Returns `{:ctx :found? :kind :key}`."
+  "Restore the entity whose stable `:id` = `id` from the LIVE ctx: flip
+   `:archived` back to live and stamp `:recalled`. Returns
+   `{:ctx :found? :kind :key}`. Cross-turn (GC'd) entities are handled
+   by the binding via a targeted DB-snapshot load (`id->turn`)."
   [ctx id scope why]
-  (let [match (fn [subtree] (some (fn [[k v]] (when (= id (:id v)) k)) (get ctx subtree)))
-        fk    (match :session/facts)
-        tk    (when-not fk (match :session/tasks))
-        [subtree k kind] (cond fk [:session/facts fk :fact]
-                           tk [:session/tasks tk :task]
-                           :else nil)]
-    (if-not subtree
-      {:ctx ctx, :found? false, :kind nil, :key nil}
-      {:ctx    (update-in ctx [subtree k] merge
-                 {:status (case kind :fact :active :task :todo)
-                  :recalled {:scope scope :why why}})
-       :found? true, :kind kind, :key k})))
+  (if-let [{:keys [subtree key kind]} (find-entity-by-id ctx id)]
+    {:ctx    (update-in ctx [subtree key]
+               (fn [e] (restored-entry e kind scope why)))
+     :found? true, :kind kind, :key key}
+    {:ctx ctx, :found? false, :kind nil, :key nil}))
 (defn summarized-iter-ranges
   "Pure: the `[scope-start scope-end]` iter ranges covered by live
    summary stubs in `trailer`. `find` excludes hits inside these so
