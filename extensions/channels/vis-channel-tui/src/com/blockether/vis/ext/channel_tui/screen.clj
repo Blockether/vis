@@ -1525,7 +1525,16 @@
                    (fn [new-title]
                      (when (= session-id (current-session-id))
                        (state/dispatch [:set-title (or new-title "")]))))
-        cleanup #(vis/remove-title-listener! session-id listener)]
+        ;; Host signals when auto-title generation starts/ends so the
+        ;; header can spinner the active tab. Scoped to the active session,
+        ;; same as the value listener — a background generation must not
+        ;; spinner the tab you're looking at.
+        pending-listener (vis/add-title-pending-listener! session-id
+                           (fn [pending?]
+                             (when (= session-id (current-session-id))
+                               (state/dispatch [:title-loading (boolean pending?)]))))
+        cleanup #(do (vis/remove-title-listener! session-id listener)
+                   (vis/remove-title-pending-listener! session-id pending-listener))]
     (register-shutdown-hook! cleanup)
     cleanup))
 (defn- date->millis
