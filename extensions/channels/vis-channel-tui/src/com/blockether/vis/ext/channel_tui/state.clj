@@ -936,12 +936,22 @@
   (fn [db _]
     (assoc db :shutdown? true)))
 
+(reg-event-db :set-workspace
+  ;; Replace the session's current workspace record (trunk or draft) after a
+  ;; turn that may have switched it (`/draft new | apply | abandon`).
+  (fn [db [_ ws]]
+    (assoc db :workspace ws)))
+
 (reg-event-db :init-session
-  (fn [db [_ session history]]
+  (fn [db [_ session history workspace]]
     (let [user-history (history-user-texts history)]
       (-> db
         ensure-workspaces
         (assoc :session session
+          ;; The session's current workspace record (trunk or draft) — the
+          ;; single source the footer/header read to show trunk vs
+          ;; `<label> (DRAFT)`. `:root` is the cwd for trunk, the clone for a draft.
+          :workspace workspace
           :title nil
           :messages (or history [])
           :scroll scroll/follow
@@ -1573,6 +1583,14 @@
                                                :iteration-count :duration-ms :tokens
                                                :cost :confidence :session-turn-id :status])
                                        :client-turn-id client-turn-id)])
+                          ;; A /draft new|apply|abandon turn may have switched the
+                          ;; session's workspace — re-sync so header/footer reflect it.
+                          (try
+                            (let [d   (vis/db-info)
+                                  sid (some->> (:id session) (vis/db-latest-session-state-id d))
+                                  ws  (when sid (vis/workspace-for-session d sid))]
+                              (dispatch [:set-workspace ws]))
+                            (catch Throwable _ nil))
                           (when (:voice-response? turn-features)
                             (speak-answer-async! (:answer result))))))
                     (catch Throwable t
