@@ -744,6 +744,17 @@
       (expect (= :t3/auth (eng/entity-id "t3/i2/f1" :auth)))
       (expect (= :t12/setup (eng/entity-id "t12/i1/f4" :setup))))
 
+    (it "id->turn parses the birth turn back out for targeted snapshot load"
+      (expect (= 3 (eng/id->turn :t3/auth)))
+      (expect (= 12 (eng/id->turn :t12/setup)))
+      (expect (nil? (eng/id->turn :auth))))
+
+    (it "find-entity-by-id locates across facts+tasks (facts first)"
+      (let [ctx {:session/facts {:a {:id :t1/a}} :session/tasks {:b {:id :t2/b}}}]
+        (expect (= :fact (:kind (eng/find-entity-by-id ctx :t1/a))))
+        (expect (= :task (:kind (eng/find-entity-by-id ctx :t2/b))))
+        (expect (nil? (eng/find-entity-by-id ctx :t9/none)))))
+
     (it "task-set! stamps :id on creation (turn from the form-scope)"
       (let [{ctx' :ctx} (eng/apply-mutator (eng/empty-ctx "s") "t3/i1/f1"
                           :task-set! [:swap {:title "x" :status :todo}])]

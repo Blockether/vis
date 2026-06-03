@@ -291,6 +291,23 @@
         (let [r (recall {:ids [:t9/ghost] :why "x"})]
           (expect (= :not-found (:vis/error (first (get-in r [:recalled :ids]))))))))))
 
+(defdescribe recall-restore-cross-turn-test
+  (describe "recall {:ids …} falls back to a TARGETED snapshot load when GC'd"
+    (let [env (assoc (mk-env) :db-info ::db :session-id "S")
+          {recall 'recall} (cl/build-introspect-bindings env (constantly []))
+          ;; entity NOT in live ctx; lives only in the turn-3 snapshot
+          snap {:session/facts {:auth {:content "JWT" :status :archived
+                                       :id :t3/auth :born "t3/i1/f1"}}}]
+      (it "loads ONLY the birth turn (id->turn) and re-inserts into live"
+        (with-redefs [com.blockether.vis.internal.persistance/db-load-ctx-at-turn
+                      (fn [_db _sid turn] (when (= turn 3) snap))]
+          (let [r (recall {:ids [:t3/auth] :why "need it back"})
+                live @(:ctx-atom env)]
+            (expect (= :snapshot (:source (first (get-in r [:recalled :ids])))))
+            (expect (= :active (get-in live [:session/facts :auth :status])))
+            (expect (= "JWT" (get-in live [:session/facts :auth :content])))
+            (expect (= "need it back" (get-in live [:session/facts :auth :recalled :why])))))))))
+
 (defdescribe recall-window-form-test
   (describe "recall by form scope windows a DB-backed result"
     (let [env  (assoc (mk-env) :db-info ::db :session-id "S")
