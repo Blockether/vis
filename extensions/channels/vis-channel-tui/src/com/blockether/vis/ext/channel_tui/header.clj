@@ -105,12 +105,24 @@
    labelled with the session title (or the `Untitled session`
    placeholder) so the centre slot is never empty."
   [db]
-  (let [entries (filterv workspace-strip-visible? (:workspaces db))]
+  (let [entries   (filterv workspace-strip-visible? (:workspaces db))
+        active-id (or (:active-workspace-id db)
+                    (:id (some #(when (:active? %) %) entries))
+                    (:id (first entries)))
+        ;; A tab is "running" when its session has a turn in flight. The
+        ;; active tab's run-state lives at the db root; every other tab's
+        ;; lives frozen in `:workspace-locals` (its streaming worker keeps
+        ;; updating it there). This is what surfaces concurrent turns.
+        running?  (fn [id]
+                    (boolean (if (= id active-id)
+                               (:loading? db)
+                               (get-in db [:workspace-locals id :loading?]))))]
     (if (seq entries)
-      entries
+      (mapv #(assoc % :running? (running? (:id %))) entries)
       [{:id (or (:active-workspace-id db) :main)
         :label (title-or-placeholder db)
-        :active? true}])))
+        :active? true
+        :running? (boolean (:loading? db))}])))
 
 (defn- active-workspace-entry-id
   [db entries]
@@ -432,7 +444,11 @@
                       out
                       (let [cell-w (+ base (if (< idx extra) 1 0))
                             entry (nth entries idx)
-                            label (p/tab-display-label entry)
+                            ;; `●` marks a tab whose session has a turn in
+                            ;; flight, so concurrent runs are visible even on
+                            ;; tabs you're not looking at.
+                            label (cond->> (p/tab-display-label entry)
+                                    (:running? entry) (str "● "))
                             text (center-padded label cell-w)
                             active? (= (:id entry) active-id)]
                         (recur (inc idx)
