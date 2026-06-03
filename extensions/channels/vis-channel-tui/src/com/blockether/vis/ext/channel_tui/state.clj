@@ -1563,11 +1563,13 @@
       {:db db'
        :fx (cond-> []
              @drain? (conj [:dispatch [:drain-pending workspace-id]])
-             ;; Ring the terminal bell when a turn finishes in a tab that
-             ;; ISN'T focused — that's the one case you can't see complete on
-             ;; screen, so the background session needs to announce itself.
+             ;; Ring the terminal bell ONLY when a background (unfocused) tab
+             ;; finishes in a state that actually needs you — awaiting input
+             ;; or errored. A routine "agent did its work" completion is NOT a
+             ;; notification, so it stays silent (no more bell-on-everything).
+             ;; Focused-tab finishes never ring; you can see those complete.
              (and (not= workspace-id (current-tab-id db))
-               (not= :cancelled status))
+               (contains? #{:needs-input :error} status))
              (conj [:bell]))})))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
