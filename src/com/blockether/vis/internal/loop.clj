@@ -4088,9 +4088,10 @@
    the channel/session/workspace coordinates the slash handlers read."
   [env user-request]
   (let [db-info  (:db-info env)
-        state-id (when db-info
-                   (some-> (:session-id env)
-                     (persistance/db-latest-session-state-id db-info)))]
+        state-id (or (:session/state-id env)
+                   (when db-info
+                     (some-> (:session-id env)
+                       (persistance/db-latest-session-state-id db-info))))]
     (cond-> {:channel/id   (or (:channel env) :tui)
              :session/id   (:session-id env)
              :db-info      db-info
@@ -4551,7 +4552,21 @@
     (throw (ex-info "run-turn! requires an env map" {:got (type env)})))
   (when (clojure.string/blank? user-request)
     (throw (ex-info "run-turn! requires a non-blank user request" {:got user-request})))
-  (let [slash-result (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
+  (let [;; Re-resolve the active workspace from the session's CURRENT pin so a
+        ;; mid-session `/draft new | apply | abandon` takes effect THIS turn.
+        ;; The cached env was built at session start (on trunk); without this
+        ;; the agent keeps editing trunk after entering a draft.
+        env (or (when-let [db (:db-info env)]
+                  (when-let [sid (or (:session/state-id env)
+                                   (some->> (:session-id env)
+                                     (persistance/db-latest-session-state-id db)))]
+                    (when-let [ws (persistance/db-workspace-for-session db sid)]
+                      (assoc env
+                        :workspace      ws
+                        :workspace/id   (:id ws)
+                        :workspace/root (:root ws)))))
+              env)
+        slash-result (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
                        (catch Throwable t
                          (tel/log! {:level :warn :id ::slash-dispatch-threw
                                     :data  {:user-request user-request
@@ -5167,6 +5182,12 @@
                                          :system-prompt system-prompt
                                          :workspace-id  (:id active-workspace)}
                                   root-provider (assoc :provider root-provider))))
+        ;; Resolve the session_state row id ONCE here (reliable at env build)
+        ;; and stamp it on the env, so slashes/turns don't re-query it — the
+        ;; per-call re-query intermittently returns nil for fresh sessions,
+        ;; which broke `/draft new`'s pin ("session not ready").
+        session-state-id    (when (and db-info session-id)
+                              (persistance/db-latest-session-state-id db-info session-id))
         ;; CTX engine wiring (see ctx-loop). ONE atom carries the entire
         ;; engine state for the session: specs/tasks/facts/trailer +
         ;; ephemeral `:engine/warnings` + `:engine/pending-satisfies`.
@@ -5323,6 +5344,7 @@
                                   (:custom-bindings @state-atom)))
         env (cond-> {:environment-id                    environment-id
                      :session-id                   session-id
+                     :session/state-id                  session-state-id
                      :channel                           (or channel :tui)
                      :depth-atom                        depth-atom
                      :db-info                           db-info}

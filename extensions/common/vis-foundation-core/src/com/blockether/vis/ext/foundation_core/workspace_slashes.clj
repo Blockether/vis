@@ -1,18 +1,20 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-slashes
   "Declarative `/draft …` slash tree.
 
-   A session IS its draft — a single `rift` CoW clone of cwd, locked 1:1.
-   Exactly one draft is active at a time; there is no parallel/multi-draft
-   juggling (parallelism comes from running multiple sessions, each with
-   its own draft). So the family is tiny:
+   Drafts are OPT-IN. By default a session works directly in the user's
+   real cwd (trunk). `/draft new <label>` clones cwd into an isolated
+   draft (a rift clone named `<label>`) and enters it; `/draft apply`
+   lands the draft's changes into cwd and leaves the draft; `/draft
+   abandon` discards it and leaves. The header shows `<label> (DRAFT)`
+   while you're in one.
 
-     /draft            show what's in the current draft (or the navigator)
-     /draft apply      land the draft's since-fork changes into cwd
-     /draft abandon [reason]   discard the draft's work, start a fresh clone
+     /draft                show whether you're on trunk or in a draft
+     /draft new <label>    clone cwd into a draft named <label>, enter it
+     /draft apply          land the draft's changes into cwd, leave the draft
+     /draft abandon [why]  discard the draft, leave it
 
-   Vis owns no git lifecycle — `apply` copies the changed files (adds,
-   edits, deletions) into the user's real cwd, uncommitted; the user
-   commits with their own tools. Handlers are PURE w.r.t. the channel."
+   Vis owns no git lifecycle — `apply` copies the changed files into the
+   user's real cwd, uncommitted. Handlers are PURE w.r.t. the channel."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.workspace :as workspace]))
@@ -21,20 +23,20 @@
 ;; Helpers
 ;; =============================================================================
 
-(defn- ctx-session-state-id
-  "Session-state UUID from a slash ctx (engine stamps `:session/state-id`)."
-  [ctx]
-  (or (:session/state-id ctx)
-    (:session-state-id ctx)))
+(defn- ctx-session-state-id [ctx]
+  (or (:session/state-id ctx) (:session-state-id ctx)))
 
 (defn- ctx-db [ctx]
   (or (:db-info ctx) (:db ctx)))
 
 (defn- session-workspace
-  "The draft pinned to the current session-state, or nil."
+  "The workspace (trunk or draft) the current session is in."
   [ctx]
-  (when-let [state-id (ctx-session-state-id ctx)]
-    (workspace/for-session (ctx-db ctx) state-id)))
+  (let [db (ctx-db ctx)]
+    (or (when-let [state-id (ctx-session-state-id ctx)]
+          (workspace/for-session db state-id))
+      (when-let [wid (:workspace/id ctx)]
+        (workspace/get db wid)))))
 
 (defn- err [msg & {:as extras}]
   (merge {:slash/status :error :slash/title msg} extras))
@@ -42,90 +44,88 @@
 (defn- change-line [{:keys [status path]}]
   (str (case status :add "+ " :modify "~ " :delete "- " "  ") path))
 
-(def ^:private help-body
-  (str "/draft            show the current draft\n"
-    "/draft apply      land the draft's changes into cwd\n"
-    "/draft abandon [reason]   discard the draft, start fresh"))
-
 ;; =============================================================================
 ;; Handlers
 ;; =============================================================================
 
-(defn- handle-status
-  "Bare `/draft` — summarise the current draft (root + since-fork change
-   count). Picker-capable channels open the navigator instead."
+(defn- handle-new
+  "`/draft new <label>` — clone cwd into a draft named <label> and enter it."
   [ctx]
-  (let [db      (ctx-db ctx)
-        current (session-workspace ctx)]
-    (if (nil? current)
-      {:slash/status :ok :slash/title "Draft" :slash/body help-body}
-      (let [st (workspace/status db (:id current))]
+  (let [db       (ctx-db ctx)
+        state-id (ctx-session-state-id ctx)
+        label    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)
+        current  (session-workspace ctx)]
+    (cond
+      (nil? state-id)
+      (err "Send a message first, then /draft new <label> (session not ready yet)")
+
+      (workspace/draft? current)
+      (err (str "Already in draft '" (workspace/display-label current)
+             "' — /draft apply or /draft abandon it first"))
+
+      :else
+      (let [draft (workspace/create! db {:session-state-id state-id :label label})]
         {:slash/status :ok
-         :slash/title  (str "Draft · " (workspace/display-label current))
-         :slash/body   (str (:workspace/root st) "\n"
-                         (:workspace/changed st 0) " file(s) changed since fork")
-         :slash/data   {:workspace-id (:id current)
-                        :changed      (:workspace/changed st 0)}}))))
+         :slash/title  (str "Draft '" (workspace/display-label draft) "' — you're in it now")
+         :slash/body   "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards."
+         :slash/data   {:workspace-id (:id draft) :label (:label draft)}}))))
 
 (defn- handle-apply
-  "`/draft apply` — land the draft's since-fork changes into cwd."
+  "`/draft apply` — land the draft's changes into cwd, then leave the draft."
   [ctx]
-  (let [db      (ctx-db ctx)
-        current (session-workspace ctx)]
-    (if (nil? current)
-      (err "No active draft")
-      (let [{:keys [landed changed]} (workspace/apply! db {:workspace-id (:id current)})]
+  (let [db       (ctx-db ctx)
+        state-id (ctx-session-state-id ctx)
+        current  (session-workspace ctx)]
+    (cond
+      (nil? current)                    (err "No active workspace")
+      (not (workspace/draft? current))  (err "Not in a draft — /draft new <label> to start one")
+      :else
+      (let [{:keys [landed changed]} (workspace/apply! db {:workspace-id (:id current)})
+            label (workspace/display-label current)]
+        (workspace/abandon! db {:workspace-id (:id current) :reason "applied"})
+        (when state-id (workspace/exit-to-trunk! db state-id))
         {:slash/status :ok
-         :slash/title  (str "Applied " landed " file" (when (not= 1 landed) "s") " to cwd")
+         :slash/title  (str "Applied " landed " file" (when (not= 1 landed) "s")
+                         " — left draft '" label "', back in your repo")
          :slash/body   (->> changed (map change-line) (str/join "\n"))
-         :slash/data   {:workspace-id (:id current) :landed landed :changed changed}}))))
+         :slash/data   {:landed landed :changed changed}}))))
 
 (defn- handle-abandon
-  "`/draft abandon [reason]` — discard the current draft's work and start
-   a fresh clone of cwd. The session always has exactly one active draft,
-   so abandoning immediately re-mints a clean one. `reason` is logged into
-   the abandoned draft's lineage record."
+  "`/draft abandon [reason]` — discard the draft and leave it."
   [ctx]
   (let [db       (ctx-db ctx)
         state-id (ctx-session-state-id ctx)
         current  (session-workspace ctx)
         reason   (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
     (cond
-      (nil? state-id) (err "No active session")
-      (nil? current)  (err "No active draft")
+      (nil? current)                    (err "No active workspace")
+      (not (workspace/draft? current))  (err "Not in a draft")
       :else
-      (let [done  (workspace/abandon! db {:workspace-id (:id current) :reason reason})
-            fresh (workspace/create! db {:session-state-id state-id})]
+      (let [label (workspace/display-label current)]
+        (workspace/abandon! db {:workspace-id (:id current) :reason reason})
+        (when state-id (workspace/exit-to-trunk! db state-id))
         {:slash/status :ok
-         :slash/title  "Draft discarded — fresh draft started"
-         :slash/body   (str "Discarded " (workspace/display-label done)
-                         (when reason (str " — " reason)))
-         :slash/data   {:abandoned-id (:id done)
-                        :active-id    (:id fresh)
-                        :reason       reason}}))))
+         :slash/title  (str "Abandoned draft '" label "' — back in your repo")
+         :slash/body   (when reason (str "Reason: " reason))
+         :slash/data   {:workspace-id (:id current) :reason reason}}))))
 
-(defn- handle-label
-  "`/draft label <text>` — name the current draft (or `--clear`)."
+(defn- handle-status
+  "Bare `/draft` — are you on trunk or in a draft?"
   [ctx]
   (let [db      (ctx-db ctx)
-        current (session-workspace ctx)
-        argv    (:command/argv ctx)
-        clear?  (boolean (some #{"--clear"} argv))
-        text    (when-not clear? (some-> (str/join " " argv) str/trim not-empty))]
+        current (session-workspace ctx)]
     (cond
-      (nil? current)
-      (err "No active draft")
-
-      (and (not clear?) (nil? text))
-      (err "/draft label <text>  |  /draft label --clear")
-
-      :else
-      (let [done (workspace/set-label! db {:workspace-id (:id current)
-                                           :label        (when-not clear? text)})]
+      (workspace/draft? current)
+      (let [st (workspace/status db (:id current))]
         {:slash/status :ok
-         :slash/title  (if clear? "Label cleared" "Draft labelled")
-         :slash/body   (workspace/display-label done)
-         :slash/data   {:workspace-id (:id done) :label (:label done)}}))))
+         :slash/title  (str "Draft '" (workspace/display-label current) "'")
+         :slash/body   (str (:workspace/changed st 0) " file(s) changed · "
+                         "/draft apply to land them, /draft abandon to discard")
+         :slash/data   {:workspace-id (:id current)}})
+      :else
+      {:slash/status :ok
+       :slash/title  "On trunk — your real repo"
+       :slash/body   "Editing your repo directly. /draft new <label> to start an isolated draft."})))
 
 ;; =============================================================================
 ;; Specs vec
@@ -135,27 +135,25 @@
   "Declarative slash specs vec hooked onto foundation-core's manifest
    via `:ext/slash-commands`."
   [{:slash/name   "draft"
-    :slash/doc    "The session's draft (CoW workspace) — see subcommands."
-    :slash/usage  "/draft <apply | abandon | label> …"
-    ;; Bare `/draft` opens the session/draft navigator in picker-capable
-    ;; channels (session == draft, 1:1); elsewhere it prints draft status.
+    :slash/doc    "Drafts — isolated rift clones of your repo (opt-in)."
+    :slash/usage  "/draft <new <label> | apply | abandon>"
     :slash/ui     {:kind :navigator}
     :slash/run-fn handle-status}
+   {:slash/name     "new"
+    :slash/parent   ["draft"]
+    :slash/doc      "Clone cwd into an isolated draft named <label> and enter it."
+    :slash/usage    "/draft new <label>"
+    :slash/requires #{:session}
+    :slash/run-fn   handle-new}
    {:slash/name     "apply"
     :slash/parent   ["draft"]
-    :slash/doc      "Land the draft's since-fork changes into cwd (uncommitted)."
+    :slash/doc      "Land the draft's changes into your repo and leave the draft."
     :slash/usage    "/draft apply"
     :slash/requires #{:session}
     :slash/run-fn   handle-apply}
    {:slash/name     "abandon"
     :slash/parent   ["draft"]
-    :slash/doc      "Discard the draft's work and start a fresh clone of cwd."
+    :slash/doc      "Discard the draft and leave it."
     :slash/usage    "/draft abandon [reason]"
     :slash/requires #{:session}
-    :slash/run-fn   handle-abandon}
-   {:slash/name     "label"
-    :slash/parent   ["draft"]
-    :slash/doc      "Name the current draft (or --clear to reset)."
-    :slash/usage    "/draft label <text>|--clear"
-    :slash/requires #{:session}
-    :slash/run-fn   handle-label}])
+    :slash/run-fn   handle-abandon}])
