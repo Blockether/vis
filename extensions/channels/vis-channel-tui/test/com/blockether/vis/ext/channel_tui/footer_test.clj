@@ -61,9 +61,9 @@
 
     (it "advertises workspace switching only when multiple workspaces exist"
       (let [one-workspace (mapv :text (build-subtitle-segments {:input (input/empty-input)
-                                                                :workspaces [{:id :main}]} 0))
+                                                                :tabs [{:id :main}]} 0))
             two-workspaces (mapv :text (build-subtitle-segments {:input (input/empty-input)
-                                                                 :workspaces [{:id :main}
+                                                                 :tabs [{:id :main}
                                                                               {:id :feature}]} 0))]
         (expect (not (some #{"Shift+Tab switch workspace"} one-workspace)))
         (expect (some #{"Shift+Tab switch workspace"} two-workspaces))))

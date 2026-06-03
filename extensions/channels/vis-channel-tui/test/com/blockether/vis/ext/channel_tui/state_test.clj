@@ -58,15 +58,15 @@
   (it "applies external input to an inactive recording-origin workspace"
     (let [external-input-fn (-> #'state/event-registry deref deref (get :external-input) :fn)
           input-state       (fn [text] {:lines [text] :crow 0 :ccol (count text)})
-          db                {:active-workspace-id :second
-                             :workspaces [{:id :first :label "First"}
+          db                {:active-tab-id :second
+                             :tabs [{:id :first :label "First"}
                                           {:id :second :label "Second" :active? true}]
                              :input (input-state "second draft")
                              :input-history-index :second-index
                              :input-history-draft "second-draft"
                              :slash-command-index 7
                              :slash-command-hidden? true
-                             :workspace-locals {:first {:input (input-state "first draft")
+                             :tab-locals {:first {:input (input-state "first draft")
                                                         :input-history-index :first-index
                                                         :input-history-draft "first-draft"
                                                         :slash-command-index 3
@@ -75,11 +75,11 @@
       (expect (= "second draft" (input/input->text (:input next-db))))
       (expect (= :second-index (:input-history-index next-db)))
       (expect (= "first draft\nrewrite"
-                (input/input->text (get-in next-db [:workspace-locals :first :input]))))
-      (expect (nil? (get-in next-db [:workspace-locals :first :input-history-index])))
-      (expect (nil? (get-in next-db [:workspace-locals :first :input-history-draft])))
-      (expect (= 0 (get-in next-db [:workspace-locals :first :slash-command-index])))
-      (expect (false? (get-in next-db [:workspace-locals :first :slash-command-hidden?]))))))
+                (input/input->text (get-in next-db [:tab-locals :first :input]))))
+      (expect (nil? (get-in next-db [:tab-locals :first :input-history-index])))
+      (expect (nil? (get-in next-db [:tab-locals :first :input-history-draft])))
+      (expect (= 0 (get-in next-db [:tab-locals :first :slash-command-index])))
+      (expect (false? (get-in next-db [:tab-locals :first :slash-command-hidden?]))))))
 
 (defdescribe external-input-test
   (it "append adds transcript text without replacing draft input"
@@ -145,56 +145,56 @@
     (state/dispatch [:reset-input])
     (expect (false? (:slash-command-hidden? @state/app-db)))))
 
-(defdescribe workspace-entries-test
+(defdescribe tab-entries-test
   (it "adds a workspace and seeds a base workspace when none exist"
     ;; Base workspace inherits the current `:title`; the freshly-added workspace
     ;; starts as `Untitled session` because it has no title yet.
     (reset! state/app-db {:title "Current"
                           :render-version 0})
-    (state/dispatch [:create-workspace])
+    (state/dispatch [:create-tab])
     (expect (= [{:id :main :label "Current"}
                 {:id :tab-1 :label state/untitled-session-label :active? true}]
-              (:workspaces @state/app-db)))
-    (expect (= :tab-1 (:active-workspace-id @state/app-db)))
+              (:tabs @state/app-db)))
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))
     (expect (= 1 (:render-version @state/app-db))))
 
   (it "adds the next unique workspace and makes it active"
     ;; New workspaces default to the untitled placeholder; `:set-title`
     ;; renames the active workspace once a title is generated.
-    (reset! state/app-db {:workspaces [{:id :main :label "Main"}
+    (reset! state/app-db {:tabs [{:id :main :label "Main"}
                                        {:id :tab-1 :label "Tab 1" :active? true}]
-                          :active-workspace-id :tab-1
+                          :active-tab-id :tab-1
                           :render-version 0})
-    (state/dispatch [:create-workspace])
+    (state/dispatch [:create-tab])
     (expect (= [{:id :main :label "Main"}
                 {:id :tab-1 :label "Tab 1"}
                 {:id :tab-2 :label state/untitled-session-label :active? true}]
-              (:workspaces @state/app-db)))
-    (expect (= :tab-2 (:active-workspace-id @state/app-db))))
+              (:tabs @state/app-db)))
+    (expect (= :tab-2 (:active-tab-id @state/app-db))))
 
   (it "attaches workspace root to the new workspace and active snapshot"
     (let [workspace {:workspace/id "ws-1"
                      :workspace/root "/tmp/vis-ws"
                      :main {:branch "feature/ws"}}]
-      (reset! state/app-db {:workspaces [{:id :main :label "Main" :active? true}]
-                            :active-workspace-id :main
-                            :workspace-locals {}
+      (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}]
+                            :active-tab-id :main
+                            :tab-locals {}
                             :render-version 0})
-      (state/dispatch [:create-workspace {:workspace workspace}])
-      (expect (= "/tmp/vis-ws" (get-in @state/app-db [:workspaces 1 :workspace/root])))
+      (state/dispatch [:create-tab {:workspace workspace}])
+      (expect (= "/tmp/vis-ws" (get-in @state/app-db [:tabs 1 :workspace/root])))
       (expect (= workspace (:workspace @state/app-db)))
       (expect (= "/tmp/vis-ws" (:workspace/root @state/app-db)))
-      (expect (= "feature/ws" (get-in @state/app-db [:workspaces 1 :label])))))
+      (expect (= "feature/ws" (get-in @state/app-db [:tabs 1 :label])))))
 
   (it "caps workspaces at eight total entries"
     (reset! state/app-db {:title "Main"
                           :render-version 0})
     (dotimes [_ 10]
-      (state/dispatch [:create-workspace]))
-    (expect (= 8 (count (:workspaces @state/app-db))))
+      (state/dispatch [:create-tab]))
+    (expect (= 8 (count (:tabs @state/app-db))))
     (expect (= [:main :tab-1 :tab-2 :tab-3 :tab-4 :tab-5 :tab-6 :tab-7]
-              (mapv :id (:workspaces @state/app-db))))
-    (expect (= :tab-7 (:active-workspace-id @state/app-db))))
+              (mapv :id (:tabs @state/app-db))))
+    (expect (= :tab-7 (:active-tab-id @state/app-db))))
 
   (it "switches the full transcript, draft, prompt history, and session by workspace"
     (reset! state/app-db {:session {:id "main-c"}
@@ -204,66 +204,66 @@
                           :pastes {}
                           :paste-counter 0
                           :detail-expansions {}
-                          :workspaces [{:id :main :label "Main" :active? true}]
-                          :active-workspace-id :main
-                          :workspace-locals {}
+                          :tabs [{:id :main :label "Main" :active? true}]
+                          :active-tab-id :main
+                          :tab-locals {}
                           :render-version 0})
-    (state/dispatch [:create-workspace])
+    (state/dispatch [:create-tab])
     (state/dispatch [:init-session {:id "tab-c"} [{:role :user :text "tab prompt"}]])
     (state/dispatch [:update-input (input/paste-text (input/empty-input) "tab draft")])
-    (state/dispatch [:select-workspace-index 0])
+    (state/dispatch [:select-tab-index 0])
     (expect (= {:id "main-c"} (:session @state/app-db)))
     (expect (= [{:role :user :text "main prompt"}] (:messages @state/app-db)))
     (expect (= "main draft" (input/input->text (:input @state/app-db))))
     (expect (= ["main prompt"] (:input-history @state/app-db)))
-    (state/dispatch [:select-workspace-index 1])
+    (state/dispatch [:select-tab-index 1])
     (expect (= {:id "tab-c"} (:session @state/app-db)))
     (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
     (expect (= "tab draft" (input/input->text (:input @state/app-db))))
     (expect (= ["tab prompt"] (:input-history @state/app-db))))
 
   (it "selects workspaces by zero-based index and cycles to the next workspace"
-    (reset! state/app-db {:workspaces [{:id :main :label "Main"}
+    (reset! state/app-db {:tabs [{:id :main :label "Main"}
                                        {:id :tab-1 :label "Tab 1" :active? true}
                                        {:id :tab-2 :label "Tab 2"}]
-                          :active-workspace-id :tab-1
+                          :active-tab-id :tab-1
                           :render-version 0})
-    (state/dispatch [:select-workspace-index 0])
-    (expect (= :main (:active-workspace-id @state/app-db)))
+    (state/dispatch [:select-tab-index 0])
+    (expect (= :main (:active-tab-id @state/app-db)))
     (expect (= [{:id :main :label "Main" :active? true}
                 {:id :tab-1 :label "Tab 1"}
                 {:id :tab-2 :label "Tab 2"}]
-              (:workspaces @state/app-db)))
-    (state/dispatch [:select-workspace-index :next])
-    (expect (= :tab-1 (:active-workspace-id @state/app-db)))
-    (state/dispatch [:select-workspace-index :next])
-    (expect (= :tab-2 (:active-workspace-id @state/app-db)))
-    (state/dispatch [:select-workspace-index :next])
-    (expect (= :main (:active-workspace-id @state/app-db)))
-    (state/dispatch [:select-workspace-index :prev])
-    (expect (= :tab-2 (:active-workspace-id @state/app-db)))
-    (state/dispatch [:select-workspace-index 99])
-    (expect (= :tab-2 (:active-workspace-id @state/app-db))))
+              (:tabs @state/app-db)))
+    (state/dispatch [:select-tab-index :next])
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index :next])
+    (expect (= :tab-2 (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index :next])
+    (expect (= :main (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index :prev])
+    (expect (= :tab-2 (:active-tab-id @state/app-db)))
+    (state/dispatch [:select-tab-index 99])
+    (expect (= :tab-2 (:active-tab-id @state/app-db))))
 
   (it "selects an already-open workspace by session id"
-    (reset! state/app-db {:workspaces [{:id :main :label "Main" :active? true}
+    (reset! state/app-db {:tabs [{:id :main :label "Main" :active? true}
                                        {:id :tab-1 :label "Tab 1"}]
-                          :active-workspace-id :main
+                          :active-tab-id :main
                           :session {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}]
                           :input (input/paste-text (input/empty-input) "main draft")
                           :input-history ["main prompt"]
-                          :workspace-locals {:tab-1 {:session {:id "tab-c"}
+                          :tab-locals {:tab-1 {:session {:id "tab-c"}
                                                      :messages [{:role :user :text "tab prompt"}]
                                                      :input (input/paste-text (input/empty-input) "tab draft")
                                                      :input-history ["tab prompt"]}}
                           :render-version 0})
-    (state/dispatch [:select-workspace-by-session "tab-c"])
-    (expect (= :tab-1 (:active-workspace-id @state/app-db)))
+    (state/dispatch [:select-tab-by-session "tab-c"])
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))
     (expect (= {:id "tab-c"} (:session @state/app-db)))
     (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
-    (state/dispatch [:select-workspace-by-session "missing"])
-    (expect (= :tab-1 (:active-workspace-id @state/app-db)))))
+    (state/dispatch [:select-tab-by-session "missing"])
+    (expect (= :tab-1 (:active-tab-id @state/app-db)))))
 
 (defdescribe init-settings-test
   (it "loads the default balanced reasoning level when config has none"
@@ -585,7 +585,7 @@
       ;; cleanly to the bottom instead of animating up from row 0 first.
       (let [message-received-fn (ev :message-received)
             pending-id          "turn-1"
-            db                  {:active-workspace-id :main
+            db                  {:active-tab-id :main
                                  :session {:id "c1"}
                                  :loading? true
                                  :messages [{:role :user :text "/workspace list" :client-turn-id pending-id}
@@ -602,7 +602,7 @@
     (it "send-message re-pins to a CLEAN FOLLOW"
       (let [send-message-fn (ev :send-message)
             db              {:session {:id "c1"}
-                             :active-workspace-id :main
+                             :active-tab-id :main
                              :messages []
                              :input-history []
                              :scroll {:mode :at, :offset 80, :pos 80}
@@ -822,7 +822,7 @@
   (it "refuses copied assistant transcript dumps before provider dispatch"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
           db              {:session {:id "c1"}
-                           :active-workspace-id :main
+                           :active-tab-id :main
                            :messages []
                            :messages-scroll 0
                            :input-history []
@@ -839,7 +839,7 @@
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
           db              {:session {:id "c1"}
-                           :active-workspace-id :main
+                           :active-tab-id :main
                            :messages []
                            :messages-scroll 0
                            :input-history []
@@ -930,18 +930,18 @@
 (defdescribe pending-send-queue-test
   (it "keeps queued submissions on their workspace snapshot"
     (let [enqueue-fn (-> #'state/event-registry deref deref (get :enqueue-message) :fn)
-          db         {:active-workspace-id :b
+          db         {:active-tab-id :b
                       :input-history []
                       :pastes {}
                       :paste-counter 0
-                      :workspace-locals {:a {:session {:id "a"}
+                      :tab-locals {:a {:session {:id "a"}
                                              :loading? true
                                              :pending-sends []
                                              :input-history []
                                              :pastes {1 {:id 1 :content "payload"}}
                                              :paste-counter 1}}}
           result     (enqueue-fn db [:enqueue-message "queued" :a])
-          queued     (get-in result [:db :workspace-locals :a :pending-sends])]
+          queued     (get-in result [:db :tab-locals :a :pending-sends])]
       (expect (= ["queued"] (mapv :text queued)))
       (expect (= {1 {:id 1 :content "payload"}} (:pastes (first queued))))
       (expect (empty? (:pending-sends (:db result))))))
@@ -949,7 +949,7 @@
   (it "schedules queue drain as an effect after message commit"
     (let [message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
           pending-id          "turn-1"
-          db                  {:active-workspace-id :main
+          db                  {:active-tab-id :main
                                :session {:id "c1"}
                                :loading? true
                                :messages [{:role :user :text "first" :client-turn-id pending-id}
@@ -968,7 +968,7 @@
 
   (it "drains one queued item without nested provider dispatch"
     (let [drain-fn       (-> #'state/event-registry deref deref (get :drain-pending) :fn)
-          db             {:active-workspace-id :main
+          db             {:active-tab-id :main
                           :pending-sends [{:text "second"
                                            :pastes {2 {:id 2 :content "p"}}
                                            :paste-counter 2}

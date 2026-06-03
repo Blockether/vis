@@ -38,7 +38,7 @@
 (defn- ctx-workspace-id
   [ctx]
   (or (:workspace-id ctx)
-    (some-> ctx :app-db deref :active-workspace-id)))
+    (some-> ctx :app-db deref :active-tab-id)))
 
 (defn- voice-asr-failed-signal
   [audio-file throwable message]

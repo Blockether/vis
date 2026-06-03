@@ -355,12 +355,12 @@
      (menu-commands screen)
      {:limit Integer/MAX_VALUE, :selected-index selected-index})))
 (defn- input-state-from-text [text] (input/paste-text (input/empty-input) (or text "")))
-(defn- activate-workspace-entry-hit!
+(defn- activate-tab-entry-hit!
   "Switch to the workspace represented by a header click region."
-  [refresh-active-workspace! hit]
-  (let [before (:active-workspace-id @state/app-db)]
-    (state/dispatch [:select-workspace-index (:index hit)])
-    (when-not (= before (:active-workspace-id @state/app-db)) (refresh-active-workspace! false))))
+  [refresh-active-tab! hit]
+  (let [before (:active-tab-id @state/app-db)]
+    (state/dispatch [:select-tab-index (:index hit)])
+    (when-not (= before (:active-tab-id @state/app-db)) (refresh-active-tab! false))))
 (defn- capture-screen-cells
   "Read the current Lanterna back-buffer as per-cell strings.
 
@@ -1465,7 +1465,7 @@
 (defn- workspace-sessions
   []
   (let [db @state/app-db]
-    (->> (concat (keep :session (vals (:workspace-locals db))) [(:session db)])
+    (->> (concat (keep :session (vals (:tab-locals db))) [(:session db)])
       (filter :id)
       (reduce (fn [{:keys [seen out], :as acc} session]
                 (let [id (:id session)] ; UUID; hashes + equality work natively
@@ -1982,7 +1982,7 @@
                                          (vis/notify! "Opened session"
                                            :level :success
                                            :ttl-ms copy-success-ttl-ms))))
-                 refresh-active-workspace!
+                 refresh-active-tab!
                  (fn [notify?]
                    (when-let [cleanup @title-listener-cleanup]
                      (try (cleanup) (catch Throwable _ nil)))
@@ -2422,7 +2422,7 @@
                                  :switch-session (switch-session! {:action :switch,
                                                                    :id (:text hit)})
                                  :workspace-entry
-                                 (activate-workspace-entry-hit! refresh-active-workspace! hit)
+                                 (activate-tab-entry-hit! refresh-active-tab! hit)
                                  ;; new expanded = current collapsed (flip).
                                  :toggle-details (state/dispatch [:toggle-detail
                                                                   (:session-id hit)
@@ -2488,7 +2488,7 @@
                                :switch-session (switch-session! {:action :switch,
                                                                  :id (:text hit)})
                                :workspace-entry
-                               (activate-workspace-entry-hit! refresh-active-workspace! hit)
+                               (activate-tab-entry-hit! refresh-active-tab! hit)
                                :toggle-details (state/dispatch [:toggle-detail (:session-id hit)
                                                                 (:node-id hit)
                                                                 (:collapsed? hit)])
@@ -2767,11 +2767,11 @@
                                                              (command-palette-extra-commands)))]
                                                (run-command! cmd)))
                                          (recur))
-                         :select-workspace-index
-                         (do (let [before (:active-workspace-id @state/app-db)]
-                               (state/dispatch [:select-workspace-index workspace-index])
-                               (when-not (= before (:active-workspace-id @state/app-db))
-                                 (refresh-active-workspace! false)))
+                         :select-tab-index
+                         (do (let [before (:active-tab-id @state/app-db)]
+                               (state/dispatch [:select-tab-index workspace-index])
+                               (when-not (= before (:active-tab-id @state/app-db))
+                                 (refresh-active-tab! false)))
                            (recur))
                          :history-up (do (state/dispatch [:history-up]) (recur))
                          :history-down (do (state/dispatch [:history-down]) (recur))

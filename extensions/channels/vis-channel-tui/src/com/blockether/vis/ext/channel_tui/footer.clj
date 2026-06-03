@@ -373,7 +373,7 @@
 (defn- subtitle-segment
   [text priority]
   {:text text, :fg t/footer-fg-muted, :bold? false, :region :center, :priority priority})
-(defn- workspace-switching-available? [{:keys [workspaces]}] (> (count workspaces) 1))
+(defn- tab-switching-available? [{:keys [tabs]}] (> (count tabs) 1))
 (defn- build-subtitle-segments
   "Context-sensitive helper strip below the input box. Kept out of
    render/draw-input-box! so input text and helper chrome never share
@@ -385,11 +385,11 @@
     (cond-> [(subtitle-segment "Alt+Enter newline" 2) (subtitle-segment "↑↓ history" 2)
              (subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
              (subtitle-segment "Ctrl+K menu" 1)]
-      (workspace-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
+      (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
                                                   3)))
     :else (cond-> [(subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
                    (subtitle-segment "Ctrl+K menu" 1)]
-            (workspace-switching-available? db)
+            (tab-switching-available? db)
             (conj (subtitle-segment "Shift+Tab switch workspace" 3)))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
