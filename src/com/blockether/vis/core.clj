@@ -109,6 +109,7 @@
 (def workspace-trunk-info        workspace/trunk-info)
 (def workspace-ensure-workspace! workspace/ensure-workspace!)
 (def workspace-create!           workspace/create!)
+(def workspace-create-trunk-at!  workspace/create-trunk-at!)
 (def workspace-apply!            workspace/apply!)
 (def workspace-abandon!          workspace/abandon!)
 (def workspace-set-label!        workspace/set-label!)

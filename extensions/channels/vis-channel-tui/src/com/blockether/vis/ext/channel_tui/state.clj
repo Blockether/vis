@@ -968,6 +968,41 @@
           :progress nil
           :detail-expansions {})))))
 
+(reg-event-db :open-session-tab
+  ;; Open `session` (with its `history` + pinned `workspace` record) in a TAB
+  ;; WITHOUT disturbing the active tab. If a tab is already bound to this
+  ;; session, focus it; otherwise mint a new tab and bind it. This is what
+  ;; makes sessions run concurrently: opening/switching never resets the
+  ;; running tab — its turn keeps streaming into its own `:workspace-locals`.
+  (fn [db [_ session history workspace]]
+    (let [sid      (some-> session :id str)
+          ;; Freeze the current tab (incl. any in-flight turn) into its locals
+          ;; before we change focus, so its streaming worker keeps updating it.
+          db       (-> db ensure-workspaces sync-active-workspace)
+          entries  (vec (:workspaces db))
+          existing (when sid
+                     (some #(when (= sid (workspace-session-id db (:id %))) %) entries))]
+      (if existing
+        (activate-workspace db (:id existing))
+        (let [n     (next-workspace-number entries)
+              id    (keyword (str "tab-" n))
+              label (or (some-> workspace :label not-empty) untitled-session-label)
+              entry (cond-> {:id id :label label :active? true}
+                      workspace        (assoc :workspace workspace)
+                      (:root workspace) (assoc :workspace/root (:root workspace)))]
+          (-> db
+            (assoc :workspaces (conj (mapv #(dissoc % :active?) entries) entry)
+              :active-workspace-id id)
+            ;; Make the new tab the live root state (a fresh session view);
+            ;; finalize-db snapshots this back into the tab's locals.
+            (merge (empty-workspace-state))
+            (assoc :session session
+              :workspace workspace
+              :workspace/root (:root workspace)
+              :title nil
+              :messages (or history [])
+              :input-history (history-user-texts history))))))))
+
 (reg-event-db :set-title
   (fn [db [_ title]]
     (let [db' (assoc db :title title)

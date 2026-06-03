@@ -186,6 +186,19 @@
         (:loading? db) (do (state/dispatch [:enqueue-message text])
                          (state/dispatch [:reset-input]))
         :else (do (state/dispatch [:send-message text]) (state/dispatch [:reset-input]))))))
+
+(defn- parse-tab-command
+  "Recognise the client-side `/open <dir>` command typed into the editor:
+   open a session tab rooted at <dir> (so you can work on another project in
+   its own tab). Handled in the TUI — it manipulates the tab strip — never
+   sent to the engine. The trailing space after `/open` also dismisses the
+   slash-suggestion overlay so Enter reaches this path. A blank new tab is a
+   `New session` (Ctrl+K / Ctrl+G), which now opens its own tab too.
+   Returns {:kind :open :dir <str>} | nil."
+  [text]
+  (let [t (str/trim (or text ""))]
+    (when-let [[_ dir] (re-matches #"(?i)/open\s+(.+)" t)]
+      {:kind :open, :dir (str/trim dir)})))
 (def ^:private copy-success-ttl-ms 1500)
 (def ^:private status-error-ttl-ms 5000)
 (defn- copy-session-id!
@@ -1888,21 +1901,25 @@
                            :budget-ms prewarm-sync-budget-ms))
                        (vreset! prewarm-thread
                          (virtual/pre-warm! history bubble-w settings warm-opts)))))
-                 install-session! (fn [{:keys [id], :as session-result} notify?]
-                                    (when (and id session-result)
-                                      (when-let [cleanup @title-listener-cleanup]
-                                        (try (cleanup) (catch Throwable _ nil)))
-                                      (vreset! title-listener-cleanup nil)
-                                      ;; Keep render + height caches HOT across
-                                      ;; session/workspace switches. Nuking here
-                                      ;; forced every revisit back to cold-scroll.
-                                      (vreset! title-listener-cleanup
-                                        (init-visible-session! session-result))
-                                      (prewarm-session! session-result)
-                                      (when notify?
-                                        (vis/notify! "Switched session"
-                                          :level :success
-                                          :ttl-ms copy-success-ttl-ms))))
+                 ;; Open (or focus) a TAB for this session. Unlike the old
+                 ;; in-place install, this NEVER resets the active tab — so a
+                 ;; turn streaming in another tab keeps running. The single
+                 ;; title listener + prewarm re-bind to whatever tab is now in
+                 ;; front (render/height caches stay hot across the switch).
+                 open-session-tab! (fn [{:keys [id history], :as session-result} notify?]
+                                     (when (and id session-result)
+                                       (when-let [cleanup @title-listener-cleanup]
+                                         (try (cleanup) (catch Throwable _ nil)))
+                                       (vreset! title-listener-cleanup nil)
+                                       (state/dispatch [:open-session-tab {:id id} history
+                                                        (session-workspace id)])
+                                       (state/dispatch [:set-title (or (session-db-title id) "")])
+                                       (vreset! title-listener-cleanup (subscribe-title-listener! id))
+                                       (prewarm-session! session-result)
+                                       (when notify?
+                                         (vis/notify! "Opened session"
+                                           :level :success
+                                           :ttl-ms copy-success-ttl-ms))))
                  refresh-active-workspace!
                  (fn [notify?]
                    (when-let [cleanup @title-listener-cleanup]
@@ -1918,13 +1935,12 @@
                        :ttl-ms copy-success-ttl-ms)))
                  switch-session!
                  (fn [choice]
-                   (cond (:loading? @state/app-db)
-                     (vis/notify!
-                       "Finish or cancel the running turn before switching sessions"
-                       :level :warn
-                       :ttl-ms copy-success-ttl-ms)
+                   ;; No `:loading?` guard: opening or focusing a tab never
+                   ;; disturbs a turn running in another tab, so there's
+                   ;; nothing to wait for. Every action lands on a tab.
+                   (cond
                      (= :new (:action choice)) (when-let [config (:config @state/app-db)]
-                                                 (install-session! (chat/make-session config)
+                                                 (open-session-tab! (chat/make-session config)
                                                    true))
                      (= :fork (:action choice))
                      (if-let [current-id (current-session-id)]
@@ -1939,7 +1955,7 @@
                                              (catch Throwable _ nil))]
                          (if fork-state-id
                            (if-let [session-result (chat/resume-session current-id)]
-                             (do (install-session! session-result false)
+                             (do (open-session-tab! session-result false)
                                (vis/notify! "Forked current session"
                                  :level :success
                                  :ttl-ms copy-success-ttl-ms))
@@ -1953,16 +1969,37 @@
                          :level :warn
                          :ttl-ms copy-success-ttl-ms))
                      (= :switch (:action choice))
+                     ;; Focus the tab already bound to this session, or open a
+                     ;; new one — `:open-session-tab` decides. Switching to a
+                     ;; session whose turn is mid-flight just brings its tab to
+                     ;; the front; the turn was never paused.
                      (let [target-id (:id choice)]
                        (when-not (= (str target-id) (current-session-id))
-                         (state/dispatch [:select-workspace-by-session target-id])
-                         (if (= (str target-id) (current-session-id))
-                           (refresh-active-workspace! true)
-                           (if-let [session-result (chat/resume-session target-id)]
-                             (install-session! session-result true)
-                             (vis/notify! "Session no longer exists"
-                               :level :warn
-                               :ttl-ms copy-success-ttl-ms)))))))
+                         (if-let [session-result (chat/resume-session target-id)]
+                           (open-session-tab! session-result true)
+                           (vis/notify! "Session no longer exists"
+                             :level :warn
+                             :ttl-ms copy-success-ttl-ms))))))
+                 handle-tab-command!
+                 (fn [{:keys [dir]}]
+                   ;; `/open <dir>`: mint a trunk workspace rooted at <dir>,
+                   ;; create a session pinned to it, and open it in a new tab —
+                   ;; a session in another project, alongside the current ones.
+                   (let [f (java.io.File. ^String dir)]
+                     (if (and (.exists f) (.isDirectory f))
+                       (when-let [config (:config @state/app-db)]
+                         (let [ws (try (vis/workspace-create-trunk-at! (vis/db-info)
+                                         (.getCanonicalPath f))
+                                    (catch Throwable _ nil))
+                               session-result (when ws
+                                                (chat/make-session config
+                                                  {:workspace-id (:id ws)}))]
+                           (if session-result
+                             (open-session-tab! session-result true)
+                             (vis/notify! "Could not open a session there"
+                               :level :warn :ttl-ms copy-success-ttl-ms))))
+                       (vis/notify! (str "Not a directory: " dir)
+                         :level :warn :ttl-ms copy-success-ttl-ms))))
                  show-sessions! (fn []
                                   (when-not (:dialog-open? @state/app-db)
                                     (let [sessions (tui-session-summaries)]
@@ -2726,6 +2763,16 @@
                              ;; already present in the input, or submits a
                              ;; normal message.
                          (do (cond
+                               ;; Client-side tab commands (`/tab`, `/open
+                               ;; <dir>`): handled in the TUI — they open a new
+                               ;; session tab (optionally rooted in another
+                               ;; directory), never an engine round-trip.
+                               (parse-tab-command (input/input->text state))
+                               (do (when-not (:dialog-open? @state/app-db)
+                                     (handle-tab-command!
+                                       (parse-tab-command (input/input->text state))))
+                                 (state/dispatch [:reset-input]))
+
                                ;; Navigator-intent slash (e.g. /workspace,
                                ;; /workspace list): open the Ctrl+G picker
                                ;; directly. Typed nested slashes never match
