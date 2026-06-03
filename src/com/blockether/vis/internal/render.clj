@@ -752,6 +752,10 @@
 ;; tag, recursing into children via the helper which itself recurses back
 ;; into the walker.
 (declare ^:private render-html)
+;; HTML tables ship as a monospace <pre> grid, so their cells must be
+;; PLAIN text — reuse the plain walker (defined below) rather than the
+;; html one, whose <b>/<code> tags would be escaped into literal markup.
+(declare ^:private render-plain-children)
 
 (defn- render-html-children [nodes opts]
   (apply str (map #(render-html % opts) nodes)))
@@ -763,13 +767,21 @@
              (let [marker (if (= tag :ul)
                             "• "
                             (let [m (str @n ". ")] (swap! n inc) m))
-                   inner  (render-html-children (node-children li) opts)]
+                   ;; Loose CommonMark lists wrap each item's content in a
+                   ;; <p>, whose trailing "\n\n" would stack on the list's
+                   ;; own per-item "\n" and triple-space the bullets. Strip
+                   ;; the item's trailing newlines (same as render-plain-list).
+                   inner  (str/replace (render-html-children (node-children li) opts)
+                            #"\n+$" "")]
                (str marker inner "\n")))
         children))))
 
 (defn- render-html-table [node opts]
   (let [rows (node-children node)
-        cell-text (fn [cell] (-> cell node-children (render-html-children opts)))
+        ;; Plain text, not html: the grid is wrapped in <pre> and the body
+        ;; is escape-html'd, so any <b>/<code> from html cells would surface
+        ;; as literal &lt;b&gt; markup (and throw off column widths).
+        cell-text (fn [cell] (-> cell node-children (render-plain-children opts) str/trim))
         all-rows  (mapv (fn [tr] (mapv cell-text (node-children tr))) rows)
         widths    (when (seq all-rows)
                     (let [cols (apply max 0 (map count all-rows))]
