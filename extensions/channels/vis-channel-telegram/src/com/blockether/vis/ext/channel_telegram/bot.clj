@@ -340,6 +340,15 @@
 (def ^:private throttle-min-ms 1200)
 (def ^:private throttle-min-delta 40)
 (def ^:private thinking-window-chars 3500)
+(def ^:private telegram-msg-limit 4096)
+
+(defn- esc-html
+  "Escape the three HTML-significant chars for Telegram HTML parse mode."
+  [s]
+  (-> (str s)
+    (str/replace "&" "&amp;")
+    (str/replace "<" "&lt;")
+    (str/replace ">" "&gt;")))
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
@@ -363,13 +372,21 @@
       (str "<blockquote expandable>" windowed "</blockquote>"))))
 
 (defn- live-bubble-html
-  "Compose the full bubble HTML from current state. Always starts with
-   the lit thinking lamp + status line so the user sees activity
-   immediately."
-  [{:keys [thinking-acc status-line]}]
-  (let [parts (cond-> ["💭 <b>Thinking…</b>"]
-                (seq thinking-acc) (conj (thinking-html thinking-acc))
-                (seq status-line)  (conj (str "<i>" status-line "</i>")))]
+  "Compose the full bubble HTML from current state: a live FEED of the
+   steps the agent is running (each form → `▸` while running, `✓` once
+   its result lands), the current status line, and the sliding reasoning
+   window. The whole bubble is transient — at turn end it is replaced in
+   place by the final answer, so none of this chrome survives."
+  [{:keys [thinking-acc status-line steps]}]
+  (let [step-lines (when (seq steps)
+                     (str/join "\n"
+                       (map (fn [{:keys [label done?]}]
+                              (str (if done? "✓" "▸") " <code>" (esc-html label) "</code>"))
+                         (take-last 10 steps))))
+        parts (cond-> ["💭 <b>Thinking…</b>"]
+                (seq step-lines)   (conj step-lines)
+                (seq status-line)  (conj (str "<i>" (esc-html status-line) "</i>"))
+                (seq thinking-acc) (conj (thinking-html thinking-acc)))]
     (str/join "\n\n" parts)))
 
 (defn- chunk-display-code
@@ -386,11 +403,13 @@
         (when (seq first-line)
           first-line)))))
 
-(defn- bubble-form-status-line
+(defn- form-step-label
+  "Short label for a live-feed step: the form's first code line
+   (truncated), or `form #N` when there's no code to show."
   [chunk]
-  (str "⏳ Running form #" (inc (or (:form-idx chunk) 0))
-    (when-let [first-line (chunk-display-code chunk)]
-      (str " — " (subs first-line 0 (min 60 (count first-line)))))))
+  (if-let [code (chunk-display-code chunk)]
+    (subs code 0 (min 72 (count code)))
+    (str "form #" (inc (or (:form-idx chunk) 0)))))
 
 (defn- bubble-state-for [chat-id]
   (get-in @chat-state [chat-id :live-bubble]))
@@ -419,7 +438,8 @@
                                            :keyboard?      true
                                            :backoff-ms     0
                                            :thinking-acc   ""
-                                           :status-line    nil}))
+                                           :status-line    nil
+                                           :steps          []}))
         :ok)
       :unavailable)))
 
@@ -490,6 +510,39 @@
         (catch Exception _ nil)))
     (update-bubble-state! chat-id (constantly nil))))
 
+(defn- drop-live-bubble!
+  "Delete the live streaming bubble message + clear its state. Used when
+   the answer can't reuse the bubble in place (too long, edit failed, or
+   a transcript must sit above the answer)."
+  [token chat-id]
+  (when-let [{:keys [message-id]} (bubble-state-for chat-id)]
+    (try (tg/delete-message! token chat-id message-id) (catch Exception _ nil))
+    (update-bubble-state! chat-id (constantly nil))))
+
+(defn- replace-bubble-with-answer!
+  "Turn the live streaming bubble INTO the final answer — one message
+   that streamed the activity and then BECOMES the answer, so none of the
+   intermediate 'what happened' chrome lingers. Edits the bubble in place
+   when `answer-html` fits a single Telegram message; otherwise (too long,
+   edit rejected, or no bubble) it drops the bubble and returns false so
+   the caller sends the answer as a fresh (auto-split) message.
+
+   Returns true when it delivered the answer, false when the caller must."
+  [token chat-id answer-html]
+  (boolean
+    (when (and (bubble-state-for chat-id)
+            (not (str/blank? answer-html))
+            (<= (count answer-html) telegram-msg-limit))
+      (let [{:keys [message-id]} (bubble-state-for chat-id)
+            resp (try (tg/edit-message! token chat-id message-id answer-html
+                        {:reply-markup {:inline_keyboard []}})
+                   (catch Exception _ nil))]
+        (if (and resp (:ok resp))
+          (do (update-bubble-state! chat-id (constantly nil)) true)
+          ;; edit rejected — remove the stale streaming bubble so it
+          ;; doesn't linger, and let the caller send the answer fresh.
+          (do (drop-live-bubble! token chat-id) false))))))
+
 (defn- on-tracker-update!
   "Progress-tracker `:on-update` handler. Reads the timeline, projects
    it into the bubble state, and calls update-live-bubble!."
@@ -517,17 +570,23 @@
               (str "↪ Fallback " from (when to (str " → " to)) " — " why)))
           (update-live-bubble! token chat-id :flush? true))
 
-        ;; Form starts swap the status line; flush so the user sees the
-        ;; new step within a tick.
+        ;; Each form the agent runs appends a line to the live feed (`▸`
+        ;; running). Flush so the new step shows within a tick.
         (= phase :form-start)
         (do
-          (update-bubble-state! chat-id assoc :status-line
-            (bubble-form-status-line chunk))
+          (update-bubble-state! chat-id update :steps (fnil conj [])
+            {:label (form-step-label chunk) :done? false})
+          (update-bubble-state! chat-id assoc :status-line nil)
           (update-live-bubble! token chat-id :flush? true))
 
+        ;; Result lands → flip the last step to `✓`.
         (= phase :form-result)
         (do
-          (update-bubble-state! chat-id assoc :status-line "⏳ Thinking…")
+          (update-bubble-state! chat-id update :steps
+            (fn [steps]
+              (if (seq steps)
+                (assoc-in steps [(dec (count steps)) :done?] true)
+                steps)))
           (update-live-bubble! token chat-id))
 
         (and (= phase :iteration-final) (not (:done? chunk)))
@@ -1202,24 +1261,35 @@
                      (tg/send-chat-action! token chat-id "typing"))
                    (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
                          result       (vis/send! id text opts)]
-                     (finalize-live-bubble! token chat-id :collapse)
                      (if voice-response?
-                       (let [voice-text (answer-voice-text result)]
-                         (when (and (voice-config-flag :telegram-send-transcript? true)
-                                 (not (str/blank? (str transcript))))
-                           (send! token chat-id (vis/markdown->ir (transcript-message transcript))))
-                         (tg/send-chat-action! token chat-id "record_voice")
-                         (send-answer-audio! token chat-id voice-text)
-                         (when (voice-config-flag :telegram-send-answer-text? true)
-                           ;; Full HTML answer ships alongside the voice
-                           ;; note so users see code/tables that TTS
-                           ;; deliberately skipped.
-                           (tg/send-message! token chat-id (answer-text result))))
                        (do
-                         (when (and transcript (not (str/blank? (str transcript))))
-                           (send! token chat-id (vis/markdown->ir (transcript-message transcript))))
-                         (tg/send-message! token chat-id
-                           (str (answer-text result) (format-footer result))))))
+                         ;; Voice answer is audio, so the streaming bubble
+                         ;; can't become it — collapse the bubble instead.
+                         (finalize-live-bubble! token chat-id :collapse)
+                         (let [voice-text (answer-voice-text result)]
+                           (when (and (voice-config-flag :telegram-send-transcript? true)
+                                   (not (str/blank? (str transcript))))
+                             (send! token chat-id (vis/markdown->ir (transcript-message transcript))))
+                           (tg/send-chat-action! token chat-id "record_voice")
+                           (send-answer-audio! token chat-id voice-text)
+                           (when (voice-config-flag :telegram-send-answer-text? true)
+                             ;; Full HTML answer ships alongside the voice
+                             ;; note so users see code/tables that TTS
+                             ;; deliberately skipped.
+                             (tg/send-message! token chat-id (answer-text result)))))
+                       ;; TEXT answer: the streaming bubble BECOMES the answer
+                       ;; (no separate "thinking complete" remnant).
+                       (let [answer-html (str (answer-text result) (format-footer result))]
+                         (if (and transcript (not (str/blank? (str transcript))))
+                           ;; Transcript must sit ABOVE the answer, but the
+                           ;; bubble was posted first — so drop it and send
+                           ;; transcript + answer fresh, in order.
+                           (do
+                             (drop-live-bubble! token chat-id)
+                             (send! token chat-id (vis/markdown->ir (transcript-message transcript)))
+                             (tg/send-message! token chat-id answer-html))
+                           (when-not (replace-bubble-with-answer! token chat-id answer-html)
+                             (tg/send-message! token chat-id answer-html))))))
                    (catch Exception e
                      (if (vis/cancellation? e)
                        (do
