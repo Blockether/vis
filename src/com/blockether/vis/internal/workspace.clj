@@ -15,10 +15,6 @@
    and leaves the user to commit with their own tools — Vis owns no
    git/branch/commit/merge lifecycle whatsoever.
 
-   Forking is a clone-of-a-clone: `create!` with `:from` another
-   workspace clones that workspace's tree instead of cwd; rift's
-   `ancestors` models the lineage for free.
-
    Vis never mutates JVM user.dir. Channels rebind *workspace-root* per
    turn from the active workspace; tools resolve paths via
    (workspace/cwd). There is NO process-cwd fallback in production -
@@ -374,18 +370,20 @@
         n))))
 
 (defn- insert-trunk!
-  "Insert a fresh TRUNK workspace row (root = repo_root = cwd, no clone,
-   no fork_ms) and pin it to `session-state-id` when given."
-  [db-info session-state-id]
-  (let [trunk (trunk-root)
-        ws    (p/db-workspace-insert! db-info
-                {:repo-id   (repo-id-for trunk)
-                 :repo-root trunk
-                 :root      trunk
-                 :state     :active})]
-    (when session-state-id
-      (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
-    ws))
+  "Insert a fresh TRUNK workspace row (root = repo_root = `root`, defaulting
+   to the real cwd; no clone, no fork_ms) and pin it to `session-state-id`
+   when given."
+  ([db-info session-state-id] (insert-trunk! db-info session-state-id (trunk-root)))
+  ([db-info session-state-id root]
+   (let [trunk (file-path root)
+         ws    (p/db-workspace-insert! db-info
+                 {:repo-id   (repo-id-for trunk)
+                  :repo-root trunk
+                  :root      trunk
+                  :state     :active})]
+     (when session-state-id
+       (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
+     ws)))
 
 (defn ensure-workspace!
   "Find-or-create the session's workspace. The DEFAULT is TRUNK — the
@@ -395,6 +393,15 @@
   [db-info {:keys [session-state-id]}]
   (or (for-session db-info session-state-id)
     (insert-trunk! db-info session-state-id)))
+
+(defn create-trunk-at!
+  "Mint a TRUNK workspace rooted at `root` (an arbitrary directory), not
+   pinned to any session. Lets a channel open a session under a directory
+   OTHER than the one vis was launched from — a tab in another project.
+   Returns the workspace row (with `:id`) to pass as `:workspace-id` when
+   creating the session."
+  [db-info root]
+  (insert-trunk! db-info nil (file-path root)))
 
 (defn create!
   "Create a DRAFT: a rift CoW clone of the user's cwd whose folder is
