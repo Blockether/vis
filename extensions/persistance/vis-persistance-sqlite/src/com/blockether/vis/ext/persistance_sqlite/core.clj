@@ -2155,9 +2155,11 @@
 (defn db-load-ctx-at-turn
   "Load the CTX snapshot (Nippy BLOB) for ONE turn POSITION in this
    session's state chain (latest version of that turn). Targeted
-   single-row read — `recall` uses it to restore an entity GC'd from the
-   live ctx, addressed by the birth turn encoded in its stable id
-   (`:t3/auth` -> turn 3). Returns the decoded CTX map or nil."
+   single-row read. `recall` calls this per turn while scanning
+   newest→oldest (down to the birth turn encoded in a stable id like
+   `:t3/auth`) to restore a GC'd entity at its last-live version,
+   stopping at the first snapshot that still contains it. Returns the
+   decoded CTX map or nil."
   [db-info session-id turn-position]
   (when (and (ds db-info) session-id turn-position)
     (let [state-ids (session-state-chain db-info session-id)]

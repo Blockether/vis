@@ -447,10 +447,23 @@
               (let [scope (synthesize-scope env)
                     ids-out    (atom [])
                     scopes-out (atom [])
-                    ;; LIVE first (same-turn :archived). If GC'd, fall
-                    ;; back to a TARGETED snapshot load of the birth turn
-                    ;; encoded in the id (:t3/auth -> turn 3) — O(1), no
-                    ;; history scan — and re-insert into live.
+                    ;; LIVE first (same-turn :archived → full latest
+                    ;; version). If GC'd, scan snapshots NEWEST→OLDEST
+                    ;; down to the id's birth turn and take the FIRST hit
+                    ;; — that's the entity's last-live state (it accreted
+                    ;; knowledge after birth), not the birth stub. Early
+                    ;; stop: recalled entities were usually alive
+                    ;; recently, so 1–3 single-row reads in practice.
+                    cur-turn (:turn (cursor-snapshot env))
+                    latest-snapshot-hit
+                    (fn [id]
+                      (let [birth (eng/id->turn id)]
+                        (when (and birth cur-turn)
+                          (some (fn [t]
+                                  (when-let [snap (persistance/db-load-ctx-at-turn db sid t)]
+                                    (when-let [hit (eng/find-entity-by-id snap id)]
+                                      hit)))
+                            (range cur-turn (dec birth) -1)))))
                     restore-id
                     (fn [id]
                       (let [out (atom nil)]
@@ -459,16 +472,12 @@
                                               (reset! out r) (:ctx r)))))
                         (if (:found? @out)
                           {:id id :restored (:kind @out) :key (:key @out) :source :live}
-                          (let [turn (eng/id->turn id)
-                                snap (when turn (persistance/db-load-ctx-at-turn db sid turn))
-                                hit  (when snap (eng/find-entity-by-id snap id))]
-                            (if hit
-                              (let [{:keys [subtree key kind entry]} hit]
-                                (when-let [ca (:ctx-atom env)]
+                          (if-let [{:keys [subtree key kind entry]} (latest-snapshot-hit id)]
+                            (do (when-let [ca (:ctx-atom env)]
                                   (swap! ca assoc-in [subtree key]
                                     (eng/restored-entry entry kind scope (str why))))
-                                {:id id :restored kind :key key :source :snapshot})
-                              {:id id :vis/error :not-found})))))]
+                              {:id id :restored kind :key key :source :snapshot})
+                            {:id id :vis/error :not-found}))))]
                 (doseq [id (or ids [])]
                   (swap! ids-out conj (restore-id id)))
                 (doseq [sc (or scopes [])]

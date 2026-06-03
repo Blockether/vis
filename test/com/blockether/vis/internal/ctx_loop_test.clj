@@ -292,21 +292,28 @@
           (expect (= :not-found (:vis/error (first (get-in r [:recalled :ids]))))))))))
 
 (defdescribe recall-restore-cross-turn-test
-  (describe "recall {:ids …} falls back to a TARGETED snapshot load when GC'd"
-    (let [env (assoc (mk-env) :db-info ::db :session-id "S")
+  (describe "recall {:ids …} scans snapshots newest→oldest for the LAST-LIVE version"
+    ;; mk-env seeds turn-position 2 — bump to 8 so the scan range covers
+    ;; the evolved t6 snapshot.
+    (let [env (-> (mk-env)
+                (assoc :db-info ::db :session-id "S")
+                (assoc :turn-state-atom (atom {:turn-position 8 :iteration 1 :form-idx 1})))
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))
-          ;; entity NOT in live ctx; lives only in the turn-3 snapshot
-          snap {:session/facts {:auth {:content "JWT" :status :archived
-                                       :id :t3/auth :born "t3/i1/f1"}}}]
-      (it "loads ONLY the birth turn (id->turn) and re-inserts into live"
+          ;; :auth born t3 (stub), evolved + archived t6 (last alive),
+          ;; GC'd by t7. The id is :t3/auth (birth turn) but the value
+          ;; we want is the t6 one.
+          snaps {3 {:session/facts {:auth {:content "stub" :status :active :id :t3/auth}}}
+                 6 {:session/facts {:auth {:content "JWT 15min" :status :archived :id :t3/auth}}}
+                 7 {:session/facts {}}}]
+      (it "re-inserts the LATEST version (t6), not the birth stub (t3)"
         (with-redefs [com.blockether.vis.internal.persistance/db-load-ctx-at-turn
-                      (fn [_db _sid turn] (when (= turn 3) snap))]
-          (let [r (recall {:ids [:t3/auth] :why "need it back"})
+                      (fn [_db _sid turn] (get snaps turn))]
+          (let [r (recall {:ids [:t3/auth] :why "need final auth"})
                 live @(:ctx-atom env)]
             (expect (= :snapshot (:source (first (get-in r [:recalled :ids])))))
             (expect (= :active (get-in live [:session/facts :auth :status])))
-            (expect (= "JWT" (get-in live [:session/facts :auth :content])))
-            (expect (= "need it back" (get-in live [:session/facts :auth :recalled :why])))))))))
+            (expect (= "JWT 15min" (get-in live [:session/facts :auth :content])))  ; t6, not "stub"
+            (expect (= "need final auth" (get-in live [:session/facts :auth :recalled :why])))))))))
 
 (defdescribe recall-window-form-test
   (describe "recall by form scope windows a DB-backed result"
