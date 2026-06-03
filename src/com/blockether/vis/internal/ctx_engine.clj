@@ -839,6 +839,7 @@
           (when (contains? e :scope-start)
             (when (iter-ranges-partial-overlap? (:scope-start e) (:scope-end e) start end) e)))
     trailer))
+(declare sort-trailer)
 (defn apply-trailer-summarize
   "Apply one or more summary directives. For each directive `{:scope-start
    :scope-end :summary}`:
@@ -848,53 +849,59 @@
      3. Absorb fully-contained entries (drop them from trailer)
      4. Insert new summary with :born stamped to `form-scope`
 
+   The result is `sort-trailer`'d so the new stub lands at its
+   chronological position (by :scope-start), never the bottom — every
+   caller gets correct ordering without re-sorting.
+
    Returns `{:trailer new-trailer :warnings vec}`."
   [trailer summaries form-scope]
-  (reduce (fn [{:keys [trailer warnings]} {:keys [scope-start scope-end summary]}]
-            (cond
-              (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
-              {:trailer trailer,
-               :warnings
-               (conj
-                 warnings
-                 (warn
-                   :trailer-summarize-bad-scope
-                   [scope-start scope-end]
-                   "trailer-summarize :scope-start / :scope-end must be valid iter-scopes"))}
-              (pos? (iter-compare scope-start scope-end))
-              {:trailer trailer,
-               :warnings
-               (conj
-                 warnings
-                 (warn
-                   :trailer-summarize-inverted
-                   [scope-start scope-end]
-                   (str "trailer-summarize range " scope-start "->" scope-end " is inverted")))}
-              :else (if-let [conflict (find-overlap-conflict trailer scope-start scope-end)]
-                      {:trailer trailer,
-                       :warnings (conj warnings
-                                   (warn :trailer-summarize-partial-overlap
-                                     [scope-start scope-end (:scope-start conflict)
-                                      (:scope-end conflict)]
-                                     (str "trailer-summarize "
-                                       scope-start
-                                       "->"
-                                       scope-end
-                                       " partially overlaps existing summary "
-                                       (:scope-start conflict)
-                                       "->"
-                                       (:scope-end conflict)
-                                       "; write refused")))}
-                      {:trailer (-> trailer
-                                  (->> (remove #(entry-contained-by? % [scope-start scope-end])))
-                                  vec
-                                  (conj {:scope-start scope-start,
-                                         :scope-end scope-end,
-                                         :summary summary,
-                                         :born form-scope})),
-                       :warnings warnings})))
-    {:trailer trailer, :warnings []}
-    (or summaries [])))
+  (update
+    (reduce (fn [{:keys [trailer warnings]} {:keys [scope-start scope-end summary]}]
+              (cond
+                (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
+                {:trailer trailer,
+                 :warnings
+                 (conj
+                   warnings
+                   (warn
+                     :trailer-summarize-bad-scope
+                     [scope-start scope-end]
+                     "trailer-summarize :scope-start / :scope-end must be valid iter-scopes"))}
+                (pos? (iter-compare scope-start scope-end))
+                {:trailer trailer,
+                 :warnings
+                 (conj
+                   warnings
+                   (warn
+                     :trailer-summarize-inverted
+                     [scope-start scope-end]
+                     (str "trailer-summarize range " scope-start "->" scope-end " is inverted")))}
+                :else (if-let [conflict (find-overlap-conflict trailer scope-start scope-end)]
+                        {:trailer trailer,
+                         :warnings (conj warnings
+                                     (warn :trailer-summarize-partial-overlap
+                                       [scope-start scope-end (:scope-start conflict)
+                                        (:scope-end conflict)]
+                                       (str "trailer-summarize "
+                                         scope-start
+                                         "->"
+                                         scope-end
+                                         " partially overlaps existing summary "
+                                         (:scope-start conflict)
+                                         "->"
+                                         (:scope-end conflict)
+                                         "; write refused")))}
+                        {:trailer (-> trailer
+                                    (->> (remove #(entry-contained-by? % [scope-start scope-end])))
+                                    vec
+                                    (conj {:scope-start scope-start,
+                                           :scope-end scope-end,
+                                           :summary summary,
+                                           :born form-scope})),
+                         :warnings warnings})))
+      {:trailer trailer, :warnings []}
+      (or summaries []))
+    :trailer sort-trailer))
 (defn sort-trailer
   "Sort by composite key: pin :scope, summary :scope-start. Stable order."
   [trailer]
@@ -1144,12 +1151,10 @@
    Returns `{:ctx :warnings}`."
   [ctx form-scope {:keys [trailer facts tasks]}]
   (let [{t :trailer w-trailer :warnings}
+        ;; apply-trailer-summarize already returns a sorted trailer, so
+        ;; the stub is at its chronological spot for every caller.
         (apply-trailer-summarize (or (:session/trailer ctx) []) (or trailer []) form-scope)
-        ;; apply-trailer-summarize conj's the stub at the END; sort here
-        ;; so the recap lands at its chronological position (by
-        ;; scope-start), NOT at the bottom — both the mid-turn
-        ;; (summarize …) binding and (done {:summarize …}) get this.
-        ctx-t (assoc ctx :session/trailer (sort-trailer t))
+        ctx-t (assoc ctx :session/trailer t)
         {ctx-f :ctx w-f :warnings n1 :next-idx}
         (summarize-entities ctx-t form-scope :fact facts 1)
         {ctx-k :ctx w-k :warnings}
