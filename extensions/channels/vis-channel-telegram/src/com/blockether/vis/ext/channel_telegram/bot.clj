@@ -427,7 +427,13 @@
    find it."
   [token chat-id]
   (let [initial-html "💭 <b>Thinking…</b>"
-        resp (try (tg/post-draft-message! token chat-id initial-html
+        ;; Plain sendMessage (NOT sendMessageDraft): the draft method
+        ;; requires a `random_id` we don't supply and 400s with
+        ;; RANDOM_ID_INVALID on every call, which silently disabled the
+        ;; whole live bubble (no stream at all). A regular message + in-
+        ;; place editMessageText is the standard streaming pattern and the
+        ;; one the rest of this namespace already edits/replaces.
+        resp (try (tg/post-message! token chat-id initial-html
                     {:reply-markup (cancel-keyboard chat-id)})
                (catch Exception _ nil))]
     (if-let [mid (some-> resp :result :message_id)]
