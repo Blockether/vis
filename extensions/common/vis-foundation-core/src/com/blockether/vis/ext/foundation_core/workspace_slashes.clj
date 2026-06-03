@@ -1,23 +1,19 @@
 (ns com.blockether.vis.ext.foundation-core.workspace-slashes
-  "Declarative `/workspace …` slash tree.
+  "Declarative `/draft …` slash tree.
 
-   Surface registered on `vis-foundation-core`'s
-   `:ext/slash-commands` vec. Engine aggregates declarative slash
-   sets from every active extension via `vis/active-slashes`; this
-   namespace owns the workspace family.
+   Surface registered on `vis-foundation-core`'s `:ext/slash-commands`
+   vec. A session IS its draft (a `rift` CoW clone of cwd), locked 1:1,
+   so the family is small:
 
-   Each handler is `(fn [ctx])` returning a `:slash/*` envelope:
+     /draft [label]        fork a new draft from the current one
+     /draft apply          land this draft's since-fork edits into cwd
+     /draft list           list drafts (== sessions)
+     /draft abandon [sel] <reason>   trash a draft (current or by selector)
 
-     {:slash/status :ok | :error | :nothing-to-commit | :ff-failed
-      :slash/title  short headline
-      :slash/body   multi-line detail (optional)
-      :slash/actions [{:label … :slash …}]   ;; optional follow-ups
-      :slash/data    arbitrary payload (workspace-id, sha, …)}
-
-   Handlers are PURE w.r.t. the channel — they never call channel
-   APIs directly. The dispatch layer (`internal/slash.clj`) wraps
-   the call so the engine + channels render results from a single
-   contract."
+   Vis owns no git lifecycle — `apply` copies changed files into the
+   user's real cwd, uncommitted, and the user commits with their own
+   tools. Each handler is `(fn [ctx])` returning a `:slash/*` envelope;
+   handlers are PURE w.r.t. the channel."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.workspace :as workspace]))
@@ -27,9 +23,7 @@
 ;; =============================================================================
 
 (defn- ctx-session-state-id
-  "Pull the session-state UUID from a slash ctx. Engine stamps both
-   `:session/id` (soul id) and `:session/state-id` (state row id); the
-   state id is what `workspace/*` core fns need."
+  "Session-state UUID from a slash ctx (engine stamps `:session/state-id`)."
   [ctx]
   (or (:session/state-id ctx)
     (:session-state-id ctx)))
@@ -38,8 +32,7 @@
   (or (:db-info ctx) (:db ctx)))
 
 (defn- session-workspace
-  "Resolve the workspace pinned to the current session-state. Returns
-   nil when the session has no pin yet (pre-ensure-trunk!)."
+  "The draft pinned to the current session-state, or nil."
   [ctx]
   (when-let [state-id (ctx-session-state-id ctx)]
     (workspace/for-session (ctx-db ctx) state-id)))
@@ -47,199 +40,94 @@
 (defn- err [msg & {:as extras}]
   (merge {:slash/status :error :slash/title msg} extras))
 
+(defn- change-line [{:keys [status path]}]
+  (str (case status :add "+ " :modify "~ " :delete "- " "  ") path))
+
 ;; =============================================================================
-;; Handlers (one per command)
+;; Handlers
 ;; =============================================================================
 
 (defn- handle-new
+  "`/draft [label]` — fork a fresh draft from the current one (clone-of-a-
+   clone) and pin the current session to it. With no current draft (first
+   call in a fresh session) clones cwd directly."
   [ctx]
-  (let [db        (ctx-db ctx)
-        state-id  (ctx-session-state-id ctx)
-        current   (session-workspace ctx)
-        label     (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
-    (cond
-      (nil? state-id)
-      (err "Cannot spawn workspace: no active session")
-
-      ;; Refuse `new` from a branch-kind session. Avoids the
-      ;; fork-from-branch ambiguity; user must apply / discard /
-      ;; switch first.
-      (and current (= :branch (:kind current)))
-      (err (str "You are in workspace " (or (:label current) (:branch current))
-             "; use /workspace apply, /workspace discard, or /workspace switch first."))
-
-      :else
-      (let [spawned (workspace/spawn-branch! db
-                      {:from              current
-                       :session-state-id  state-id})
-            spawned (if label
-                      (workspace/set-label! db
-                        {:workspace-id (:id spawned) :label label})
-                      spawned)]
+  (let [db       (ctx-db ctx)
+        state-id (ctx-session-state-id ctx)
+        current  (session-workspace ctx)
+        label    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+    (if (nil? state-id)
+      (err "Cannot fork: no active session")
+      (let [forked (workspace/create! db {:from             current
+                                          :session-state-id state-id
+                                          :label            label})]
         {:slash/status :ok
-         :slash/title  "Workspace created"
-         :slash/body   (str (workspace/display-label spawned) " · " (:branch spawned))
-         :slash/data   {:workspace-id (:id spawned)
-                        :branch       (:branch spawned)
-                        :label        (:label spawned)}}))))
-
-(defn- handle-commit
-  [ctx]
-  (let [db      (ctx-db ctx)
-        current (session-workspace ctx)
-        message (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
-    (cond
-      (nil? current)
-      (err "No active workspace")
-
-      (= :trunk (:kind current))
-      (err "Cannot commit on trunk workspace")
-
-      (str/blank? message)
-      (err "Commit message required: /workspace commit <message>")
-
-      :else
-      (let [result (workspace/commit! db {:workspace-id (:id current)
-                                          :message      message})]
-        (case (:status result)
-          :ok               {:slash/status :ok
-                             :slash/title  "Committed"
-                             :slash/body   (str (subs (:sha result) 0 8) " — " (:message result))
-                             :slash/data   result}
-          :nothing-to-commit {:slash/status :nothing-to-commit
-                              :slash/title  "Nothing to commit"
-                              :slash/data   result})))))
+         :slash/title  "Draft created"
+         :slash/body   (str (workspace/display-label forked)
+                         (when current
+                           (str " · forked from " (workspace/display-label current))))
+         :slash/data   {:workspace-id (:id forked)
+                        :label        (:label forked)
+                        :parent-id    (:parent-id forked)}}))))
 
 (defn- handle-apply
+  "`/draft apply` — land the draft's since-fork edits into cwd."
   [ctx]
   (let [db      (ctx-db ctx)
         current (session-workspace ctx)]
-    (cond
-      (nil? current)
-      (err "No active workspace")
-
-      (= :trunk (:kind current))
-      (err "Cannot apply trunk onto itself")
-
-      :else
-      (let [result (workspace/ff-apply! db {:workspace-id (:id current)})]
-        (case (:status result)
-          :ok        {:slash/status :ok
-                      :slash/title  "Workspace applied"
-                      :slash/body   (str (:branch result) " -> " (:trunk result "trunk")
-                                      " (" (subs (:sha result) 0 8) ")")
-                      :slash/data   result}
-          :ff-failed {:slash/status :ff-failed
-                      :slash/title  "FF apply failed"
-                      :slash/body   (:reason result)
-                      :slash/actions [{:label "Resolve merge"
-                                       :slash "/workspace merge-resolve"}
-                                      {:label "Discard workspace"
-                                       :slash "/workspace discard"}]
-                      :slash/data   result})))))
-
-(defn- handle-discard
-  [ctx]
-  (let [db      (ctx-db ctx)
-        current (session-workspace ctx)
-        hard?   (boolean (some #{"--hard"} (:command/argv ctx)))]
-    (cond
-      (nil? current)        (err "No active workspace")
-      (= :trunk (:kind current))
-      (err "Cannot discard trunk workspace")
-
-      :else
-      (let [done (workspace/discard! db
-                   {:workspace-id   (:id current)
-                    :delete-branch? hard?
-                    :force?         hard?})]
+    (if (nil? current)
+      (err "No active draft")
+      (let [{:keys [landed changed]} (workspace/apply! db {:workspace-id (:id current)})]
         {:slash/status :ok
-         :slash/title  (if hard? "Workspace fully discarded" "Workspace worktree removed")
-         :slash/body   (str (:branch done) " state=" (:state done))
-         :slash/data   {:workspace-id (:id done)
-                        :hard?        hard?
-                        :state        (:state done)}}))))
+         :slash/title  (str "Applied " landed " file" (when (not= 1 landed) "s") " to cwd")
+         :slash/body   (->> changed (map change-line) (str/join "\n"))
+         :slash/data   {:workspace-id (:id current) :landed landed :changed changed}}))))
 
 (defn- handle-list
+  "`/draft list` — drafts for the current repo (== sessions, 1:1)."
   [ctx]
   (let [db      (ctx-db ctx)
         current (session-workspace ctx)
-        repo-id (some :repo-id [current (workspace/get db (:workspace/id ctx))])
+        repo-id (or (:repo-id current)
+                  (some-> (workspace/get db (:workspace/id ctx)) :repo-id))
         active  (when repo-id (workspace/list-active-with-sessions db repo-id))]
     {:slash/status :ok
-     :slash/title  (str "Workspaces (" (count active) " active)")
+     :slash/title  (str "Drafts (" (count active) ")")
      :slash/body   (->> active
                      (map (fn [{:keys [workspace session-state]}]
                             (str (if (= (:id workspace) (:id current)) "* " "  ")
-                              (workspace/display-label nil workspace session-state)
-                              "  [" (name (:kind workspace)) " " (:branch workspace) "]")))
+                              (workspace/display-label nil workspace session-state))))
                      (str/join "\n"))
      :slash/data   {:active active :current-id (:id current)}}))
 
-(defn- handle-switch
+(defn- handle-abandon
+  "`/draft abandon [selector] <reason>` — trash a draft. With a leading
+   id-prefix / label / clone-name selector, targets that draft; otherwise
+   the current one. Remaining words are the reason (logged into lineage)."
   [ctx]
-  (let [db        (ctx-db ctx)
-        selector  (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)
-        current   (session-workspace ctx)
-        repo-id   (:repo-id current)
+  (let [db         (ctx-db ctx)
+        current    (session-workspace ctx)
+        repo-id    (:repo-id current)
+        argv       (vec (:command/argv ctx))
         candidates (when repo-id (workspace/list-active db repo-id))
-        chosen     (when selector
-                     (or
-                       ;; uuid prefix match
-                       (some #(when (str/starts-with? (str (:id %)) selector) %) candidates)
-                       ;; label match
-                       (some #(when (= selector (:label %)) %) candidates)
-                       ;; branch match
-                       (some #(when (= selector (:branch %)) %) candidates)))]
-    (cond
-      (nil? selector)
-      (err "/workspace switch <id|label|branch>")
-
-      (nil? chosen)
-      (err (str "No workspace matches selector " (pr-str selector)))
-
-      :else
-      (do (workspace/focus! db (:id chosen))
+        selector   (first argv)
+        match      (when selector
+                     (some #(when (or (str/starts-with? (str (:id %)) selector)
+                                    (= selector (:label %))
+                                    (= selector (:branch %)))
+                              %)
+                       candidates))
+        target     (or match current)
+        reason     (str/trim (str/join " " (if match (rest argv) argv)))]
+    (if (nil? target)
+      (err "No draft to abandon")
+      (let [done (workspace/abandon! db {:workspace-id (:id target)
+                                         :reason       (not-empty reason)})]
         {:slash/status :ok
-         :slash/title  "Workspace focused"
-         :slash/body   (workspace/display-label chosen)
-         :slash/data   {:workspace-id (:id chosen)}}))))
-
-(defn- handle-label
-  [ctx]
-  (let [db      (ctx-db ctx)
-        current (session-workspace ctx)
-        argv    (:command/argv ctx)
-        clear?  (boolean (some #{"--clear"} argv))
-        text    (when-not clear? (some-> (str/join " " argv) str/trim not-empty))]
-    (cond
-      (nil? current)
-      (err "No active workspace")
-
-      (and (not clear?) (nil? text))
-      (err "/workspace label <text>  |  /workspace label --clear")
-
-      :else
-      (let [done (workspace/set-label! db
-                   {:workspace-id (:id current)
-                    :label        (when-not clear? text)})]
-        {:slash/status :ok
-         :slash/title  (if clear? "Label cleared" "Label set")
-         :slash/body   (workspace/display-label done)
-         :slash/data   {:workspace-id (:id done)
-                        :label        (:label done)}}))))
-
-;; =============================================================================
-;; Availability predicates
-;; =============================================================================
-
-(defn- branch-ws? [ctx]
-  (= :branch (:kind (session-workspace ctx))))
-
-(defn- branch-and-not-merged? [ctx]
-  (let [ws (session-workspace ctx)]
-    (and (= :branch (:kind ws))
-      (contains? #{:active :merging} (:state ws)))))
+         :slash/title  "Draft abandoned"
+         :slash/body   (str (workspace/display-label done)
+                         (when (not-empty reason) (str " — " reason)))
+         :slash/data   {:workspace-id (:id done) :reason (not-empty reason)}}))))
 
 ;; =============================================================================
 ;; Specs vec
@@ -248,72 +136,37 @@
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest
    via `:ext/slash-commands`."
-  [{:slash/name   "workspace"
-    :slash/doc    "Workspace operations (see subcommands)."
-    :slash/usage  "/workspace <new|commit|apply|discard|list|switch|label> …"
-    ;; Bare `/workspace` opens the unified session/workspace navigator in
-    ;; picker-capable channels (session == workspace); other channels get
-    ;; the subcommand help text from the run-fn below.
+  [{:slash/name   "draft"
+    :slash/doc    "Draft (CoW workspace) operations — see subcommands."
+    :slash/usage  "/draft <[label] | apply | list | abandon> …"
+    ;; Bare `/draft` opens the session/draft navigator in picker-capable
+    ;; channels (session == draft, 1:1); `/draft <label>` forks a new one.
     :slash/ui     {:kind :navigator}
-    :slash/run-fn (fn [_ctx]
-                    {:slash/status :ok
-                     :slash/title  "Workspace commands"
-                     :slash/body   (str "/workspace new [label?]\n"
-                                     "/workspace commit <message>\n"
-                                     "/workspace apply\n"
-                                     "/workspace discard [--hard]\n"
-                                     "/workspace list\n"
-                                     "/workspace switch <id|label|branch>\n"
-                                     "/workspace label <text>|--clear")})}
-   {:slash/name     "new"
-    :slash/parent   ["workspace"]
-    :slash/doc      "Spawn a fresh :branch workspace from trunk; pins the current session 1:1."
-    :slash/usage    "/workspace new [label?]"
-    :slash/requires #{:session}
-    :slash/run-fn   handle-new}
-   {:slash/name     "commit"
-    :slash/parent   ["workspace"]
-    :slash/doc      "Stage all worktree changes and commit (refuses trunk + empty diff)."
-    :slash/usage    "/workspace commit <message>"
-    :slash/requires #{:session}
-    :slash/availability-fn branch-ws?
-    :slash/run-fn   handle-commit}
+    :slash/run-fn (fn [ctx]
+                    (if (seq (:command/argv ctx))
+                      (handle-new ctx)
+                      {:slash/status :ok
+                       :slash/title  "Draft commands"
+                       :slash/body   (str "/draft [label]        fork a new draft from the current one\n"
+                                       "/draft apply          land this draft's changes into cwd\n"
+                                       "/draft list           list drafts\n"
+                                       "/draft abandon [sel] <reason>   trash a draft")}))}
    {:slash/name     "apply"
-    :slash/parent   ["workspace"]
-    :slash/doc      "Fast-forward trunk onto this workspace's branch."
-    :slash/usage    "/workspace apply"
+    :slash/parent   ["draft"]
+    :slash/doc      "Land this draft's since-fork edits into cwd (uncommitted)."
+    :slash/usage    "/draft apply"
     :slash/requires #{:session}
-    :slash/availability-fn branch-and-not-merged?
     :slash/run-fn   handle-apply}
-   {:slash/name     "discard"
-    :slash/parent   ["workspace"]
-    :slash/doc      "Drop the worktree (soft) or worktree + branch (--hard)."
-    :slash/usage    "/workspace discard [--hard]"
-    :slash/requires #{:session}
-    :slash/availability-fn branch-and-not-merged?
-    :slash/run-fn   handle-discard}
    {:slash/name     "list"
-    :slash/parent   ["workspace"]
-    :slash/doc      "List workspaces / sessions for the current repo."
-    :slash/usage    "/workspace list"
+    :slash/parent   ["draft"]
+    :slash/doc      "List drafts / sessions for the current repo."
+    :slash/usage    "/draft list"
     :slash/requires #{:channel}
-    ;; A session IS its workspace (locked 1:1), so listing workspaces is
-    ;; exactly the Ctrl+G session navigator. In channels that can paint a
-    ;; picker (TUI) this opens it directly — no engine round-trip, no
-    ;; persisted answer bubble (which also fixed the resume-only text dump
-    ;; that read as a wall of `[trunk main]` rows). Channels without a
-    ;; navigator (Telegram) fall back to `handle-list`'s text.
     :slash/ui       {:kind :navigator}
     :slash/run-fn   handle-list}
-   {:slash/name     "switch"
-    :slash/parent   ["workspace"]
-    :slash/doc      "Focus another workspace by id-prefix, label, or branch."
-    :slash/usage    "/workspace switch <id|label|branch>"
-    :slash/requires #{:channel}
-    :slash/run-fn   handle-switch}
-   {:slash/name     "label"
-    :slash/parent   ["workspace"]
-    :slash/doc      "Set or clear the human-friendly workspace label."
-    :slash/usage    "/workspace label <text>|--clear"
+   {:slash/name     "abandon"
+    :slash/parent   ["draft"]
+    :slash/doc      "Trash a draft (current, or by selector) with an optional reason."
+    :slash/usage    "/draft abandon [id|label] <reason>"
     :slash/requires #{:session}
-    :slash/run-fn   handle-label}])
+    :slash/run-fn   handle-abandon}])

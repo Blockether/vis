@@ -90,7 +90,13 @@
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
   ;; on the classpath to read `ssh-ed25519` private keys.
   org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.80"}
-  org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.6.0.202603022253-r"}}
+  org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.6.0.202603022253-r"}
+  ;; rift — copy-on-write workspaces (APFS clonefile / btrfs snapshot) loaded
+  ;; in-process via FFM (java.lang.foreign). Replaces git-worktree-backed
+  ;; workspaces: `rift/create` clones cwd instantly at near-zero disk; `.git`
+  ;; rides along so in-clone `git diff` is a valid since-fork baseline.
+  ;; Needs `--enable-native-access=ALL-UNNAMED` (already on :vis + :dev).
+  com.blockether/rift                             {:mvn/version "0.0.8"}}
 
  :aliases
  {  ;; Primary alias - the `vis` CLI.
@@ -101,7 +107,12 @@
                       "--sun-misc-unsafe-memory-access=allow"]
           :main-opts ["-m" "com.blockether.vis.core"]}
   ;; Aggregate test runner.
-  :test  {:extra-paths ["test"
+  :test  {;; rift's FFM loader (exercised by the draft slash tests) needs
+          ;; native access, same as :vis / :dev.
+          :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
+                        "--enable-native-access=ALL-UNNAMED"
+                        "--sun-misc-unsafe-memory-access=allow"]
+          :extra-paths ["test"
                         "test/resources"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/providers/vis-provider-github-copilot/test"

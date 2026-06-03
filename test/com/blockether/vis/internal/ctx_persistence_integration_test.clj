@@ -49,7 +49,10 @@
     (it "tasks / facts persist across env rebuild on the same session"
       (let [db-info (vis/db-create-connection! :memory)]
         (try
-          (let [ws (vis/workspace-ensure-trunk! db-info {})
+          (let [ws (vis/db-workspace-insert! db-info
+                       {:repo-id "test" :repo-root "/tmp" :kind :branch
+                        :branch (str "t-" (subs (str (random-uuid)) 0 8))
+                        :root "/tmp" :state :active :commit-id "0"})
                 session-id (vis/db-store-session!
                              db-info {:channel :tui :title "integration"
                                       :workspace-id (:id ws)})
@@ -120,7 +123,10 @@
     (it "task aged past TTL is dropped from live ctx but reachable via history"
       (let [db-info (vis/db-create-connection! :memory)]
         (try
-          (let [ws (vis/workspace-ensure-trunk! db-info {})
+          (let [ws (vis/db-workspace-insert! db-info
+                       {:repo-id "test" :repo-root "/tmp" :kind :branch
+                        :branch (str "t-" (subs (str (random-uuid)) 0 8))
+                        :root "/tmp" :state :active :commit-id "0"})
                 session-id (vis/db-store-session!
                              db-info {:channel :tui :title "ttl"
                                       :workspace-id (:id ws)})

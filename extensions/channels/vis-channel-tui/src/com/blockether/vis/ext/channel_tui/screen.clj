@@ -1919,9 +1919,8 @@
                      (if-let [current-id (current-session-id)]
                        (let [db (vis/db-info)
                                      ;; Each fork gets its own workspace pin (1:1).
-                                     ;; The simplest version mints a fresh trunk for
-                                     ;; the new state.
-                             ws-id (try (:id (vis/workspace-ensure-trunk! db {}))
+                                     ;; Mint a fresh rift clone of cwd for the new state.
+                             ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
                                      (catch Throwable _ nil))
                              fork-state-id (try (vis/db-fork-session! db
                                                   current-id
