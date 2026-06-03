@@ -1916,8 +1916,9 @@
 (def ^:private navigator-columns
   [{:id :title, :label "Title", :flex 1}
    {:id :session, :label "Session", :width 8}
+   {:id :draft, :label "Draft", :width 8}
+   {:id :dir, :label "Directory", :width 22}
    {:id :status, :label "Status", :width 10}
-   {:id :created, :label "Created", :width 12}
    {:id :modified, :label "Modified", :width 12}])
 (defn- navigator-content-w
   "Navigator is wider than the default modal footprint — five columns need
@@ -1946,6 +1947,11 @@
      :focused? active?,
      :title (session-title session),
      :session (short-session-id session),
+     ;; Enriched by the caller (screen/show-sessions!) from each session's
+     ;; pinned workspace: whether it's in a draft, and the directory it works
+     ;; in. `—` = trunk / no draft.
+     :draft (or (not-empty (:draft-label session)) "—"),
+     :dir (or (not-empty (:work-dir session)) "—"),
      :status (if active? "● focused" (str (long (or (:turn-count session) 0)) " turns")),
      :created (navigator-stamp (:created-at session)),
      :modified (navigator-stamp (:modified-at session)),
@@ -2001,6 +2007,97 @@
                  (p/put-str! g (+ x off) row
                    (table/fit-cell (nth cells i "") w (nth aligns i :left)))))]
     (if bold? (p/styled g [p/BOLD] (draw)) (draw))))
+(defn- dir-canon
+  ^java.io.File [^java.io.File f]
+  (try (.getCanonicalFile f) (catch Throwable _ (.getAbsoluteFile f))))
+
+(defn- list-subdirs
+  "Case-insensitively sorted names of the visible child directories of `dir`.
+   Unreadable dirs (permission denied → nil listing) yield an empty vec."
+  [^java.io.File dir]
+  (->> (try (.listFiles dir) (catch Throwable _ nil))
+    (filter (fn [^java.io.File f] (and (.isDirectory f) (not (.isHidden f)))))
+    (map (fn [^java.io.File f] (.getName f)))
+    (sort String/CASE_INSENSITIVE_ORDER)
+    vec))
+
+(defn directory-picker-dialog!
+  "Browse the filesystem and choose a directory. Returns the chosen absolute
+   path (string) or nil on Esc.
+
+   Row 0 is always `Open here` (choose the directory you're currently
+   browsing). `..` ascends; every other row descends into that subdirectory.
+   ↑/↓ move, Enter activates the highlighted row, Tab / → chooses the current
+   directory outright, ← ascends."
+  [^TerminalScreen screen start-path]
+  (let [path     (atom (dir-canon (java.io.File. ^String (or start-path "."))))
+        selected (atom 0)
+        scroll   (atom 0)]
+    (loop []
+      (let [^java.io.File dir @path
+            up?      (some? (.getParentFile dir))
+            entries  (vec (concat
+                            [{:kind :choose :label (str "‣ Open here: " (.getPath dir))}]
+                            (when up? [{:kind :up :label ".."}])
+                            (map (fn [n] {:kind :into :name n :label (str "  " n "/")})
+                              (list-subdirs dir))))
+            total    (count entries)
+            size     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols     (.getColumns size)
+            rows-n   (.getRows size)
+            g        (.newTextGraphics screen)
+            bounds   (draw-dialog-chrome! g cols rows-n "Open directory"
+                       (default-content-height rows-n))
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+            list-x   (+ left 2)
+            list-w   (max 1 (- inner-w 3))
+            body-h   (clamp total 1 (max 1 content-h))
+            _        (swap! selected #(clamp % 0 (max 0 (dec total))))
+            _        (swap! scroll #(visible-window-start @selected % body-h total))
+            ascend!  (fn [] (when up?
+                              (reset! path (dir-canon (.getParentFile dir)))
+                              (reset! selected 0) (reset! scroll 0)))]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) content-top inner-w content-h)
+        (dotimes [i body-h]
+          (let [idx       (+ @scroll i)
+                row       (+ content-top i)
+                entry     (nth entries idx)
+                selected? (= idx @selected)
+                fg        (if (= :choose (:kind entry)) t/dialog-hint-key t/dialog-fg)
+                bg        (if selected? t/dialog-title-bg t/dialog-bg)]
+            (p/set-colors! g fg bg)
+            (p/fill-rect! g (inc left) row inner-w 1)
+            (p/put-str! g list-x row (ellipsize (:label entry) list-w))
+            (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))
+        (draw-hint-bar! g left hint-row inner-w
+          [["↑/↓" "move"] ["Enter" "open"] ["Tab" "choose here"] ["Esc" "cancel"]])
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (read-modal-key! screen)]
+          (when key
+            (cond
+              (modal-escape-key? key) nil
+              (modal-wheel-step key)
+              (do (swap! selected #(clamp (+ % (modal-wheel-step key)) 0 (max 0 (dec total))))
+                (recur))
+              (modal-enter-key? key)
+              (let [entry (nth entries @selected)]
+                (case (:kind entry)
+                  :choose (.getPath dir)
+                  :up     (do (ascend!) (recur))
+                  :into   (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
+                            (reset! selected 0) (reset! scroll 0) (recur))))
+              :else
+              (let [kt (.getKeyType key)]
+                (condp = kt
+                  KeyType/ArrowUp    (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                  KeyType/ArrowDown  (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                  KeyType/Tab        (.getPath dir)
+                  KeyType/ArrowRight (.getPath dir)
+                  KeyType/ArrowLeft  (do (ascend!) (recur))
+                  (recur))))))))))
+
 (defn navigator-dialog!
   "Global Ctrl+G picker. Returns a target action map or nil on Esc."
   [^TerminalScreen screen opts]

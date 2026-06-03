@@ -1546,9 +1546,14 @@
                              (vreset! drain? true))
                            ws-final)))))]
       {:db db'
-       :fx (if @drain?
-             [[:dispatch [:drain-pending workspace-id]]]
-             [])})))
+       :fx (cond-> []
+             @drain? (conj [:dispatch [:drain-pending workspace-id]])
+             ;; Ring the terminal bell when a turn finishes in a tab that
+             ;; ISN'T focused — that's the one case you can't see complete on
+             ;; screen, so the background session needs to announce itself.
+             (and (not= workspace-id (current-workspace-id db))
+               (not= :cancelled status))
+             (conj [:bell]))})))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
@@ -1568,6 +1573,17 @@
 (reg-fx :notify
   (fn [text level ttl-ms]
     (vis/notify! text :level level :ttl-ms ttl-ms)))
+
+(reg-fx :bell
+  ;; Write a raw BEL (0x07) to the terminal. BEL doesn't move the cursor, so
+  ;; interleaving it with Lanterna's output is safe; the terminal turns it
+  ;; into an audible/visible bell per the user's terminal settings.
+  (fn []
+    (try
+      (when-let [^java.io.OutputStream out @vis/tty-out]
+        (.write out 7)
+        (.flush out))
+      (catch Throwable _ nil))))
 
 (reg-fx :apply-config
   (fn [config]
