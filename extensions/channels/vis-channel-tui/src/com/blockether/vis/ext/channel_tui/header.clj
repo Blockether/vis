@@ -83,7 +83,7 @@
    panel, or overlay."
   #{:active :merging})
 
-(defn- workspace-strip-visible?
+(defn- tab-strip-visible?
   "True for entries that should appear in the header strip. Entries
    without an attached :workspace record (synthetic fallback) are
    always visible. Entries with a workspace record are visible only
@@ -93,7 +93,7 @@
     (or (nil? state)
       (contains? active-workspace-states state))))
 
-(defn- workspace-entries
+(defn- tab-entries
   "Return entries to render in the centre strip, ALWAYS non-empty.
 
    Each entry represents a workspace (1:1 with its session); the
@@ -105,28 +105,28 @@
    labelled with the session title (or the `Untitled session`
    placeholder) so the centre slot is never empty."
   [db]
-  (let [entries   (filterv workspace-strip-visible? (:workspaces db))
-        active-id (or (:active-workspace-id db)
+  (let [entries   (filterv tab-strip-visible? (:tabs db))
+        active-id (or (:active-tab-id db)
                     (:id (some #(when (:active? %) %) entries))
                     (:id (first entries)))
         ;; A tab is "running" when its session has a turn in flight. The
         ;; active tab's run-state lives at the db root; every other tab's
-        ;; lives frozen in `:workspace-locals` (its streaming worker keeps
+        ;; lives frozen in `:tab-locals` (its streaming worker keeps
         ;; updating it there). This is what surfaces concurrent turns.
         running?  (fn [id]
                     (boolean (if (= id active-id)
                                (:loading? db)
-                               (get-in db [:workspace-locals id :loading?]))))]
+                               (get-in db [:tab-locals id :loading?]))))]
     (if (seq entries)
       (mapv #(assoc % :running? (running? (:id %))) entries)
-      [{:id (or (:active-workspace-id db) :main)
+      [{:id (or (:active-tab-id db) :main)
         :label (title-or-placeholder db)
         :active? true
         :running? (boolean (:loading? db))}])))
 
-(defn- active-workspace-entry-id
+(defn- active-tab-entry-id
   [db entries]
-  (or (:active-workspace-id db)
+  (or (:active-tab-id db)
     (:id (some #(when (:active? %) %) entries))
     (:id (first entries))))
 
@@ -339,7 +339,7 @@
   [entries active-id]
   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) entries)) 0))
 
-(defn- visible-workspace-window
+(defn- visible-tab-window
   [entries active-id width]
   (let [entries (vec entries)
         n (count entries)
@@ -371,9 +371,9 @@
 
 (defn- center-padded
   "Place `s` centred inside a `cell-w`-wide workspace cell with
-   `vh/workspace-entry-padding` reserved on each side; ellipsises overflow."
+   `vh/tab-entry-padding` reserved on each side; ellipsises overflow."
   ^String [s ^long cell-w]
-  (let [inner (max 0 (- cell-w (* 2 (long vh/workspace-entry-padding))))
+  (let [inner (max 0 (- cell-w (* 2 (long vh/tab-entry-padding))))
         text  (truncate-with-ellipsis s inner)
         text-w (p/display-width text)
         pad-total (max 0 (- cell-w text-w))
@@ -422,12 +422,12 @@
   "Paint the visible workspace switcher window inside the center 60% slot.
 
    Workspaces are painted directly here because the header needs a fixed
-   `vh/workspace-entry-padding`-cell inner margin and an ellipsis on overflow.
+   `vh/tab-entry-padding`-cell inner margin and an ellipsis on overflow.
    Each cell still occupies its full width on screen — fill-rect paints the
    active/inactive background — but the label itself is centred within the
    inner area `(cell-w - 2*padding)`."
   [g entries active-id row left width]
-  (let [{:keys [overflow? entries]} (visible-workspace-window entries active-id width)
+  (let [{:keys [overflow? entries]} (visible-tab-window entries active-id width)
         arrow-w 1
         arrow-gap 1
         entries-left (if overflow? (+ left arrow-w arrow-gap) left)
@@ -492,14 +492,14 @@
    - CENTER 60%: workspace title or workspace switcher. With one workspace,
      paint inert title text. With multiple workspaces, paint switchable
      workspace entries. When app-db has not yet materialised a workspace list,
-     `workspace-entries` synthesises one placeholder workspace so a fresh
+     `tab-entries` synthesises one placeholder workspace so a fresh
      session reads as `Untitled session` in the centre.
    - RIGHT 20%: stable session-id copy affordance only.
 
    Workspaces are part of the header row (no separate band). Overflow shows
    clickable left/right arrows that cycle through workspaces."
   [g db header-top cols]
-  (let [workspaces (workspace-entries db)
+  (let [workspaces (tab-entries db)
         top-rule-row header-top
         content-row (inc header-top)
         contrib-specs (header-row-specs db cols)
@@ -527,7 +527,7 @@
         id-copy-w (p/display-width id-copy-text)
         right-col (max right-x (- cols edge-pad right-w))
         action-col right-col
-        active-id (active-workspace-entry-id db workspaces)
+        active-id (active-tab-entry-id db workspaces)
         ;; In a draft, the centre title shows `<label> (DRAFT)`; on trunk it's
         ;; the session title.
         single-title (let [ws (:workspace db)]

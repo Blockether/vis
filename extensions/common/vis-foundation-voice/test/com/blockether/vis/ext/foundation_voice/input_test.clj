@@ -32,7 +32,7 @@
 
   (it "appends Parakeet transcript without rewriting or replacing existing input"
     (let [events (atom [])
-          app-db (atom {:active-workspace-id :first})]
+          app-db (atom {:active-tab-id :first})]
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
       (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
                     recorder/stop! (fn [_] :audio-file)
@@ -43,7 +43,7 @@
                                                  (expect (= :tui channel))
                                                  (swap! events conj event))]
         (voice/start-recording! {:app-db app-db})
-        (reset! app-db {:active-workspace-id :second})
+        (reset! app-db {:active-tab-id :second})
         (voice/stop-and-transcribe! {:app-db app-db})
         (loop [n 50]
           (when (and (pos? n)
