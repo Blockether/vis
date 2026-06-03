@@ -206,10 +206,16 @@
         (recall {:scopes [\"t4/i2\"] :why \"re-examine patch attempts\"})
           → a summarized iter re-pinned INTO the trailer.
       WINDOW — read a stored value, scrollable (no mutation, no :why):
-        (recall \"t<N>/i<M>/f<K>\")          ; window a stored form result
-        (recall \"t<N>/i<M>/f<K>\" {:offset 8000})  ; scroll: follow :vis/next
-        (recall :K)                        ; window a stored fact/task
-          → {:view … :vis/window [a b] :vis/size <chars> :vis/next}
+        (recall \"t<N>/i<M>/f<K>\")          ; first window of a form result
+        (recall :K)                        ; first window of a fact/task
+        (recall \"t<N>/i<M>/f<K>\" {:offset 8000})  ; window from char 8000
+          Returns {:view <slice> :vis/window [from to] :vis/size <total-chars>
+                   :vis/next \"(recall … {:offset to})\"}. :offset is a CHAR
+          position into the value's pr-str; each window is ~8000 chars.
+          :vis/next is the literal NEXT call — eval it verbatim to scroll
+          forward; absent once :vis/window reaches :vis/size (the end).
+          To jump, pass your own {:offset N}. A clipped value's :vis/full
+          handle IS the first (recall …) of this scroll.
       SEARCH — find a scope/id you don't have:
         (recall {:match \"v/patch auth\" :scope-after \"t2/i1\"})
           → [{:scope :preview :rank}]. :match REQUIRED, :limit 10. Over
