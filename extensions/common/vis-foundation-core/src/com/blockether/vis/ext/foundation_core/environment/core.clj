@@ -52,8 +52,7 @@
   (try
     (.getCanonicalPath (workspace/cwd))
     (catch Throwable _
-      (or workspace/*workspace-root*
-        (System/getProperty "user.dir")))))
+      (.getPath (workspace/cwd)))))
 
 (defn- compute-snapshot
   "Build the full snapshot map. Each piece is independently guarded

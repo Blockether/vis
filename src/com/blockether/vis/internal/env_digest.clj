@@ -71,7 +71,7 @@
    the active workspace cwd instead of the shell from which Vis launched."
   []
   (try
-    (let [cwd   (or workspace/*workspace-root* (System/getProperty "user.dir"))
+    (let [cwd   (.getPath (workspace/cwd))
           os    (normalize-os (System/getProperty "os.name"))
           shell (normalize-shell (System/getenv "SHELL"))
           clock (iso-clock)]
@@ -132,7 +132,7 @@
   ;; we no longer surface a boolean `:agents-md?` here — the model sees
   ;; the actual rules instead of a stale hint.
   (try
-    (let [cwd     (or workspace/*workspace-root* (System/getProperty "user.dir"))
+    (let [cwd     (.getPath (workspace/cwd))
           kind    (project-kind cwd)
           primary (primary-language-guess cwd)]
       (cond-> {:kind kind}
