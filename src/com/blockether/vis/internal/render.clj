@@ -662,6 +662,38 @@
     :else
     (mapcat cm->blocks (cm-children-seq n))))
 
+(defn- table-delimiter-line?
+  "True for a GFM table delimiter row, e.g. `|---|---|` / `:--|--:`."
+  [line]
+  (let [t (str/trim line)]
+    (and (re-matches #"[-|: ]+" t)
+         (str/includes? t "-")
+         (str/includes? t "|"))))
+
+(defn- ensure-table-blank-lines
+  "GFM only recognizes a pipe-table when a blank line precedes it. Models
+   routinely write the table directly under a text line (ripgrep-style
+   muscle memory), so commonmark folds it into the paragraph as literal
+   pipes and it never renders. Inject the missing blank line so tolerant
+   authoring just works — mirrors the scalar-tolerant v/rg spec coercion."
+  [text]
+  (let [lines (str/split-lines text)]
+    (->> (range (count lines))
+         (reduce
+          (fn [out i]
+            (let [line (nth lines i)
+                  hdr  (peek out)
+                  pre  (when (> i 1) (nth lines (- i 2)))]
+              (if (and (table-delimiter-line? line)
+                       (string? hdr)
+                       (str/includes? hdr "|")
+                       (string? pre)
+                       (not (str/blank? pre)))
+                (conj (pop out) "" hdr line)
+                (conj out line))))
+          [])
+         (str/join "\n"))))
+
 (defn markdown->ir
   "Parse a Markdown string into canonical answer-IR.
    Idempotent: when the input is already canonical IR, returns it
@@ -696,7 +728,8 @@
 
      (string? text)
      (binding [*soft-break* (or soft-break *soft-break*)]
-       (let [doc    (.parse md-parser ^String text)
+       (let [prepared (if (= :hard *soft-break*) text (ensure-table-blank-lines text))
+             doc    (.parse md-parser ^String prepared)
              blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
          (->ast (into [:ir {}] blocks))))
 
