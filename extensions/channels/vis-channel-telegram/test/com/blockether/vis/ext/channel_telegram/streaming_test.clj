@@ -59,7 +59,19 @@
     (let [live-bubble-html (p 'live-bubble-html)
           out (live-bubble-html {:thinking-acc "x" :status-line "⏳ Form 1"})]
       (expect (str/includes? out "<i>⏳ Form 1</i>"))
-      (expect (str/includes? out "<blockquote expandable>x</blockquote>")))))
+      (expect (str/includes? out "<blockquote expandable>x</blockquote>"))))
+
+  (it "renders the running step feed (▸ running, ✓ done)"
+    (let [live-bubble-html (p 'live-bubble-html)
+          out (live-bubble-html {:steps [{:label "(v/cat \"a.clj\")" :done? true}
+                                         {:label "(v/rg)" :done? false}]})]
+      (expect (str/includes? out "✓ <code>(v/cat \"a.clj\")</code>"))
+      (expect (str/includes? out "▸ <code>(v/rg)</code>"))))
+
+  (it "escapes HTML specials in step labels"
+    (let [live-bubble-html (p 'live-bubble-html)
+          out (live-bubble-html {:steps [{:label "(< a b)" :done? false}]})]
+      (expect (str/includes? out "▸ <code>(&lt; a b)</code>")))))
 
 ;; ---------------------------------------------------------------------------
 ;; should-edit? throttle
