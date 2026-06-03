@@ -137,6 +137,11 @@
 
     ENTITY SHAPES
       :session/scope     {:turn :iter :next-form}
+      :session/utilization {:request-tokens :window-tokens :pct :turn-tokens
+                            :fold-cap}  ; last request's share of the model
+                            ; window. Watch :pct — as it climbs, summarize
+                            ; aggressively + converge. Engine auto-folds
+                            ; the trailer at :fold-cap; don't rely on it.
       :session/env       {:host :project :extensions}     ; auto digest
       :session/workspace {:workspace/root :workspace/sandbox? :vcs/kind :vcs/ref :vcs/mainline :vcs/head :vcs/dirty? …}
                          (kind-namespaced :git/* :hg/* :jj/* when emitted;

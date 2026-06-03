@@ -1370,6 +1370,25 @@
   "True when iter-scope `tN/iM` falls inside any summarized `ranges`."
   [ranges scope]
   (boolean (some (fn [[a b]] (iter-in-range? scope a b)) ranges)))
+(defn utilization
+  "Pure: the `:session/utilization` map the model reads to see how much
+   of the context window the LAST request consumed.
+     :request-tokens  input tokens of the last provider call
+     :window-tokens   the model's effective input window
+     :pct             request / window, rounded
+     :turn-tokens     cumulative input this turn so far
+     :fold-cap        engine auto-summarize ceiling (informational)
+   Returns nil until a request has actually been measured (req <= 0), so
+   the first iter of a turn shows nothing rather than a bogus 0%."
+  [request-tokens window-tokens turn-tokens fold-cap]
+  (let [req (long (or request-tokens 0))
+        win (long (or window-tokens 0))]
+    (when (pos? req)
+      (cond-> {:request-tokens req
+               :turn-tokens    (long (or turn-tokens 0))
+               :fold-cap       (long (or fold-cap 0))}
+        (pos? win) (assoc :window-tokens win
+                     :pct (long (Math/round (* 100.0 (/ (double req) (double win))))))))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================
