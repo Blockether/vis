@@ -503,10 +503,21 @@
                         ;; their assistant message but elide the
                         ;; answer-bearing form differently.
                         produced-answer? (not (str/blank? answer-md))
-                        trace (into [] (map (partial it->iteration-entry
-                                              {:produced-answer? produced-answer?
-                                               :last-iteration-id last-iteration-id}))
-                                turn-iterations)
+                        ;; A slash turn persists ONE synthetic iteration whose
+                        ;; envelope is tagged `:user-slash`. Live slash turns
+                        ;; stream no iterations, so they render as a bare answer
+                        ;; bubble — rebuilding that synthetic iteration into a
+                        ;; trace made resumed sessions look different from live.
+                        ;; Suppress it so resume matches live: just the answer.
+                        slash-turn? (some (fn [it]
+                                            (some #(= :user-slash (:tag %)) (:forms it)))
+                                      turn-iterations)
+                        trace (if slash-turn?
+                                []
+                                (into [] (map (partial it->iteration-entry
+                                                {:produced-answer? produced-answer?
+                                                 :last-iteration-id last-iteration-id}))
+                                  turn-iterations))
                         assistant-message (cond-> (assistant-message answer-ir (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :session-turn-id (:id q))
                                             (seq trace) (assoc :traces trace :ir answer-ir)
