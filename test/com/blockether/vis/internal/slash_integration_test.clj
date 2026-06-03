@@ -29,7 +29,10 @@
               {:ext/name        "test.slash-integration"
                :ext/description "Slash integration test fixture."
                :ext/slash-commands slashes})
-        ws  (workspace/ensure-trunk! store {})
+        ws  (persistance/db-workspace-insert! store
+              {:repo-id "test" :repo-root "/tmp" :kind :branch
+               :branch (str "t-" (subs (str (random-uuid)) 0 8))
+               :root "/tmp" :state :active :commit-id "0"})
         soul-id (persistance/db-store-session! store
                   {:channel      :tui
                    :workspace-id (:id ws)

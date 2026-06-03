@@ -870,7 +870,7 @@
           workspace (:workspace opts)
           root      (or (:workspace/root workspace) (:workspace/root opts))
           label     (or (:label opts)
-                      (some-> workspace :main :branch)
+                      (some-> workspace :label not-empty)
                       untitled-session-label)
           entry     (cond-> {:id id :label label :active? true}
                       workspace (assoc :workspace workspace)

@@ -67,27 +67,46 @@
   [^bytes bs]
   (when bs (nippy/thaw bs)))
 
+(defn- fresh-workspace!
+  "Insert a lightweight workspace row (NO rift clone) rooted at a
+   throwaway temp dir, satisfying `session_state.workspace_id` (NOT
+   NULL, 1:1). Tests never `apply`, so a real CoW clone of cwd would
+   only be slow and litter ~/.rifts."
+  [store]
+  (let [root (.getCanonicalPath
+               (.toFile (java.nio.file.Files/createTempDirectory
+                          "vis-test-ws"
+                          (make-array java.nio.file.attribute.FileAttribute 0))))
+        id   (str (java.util.UUID/randomUUID))]
+    (:id (vis/db-workspace-insert! store
+           {:id        id
+            :repo-id   "test"
+            :repo-root root
+            :kind      :branch
+            :branch    (str "ws-" (subs id 0 8))
+            :root      root
+            :state     :active
+            :commit-id "0"}))))
+
 (defn store-session!
-  "Test wrapper for `vis/db-store-session!` that injects a fresh trunk
-   workspace per call (session_state.workspace_id is NOT NULL, 1:1
-   with workspace). Calls
-   `vis/workspace-ensure-trunk!` against the live vis repo when no
-   `:workspace-id` was supplied.
+  "Test wrapper for `vis/db-store-session!` that injects a fresh
+   workspace per call (session_state.workspace_id is NOT NULL, 1:1 with
+   workspace) via `fresh-workspace!` when no `:workspace-id` supplied.
 
    Use everywhere the test would have called `vis/db-store-session!`
    directly with a plain opts map."
   [store opts]
   (let [ws-id (or (:workspace-id opts)
-                (:id (vis/workspace-ensure-trunk! store {})))]
+                (fresh-workspace! store))]
     (vis/db-store-session! store (assoc opts :workspace-id ws-id))))
 
 (defn fork-session!
-  "Test wrapper for `vis/db-fork-session!` that injects a fresh trunk
+  "Test wrapper for `vis/db-fork-session!` that injects a fresh
    workspace when no `:workspace-id` was supplied. Each fork gets its
-   own trunk row to satisfy `UNIQUE(session_state.workspace_id)`."
+   own workspace row to satisfy `UNIQUE(session_state.workspace_id)`."
   [store session-id opts]
   (let [ws-id (or (:workspace-id opts)
-                (:id (vis/workspace-ensure-trunk! store {})))]
+                (fresh-workspace! store))]
     (vis/db-fork-session! store session-id (assoc opts :workspace-id ws-id))))
 
 (defn store-iteration!

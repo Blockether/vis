@@ -5138,9 +5138,9 @@
                                 ;; (e.g. /workspace slash spawn-branch path).
                                 workspace-id
                                 (persistance/db-workspace-get db-info workspace-id)
-                                ;; New session, no pre-spawn: default trunk.
+                                ;; New session, no pre-spawn: clone cwd.
                                 :else
-                                (workspace/ensure-trunk! db-info {})))
+                                (workspace/ensure-workspace! db-info {})))
         session-id          (or resolved-session-id
                               (persistance/db-store-session! db-info
                                 (cond-> {:channel       (or channel :tui)
@@ -5316,8 +5316,9 @@
               (assoc :workspace          active-workspace
                 :workspace/id       (:id active-workspace)
                 :workspace/root     (:root active-workspace)
-                :workspace/sandbox? (= :branch (:kind active-workspace))
-                :vcs/kind           :git
+                ;; Every workspace is a rift clone now — always a sandbox.
+                :workspace/sandbox? true
+                :vcs/kind           :rift
                 :vcs/ref            (:branch active-workspace)))
         env (assoc env
               ;; CTX engine atoms — visible to the rest of the loop so the
