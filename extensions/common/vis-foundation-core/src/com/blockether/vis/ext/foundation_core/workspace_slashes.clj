@@ -127,6 +127,15 @@
        :slash/title  "On trunk — your real repo"
        :slash/body   "Editing your repo directly. /draft new <label> to start an isolated draft."})))
 
+(defn- handle-dir
+  "`/dir` is realized by the TUI as a directory picker (`:slash/ui
+   {:kind :dir-picker}`) — it opens a session in the chosen directory in its
+   own tab. On non-TUI channels it has no effect; say so."
+  [_ctx]
+  {:slash/status :ok
+   :slash/title  "Open a directory"
+   :slash/body   "Use /dir in the TUI to open a session in another directory, in its own tab."})
+
 ;; =============================================================================
 ;; Specs vec
 ;; =============================================================================
@@ -156,4 +165,9 @@
     :slash/doc      "Discard the draft and leave it."
     :slash/usage    "/draft abandon [reason]"
     :slash/requires #{:session}
-    :slash/run-fn   handle-abandon}])
+    :slash/run-fn   handle-abandon}
+   {:slash/name   "dir"
+    :slash/doc    "Open a session in another directory, in its own tab."
+    :slash/usage  "/dir"
+    :slash/ui     {:kind :dir-picker}
+    :slash/run-fn handle-dir}])
