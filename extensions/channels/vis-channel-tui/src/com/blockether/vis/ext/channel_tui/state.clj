@@ -149,6 +149,21 @@
     (assoc-in db [:workspace-locals id] (workspace-snapshot db))
     db))
 
+(defn tab-session-snapshot
+  "Ordered open-tab session ids + the active one, for per-place persistence.
+   Returns {:active <session-id-str|nil> :sessions [<session-id-str> …]} in
+   left-to-right tab order. The active tab's session lives at the db root;
+   every other tab's lives in `:workspace-locals`."
+  [db]
+  (let [entries   (vec (:workspaces db))
+        active-id (current-workspace-id db)
+        sid       (fn [tab-id]
+                    (if (= tab-id active-id)
+                      (some-> db :session :id str)
+                      (some-> (get-in db [:workspace-locals tab-id :session :id]) str)))]
+    {:active   (sid active-id)
+     :sessions (vec (keep #(sid (:id %)) entries))}))
+
 (defn- finalize-db
   [db]
   (cond-> db

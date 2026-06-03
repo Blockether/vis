@@ -14,6 +14,7 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.tabs :as tabs]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -1604,6 +1605,12 @@
       :draft-label (when draft? (or (not-empty (:label ws)) "draft"))
       :work-dir    (short-dir (or (:repo-root ws) (:root ws))))))
 
+(defn- persist-tabs!
+  "Snapshot the current open-tab set + active tab and persist it for this
+   launch directory, so the tabs come back next time vis opens here."
+  []
+  (tabs/save! (state/tab-session-snapshot @state/app-db)))
+
 (defn- init-visible-session!
   "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
   [{:keys [id history]}]
@@ -1760,7 +1767,11 @@
            ;; Stays nil for fresh sessions (nothing to warm).
            prewarm-thread (volatile! nil)
            provider-limits-thread (volatile! nil)
-           terminal-signal-cleanup (volatile! nil)]
+           terminal-signal-cleanup (volatile! nil)
+           ;; On a plain launch, the saved tab snapshot for this place (set
+           ;; while resolving the initial session); the extra tabs are reopened
+           ;; once the loop closures exist.
+           restore-plan (volatile! nil)]
        (.startScreen screen)
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try
@@ -1791,8 +1802,19 @@
 
                      ;; --resume: start fresh; the session picker opens
                      ;; before the main loop (see below), like `pi -r`.
+                     (:resume opts)
+                     (chat/make-session config)
+
+                     ;; Plain launch: restore this place's saved tabs. The
+                     ;; first still-existing saved session becomes tab 1; the
+                     ;; rest are reopened after the loop closures exist (see
+                     ;; `restore-plan`). No saved tabs → a fresh session.
                      :else
-                     (chat/make-session config))]
+                     (let [snap  (tabs/read-snapshot)
+                           saved (filter some? (:sessions snap))]
+                       (if-let [first-session (some chat/resume-session saved)]
+                         (do (vreset! restore-plan snap) first-session)
+                         (chat/make-session config))))]
                (vreset! title-listener-cleanup (init-visible-session! {:id id, :history history}))
                ;; Kick off background pre-warm of the LRU. Walks the
                ;; history bottom-up calling project + bubble-height,
@@ -1935,6 +1957,7 @@
                                        (state/dispatch [:set-title (or (session-db-title id) "")])
                                        (vreset! title-listener-cleanup (subscribe-title-listener! id))
                                        (prewarm-session! session-result)
+                                       (persist-tabs!)
                                        (when notify?
                                          (vis/notify! "Opened session"
                                            :level :success
@@ -1948,6 +1971,7 @@
                      (when-let [title (session-db-title id)] (state/dispatch [:set-title title]))
                      (vreset! title-listener-cleanup (subscribe-title-listener! id))
                      (prewarm-session! {:id id, :history (:messages @state/app-db)}))
+                   (persist-tabs!)
                    (when notify?
                      (vis/notify! "Switched workspace"
                        :level :success
@@ -2040,6 +2064,18 @@
                                                               :active-session-id (current-session-id)
                                                               :db @state/app-db}))]
                                         (switch-session! choice)))))]
+             ;; Restore the rest of this place's saved tabs (tab 1 is already
+             ;; the first saved session). Reopen each in order, then focus the
+             ;; one that was active — `open-session-tab!` focuses an
+             ;; already-open session rather than duplicating it. Sessions that
+             ;; no longer exist are silently skipped (the next save self-heals).
+             (when-let [snap @restore-plan]
+               (doseq [sid (:sessions snap)]
+                 (when-let [sr (chat/resume-session sid)]
+                   (open-session-tab! sr false)))
+               (when-let [active (:active snap)]
+                 (when-let [sr (chat/resume-session active)]
+                   (open-session-tab! sr false))))
              ;; --resume opens the session picker at startup, like `pi -r`.
              (when (and (:resume opts)
                         (not (:dialog-open? @state/app-db)))
