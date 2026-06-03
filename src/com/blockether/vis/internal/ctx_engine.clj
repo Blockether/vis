@@ -1145,7 +1145,11 @@
   [ctx form-scope {:keys [trailer facts tasks]}]
   (let [{t :trailer w-trailer :warnings}
         (apply-trailer-summarize (or (:session/trailer ctx) []) (or trailer []) form-scope)
-        ctx-t (assoc ctx :session/trailer t)
+        ;; apply-trailer-summarize conj's the stub at the END; sort here
+        ;; so the recap lands at its chronological position (by
+        ;; scope-start), NOT at the bottom — both the mid-turn
+        ;; (summarize …) binding and (done {:summarize …}) get this.
+        ctx-t (assoc ctx :session/trailer (sort-trailer t))
         {ctx-f :ctx w-f :warnings n1 :next-idx}
         (summarize-entities ctx-t form-scope :fact facts 1)
         {ctx-k :ctx w-k :warnings}
