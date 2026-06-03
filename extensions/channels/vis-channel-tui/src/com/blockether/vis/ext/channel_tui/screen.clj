@@ -1974,7 +1974,13 @@
                                        (vreset! title-listener-cleanup nil)
                                        (state/dispatch [:open-session-tab {:id id} history
                                                         (session-workspace id)])
-                                       (state/dispatch [:set-title (or (session-db-title id) "")])
+                                       ;; `:open-session-tab` already reset `:title nil`. Only
+                                       ;; push a title when the DB actually has one — mirror
+                                       ;; refresh-active-tab! and NEVER overwrite with "" (a
+                                       ;; race where the background auto-title future hasn't
+                                       ;; persisted yet would otherwise blank the tab).
+                                       (when-let [title (session-db-title id)]
+                                         (state/dispatch [:set-title title]))
                                        (vreset! title-listener-cleanup (subscribe-title-listener! id))
                                        (prewarm-session! session-result)
                                        (persist-tabs!)

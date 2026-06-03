@@ -624,6 +624,11 @@
                        (seq workspace)   (merge workspace))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
+           ;; A background tab that ends AWAITING the user (needs-input)
+           ;; is the one routine completion worth a terminal bell. Surface
+           ;; it as a status the bell logic can key on; a plain done turn
+           ;; stays statusless and silent.
+           needs-input? (= :needs-input (:vis/answer-mode (:answer result)))
            ;; `(:answer result)` is a `{:answer markdown}` map from
            ;; `(done {:answer ...})`, a needs-input map, a plain
            ;; string (cancel/error fallbacks), or nil. Normalize to a
@@ -661,6 +666,7 @@
          tokens     (assoc :tokens tokens)
          cost       (assoc :cost cost)
          confidence (assoc :confidence confidence)
+         needs-input? (assoc :status :needs-input)
          cancelled? (assoc :status :cancelled)))
      ;; future-cancel from the TUI translates to thread interruption.
      ;; The shared channels.cancellation predicate folds in
