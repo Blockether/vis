@@ -73,61 +73,35 @@ CREATE UNIQUE INDEX idx_session_soul_channel_external
   WHERE external_id IS NOT NULL;
 
 -- =============================================================================
--- Workspace - git worktree-backed work unit.
+-- Workspace — a rift copy-on-write clone of cwd (a "draft").
 --
--- One row = one branch = one worktree on disk = one session-binding.
--- Each session_state pins to exactly one workspace (1:1 invariant).
---
---   kind='trunk'   - original repo checkout. root = repo_root. No worktree
---                    materialised on disk. merge/discard refused by API.
---   kind='branch'  - managed worktree under
---                    ~/.vis/workspaces/<repo_id>/<workspace_id>/.
---
--- state lifecycle (branch-kind only):
---   active --> merging --> merged
---   active --> discarded
---
--- UNIQUE(repo_id, branch) is partial: only enforced for kind='branch',
--- so multiple trunk-kind rows (one per session-on-trunk) coexist.
+-- One row = one draft clone on disk = one session-binding (1:1 invariant).
+-- The user's real cwd is *trunk* (`repo_root`) and is never mutated; `root`
+-- is the rift clone path. `fork_ms` is the clone timestamp — the baseline
+-- for the mtime since-fork diff that `apply` lands back into cwd. Drafts
+-- carry no git: no branch/commit/merge, only active -> discarded.
 -- =============================================================================
 CREATE TABLE workspace (
   id                   TEXT PRIMARY KEY NOT NULL,
   repo_id              TEXT NOT NULL,
-  repo_root            TEXT NOT NULL,
+  repo_root            TEXT NOT NULL,     -- trunk: the real cwd, where apply lands
+  root                 TEXT NOT NULL,     -- the rift clone path
 
-  kind                 TEXT NOT NULL
-                       CHECK (kind IN ('trunk', 'branch')),
-  branch               TEXT,
-  root                 TEXT NOT NULL,
+  state                TEXT NOT NULL DEFAULT 'active'
+                       CHECK (state IN ('active', 'discarded')),
 
-  parent_workspace_id  TEXT
-                       REFERENCES workspace(id) ON DELETE SET NULL,
+  fork_ms              INTEGER,           -- clone timestamp; mtime since-fork baseline
 
-  state                TEXT NOT NULL
-                       CHECK (state IN ('active', 'merging', 'merged', 'discarded')),
-
-  commit_id            TEXT,              -- repo HEAD sha at worktree creation
-
-  -- Human-friendly label that overrides the default
-  -- (session.title / branch name) in the TUI strip + Telegram
-  -- switcher. NULL falls back to the heuristic. Set via
-  -- `/workspace label "…"` / `workspace/set-label!`.
+  -- Human-friendly label overriding the default (session.title) in the
+  -- TUI strip. NULL falls back to the heuristic. Set via `workspace/set-label!`.
   label                TEXT,
-  -- Monotonic timestamp of the last `workspace/focus!`.
-  -- Drives TUI strip ordering (most-recent first) and tab restore
-  -- (`workspace/last-focused`). NULL falls back to `created_at`.
+  -- Monotonic timestamp of the last `workspace/focus!` (TUI strip ordering /
+  -- tab restore). NULL falls back to `created_at`.
   last_focused_at_ms   INTEGER,
 
   created_at           INTEGER NOT NULL,
-  merged_at            INTEGER,
-  discarded_at         INTEGER,
-
-  CHECK (kind = 'trunk' OR branch IS NOT NULL),
-  CHECK (kind = 'branch' OR state = 'active')
+  discarded_at         INTEGER
 );
-
-CREATE UNIQUE INDEX uq_workspace_repo_branch
-  ON workspace(repo_id, branch) WHERE kind = 'branch';
 
 CREATE INDEX idx_workspace_repo_state
   ON workspace(repo_id, state);
@@ -163,29 +137,12 @@ CREATE TABLE session_state (
   llm_root_model        TEXT,
   created_at            INTEGER NOT NULL,
 
-  -- When this session_state is the engine-spawned merge-resolve
-  -- sub-session, this column points at the parent
-  -- session_state that initiated the merge. The sub-session's
-  -- prompt + permitted op set are gated on the column being
-  -- non-NULL; completion deletes the sub-session and the
-  -- parent resumes. Distinct from `parent_state_id` which is
-  -- the fork lineage column.
-  merge_resolve_parent_id  TEXT
-                        REFERENCES session_state(id) ON DELETE SET NULL,
-
   UNIQUE (session_soul_id, version)
 );
 
--- The 1:1 workspace-session_state invariant is partial. A
--- merge-resolve sub-session pins to its parent's workspace so the
--- conflict state in the worktree index is visible to both sessions.
--- We DON'T want that to violate the UNIQUE: the
--- constraint applies only to rows where merge_resolve_parent_id IS
--- NULL (i.e. the canonical session_state of a workspace). Resolve
--- sub-session rows can coexist on the same workspace_id.
+-- Each workspace pins to exactly one session_state (1:1 invariant).
 CREATE UNIQUE INDEX uq_session_state_workspace
-  ON session_state(workspace_id)
-  WHERE merge_resolve_parent_id IS NULL;
+  ON session_state(workspace_id);
 
 CREATE INDEX idx_session_state_soul
   ON session_state(session_soul_id, version);

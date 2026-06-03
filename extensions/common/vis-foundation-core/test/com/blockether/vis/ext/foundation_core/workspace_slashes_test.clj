@@ -54,9 +54,8 @@
   [store base]
   (let [id (str (java.util.UUID/randomUUID))]
     (ps/db-workspace-insert! store
-      {:id id :repo-id "test" :repo-root base :kind :branch
-       :branch (str "seed-" (subs id 0 8)) :root base
-       :state :active :commit-id "0"})))
+      {:id id :repo-id "test" :repo-root base :root base
+       :state :active :fork-ms 0})))
 
 (defn- pin-session! [store workspace-id]
   (let [ds  (:datasource store)
@@ -80,17 +79,17 @@
 ;; =============================================================================
 
 (defdescribe specs-shape-test
-  (it "exposes 3 slash specs (parent /draft + 2 subcommands)"
-    (expect (= 3 (count ws-slashes/specs))))
+  (it "exposes 4 slash specs (parent /draft + 3 subcommands)"
+    (expect (= 4 (count ws-slashes/specs))))
 
-  (it "subcommands are apply + abandon under `:slash/parent [\"draft\"]`"
+  (it "subcommands are apply + abandon + label under `:slash/parent [\"draft\"]`"
     (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
-      (expect (= 2 (count subs)))
-      (expect (= #{"apply" "abandon"} (set (map :slash/name subs))))))
+      (expect (= 3 (count subs)))
+      (expect (= #{"apply" "abandon" "label"} (set (map :slash/name subs))))))
 
   (it "registered through `:ext/slash-commands` without path collisions"
     (let [env (env-with nil)]
-      (expect (= 3 (count (slash/active-slashes env))))
+      (expect (= 4 (count (slash/active-slashes env))))
       (expect (some? (slash/slash-by-path env ["draft" "apply"]))))))
 
 ;; =============================================================================
