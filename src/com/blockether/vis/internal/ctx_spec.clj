@@ -176,6 +176,15 @@
 (s/def :session.task/hook-id    keyword?)
 (s/def :session.task/importance #{:info :warn :critical})
 
+;; W3 — acceptance + verification. A task SHOULD carry `:acceptance` (the
+;; concrete criterion that means it's truly done) and, once met, `:verified?
+;; true` (the model asserts it checked — engine does NOT verify the claim). The
+;; engine emits a SOFT `:session/warnings` nudge when a task is closed `:done`
+;; with an `:acceptance` but `:verified? not true` — so "done" isn't claimed
+;; without a stated, checked criterion.
+(s/def :session.task/acceptance string?)
+(s/def :session.task/verified?  boolean?)
+
 (s/def ::task
   (s/keys :req-un [::title
                    :session.task/status
@@ -184,7 +193,9 @@
              :session.task/done-born
              :session.task/source
              :session.task/hook-id
-             :session.task/importance]))
+             :session.task/importance
+             :session.task/acceptance
+             :session.task/verified?]))
 
 ;; Soft rules (engine-side; not enforced by spec):
 ;;   - :depends-on entries must point to existing tasks/facts
