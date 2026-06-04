@@ -138,25 +138,37 @@
 ;; git/log
 ;; ---------------------------------------------------------------------------
 
-(defn- log-row [{:keys [short-sha author at subject]}]
+(defn- fmt-at [at]
+  (when at
+    (-> (java.time.Instant/ofEpochMilli (long at))
+      (.atZone (java.time.ZoneId/systemDefault))
+      (.format (java.time.format.DateTimeFormatter/ofPattern "MMM d HH:mm")))))
+
+(defn- log-row [show-author? {:keys [short-sha author at subject]}]
   (str (pad-right short-sha 9)
-    (pad-right (or author "?") 22)
-    (or at "")
-    "  " (or subject "")))
+    (pad-right (or (fmt-at at) "") 14)
+    (when show-author? (pad-right (or author "?") 20))
+    (or subject "")))
 
 (defn render-log
   [{:keys [branch commits]}]
-  (let [n (count commits)]
+  (let [n        (count commits)
+        authors  (distinct (keep :author commits))
+        single?  (= 1 (count authors))]
     {:summary
      {:left   (ir-strong "LOG")
       :center (ir-code (or branch "?"))
-      :right  (str n " commit" (when (not= 1 n) "s"))}
-     ;; Body ONLY — LOG / branch / count are already on the summary op-row.
+      :right  (str n " commit" (when (not= 1 n) "s")
+                ;; one author for the whole range -> name it once here
+                ;; instead of repeating it on every row.
+                (when single? (str " \u00b7 " (first authors))))}
+     ;; Body ONLY — LOG / branch / count / lone-author are on the summary op-row.
+     ;; Rows: sha + human date (+ author only when the range is multi-author).
      :display
      (ir-root
        (when (seq commits)
          (ir-code-block "text"
-           (cap (str/join "\n" (map log-row commits))))))}))
+           (cap (str/join "\n" (map (partial log-row (not single?)) commits))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/show

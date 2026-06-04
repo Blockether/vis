@@ -183,6 +183,62 @@
    ["@"                "Pick a file"]
    ["Mouse"            "Click a tab to switch · ✕ to close"]])
 
+;; ── header band chrome ──────────────────────────────────────────────────────
+
+(defn band-rule!
+  "Paint a full-width single-line horizontal rule across `cols` on `row`."
+  ([g row cols] (band-rule! g row cols t/footer-fg-muted))
+  ([g row cols fg]
+   (p/clear-styles! g)
+   (p/set-colors! g fg t/terminal-bg)
+   (dotimes [c (long cols)]
+     (p/set-char! g c row p/BOX_H))
+   (p/clear-styles! g)))
+
+(defn- level->fg
+  "Map a notification level to a foreground color; unknown levels fall back
+   to the muted-footer color so something still renders."
+  [level]
+  (case level
+    :success t/footer-fg-strong
+    :warn    t/footer-warning-fg
+    :error   t/footer-error-fg
+    :info    t/footer-spinner-fg
+    t/footer-fg-muted))
+
+(defn notification-slot!
+  "Paint the header's left-slot notification/status `text` at (col,row),
+   colored by `level` (bold). No-op for blank text."
+  [g col row text level]
+  (when (seq text)
+    (p/clear-styles! g)
+    (p/set-colors! g (level->fg level) t/terminal-bg)
+    (p/enable! g p/BOLD)
+    (p/put-str! g col row text)
+    (p/clear-styles! g)))
+
+(defn id-badge!
+  "Paint the session-id copy affordance `text` at (col,row) and register its
+   `:copy-id` click region carrying the FULL uuid (the click handler drops it
+   on the clipboard). Brightens on hover. No-op for blank text."
+  [g col row text full-uuid register?]
+  (when (pos? (p/display-width text))
+    (let [hovered  (cr/hovered)
+          hovered? (and (= row (get-in hovered [:bounds :row]))
+                     (= :copy-id (:kind hovered)))]
+      (p/clear-styles! g)
+      (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+      (when hovered? (p/enable! g p/BOLD))
+      (p/put-str! g col row text)
+      (p/clear-styles! g)
+      (when (and register? full-uuid)
+        (cr/register! {:bounds   {:row row :col col :width (p/display-width text)}
+                       :kind     :copy-id
+                       :text     full-uuid
+                       :enabled? true})))))
+
+;; ── help overlay ────────────────────────────────────────────────────────────
+
 (def ^:private help-title "Keyboard shortcuts  —  Ctrl+H / F1 to close")
 
 (defn- pad-right ^String [^String s ^long w]
