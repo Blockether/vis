@@ -216,6 +216,24 @@ W1's actionable summaries are what *become* facts (path + range + what).
 **Open questions.** Crisp, short heuristics that fit a tight prompt. Should the
 engine *nudge* ("you patched a file but stored no fact about it")?
 
+**Status: DONE (graduation) — model-driven.**
+- Facts now carry the SAME structured `:files` regions as trailer summaries:
+  `ctx_spec.clj` `::fact` gains optional `:session.fact/files`
+  (reuses `::trailer-summary-file`: path + verbatim `:src` + `:from-hash`/`:to-hash`
+  + `:lines`). So file knowledge graduates from a transient trailer stub to an
+  immortal fact, directly re-patchable by hash — never re-`cat`.
+- `apply-fact-set!` already merges the upsert map, so `:files` rides through with NO
+  engine change; `ctx_renderer/project-fact` now surfaces `:files`.
+- Decision matrix lives in the prompt GATES (PLAN=task, REMEMBER=fact) + the
+  `fact-set!` doc shows `:files`. Graduation is **model-driven** (the GATES tell the
+  model to `fact-set!` a file fact) — not auto, keeping the engine simple and
+  consistent with W1's model-produced choice.
+- Tests: `fact-files-test` (carries-through, born/id stamp, spec-valid, back-compat)
+  + the ctx generative test passes with the new fact `:files` generator. ctx-engine
+  ns 118/118.
+- *Deferred:* an engine nudge ("patched a file, stored no fact") → could be a
+  `:session/warnings` entry; left for later (advisory, low-risk).
+
 ---
 
 ### W3 — Task system: enforce + lifecycle + verification/acceptance + USER visibility

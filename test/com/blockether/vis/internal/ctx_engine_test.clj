@@ -1038,3 +1038,28 @@
         (it "remains spec-valid"
           (expect (s/valid? ::cs/trailer-summary s2)))))))
 
+;; =============================================================================
+;; W2 — file knowledge graduates into a DURABLE fact (same :files region shape)
+;; =============================================================================
+
+(defdescribe fact-files-test
+  (let [files [{:path "ext/.../components.clj"
+                :regions [{:src "(def close-button-width 4)"
+                           :note "consts" :from-hash "a1b2" :to-hash "a1b2"}]}]
+        {ctx :ctx} (#'eng/apply-fact-set! (eng/empty-ctx) "t1/i1/f1"
+                     [:btn {:content "close-button geometry" :files files}])
+        fact (get-in ctx [:session/facts :btn])]
+    (describe "fact-set! with :files"
+      (it "carries the structured :files through the merge-based upsert"
+        (expect (= files (:files fact))))
+      (it "stamps the standard fact fields (:born, :id)"
+        (expect (= "t1/i1/f1" (:born fact)))
+        (expect (some? (:id fact))))
+      (it "is spec-valid as a fact"
+        (expect (s/valid? ::cs/fact fact)))
+      (it "a fact without :files stays spec-valid (back-compat)"
+        (let [{c2 :ctx} (#'eng/apply-fact-set! (eng/empty-ctx) "t1/i1/f1"
+                          [:plain {:content "no files here"}])]
+          (expect (not (contains? (get-in c2 [:session/facts :plain]) :files)))
+          (expect (s/valid? ::cs/fact (get-in c2 [:session/facts :plain]))))))))
+
