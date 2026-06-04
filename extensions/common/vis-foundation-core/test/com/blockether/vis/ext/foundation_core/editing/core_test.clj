@@ -896,7 +896,7 @@
   (it "returns a 2-key map: :hits + :truncated-by"
     (let [_    (write-temp! "rg/a.txt" "alpha needle gamma\nbeta\n")
           _    (write-temp! "rg/b.txt" "plain line\nanother needle here\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["needle"] :paths [(temp-dir-path "rg")]})]
       (expect (= #{:hits :truncated-by} (set (keys out))))
       (expect (vector? (:hits out)))
@@ -907,7 +907,7 @@
 
   (it "query strings are literal, including pipe characters"
     (let [_    (write-temp! "rgliteral/a.clj" "foo|bar\nfoo only\nbar only\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["foo|bar"]
                       :paths [(temp-dir-path "rgliteral")]
                       :include ["*.clj"]})]
@@ -915,7 +915,7 @@
 
   (it "spec {:all [...]} requires all literals on the same line"
     (let [_    (write-temp! "rgall/a.clj" "(defn info-event [x] x)\n(defn other [x] x)\ninfo-event call\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["defn" "info-event"]
                       :paths [(temp-dir-path "rgall")]
                       :include ["*.clj"]})]
@@ -924,7 +924,7 @@
 
   (it "spec {:any [...]} is explicit OR"
     (let [_    (write-temp! "rgany/a.clj" "alpha\nbeta\ngamma\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:any ["alpha" "gamma"]
                       :paths [(temp-dir-path "rgany")]
                       :include ["*.clj"]})]
@@ -935,7 +935,7 @@
           _    (write-temp! "rgpaths/src/a.clj" "needle clj\n")
           _    (write-temp! "rgpaths/src/a.txt" "needle txt\n")
           _    (write-temp! "rgpaths/test/b.cljc" "needle cljc\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["needle"]
                       :paths [root (str root "/src")]
                       :include ["*.clj" "*.cljc"]})]
@@ -945,7 +945,7 @@
   (it "accepts :files as an alias for :paths"
     (let [file (write-temp! "rgfiles/a.clj" "needle alias\n")
           _    (write-temp! "rgfiles/b.clj" "needle other\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["needle"]
                       :files [file]})]
       (expect (= ["needle alias"] (mapv :text (:hits out))))))
@@ -955,7 +955,7 @@
           spec {:all ["needle"]
                 :paths [(temp-dir-path "rgsame")]
                 :include ["*.clj"]}
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           rg (private-fn "rg-tool")
           ;; rg-tool groups grep's flat :hits into :matches (path-once) on
           ;; the model-facing :result — there is no flat :hits vec anymore.
@@ -968,13 +968,15 @@
                 (:file-count rg-result)))))
 
   (it "rejects shorthand and unknown keys instead of silently changing grammar"
-    (let [grep (private-fn "grep-files")
+    (let [grep (private-fn "rg-search")
           rg (private-fn "rg-tool")
           bad-spec (fn [k v] (assoc {:all ["needle"] :paths ["."]} k v))]
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep "needle")))
-      (expect (throws? clojure.lang.ExceptionInfo
-                #(grep {:all ["needle"] :paths "."})))
+      ;; NOTE: scalar :paths "." is NO LONGER rejected — it coerces to ["."]
+      ;; (commit 89d76804). The scalar→vec coercion is covered directly by
+      ;; rg-spec-path-alias-test; here we only assert that positional strings
+      ;; and genuinely-unknown keys still throw.
       (let [err (try
                   (rg "needle" {:include "**/*.clj"})
                   nil
@@ -992,7 +994,7 @@
     ;; Limit bumped 50 -> 250 in the v/rg sweep. Use 300 hits to force the cap.
     (let [_ (write-temp! "rgcap/a.txt"
               (string/join "\n" (map #(str "needle " %) (range 300))))
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["needle"] :paths [(temp-dir-path "rgcap")]})]
       (expect (= 250 (count (:hits out))))
       (expect (= :limit (:truncated-by out)))))
@@ -1000,14 +1002,14 @@
   (it ":limit override caps results below default"
     (let [_ (write-temp! "rglim/a.txt"
               (string/join "\n" (map #(str "needle " %) (range 50))))
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["needle"] :paths [(temp-dir-path "rglim")] :limit 5})]
       (expect (= 5 (count (:hits out))))
       (expect (= :limit (:truncated-by out)))))
 
   (it "empty result still has :truncated-by :end-of-results, never nil"
     (let [_ (write-temp! "rgmiss/a.txt" "nothing matches in here\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["definitely-not-present"] :paths [(temp-dir-path "rgmiss")]})]
       (expect (= [] (:hits out)))
       (expect (= :end-of-results (:truncated-by out)))))
@@ -1017,7 +1019,7 @@
   (it ":before / :after add context lines around each hit"
     (let [_path (write-temp! "rgctx/file.txt"
                   "alpha\nbeta\nGAMMA\ndelta\nepsilon\nfoo\nGAMMA\nbar\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["GAMMA"]
                       :paths [(temp-dir-path "rgctx")]
                       :before 1 :after 1})
@@ -1034,7 +1036,7 @@
 
   (it ":context N is shorthand for :before N + :after N"
     (let [_path (write-temp! "rgctxa/a.txt" "L1\nL2\nMATCH\nL4\nL5\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["MATCH"]
                       :paths [(temp-dir-path "rgctxa")]
                       :context 2})
@@ -1046,7 +1048,7 @@
     (let [_ (write-temp! "rgfo/src/a.py" "alpha\nalpha\nalpha\n")
           _ (write-temp! "rgfo/src/b.py" "alpha\n")
           _ (write-temp! "rgfo/src/c.py" "no match\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["alpha"]
                       :paths [(temp-dir-path "rgfo")]
                       :files-only? true})]
@@ -1059,7 +1061,7 @@
               (string/join "\n" (repeat 300 "needle")))
           _ (write-temp! "rgcnt/src/b.py" "needle\nneedle\n")
           _ (write-temp! "rgcnt/src/c.py" "no\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["needle"]
                       :paths [(temp-dir-path "rgcnt")]
                       :counts? true})
@@ -1073,7 +1075,7 @@
   (it ":regex? true treats needles as java.util.regex patterns"
     (let [_ (write-temp! "rgrgx/src/a.py"
               "def login(user): pass\ndef test_login(): pass\ndef logout(): pass\n")
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           ;; Word-boundary regex: matches `login` but not `test_login`.
           out  (grep {:any ["\\bdef login\\b"]
                       :paths [(temp-dir-path "rgrgx")]
@@ -1083,7 +1085,7 @@
       (expect (= "def login(user): pass" (first texts)))))
 
   (it ":regex? with malformed pattern raises an invalid-rg-spec error"
-    (let [grep (private-fn "grep-files")
+    (let [grep (private-fn "rg-search")
           err (try (grep {:any ["(unclosed"]
                           :paths ["."]
                           :regex? true})
@@ -1092,12 +1094,12 @@
       (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))
 
   (it ":files-only? and :counts? are mutually exclusive"
-    (let [grep (private-fn "grep-files")]
+    (let [grep (private-fn "rg-search")]
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep {:any ["x"] :files-only? true :counts? true})))))
 
   (it ":before / :after rejected in :files-only? or :counts? mode"
-    (let [grep (private-fn "grep-files")]
+    (let [grep (private-fn "rg-search")]
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep {:any ["x"] :files-only? true :context 2})))
       (expect (throws? clojure.lang.ExceptionInfo
@@ -1114,7 +1116,7 @@
     (let [huge (apply str (repeat 1000 "x"))
           line (str "NEEDLE " huge)
           _ (write-temp! "rgtext/big.txt" (str line "\n"))
-          grep (private-fn "grep-files")
+          grep (private-fn "rg-search")
           out  (grep {:all ["NEEDLE"] :paths [(temp-dir-path "rgtext")]})
           text (:text (first (:hits out)))]
       (expect (= line text))
