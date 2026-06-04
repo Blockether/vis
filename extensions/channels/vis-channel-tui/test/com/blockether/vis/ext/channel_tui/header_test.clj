@@ -329,11 +329,26 @@
         ;; First and last visible cells must keep at least one padding cell.
         (expect (str/starts-with? (:text main-write) " "))
         (expect (str/ends-with? (:text main-write) " "))
-        ;; Each cell now reserves `components/close-button-width` (3) cells on
+        ;; Each cell now reserves `components/close-button-width` (4) cells on
         ;; the right for the always-visible ✕ close button, so the label cell
-        ;; paints 16-3 = 13 cols and a separate " ✕ " write covers the rest.
-        (expect (= 13 (p/display-width (:text main-write))))
+        ;; paints 16-4 = 12 cols and a separate "│ ✕ " write covers the rest.
+        (expect (= 12 (p/display-width (:text main-write))))
         (expect (some #(str/includes? (str (:text %)) "✕") tab-writes)))))
+
+  (it "omits the ✕ close button when there's only ONE session (the last tab can't be closed)"
+    (cr/reset!)
+    (let [writes (atom [])
+          g      (dummy-text-graphics writes)
+          db     {:title "Solo"
+                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :active-tab-id :main
+                  :tabs [{:id :main :label "Main"}]}]
+      (cr/begin-frame!)
+      (header/draw-header! g db 0 80)
+      (cr/commit-frame!)
+      (let [tab-writes (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)]
+        (expect (not-any? #(str/includes? (str (:text %)) "✕") tab-writes))
+        (expect (empty? (filter #(= :close-tab (:kind %)) (cr/current)))))))
 
   (it "truncates oversized workspace labels with an ellipsis instead of a hard cut"
     ;; Five long-labelled workspaces in a 48-col centre slot → cell width 9 (or 10
