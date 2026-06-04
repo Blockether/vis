@@ -112,6 +112,46 @@
             (expect (< (.indexOf s "defn bar") (.indexOf s "defmulti area")))))
         (finally (cleanup root))))))
 
+(defdescribe replace-doc-op
+  (it "swaps an existing docstring, leaving the body intact"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f "(ns demo.core)\n\n(defn foo \"old doc\" [x] (* x 2))\n")
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj" :op :replace-doc :target "foo" :code "Doubles x."})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            (expect (re-find #"\"Doubles x\.\"" s))
+            (expect (not (re-find #"old doc" s)))
+            (expect (re-find #"\(\* x 2\)" s))))
+        (finally (cleanup root)))))
+
+  (it "inserts a docstring when the def has none"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f "(ns demo.core)\n\n(defn bar [x] x)\n")
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj" :op :replace-doc :target "bar" :code "Identity."})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            (expect (re-find #"(?s)defn bar\s+\"Identity\.\"\s+\[x\]" s))))
+        (finally (cleanup root)))))
+
+  (it "treats a lone trailing string as a def VALUE, not a docstring"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f "(ns demo.core)\n\n(def greeting \"hello\")\n")
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj" :op :replace-doc :target "greeting" :code "A greeting."})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            ;; value preserved, docstring inserted BEFORE it
+            (expect (re-find #"(?s)def greeting\s+\"A greeting\.\"\s+\"hello\"" s))))
+        (finally (cleanup root))))))
+
 (defdescribe missing-target
   (it "returns :error when target def is absent"
     (let [root (tmp-dir)
