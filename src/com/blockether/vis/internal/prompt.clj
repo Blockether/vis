@@ -262,9 +262,21 @@
         At close:  (done {:answer … :summarize {… same shape …}})
           :summarize {:trailer [{:scope-start \"t<N>/i<M>\"
                                  :scope-end   \"t<N>/i<M>\"
-                                 :summary \"t3/i2-i5: read X, patched Y, why\"} ...]
+                                 :summary \"t3/i2-i5: read X, patched Y, why\"
+                                 :files [{:path \"full/path.clj\"
+                                          :regions [{:src \"<verbatim text>\"
+                                                     :note \"what/why it matters\"
+                                                     :from-hash \"a1b2\" :to-hash \"c3d4\"}]}]} ...]
                       :facts   [{:keys [:a :b] :into :k :summary \"recap + why\"} ...]
                       :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap + why\"} ...]}
+          When a summarized range READ or CHANGED a file, you MUST add :files:
+          FULL path + the interesting :regions. Carry the VERBATIM :src (so the
+          region is readable + editable from memory) AND its :from-hash/:to-hash
+          — the per-line hashes from the v/cat gutter — so you can re-patch it by
+          hash with no re-cat. This lets the big raw file-read pins be dropped:
+          never re-cat a region you've kept. If you must refresh one, read it
+          back by content with (v/cat path :hash from-hash to-hash) — not by line
+          number (those drift).
         trailer range → one recap stub; N facts/tasks → one new summary
         fact, originals → :archived. Nothing is lost: (recall \"t<N>/i<M>\")
         windows archived trace, (recall :K) windows an archived entity,

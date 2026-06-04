@@ -25,7 +25,6 @@
   com.blockether/vis-provider-standard            {:local/root "extensions/providers/vis-provider-standard"}
   com.blockether/vis-channel-telegram             {:local/root "extensions/channels/vis-channel-telegram"}
   com.blockether/vis-channel-tui                  {:local/root "extensions/channels/vis-channel-tui"}
-  com.blockether/vis-foundation-core              {:local/root "extensions/common/vis-foundation-core"}
   com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
   com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-foundation-git               {:local/root "extensions/common/vis-foundation-git"}
@@ -78,6 +77,13 @@
   org.commonmark/commonmark-ext-gfm-tables        {:mvn/version "0.24.0"}
   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.24.0"}
   babashka/process                                {:mvn/version "0.6.25"}
+  ;; babashka.fs / java-diff-utils — back the `v/` kernel (cat/ls/rg/patch),
+  ;; now a CORE module under `internal.foundation` (was the vis-foundation-core
+  ;; extension). fs = cwd-safe filesystem wrappers; java-diff-utils = unified
+  ;; diff hunks for `v/patch` previews. JGit (gitignore parsing + repo
+  ;; discovery) is already declared below.
+  babashka/fs                                     {:mvn/version "0.5.24"}
+  io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.12"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
   metosin/malli                                   {:mvn/version "0.20.1"}
@@ -122,7 +128,6 @@
                         "extensions/providers/vis-provider-standard/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/channels/vis-channel-telegram/test"
-                        "extensions/common/vis-foundation-core/test"
                         "extensions/common/vis-foundation-bridge/test"
                         "extensions/common/vis-foundation-search/test"
                         "extensions/common/vis-foundation-git/test"
@@ -148,7 +153,6 @@
                         "--dir" "extensions/providers/vis-provider-standard/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/channels/vis-channel-telegram/test"
-                        "--dir" "extensions/common/vis-foundation-core/test"
                         "--dir" "extensions/common/vis-foundation-bridge/test"
                         "--dir" "extensions/common/vis-foundation-search/test"
                         "--dir" "extensions/common/vis-foundation-git/test"

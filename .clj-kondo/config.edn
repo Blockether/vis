@@ -20,7 +20,7 @@
    ;; bind a fresh tmp-dir path to the symbol passed in. Without
    ;; the hook every `(with-tmp root ...)` call lights every `root`
    ;; reference in the body up as `unresolved-symbol`.
-   com.blockether.vis.ext.foundation-core.environment.agents-test/with-tmp
+   com.blockether.vis.internal.foundation.environment.agents-test/with-tmp
    hooks.com.blockether.vis.with-tmp/with-tmp
-   com.blockether.vis.ext.foundation-core.environment.skills-test/with-tmp
+   com.blockether.vis.internal.foundation.environment.skills-test/with-tmp
    hooks.com.blockether.vis.with-tmp/with-tmp}}}

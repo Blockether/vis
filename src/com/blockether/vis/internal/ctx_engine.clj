@@ -856,7 +856,7 @@
    Returns `{:trailer new-trailer :warnings vec}`."
   [trailer summaries form-scope]
   (update
-    (reduce (fn [{:keys [trailer warnings]} {:keys [scope-start scope-end summary]}]
+    (reduce (fn [{:keys [trailer warnings]} {:keys [scope-start scope-end summary files]}]
               (cond
                 (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
                 {:trailer trailer,
@@ -894,10 +894,11 @@
                         {:trailer (-> trailer
                                     (->> (remove #(entry-contained-by? % [scope-start scope-end])))
                                     vec
-                                    (conj {:scope-start scope-start,
-                                           :scope-end scope-end,
-                                           :summary summary,
-                                           :born form-scope})),
+                                    (conj (cond-> {:scope-start scope-start,
+                                                   :scope-end scope-end,
+                                                   :summary summary,
+                                                   :born form-scope}
+                                            (seq files) (assoc :files (vec files))))),
                          :warnings warnings})))
       {:trailer trailer, :warnings []}
       (or summaries []))

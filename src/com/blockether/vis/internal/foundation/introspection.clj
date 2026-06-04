@@ -1,0 +1,868 @@
+(ns com.blockether.vis.internal.foundation.introspection
+  "Programmatic introspection of the agent's own state from inside
+   `:code`. The public state surface is deliberately small:
+
+   - `(v/session-state [session-id])` -> data map, including raw LLM diagnostics
+   - `(v/session-report [session-id])` -> Markdown rendered from that data
+
+   Everything else in this namespace is implementation detail. The agent
+   gets the data once, manipulates it via plain Clojure (`get-in`,
+   `filter`, `map`, etc.), and renders the same data to Markdown only
+   when presentation is needed.
+
+   Every function is a pure read off the same DB tables the projection
+   layer reads from (or a classpath read for the doc accessors).
+   Failures return nil/[], never throw, so a misbehaving introspection
+   call cannot break iteration execution.
+
+   Opt-in: not auto-loaded by default. Add this jar to the classpath
+   to enable."
+  (:require
+   [charred.api :as json]
+   [clojure.string :as str]
+   [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.foundation.transcript :as transcript]
+   [com.blockether.vis.internal.extension :as extension]))
+
+;; ---------------------------------------------------------------------------
+;; Channels we know how to enumerate. Derived from the global channel
+;; registry (`vis/registered-channels`) so any third-party channel jar
+;; on the classpath surfaces in the inspect session index automatically -
+;; no edits to this file when a new front-end ships.
+;;
+;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
+;; its sessions-channel namespace WITHOUT registering a channel
+;; descriptor (the `vis` dispatcher itself is the surface; there is no
+;; `vis channels cli` sub-command, so it has no `:channel/cmd`). Every
+;; other channel id comes from the registry.
+;; ---------------------------------------------------------------------------
+
+(defn- known-channels
+  "Vec of sessions-channel keywords known to this process. Derived
+   from the global channel registry plus the implicit `:cli` namespace."
+  []
+  (->> (vis/registered-channels)
+    (map :channel/id)
+    (cons :cli)
+    distinct
+    vec))
+
+;; ---------------------------------------------------------------------------
+;; Helpers - derive ids, deref atoms, normalize sym args.
+;; ---------------------------------------------------------------------------
+
+(defn- current-session-id [env]
+  (:session-id env))
+
+(defn- current-session-turn-id
+  "UUID of the in-flight turn, or nil when no turn is running yet.
+
+   Internally this is the `session_turn_soul` id — stored as the
+   `:session-turn-id` field on the single `:turn-state-atom` (see
+   `ctx-loop/make-turn-state-atom`). The product concept is *turn*;
+   everywhere this id is surfaced to the model (e.g. inspect
+   current-turn results, the `:in-flight-turn-id` slot) it's labelled
+   `turn`. Mirrors the SCI-visible `TURN_ID` SYSTEM var so meta-fns
+   can filter it without round-tripping through SCI."
+  [env]
+  (some-> (:turn-state-atom env) deref :session-turn-id))
+
+(defn- same-uuid?
+  "True when two values denote the same UUID. Accepts UUID instances
+   or any object whose `str` is the canonical UUID form. Used to
+   match `TURN_ID` against a turn's `:id` regardless of
+   whether the persistence layer returned a UUID or a string."
+  [a b]
+  (and a b (= (str a) (str b))))
+
+(defn- iteration-rows
+  "Fetch the iteration rows for `session-turn-id`; returns [] on any failure."
+  [db-info session-turn-id]
+  (try
+    (vis/db-list-session-turn-iterations db-info session-turn-id)
+    (catch Throwable _ [])))
+
+;; ---------------------------------------------------------------------------
+;; Builders - assemble each top-level snapshot map.
+;; ---------------------------------------------------------------------------
+
+(defn- iteration-pointer
+  "Snapshot of the live iteration counter. Reads the env atom set by
+   the iteration-loop's prepared context. The loop runs until the
+   model emits `:answer` -- there is no model-visible budget, so the
+   pointer carries only `:current`."
+  [env]
+  (let [iter-raw (some-> (:turn-state-atom env) deref :iteration)
+        current-position (cond (map? iter-raw)    (or (:position iter-raw) 1)
+                           (number? iter-raw) iter-raw
+                           :else              1)]
+    {:current (long current-position)}))
+
+(defn- attempts-from-iterations
+  "Walk `iterations` (in DB order) and collect every executed
+   expression. Used by the current-turn snapshot and by attempt search."
+  [_db-info iterations]
+  (mapv (fn [iteration]
+          {:iteration-id (:id iteration)
+           :iteration    (:position iteration)
+           :code         (:code iteration)
+           :result       (:result iteration)
+           :error        (:error iteration)
+           :duration-ms  (:duration-ms iteration)})
+    iterations))
+
+(defn- format-provider-model
+  "Render `\"provider/model\"` when both are known, otherwise just the
+   model (or just the provider) so callers always get a non-empty
+   string when at least one component exists. Returns nil when both
+   are nil/blank - callers `cond->` on the result."
+  [provider model]
+  (let [provider-str (some-> provider name str/trim not-empty)
+        model-str    (some-> model str str/trim not-empty)]
+    (cond
+      (and provider-str model-str) (str provider-str "/" model-str)
+      model-str                    model-str
+      provider-str                 provider-str
+      :else                        nil)))
+
+(defn- turn-cost-summary
+  "Pull the token / cost / provider / model summary persisted on
+   `session_turn_state` canonical columns (Phase B: `input_tokens`,
+   `input_regular_tokens`, `input_cache_write_tokens`,
+   `input_cache_read_tokens`, `output_tokens`, `output_reasoning_tokens`,
+   `total_cost_usd`, `llm_root_provider`, `llm_root_model`). Returns a
+   map with the canonical token keys + cost + provider/model when
+   present, or an empty map. Never throws.
+
+   `:provider-model` is a derived `\"provider/model\"` display string
+   (e.g. `\"openai/gpt-4o\"`) so callers render it directly - the
+   canonical data still lives in `:provider` and `:model` separately."
+  [turn]
+  (let [provider-model (format-provider-model (:provider turn) (:model turn))]
+    (cond-> {}
+      (:input-tokens turn)             (assoc :input-tokens             (:input-tokens turn))
+      (:input-regular-tokens turn)     (assoc :input-regular-tokens     (:input-regular-tokens turn))
+      (:input-cache-write-tokens turn) (assoc :input-cache-write-tokens (:input-cache-write-tokens turn))
+      (:input-cache-read-tokens turn)  (assoc :input-cache-read-tokens  (:input-cache-read-tokens turn))
+      (:output-tokens turn)            (assoc :output-tokens            (:output-tokens turn))
+      (:output-reasoning-tokens turn)  (assoc :output-reasoning-tokens  (:output-reasoning-tokens turn))
+      (:total-cost turn)               (assoc :total-cost               (:total-cost turn))
+      (:provider turn)                 (assoc :provider                 (:provider turn))
+      (:model turn)                    (assoc :model                    (:model turn))
+      provider-model           (assoc :provider-model   provider-model))))
+
+(defn- elapsed-ms
+  "Wall-clock duration for a turn in milliseconds. Read from
+   `:duration-ms` when persisted; otherwise computed from the
+   underlying turn row's `:created-at` so the model can self-pace
+   mid-turn."
+  [turn]
+  (or (:duration-ms turn)
+    (when-let [created (:created-at turn)]
+      (try
+        (- (System/currentTimeMillis)
+          (cond
+            (inst? created)    (inst-ms created)
+            (integer? created) (long created)
+            :else              0))
+        (catch Throwable _ nil)))))
+
+(defn- parse-json-map
+  "Best-effort JSON object parser for persisted provider errors. The
+   persistence layer stores `iteration.llm_error` as JSON text; meta
+   keeps parsing local so callers get failures as Clojure data."
+  [text]
+  (when (and (string? text) (not (str/blank? text)))
+    (try
+      (let [parsed (json/read-json text :key-fn keyword)]
+        (when (map? parsed) parsed))
+      (catch Throwable _ nil))))
+
+(defn- preview
+  ([text] (preview text 220))
+  ([text limit]
+   (when (some? text)
+     (let [string-value (str text)]
+       (if (> (count string-value) limit)
+         (str (subs string-value 0 limit) "...")
+         string-value)))))
+
+(defn- error-text [error]
+  (cond
+    (nil? error) nil
+    (string? error) error
+    (map? error) (or (:message error) (pr-str error))
+    :else (str error)))
+
+(defn- keywordish [value]
+  (cond
+    (keyword? value) value
+    (string? value) (keyword (str/replace value #"^:" ""))
+    :else value))
+
+(defn- schema-rejected-type? [value]
+  (= :svar.spec/schema-rejected (keywordish value)))
+
+(defn- provider-failure [iteration]
+  (when-let [error (:error iteration)]
+    (let [error-map (or (parse-json-map error) {:message (str error)})
+          data      (:data error-map)
+          type      (keywordish (:type data))
+          reason    (keywordish (:reason data))
+          raw-data  (:raw-data data)]
+      (cond-> {:source       :provider
+               :iteration-id (:id iteration)
+               :iteration    (:position iteration)
+               :status       (:status iteration)
+               :message      (or (:message error-map) (str error))
+               :classification (if (schema-rejected-type? type)
+                                 :provider-schema-rejected
+                                 :provider-error)}
+        type                    (assoc :type type)
+        reason                  (assoc :reason reason)
+        (:received-type data)   (assoc :received-type (:received-type data))
+        (some? raw-data)        (assoc :raw-preview (preview raw-data))
+        (:raw-data-preview data) (assoc :raw-data-preview (:raw-data-preview data))))))
+
+(defn- tool-name-from-code [code]
+  (when (string? code)
+    (second (re-find #"^\s*\(?([^\s\)]+)" code))))
+
+(defn- classify-expression-failure [code error]
+  (let [message (or (error-text error) "")
+        lower-message (str/lower-case message)
+        tool-name (or (tool-name-from-code code) "")]
+    (cond
+      (and (str/includes? tool-name "v/rg")
+        (str/includes? lower-message "unsupported escape character"))
+      :regex-unsupported-escape
+
+      (and (str/includes? tool-name "v/rg")
+        (str/includes? lower-message "unable to resolve symbol"))
+      :regex-unescaped-quote
+
+      (and (str/includes? tool-name "v/patch")
+        (str/includes? lower-message "unmatched delimiter"))
+      :patch-unbalanced-string
+
+      (and (str/includes? tool-name "v/patch")
+        (str/includes? lower-message "search block")
+        (str/includes? lower-message "not found"))
+      :patch-no-match
+
+      (str/includes? lower-message "unable to resolve symbol")
+      :unresolved-symbol
+
+      :else
+      :code-execution-error)))
+
+(defn- advice-for-classification [classification]
+  (case classification
+    :provider-schema-rejected
+    "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
+
+    :regex-unsupported-escape
+    "Clojure strings reject \\| as an escape. v/rg is literal and takes one spec map: use {:any [\"foo\" \"bar\"]} for OR, or {:all [\"foo|bar\"]} only when you need the literal pipe text."
+
+    :regex-unescaped-quote
+    "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
+
+    :patch-unbalanced-string
+    "The v/patch EDN payload likely lost the closing quote of a :search or :replace string. Re-emit as the canonical vector shape (v/patch [{:path :search :replace} ...]) and compose multi-line content with (str \"line1\\n\" \"line2\\n\") so each line stays on its own physical line and the closing quote stays visible."
+
+    :patch-no-match
+    "The SEARCH text did not match the file exactly. Use the near-match data when present, or re-read the smallest file slice and emit an exact-byte SEARCH block."
+
+    :unresolved-symbol
+    "A reader/string boundary probably split the form and exposed a bare symbol. Check quoting before retrying."
+
+    "Read :message, :code, and :iteration; fix the smallest failing form before issuing new searches."))
+
+(defn- expression-failures-for-iteration [_db-info iteration]
+  (if-let [error (:error iteration)]
+    (let [classification (classify-expression-failure (:code iteration) error)]
+      [{:source        :code
+        :iteration-id  (:id iteration)
+        :iteration     (:position iteration)
+        :tool          (tool-name-from-code (:code iteration))
+        :classification classification
+        :code          (:code iteration)
+        :message       (error-text error)
+        :advice        (advice-for-classification classification)}])
+    []))
+
+(defn- failures-from-iterations [db-info iterations]
+  (vec
+    (mapcat (fn [iteration]
+              (let [provider (when-let [failure (provider-failure iteration)]
+                               [(assoc failure :advice
+                                  (advice-for-classification (:classification failure)))])]
+                (concat provider (expression-failures-for-iteration db-info iteration))))
+      iterations)))
+
+(defn- latest-turn [db-info session-id]
+  (when (and db-info session-id)
+    (last (try (vis/db-list-session-turns db-info session-id)
+            (catch Throwable _ [])))))
+
+(defn- turn-snapshot
+  "The single-call rich current-turn snapshot. Aggregates
+   the per-iteration data the prompt projection does NOT carry
+   (attempts, provider/code failures, cost, elapsed-ms) plus the
+   iteration pointer. The agent picks what it needs by map key
+   instead of querying SQLite manually."
+  [env]
+  (let [{:keys [db-info session-id]} env]
+    (when-let [turn (latest-turn db-info session-id)]
+      (let [iterations (iteration-rows db-info (:id turn))
+            attempts   (attempts-from-iterations db-info iterations)]
+        (cond-> {:id           (:id turn)
+                 :user-request (:user-request turn)
+                 :status       (:status turn)
+                 :attempts     attempts
+                 :errors       (filterv :error attempts)
+                 :failures     (failures-from-iterations db-info iterations)
+                 :iteration    (iteration-pointer env)
+                 :cost         (turn-cost-summary turn)}
+          (elapsed-ms turn) (assoc :elapsed-ms (elapsed-ms turn)))))))
+
+(defn- session-snapshot
+  "Map for a single session: identity + every turn rolled up to a
+   compact `{:id :user-request :outcome :answer :iteration-count :status}`
+   shape. Used by the session-summary portion of inspect.
+
+   `:iteration-count` is the integer number of LLM rounds the turn
+   consumed. Spelled out so it never gets confused with the vector
+   shape that the runtime trace uses for per-iteration entries."
+  [db-info session-id]
+  (when (and db-info session-id)
+    (try
+      (when-let [session (vis/db-get-session db-info session-id)]
+        (let [turn-rows (vis/db-list-session-turns db-info session-id)
+              turns (mapv (fn [turn]
+                            (cond-> {:id (:id turn)
+                                     :outcome (or (:prior-outcome turn)
+                                                (:status turn))}
+                              (:user-request turn)     (assoc :user-request    (:user-request turn))
+                              (:answer turn)           (assoc :answer          (:answer turn))
+                              (:iteration-count turn)  (assoc :iteration-count (:iteration-count turn))
+                              (:total-cost turn)       (assoc :total-cost      (:total-cost turn))))
+                      turn-rows)]
+          (cond-> {:id          session-id
+                   :channel     (:channel session)
+                   :title       (:title session)
+                   :model       (:model session)
+                   :created-at  (:created-at session)
+                   :turns       turns
+                   :turn-count  (count turns)}
+            (:provider session)
+            (assoc :provider (:provider session))
+            (format-provider-model (:provider session) (:model session))
+            (assoc :provider-model
+              (format-provider-model (:provider session) (:model session))))))
+      (catch Throwable _ nil))))
+
+;; ---------------------------------------------------------------------------
+;; Meta fns - each takes `env` as first arg via the shared
+;; `:before-fn` injector below. The agent never sees `env`; it calls
+;; e.g. current-turn snapshot with zero args.
+;; ---------------------------------------------------------------------------
+
+(defn- foundation-turn [env]
+  (turn-snapshot env))
+
+(defn- foundation-session
+  "Snapshot for a session. The in-flight turn (= current `TURN_ID`)
+   is automatically excluded from `:turns` because its `:iteration-count` /
+   `:total-cost` haven't been finalized yet - listing it would render
+   as `null | $null` and confuse downstream summaries. The excluded id
+   is surfaced as `:in-flight-turn-id` so callers can opt into seeing
+   it. Filtering happens only when the in-flight turn belongs to this
+   session; foreign sessions are returned verbatim."
+  ([env]
+   (foundation-session env (current-session-id env)))
+  ([env session-id]
+   (when-let [snapshot (session-snapshot (:db-info env) session-id)]
+     (let [in-flight-id (current-session-turn-id env)
+           same-session?   (and in-flight-id
+                             (same-uuid? session-id (current-session-id env)))]
+       (if-not same-session?
+         snapshot
+         (let [filtered (filterv #(not (same-uuid? in-flight-id (:id %)))
+                          (:turns snapshot))]
+           (-> snapshot
+             (assoc :turns filtered)
+             (assoc :turn-count (count filtered))
+             (assoc :in-flight-turn-id in-flight-id))))))))
+
+(defn- foundation-sessions
+  "List every session the DB knows about, newest-first. With no
+   arg, scans every channel surfaced by `known-channels`. With a
+   channel kw, filters to that channel. Returns `[]` (never nil) when
+   the env is missing a `:db-info` handle so callers can chain seq
+   operations safely."
+  ([env]
+   (if (:db-info env)
+     (vec
+       (sort-by (comp #(if-let [c (:created-at %)]
+                         (cond (inst? c)    (- (inst-ms c))
+                           (integer? c) (- (long c))
+                           :else        0)
+                         0)
+                  identity)
+         (mapcat #(foundation-sessions env %) (known-channels))))
+     []))
+  ([env channel]
+   (if (:db-info env)
+     (try
+       (mapv (fn [session]
+               (let [session-id (:id session)
+                     turns (try (vis/db-list-session-turns (:db-info env) session-id)
+                             (catch Throwable _ []))]
+                 (cond-> {:id          session-id
+                          :channel     (:channel session)
+                          :title       (:title session)
+                          :created-at  (:created-at session)
+                          :turn-count  (count turns)}
+                   (:external-id session) (assoc :external-id (:external-id session)))))
+         (vis/db-list-sessions (:db-info env) channel))
+       (catch Throwable _ []))
+     [])))
+
+(defn- foundation-session-forks
+  "List every `session_state` row for the session soul behind
+   `session-id`, oldest version first. Each row maps to
+   `{:state-id :version :parent-state-id :title :system-prompt :provider
+     :model :created-at :turn-count}`. The trunk is `:version 0` with
+   `:parent-state-id nil`; any later row with non-nil `:parent-state-id`
+   is a fork off the referenced state. Returns `[]` (never nil) when
+   the session has no rows OR the env is missing handles - lets
+   callers chain `(group-by :parent-state-id ...)` without nil-guards.
+
+   No-arg form uses the current-session-id from the env."
+  ([env]
+   (foundation-session-forks env (current-session-id env)))
+  ([env session-id]
+   (if (and (:db-info env) session-id)
+     (try
+       (vec (vis/db-list-session-states (:db-info env) session-id))
+       (catch Throwable _ []))
+     [])))
+
+(defn- meta-turn-retries
+  "List every `session_turn_state` row (= every retry version) for the turn
+   soul behind `session-turn-id`, oldest version first. Each row maps to
+   `{:state-id :version :forked-from-session-turn-state-id :status :prior-outcome
+     :provider :model :created-at :iteration-count}`. Version 0 with
+   `:forked-from-session-turn-state-id nil` is the original run; any higher
+   version is a retry. `session-turn-id` is a `session_turn_soul` UUID - the same id
+   surfaced as `:turn-id` by attempt search, `:id` by the current-turn
+   snapshot, or `:turns[].id` by the session summary. Returns `[]` (never nil)
+   when the turn is unknown or the env is missing handles."
+  [env session-turn-id]
+  (if (and (:db-info env) session-turn-id)
+    (try
+      (vec (vis/db-list-session-turn-states (:db-info env) session-turn-id))
+      (catch Throwable _ []))
+    []))
+
+(defn- foundation-failures
+  "Provider/schema and code/tool failures, normalized into one
+   chronological vector. No arg = current turn. Pass a session id
+   to scan every turn in that session. To scan EVERY session
+   in the DB use the DB-wide helper instead. Returns `[]`
+   (never nil) when there is nothing to report or the env is missing
+   handles."
+  ([env]
+   (or (:failures (turn-snapshot env)) []))
+  ([env session-id]
+   (if (and (:db-info env) session-id)
+     (try
+       (vec
+         (mapcat (fn [turn]
+                   (let [iterations (iteration-rows (:db-info env) (:id turn))]
+                     (mapv #(assoc % :turn-id (:id turn)
+                              :user-request (:user-request turn))
+                       (failures-from-iterations (:db-info env) iterations))))
+           (vis/db-list-session-turns (:db-info env) session-id)))
+       (catch Throwable _ []))
+     [])))
+
+(defn- classification-counts [failures]
+  (into {}
+    (map (fn [[classification total]] [classification total]))
+    (frequencies (map :classification failures))))
+
+(def ^:private REPETITION_THRESHOLD
+  "Minimum number of failures sharing the same normalized signature
+   before the turn is flagged as locked in a same-error loop. Empirical
+   floor: agents that miss a path 2-3x and pivot stay below; agents
+   that emit 5+ identical-root-cause errors are stuck and not learning.
+   Anchored to the worst-case in the self-analyze report for
+   session 89ea9c98-21d4-4483-a962-f8ccb1d8232d (148 'src/tui not
+   found' failures in one turn - the failure mode this catches)."
+  5)
+
+(defn- repetition-signature
+  "Project a failure to a lossy 'same root cause' signature so 148
+   varying filename attempts under the same missing directory hash to
+   the same bucket. Strategy: keep `:source` + `:classification` and
+   collapse the message to the leading phrase before the first `:`
+   (e.g. `Path not found: /.../foo.clj` and `File not found: /.../bar.clj`
+   become `\"Path not found\"` and `\"File not found\"`). Drops the
+   varying tail that would otherwise scatter identical-cause errors
+   across distinct buckets."
+  [failure]
+  (let [message (or (:message failure) "")
+        head    (or (some-> (re-find #"^([^:\n]{1,80}):" message) second str/trim)
+                  (let [trimmed (str/trim message)]
+                    (subs trimmed 0 (min 60 (count trimmed)))))]
+    [(:source failure) (:classification failure) head]))
+
+(defn- repetition-clusters
+  "Buckets of failures sharing a `repetition-signature`. Returns a vec
+   of `{:signature .. :count .. :sample failure}` for clusters whose
+   size meets `REPETITION_THRESHOLD`, sorted largest-first. Empty vec
+   when nothing is repeating - caller treats `(seq ...)` as the
+   `:repetition-loop?` flag. Surfacing this gives the agent a single
+   number to read instead of having to derive it from `:failures`."
+  [failures]
+  (->> (group-by repetition-signature failures)
+    (keep (fn [[signature group]]
+            (when (>= (count group) REPETITION_THRESHOLD)
+              {:signature signature
+               :count     (count group)
+               :sample    (first group)})))
+    (sort-by :count >)
+    vec))
+
+(defn- next-actions [failures clusters]
+  (let [classes (set (map :classification failures))]
+    (vec
+      (cond-> []
+        ;; Repetition loop is the loudest signal and goes first so
+        ;; the agent reads it before any classification-specific tip.
+        ;; Sample message is truncated; full failure stays in :failures.
+        (seq clusters)
+        (into
+          (mapv (fn [{:keys [count sample]}]
+                  (str "Same error repeated " count "x this turn (e.g. "
+                    (preview (:message sample) 80)
+                    "). STOP varying inputs to the failing call. "
+                    "Switch strategy: list a parent directory, broaden "
+                    "the search, or pivot - repeating the same shape "
+                    "will not converge."))
+            clusters))
+
+        (contains? classes :provider-schema-rejected)
+        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/session-state)) and retry/switch model only if it repeats.")
+
+        (contains? classes :regex-unsupported-escape)
+        (conj (str "v/rg takes one spec map with literal vectors, not regex strings or positional args. "
+                "Use {:all [\"foo|bar\"]} for literal pipe text, or {:any [\"foo\" \"bar\"]} for OR. "
+                "Add :paths and :include in the same map."))
+
+        (contains? classes :regex-unescaped-quote)
+        (conj "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
+
+        (contains? classes :patch-unbalanced-string)
+        (conj "Re-emit v/patch as a vector of {:path :search :replace} maps; compose multi-line :search/:replace with (str \"line\\n\" \"line\\n\") so each line stays on its own physical line and the closing quote stays visible.")
+
+        (contains? classes :patch-no-match)
+        (conj "Use any :near-match hint, then re-read the smallest file slice and emit an exact SEARCH block.")))))
+
+(defn- foundation-diagnose
+  "Compact current-turn diagnosis built from failure data. Returns a
+   map with counts, repetition-loop detection, and next actions so the
+   agent can stop burning iterations on DB spelunking. Pass a
+   session id to diagnose all turns in that session.
+
+   `:repetition-loop?` is `true` when any error signature repeats at
+   least `REPETITION_THRESHOLD` times in the failure list - the
+   single-glance flag for the 'agent retried the same broken call N
+   times' pathology. `:repetition-clusters` carries the supporting
+   data (signature, count, sample failure)."
+  ([env]
+   (let [turn     (turn-snapshot env)
+         failures (vec (:failures turn))
+         clusters (repetition-clusters failures)]
+     {:turn-id             (:id turn)
+      :user-request        (:user-request turn)
+      :status              (:status turn)
+      :failure-count       (count failures)
+      :by-classification   (classification-counts failures)
+      :repetition-loop?    (boolean (seq clusters))
+      :repetition-clusters clusters
+      :failures            failures
+      :next-actions        (next-actions failures clusters)}))
+  ([env session-id]
+   (let [failures (vec (foundation-failures env session-id))
+         clusters (repetition-clusters failures)]
+     {:session-id     session-id
+      :failure-count       (count failures)
+      :by-classification   (classification-counts failures)
+      :repetition-loop?    (boolean (seq clusters))
+      :repetition-clusters clusters
+      :failures            failures
+      :next-actions        (next-actions failures clusters)})))
+
+(defn- safe-call
+  [f default]
+  (try
+    (let [v (f)]
+      (if (nil? v) default v))
+    (catch Throwable _ default)))
+
+(defn- retries-by-turn
+  [env turns]
+  (into {}
+    (keep (fn [{:keys [id]}]
+            (when id
+              [id (meta-turn-retries env id)])))
+    turns))
+
+(defn- raw-response-map
+  [iteration]
+  (let [blocks (when (seq (:llm-executable-blocks iteration))
+                 (vec (:llm-executable-blocks iteration)))]
+    (cond-> {}
+      (some? (:llm-raw-response-preview iteration))
+      (assoc :preview (:llm-raw-response-preview iteration))
+      (some? (:llm-raw-response-length iteration))
+      (assoc :length (:llm-raw-response-length iteration))
+      (some? (:llm-raw-response-sha256 iteration))
+      (assoc :sha256 (:llm-raw-response-sha256 iteration))
+      blocks
+      (assoc :executable-blocks blocks
+        :form-count (count blocks)
+        :block-langs (mapv :lang blocks)))))
+
+(defn- llm-diagnostic-row
+  [turn iteration]
+  (let [raw-response (raw-response-map iteration)]
+    (when (seq raw-response)
+      (cond-> {:turn-id      (:id turn)
+               :user-request (:user-request turn)
+               :iteration-id (:id iteration)
+               :iteration    (:position iteration)
+               :status       (:status iteration)
+               :raw-response raw-response}
+        (:provider iteration) (assoc :provider (:provider iteration))
+        (:model iteration)    (assoc :model (:model iteration))))))
+
+(defn- llm-diagnostics
+  "Flatten the full transcript into the raw LLM diagnostics view exposed
+   by `v/session-state`. This is a convenience index over the canonical
+   transcript payload, not another storage read."
+  [transcript-data]
+  (vec
+    (mapcat (fn [turn]
+              (keep #(llm-diagnostic-row turn %) (:iterations turn)))
+      (:turns transcript-data))))
+
+(defn- foundation-inspect-data
+  "Canonical session-state data surface. One read returns the
+   navigation summary, live current turn, classified failures,
+   diagnosis, fork/retry metadata, raw LLM diagnostics, and the full
+   transcript payload. Default target is the current session;
+   pass a session id or unambiguous prefix to inspect another
+   session."
+  [env session-id]
+  (let [target-id            (or session-id (:session-id env))
+        transcript-data      (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+        resolved-id          (or (get-in transcript-data [:session :id]) target-id)
+        session-summary (safe-call #(foundation-session env resolved-id) nil)
+        failures             (safe-call #(foundation-failures env resolved-id) [])
+        diagnosis            (safe-call #(foundation-diagnose env resolved-id) {})
+        forks                (safe-call #(foundation-session-forks env resolved-id) [])
+        turn-retries         (safe-call #(retries-by-turn env (:turns transcript-data)) {})]
+    {:schema-version      1
+     :scope               :session
+     :session-id     resolved-id
+     :session-index  (safe-call #(foundation-sessions env) [])
+     :session        session-summary
+     :current-turn        (safe-call #(foundation-turn env) nil)
+     :failures            failures
+     :diagnosis           diagnosis
+     :session-forks  forks
+     :turn-retries        turn-retries
+     :llm-diagnostics    (safe-call #(llm-diagnostics transcript-data) [])
+     :transcript          transcript-data}))
+
+(defn- session-envelope
+  [op result]
+  (extension/success {:op op
+                      :result result}))
+
+(defn- foundation-inspect
+  "Canonical session-state data surface. Returns a Vis tool envelope;
+   SCI callers receive the unwrapped data map."
+  ([env]
+   (foundation-inspect env (:session-id env)))
+  ([env session-id]
+   (session-envelope :v/session-state
+     (foundation-inspect-data env session-id))))
+
+(defn- foundation-report
+  "Render the same canonical data returned by `foundation-inspect` as
+   Markdown. Returns a Vis tool envelope; SCI callers receive the
+   unwrapped string."
+  ([env]
+   (foundation-report env (:session-id env)))
+  ([env session-id]
+   (let [data (foundation-inspect-data env session-id)
+         report (if-let [transcript-data (:transcript data)]
+                  (transcript/transcript->md transcript-data)
+                  (str "Session not found: " (:session-id data) "\n"))]
+     (session-envelope :v/session-report report))))
+
+;; Removed extra workflow surfaces.
+
+;; ---------------------------------------------------------------------------
+;; Session-state IR render helpers
+;;
+;; SCI symbol introspection (`v/engine-symbol-*`) was retired here: the
+;; engine now owns it as the bare `doc` / `apropos` system calls (see
+;; `com.blockether.vis.internal.sci-symbols`), since those describe the
+;; SCI sandbox itself, not a foundation `v/` tool.
+;; ---------------------------------------------------------------------------
+
+(def ^:private symbol-render-chars 3000)
+
+(defn- truncate-text
+  [s n]
+  (let [s (str s)]
+    (if (> (count s) n)
+      (str (subs s 0 n) " ...<+" (- (count s) n) " chars>")
+      s)))
+
+(defn- ir-text
+  [s]
+  [:span {} (str s)])
+
+(defn- ir-code
+  [s]
+  [:c {} (str s)])
+
+(defn- ir-strong
+  [s]
+  [:strong {} (str s)])
+
+(defn- ir-p
+  [& children]
+  (into [:p {}] children))
+
+(defn- ir-code-block
+  [lang body]
+  [:code (cond-> {} lang (assoc :lang lang)) (str body)])
+
+(defn- session-state-ir
+  [{:keys [session-id session-index session current-turn failures diagnosis
+           session-forks turn-retries llm-diagnostics transcript]}]
+  (let [turns      (vec (:turns transcript))
+        iterations (reduce + 0 (map (comp count :iterations) turns))
+        total-cost (get-in transcript [:totals :cost-usd])
+        tokens     (get-in transcript [:totals :tokens])]
+    [:ir {}
+     (ir-p (ir-strong "SESSION")
+       (ir-text (str "  " (count turns) " turn" (when (not= 1 (count turns)) "s")
+                  "  " iterations " iter" (when (not= 1 iterations) "s")
+                  "  failures=" (count failures))))
+     [:ul {}
+      [:li {} (ir-p (ir-code ":session-id") (ir-text (str " " session-id)))]
+      [:li {} (ir-p (ir-code ":session-index") (ir-text (str " " (count session-index) " session(s)")))]
+      [:li {} (ir-p (ir-code ":session") (ir-text (str " " (or (:title session) "<none>"))))]
+      [:li {} (ir-p (ir-code ":current-turn") (ir-text (str " " (or (:id current-turn) "<none>"))))]
+      [:li {} (ir-p (ir-code ":transcript") (ir-text (str " " (count turns) " turn(s), " iterations " iteration(s)")))]
+      [:li {} (ir-p (ir-code ":failures") (ir-text (str " " (count failures))))]
+      [:li {} (ir-p (ir-code ":diagnosis") (ir-text (str " " (count diagnosis) " key(s)")))]
+      [:li {} (ir-p (ir-code ":session-forks") (ir-text (str " " (count session-forks))))]
+      [:li {} (ir-p (ir-code ":turn-retries") (ir-text (str " " (count turn-retries) " turn(s)")))]
+      [:li {} (ir-p (ir-code ":llm-diagnostics") (ir-text (str " " (count llm-diagnostics) " row(s)")))]
+      (when tokens
+        [:li {} (ir-p (ir-code ":tokens") (ir-text (str " " (pr-str tokens))))])
+      (when total-cost
+        [:li {} (ir-p (ir-code ":cost-usd") (ir-text (str " " total-cost)))])]
+     (ir-p (ir-text "Full value is still bound. Use ")
+       (ir-code "get-in")
+       (ir-text " / ")
+       (ir-code "select-keys")
+       (ir-text " or ")
+       (ir-code "v/session-report")
+       (ir-text " for the full dump."))]))
+
+;; ---------------------------------------------------------------------------
+;; Render-fns — the `{:summary :display}` contract (Phase 2).
+;;
+;; Each `*-channel` returns `{:summary <zone-map-or-ir> :display <ir>}`.
+;; `:summary` is a zone map ({:left :center? :right?}) whenever the result
+;; has a natural label + right-anchored metric (counts, chars, char-length);
+;; the first [:strong] of `:left` is the badge label by convention.
+;; `:display` is the full IR body the `*-ir` builders produce.
+;; ---------------------------------------------------------------------------
+
+(defn- session-state-channel
+  "Badge: `SESSION  <turns>·<iters>` left, `failures=N` right.
+   Display: the full session-state IR."
+  [{:keys [failures transcript] :as result}]
+  (let [turns      (vec (:turns transcript))
+        iterations (reduce + 0 (map (comp count :iterations) turns))]
+    {:summary {:left  (ir-strong "SESSION")
+               :center (ir-text (str (count turns) " turn" (when (not= 1 (count turns)) "s")
+                                  "  " iterations " iter" (when (not= 1 iterations) "s")))
+               :right (ir-text (str "failures=" (count failures)))}
+     :display (session-state-ir result)}))
+
+(defn- session-report-channel
+  "`v/session-report` returns a single Markdown string. Badge: `REPORT`
+   left, char count right. Display: a header + fenced markdown block so
+   the channel preview matches the rest of the foundation surface (no
+   bare `str`-dump)."
+  [result]
+  (let [s     (str result)
+        chars (count s)
+        body  (truncate-text s symbol-render-chars)]
+    {:summary {:left  (ir-strong "REPORT")
+               :right (ir-text (str chars " char" (when (not= 1 chars) "s")))}
+     :display [:ir {}
+               (ir-p (ir-strong "REPORT")
+                 (ir-text (str "  " chars " char" (when (not= 1 chars) "s"))))
+               (ir-code-block "markdown" body)]}))
+
+(defn- inject-environment
+  [env f args]
+  {:env env :fn f :args (into [env] args)})
+
+;; -- public, doc-bearing aliases -----------------------------------------------
+;; The two underlying defs (`foundation-inspect`, `foundation-report`) are
+;; private and named for clarity inside this ns. Re-export them under their
+;; SCI-visible names with `:doc` and `:arglists` baked into the var meta so
+;; `vis/symbol` can read both straight off the var.
+(def ^{:doc "Full session state: session index, current turn snapshot, classified failures, diagnosis, fork/retry metadata, raw LLM diagnostics, and complete transcript. Default target = current session; pass a session-id or unambiguous prefix to inspect another."
+       :arglists '([] [session-id])} session-state foundation-inspect)
+(def ^{:doc "Complete Markdown report for a session: every turn, iteration, code block, result, answer, and LLM diagnostic rendered as a single Markdown artifact. Same underlying data as `v/session-state`. Default target = current session."
+       :arglists '([] [session-id])} session-report foundation-report)
+
+(def session-state-symbol
+  (vis/symbol #'session-state
+    {:before-fn inject-environment
+     :tag       :observation
+     :render-fn session-state-channel}))
+
+(def session-report-symbol
+  (vis/symbol #'session-report
+    {:before-fn inject-environment
+     :tag       :observation
+     :render-fn session-report-channel}))
+
+(def all-symbols
+  [session-state-symbol
+   session-report-symbol])
+
+(def introspection-prompt
+  "`v/` session strategy: use v/session-state for data you will combine/filter, v/session-report when a rendered forensic report is enough.")
+
+;; The extension that owns all `v/`-aliased symbols is built
+;; and registered by `com.blockether.vis.internal.foundation.core`,
+;; not here - this namespace only exposes the symbol vec + prompt
+;; fragment for the aggregator to assemble.

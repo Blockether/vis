@@ -1000,3 +1000,41 @@
                              (not (re-find #":B" %)))
                   hits))))))
 
+;; =============================================================================
+;; W1 — actionable summaries: model-produced :files survive on the trailer stub
+;; =============================================================================
+
+(defdescribe trailer-summarize-files-test
+  (let [files [{:path "ext/.../components.clj"
+                :regions [{:src "(def close-button-width 4)\n(def close-button-glyph \"│ ✕ \")"
+                           :note "close-button consts — glyph │ ✕ width 4"
+                           :from-hash "a1b2" :to-hash "c3d4"}
+                          ;; content-only region: :src is the anchor, hashes optional
+                          {:src "(when (and closable? (>= width …)) …)"
+                           :note "show-close? gate"}]}]
+        directive {:scope-start "t2/i1" :scope-end "t2/i3"
+                   :summary "patched glyph; raw reads no longer needed"
+                   :files files}
+        {:keys [trailer warnings]}
+        (eng/apply-trailer-summarize [] [directive] "t3/i1/f1")
+        stub (first trailer)]
+    (describe "apply-trailer-summarize with :files"
+      (it "carries :files onto the stored stub verbatim"
+        (expect (= files (:files stub))))
+      (it "still stamps the standard summary fields"
+        (expect (= "t2/i1" (:scope-start stub)))
+        (expect (= "t2/i3" (:scope-end stub)))
+        (expect (= "t3/i1/f1" (:born stub))))
+      (it "emits no warnings for a well-formed :files summary"
+        (expect (= [] warnings)))
+      (it "is spec-valid as a trailer-summary"
+        (expect (s/valid? ::cs/trailer-summary stub))))
+    (describe "without :files (back-compat)"
+      (let [{t2 :trailer} (eng/apply-trailer-summarize
+                            [] [(dissoc directive :files)] "t3/i1/f1")
+            s2 (first t2)]
+        (it "omits the :files key entirely"
+          (expect (not (contains? s2 :files))))
+        (it "remains spec-valid"
+          (expect (s/valid? ::cs/trailer-summary s2)))))))
+
