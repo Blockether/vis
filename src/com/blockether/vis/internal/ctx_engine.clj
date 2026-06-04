@@ -642,7 +642,7 @@
    Rebinding the same def is intentional model behaviour (each iter
    refines arguments / inspects shapes). Pins from earlier rebinds stay
    in the trailer so the model can see prior attempts and avoid looping;
-   if a run truly bloats, `(done {:summarize {:trailer …}})` is the contract
+   if a run truly bloats, `(summarize {:trailer …})` is the contract
    to collapse the history."
   [ctx form-results-vec]
   (let [cursor (:session/scope ctx)
@@ -660,7 +660,7 @@
         ;; (that caused needless re-reads). The trailer carries
         ;; forward verbatim; size is bounded by the engine's
         ;; size-triggered auto-archive (`ensure-prompt-under-budget!`)
-        ;; and the model's explicit `(done {:summarize {:trailer …}})`.
+        ;; and the model's explicit `(summarize {:trailer …})`.
         trailer' (vec (or (:session/trailer ctx) []))
         tasks' (into {}
                  (for [[k v] (or (:session/tasks ctx) {})
@@ -836,7 +836,7 @@
         b-in-a? (and (<= (iter-compare a1 b1) 0) (<= (iter-compare b2 a2) 0))]
     (and overlap? (not a-in-b?) (not b-in-a?))))
 ;; =============================================================================
-;; done handler — apply :summarize {:trailer :facts :tasks}
+;; summarize handler — collapse {:trailer :facts :tasks}
 ;; =============================================================================
 (defn- entry-iter-range
   "Return [start end] iter-scope strings for any trailer entry (pin or summary)."
@@ -939,7 +939,7 @@
 ;; either a real companion LLM call (semantic) or a deterministic
 ;; fallback (`dummy-summary-text`). Either way the resulting stub
 ;; shape is identical — same `:scope-start :scope-end :summary :born`
-;; the model already knows from `(done {:summarize {:trailer …}})`, plus
+;; the model already knows from `(summarize {:trailer …})`, plus
 ;; `:vis/auto?` / `:vis/summary-source` flags so the model can tell who
 ;; wrote it.
 ;;
@@ -1161,8 +1161,8 @@
       {:ctx ctx :warnings [] :next-idx start-idx}
       (or directives []))))
 (defn apply-summarize
-  "`(done {:summarize {:trailer [{:scope-start :scope-end :summary} …]
-   :facts [{:keys :into :summary} …] :tasks […]}})` — compress N→1, never
+  "`(summarize {:trailer [{:scope-start :scope-end :summary} …]
+   :facts [{:keys :into :summary} …] :tasks […]})` — compress N→1, never
    lose data:
      :trailer  range  → collapsed into one recap stub pin (DB keeps the
                         raw pins; introspect-iter recovers)
@@ -1196,31 +1196,19 @@
      :answer     markdown payload — stored verbatim as the
                  `:turn-N-answer` fact `:content`; the loop also ships it
                  to the channel.
-     :summarize  the ONE cleanup verb. Compress N→1 across all three
-                 surfaces — never drop, always leave a recap:
-                   `{:trailer [{:scope-start :scope-end :summary} …]
-                     :facts   [{:keys [k…] :into key? :summary str} …]
-                     :tasks   [{:keys [k…] :into key? :summary str} …]}`
-                 trailer range → one recap stub pin; N facts/tasks →
-                 one new summary FACT, originals flipped `:archived`
-                 (recoverable via (recall :K)). Answer facts compress the
-                 SAME way — full answers are summarized AFTER the turn, not
-                 truncated at birth. No `:specs` (no such subtree).
 
-   Nothing is ever hard-deleted — summarize compresses, the raw data
-   stays in the DB (trailer pins + entities recoverable via recall).
-   Close-of-turn is the single authoritative
-   place to retire commitments. The engine ALSO auto-summarizes oldest
-   trailer pins under size pressure (`ensure-prompt-under-budget!`),
-   using the same stub mechanism; this arg is the model's override."
+   done does NOT compact. Compaction is the standalone `(summarize …)` verb
+   (batch one right before `(done …)` in the same fence to compact at close).
+   The engine ALSO auto-summarizes oldest trailer pins under size pressure
+   (`ensure-prompt-under-budget!`). Nothing is hard-deleted; raw data stays
+   in the DB (trailer pins + entities recoverable via recall)."
   [ctx form-scope
-   {:keys [answer user-request turn-summary summarize]}]
+   {:keys [answer user-request turn-summary]}]
   (apply-done-impl ctx
     form-scope
     {:answer answer,
      :user-request user-request,
-     :turn-summary turn-summary,
-     :summarize summarize}))
+     :turn-summary turn-summary}))
 (defn- auto-fact-for-turn-answer
   "Phase F: build the `:turn-N-answer` fact — the FULL answer for the
    just-closed turn, stored as a first-class fact so cross-turn reference
@@ -1282,13 +1270,11 @@
   "– the un-gated core of `apply-done`. Pulled out so the
    gate can short-circuit cleanly; callers must use `apply-done`."
   [ctx form-scope
-   {:keys [answer user-request turn-summary summarize]}]
-  (let [{ctx-summ :ctx summarize-warns :warnings}
-        (apply-summarize ctx form-scope (or summarize {}))
-        ;; Phase F (redesigned): `:turn-N-answer` fact carries the FULL
+   {:keys [answer user-request turn-summary]}]
+  (let [;; Phase F (redesigned): `:turn-N-answer` fact carries the FULL
         ;; answer markdown verbatim under :content (head+tail-clipped
         ;; in-prompt, recallable in full) plus the question + entity ids
-        ;; born/done this turn. Compression is deferred to the normal
+        ;; born/done this turn. Compression is deferred to the standalone
         ;; `summarize` verb — answers are summarized AFTER the turn, never
         ;; truncated at birth. Optional `:turn-summary` arg from the model
         ;; adds free-form fields merged onto the auto skeleton.
@@ -1297,11 +1283,11 @@
                           {:user-request user-request,
                            :answer answer,
                            :model-summary turn-summary})
-        sorted (sort-trailer (:session/trailer ctx-summ))
-        ctx-final (cond-> (assoc ctx-summ :session/trailer sorted)
+        sorted (sort-trailer (:session/trailer ctx))
+        ctx-final (cond-> (assoc ctx :session/trailer sorted)
                     auto-fact-entry (assoc-in [:session/facts (first auto-fact-entry)]
                                       (second auto-fact-entry)))]
-    {:ctx ctx-final, :warnings (vec summarize-warns)}))
+    {:ctx ctx-final, :warnings []}))
 ;; =============================================================================
 ;; recall — the single recovery verb (replaces the introspect-* sprawl)
 ;;

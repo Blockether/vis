@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.ctx-engine-done-test
-  "Tests for the `done` handler: the single `:summarize` cleanup verb
-   (trailer ranges + entity collapse), partial overlap detection, the
-   trailer comparator, history introspection, and hook-task idempotent
-   re-emission."
+  "Tests for the `done` handler (answer-fact + trailer sort) and the
+   standalone `summarize` cleanup verb (trailer ranges + entity collapse),
+   partial overlap detection, the trailer comparator, history
+   introspection, and hook-task idempotent re-emission."
   (:require
    [com.blockether.vis.internal.ctx-engine :as eng]
    [lazytest.core :refer [defdescribe describe expect it]]))
@@ -101,12 +101,11 @@
                    (pin "t2/i3" "tests")
                    (pin "t3/i1" "more")]))]
 
-      (it "applies :summarize {:trailer …} collapsing a range into one stub"
+      (it "summarize collapses a trailer range into one stub"
         (let [{ctx' :ctx ws :warnings}
-              (eng/apply-done ctx "t4/i1/f1"
-                {:summarize
-                 {:trailer [{:scope-start "t2/i1" :scope-end "t2/i3"
-                             :summary "patch+test cycle"}]}})]
+              (eng/apply-summarize ctx "t4/i1/f1"
+                {:trailer [{:scope-start "t2/i1" :scope-end "t2/i3"
+                            :summary "patch+test cycle"}]})]
           (expect (empty? ws))
           (expect (= 3 (count (:session/trailer ctx'))))
           (expect (some :scope-start (:session/trailer ctx')))))
@@ -117,10 +116,9 @@
                       (assoc :session/facts
                         {:a {:content "alpha" :status :active :born "t2/i1/f1"}
                          :b {:content "beta"  :status :active :born "t2/i2/f1"}}))
-              {ctx' :ctx} (eng/apply-done ctx-f "t4/i1/f1"
-                            {:summarize
-                             {:facts [{:keys [:a :b] :into :ab
-                                       :summary "alpha+beta settled"}]}})]
+              {ctx' :ctx} (eng/apply-summarize ctx-f "t4/i1/f1"
+                            {:facts [{:keys [:a :b] :into :ab
+                                      :summary "alpha+beta settled"}]})]
           ;; new summary fact exists with the recap content
           (expect (= "alpha+beta settled" (get-in ctx' [:session/facts :ab :content])))
           (expect (= [:a :b] (get-in ctx' [:session/facts :ab :summarized-from])))
@@ -134,10 +132,9 @@
                       (assoc :session/tasks
                         {:t1 {:title "one" :status :done :born "t2/i1/f1"}
                          :t2 {:title "two" :status :done :born "t2/i2/f1"}}))
-              {ctx' :ctx} (eng/apply-done ctx-t "t4/i1/f1"
-                            {:summarize
-                             {:tasks [{:keys [:t1 :t2] :into :setup
-                                       :summary "env wired"}]}})]
+              {ctx' :ctx} (eng/apply-summarize ctx-t "t4/i1/f1"
+                            {:tasks [{:keys [:t1 :t2] :into :setup
+                                      :summary "env wired"}]})]
           (expect (= "env wired" (get-in ctx' [:session/facts :setup :content])))
           (expect (= :archived (get-in ctx' [:session/tasks :t1 :status])))
           (expect (= :archived (get-in ctx' [:session/tasks :t2 :status])))))
@@ -147,9 +144,8 @@
                       (assoc :session/turn 7)
                       (assoc :session/facts
                         {:a {:content "alpha" :status :active :born "t2/i1/f1"}}))
-              {ctx' :ctx} (eng/apply-done ctx-f "t7/i1/f1"
-                            {:summarize
-                             {:facts [{:keys [:a] :summary "recap"}]}})]
+              {ctx' :ctx} (eng/apply-summarize ctx-f "t7/i1/f1"
+                            {:facts [{:keys [:a] :summary "recap"}]})]
           (expect (= "recap" (get-in ctx' [:session/facts :summary-t7-fact-1 :content])))))
 
       (it "warns on partial-overlap between summarize ranges and existing summary"
@@ -158,10 +154,9 @@
                            [(summary "t2/i1" "t2/i5" "first")
                             (pin "t3/i1" "x")]))
               {ws :warnings}
-              (eng/apply-done ctx-with "t9/i1/f1"
-                {:summarize
-                 {:trailer [{:scope-start "t2/i3" :scope-end "t3/i1"
-                             :summary "second"}]}})]
+              (eng/apply-summarize ctx-with "t9/i1/f1"
+                {:trailer [{:scope-start "t2/i3" :scope-end "t3/i1"
+                            :summary "second"}]})]
           (expect (some #(= :trailer-summarize-partial-overlap (:code %)) ws))))
 
       (it "sorts trailer by (scope-start, kind)"

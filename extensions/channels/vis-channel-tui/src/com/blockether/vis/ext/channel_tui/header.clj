@@ -492,6 +492,16 @@
     (components/id-badge! g action-col content-row id-copy-text full-uuid
       *register-click-regions?*)
 
+    ;; RIGHT slot: clickable tasks/help chips — terminal-safe replacements
+    ;; for the F2/F1 accelerators. Painted at the left edge of the right slot;
+    ;; the id badge stays right-aligned.
+    (let [tasks-glyph " ☰ "
+          badges-x (+ right-x edge-pad)]
+      (components/header-badge! g badges-x content-row tasks-glyph :toggle-tasks
+        *register-click-regions?*)
+      (components/header-badge! g (+ badges-x (p/display-width tasks-glyph)) content-row
+        " ? " :toggle-help *register-click-regions?*))
+
     ;; Extension-contributed rows.
     (loop [row (inc content-row)
            specs (seq contrib-specs)]

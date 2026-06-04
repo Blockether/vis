@@ -171,7 +171,7 @@
           (expect (str/includes? pin-region ":result")))))))
 
 (defdescribe render-trailer-summary-pin-test
-  (describe "summary trailer pins (from done :summarize {:trailer …}) render unchanged"
+  (describe "summary trailer pins (from (summarize {:trailer …})) render unchanged"
     (let [trailer [{:scope-start "t3/i1" :scope-end "t3/i5"
                     :summary "explored auth flow"
                     :born "t4/i1/f1"}]

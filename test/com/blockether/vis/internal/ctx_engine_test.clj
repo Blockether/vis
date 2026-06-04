@@ -265,7 +265,7 @@
       ;; first mutation) was removed — it forced needless re-reads (read
       ;; file A, patch unrelated B, lose A). Pins now carry forward;
       ;; size is bounded by the engine's size-triggered auto-summarize
-      ;; and the model's explicit `(done {:summarize …})`.
+      ;; and the model's explicit `(summarize …)`.
       (let [ctx1 (eng/advance-iter base obs1)
             ctx2 (eng/advance-iter ctx1 obs2)
             ctx3 (eng/advance-iter ctx2 mut3)]
@@ -278,7 +278,7 @@
       ;; prior attempts MUST stay so the model can see what it tried and
       ;; switch tactic. Collapsing prior pins on rebind hides the loop
       ;; signal and lets the model run rg 20 times without realising.
-      ;; `(done {:summarize {:trailer …}})` is the only contract for trimming.
+      ;; `(summarize {:trailer …})` is the only contract for trimming.
       (let [step1 (eng/advance-iter base
                     [{:scope "t1/i1/f1" :tag :mutation
                       :src "(def persist (rg {:any [\"a\"]}))"}])

@@ -217,6 +217,25 @@
                        :kind :copy-id,
                        :text full-uuid,
                        :enabled? true})))))
+(defn header-badge!
+  "Paint a clickable header chip `glyph` at (col,row) and register a click
+   region of `kind` (e.g. :toggle-tasks / :toggle-help). Brightens on hover.
+   Returns the consumed width. A terminal-safe, always-visible stand-in for
+   the F1/F2 accelerators."
+  [g col row glyph kind register?]
+  (let [hovered (cr/hovered)
+        hovered? (= kind (:kind hovered))
+        w (p/display-width glyph)]
+    (p/clear-styles! g)
+    (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+    (when hovered? (p/enable! g p/BOLD))
+    (p/put-str! g col row glyph)
+    (p/clear-styles! g)
+    (when register?
+      (cr/register! {:bounds {:row row, :col col, :width w},
+                     :kind kind,
+                     :enabled? true}))
+    w))
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-title "Keyboard shortcuts  —  Ctrl+H / F1 to close")
 (defn- pad-right

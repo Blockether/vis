@@ -48,6 +48,9 @@
 (def ^:private previous-turn-context
   (deref #'lp/previous-turn-context))
 
+(def ^:private previous-request-usage
+  (deref #'lp/previous-request-usage))
+
 (def ^:private call-provider-with-interrupt-retry!
   (deref #'lp/call-provider-with-interrupt-retry!))
 
@@ -146,6 +149,35 @@
                      {:id "t2" :status :running :user-request "now"
                       :answer-markdown "partial"}])]
       (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db} "t2"))))))
+
+(defdescribe previous-request-usage-test
+  (it "loads latest persisted request before current turn for iter-1 utilization"
+    (with-redefs [persistance/db-list-session-turns
+                  (fn [_db-info session-id]
+                    (expect (= "s1" session-id))
+                    [{:id "t1" :position 1}
+                     {:id "t2" :position 2}
+                     {:id "t3" :position 3 :status :running}])
+                  persistance/db-list-session-turn-iterations
+                  (fn [_db-info turn-id]
+                    (case turn-id
+                      "t2" [{:position 1 :input-tokens 42000}
+                            {:position 2 :input-tokens 51000}]
+                      "t1" [{:position 1 :input-tokens 10000}]
+                      []))]
+      (expect (= {:last-request-tokens 51000
+                  :last-request-turn-id "t2"
+                  :last-request-turn-position 2
+                  :last-request-iteration 2}
+                (previous-request-usage {:session-id "s1" :db-info ::db} "t3")))))
+
+  (it "returns nil when no prior iteration has input tokens"
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly [{:id "t1" :position 1}
+                               {:id "t2" :position 2}])
+                  persistance/db-list-session-turn-iterations
+                  (constantly [{:position 1 :input-tokens 0}])]
+      (expect (nil? (previous-request-usage {:session-id "s1" :db-info ::db} "t2"))))))
 
 (defdescribe turn-position-state-test
   (it "seeds turn-state with persisted turn position before iteration render"
@@ -712,7 +744,7 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "recovers malformed done answers with a :summarize tail"
+  (it "salvages the answer from a torn done that carried a stale :summarize tail"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
           answer (str "## Spowiedź + blocker\n\n"
@@ -731,12 +763,11 @@
       (expect (some? (:parse-error (parse-forms bad-src))))
       (expect (nil? (:parse-error parsed)))
       (expect (= answer (:answer payload)))
-      (expect (= {:trailer [{:scope-start "t7/i4"
-                             :scope-end "t7/i15"
-                             :summary "Investigation: no tui code here."}]}
-                (:summarize payload)))))
+      ;; done no longer carries :summarize — recovery salvages the answer
+      ;; and drops the stale tail.
+      (expect (nil? (:summarize payload)))))
 
-  (it "recovers direct answers when valid :summarize metadata precedes :answer"
+  (it "salvages the answer when a stale :summarize tail precedes :answer"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
           answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
@@ -748,10 +779,9 @@
           payload (second (:form (first (:forms parsed))))]
       (expect (nil? (:parse-error parsed)))
       (expect (= answer (:answer payload)))
-      (expect (= {:trailer [{:scope-start "t39/i1" :scope-end "t39/i1" :summary "x"}]}
-                (:summarize payload)))))
+      (expect (nil? (:summarize payload)))))
 
-  (it "recovers direct answers with valid :summarize metadata after :answer"
+  (it "salvages the answer when a stale :summarize tail follows :answer"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
           parse-forms (var-get #'lp/parse-top-level-forms)
           answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
@@ -764,8 +794,7 @@
           payload (second (:form (first (:forms parsed))))]
       (expect (nil? (:parse-error parsed)))
       (expect (= answer (:answer payload)))
-      (expect (= {:facts [{:keys [:a :b] :into :ab :summary "x"}]}
-                (:summarize payload)))))
+      (expect (nil? (:summarize payload)))))
 
   (it "drops nonsensical :summarize? booleans during direct-answer recovery"
     (let [recover (var-get #'lp/raw-response->direct-answer-source)
