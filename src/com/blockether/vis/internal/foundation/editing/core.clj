@@ -26,11 +26,11 @@
         (delete path)
         (delete-if-exists path)
         (exists? path)
-        (v/cwd)
-        (v/parent path)
-        (v/file-name path)
-        (v/extension path)
-        (v/relativize from to)
+        (cwd)
+        (parent path)
+        (file-name path)
+        (extension path)
+        (relativize from to)
 
    Hard guard: every path must stay inside the session's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
@@ -296,8 +296,8 @@
 (defn- current-dir-read-ancestor-match?
   "True when a read op is targeting `.` (cwd) and the matched rule
    protects only a descendant of `.`. Reading cwd itself must stay
-   usable for every observation tool (ls, rg, v/cat-on-dir,
-   exists?, v/grep, …); hidden protected extension roots (for
+   usable for every observation tool (ls, rg, cat-on-dir,
+   exists?, grep, …); hidden protected extension roots (for
    example `.bridge/**`) should not make cwd reads fail closed.
 
    Direct rules for `.` (a glob that literally matches `.`) still
