@@ -3235,7 +3235,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools (bare: cat/ls/rg/patch/write). Canonical path only; strategies live as data."
+    ["Editing tools (bare: cat/ls/rg/patch/write + file ops copy/move/delete/exists?). Canonical path only; strategies live as data."
      ""
      "CANONICAL FLOW"
      "  Discover repo shape first:"
@@ -3259,6 +3259,11 @@
      "  Mix locators freely; >1 identical line has no hash — use :search there."
      "  Create/replace whole files only when full content is known:"
      "    (write {:path P :content S})"
+     "  FILE OPS (bare; paths inside workspace root) — no apropos needed:"
+     "    (exists? path)                          ; {:path :exists?}"
+     "    (copy src dest {:overwrite? true})      ; {:src :dest :path}"
+     "    (move src dest {:overwrite? true})      ; rename/move"
+     "    (delete path) | (delete-if-exists path) ; {:path :deleted?}"
      ""
      "INVARIANTS"
      "  - One canonical call shape: maps for option-bearing tools."

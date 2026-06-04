@@ -27,7 +27,7 @@
                      :symbol sym})))
     args))
 
-;; Every `v/*` symbol carries its `:tag :observation | :mutation`
+;; Every foundation symbol carries its `:tag :observation | :mutation`
 ;; INLINE on the (vis/symbol ...) opts map; register-extension! walks
 ;; the symbol vec and auto-populates the op registry. The old
 ;; flat (doseq [[op tag] ...] (vis/register-op! ...)) table retired.
@@ -71,12 +71,12 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation `v/` kernel: session-state/session-report, file I/O (cat/ls/rg/patch/copy/move/delete/exists?), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. SCI symbol introspection is an engine system call (`doc` / `apropos`), not a `v/` tool. Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation kernel (bare symbols, no alias): session-state/session-report, file I/O (cat/ls/rg/patch/write/copy/move/delete/delete-if-exists/exists?), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. SCI symbol introspection is an engine system call (`doc` / `apropos`), not a tool. Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
-     ;; BUILT-IN: foundation is the mandatory `v/` kernel promoted into core, so
+     ;; BUILT-IN: foundation is the mandatory kernel promoted into core, so
      ;; its symbols bind BARE into the sandbox ns (cat/ls/rg/patch …) right next
      ;; to the engine verbs (done/task-set!/recall) — NO `v/` alias. `:builtin?`
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
