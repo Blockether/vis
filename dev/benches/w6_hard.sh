@@ -108,5 +108,22 @@ run_turn 'In service.clj, add an optional status arg to list-orders that, when g
 echo "[w6-hard] turn 4/4 — add total-revenue" >&2
 run_turn 'In service.clj, add a function total-revenue that sums :total across all stored orders (reuse summarize-orders if helpful). Verify it loads.' "$SID" >/dev/null
 
-echo "[w6-hard] DONE session=$SID" >&2
-echo "$SID"
+# ── verify-based pass/fail: load the final file and assert the 4 edits actually work.
+echo "[w6-hard] verifying service.clj behavior…" >&2
+verify_out="$(clojure -e "
+(load-file \"$work/service.clj\")
+(in-ns 'service)
+(assert (fn? @(resolve 'service/total-revenue))                       \"total-revenue defined\")
+(assert (number? (service/total-revenue))                              \"total-revenue callable\")
+(assert (try (service/price-order nil) false (catch Throwable _ true)) \"price-order throws on nil\")
+(assert (= [] (service/list-orders :archived))                         \"list-orders takes a status arg\")
+(assert (zero? (:total (service/apply-discount {:subtotal 100} 2)))    \"apply-discount clamps rate>1 to 1\")
+(assert (= 100 (:total (service/apply-discount {:subtotal 100} -1)))   \"apply-discount clamps rate<0 to 0\")
+(println :VERIFY-PASS)
+" 2>&1)" && verify=pass || verify=fail
+if printf '%s' "$verify_out" | grep -q ':VERIFY-PASS'; then verify=pass; else verify=fail; fi
+echo "[w6-hard] VERIFY=$verify" >&2
+printf '%s\n' "$verify_out" | tail -3 >&2
+
+echo "[w6-hard] DONE session=$SID verify=$verify" >&2
+echo "$SID verify=$verify"
