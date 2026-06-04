@@ -310,14 +310,10 @@
                                                      :from-hash \"a1b2\" :to-hash \"c3d4\"}]}]} ...]
                       :facts   [{:keys [:a :b] :into :k :summary \"recap + why\"} ...]
                       :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap + why\"} ...]}
-          When a summarized range READ or CHANGED a file, you MUST add :files:
-          FULL path + the interesting :regions. Carry the VERBATIM :src (so the
-          region is readable + editable from memory) AND its :from-hash/:to-hash
-          — the per-line hashes from the cat gutter — so you can re-patch it by
-          hash with no re-cat. This lets the big raw file-read pins be dropped:
-          never re-cat a region you've kept. If you must refresh one, read it
-          back by content with (cat path :hash from-hash to-hash) — not by line
-          number (those drift).
+          A summarized range that read/changed a file MUST carry :files (the
+          REMEMBER-gate region shape) so the regions survive the fold and the
+          big raw read pins drop. Refresh a stale region by content, never line
+          number: (cat path :hash from-hash to-hash).
         trailer range → one recap stub; N facts/tasks → one new summary
         fact, originals → :archived. Nothing is lost: (recall \"t<N>/i<M>\")
         windows archived trace, (recall :K) windows an archived entity,
@@ -335,8 +331,8 @@
     SANDBOX No shell / process spawn / JVM escape. ProcessBuilder,
             Runtime/getRuntime, Runtime/exec, clojure.java.shell,
             clojure.java.process, babashka.process, sh — all unbound;
-            don't probe. Filesystem/VCS go through extension tools
-            (foundation `v/`, `git/`).
+            don't probe. Filesystem goes through bare foundation tools
+            (cat/ls/rg/patch/write); VCS through `git/`.
 
     ERRORS  On form error, read it before retrying. Failed patch?
             Re-cat the region for current text. Same approach failing

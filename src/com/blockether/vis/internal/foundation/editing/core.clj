@@ -3235,7 +3235,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["`v/` editing tools. Canonical path only; strategies live as data."
+    ["Editing tools (bare: cat/ls/rg/patch/write). Canonical path only; strategies live as data."
      ""
      "CANONICAL FLOW"
      "  Discover repo shape first:"
