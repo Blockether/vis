@@ -308,6 +308,23 @@ scenarios where it currently loses signal.
 **Open questions.** What heuristic marks "important"? Is recall enough of a safety
 net, or do we need pin-protection? Reproduce a loss case from real sessions.
 
+**Status: analyzed + hardened.** Investigation finding: the auto-fold
+(`safe-guards/fold-trailer-now!` → `ctx-engine/pick-oldest-batch-for-summarization`)
+is already largely safe — it folds OLDEST-first (past-turn pins before current), is
+**recoverable** (the stub carries `(recall …)` pointers + `:vis/auto?`; the per-form
+blob stays in the DB), and the *real* "don't lose important stuff" guarantee is
+delivered by **W1/W2**: durable knowledge lives in FACTS, which are never trailer
+pins and so are never auto-folded. So there is no silent data loss — only an
+attention shift to a recoverable stub.
+- Hardening applied: `pick-oldest-batch-for-summarization` now refuses to fold into
+  the **two** most recent pins (was one) — `(>= (+ k 2) n)` — so the model always
+  keeps a real recent working window before any fold. Verified: folds [i1 i2 i3],
+  keeps [i4 i5]; n≤2 never folds.
+- *Deferred (gated on W6 evidence):* deeper importance-marking (e.g. model-pinned
+  "do not fold" ranges) — not justified until a real loss case is reproduced on the
+  benches, per this section's own note. The current design + W1/W2 cover the stated
+  risk.
+
 ---
 
 ### W6 — Benchmark-driven evaluation (the decision loop for W1–W5)
