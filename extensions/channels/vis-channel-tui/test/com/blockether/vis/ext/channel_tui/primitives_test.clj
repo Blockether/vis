@@ -44,7 +44,14 @@
       ;; chars are present, which `display-width` relies on to keep
       ;; the hot path allocation-free. Verified by absence-of-crash
       ;; and equality with the post-fix expected width.
-      (expect (= 11 (p/display-width "hello world")))))
+      (expect (= 11 (p/display-width "hello world"))))
+    (it "NEVER throws on a non-String arg (Character / number / nil) — the
+         ClassCastException that froze the whole TUI when the F2 panel mapped
+         display-width over a string's characters (regression)"
+      (expect (= 1 (p/display-width \a)))
+      (expect (= 1 (p/display-width \space)))
+      (expect (= 0 (p/display-width nil)))
+      (expect (= 1 (p/display-width 7))))))
 
   (describe "BMP `Emoji_Presentation=Yes` chars are TWO columns (lanterna fork fix)"
     ;; Pre-fix lanterna's TextCharacter.isDoubleWidth() returned false
