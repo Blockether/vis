@@ -1036,8 +1036,11 @@
       (count (filter matches? (line-seq r))))
     (catch Throwable _ 0)))
 
-(defn- grep-files
-  "Search with the public v/rg spec map. Three output modes, picked by
+(defn- rg-search
+  "The v/rg search ENGINE: takes the public v/rg spec map and does the
+   actual file scanning. The public `rg-tool` (= `v/rg`) wraps this with
+   arity/kwargs handling + the LLM-facing result envelope. Three output
+   modes, picked by
    `:files-only?` / `:counts?` / (default content).
 
    Returns one of:
@@ -2322,7 +2325,7 @@
                          :got args})))
         {:keys [paths include exclude files-only? counts? regex?
                 before-ctx after-ctx limit] :as coerced} (coerce-rg-spec spec)
-        out (grep-files spec)
+        out (rg-search spec)
         mode (cond files-only? :files-only
                counts?     :counts
                :else       :content)
