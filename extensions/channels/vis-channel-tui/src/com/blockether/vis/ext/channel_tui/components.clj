@@ -329,10 +329,14 @@
                    title [(clip-str (or (not-empty (str (:title t))) (name k)) title-w) t/dialog-fg
                           true]
                    primary (cond-> [glyph title] badge (conj badge))
+                   ;; accept is a LINE (a vec of one seg). conj it as a single
+                   ;; element — `into` would splice the bare seg in as a line,
+                   ;; so line-w's (display-width (first seg)) hit a Character and
+                   ;; threw every frame, freezing the TUI.
                    accept (when-let [a (not-empty (str (:acceptance t)))]
-                            [[(str "    ▸ " (clip-str a (max 6 (- body-w 6)))) t/footer-fg-muted
-                              false]])]
-               (cond-> [primary] accept (into accept))))))))
+                            [(str "    ▸ " (clip-str a (max 6 (- body-w 6)))) t/footer-fg-muted
+                             false])]
+               (cond-> [primary] accept (conj [accept]))))))))
 (defn- fact-overlay-lines
   "Lines for the FACTS section: a status glyph (active • / superseded ⊘) +
    `key: content` clipped to width, plus a `⛁N` badge when the fact carries
