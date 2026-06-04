@@ -929,6 +929,37 @@
         (activate-tab db (:id entry))
         db))))
 
+(reg-event-db :close-tab
+  ;; Close one tab (default: the active tab). Removes it from `:tabs`,
+  ;; drops its `:tab-locals` snapshot, and — if it was active — activates
+  ;; the neighbor (same index, clamped). Refuses to close the last tab.
+  (fn [db [_ tab-id]]
+    (let [db        (-> db ensure-tabs sync-active-tab)
+          entries   (vec (:tabs db))
+          active-id (current-tab-id db)
+          target-id (or tab-id active-id)
+          idx       (first (keep-indexed #(when (= (:id %2) target-id) %1) entries))]
+      (if (or (nil? idx) (<= (count entries) 1))
+        db
+        (let [remaining (vec (concat (subvec entries 0 idx)
+                              (subvec entries (inc idx))))
+              db        (-> db
+                          (assoc :tabs remaining)
+                          (update :tab-locals dissoc target-id))]
+          (if (= target-id active-id)
+            (let [next-idx (min idx (dec (count remaining)))
+                  next-id  (:id (nth remaining next-idx))]
+              (-> db
+                (assoc :active-tab-id next-id)
+                (update :tabs
+                  (fn [es]
+                    (mapv (fn [entry]
+                            (cond-> (dissoc entry :active?)
+                              (= (:id entry) next-id) (assoc :active? true)))
+                      es)))
+                (restore-tab next-id)))
+            db))))))
+
 (reg-event-db :set-mouse-selection
   (fn [db [_ selection]]
     (assoc db :mouse-selection selection)))

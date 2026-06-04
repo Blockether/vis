@@ -2788,6 +2788,15 @@
                                (when-not (= before (:active-tab-id @state/app-db))
                                  (refresh-active-tab! false)))
                            (recur))
+                         :close-tab
+                         (do (let [before-active (:active-tab-id @state/app-db)
+                                   before-n      (count (:tabs @state/app-db))]
+                               (state/dispatch [:close-tab])
+                               (when (not= before-n (count (:tabs @state/app-db)))
+                                 (when (not= before-active (:active-tab-id @state/app-db))
+                                   (refresh-active-tab! false))
+                                 (persist-tabs!)))
+                           (recur))
                          :history-up (do (state/dispatch [:history-up]) (recur))
                          :history-down (do (state/dispatch [:history-down]) (recur))
                          :cycle-reasoning (do (state/dispatch [:cycle-reasoning-level]) (recur))

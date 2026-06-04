@@ -470,12 +470,15 @@
                             ;; tab's title, show an animated spinner instead
                             ;; of the `●` run-dot; otherwise the dot marks an
                             ;; in-flight turn so concurrent runs stay visible.
+                            active? (= (:id entry) active-id)
                             label (cond->> (p/tab-display-label entry)
                                     (and (:running? entry)
                                       (not (:title-loading? entry))) (str "● ")
                                     (:title-loading? entry) (str (title-spinner-frame) " "))
-                            text (center-padded label cell-w)
-                            active? (= (:id entry) active-id)]
+                            ;; Active tab carries a close affordance (`✕`); Ctrl+W
+                            ;; (or a click on the glyph) dispatches `:close-tab`.
+                            label (cond-> label active? (str " ✕"))
+                            text (center-padded label cell-w)]
                         (recur (inc idx)
                           (+ x cell-w)
                           (conj out (assoc entry

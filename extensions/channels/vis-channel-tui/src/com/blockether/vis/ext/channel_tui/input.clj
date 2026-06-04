@@ -964,6 +964,9 @@
             {:action :quit :state state}
             {:action :clear-input :state (empty-input)})
 
+          (and ctrl (= (Character/toLowerCase c) \w))
+          {:action :close-tab :state state}
+
           (and ctrl (= (Character/toLowerCase c) \a))
           {:action :continue :state (move-line-start state)}
 
