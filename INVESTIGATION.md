@@ -382,9 +382,32 @@ fastest to iterate on?
     re-grep), unlike the baseline's big real file (`components.clj`). The scenario is
     too easy to prove the cross-turn re-location win; needs a harder, big-file
     scenario to be conclusive.
-- **Next W6 iterations:** (a) a HARDER scenario (large real files, ≥4 steps) to
-  stress re-location + force planning; (b) strengthen the PLAN/REMEMBER gates and
-  re-measure; (c) add `verify`-based pass/fail (filewrite) alongside the signals.
+**SECOND run — strengthened gates + harder scenario = DECISIVE WIN.**
+Iterated on the finding: (1) rewrote the GATES imperative with a concrete
+file-work trigger ("if the turn touches a file, its FIRST form is a task";
+"the moment you locate/edit a file, fact-set! it") + a worked iter-1 example;
+(2) `dev/benches/w6_hard.sh` — a 60-line multi-function `service.clj`, 4 turns
+each editing a DIFFERENT function. opus (same model as the baseline):
+
+  | signal               | baseline opus (OLD) | opus (NEW gates, hard) |
+  |----------------------|---------------------|------------------------|
+  | task-set! calls      | 0                   | **8** (open+close/turn)|
+  | fact-set! calls      | 0                   | **4** (1/turn)         |
+  | model-authored facts | 0                   | **4**                  |
+  | multi-form iters     | 0                   | **12**                 |
+  | forms-per-iter       | `{1 41}`            | `{1 9,2 5,3 6,5 1}`    |
+  | locate-waste         | 13                  | 0                      |
+
+  **Verdict:** the PLAN/REMEMBER/BATCH gates now ALL fire on opus — every turn
+  opens with a task, records a file fact, and batches forms. The investigation's
+  core diagnosis (model ignores the engine's System-2) is **fixed and measured**:
+  task-set! 0→8, fact-set! 0→4, model-authored facts 0→4, batching 0→12. The
+  earlier "gates don't fire" result was the weak gate wording + a trivial
+  scenario; both addressed.
+
+- **Remaining W6 polish (optional):** glm re-run on the strengthened gates;
+  `verify`-based pass/fail alongside the signals; a still-larger real-repo
+  scenario. Core hypothesis is now empirically confirmed.
 
 ---
 
