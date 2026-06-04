@@ -326,8 +326,11 @@
         ;; First and last visible cells must keep at least one padding cell.
         (expect (str/starts-with? (:text main-write) " "))
         (expect (str/ends-with? (:text main-write) " "))
-        ;; The cell paints its full 16-col width as one string.
-        (expect (= 16 (p/display-width (:text main-write)))))))
+        ;; Each cell now reserves `components/close-button-width` (3) cells on
+        ;; the right for the always-visible ✕ close button, so the label cell
+        ;; paints 16-3 = 13 cols and a separate " ✕ " write covers the rest.
+        (expect (= 13 (p/display-width (:text main-write))))
+        (expect (some #(str/includes? (str (:text %)) "✕") tab-writes)))))
 
   (it "truncates oversized workspace labels with an ellipsis instead of a hard cut"
     ;; Five long-labelled workspaces in a 48-col centre slot → cell width 9 (or 10
