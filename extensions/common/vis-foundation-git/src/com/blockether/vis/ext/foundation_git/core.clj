@@ -366,6 +366,26 @@
          merge-ops/merge-ops-symbols
          write-ops/write-ops-symbols)))
 
+(def ^:private prompt-text
+  (str
+    "git/ surface active — JGit-backed, no host git binary needed. Workspace\n"
+    "VCS truth (branch, head, dirty?, mainline) already rides in ctx under\n"
+    "`:session/workspace`; read it there before probing. Symbols under `git/`:\n"
+    "  OBSERVE (read-only):\n"
+    "    (git/status)                            {:branch :head :clean? :entries}\n"
+    "    (git/diff [{:from :to :path :patch?}])  stat+porcelain; :patch? adds unified text\n"
+    "    (git/log [N | {:limit :path :ref :since :until :author}])  commits (default 20, max 200)\n"
+    "    (git/show sha | {:rev :patch?})         one commit: per-file numstat (+ :patch)\n"
+    "    (git/blame path | {:path :from :to :ignore-revs})  per-line blame\n"
+    "  WRITE (mutating):\n"
+    "    (git/add paths) (git/commit {:message …}) (git/amend! …)\n"
+    "    (git/push! …) (git/fetch! …) (git/reset! …) (git/branch! …)\n"
+    "    (git/checkout! …) (git/cherry-pick! …) (git/rebase! …)\n"
+    "  MERGE-RESOLVE (only inside an active merge):\n"
+    "    (git/merge-status) (git/merge-accept-ours) (git/merge-accept-theirs)\n"
+    "    (git/merge-mark-resolved) (git/merge-continue!) (git/merge-abort!)\n"
+    "`(doc 'git/<verb>)` for full opts — do NOT apropos to rediscover this surface."))
+
 ;; =============================================================================
 ;; Extension manifest
 ;; =============================================================================
@@ -381,6 +401,7 @@
      :ext/activation-fn  activation-fn
      :ext/sci            {:ext.sci/alias 'git
                           :ext.sci/symbols git-symbols}
+     :ext/prompt         (fn [_env] prompt-text)
      :ext/kind           "git"}))
 
 (vis/register-extension! vis-extension)
