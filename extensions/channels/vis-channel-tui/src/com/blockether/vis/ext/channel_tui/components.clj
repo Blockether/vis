@@ -159,3 +159,78 @@
                      :workspace-id direction
                      :text         direction
                      :enabled?     true}))))
+
+;; ── help overlay ────────────────────────────────────────────────────────────
+
+(def ^:private help-shortcuts
+  "[[keys description] …] rows shown in the Ctrl+H help card."
+  [["Ctrl+H · F1"      "Toggle this help"]
+   ["Enter · Ctrl+X"   "Send message"]
+   ["Alt+Enter"        "Insert a newline"]
+   ["Esc"              "Clear draft · cancel turn"]
+   ["Ctrl+C"           "Cancel turn · quit"]
+   ["Tab · Shift+Tab"  "Switch tab"]
+   ["Ctrl+W"           "Close tab  (or click the ✕)"]
+   ["Ctrl+K"           "Command palette"]
+   ["Ctrl+G"           "Sessions · workspaces"]
+   ["Ctrl+T"           "Cycle model"]
+   ["Ctrl+R"           "Cycle reasoning effort"]
+   ["Ctrl+L"           "Cycle Codex verbosity"]
+   ["Ctrl+A · Ctrl+E"  "Jump to line start · end"]
+   ["Ctrl+U"           "Delete to line start"]
+   ["Alt+B · Alt+F"    "Move word left · right"]
+   ["Ctrl+V"           "Paste"]
+   ["@"                "Pick a file"]
+   ["Mouse"            "Click a tab to switch · ✕ to close"]])
+
+(def ^:private help-title "Keyboard shortcuts  —  Ctrl+H / F1 to close")
+
+(defn- pad-right ^String [^String s ^long w]
+  (str s (apply str (repeat (max 0 (- w (p/display-width s))) \space))))
+
+(defn help-overlay!
+  "Draw a centered modal help card listing every keyboard shortcut, painting
+   its own background over whatever is underneath. Pure chrome — registers no
+   click regions; the caller dismisses it (Ctrl+H / F1 / any key). No-op when
+   the terminal is too small to host the card."
+  [g cols rows]
+  (let [cols    (long cols)
+        rows    (long rows)
+        key-w   (reduce max 0 (map (comp p/display-width first) help-shortcuts))
+        desc-w  (reduce max 0 (map (comp p/display-width second) help-shortcuts))
+        inner-w (max (p/display-width help-title) (+ key-w 2 desc-w))
+        box-w   (+ inner-w 4)                   ; 1 border + 1 pad per side
+        box-h   (+ (count help-shortcuts) 4)    ; borders + title + blank row
+        left    (max 0 (quot (- cols box-w) 2))
+        top     (max 0 (quot (- rows box-h) 2))
+        right   (+ left box-w -1)
+        bottom  (+ top box-h -1)]
+    (when (and (>= cols box-w) (>= rows box-h))
+      ;; Solid background slab.
+      (p/clear-styles! g)
+      (p/set-colors! g t/border-fg t/dialog-bg)
+      (doseq [r (range top (inc bottom))]
+        (p/fill-rect! g left r box-w 1))
+      ;; Border box.
+      (p/put-str! g left top (str "┌" (apply str (repeat (- box-w 2) "─")) "┐"))
+      (p/put-str! g left bottom (str "└" (apply str (repeat (- box-w 2) "─")) "┘"))
+      (doseq [r (range (inc top) bottom)]
+        (p/put-str! g left r "│")
+        (p/put-str! g right r "│"))
+      ;; Title (bold).
+      (p/clear-styles! g)
+      (p/set-colors! g t/header-fg t/dialog-bg)
+      (p/enable! g p/BOLD)
+      (p/put-str! g (+ left 2) (inc top) (pad-right help-title inner-w))
+      (p/clear-styles! g)
+      ;; Shortcut rows: bold key, dim description.
+      (doseq [[i [k d]] (map-indexed vector help-shortcuts)]
+        (let [r (+ top 3 i)]
+          (p/clear-styles! g)
+          (p/set-colors! g t/footer-fg-strong t/dialog-bg)
+          (p/enable! g p/BOLD)
+          (p/put-str! g (+ left 2) r (pad-right k key-w))
+          (p/clear-styles! g)
+          (p/set-colors! g t/footer-fg t/dialog-bg)
+          (p/put-str! g (+ left 2 key-w 2) r d)))
+      (p/clear-styles! g))))

@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
+            [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -957,6 +958,10 @@
       ;; hit inside an actively-selected range still shows reverse
       ;; (the modifier is idempotent — stacking it doesn't double-flip).
       (paint-search-hits! screen layout text-top inner-h cols db)
+      ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
+      ;; registers no click regions, so order vs. commit-frame! is moot.
+      (when (:help-open? db)
+        (components/help-overlay! g cols rows))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols,
@@ -2814,6 +2819,7 @@
                                    (refresh-active-tab! false))
                                  (persist-tabs!)))
                            (recur))
+                         :toggle-help (do (state/dispatch [:toggle-help]) (recur))
                          :history-up (do (state/dispatch [:history-up]) (recur))
                          :history-down (do (state/dispatch [:history-down]) (recur))
                          :cycle-reasoning (do (state/dispatch [:cycle-reasoning-level]) (recur))
