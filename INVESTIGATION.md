@@ -1,164 +1,276 @@
-# ctx-engine investigation — session `b117af1a`
+# ctx-engine investigation & redesign — session `b117af1a`
 
 **Date:** 2026-06-04
 **Source session:** `b117af1a-9cd8-4374-aeca-052b286b0a11` — *"Git Commit and Push Commands"*
-(TUI close-button work; the commits `80b77ca` / `5757dda3` / `1a56fbd3` …)
-**Method:** Restarted the dev nREPL (killed stale 1.8-day-old JVM pid 71887 → fresh pid
-on :7888), loaded the session straight from `~/.vis/vis.mdb/vis.db` via
-`persistance` facade, and inspected the engine's *ctx state + per-iteration
-thinking/code* — NOT the polished `:answer-markdown`.
+(TUI close-button work → commits `80b77ca` / `5757dda3` / `1a56fbd3` …)
+**Method:** Restarted dev nREPL (killed stale 1.8-day JVM → fresh on :7888), loaded the
+session from `~/.vis/vis.mdb/vis.db` via the `persistance` facade, inspected the
+engine's *ctx state + per-iteration thinking/code* — NOT the polished answers.
+**Shape:** 4 turns, 41 iterations.
 
-**Shape:** 4 turns, 41 iterations total.
+> **Headline (user's framing):** *the prompt is broken and most of this is prompt
+> work.* The engine has a rich tasks/facts/recall/summarize System-2; the prompt
+> fails to make the model use it, fails to force thinking, and is too long. The
+> file-ledger idea is **rejected** (see W2). Everything below is to be decided
+> empirically on the benchmarks (W6), then walked one-by-one.
 
-| turn | user request | iters | status |
+---
+
+## Baseline evidence (the diagnosis — all confirmed)
+
+| Signal | Measured | Meaning |
+|---|---|---|
+| `task-set!` calls | **0 / 41 iters** | model never plans; task system unused |
+| `fact-set!` calls | **0 / 41 iters** | model never stores durable knowledge |
+| `:session/tasks` | **`{}`** | no commitments, no acceptance, no verification surfaced |
+| facts present | 0 model `fact-set!`; only `:done-auto` (engine auto-logs each turn's answer) + `:done-summarize` (model-folded those answer-facts) | the model never stored a NEW discovery |
+| forms-per-iter | **`{1 41}`** | one tool per iter, never batched (engine supports N) |
+| `recall` calls | **1 / 41** | recovery verb essentially unused |
+| locate-before-edit iters | **6 of 41** (turns 2+3) | re-discovering an already-edited file every follow-up turn |
+
+**Stored memory is path-blind:** facts/trailer hold bare names (`components.clj`),
+never `extensions/channels/vis-channel-tui/src/.../components.clj`. So turns 2 & 3
+each *opened* with `v/rg`+`v/cat` to re-find the file they'd edited the prior turn.
+
+**Engine capabilities that already exist but go unused/under-leveraged:**
+edit/read tools return `{:path …}`; the loop captures per-form `:result` envelopes;
+`iteration/entry-ops` runs N forms + nested tool calls per fence; `recall`
+(window/restore/search); `summarize` (N→1, archives originals, recoverable).
+
+### Frozen baseline scorecard (reproduce with the W6 probe)
+
+Tool: `dev/benches/ctx_metrics.clj` (ns `benches.ctx-metrics`). In the dev nREPL:
+```clojure
+(require 'benches.ctx-metrics :reload)
+(def db (benches.ctx-metrics/open-db "/Users/fierycod/.vis/vis.mdb"))
+(benches.ctx-metrics/report db #uuid "b117af1a-9cd8-4374-aeca-052b286b0a11")
+```
+
+```
+turns=4 iters=41  prompt=11031 chars  tokens in=888770 out=18861
+task-set!=0  fact-set!=0  ctx-add!=0  recall=1
+forms-per-iter={1 41}  multi-form-iters=0
+locate-before-edit waste=13 iters
+final engine state: tasks=0 facts=3 (model-authored facts=0)
+
+turn iters task fact recall multi locate  in-tok  out-tok
+  1    16    0    0    1     0     6     483773  10763
+  2     9    0    0    0     0     3     164486   2406
+  3    10    0    0    0     0     3     156673   4985
+  4     6    0    0    0     0     1      83838    707
+```
+
+**New finding — token blowup.** 888K input tokens for a 4-turn one-file TUI tweak
+(turn 1 alone = 483K). Each iter re-carries full-file observations; nothing is
+distilled to ranges. This is the cost W1 (actionable summarization → drop big
+observations) and W5 (auto-summarization safety) must bring down. It is now a
+first-class signal in the scorecard (`in-tokens-total`).
+
+These eight numbers are the **A/B targets**: every W1–W5 change is judged by moving
+them in the right direction (task/fact > 0, forms-per-iter shifts off `{1 N}`,
+locate-waste → ~0 on follow-ups, in-tokens down) without regressing bench pass-rate.
+
+---
+
+## Corrected direction — workstreams (walk one-by-one)
+
+### W1 — Summarization must be ACTIONABLE, not prose
+**Problem.** Summaries (trailer pins, and `:summarize` in `done`) say *"something was
+changed there"* / *"explored auth"*. They lose the one thing that matters: **where**
+and **what's interesting**. We read big files, do research, decide what matters —
+then throw that judgement away at summarization.
+
+**Direction.** Every summary about a read/changed file should carry:
+- **full path** of the interesting file,
+- the **interesting line ranges**,
+- **what is there** + why it matters / what changed vs not.
+
+So we can **drop the big full-file observations from the prompt** and keep only the
+surgical ranges. The model should never re-read a whole file — it keeps
+"`path` lines a–b: `<what>`". The judgement made during research is *preserved into*
+the summary instead of discarded.
+
+**Decided.** Source = **model-produced** (model knows what's *interesting*). Couples
+W1 to W4 (prompt must force it). Renders as plain EDN on the summary stub (pins are
+already EDN; no renderer change).
+
+**Status: contract IMPLEMENTED + tested (2026-06-04).** Behavioral validation (does
+the model actually emit `:files`, does locate-waste/tokens drop) is pending a W6
+bench run.
+- `ctx_spec.clj` — `::trailer-summary` gains optional `:files`. Final shape,
+  aligned to vis's **native hashline editing**:
+  ```clojure
+  :files [{:path "full/path.clj"
+           :regions [{:src       "<verbatim text>"  ; MEMORY + :search fallback (required)
+                      :note      "what/why"
+                      :from-hash "a1b2"             ; native hashline edit address
+                      :to-hash   "c3d4"}]}]         ; range end (defaults to from-hash)
+  ```
+  Design decisions (each from review):
+  - **Content, not labels.** Regions carry the **verbatim `:src`** so they're
+    readable/editable from memory — a summary without the text forces a re-read,
+    and a bare hash is opaque. `:src` is the required field.
+  - **Hashline anchors, not line numbers.** vis edits by content hash:
+    `v/cat` shows `<ln> <hash>│ text`, `v/patch {:from-hash :to-hash :replace}`
+    resolves those per-line hashes against LIVE content. Line numbers drift AND
+    aren't the edit address (gutter uses hashes), so the region carries
+    `:from-hash`/`:to-hash` (copied from the cat gutter) → re-patch from memory,
+    no re-cat. `:lines` dropped.
+  - **No content hash.** A drifted region just fails to patch — stale `:src`
+    misses on `:search`; a stale `:from-hash` yields `:hash-not-found` ("re-read
+    with v/cat"). Self-validating; a file hash would be redundant + unsupplyable
+    by the model. *(Considered and dropped.)*
+- `ctx_engine.clj` `apply-trailer-summarize` — carries `:files` onto the stub
+  (`cond-> … (seq files) (assoc :files …)`), back-compatible.
+- `ctx_renderer.clj` — no change; summary pin `(zp pin)` auto-renders `:files`.
+- `prompt.clj` — terse MUST-add-`:files` clause in the `:summarize` block.
+- `ctx_engine_test.clj` — `trailer-summarize-files-test` (6 cases). Full ns 114/114;
+  done-test 18/18. (Fixed a generative-test regression my first spec draft caused:
+  `s/and vector? (s/cat …)` → `s/tuple`.)
+
+**W1b — `v/cat` read-by-hash (the round-trip).** vis already edits by content hash
+(`v/patch :from-hash`/`:to-hash`) but could only *read* by line number — so a kept
+region's stored hashes had no read path back. Closed that:
+- `editing/patch.clj` — factored `resolve-hash-range` (1-based inclusive line span
+  from a hash pair, with not-found/ambiguous/inverted errors); `resolve-hash-edit`
+  now reuses it, so READ and WRITE address lines by content identically.
+- `editing/core.clj` — `read-file-by-hash` (slurp → `resolve-hash-range` → window)
+  + `cat-tool` arities `(v/cat path :hash H)` and `(v/cat path :hash H1 H2)`
+  (positional, per the project args rule) + `hash-read-error-message` pointing back
+  to a fresh read. Docstring updated.
+- `core_test.clj` — `vis-cat-hash-read-test`: single line, range, **drift survival**
+  (prepend shifts line numbers; the hash still finds the line), missing-hash throw,
+  bad-mode throw. Verified live in the dev nREPL against a temp file.
+- `prompt.clj` — `:files` clause notes refresh via `(v/cat path :hash from to)`.
+Now hashline is symmetric: read-by-hash + edit-by-hash, both drift-proof.
+
+**Open / follow-ups.**
+- **Graduation to facts (W2).** `:files` records live on the trailer stub, which
+  can itself be re-summarized away — W2 decides whether/when they become durable
+  facts.
+- **Bench-validation prerequisites.** Behavioral proof needs (a) the prompt to
+  actually force `:files` (W4), and (b) a MULTI-TURN scenario — the existing
+  single-shot benches (`filewrite`/`4clojure`) don't reproduce the cross-turn
+  re-location that W1 targets. See W6 note.
+
+---
+
+### W2 — Facts vs Tasks DECISION MATRIX (replaces the file-ledger idea)
+**Rejected:** a workspace/file ledger like git. *"In git we know how to do it, but
+what if we have a draft — then it's not easy; the idea is completely broken."*
+File-location knowledge belongs in **facts**, not a separate ledger.
+
+**Problem.** No rules for what is a fact vs not, what is a task vs not. The model
+guesses → writes neither.
+
+**Direction.** An explicit decision matrix the prompt enforces:
+- **Fact** = durable knowledge that outlives the turn (a file path + interesting
+  range, a decision, an invariant, a discovered API shape). Immortal until superseded.
+- **Not a fact** = transient probe output, a full file dump, one-off scratch.
+- **Task** = a commitment with acceptance criteria (see W3).
+- **Not a task** = a single trivial action.
+
+W1's actionable summaries are what *become* facts (path + range + what).
+
+**Open questions.** Crisp, short heuristics that fit a tight prompt. Should the
+engine *nudge* ("you patched a file but stored no fact about it")?
+
+---
+
+### W3 — Task system: enforce + lifecycle + verification/acceptance + USER visibility
+**Problem.** The system: doesn't create tasks, doesn't enforce tasks, doesn't show
+the user which tasks were done, says nothing about **verification** or **acceptance
+criteria**. *"This is all wrong and has to be fixed."*
+
+**Direction.**
+- **Enforce** task creation for multi-step turns (prompt gate, maybe engine warning).
+- **Acceptance criteria** + **verification** as first-class fields on a task — a task
+  isn't `:done` until its verification passed.
+- **Surface to the user**: which tasks exist, their status (todo/doing/done), and
+  the verification result — in the channel UI, not buried in ctx.
+
+**Open questions.** Task schema additions (`:acceptance`, `:verify`, `:verified?`).
+How does `done` self-assertion interact with verification (engine doesn't verify
+claims today)? What does the user-facing task panel look like (TUI render)?
+
+---
+
+### W4 — Prompt: shorter AND forces thinking
+**Problem.** ~205-line system prompt; documents verbs but exhorts abstractly
+("Engine fns ARE your System 2") with **no concrete triggers**, and it **does not
+force the model to think/plan** before acting. Too long, low leverage.
+
+**Direction.** Cut length; replace philosophy with **concrete decision gates**:
+when to open a task, when to write a fact, when to batch forms, when to summarize.
+Make planning/thinking a required step, not a suggestion.
+
+**Open questions.** What's the minimal prompt that still produces tasks/facts/
+batching? Measure prompt-size vs behavior on the benches (W6).
+
+---
+
+### W5 — Auto-summarization safety (don't kill important stuff)
+**Problem.** Auto-summarization (engine folds oldest trailer under size pressure)
+can **compress away something important**. It's a blunt instrument.
+
+**Direction.** Make auto-summarization importance-aware / reversible-by-default:
+never silently drop pinned/fact-backed content; prefer recoverable stubs; maybe
+protect ranges the model marked important (ties to W1). Investigate concrete
+scenarios where it currently loses signal.
+
+**Open questions.** What heuristic marks "important"? Is recall enough of a safety
+net, or do we need pin-protection? Reproduce a loss case from real sessions.
+
+---
+
+### W6 — Benchmark-driven evaluation (the decision loop for W1–W5)
+**This is how we decide what's good/bad — not by intuition.** Existing harnesses in
+`dev/benches/`:
+
+| Bench | What it tests | Scorer | Runner |
 |---|---|---|---|
-| 1 | suppress ✕ when only one session | 16 | done |
-| 2 | add a `│` before the ✕ | 9 | done |
-| 3 | make it read like `│ ✕ ` (`| x `) | 10 | done |
-| 4 | add all, commit, push | 6 | done |
+| `filewrite` | multi-file edits (our exact scenario) | `verify` form per problem → `:pass` | `dev/benches/filewrite/` |
+| `4clojure` | write one solving form | tests → `pass_pct`, traces per task | `dev/benches/4clojure/run_subset.sh` |
+| `swe-bench` | SWE-bench Lite | `resolved_pct` | `dev/benches/swe-bench/run_subset.sh` |
+
+Each problem has objective verification (e.g. filewrite `fw-001`: `verify` asserts
+`(= 5 (core/add 2 3))` → `:pass`), produces `predictions.jsonl` + `summary.json` +
+per-task traces. `vis_agent.py` drives Vis; results live under `results/<ITER_TAG>/`.
+
+**Plan.** For each candidate prompt/summarization/task change:
+1. Run the relevant bench subset (start `filewrite`, it mirrors the real failure).
+2. Capture pass-rate **and** the engine signals from this doc's baseline table
+   (tasks created, facts stored, forms-per-iter, locate-before-edit iters,
+   prompt-size, tokens/turn).
+3. A/B old vs new; keep changes that improve pass-rate and/or the efficiency
+   signals without regressions. A "judge" can grade trace quality where pass/fail
+   is too coarse.
+
+**Open questions.** Do current benches emit the engine signals, or do we add a
+metrics pass that reads the trace ctx (like this investigation did)? Which subset is
+fastest to iterate on?
 
 ---
 
-## The four issues (all confirmed with hard evidence)
-
-### 1. No record of *which files we edited and where* — STRUCTURAL
-
-- `:session/workspace` carries **only VCS coords** (`:workspace/root`, `:vcs/kind`,
-  `:vcs/head`, `:vcs/dirty?` …). There is **no touched-files list**.
-- `:session/tasks` = `{}`, and the only `:session/facts` are engine-auto
-  (`:done-auto` / `:done-summarize`). They mention **bare filenames**
-  (`components.clj`, `header.clj`) — **never the real path**
-  `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/components.clj`.
-- Edit/read tools DO return `{:path …}` (`v/patch`, `v/cat`, `clj/edit`), and the
-  loop already captures per-form `:result` envelopes per scope — **but that trace is
-  ephemeral**: it gets summarized down to bare filenames at turn close.
-
-**Verdict:** the path data exists at runtime; nothing persists it into durable,
-rendered state. Cheap to harvest, currently dropped.
-
-### 2. Model stored ZERO facts of its own — PROMPT
-
-- Across all 41 iters: `fact-set!` = **0**, `ctx-add!` = **0**.
-- 100% of facts present are engine-generated. The model never promoted a single
-  discovery (a file path, a key symbol, a decision) to durable memory.
-- The system prompt *documents* `fact-set!` and calls facts "immortal knowledge"
-  / "Engine fns ARE your System 2" — but gives **no concrete trigger** for WHEN to
-  write one.
-
-### 3. Tasks were NEVER created — PROMPT
-
-- `:session/tasks` = `{}`. `task-set!` = **0** across all 41 iters.
-- The engine's entire planning/commitment system went **completely unused**. The
-  model operated as a pure tool-runner.
-- Same root cause as #2: the prompt exhorts abstractly but never says *"a multi-step
-  turn opens with a task."*
-
-### 4. One form per iteration — never batched — PROMPT (engine already supports N)
-
-- forms-per-iter distribution = **`{1 41}`** — every single iteration emitted
-  exactly one top-level form.
-- The engine **fully supports N forms per fence** AND nested tool calls inside a
-  `let` (`iteration/entry-ops`, `iteration/form->ops`: "ops from every form flatten
-  into one ordered op list"). The capability is there and unused.
-- The prompt's heavy **"Each iteration → exactly ONE ```clojure``` fence"** framing
-  reads as "do one thing"; nothing encourages composing independent/deterministic
-  steps into one fence.
-- The existing nudge `iteration/block-batch-hints` only fires for **≥5 of the same
-  op inside ONE block** (a `doseq` fan-out). It is **structurally blind** to the
-  dominant waste here: one form per iter spread across many iters.
-
----
-
-## Measured cost (the symptom)
-
-Both follow-up turns *opened* by re-discovering a file they had edited the
-**previous** turn:
-
-| turn | iters | locate-iters before first edit | opening forms |
-|---|---|---|---|
-| 1 | 16 | 6 | `v/rg` ×3 — legit first discovery |
-| 2 | 9 | **3** | `v/rg`, `v/rg`, `v/cat` → re-locating `components.clj` |
-| 3 | 10 | **3** | `v/rg`, `v/cat`, `v/rg` → re-locating `components.clj` |
-| 4 | 6 | 1 | `apropos "git"` |
-
-- **6 of 41 iters (turns 2+3) were pure re-location of an already-edited file.**
-- ~32% of all iters went to locating before the first edit.
-- Cost scales linearly with every follow-up turn (no memory of file locations →
-  re-grep every time).
-
-`recall` (the recovery verb: window / restore / search) exists but is **reactive** —
-the model must think to call it. It was called **once** in the whole session.
-
----
-
-## Root-cause split
-
-- **#1** is structural — the engine needs a durable, auto-maintained file-edit ledger.
-- **#2 / #3 / #4** are mostly the **prompt** — the machinery exists; the prompt fails
-  to make the model *use* it (no concrete task/fact triggers, no batching guidance),
-  and the batch-hint can't see the real pattern.
-
----
-
-## Candidate strategy (to discuss one-by-one)
-
-> We will walk these in order; this is the menu, not a commitment.
-
-1. **Engine: durable file-edit ledger.**
-   Harvest `:path` from patch/edit (and optionally read) results into
-   `:session/workspace :files` (or a new `:session/files`) — `path → {:last-touched
-   scope :op :one-line}`. Auto-rendered every turn (the `:session/workspace` slot is
-   already rendered and currently empty). Survives summarization (structured, not
-   prose). Needs: render slot, GC/TTL policy, size cap. Belt-and-suspenders — works
-   even if the model never `fact-set!`s a path. Kills #1 + the re-location waste.
-
-2. **Prompt: concrete task triggers (#3).**
-   Replace abstract exhortation with WHEN rules, e.g. *"A turn with ≥2 dependent
-   steps opens with `(task-set! …)`; flip `:doing`/`:done` as you go."*
-
-3. **Prompt: concrete fact triggers (#2).**
-   e.g. *"Located a file/symbol you'll reference again → `fact-set!` its path. A
-   decision that outlives the turn → `fact-set!` it."*
-
-4. **Prompt: batching guidance (#4).**
-   State the fence holds N forms; show the locate→read `let` pattern
-   (`(let [src (v/cat (:path (first (v/rg …))))] src)`); tell it to read multiple
-   files in one fence.
-
-5. *(Optional)* **Cross-iter batch hint.**
-   Extend `block-batch-hints` to detect one-form-per-iter streaks across iterations,
-   not just intra-block fan-out.
-
-6. *(Optional)* **Proactive recall** at turn entry.
-   When a new request references entities/files in archived facts or the file
-   ledger, auto-surface them (so recall isn't purely reactive).
-
----
-
-## Validation plan (when we implement)
-
-- **Replay** the same 4 user turns through the patched engine/prompt on the live
-  nREPL; measure against this baseline:
-  - tasks created: **0** → expect > 0 on multi-step turns
-  - facts stored by model: **0** → expect file paths / decisions captured
-  - forms-per-iter: **`{1 41}`** → expect batched iters
-  - locate-before-edit iters: **6 wasted** → expect ~0 on follow-up turns
-- **Unit tests** for the engine ledger: harvest path → `:session/workspace :files`,
-  render, GC/TTL, size cap.
+## How we proceed
+Walk W1 → W6 one at a time. For each: agree the design, implement behind the bench
+harness (W6), measure against the baseline table, keep or revert. W6 gets stood up
+early enough to measure W1/W3/W4 (the highest-leverage prompt changes).
 
 ---
 
 ## Reference — key files
-
 - `src/com/blockether/vis/internal/ctx_engine.clj` — tasks/facts/recall/summarize
-  (`auto-fact-for-turn-answer` ~1203, `recall-window`/`recall-entity` ~1297-1351).
-- `src/com/blockether/vis/internal/ctx_renderer.clj` — `:session/workspace` render
-  (~365).
-- `src/com/blockether/vis/internal/iteration.clj` — N-form execution
-  (`form->ops`/`entry-ops` ~139-155), `block-batch-hints` (~350).
-- `src/com/blockether/vis/internal/ctx_loop.clj` — per-form `:result` envelopes,
+  (`auto-fact-for-turn-answer` ~1203; `apply-summarize` ~1142; `recall-*` ~1297-1351;
+  `pick-oldest-batch-for-summarization` ~947; `gc-pass` ~698).
+- `src/com/blockether/vis/internal/ctx_renderer.clj` — ctx render incl.
+  `:session/workspace` (~365); where W1 ranges + W3 task panel would render.
+- `src/com/blockether/vis/internal/iteration.clj` — N-form exec (`form->ops`/
+  `entry-ops` ~139-155); `block-batch-hints` (~350, intra-block only).
+- `src/com/blockether/vis/internal/ctx_loop.clj` — per-form `:result` envelopes;
   recall bindings (~260-395).
+- System prompt — rendered ~205 lines (W4 target). Dump:
+  `(:llm-system-prompt <iter>)`.
+- Benches: `dev/benches/{filewrite,4clojure,swe-bench}/` (W6).
 - Edit tools: `extensions/common/vis-foundation-core/src/.../editing/core.clj`
-  (`patch-arg-paths` ~164-171 — already extracts `:path`s).
-- System prompt: rendered ~205 lines; documents `task-set!`/`fact-set!`/`recall`
-  but no batching/trigger guidance.
+  (`patch-arg-paths` ~164 already extracts `:path`s — feeds W1).

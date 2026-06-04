@@ -3014,18 +3014,40 @@
     (map (fn [[id entry]] [id {:nses (:nses entry)}]))
     @extension-manifest-registry))
 
-(defn discover-extensions!
-  "Public entry point for vis's classpath auto-discovery.
+(def ^:private builtin-extension-nses
+  "Core modules that register through the extension API but ship IN the main
+   jar (NOT classpath plug-ins discovered via `META-INF/vis-extension/vis.edn`).
+   Loaded explicitly here so their top-level `(register-extension! …)` fires as
+   a built-in — internal is a first-class contributor of SCI symbols /
+   render-fns / ctx hooks, same path third-party extensions use.
 
-   Runs `manifest/scan-extensions!` (which scans every
-   `META-INF/vis-extension/vis.edn`, `require`s every namespace
-   listed under each manifest's `:nses` key, and returns the merged
-   parsed manifests) and then merges those manifests into this
-   namespace's manifest registry. Returns the count of namespaces
-   declared under `:nses` across the merged manifests.
+     foundation — the `v/` kernel (cat/ls/rg/patch + workspace/env ctx). It is
+       mandatory (the sandbox bans `slurp` in favour of `v/cat`; the session
+       workspace block waits for its `:ext/ctx`), so it lives in core, not as a
+       droppable extension."
+  '[com.blockether.vis.internal.foundation.core])
 
-   Idempotent on both layers."
+(defn- load-builtin-extensions!
+  "`require` each built-in extension ns so its top-level `register-extension!`
+   side-effect runs. Idempotent (require won't reload; register is idempotent)."
   []
+  (doseq [ns-sym builtin-extension-nses]
+    (require ns-sym)))
+
+(defn discover-extensions!
+  "Public entry point for vis's extension wiring.
+
+   First loads the BUILT-IN extensions (`load-builtin-extensions!` — core
+   modules like the foundation `v/` kernel that register via the same API but
+   ship in the main jar). Then runs `manifest/scan-extensions!` (which scans
+   every `META-INF/vis-extension/vis.edn`, `require`s every namespace listed
+   under each manifest's `:nses` key, and returns the merged parsed manifests)
+   and merges those manifests into this namespace's manifest registry. Returns
+   the count of namespaces declared under `:nses` across the merged manifests.
+
+   Idempotent on every layer."
+  []
+  (load-builtin-extensions!)
   (let [manifests (manifest/scan-extensions!)]
     (doseq [[id entry] manifests]
       (merge-manifest-entry! id entry))

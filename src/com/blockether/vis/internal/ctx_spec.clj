@@ -220,11 +220,56 @@
 (s/def :session.trailer.summary/summary      string?)
 (s/def :session.trailer.summary/born         ::scope-form)
 
+;; W1 — actionable summaries. A model-produced trailer summary MAY carry a
+;; structured `:files` record so the interesting REGION of a touched file
+;; survives compaction WITH ITS VERBATIM CONTENT — letting the big full-file
+;; read pin be dropped from the prompt while the surgical regions stay
+;; directly editable (no re-cat needed). Each file lists `:regions`; each
+;; region is {:src "<verbatim text>" :note "<what/why>" :lines [start end]?}.
+;;
+;; Aligned with vis's NATIVE hashline editing (foundation-core editing/patch):
+;; vis edits by CONTENT HASH, not line number. `v/cat` shows `<ln> <hash>│ text`
+;; and `v/patch {:from-hash H1 :to-hash H2 :replace R}` resolves those per-line
+;; hashes against LIVE content. So a region carries:
+;;   :src        verbatim text — the MEMORY (what's there, for reasoning) and a
+;;               `:search`-patch fallback; required (a 4-hex hash alone is opaque).
+;;   :from-hash  the line-hash of the region's first line, copied from the cat
+;;   :to-hash    gutter — the native, drift-resistant, token-cheap edit address
+;;               so the model patches the region from memory (no re-cat). :to-hash
+;;               defaults to :from-hash (single line). Optional.
+;;   :lines      [start end] — an ADVISORY navigation hint (where in the file the
+;;               region roughly sits). NOT an edit address (drifts after edits;
+;;               the gutter uses hashes). Optional; `(s/tuple nat-int? nat-int?)`
+;;               for a clean generator.
+;;   :note       what/why it matters. Optional.
+;; No file content hash (a stale region just fails to patch — `:src`/`:from-hash`
+;; are self-validating, the re-read signal).
+(s/def :session.trailer.summary.file/path        string?)
+(s/def :session.trailer.summary.region/src       string?)
+(s/def :session.trailer.summary.region/note      string?)
+(s/def :session.trailer.summary.region/from-hash string?)
+(s/def :session.trailer.summary.region/to-hash   string?)
+(s/def :session.trailer.summary.region/lines     (s/tuple nat-int? nat-int?))
+(s/def ::trailer-summary-region
+  (s/keys :req-un [:session.trailer.summary.region/src]
+    :opt-un [:session.trailer.summary.region/note
+             :session.trailer.summary.region/from-hash
+             :session.trailer.summary.region/to-hash
+             :session.trailer.summary.region/lines]))
+(s/def :session.trailer.summary.file/regions
+  (s/coll-of ::trailer-summary-region :kind vector?))
+(s/def ::trailer-summary-file
+  (s/keys :req-un [:session.trailer.summary.file/path]
+    :opt-un [:session.trailer.summary.file/regions]))
+(s/def :session.trailer.summary/files
+  (s/coll-of ::trailer-summary-file :kind vector?))
+
 (s/def ::trailer-summary
   (s/keys :req-un [:session.trailer.summary/scope-start
                    :session.trailer.summary/scope-end
                    :session.trailer.summary/summary
-                   :session.trailer.summary/born]))
+                   :session.trailer.summary/born]
+    :opt-un [:session.trailer.summary/files]))
 
 ;; Soft rules:
 ;;   :scope-start must be ≤ :scope-end per scope comparator.
