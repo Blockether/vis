@@ -304,7 +304,8 @@
 
 (defn- project-fact
   "LLM-facing projection of a fact. Drops engine-internal flags; keeps
-   `:content`, `:status`, `:born`, `:depends-on`, `:contradicts` (vec).
+   `:content`, `:status`, `:born`, `:depends-on`, `:contradicts` (vec),
+   and `:files` (durable file regions — path + verbatim src + hash anchors).
    Raw shape stays in storage; `(recall :K)` windows it. `:id` is the
    stable turn-qualified handle the model passes to `(recall {:ids …})`;
    `:recalled` shows it was brought back + why."
@@ -315,6 +316,7 @@
        (:born f)                 (assoc :born (:born f))
        (:recalled f)             (assoc :recalled (:recalled f))
        (seq (:depends-on f))     (assoc :depends-on (:depends-on f))
+       (seq (:files f))          (assoc :files (:files f))
        (seq (:contradicts f))    (assoc :contradicts (vec (sort (:contradicts f)))))])
 
 (defn- render-warnings-value
