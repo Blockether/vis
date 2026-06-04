@@ -339,7 +339,12 @@
 
 (def ^:private throttle-min-ms 1200)
 (def ^:private throttle-min-delta 40)
-(def ^:private thinking-window-chars 3500)
+;; Reasoning window. Kept well under Telegram's 4096 hard limit so the
+;; bubble (reasoning + up to 8 feed steps + chrome) can NEVER exceed it —
+;; once an edit is too long, editMessageText 400s and the bubble freezes
+;; mid-turn (never reaching the answer).
+(def ^:private thinking-window-chars 2800)
+(def ^:private max-feed-steps 8)
 (def ^:private telegram-msg-limit 4096)
 
 (defn- esc-html
@@ -362,14 +367,15 @@
    but functional."
   [thinking]
   (when-not (str/blank? thinking)
-    (let [escaped (-> thinking
-                    (str/replace "&" "&amp;")
-                    (str/replace "<" "&lt;")
-                    (str/replace ">" "&gt;"))
-          windowed (if (> (count escaped) thinking-window-chars)
-                     (str "…" (subs escaped (- (count escaped) thinking-window-chars)))
-                     escaped)]
-      (str "<blockquote expandable>" windowed "</blockquote>"))))
+    ;; Window the RAW text (so we never split an HTML entity), opening at
+    ;; the next word boundary so it doesn't start mid-word ("…dd a close
+    ;; icon"), THEN escape.
+    (let [windowed (if (> (count thinking) thinking-window-chars)
+                     (let [tail (subs thinking (- (count thinking) thinking-window-chars))
+                           cut  (or (str/index-of tail " ") 0)]
+                       (str "…" (str/triml (subs tail cut))))
+                     thinking)]
+      (str "<blockquote expandable>" (esc-html windowed) "</blockquote>"))))
 
 (defn- live-bubble-html
   "Compose the full bubble HTML from current state: a live FEED of the
@@ -382,12 +388,20 @@
                      (str/join "\n"
                        (map (fn [{:keys [label done?]}]
                               (str (if done? "✓" "▸") " <code>" (esc-html label) "</code>"))
-                         (take-last 10 steps))))
-        parts (cond-> ["💭 <b>Thinking…</b>"]
-                (seq step-lines)   (conj step-lines)
-                (seq status-line)  (conj (str "<i>" (esc-html status-line) "</i>"))
-                (seq thinking-acc) (conj (thinking-html thinking-acc)))]
-    (str/join "\n\n" parts)))
+                         (take-last max-feed-steps steps))))
+        chrome (cond-> ["💭 <b>Thinking…</b>"]
+                 (seq step-lines)  (conj step-lines)
+                 (seq status-line) (conj (str "<i>" (esc-html status-line) "</i>")))
+        full   (str/join "\n\n"
+                 (cond-> chrome
+                   (seq thinking-acc) (conj (thinking-html thinking-acc))))]
+    ;; Hard guard: an over-long edit 400s ("message is too long") and
+    ;; FREEZES the live bubble mid-turn. If reasoning pushes us past the
+    ;; limit, drop the blockquote — the step feed is the more useful live
+    ;; signal and stays well within bounds.
+    (if (<= (count full) telegram-msg-limit)
+      full
+      (str/join "\n\n" chrome))))
 
 (defn- chunk-display-code
   [chunk]
@@ -556,10 +570,14 @@
   (when (bubble-state-for chat-id)
     (let [phase (:phase chunk)]
       (cond
-        ;; Reasoning text deltas accumulate into thinking-acc.
+        ;; The tracker chunk carries the CUMULATIVE reasoning so far (the
+        ;; progress reducer REPLACES the entry's :thinking with the chunk's),
+        ;; NOT a delta — so REPLACE thinking-acc, don't append. Appending
+        ;; restacked the whole reasoning block on every tick (the ~11×
+        ;; duplicated paragraph).
         (= phase :reasoning)
-        (when-let [delta (or (:thinking chunk) (:reasoning chunk))]
-          (update-bubble-state! chat-id update :thinking-acc str delta)
+        (when-let [thinking (or (:thinking chunk) (:reasoning chunk))]
+          (update-bubble-state! chat-id assoc :thinking-acc thinking)
           (update-live-bubble! token chat-id))
 
         (= phase :provider-fallback)
