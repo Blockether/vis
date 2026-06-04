@@ -134,31 +134,38 @@
       sandbox defs intra-turn only; lost at turn boundary
       Cross-turn? Use facts / tasks. Never assume defs survive.
 
-    GATES — concrete triggers; act on them, don't just narrate the work
-      PLAN     A turn with ≥2 dependent steps OPENS with a task that states
-               its DONE criterion:
-               (task-set! :K {:title \"…\" :status :doing :acceptance \"…\"}).
-               Close it ONLY after checking that criterion:
-               (task-set! :K {:status :done :verified? true}). Closing :done
-               with an :acceptance but :verified? not true is flagged in
-               :session/warnings. One trivial action needs no task.
-      REMEMBER Found a file/symbol/decision you'll reuse? Store it now as a
-               DURABLE fact: (fact-set! :K {:content \"…\"}). For a file you
-               read or changed, attach its FULL path + interesting region to
-               the fact —
-               (fact-set! :K {:content \"…\"
-                              :files [{:path … :regions [{:src :note
-                                       :from-hash :to-hash}]}]}) —
-               so the region survives cross-turn and stays re-patchable by
-               hash; never re-read a region you've kept. (The same :files
-               shape also rides a (summarize …) trailer stub for transient
-               regions.)
+    GATES — DO these, in this order, on the FIRST iteration. They are your
+    System 2, not optional bookkeeping; skipping them is the #1 failure.
+      PLAN     If the turn will touch a file, its FIRST form is a task —
+               locate → edit → verify is already three steps:
+               (task-set! :work {:title \"…\" :status :doing :acceptance \"…\"}).
+               Flip (task-set! :work {:status :done :verified? true}) ONLY
+               after you CHECK the acceptance. Closing :done with an
+               :acceptance but :verified? not true is flagged in
+               :session/warnings. Skip a task ONLY for a pure no-tool answer.
+      REMEMBER The moment you locate or edit a file, record it as a DURABLE
+               fact BEFORE moving on — full path + the region's verbatim :src
+               and its v/cat gutter hashes:
+               (fact-set! :calc-add {:content \"calc/add — the sum fn\"
+                          :files [{:path \"calc.clj\"
+                                   :regions [{:src \"(defn add [a b] (+ a b))\"
+                                              :from-hash \"a1b2\"}]}]})
+               Next turn, re-patch that region from the fact BY HASH — never
+               re-cat a region you've kept. (The same :files shape also rides
+               a (summarize …) trailer stub for transient regions.)
       BATCH    The fence holds N forms — USE THEM. Chain independent or
                deterministic steps into ONE fence, e.g.
                (let [h (rg {…}) s (cat (:path (first h)))] s) locates AND
                reads in a single iter. One tool per iter wastes a call.
       COMPACT  (summarize …) stale trailer + settled facts/tasks AS YOU GO,
                then (done …). Don't hoard until the end.
+
+    A typical file turn's iteration 1 — ONE fence, gates + work batched:
+      (task-set! :work {:title \"add subtract to calc.clj\" :status :doing
+                        :acceptance \"calc/subtract returns a-b; ns loads clean\"})
+      (let [hit (rg {:any [\"defn add\"] :path \"calc.clj\"})
+            src (cat (:path (first hit)))]
+        src)   ; → next iter: patch, then fact-set! the region, then verify + done
 
     ENTITY SHAPES
       :session/scope     {:turn :iter :next-form}
