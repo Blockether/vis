@@ -629,9 +629,10 @@
 
 (defn- format-footer [result]
   ;; Canonical " / "-joined turn-summary line, decorated for Telegram.
-  ;; Keep this RAW Markdown-ish text. `tg/send-message!` owns escaping.
-  ;; Pre-escaping here made MarkdownV2 fallback leak literal backslashes
-  ;; into chats when an answer body failed Telegram parsing.
+  ;; The footer is appended to the already-rendered Telegram-HTML answer
+  ;; body and shipped with parse_mode=HTML, so use <i>…</i> tags — Markdown
+  ;; `_…_` underscores render as LITERAL underscores in HTML mode. Escape
+  ;; the dynamic meta line so stray &/</> never break parsing.
   ;;
   ;; Telegram gets the COMPACT meta line: the per-bucket cost breakdown
   ;; and cache-write token count are valuable in the CLI/TUI but are just
@@ -645,7 +646,7 @@
                   (assoc :tokens (select-keys (:tokens result) [:input :output])))
         line    (vis/format-meta-line compact)]
     (when (seq line)
-      (str "\n\n_🤖 " line "_"))))
+      (str "\n\n<i>🤖 " (esc-html line) "</i>"))))
 
 (defn- normalize-choice [allowed aliases default v]
   (let [k (cond
