@@ -2,8 +2,8 @@
   "Programmatic introspection of the agent's own state from inside
    `:code`. The public state surface is deliberately small:
 
-   - `(v/session-state [session-id])` -> data map, including raw LLM diagnostics
-   - `(v/session-report [session-id])` -> Markdown rendered from that data
+   - `(session-state [session-id])` -> data map, including raw LLM diagnostics
+   - `(session-report [session-id])` -> Markdown rendered from that data
 
    Everything else in this namespace is implementation detail. The agent
    gets the data once, manipulates it via plain Clojure (`get-in`,
@@ -233,19 +233,19 @@
         lower-message (str/lower-case message)
         tool-name (or (tool-name-from-code code) "")]
     (cond
-      (and (str/includes? tool-name "v/rg")
+      (and (str/includes? tool-name "rg")
         (str/includes? lower-message "unsupported escape character"))
       :regex-unsupported-escape
 
-      (and (str/includes? tool-name "v/rg")
+      (and (str/includes? tool-name "rg")
         (str/includes? lower-message "unable to resolve symbol"))
       :regex-unescaped-quote
 
-      (and (str/includes? tool-name "v/patch")
+      (and (str/includes? tool-name "patch")
         (str/includes? lower-message "unmatched delimiter"))
       :patch-unbalanced-string
 
-      (and (str/includes? tool-name "v/patch")
+      (and (str/includes? tool-name "patch")
         (str/includes? lower-message "search block")
         (str/includes? lower-message "not found"))
       :patch-no-match
@@ -262,13 +262,13 @@
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "Clojure strings reject \\| as an escape. v/rg is literal and takes one spec map: use {:any [\"foo\" \"bar\"]} for OR, or {:all [\"foo|bar\"]} only when you need the literal pipe text."
+    "Clojure strings reject \\| as an escape. rg is literal and takes one spec map: use {:any [\"foo\" \"bar\"]} for OR, or {:all [\"foo|bar\"]} only when you need the literal pipe text."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
 
     :patch-unbalanced-string
-    "The v/patch EDN payload likely lost the closing quote of a :search or :replace string. Re-emit as the canonical vector shape (v/patch [{:path :search :replace} ...]) and compose multi-line content with (str \"line1\\n\" \"line2\\n\") so each line stays on its own physical line and the closing quote stays visible."
+    "The patch EDN payload likely lost the closing quote of a :search or :replace string. Re-emit as the canonical vector shape (patch [{:path :search :replace} ...]) and compose multi-line content with (str \"line1\\n\" \"line2\\n\") so each line stays on its own physical line and the closing quote stays visible."
 
     :patch-no-match
     "The SEARCH text did not match the file exactly. Use the near-match data when present, or re-read the smallest file slice and emit an exact-byte SEARCH block."
@@ -555,10 +555,10 @@
             clusters))
 
         (contains? classes :provider-schema-rejected)
-        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/session-state)) and retry/switch model only if it repeats.")
+        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (session-state)) and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
-        (conj (str "v/rg takes one spec map with literal vectors, not regex strings or positional args. "
+        (conj (str "rg takes one spec map with literal vectors, not regex strings or positional args. "
                 "Use {:all [\"foo|bar\"]} for literal pipe text, or {:any [\"foo\" \"bar\"]} for OR. "
                 "Add :paths and :include in the same map."))
 
@@ -566,7 +566,7 @@
         (conj "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
 
         (contains? classes :patch-unbalanced-string)
-        (conj "Re-emit v/patch as a vector of {:path :search :replace} maps; compose multi-line :search/:replace with (str \"line\\n\" \"line\\n\") so each line stays on its own physical line and the closing quote stays visible.")
+        (conj "Re-emit patch as a vector of {:path :search :replace} maps; compose multi-line :search/:replace with (str \"line\\n\" \"line\\n\") so each line stays on its own physical line and the closing quote stays visible.")
 
         (contains? classes :patch-no-match)
         (conj "Use any :near-match hint, then re-read the smallest file slice and emit an exact SEARCH block.")))))
@@ -652,7 +652,7 @@
 
 (defn- llm-diagnostics
   "Flatten the full transcript into the raw LLM diagnostics view exposed
-   by `v/session-state`. This is a convenience index over the canonical
+   by `session-state`. This is a convenience index over the canonical
    transcript payload, not another storage read."
   [transcript-data]
   (vec
@@ -700,7 +700,7 @@
   ([env]
    (foundation-inspect env (:session-id env)))
   ([env session-id]
-   (session-envelope :v/session-state
+   (session-envelope :session-state
      (foundation-inspect-data env session-id))))
 
 (defn- foundation-report
@@ -714,7 +714,7 @@
          report (if-let [transcript-data (:transcript data)]
                   (transcript/transcript->md transcript-data)
                   (str "Session not found: " (:session-id data) "\n"))]
-     (session-envelope :v/session-report report))))
+     (session-envelope :session-report report))))
 
 ;; Removed extra workflow surfaces.
 
@@ -788,7 +788,7 @@
        (ir-text " / ")
        (ir-code "select-keys")
        (ir-text " or ")
-       (ir-code "v/session-report")
+       (ir-code "session-report")
        (ir-text " for the full dump."))]))
 
 ;; ---------------------------------------------------------------------------
@@ -814,7 +814,7 @@
      :display (session-state-ir result)}))
 
 (defn- session-report-channel
-  "`v/session-report` returns a single Markdown string. Badge: `REPORT`
+  "`session-report` returns a single Markdown string. Badge: `REPORT`
    left, char count right. Display: a header + fenced markdown block so
    the channel preview matches the rest of the foundation surface (no
    bare `str`-dump)."
@@ -840,7 +840,7 @@
 ;; `vis/symbol` can read both straight off the var.
 (def ^{:doc "Full session state: session index, current turn snapshot, classified failures, diagnosis, fork/retry metadata, raw LLM diagnostics, and complete transcript. Default target = current session; pass a session-id or unambiguous prefix to inspect another."
        :arglists '([] [session-id])} session-state foundation-inspect)
-(def ^{:doc "Complete Markdown report for a session: every turn, iteration, code block, result, answer, and LLM diagnostic rendered as a single Markdown artifact. Same underlying data as `v/session-state`. Default target = current session."
+(def ^{:doc "Complete Markdown report for a session: every turn, iteration, code block, result, answer, and LLM diagnostic rendered as a single Markdown artifact. Same underlying data as `session-state`. Default target = current session."
        :arglists '([] [session-id])} session-report foundation-report)
 
 (def session-state-symbol
@@ -860,7 +860,7 @@
    session-report-symbol])
 
 (def introspection-prompt
-  "`v/` session strategy: use v/session-state for data you will combine/filter, v/session-report when a rendered forensic report is enough.")
+  "`v/` session strategy: use session-state for data you will combine/filter, session-report when a rendered forensic report is enough.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.internal.foundation.core`,

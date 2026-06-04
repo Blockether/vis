@@ -218,7 +218,7 @@
 
     (it ":observation for everything else"
       (expect (= :observation (eng/classify-form-tag "(+ 1 2)")))
-      (expect (= :observation (eng/classify-form-tag "(v/cat \"src/x.clj\")")))
+      (expect (= :observation (eng/classify-form-tag "(cat \"src/x.clj\")")))
       (expect (= :observation (eng/classify-form-tag "(recall \"t1/i1/f1\")")))
       (expect (= :observation (eng/classify-form-tag "(recall {:match \"x\"})")))
       (expect (= :observation (eng/classify-form-tag "42")))
@@ -226,16 +226,16 @@
       (expect (= :observation (eng/classify-form-tag ""))))
 
     (it "extension tool heads default to :observation when no resolver is wired"
-      ;; Extension-owned heads like `v/patch` are NOT in the engine's
+      ;; Extension-owned heads like `patch` are NOT in the engine's
       ;; core-mutation-heads. The 1-arity `classify-form-tag` (pure,
       ;; no registry access) returns :observation. The integration
       ;; layer in `loop.clj` passes a `head-tag-resolver` that hits
       ;; `extension/op-tag`; with that resolver, the same head
       ;; classifies as :mutation.
-      (expect (= :observation (eng/classify-form-tag "(v/patch [{:path \"x\"}])")))
+      (expect (= :observation (eng/classify-form-tag "(patch [{:path \"x\"}])")))
       (expect (= :mutation
-                (eng/classify-form-tag "(v/patch [{:path \"x\"}])"
-                  (fn [head] (when (= 'v/patch head) :mutation))))))
+                (eng/classify-form-tag "(patch [{:path \"x\"}])"
+                  (fn [head] (when (= 'patch head) :mutation))))))
 
     (it "resolver-supplied tag wins over the engine's core fallback"
       ;; A resolver can also flip an engine-owned head, but in
@@ -250,9 +250,9 @@
 (defdescribe advance-iter-trailer-test
   (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
               :session/trailer []}
-        obs1 [{:scope "t1/i1/f1" :tag :observation :src "(v/cat \"a\")" :result "old"}]
-        obs2 [{:scope "t1/i2/f1" :tag :observation :src "(v/cat \"b\")" :result "new"}]
-        mut3 [{:scope "t1/i3/f1" :tag :mutation :src "(v/patch [])" :result []}]]
+        obs1 [{:scope "t1/i1/f1" :tag :observation :src "(cat \"a\")" :result "old"}]
+        obs2 [{:scope "t1/i2/f1" :tag :observation :src "(cat \"b\")" :result "new"}]
+        mut3 [{:scope "t1/i3/f1" :tag :mutation :src "(patch [])" :result []}]]
 
     (it "carries observation-only pins forward"
       (let [ctx1 (eng/advance-iter base obs1)
@@ -281,10 +281,10 @@
       ;; `(done {:summarize {:trailer …}})` is the only contract for trimming.
       (let [step1 (eng/advance-iter base
                     [{:scope "t1/i1/f1" :tag :mutation
-                      :src "(def persist (v/rg {:any [\"a\"]}))"}])
+                      :src "(def persist (rg {:any [\"a\"]}))"}])
             step2 (eng/advance-iter step1
                     [{:scope "t1/i2/f1" :tag :mutation
-                      :src "(def persist (v/rg {:any [\"b\"]}))"}])
+                      :src "(def persist (rg {:any [\"b\"]}))"}])
             step3 (eng/advance-iter step2
                     [{:scope "t1/i3/f1" :tag :mutation
                       :src "(def other 1)"}])]
@@ -294,13 +294,13 @@
 (defdescribe rebind-loop-warning-test
   (it "flags a rebind-loop warning once the same def is rebound 3+ times"
     (let [trailer [{:scope "t1/i1"
-                    :forms [{:src "(def persist (v/rg {:any [\"a\"]}))"
+                    :forms [{:src "(def persist (rg {:any [\"a\"]}))"
                              :tag :mutation :scope "t1/i1/f1"}]}
                    {:scope "t1/i2"
-                    :forms [{:src "(def persist (v/rg {:any [\"b\"]}))"
+                    :forms [{:src "(def persist (rg {:any [\"b\"]}))"
                              :tag :mutation :scope "t1/i2/f1"}]}
                    {:scope "t1/i3"
-                    :forms [{:src "(def persist (v/rg {:any [\"c\"]}))"
+                    :forms [{:src "(def persist (rg {:any [\"c\"]}))"
                              :tag :mutation :scope "t1/i3/f1"}]}]
           ctx {:session/turn 1
                :session/scope {:turn 1 :iter 4 :next-form 1}
@@ -334,7 +334,7 @@
                   :src "(task-set! :K {:title \"x\"})"
                   :result :vis/silent}
                  {:scope "t1/i1/f2" :tag :observation
-                  :src "(v/cat \"a\")"
+                  :src "(cat \"a\")"
                   :result "old"}
                  {:scope "t1/i1/f3" :tag :mutation
                   :src "(fact-set! :baseline {:content \"x\"})"
@@ -345,9 +345,9 @@
       (it "trailer pin exists for the iter"
         (expect (= "t1/i1" (:scope pin))))
 
-      (it "only the non-silent v/cat form is kept under :forms"
+      (it "only the non-silent cat form is kept under :forms"
         (expect (= 1 (count (:forms pin))))
-        (expect (= "(v/cat \"a\")" (:src (first (:forms pin))))))))
+        (expect (= "(cat \"a\")" (:src (first (:forms pin))))))))
 
   (describe "an iter with ONLY :vis/silent forms produces no pin"
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
@@ -371,19 +371,19 @@
                   :vis/silent true
                   :result :vis/silent}
                  {:scope "t1/i1/f2" :tag :observation
-                  :src "(v/cat \"a\")"
+                  :src "(cat \"a\")"
                   :result "..."}]
           ctx (eng/advance-iter base forms)
           pin (first (:session/trailer ctx))]
 
-      (it "only v/cat lands in :forms"
+      (it "only cat lands in :forms"
         (expect (= 1 (count (:forms pin)))))))
 
   (describe "(done …) still excluded even when its :result is not :vis/silent"
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           forms [{:scope "t1/i1/f1" :tag :observation
-                  :src "(v/cat \"a\")"
+                  :src "(cat \"a\")"
                   :result "..."}
                  {:scope "t1/i1/f2" :tag :mutation
                   :src "(done {:answer \"x\"})"
@@ -391,18 +391,18 @@
           ctx (eng/advance-iter base forms)
           pin (first (:session/trailer ctx))]
 
-      (it "only v/cat lands in :forms (done excluded)"
+      (it "only cat lands in :forms (done excluded)"
         (expect (= 1 (count (:forms pin))))
-        (expect (= "(v/cat \"a\")" (:src (first (:forms pin)))))))))
+        (expect (= "(cat \"a\")" (:src (first (:forms pin)))))))))
 
 (defdescribe block-envelope-def-deref-test
   (it "derefs the Var returned by `(def NAME …)` so the trailer carries the bound value"
-    ;; Regression: model writes `(def persist (v/rg …))`, SCI returns the
+    ;; Regression: model writes `(def persist (rg …))`, SCI returns the
     ;; Var, trailer shows `{:vis/ref :expr}` (or `#'sandbox/persist`).
     ;; Model then re-emits `persist` to inspect, wasting an iter.
     ;; block->envelope now derefs IDeref results for def-shaped sources.
     (let [boxed (atom {:files ["a.clj"] :count 1})
-          env (eng/block->envelope {:code "(def persist (v/rg :any [\"x\"]))"
+          env (eng/block->envelope {:code "(def persist (rg :any [\"x\"]))"
                                     :result boxed}
                 1 {:turn 3 :iter 4})]
       (expect (= {:files ["a.clj"] :count 1} (:result env)))
@@ -414,7 +414,7 @@
       (expect (= 3 (:result env)))))
 
   (it "carries duration from the loop block envelope for restored TUI footers"
-    (let [env (eng/block->envelope {:code "(v/patch [])"
+    (let [env (eng/block->envelope {:code "(patch [])"
                                     :result :ok
                                     :envelope {:started-at-ms 1000
                                                :finished-at-ms 1012}}
@@ -452,23 +452,23 @@
   (it "carries the per-form `:channel` sink onto the envelope when present (regression: badge missing on def-wrapped tool calls)"
     ;; Regression for conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
     ;; turn 2 \"show me ls\":
-    ;;   model wrote `(def r (v/ls \".\"))` per the engine contract
+    ;;   model wrote `(def r (ls \".\"))` per the engine contract
     ;;   (\"bind values to defs\"). SCI's def unwrapped the tool envelope
     ;;   to its inner :result, so the persisted block's :result is a
-    ;;   plain `{:vis.op :v/ls …}` map without `:success?`. The TUI's
-    ;;   `render-tool-result` then refused to dispatch to the v/ls
+    ;;   plain `{:vis.op :ls …}` map without `:success?`. The TUI's
+    ;;   `render-tool-result` then refused to dispatch to the ls
     ;;   renderer (envelope guard) and the bubble showed plain EDN —
     ;;   no widget, no badge. The pre-rendered IR already lives on
     ;;   each per-form `:channel` sink entry; block->envelope must
     ;;   carry that vec through so persistence + replay can paint the
     ;;   badge from the sink.
-    (let [channel [{:position 1 :form "(v/ls \".\")"
+    (let [channel [{:position 1 :form "(ls \".\")"
                     :success? true
-                    :result [:ir {} [:strong {} "v/ls"] [:p {} ". (844)"]]
+                    :result [:ir {} [:strong {} "ls"] [:p {} ". (844)"]]
                     :error nil}]
           env (eng/block->envelope
-                {:code "(def r (v/ls \".\"))"
-                 :result {:vis.op :v/ls :path "." :entry-count 844}
+                {:code "(def r (ls \".\"))"
+                 :result {:vis.op :ls :path "." :entry-count 844}
                  :channel channel}
                 1 {:turn 2 :iter 1})]
       (expect (= (vec channel) (:channel env)))
@@ -490,7 +490,7 @@
   (describe "blocks->forms"
     (let [cursor {:turn 5 :iter 2}
           blocks [{:code "(task-set! :K {:title \"x\"})" :result :ok}
-                  {:code "(v/cat \"a.clj\")"          :result "(ns a) ..."}
+                  {:code "(cat \"a.clj\")"          :result "(ns a) ..."}
                   {:code "(/ 1 0)" :error {:message "Divide by zero"}}]
           forms (eng/blocks->forms blocks cursor)]
 
@@ -642,7 +642,7 @@
                                   :status :todo :lifetime :iteration
                                   :born "t1/i2/f1"}}}
             advanced (eng/advance-iter ctx
-                       [{:scope "t1/i2/f1" :src "(v/cat \"a.clj\")"
+                       [{:scope "t1/i2/f1" :src "(cat \"a.clj\")"
                          :tag :observation :result "ok"}])]
         (expect (= 3 (:iter (:session/scope advanced))))
         (expect (= 1 (:next-form (:session/scope advanced))))

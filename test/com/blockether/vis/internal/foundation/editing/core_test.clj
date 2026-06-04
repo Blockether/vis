@@ -3,8 +3,8 @@
 
    Smoke-checks the loaded extension surface (symbol vector, doc
    strings, prompt fragment) plus behavioral coverage of the
-   structured preview/search helpers (`v/cat`, `v/rg`) and the new
-   thin babashka.fs wrappers (`v/patch`, `v/copy`, ...).
+   structured preview/search helpers (`cat`, `rg`) and the new
+   thin babashka.fs wrappers (`patch`, `copy`, ...).
 
    Tests reach private fns directly through the registry to avoid
    bringing up a full SCI sandbox. Temp files land under
@@ -71,14 +71,14 @@
                       "/etc/passwd"
                       "target/../../escape.txt"]]
 
-    (it "v/patch (exact-replace) refuses to write outside cwd"
+    (it "patch (exact-replace) refuses to write outside cwd"
       (let [patch (private-fn "patch-safe")]
         (doseq [p escape-paths]
           (let [r (patch [{:path p :search "x" :replace "y"}])]
             (expect (false? (:success? r)))
             (expect (= :path-escape (-> r :failures first :reason)))))))
 
-    (it "v/write refuses to create files outside cwd"
+    (it "write refuses to create files outside cwd"
       ;; Note: we deliberately do NOT (.exists) the escape path here; the
       ;; check is whether `write-safe` REFUSED to act. /etc/passwd exists
       ;; on macOS regardless of our actions; what matters is :reason :path-escape
@@ -89,7 +89,7 @@
             (expect (false? (:success? r)))
             (expect (= :path-escape (-> r :failures first :reason)))))))
 
-    (it "v/create-dirs refuses to mkdir outside cwd"
+    (it "create-dirs refuses to mkdir outside cwd"
       (let [create (private-fn "create-dirs-safe")]
         (doseq [p escape-paths]
           (let [err (try (create p) nil
@@ -98,7 +98,7 @@
             (expect (= :ext.foundation.editing/path-escape
                       (:type (ex-data err))))))))
 
-    (it "v/copy refuses src OR dest outside cwd"
+    (it "copy refuses src OR dest outside cwd"
       (let [copy (private-fn "copy-safe")
             inside (write-temp! "cwd-safety/copy-src.txt" "x")]
         (doseq [p escape-paths]
@@ -109,7 +109,7 @@
             (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
             (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
 
-    (it "v/move refuses src OR dest outside cwd"
+    (it "move refuses src OR dest outside cwd"
       (let [move (private-fn "move-safe")
             inside (write-temp! "cwd-safety/move-src.txt" "x")]
         (doseq [p escape-paths]
@@ -120,7 +120,7 @@
             (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
             (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
 
-    (it "v/delete and v/delete-if-exists refuse paths outside cwd"
+    (it "delete and delete-if-exists refuse paths outside cwd"
       (let [del   (private-fn "delete-safe")
             del-if (private-fn "delete-if-exists-safe")]
         (doseq [p escape-paths]
@@ -131,7 +131,7 @@
             (expect (= :ext.foundation.editing/path-escape (:type (ex-data err1))))
             (expect (= :ext.foundation.editing/path-escape (:type (ex-data err2))))))))
 
-    (it "v/cat (read) ALSO refuses paths outside cwd"
+    (it "cat (read) ALSO refuses paths outside cwd"
       ;; Defense in depth: even reads can't leak through path traversal.
       (let [cat (private-fn "read-file")]
         (doseq [p escape-paths]
@@ -187,14 +187,14 @@
                     editing/editing-symbols))))
 
   (it "pushes search/read/path discovery to the structured v tool surface"
-    (expect (string/includes? editing/editing-prompt "v/rg"))
-    (expect (string/includes? editing/editing-prompt "v/ls"))
-    (expect (string/includes? editing/editing-prompt "v/cat"))
+    (expect (string/includes? editing/editing-prompt "rg"))
+    (expect (string/includes? editing/editing-prompt "ls"))
+    (expect (string/includes? editing/editing-prompt "cat"))
     nil)
 
-  (it "documents only the canonical root-scoped v/rg map shape"
+  (it "documents only the canonical root-scoped rg map shape"
     (expect (string/includes? editing/editing-prompt
-              "(v/rg {:any [P] :files-only? true})"))
+              "(rg {:any [P] :files-only? true})"))
     (expect (string/includes? editing/editing-prompt "Do not assume `src`"))
     (expect (not (string/includes? editing/editing-prompt ":paths [\"src\"]")))
     (expect (not (string/includes? editing/editing-prompt "kwargs")))
@@ -214,13 +214,13 @@
   ;; shim is gone and callers go straight to the engine. Tags
   ;; collapsed to observation/mutation values; ops not in the
   ;; registration table fail closed instead of defaulting to observation.
-  (doseq [[op tag] [[:v/cat         :observation]
+  (doseq [[op tag] [[:cat         :observation]
                     [:z/locators    :observation]
-                    [:v/rg          :observation]
-                    [:v/patch       :mutation]
-                    [:v/create-dirs :mutation]
-                    [:v/delete      :mutation]
-                    [:v/move        :mutation]]]
+                    [:rg          :observation]
+                    [:patch       :mutation]
+                    [:create-dirs :mutation]
+                    [:delete      :mutation]
+                    [:move        :mutation]]]
     (expect (= tag (extension/op-tag op)))
     (expect (= {:tag tag} (extension/op-presentation op))))
   (let [thrown (try (extension/op-tag :v/extensions)
@@ -236,7 +236,7 @@
                          :ext/protected-paths (constantly (vec rules))})])})
 
 (defdescribe protected-path-before-fn-test
-  (it "v/cat blocks :none protected paths and returns the extension hint"
+  (it "cat blocks :none protected paths and returns the extension hint"
     (let [hint "Use (br/policy) instead of reading this file directly."
           path "target/editing-test/protected/secret.edn"
           before (:ext.symbol/before-fn (private-fn "cat-symbol"))
@@ -255,7 +255,7 @@
       (expect (= :none (-> failure :error :failures first :access)))
       (expect (= :read (-> failure :error :failures first :intent)))))
 
-  (it "v/patch blocks writes to :read-only protected paths and returns the extension hint"
+  (it "patch blocks writes to :read-only protected paths and returns the extension hint"
     (let [hint "Use (br/update-policy!) instead of patching policy files."
           path "target/editing-test/protected/policy.txt"
           before (:ext.symbol/before-fn (private-fn "patch-symbol"))
@@ -273,7 +273,7 @@
       (expect (= :read-only (-> failure :error :failures first :access)))
       (expect (= :write (-> failure :error :failures first :intent)))))
 
-  (it "v/ls allows current directory even when descendants are protected"
+  (it "ls allows current directory even when descendants are protected"
     (let [before (:ext.symbol/before-fn (private-fn "ls-symbol"))
           out (before (protected-env [{:glob "target/editing-test/protected/*.edn"
                                        :access :none
@@ -283,10 +283,10 @@
       (expect (not (contains? out :result)))
       (expect (= ["."] (:args out)))))
 
-  (it "v/rg allows current directory even when descendants are protected (regression: .bridge/ blocks rg on `.`)"
+  (it "rg allows current directory even when descendants are protected (regression: .bridge/ blocks rg on `.`)"
     ;; Repro for transcript ccee2e1f-16ee-4acf-8d93-b4505034c0de iter 1:
-    ;;   (v/rg {:any ["scrollbar"] :paths ["."] :counts? true})
-    ;;   -> ERROR ":v/rg blocked: . is protected; use the owning extension API instead."
+    ;;   (rg {:any ["scrollbar"] :paths ["."] :counts? true})
+    ;;   -> ERROR ":rg blocked: . is protected; use the owning extension API instead."
     ;; The bridge extension registers `.bridge/` with :access :none. Because
     ;; "." is an ancestor of every protected descendant, the composite-dir
     ;; branch in `protected-rule-matches?` reported a match and rg failed
@@ -302,9 +302,9 @@
       (expect (not (contains? out :result)))
       (expect (= [{:any ["scrollbar"] :paths ["."] :counts? true}] (:args out)))))
 
-  (it "v/rg with no :paths (default `.`) is allowed when only descendants are protected"
+  (it "rg with no :paths (default `.`) is allowed when only descendants are protected"
     ;; rg-arg-paths returns ["."] when :paths is omitted; same bypass
-    ;; must apply so model can call `(v/rg {:any ["x"]})` without paths.
+    ;; must apply so model can call `(rg {:any ["x"]})` without paths.
     (let [before (:ext.symbol/before-fn (private-fn "rg-symbol"))
           out (before (protected-env [{:glob ".bridge/"
                                        :access :none
@@ -313,7 +313,7 @@
                 [{:any ["scrollbar"]}])]
       (expect (not (contains? out :result)))))
 
-  (it "v/exists? on `.` is allowed when only descendants are protected"
+  (it "exists? on `.` is allowed when only descendants are protected"
     (let [before (:ext.symbol/before-fn (private-fn "exists?-symbol"))
           out (before (protected-env [{:glob ".bridge/"
                                        :access :none
@@ -323,7 +323,7 @@
       (expect (not (contains? out :result)))
       (expect (= ["."] (:args out)))))
 
-  (it "v/rg still respects direct rules whose glob matches `.` itself"
+  (it "rg still respects direct rules whose glob matches `.` itself"
     ;; The bypass is descendant-only. If an extension explicitly says
     ;; `:glob "." :access :none` (\"do not read cwd at all\") that's still
     ;; honored — we don't want the bypass to be a back door.
@@ -340,8 +340,8 @@
   (it "writes on `.` are still blocked even when only descendants are protected"
     ;; The bypass is INTENTIONALLY read-only — a recursive write on cwd
     ;; cannot filter protected descendants safely, so we keep failing
-    ;; closed. (v/patch / v/write don't target cwd in practice, but
-    ;; v/delete on \".\" must stay blocked.)
+    ;; closed. (patch / write don't target cwd in practice, but
+    ;; delete on \".\" must stay blocked.)
     (let [before (:ext.symbol/before-fn (private-fn "delete-symbol"))
           out (before (protected-env [{:glob ".bridge/"
                                        :access :none
@@ -352,7 +352,7 @@
       (expect (some? failure))
       (expect (false? (:success? failure)))))
 
-  (it "v/ls still blocks non-root ancestor directories that would reveal :none protected children"
+  (it "ls still blocks non-root ancestor directories that would reveal :none protected children"
     (let [hint "Use (br/files) instead of listing Bridge-owned files."
           before (:ext.symbol/before-fn (private-fn "ls-symbol"))
           out (before (protected-env [{:glob "target/editing-test/protected/*.edn"
@@ -401,14 +401,14 @@
       (expect (< (count prompt) 1600))
       (expect (string/includes? prompt "Canonical path only"))
       (expect (not (string/includes? prompt "v/strategy")))
-      (expect (string/includes? prompt "(v/ls \".\" {:depth 2})"))
-      (expect (string/includes? prompt "(v/rg {:any [P] :files-only? true})"))
+      (expect (string/includes? prompt "(ls \".\" {:depth 2})"))
+      (expect (string/includes? prompt "(rg {:any [P] :files-only? true})"))
       (expect (string/includes? prompt "400-500 line range"))
-      (expect (string/includes? prompt "(v/cat path :ranges [[start end] ...])"))
-      (expect (string/includes? prompt "(v/patch {:path P :edits"))
+      (expect (string/includes? prompt "(cat path :ranges [[start end] ...])"))
+      (expect (string/includes? prompt "(patch {:path P :edits"))
       ;; Strategy guidance: both locators documented with their intent.
       (expect (string/includes? prompt "PATCH STRATEGY"))
-      (expect (string/includes? prompt "(v/patch [{:path P :from-hash H :replace R}])"))
+      (expect (string/includes? prompt "(patch [{:path P :from-hash H :replace R}])"))
       (expect (string/includes? prompt ":nth :all"))
       (expect (string/includes? prompt "diff is evidence"))
       (expect (not (string/includes? prompt "kwargs")))
@@ -424,7 +424,7 @@
       (expect (not (string/includes? prompt "update-file"))))))
 
 (defdescribe vis-ls-flat-shape-test
-  ;; v/ls now returns a FLAT entry list (no nested :children). The shape
+  ;; ls now returns a FLAT entry list (no nested :children). The shape
   ;; mirrors what other harnesses surface so the model can `(filter ...)`
   ;; directly on (:entries r) instead of a tree-seq walk.
   (it "returns a flat entry list with workspace-relative paths"
@@ -435,7 +435,7 @@
       (expect (= "." (:path out)))
       (expect (= (str (.toAbsolutePath (fs/path (fs/cwd))))
                 (:absolute-path out)))
-      (expect (= :v/ls (:vis.op result)))
+      (expect (= :ls (:vis.op result)))
       (expect (= (:absolute-path out) (:absolute-path result)))
       (expect (vector? (:entries out)))
       (expect (every? #(= #{:path :type :size} (set (keys %))) (:entries out)))
@@ -502,7 +502,7 @@
       (expect (false? (:truncated? out)))
       (expect (= (numbered-tuples 1 ["alpha" "beta" "gamma"]) (:lines out)))
       ;; staleness metadata mirrors File.lastModified / File.length and can
-      ;; be threaded into a later v/patch as :expected-mtime / :expected-size.
+      ;; be threaded into a later patch as :expected-mtime / :expected-size.
       (expect (pos-int? (:mtime out)))
       (expect (= (.length (fs/file path)) (:size out)))))
 
@@ -514,7 +514,7 @@
       (expect (false? (:eof? out)))
       (expect (= 4 (:next-offset out)))))
 
-  (it ":mtime / :size from v/cat round-trip into v/patch :expected-mtime guard"
+  (it ":mtime / :size from cat round-trip into patch :expected-mtime guard"
     ;; This is the canonical staleness recipe: cat -> patch :expected-mtime
     ;; matches -> succeeds. If something rewrites the file in between, the
     ;; patch fails closed with :reason :stale.
@@ -541,7 +541,7 @@
           out  (read-file path)]
       (expect (= [[1 "   indented"] [2 "plain"]] (:lines out)))))
 
-  (it "(v/cat path n) reads first n lines and sets :next-offset when more remain"
+  (it "(cat path n) reads first n lines and sets :next-offset when more remain"
     (let [body (string/join "\n" (map #(str "line-" %) (range 1 11)))
           path (write-temp! "ten.txt" (str body "\n"))
           read-file (private-fn "read-file")
@@ -550,7 +550,7 @@
       (expect (false? (:truncated? out)))
       (expect (= (numbered-tuples 1 ["line-1" "line-2" "line-3" "line-4"]) (:lines out)))))
 
-  (it "(v/cat path offset n) reads a mid-file window and advances :next-offset"
+  (it "(cat path offset n) reads a mid-file window and advances :next-offset"
     (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
           path (write-temp! "twenty.txt" (str body "\n"))
           read-file (private-fn "read-file")
@@ -595,7 +595,7 @@
       (expect (some? (:next-offset out)))))
 
   (it "persistence-blob contract: :lines bytes are bounded by max-cat-window-bytes"
-    ;; This is the storage claim: a single v/cat call cannot persist
+    ;; This is the storage claim: a single cat call cannot persist
     ;; more than max-cat-window-bytes of line bytes regardless of file size.
     (let [line (apply str (repeat 200 "x"))
           body (string/join "\n" (repeat 5000 line))
@@ -621,7 +621,7 @@
                   #(apply read-file path bad)))))))
 
 (defdescribe vis-cat-tail-shape-test
-  (it "(v/cat path :tail n) reads the last n lines and reports correct line numbers"
+  (it "(cat path :tail n) reads the last n lines and reports correct line numbers"
     (let [body (string/join "\n" (map #(str "line-" %) (range 1 21)))
           path (write-temp! "tail.txt" (str body "\n"))
           tail-file (private-fn "tail-file")
@@ -657,7 +657,7 @@
       (expect (= 200 (first (peek (:lines out))))))))
 
 (defdescribe vis-cat-tool-arities-test
-  (it "(v/cat path :tail) defaults to default-cat-limit (2000) lines from the end"
+  (it "(cat path :tail) defaults to default-cat-limit (2000) lines from the end"
     ;; Bumped from 400 → 2000 for industry parity with Claude Code / Roo Code.
     ;; Use a file with >2000 lines so the tail default actually clamps.
     (let [body (string/join "\n" (map #(str "L" %) (range 1 2401)))
@@ -669,7 +669,7 @@
       (expect (= 2400 (first (peek (:lines out)))))
       (expect (nil? (:next-offset out)))))
 
-  (it "(v/cat path :tail n) honours an explicit count"
+  (it "(cat path :tail n) honours an explicit count"
     (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
           path (write-temp! "explicit-tail.txt" (str body "\n"))
           cat-tool (private-fn "cat-tool")
@@ -677,10 +677,10 @@
       (expect (= (numbered-tuples 18 ["L18" "L19" "L20"]) (:lines out))))))
 
 (defdescribe vis-cat-range-arity-test
-  ;; G1 from the v/cat probe (C9): the offset+count arity feels awkward
+  ;; G1 from the cat probe (C9): the offset+count arity feels awkward
   ;; when the model already knows both endpoints ("convert end=100 to
   ;; n=51 mentally"). The :range arity takes inclusive start..end.
-  (it "(v/cat path :range start end) reads inclusive 1-based start..end"
+  (it "(cat path :range start end) reads inclusive 1-based start..end"
     (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
           path (write-temp! "range/inclusive.txt" (str body "\n"))
           cat-tool (private-fn "cat-tool")
@@ -709,7 +709,7 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(cat-tool path :not-range 1 5)))))
 
-  (it "(v/cat path :ranges [[start end] ...]) reads several ranges in one result"
+  (it "(cat path :ranges [[start end] ...]) reads several ranges in one result"
     (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
           path (write-temp! "range/multi.txt" (str body "\n"))
           cat-tool (private-fn "cat-tool")
@@ -764,7 +764,7 @@
   "Construct the plain-map shape `cat-tool` produces, for renderer-contract
    tests. Tuples for `:lines`, no `:offset` / `:eof?` / `:truncated-by`."
   [path lines next-offset truncated?]
-  {:vis.op :v/cat
+  {:vis.op :cat
    :path path
    :lines (vec lines)
    :next-offset next-offset
@@ -774,7 +774,7 @@
   ;; Phase 1 hard cut: every render-fn returns {:summary <ir-or-zones>
   ;; :display <ir>}. These assert the new contract shape — :display
   ;; carries the IR body the fns used to return, :summary is the badge.
-  (it "v/cat channel renderer conforms to ::render-fn-result"
+  (it "cat channel renderer conforms to ::render-fn-result"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "src/demo.clj" [[1 "only-line"]] nil false)
           out (channel-render-cat r)]
@@ -782,7 +782,7 @@
       (expect (some? (:summary out)))
       (expect (extension/render-value? (:display out)))))
 
-  (it "v/cat :display is canonical [:ir ...] with a :code block, line-number gutter (human surface)"
+  (it "cat :display is canonical [:ir ...] with a :code block, line-number gutter (human surface)"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "src/demo.clj" [[1 "only-line"]] nil false)
           out (channel-render-cat r)
@@ -797,7 +797,7 @@
         (expect (string/includes? body "1│ only-line"))
         (expect (not (string/includes? body (str (patch/line-hash "only-line") "│ only-line")))))))
 
-  (it "v/cat summary is a zone badge: CAT label, path centered, line/pagination right"
+  (it "cat summary is a zone badge: CAT label, path centered, line/pagination right"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
                 [[1898 "x"]] 1928 false)
@@ -818,7 +818,7 @@
       (expect (string/includes? text "from=1898"))
       (expect (string/includes? text "next-offset=1928"))))
 
-  (it "v/cat :display gutter is the per-line LINE NUMBER on each tuple"
+  (it "cat :display gutter is the per-line LINE NUMBER on each tuple"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "f.txt" [[100 "hundred"] [101 "hundred-one"]] 102 false)
           display (:display (channel-render-cat r))
@@ -829,9 +829,9 @@
       (expect (string/includes? body "101│ hundred-one"))
       (expect (not (string/includes? body (str (patch/line-hash "hundred") "│ hundred"))))))
 
-  (it "v/cat multi-range summary and display stay one CAT result"
+  (it "cat multi-range summary and display stay one CAT result"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          r {:vis.op :v/cat
+          r {:vis.op :cat
              :path "src/demo.clj"
              :lines [[2 "b"] [3 "c"] [10 "j"]]
              :ranges [{:range [2 3] :lines [[2 "b"] [3 "c"]]}
@@ -849,7 +849,7 @@
       (expect (string/includes? body "-- range 10-10 --"))
       (expect (string/includes? body "10│ j"))))
 
-  (it "v/ls renderer conforms to ::render-fn-result with a zone summary"
+  (it "ls renderer conforms to ::render-fn-result with a zone summary"
     (let [render (private-fn "channel-render-ls")
           out (render {:path "." :entries [{:path "a" :type :file :size 3}]
                        :entry-count 1 :file-count 1 :dir-count 0})]
@@ -858,7 +858,7 @@
       (expect (extension/render-value? (:display out)))
       (expect (string/includes? (pr-str (:summary out)) "LS"))))
 
-  (it "v/ls renderer with no entries still returns a valid (empty-bodied) display"
+  (it "ls renderer with no entries still returns a valid (empty-bodied) display"
     (let [render (private-fn "channel-render-ls")
           out (render {:path "." :entries [] :entry-count 0 :file-count 0 :dir-count 0})]
       (expect (extension/render-fn-result? out))
@@ -871,7 +871,7 @@
   (it "engine-default channel error formatter conforms to ::render-fn-result"
     (let [result (extension/default-error-result
                    {:success? false
-                    :symbol :v/cat
+                    :symbol :cat
                     :error {:message "src/missing.clj (No such file)"
                             :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})]
       (expect (extension/render-fn-result? result))
@@ -881,7 +881,7 @@
   (it "engine-default error :display is canonical [:ir ...] carrying the error class"
     (let [result (extension/default-error-result
                    {:success? false
-                    :symbol :v/cat
+                    :symbol :cat
                     :error {:message "src/missing.clj (No such file)"
                             :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})
           out (:display result)
@@ -889,7 +889,7 @@
       (expect (vector? out))
       (expect (= :ir (first out)))
       (expect (string/includes? joined "ERROR"))
-      (expect (string/includes? joined "v/cat"))
+      (expect (string/includes? joined "cat"))
       (expect (string/includes? joined "FileNotFoundException")))))
 
 (defdescribe vis-rg-structured-shape-test
@@ -961,7 +961,7 @@
           ;; the model-facing :result — there is no flat :hits vec anymore.
           rg-result (:result (rg spec))
           grep-hits (:hits (grep spec))]
-      (expect (= :v/rg (:vis.op rg-result)))
+      (expect (= :rg (:vis.op rg-result)))
       (expect (vector? (:matches rg-result)))
       (expect (= (count grep-hits) (:hit-count rg-result)))
       (expect (= (count (distinct (map :path grep-hits)))
@@ -991,7 +991,7 @@
                   #(grep (bad-spec k v)))))))
 
   (it ":truncated-by :limit when results exceed the configured limit (default 250)"
-    ;; Limit bumped 50 -> 250 in the v/rg sweep. Use 300 hits to force the cap.
+    ;; Limit bumped 50 -> 250 in the rg sweep. Use 300 hits to force the cap.
     (let [_ (write-temp! "rgcap/a.txt"
               (string/join "\n" (map #(str "needle " %) (range 300))))
           grep (private-fn "rg-search")
@@ -1110,7 +1110,7 @@
     ;; mutilated every long hit line into `…<+N chars>`. That marker
     ;; reproduced the same failure mode as the trailer cap removed in
     ;; ccee2e1f-16ee-4acf-8d93-b4505034c0de — the model perceived its
-    ;; own search data as missing and chased phantom v/cat roundtrips
+    ;; own search data as missing and chased phantom cat roundtrips
     ;; even on normal source lines that brushed the cap. The model
     ;; owns its data; no silent renderer-side ellipsis.
     (let [huge (apply str (repeat 1000 "x"))
@@ -1260,7 +1260,7 @@
       (let [r (run!)]
         (expect (false? (:success? r)))
         (expect (some? (:loop-hint r)))
-        (expect (string/includes? (:message r) "Consecutive v/patch failures"))
+        (expect (string/includes? (:message r) "Consecutive patch failures"))
         (expect (= 3 (-> r :failures first :consecutive-failures))))
       (clear file)))
 
@@ -1412,7 +1412,7 @@
       (patch [{:path p :search "foo" :replace "foo xtra"}])
       (expect (= "foo xtra bar\n" (slurp p)))))
 
-  (it "a single v/patch invocation cannot move the loop counter past +1 per path"
+  (it "a single patch invocation cannot move the loop counter past +1 per path"
     ;; Loop counter must be PER INVOCATION, not per failed edit. Two
     ;; failed edits in one call against the same path bump the counter
     ;; once, not twice.
@@ -1429,7 +1429,7 @@
         (expect (nil? (:loop-hint r))))
       (clear file)))
 
-  (it "v/patch reports :exact-replace as its only mode (envelope retired)"
+  (it "patch reports :exact-replace as its only mode (envelope retired)"
     (let [patch-tool (private-fn "patch-tool")
           p (write-temp! "bbfs/dispatch-mode.txt" "alpha\nbeta\n")
           vec-out (-> (patch-tool [{:path p :search "alpha" :replace "X"}])
@@ -1466,14 +1466,14 @@
       (expect (true? (delete-if-exists path)))
       (expect (false? (exists? path)))))
 
-  (it "v/exists? tool returns the canonical {:vis.op :v/exists? :path :exists?} map (envelope-shape consistency)"
+  (it "exists? tool returns the canonical {:vis.op :exists? :path :exists?} map (envelope-shape consistency)"
     ;; Regression for conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
     ;; turn 4 iter 1→2:
-    ;;   model wrote `(def ports (v/exists? \".nrepl-port\"))` then
+    ;;   model wrote `(def ports (exists? \".nrepl-port\"))` then
     ;;   `(:exists? ports)`, expecting the map shape every other `v/*`
     ;;   tool returns. The old `exists-tool` returned a bare boolean
     ;;   so `(:exists? true)` evaluated to `nil` and the model burned
-    ;;   an iter realizing \"v/exists? is returning true directly rather
+    ;;   an iter realizing \"exists? is returning true directly rather
     ;;   than a map containing an :exists? key\".
     ;; Fix: every v/* tool returns a map keyed on :vis.op for shape
     ;; consistency; bare booleans are no longer a supported result.
@@ -1483,19 +1483,19 @@
           present (:result (exists-tool present-path))
           missing (:result (exists-tool missing-path))]
       (expect (map? present))
-      (expect (= :v/exists? (:vis.op present)))
+      (expect (= :exists? (:vis.op present)))
       (expect (true? (:exists? present)))
       (expect (= present-path (:path present)))
       (expect (map? missing))
-      (expect (= :v/exists? (:vis.op missing)))
+      (expect (= :exists? (:vis.op missing)))
       (expect (false? (:exists? missing)))
       (expect (= missing-path (:path missing)))))
 
-  (it "keeps v/exists? shape details out of the compact prompt and in symbol docs"
+  (it "keeps exists? shape details out of the compact prompt and in symbol docs"
     (let [exists-symbol (some #(when (= 'exists? (:ext.symbol/symbol %)) %)
                           editing/editing-symbols)]
-      (expect (not (string/includes? editing/editing-prompt ":vis.op :v/exists?")))
-      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":vis.op :v/exists?"))
+      (expect (not (string/includes? editing/editing-prompt ":vis.op :exists?")))
+      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":vis.op :exists?"))
       (expect (string/includes? (:ext.symbol/doc exists-symbol) ":exists?"))))
 
   (it "bash helpers fully removed from the editing core"
@@ -1509,22 +1509,22 @@
 
 (defdescribe delete-tool-shape-test
   ;; Regression: `delete-tool` used to set `:result nil`. The channel
-  ;; preview then painted `DELETE nil` and `(def r (v/delete p))`
-  ;; consumers couldn't read `(:path r)` (same parity bug `v/exists?`
+  ;; preview then painted `DELETE nil` and `(def r (delete p))`
+  ;; consumers couldn't read `(:path r)` (same parity bug `exists?`
   ;; already fixed). All `v/*` tools now return a map shape.
-  (it "v/delete returns {:vis.op :v/delete :path P :deleted? true} (no bare nil)"
+  (it "delete returns {:vis.op :delete :path P :deleted? true} (no bare nil)"
     (let [delete-tool (private-fn "delete-tool")
           p           (write-temp! "delete-shape/x.txt" "goodbye\n")
           envelope    (delete-tool p)]
       (expect (true? (:success? envelope)))
-      (expect (= :v/delete (:symbol envelope)))
+      (expect (= :delete (:symbol envelope)))
       (let [r (:result envelope)]
         (expect (map? r))
-        (expect (= :v/delete (:vis.op r)))
+        (expect (= :delete (:vis.op r)))
         (expect (= p (:path r)))
         (expect (true? (:deleted? r))))))
 
-  (it "v/delete-if-exists returns the same map shape with :deleted? reflecting the actual outcome"
+  (it "delete-if-exists returns the same map shape with :deleted? reflecting the actual outcome"
     (let [delete-if (private-fn "delete-if-exists-tool")
           p         (write-temp! "delete-shape/here.txt" "x\n")
           present   (:result (delete-if p))
@@ -1545,14 +1545,14 @@
   ;; surfaces here, not at paint time.
   (it "MKDIR renderer reads :path off the result map (contract-conformant)"
     (let [out ((private-fn "channel-render-create-dirs")
-               {:vis.op :v/create-dirs :path "target/x" :created? true})]
+               {:vis.op :create-dirs :path "target/x" :created? true})]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? (pr-str out) "target/x"))
       (expect (string/includes? (pr-str out) "MKDIR"))))
 
   (it "COPY renderer reads :src/:dest off the result map (contract-conformant)"
     (let [out ((private-fn "channel-render-copy")
-               {:vis.op :v/copy :src "a.txt" :dest "b.txt" :path "b.txt"})
+               {:vis.op :copy :src "a.txt" :dest "b.txt" :path "b.txt"})
           s  (pr-str out)]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? s "COPY"))
@@ -1561,7 +1561,7 @@
 
   (it "MOVE renderer reads :src/:dest off the result map (contract-conformant)"
     (let [out ((private-fn "channel-render-move")
-               {:vis.op :v/move :src "a.txt" :dest "b.txt" :path "b.txt"})
+               {:vis.op :move :src "a.txt" :dest "b.txt" :path "b.txt"})
           s  (pr-str out)]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? s "MOVE"))
@@ -1570,7 +1570,7 @@
 
   (it "DELETE renderer reads :path off the result map (NO nil token in output)"
     (let [out ((private-fn "channel-render-delete")
-               {:vis.op :v/delete :path "src/foo.txt" :deleted? true})
+               {:vis.op :delete :path "src/foo.txt" :deleted? true})
           s  (pr-str out)]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? s "src/foo.txt"))
@@ -1579,8 +1579,8 @@
 
   (it "DELETE-IF-EXISTS renderer flips badge between DELETE / ABSENT on :deleted?"
     (let [render (private-fn "channel-render-delete-if-exists")
-          gone   (render {:vis.op :v/delete-if-exists :path "a.txt" :deleted? true})
-          absent (render {:vis.op :v/delete-if-exists :path "a.txt" :deleted? false})]
+          gone   (render {:vis.op :delete-if-exists :path "a.txt" :deleted? true})
+          absent (render {:vis.op :delete-if-exists :path "a.txt" :deleted? false})]
       (expect (extension/render-fn-result? gone))
       (expect (extension/render-fn-result? absent))
       (expect (string/includes? (pr-str gone)   "DELETE"))
@@ -1588,15 +1588,15 @@
 
   (it "EXISTS? renderer flips badge between EXISTS / MISSING on :exists?"
     (let [render  (private-fn "channel-render-exists?")
-          present (render {:vis.op :v/exists? :path "a.txt" :exists? true})
-          absent  (render {:vis.op :v/exists? :path "a.txt" :exists? false})]
+          present (render {:vis.op :exists? :path "a.txt" :exists? true})
+          absent  (render {:vis.op :exists? :path "a.txt" :exists? false})]
       (expect (extension/render-fn-result? present))
       (expect (extension/render-fn-result? absent))
       (expect (string/includes? (pr-str present) "EXISTS"))
       (expect (string/includes? (pr-str absent)  "MISSING")))))
 
 (defdescribe patch-summary-shape-test
-  ;; The summary IS what the model reads back as the v/patch result
+  ;; The summary IS what the model reads back as the patch result
   ;; AND what the channel renderer projects. Every key counts; redundant
   ;; signal pollutes the iteration trailer.
   (it "byte-exact match: no :passes key, no :indent-delta, no line counters"
@@ -1658,7 +1658,7 @@
       (expect (true? (:success? r)))
       (expect (= [:rstrip :unicode] (:passes s)))))
 
-  (it "successful v/patch with byte-exact match carries no :passes / :indent-delta"
+  (it "successful patch with byte-exact match carries no :passes / :indent-delta"
     ;; This used to be tested against envelope mode; envelope is retired.
     ;; Byte-exact single-edit success on exact-replace still must omit the
     ;; fuzzy alarm keys.
@@ -1740,7 +1740,7 @@
       (expect (string/includes? changed "diff truncated"))))
   (it "search-grouped renderer formats grouped matches (path once) without raw EDN fallback"
     (let [render-hits (private-fn "channel-render-rg")
-          rg-result {:vis.op :v/rg
+          rg-result {:vis.op :rg
                      :hit-count 2
                      :file-count 1
                      :truncated-by :end-of-results
@@ -1762,7 +1762,7 @@
       (expect (string/includes? joined "workspace-tabs-or-base"))))
   (it "search-grouped renderer states the path once as a header row"
     (let [render-hits (private-fn "channel-render-rg")
-          rg-result {:vis.op :v/rg
+          rg-result {:vis.op :rg
                      :hit-count 1
                      :file-count 1
                      :truncated-by :end-of-results
@@ -1785,10 +1785,10 @@
       ;; (e.g. :presentation) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))
       (expect (true? (:success? out)))
-      ;; v/cat returns a plain map as :result. :lines is a vec of
+      ;; cat returns a plain map as :result. :lines is a vec of
       ;; `[line-number text]` tuples; no deref, no handle, no offset key.
       (let [r (:result out)]
-        (expect (= :v/cat (:vis.op r)))
+        (expect (= :cat (:vis.op r)))
         (expect (= [[1 "alpha"] [2 "beta"]] (:lines r)))
         (expect (nil? (:next-offset r)))
         (expect (false? (:truncated? r))))
@@ -1808,11 +1808,11 @@
       (expect (not (contains? out :markdown))))))
 
 (defdescribe vis-patch-hashline-test
-  ;; End-to-end content-addressed editing: read hashes from v/cat, then
+  ;; End-to-end content-addressed editing: read hashes from cat, then
   ;; patch by :from-hash / :to-hash. The hash anchors come straight from
   ;; the read's `:hashes` map (same value rendered in the cat gutter),
   ;; and self-locate against live disk content on apply.
-  (it "v/patch :from-hash replaces a single content-anchored line"
+  (it "patch :from-hash replaces a single content-anchored line"
     (let [path (write-temp! "hashline/single.txt"
                  "alpha first\nbeta second\ngamma third\n")
           read-file (private-fn "read-file")
@@ -1823,7 +1823,7 @@
       (expect (true? (:success? r)))
       (expect (= "alpha first\nBETA REPLACED\ngamma third\n" (slurp path)))))
 
-  (it "v/patch :from-hash + :to-hash replaces an inclusive range"
+  (it "patch :from-hash + :to-hash replaces an inclusive range"
     (let [path (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
@@ -1835,7 +1835,7 @@
       (expect (true? (:success? r)))
       (expect (= "X\nd\n" (slurp path)))))
 
-  (it "v/patch refuses a :from-hash that hits >1 identical line"
+  (it "patch refuses a :from-hash that hits >1 identical line"
     (let [path (write-temp! "hashline/dup.txt" "x\ny\nx\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
@@ -1850,25 +1850,25 @@
       ;; file untouched
       (expect (= "x\ny\nx\n" (slurp path)))))
 
-  (it "v/patch needs EXACTLY ONE of :search or :from-hash"
+  (it "patch needs EXACTLY ONE of :search or :from-hash"
     (let [path (write-temp! "hashline/both.txt" "a\n")
           patch (private-fn "patch-safe")]
       (expect (throws? clojure.lang.ExceptionInfo
                 #(patch [{:path path :search "a" :from-hash "abc123" :replace "Z"}]))))))
 
 (defdescribe vis-cat-hash-read-test
-  ;; v/cat :hash — the READ twin of v/patch :from-hash. Re-read a kept region
+  ;; cat :hash — the READ twin of patch :from-hash. Re-read a kept region
   ;; by its content hash, addressed by content not drifting line numbers.
   (let [cat-tool (private-fn "cat-tool")
         path     (write-temp! "hashread/probe.clj"
                    "(ns probe)\n(def alpha 1)\n(def beta 2)\n(def gamma 3)\n")
         h-beta   (patch/line-hash "(def beta 2)")
         h-gamma  (patch/line-hash "(def gamma 3)")]
-    (it "(v/cat path :hash H) reads the single line whose content hash is H"
+    (it "(cat path :hash H) reads the single line whose content hash is H"
       (let [out (:result (cat-tool path :hash h-beta))]
         (expect (= [[3 "(def beta 2)"]] (:lines out)))
         (expect (= [3 3] (:range out)))))
-    (it "(v/cat path :hash H1 H2) reads the inclusive content-addressed window"
+    (it "(cat path :hash H1 H2) reads the inclusive content-addressed window"
       (let [out (:result (cat-tool path :hash h-beta h-gamma))]
         (expect (= (numbered-tuples 3 ["(def beta 2)" "(def gamma 3)"]) (:lines out)))
         (expect (= [3 4] (:range out)))))
@@ -1879,7 +1879,7 @@
             out (:result (cat-tool p2 :hash (patch/line-hash "(def beta 2)")))]
         ;; beta moved from line 2 to line 4; the hash still finds it
         (expect (= [[4 "(def beta 2)"]] (:lines out)))))
-    (it "a missing hash throws back to v/cat for fresh :hashes"
+    (it "a missing hash throws back to cat for fresh :hashes"
       (expect (throws? clojure.lang.ExceptionInfo
                 #(cat-tool path :hash "zzzz"))))
     (it "an unknown 4-arity mode throws"

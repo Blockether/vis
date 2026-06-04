@@ -12,8 +12,8 @@
        submodules) by counting per-ecosystem manifests.
 
    Model-facing VCS/workspace truth lives in `:session/workspace` CTX.
-   Remaining helpers cover coarse project shape (`v/languages`,
-   `v/monorepo`, `v/repositories`) and cache invalidation (`v/refresh!`).
+   Remaining helpers cover coarse project shape (`languages`,
+   `monorepo`, `repositories`) and cache invalidation (`refresh!`).
 
    Runtime facts are computed lazily on first access and cached per
    working-directory. The cache is invalidated automatically when

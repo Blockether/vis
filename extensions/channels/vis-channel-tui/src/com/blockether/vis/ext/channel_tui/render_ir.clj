@@ -213,7 +213,7 @@
         ;; false until the first flush — i.e. while we are still on the
         ;; ORIGINAL line, not a wrapped continuation segment. Leading
         ;; whitespace is meaningful indentation on the first line (source
-        ;; code, the `v/cat` hash gutter's blank-anchor pad) and must
+        ;; code, the `cat` hash gutter's blank-anchor pad) and must
         ;; survive; only continuation segments drop it on reflow.
         cont?  (volatile! false)
         flush! (fn []

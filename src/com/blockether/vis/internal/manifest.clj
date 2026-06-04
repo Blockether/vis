@@ -83,12 +83,12 @@
   ;; on every `scan!`. The atom is the single point that lets us
   ;; surface the failure to TWO consumers - the per-turn
   ;; `(:project ctx) :warnings` slice (so the LLM sees "foundation extension
-  ;; failed; v/cat will be unbound") and the launcher's stderr banner
+  ;; failed; cat will be unbound") and the launcher's stderr banner
   ;; (so the user running `bin/vis` notices before they spend an
   ;; iteration loop on phantom errors). Pre-fix: `discover-extension-failed`
   ;; was a buried `~/.vis/vis.log` ERROR line; session
   ;; d8aff512-d60d-42b6-a009-041f1bec3891 burned 200+ blocks bouncing
-  ;; off `Unable to resolve symbol: v/cat` because nothing else surfaced
+  ;; off `Unable to resolve symbol: cat` because nothing else surfaced
   ;; that the foundation extension's source had a syntax error.
   (atom []))
 

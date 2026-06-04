@@ -3,7 +3,7 @@
    both as PURE projections off the canonical iteration-entry `:ops`.
 
    The fixture is a `doseq` fan-out: ONE fence / ONE proof envelope whose
-   channel slice carries N `(v/cat …)` observation ops. That is the exact
+   channel slice carries N `(cat …)` observation ops. That is the exact
    bad-agent-behaviour Phase 4 targets:
 
      - the header counts must stay REAL (`100 observations`),
@@ -20,11 +20,11 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- cat-sink-entry
-  "One `(v/cat \"<name>\")` observation sink entry whose summary label is the
+  "One `(cat \"<name>\")` observation sink entry whose summary label is the
    file name — so the aggregated head reads `CAT × N (a.txt, b.txt, …)`."
   [position file]
   {:position position
-   :form     (str "(v/cat \"" file "\")")
+   :form     (str "(cat \"" file "\")")
    :symbol   :cat
    :op       :cat
    :tag      :observation
@@ -39,11 +39,11 @@
 
 (defn- fanout-entry
   "A single-fence iteration entry whose one proof envelope ran `n` cat ops
-   plus one trailing `(v/patch …)` mutation, mirroring a `doseq` fan-out."
+   plus one trailing `(patch …)` mutation, mirroring a `doseq` fan-out."
   [n]
   (let [cats  (mapv (fn [i] (cat-sink-entry i (str "f" i ".txt"))) (range n))
         patch {:position n
-               :form     "(v/patch ...)"
+               :form     "(patch ...)"
                :symbol   :patch
                :op       :patch
                :tag      :mutation
@@ -56,10 +56,10 @@
                                      (extension/ir-p (extension/ir-strong "PATCH")))}}
         channel (conj cats patch)]
     {:position 0
-     :code     "(doseq [f files] (v/cat f))\n(v/patch ...)"
+     :code     "(doseq [f files] (cat f))\n(patch ...)"
      :forms    [{:scope       "t1/i1/f1"
                  :tag         :observation
-                 :src         "(doseq [f files] (v/cat f))"
+                 :src         "(doseq [f files] (cat f))"
                  :channel     channel
                  :duration-ms 4200}]}))
 
@@ -113,10 +113,12 @@
       ;; The trailing mutation is NOT aggregated.
       (expect (= [:patch] (mapv :op (remove :aggregate agg))))))
 
-  (it "the synthetic head reads `CAT × 100 (a, b, c, …)`"
+  (it "the synthetic head reads `READ × 100 (a, b, c, …)`"
+    ;; `:cat` is now the bare canonical op (foundation is a built-in, no `v/`
+    ;; alias), so op-friendly-labels maps it to READ — the head uses that label.
     (let [ops   (:ops (iteration/canonicalize (fanout-entry 100)))
           synth (first (filter :aggregate (iteration/aggregate-ops ops)))]
-      (expect (= "CAT × 100 (f0.txt, f1.txt, f2.txt, …)"
+      (expect (= "READ × 100 (f0.txt, f1.txt, f2.txt, …)"
                 (iteration/aggregate-op-head synth)))))
 
   (it "errored runs surface :error status on the synthetic op"

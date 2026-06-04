@@ -100,7 +100,7 @@
   {:path path :op :git/merge-accept-theirs})
 
 (defn mark-resolved
-  "Stage a path the model already edited by hand (e.g. via `v/patch`).
+  "Stage a path the model already edited by hand (e.g. via `patch`).
    Pure `AddCommand`; no checkout."
   [path]
   (with-open [git (open-git)]
@@ -184,7 +184,7 @@
   (ok (accept-theirs path)))
 
 (defn merge-mark-resolved-tool
-  "Stage a path the model already edited by hand (e.g. via v/patch). JGit AddCommand."
+  "Stage a path the model already edited by hand (e.g. via patch). JGit AddCommand."
   [path]
   (ok (mark-resolved path)))
 

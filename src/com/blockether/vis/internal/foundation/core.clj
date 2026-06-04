@@ -76,7 +76,12 @@
      :ext/author         "Blockether"
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
-     :ext/sci            {:ext.sci/alias 'v
+     ;; BUILT-IN: foundation is the mandatory `v/` kernel promoted into core, so
+     ;; its symbols bind BARE into the sandbox ns (cat/ls/rg/patch …) right next
+     ;; to the engine verbs (done/task-set!/recall) — NO `v/` alias. `:builtin?`
+     ;; routes the binding through `extension/builtin-sandbox-bindings` instead
+     ;; of the aliased-namespace path third-party extensions use.
+     :ext/sci            {:ext.sci/builtin? true
                           :ext.sci/symbols (vec (concat introspection/all-symbols
                                                   (editing/available-editing-symbols)
                                                   environment/environment-symbols))}

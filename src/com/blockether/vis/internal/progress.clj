@@ -127,7 +127,7 @@
      :tool   —  the form *touched* the tool surface (either its
                 top-level value is a tool envelope, OR it carries
                 `:channel` sink entries from inner tool calls like
-                `(def r (v/ls …))`). Without this, a tool
+                `(def r (ls …))`). Without this, a tool
                 preview computed by `format-form-result` would be
                 suppressed by the renderer's `(= :tool result-kind)`
                 gate when the FENCE's last value is plain data

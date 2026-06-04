@@ -2434,7 +2434,7 @@
    user-actionable hint. Pre-fix the failure was a buried
    `~/.vis/vis.log` ERROR line and the user had no surface clue
    that an entire alias namespace was unbound - the LLM in the
-   sandbox would loop on `Unable to resolve symbol: v/cat` until
+   sandbox would loop on `Unable to resolve symbol: cat` until
    the user manually dug through the log file. Now the launcher
    shouts the failure on every startup so the user can `git diff`
    the broken extension and fix the typo.

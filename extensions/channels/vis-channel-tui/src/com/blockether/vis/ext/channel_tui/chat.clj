@@ -68,7 +68,7 @@
 (defn- form-result-kind
   "Mirror of `progress/form-result-kind` for restored sessions: a
    form is `:tool`-kind whenever it touched the tool surface, even
-   indirectly via `:channel` sink entries (e.g. `(def r (v/ls …))`
+   indirectly via `:channel` sink entries (e.g. `(def r (ls …))`
    followed by `(select-keys r …)`). Without this the channel's
    preview pane is hidden because the FENCE's last value
    is plain data."
