@@ -1108,6 +1108,17 @@
     (vis/markdown->ir
       (if (seq markdown) markdown "No persisted turns to export yet."))))
 
+(defn- command-clear [chat-id]
+  ;; Tear down the chat's whole session tree (turns + soul + workspace
+  ;; links) and immediately recreate a fresh empty session for the chat
+  ;; so the next message starts clean. `vis/delete!` closes the live env
+  ;; (disposes + evicts the env cache) before dropping the rows, so the
+  ;; in-flight conversation history is gone.
+  (let [{:keys [id]} (vis/for-telegram-chat! chat-id)]
+    (vis/delete! id)
+    (vis/for-telegram-chat! chat-id)
+    (vis/markdown->ir "\uD83E\uDDF9 Session cleared - starting a fresh conversation.")))
+
 ;; ----------------------------------------------------------------------------
 ;; Slash dispatch
 ;;
@@ -1185,14 +1196,20 @@
     :else                                               ""))
 
 (defn- answer-text
-  "Render the turn's answer to a Telegram-HTML string. The model wrote
-   Markdown via `(done {:answer ...})`; lift via `vis/markdown->ir`
-   before handing the IR to the strict renderer chokepoint."
+  "Render the turn's answer to a Telegram-HTML string. The model usually
+   writes Markdown via `(done {:answer ...})` (a `{:answer string}` map), but
+   the engine can hand back canonical IR DIRECTLY — e.g. a
+   `#:vis{:provider-error true}` block when a provider call fails (401, etc.).
+   Render IR as-is (otherwise it falls through to a blank string and the user
+   sees only the footer); lift a markdown string to IR first."
   [result]
-  (let [md (answer->markdown-string (:answer result))]
-    (if (str/blank? md)
-      ""
-      (render-for-telegram (vis/markdown->ir md)))))
+  (let [answer (:answer result)]
+    (if (and (vector? answer) (= :ir (first answer)))
+      (render-for-telegram answer)
+      (let [md (answer->markdown-string answer)]
+        (if (str/blank? md)
+          ""
+          (render-for-telegram (vis/markdown->ir md)))))))
 
 (defn- answer-voice-text
   "Plain-text projection of the answer for voice TTS. Strips structure
@@ -1637,7 +1654,11 @@
    {:slash/name "export"
     :slash/doc  "Export session as Markdown"
     :slash/availability-fn telegram-only-channel?
-    :slash/run-fn (fn [ctx] (ok-ir (command-export (ctx-chat-id ctx))))}])
+    :slash/run-fn (fn [ctx] (ok-ir (command-export (ctx-chat-id ctx))))}
+   {:slash/name "clear"
+    :slash/doc  "Clear this session and start fresh"
+    :slash/availability-fn telegram-only-channel?
+    :slash/run-fn (fn [ctx] (ok-ir (command-clear (ctx-chat-id ctx))))}])
 
 ;; Hidden Telegram slashes — dispatched normally but excluded from
 ;; `setMyCommands`. `/start` aliases `/help` so first-time users get
