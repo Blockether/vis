@@ -374,7 +374,8 @@
    active/inactive background — but the label itself is centred within the
    inner area `(cell-w - 2*padding)`."
   [g entries active-id row left width]
-  (let [{:keys [overflow? entries]} (visible-tab-window entries active-id width)
+  (let [multi? (> (count entries) 1)
+        {:keys [overflow? entries]} (visible-tab-window entries active-id width)
         arrow-w 1
         arrow-gap 1
         entries-left (if overflow? (+ left arrow-w arrow-gap) left)
@@ -422,7 +423,7 @@
           (components/tab-cell! g
             {:left left :row row :width width :label label
              :active? active? :workspace-id id :index idx
-             :register? *register-click-regions?*})
+             :register? *register-click-regions?* :closable? multi?})
           ;; `│` divider after every tab but the last.
           (when-not last?
             (components/tab-divider! g row (+ (long left) (long width)))))
@@ -482,8 +483,9 @@
     (components/notification-slot! g (+ left-x edge-pad) content-row left-text left-level)
 
     ;; CENTER 60%: the workspace tab strip. Even a single session renders as a
-    ;; real tab (with its ✕), so there's one consistent affordance — no special
-    ;; inert-title path.
+    ;; real tab, so there's one consistent affordance — no special inert-title
+    ;; path. The ✕ close button is suppressed when it's the ONLY session, since
+    ;; the last tab can't be closed.
     (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
 
     ;; RIGHT 20%: stable session-id copy affordance only.

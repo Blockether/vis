@@ -47,6 +47,20 @@
     (fs/create-dirs rel)
     rel))
 
+(defdescribe rg-spec-path-alias-test
+  (let [coerce (private-fn "coerce-rg-spec")]
+    (it "accepts :path as an undocumented alias for :paths (scalar or vector)"
+      (expect (= ["src"] (:paths (coerce {:any ["x"] :path "src"}))))
+      (expect (= ["a" "b"] (:paths (coerce {:any ["x"] :path ["a" "b"]})))))
+    (it "keeps canonical :paths working and defaults to [\".\"] when absent"
+      (expect (= ["src"] (:paths (coerce {:any ["x"] :paths ["src"]}))))
+      (expect (= ["."] (:paths (coerce {:any ["x"]})))))
+    (it "rejects :path used together with :paths or :files"
+      (expect (= :threw (try (coerce {:any ["x"] :path "a" :paths ["b"]})
+                          :no-throw (catch Exception _ :threw))))
+      (expect (= :threw (try (coerce {:any ["x"] :path "a" :files ["b"]})
+                          :no-throw (catch Exception _ :threw)))))))
+
 (defdescribe cwd-safety-test
   ;; THE non-negotiable invariant: every v/* tool that touches the
   ;; filesystem must refuse any path that escapes (workspace/cwd).

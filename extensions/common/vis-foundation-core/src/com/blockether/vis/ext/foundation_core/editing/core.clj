@@ -837,7 +837,7 @@
     (throw (ex-info "v/rg takes one spec map: {:all [...] :paths [...]}."
              {:type :ext.foundation.editing/invalid-rg-spec
               :got  (type spec)})))
-  (let [allowed-keys #{:all :any :paths :files :include :glob :exclude :hidden? :respect-gitignore?
+  (let [allowed-keys #{:all :any :paths :path :files :include :glob :exclude :hidden? :respect-gitignore?
                        :limit :context :before :after :files-only? :counts? :regex?}
         unknown-keys (seq (remove allowed-keys (keys spec)))
         _ (when unknown-keys
@@ -867,11 +867,16 @@
                                           :field k
                                           :got v})))
                               v))
-        _ (when (and (contains? spec :paths) (contains? spec :files))
-            (throw (ex-info "v/rg spec must use only one of canonical :paths or compatibility :files."
+        ;; :path is an undocumented singular alias for :paths (same muscle-
+        ;; memory treatment as :glob for :include). Kept out of the docstring
+        ;; / prompt on purpose; canonical stays :paths.
+        _ (when (< 1 (count (filter #(contains? spec %) [:paths :files :path])))
+            (throw (ex-info "v/rg spec must use only one of canonical :paths or its aliases (:files / :path)."
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
-        path-key (if (contains? spec :files) :files :paths)
+        path-key (cond (contains? spec :files) :files
+                       (contains? spec :path)  :path
+                       :else                   :paths)
         op (if has-all? :all :any)
         needles (vector-of-strings op nil)
         paths (vector-of-strings path-key ["."])
