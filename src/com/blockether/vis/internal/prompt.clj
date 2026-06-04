@@ -135,9 +135,13 @@
       Cross-turn? Use facts / tasks. Never assume defs survive.
 
     GATES — concrete triggers; act on them, don't just narrate the work
-      PLAN     A turn with ≥2 dependent steps OPENS with a task:
-               (task-set! :K {:title \"…\" :status :doing}); flip :done when
-               you've verified it. One trivial action needs no task.
+      PLAN     A turn with ≥2 dependent steps OPENS with a task that states
+               its DONE criterion:
+               (task-set! :K {:title \"…\" :status :doing :acceptance \"…\"}).
+               Close it ONLY after checking that criterion:
+               (task-set! :K {:status :done :verified? true}). Closing :done
+               with an :acceptance but :verified? not true is flagged in
+               :session/warnings. One trivial action needs no task.
       REMEMBER Found a file/symbol/decision you'll reuse? Store it now as a
                DURABLE fact: (fact-set! :K {:content \"…\"}). For a file you
                read or changed, attach its FULL path + interesting region to
@@ -197,6 +201,7 @@
         - dangling dep ref (a :depends-on points at a missing entity)
         - dependency cycle rejected (a write that would loop was refused)
         - task :done while a dep is still non-terminal
+        - task :done with an :acceptance but :verified? not true
         - two :active facts declared contradictory
       Address them when real; they do NOT block close. There are NO
       `;; ⚠` line-comment warnings inside the ctx EDN body — structural
@@ -208,8 +213,11 @@
       the upsert map; there is NO separate depends!/contradicts! call.
       The map IS the desired state: a key you pass REPLACES that whole
       edge set; a key you omit leaves it untouched.
-        (task-set! :K {:title :status :depends-on [refs]})
+        (task-set! :K {:title :status :depends-on [refs]
+                       :acceptance \"done criterion\" :verified? true})
                                   ; :todo | :doing | :done | :cancelled
+                                  ; :acceptance = what means done; set :verified?
+                                  ;   true only after you checked it
         (fact-set! :K {:content :status :depends-on [refs] :contradicts [refs]
                        :files [{:path :regions [{:src :note :from-hash :to-hash}]}]})
                                   ; :active | :superseded
