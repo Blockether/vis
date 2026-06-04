@@ -361,6 +361,19 @@
   (let [before (:active-tab-id @state/app-db)]
     (state/dispatch [:select-tab-index (:index hit)])
     (when-not (= before (:active-tab-id @state/app-db)) (refresh-active-tab! false))))
+(defn- close-tab-entry-hit!
+  "Close the workspace behind a header ✕ click region. Mirrors the Ctrl+W
+   keyboard path: refresh the active tab only when it actually changed, and
+   persist only when a tab was really removed (closing the last tab is a
+   no-op in the reducer)."
+  [refresh-active-tab! persist-tabs! hit]
+  (let [before-active (:active-tab-id @state/app-db)
+        before-n      (count (:tabs @state/app-db))]
+    (state/dispatch [:close-tab (:workspace-id hit)])
+    (when (not= before-n (count (:tabs @state/app-db)))
+      (when (not= before-active (:active-tab-id @state/app-db))
+        (refresh-active-tab! false))
+      (persist-tabs!))))
 (defn- capture-screen-cells
   "Read the current Lanterna back-buffer as per-cell strings.
 
@@ -2438,6 +2451,8 @@
                                                                    :id (:text hit)})
                                  :workspace-entry
                                  (activate-tab-entry-hit! refresh-active-tab! hit)
+                                 :close-tab
+                                 (close-tab-entry-hit! refresh-active-tab! persist-tabs! hit)
                                  ;; new expanded = current collapsed (flip).
                                  :toggle-details (state/dispatch [:toggle-detail
                                                                   (:session-id hit)
@@ -2504,6 +2519,8 @@
                                                                  :id (:text hit)})
                                :workspace-entry
                                (activate-tab-entry-hit! refresh-active-tab! hit)
+                               :close-tab
+                               (close-tab-entry-hit! refresh-active-tab! persist-tabs! hit)
                                :toggle-details (state/dispatch [:toggle-detail (:session-id hit)
                                                                 (:node-id hit)
                                                                 (:collapsed? hit)])

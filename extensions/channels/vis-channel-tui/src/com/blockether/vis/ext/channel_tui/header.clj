@@ -26,6 +26,7 @@
    nudges this band to repaint immediately."
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -377,65 +378,11 @@
                 (range start end)
                 (subvec entries start end))}))
 
-(defn- truncate-with-ellipsis
-  "Truncate `s` so its display width fits in `max-cols`. When truncation
-   actually happens, append `vh/workspace-ellipsis` so overflow is visible."
-  ^String [s ^long max-cols]
-  (let [s (or s "")]
-    (cond
-      (<= max-cols 0) ""
-      (<= (p/display-width s) max-cols) s
-      (= max-cols 1) (p/truncate-cols vh/workspace-ellipsis 1)
-      :else (str (p/truncate-cols s (dec max-cols)) vh/workspace-ellipsis))))
+;; `truncate-with-ellipsis` + `center-padded` now live in `components` (the
+;; tab cell that consumes them does too).
 
-(defn- center-padded
-  "Place `s` centred inside a `cell-w`-wide workspace cell with
-   `vh/tab-entry-padding` reserved on each side; ellipsises overflow."
-  ^String [s ^long cell-w]
-  (let [inner (max 0 (- cell-w (* 2 (long vh/tab-entry-padding))))
-        text  (truncate-with-ellipsis s inner)
-        text-w (p/display-width text)
-        pad-total (max 0 (- cell-w text-w))
-        left  (quot pad-total 2)
-        right (- pad-total left)]
-    (str (apply str (repeat left \space))
-      text
-      (apply str (repeat right \space)))))
-
-(defn- draw-workspace-arrow!
-  [g row col text direction]
-  (let [hovered (cr/hovered)
-        hovered? (and (= :workspace-entry (:kind hovered))
-                   (= direction (:index hovered))
-                   (= row (get-in hovered [:bounds :row])))]
-    (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
-    (when hovered? (p/enable! g p/BOLD))
-    (p/put-str! g col row text)
-    (p/clear-styles! g)
-    (when *register-click-regions?*
-      (cr/register!
-        {:bounds {:row row :col col :width (p/display-width text)}
-         :kind :workspace-entry
-         :index direction
-         :workspace-id direction
-         :text direction
-         :enabled? true}))))
-
-(defn- draw-center-title!
-  "Paint one workspace/session title as inert header text. With only one
-   workspace there is nothing to switch, so this must not look or behave like
-   a switcher entry."
-  [g row left width text]
-  (when (pos? (long width))
-    (let [shown (truncate-with-ellipsis text width)
-          w     (p/display-width shown)
-          col   (+ left (max 0 (quot (- width w) 2)))]
-      (p/clear-styles! g)
-      (p/set-colors! g t/header-fg t/terminal-bg)
-      (p/enable! g p/BOLD)
-      (p/put-str! g col row shown)
-      (p/clear-styles! g))))
+;; The overflow nav arrow + inert center title are now `components/nav-arrow!`
+;; and `components/title!`.
 
 (defn- draw-center-workspaces!
   "Paint the visible workspace switcher window inside the center 60% slot.
@@ -453,63 +400,43 @@
         entries-width (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
         n (count entries)]
     (when overflow?
-      (draw-workspace-arrow! g row left vh/workspace-arrow-left :prev)
-      (draw-workspace-arrow! g row (+ left width (- arrow-w)) vh/workspace-arrow-right :next))
+      (components/nav-arrow! g row left vh/workspace-arrow-left :prev *register-click-regions?*)
+      (components/nav-arrow! g row (+ left width (- arrow-w)) vh/workspace-arrow-right :next
+        *register-click-regions?*))
     (when (and (pos? n) (pos? entries-width))
       (let [base (quot entries-width n)
             extra (rem entries-width n)
+            ;; Lay out each tab cell, then hand the drawing to the
+            ;; `components/tab-cell!` component — it owns the slab, the
+            ;; centered label, and the always-visible ✕ close button (plus
+            ;; both click regions). `label` carries the run-dot / spinner
+            ;; prefix: `●` for an in-flight turn, the braille spinner while
+            ;; this active tab's title is generating.
             cells (loop [idx 0 x entries-left out []]
                     (if (= idx n)
                       out
                       (let [cell-w (+ base (if (< idx extra) 1 0))
-                            entry (nth entries idx)
-                            ;; `●` marks a tab whose session has a turn in
-                            ;; flight, so concurrent runs are visible even on
-                            ;; tabs you're not looking at.
-                            ;; While the host is generating this (active)
-                            ;; tab's title, show an animated spinner instead
-                            ;; of the `●` run-dot; otherwise the dot marks an
-                            ;; in-flight turn so concurrent runs stay visible.
+                            entry  (nth entries idx)
                             active? (= (:id entry) active-id)
                             label (cond->> (p/tab-display-label entry)
                                     (and (:running? entry)
                                       (not (:title-loading? entry))) (str "● ")
-                                    (:title-loading? entry) (str (title-spinner-frame) " "))
-                            ;; Active tab carries a close affordance (`✕`); Ctrl+W
-                            ;; (or a click on the glyph) dispatches `:close-tab`.
-                            label (cond-> label active? (str " ✕"))
-                            text (center-padded label cell-w)]
+                                    (:title-loading? entry) (str (title-spinner-frame) " "))]
                         (recur (inc idx)
                           (+ x cell-w)
                           (conj out (assoc entry
                                       :left x
                                       :width cell-w
-                                      :text text
+                                      :label label
                                       :active? active?))))))]
-        (doseq [{:keys [left width active? text id]
+        (doseq [{:keys [left width active? label id]
                  idx :header/original-index}
                 cells
                 :when (pos? (long width))]
-          (p/clear-styles! g)
-          (if active?
-            ;; Inverted slab: black bg + white fg (BOLD) makes the
-            ;; active workspace pop; no BORDERED outline so the slab reads
-            ;; clean. Inactive workspaces are dim italic on the header surface.
-            (do (p/set-colors! g t/header-active-tab-fg t/header-active-tab-bg)
-              (p/enable! g p/BOLD))
-            (do (p/set-colors! g t/border-fg t/dialog-bg)
-              (p/enable! g p/ITALIC)))
-          (p/fill-rect! g left row width 1)
-          (p/put-str! g left row text)
-          (p/clear-styles! g)
-          (when *register-click-regions?*
-            (cr/register!
-              {:bounds {:row row :col left :width width}
-               :kind :workspace-entry
-               :index idx
-               :workspace-id id
-               :text id
-               :enabled? true})))
+          (components/tab-cell! g
+            {:left left :row row :width width :label label
+             :active? active? :workspace-id id :index idx
+             :register? *register-click-regions?*}))
         cells))))
 
 (defn draw-header!
@@ -580,7 +507,7 @@
     ;; CENTER 60%: one inert title, or a switcher when multiple workspaces exist.
     (if (> (count workspaces) 1)
       (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
-      (draw-center-title! g content-row center-x center-w single-title))
+      (components/title! g content-row center-x center-w single-title))
 
     ;; RIGHT 20%: stable session-id copy affordance only.
     (when (pos? right-w)
