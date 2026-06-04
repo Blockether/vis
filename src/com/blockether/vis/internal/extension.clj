@@ -1341,7 +1341,7 @@
   "Read `:doc` / `:arglists` / `:name` / source from a var's metadata. Throws when the
    var lacks a non-blank docstring or non-empty arglists - extension symbols
    carry their canonical surface from the underlying defn, not from a side
-   map. Without these, the SCI sandbox cannot expose `(doc v/sym)` to the
+   map. Without these, the SCI sandbox cannot expose `(doc 'sym)` to the
    model and the prompt-listing has no doc line to render.
 
    Opts can supply `:doc`, `:doc-fn`, or `:arglists` for third-party vars

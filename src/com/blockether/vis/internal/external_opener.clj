@@ -197,7 +197,7 @@
 
 (defn- file-editor-commands
   "Preferred GUI editor commands for local file links. These are tried
-   before the generic OS opener so Markdown `v/file-link` resources go
+   before the generic OS opener so Markdown file-link resources go
    to an editor, not a browser/file manager. Missing commands are fine:
    `open-file-in-editor!` falls back to `open!`."
   [target line]
