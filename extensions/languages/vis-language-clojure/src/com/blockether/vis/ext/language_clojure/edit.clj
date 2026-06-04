@@ -4,13 +4,17 @@
    Public entry: `(apply-edit! workspace-root opts)` where `opts` is:
 
      {:path     \"src/foo.clj\"        ; required
-      :op       :replace | :insert-before | :insert-after | :add | :replace-sexp
+      :op       :replace | :insert-before | :insert-after | :add
+                | :replace-doc | :replace-sexp
                 ; :add inserts after :target, or appends a new top-level form
                 ; at EOF when no :target is given
+                ; :replace-doc swaps :target's docstring (inserts one if absent)
       :target   sym-name-string         ; defn/def name
                 | [sym-name dispatch]   ; defmethod
                 | {:within sym :match \"(...)\"}    ; for :replace-sexp
       :code     \"(defn bar [] ...)\"  ; new form text
+                ; for :replace-doc, :code is the docstring TEXT (a plain
+                ; string, not a quoted form)
       :format?  true                   ; default true; zprint-on-write}
 
    Why structure-aware: text-level `patch` is fragile on Clojure
@@ -170,6 +174,29 @@
            (z/insert-right node))
          nil]))))
 
+(defn- op-replace-doc!
+  "Replace `target-name`'s docstring, or insert one if absent. `code` is the
+   new docstring TEXT — a plain string, NOT a quoted form (built into a string
+   node via pr-str so escaping is correct). The docstring is the string right
+   after the name that still has a form after it; a lone trailing string (a
+   `def` value, e.g. `(def x \"hi\")`) is left alone and a docstring is inserted
+   before it."
+  [zloc target-name target-dispatch code]
+  (let [[doc-node perr] (parse-code (pr-str code))]
+    (if perr
+      [nil perr]
+      (if-let [found (find-top-form zloc target-name target-dispatch)]
+        (let [name-loc  (some-> found z/down z/right)        ; head -> name
+              after     (some-> name-loc z/right)            ; node after name
+              existing? (and after
+                          (string? (sexpr-safe (z/node after)))
+                          (some? (z/right after)))]          ; a string with a form after = docstring
+          (cond
+            (nil? name-loc) [nil (str "cannot locate a name in target form: " target-name)]
+            existing?       [(z/replace after doc-node) nil]
+            :else           [(-> name-loc (z/insert-right doc-node) (z/insert-right (n/spaces 1))) nil]))
+        [nil (str "target not found: " target-name)]))))
+
 (defn- op-replace-sexp!
   "Replace the first occurrence of `match-code` inside the body of
    `target-name`. We restrict the search to that top-level form so
@@ -217,9 +244,9 @@
       (not (and (.exists f) (.isFile f)))
       (err (str "file not found: " (.getPath f)) {:opts opts})
 
-      (not (#{:replace :insert-before :insert-after :add :replace-sexp} op))
+      (not (#{:replace :insert-before :insert-after :add :replace-doc :replace-sexp} op))
       (err (str "invalid :op " (pr-str op))
-        {:expected #{:replace :insert-before :insert-after :add :replace-sexp}})
+        {:expected #{:replace :insert-before :insert-after :add :replace-doc :replace-sexp}})
 
       (and (not= :replace-sexp op)
         (or (not (string? code)) (str/blank? code)))
@@ -242,6 +269,7 @@
               :add            (if tname
                                 (op-insert! zloc tname tdispatch code :after)
                                 (op-append! zloc code))
+              :replace-doc    (op-replace-doc! zloc tname tdispatch code)
               :replace-sexp   (op-replace-sexp! zloc tname (:match opts) code))]
         (cond
           err-msg
