@@ -44,7 +44,8 @@
           (binding [workspace/*workspace-root* (.getCanonicalPath root)]
             (let [d (env-digest/base-digest {:fake true})]
               (expect (contains? d :host))
-              (expect (string? (get-in d [:host :cwd])))
+              ;; :cwd removed — it duplicated :session/workspace :workspace/root.
+              (expect (not (contains? (:host d) :cwd)))
               (expect (keyword? (get-in d [:host :os])))
               (expect (contains? d :project))
               ;; AGENTS.md content now rides in PROJECT-INSTRUCTIONS
