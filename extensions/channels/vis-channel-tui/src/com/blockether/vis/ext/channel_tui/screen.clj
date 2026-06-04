@@ -900,7 +900,12 @@
         transcript-disclosure-copy-regions (disclosure-copy-regions layout text-top inner-h cols)
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
         selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)
-        slash-suggestions (slash-suggestions-for-input screen input slash-command-index)]
+        slash-suggestions (slash-suggestions-for-input screen input slash-command-index)
+        ;; F2 context panel snapshot ({:tasks :facts}) — derived once here (like
+        ;; slash-suggestions) from the active session's cache, refreshed at each
+        ;; turn end. The paint body just reads it; no inline let, no DB hit.
+        ctx-snapshot      (get-in db [:ctx-by-session (get-in db [:session :id])]
+                            {:tasks {} :facts {}})]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome
@@ -962,6 +967,9 @@
       ;; registers no click regions, so order vs. commit-frame! is moot.
       (when (:help-open? db)
         (components/help-overlay! g cols rows))
+      ;; F2 context panel (W3) — paints last, from the derived `ctx-snapshot`.
+      (when (:tasks-open? db)
+        (components/context-overlay! g cols rows ctx-snapshot))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols,
@@ -2820,6 +2828,7 @@
                                  (persist-tabs!)))
                            (recur))
                          :toggle-help (do (state/dispatch [:toggle-help]) (recur))
+                         :toggle-tasks (do (state/dispatch [:toggle-tasks]) (recur))
                          :history-up (do (state/dispatch [:history-up]) (recur))
                          :history-down (do (state/dispatch [:history-down]) (recur))
                          :cycle-reasoning (do (state/dispatch [:cycle-reasoning-level]) (recur))

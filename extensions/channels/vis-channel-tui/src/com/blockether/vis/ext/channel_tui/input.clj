@@ -1036,6 +1036,10 @@
       ;; Ctrl+H which collides with Backspace on many terminals).
       KeyType/F1 {:action :toggle-help :state state}
 
+      ;; F2: toggle the task panel (W3) — :session/tasks with status,
+      ;; acceptance, and verification.
+      KeyType/F2 {:action :toggle-tasks :state state}
+
       KeyType/Enter
       (if (.isAltDown key)
         {:action :continue :state (insert-newline state)}

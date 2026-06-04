@@ -265,9 +265,20 @@ claims today)? What does the user-facing task panel look like (TUI render)?
 - Tasks render raw via `(zp tasks)` so `:acceptance`/`:verified?` auto-surface in ctx.
 - Tests: `task-done-unverified-test` (warns/silent matrix + spec). ctx-engine ns
   123/123; full suite at baseline.
-- **Deferred — USER-visible TUI task panel:** a `:session/tasks` panel in
-  `vis-channel-tui` (status todo/doing/done + acceptance/verified). Larger UI work;
-  next focused piece of W3.
+- **USER-visible TUI context panel (tasks + facts) — DONE.**
+  `components/context-overlay!`: a centered modal (mirrors the help-overlay)
+  toggled by **F2**, showing the active session's working memory in two sections:
+  - **TASKS** — title progress summary (`tasks 2/3 done`), status-sorted (doing →
+    todo → done → cancelled), colored glyphs (green ✓ / amber ◐ / dim ○ / red ✗),
+    verify badges (✓ verified / ⌛ unverified), dim acceptance sub-lines.
+  - **FACTS** — active first, `• key: content` (dim `⊘` for superseded), with a
+    `⛁N` badge for facts carrying `:files` regions; capped with a `+N more` tail.
+  Wiring: `:toggle-tasks` event + F2 keybind + screen paint. Data is
+  **state-driven** — a `:set-ctx-panel` dispatch refreshes the `:ctx-by-session`
+  cache `{:tasks :facts}` ONCE at each turn end (one DB read via the new
+  `core/db-load-latest-ctx` re-export, never in the paint path); the paint reads a
+  derived `ctx-snapshot` binding (hoisted, no inline let). Full suite at baseline,
+  `components_test` clean, 0 structural.
 
 ---
 
