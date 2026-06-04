@@ -333,7 +333,7 @@
                          (when (= target (vec (concat (:slash/parent s) [(:slash/name s)])))
                            s))
                    (vis/registered-slashes))]
-      (when (#{:navigator :dir-picker} (get-in spec [:slash/ui :kind]))
+      (when (#{:navigator :dir-picker :clear-session} (get-in spec [:slash/ui :kind]))
         spec))))
 (defn- prompt-arg-slash-for-input
   "When the typed text is EXACTLY a registered slash that declares
@@ -2084,6 +2084,25 @@
                            (vis/notify! "Session no longer exists"
                              :level :warn
                              :ttl-ms copy-success-ttl-ms))))))
+                 ;; `/clear` (a `:slash/ui {:kind :clear-session}` slash):
+                 ;; tear down THIS session (turns + soul + workspace links)
+                 ;; and open a fresh empty one in its place — like Telegram's
+                 ;; /clear, but in the SAME tab slot (open a fresh focused tab,
+                 ;; drop the old one) so you keep working right where you were.
+                 clear-session!
+                 (fn []
+                   (when-not (:dialog-open? @state/app-db)
+                     (when-let [config (:config @state/app-db)]
+                       (let [old-id     (current-session-id)
+                             old-tab-id (:active-tab-id @state/app-db)]
+                         (open-session-tab! (chat/make-session config) true)
+                         (when old-tab-id
+                           (state/dispatch [:close-tab old-tab-id]))
+                         (when old-id
+                           (try (vis/delete! old-id) (catch Throwable _ nil)))
+                         (vis/notify! "Cleared session"
+                           :level :success
+                           :ttl-ms copy-success-ttl-ms)))))
                  ;; Mint a trunk workspace rooted at `d`, create a session
                  ;; pinned to it, and open it in a new tab — a session in
                  ;; another project, focused, alongside the current ones.
@@ -2684,6 +2703,11 @@
                                  (= :dir-picker (get-in cmd-map [:slash/spec :slash/ui :kind]))
                                  (pick-dir!)
 
+                                 ;; `/clear`: wipe this session and start a
+                                 ;; fresh one in the same tab.
+                                 (= :clear-session (get-in cmd-map [:slash/spec :slash/ui :kind]))
+                                 (clear-session!)
+
                                  (and cmd-map (:slash/text cmd-map))
                                  (when-not (:dialog-open? @state/app-db)
                                    (let [text (cond-> (:slash/text cmd-map)
@@ -2936,6 +2960,7 @@
                                  (when-not (:dialog-open? @state/app-db)
                                    (case kind
                                      :dir-picker (pick-dir!)
+                                     :clear-session (clear-session!)
                                      (show-sessions!)))
                                  (state/dispatch [:reset-input]))
 

@@ -79,17 +79,17 @@
 ;; =============================================================================
 
 (defdescribe specs-shape-test
-  (it "exposes 4 slash specs (parent /draft + 3 subcommands)"
-    (expect (= 4 (count ws-slashes/specs))))
+  (it "exposes 6 slash specs (/draft + 3 subcommands, /dir, /clear)"
+    (expect (= 6 (count ws-slashes/specs))))
 
-  (it "subcommands are apply + abandon + label under `:slash/parent [\"draft\"]`"
+  (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
     (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
       (expect (= 3 (count subs)))
-      (expect (= #{"apply" "abandon" "label"} (set (map :slash/name subs))))))
+      (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
 
   (it "registered through `:ext/slash-commands` without path collisions"
     (let [env (env-with nil)]
-      (expect (= 4 (count (slash/active-slashes env))))
+      (expect (= 6 (count (slash/active-slashes env))))
       (expect (some? (slash/slash-by-path env ["draft" "apply"]))))))
 
 ;; =============================================================================

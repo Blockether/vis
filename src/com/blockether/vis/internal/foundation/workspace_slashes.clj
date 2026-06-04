@@ -143,6 +143,22 @@
    :slash/title  "Open a directory"
    :slash/body   "Use /dir in the TUI to open a session in another directory, in its own tab."})
 
+(defn- non-telegram-channel?
+  "True for every channel EXCEPT Telegram, which ships its own `/clear`.
+   Keeps the two `/clear` specs from colliding (disjoint availability)."
+  [ctx]
+  (not= :telegram (:channel/id ctx)))
+
+(defn- handle-clear
+  "`/clear` is realized by the TUI as a client-side action (`:slash/ui
+   {:kind :clear-session}`): it tears down THIS session and opens a fresh
+   one in the same tab. On other non-Telegram channels it has no engine
+   effect yet; say so."
+  [_ctx]
+  {:slash/status :ok
+   :slash/title  "Clear session"
+   :slash/body   "Use /clear in the TUI to wipe this session and start fresh in the same tab."})
+
 ;; =============================================================================
 ;; Specs vec
 ;; =============================================================================
@@ -180,4 +196,10 @@
     :slash/doc    "Open a session in another directory, in its own tab."
     :slash/usage  "/dir"
     :slash/ui     {:kind :dir-picker}
-    :slash/run-fn handle-dir}])
+    :slash/run-fn handle-dir}
+   {:slash/name   "clear"
+    :slash/doc    "Clear this session and start a fresh one in the same tab."
+    :slash/usage  "/clear"
+    :slash/ui     {:kind :clear-session}
+    :slash/availability-fn non-telegram-channel?
+    :slash/run-fn handle-clear}])
