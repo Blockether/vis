@@ -381,7 +381,7 @@
 (defn needs-input-answer?
   "True for explicit clarification/needs-input answer payloads.
 
-   Foundation exposes this through `(v/needs-input ...)`; the loop
+   Foundation exposes this through `(needs-input ...)`; the loop
    keeps the predicate data-shaped instead of depending on foundation
    namespaces so the core runtime has no extension cycle."
   [v]
@@ -594,7 +594,7 @@
       (str "List with a String literal as head: " (pr-str bad)
         ". Strings are not callable in Clojure; this would throw "
         "ClassCastException. Most often this is JS/Python call-paren leakage: "
-        "write `(v/bold \"text\")`, not `(v/bold(\"text\"))`."))))
+        "write `(cat \"path\")`, not `(cat(\"path\"))`."))))
 
 (def ^:private banned-io-print-names
   "Head-symbol names of stdout/stderr side-effect fns. Matched by NAME so
