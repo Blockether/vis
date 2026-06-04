@@ -79,6 +79,39 @@
             (expect (< (.indexOf s "defn foo") (.indexOf s "defn bar")))))
         (finally (cleanup root))))))
 
+(defdescribe add-op
+  (it "appends a new top-level form at EOF when no :target is given"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f base-src)
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj"
+                     :op :add
+                     :code "(defn appended [] :end)"})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            (expect (re-find #"defn appended" s))
+            ;; after the LAST original form (the defmethod)
+            (expect (< (.indexOf s "defmethod area") (.indexOf s "defn appended")))))
+        (finally (cleanup root)))))
+
+  (it "inserts after :target when one is given (insert-after alias)"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f base-src)
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj"
+                     :op :add
+                     :target "foo"
+                     :code "(defn bar [] :bar)"})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            (expect (< (.indexOf s "defn foo") (.indexOf s "defn bar")))
+            (expect (< (.indexOf s "defn bar") (.indexOf s "defmulti area")))))
+        (finally (cleanup root))))))
+
 (defdescribe missing-target
   (it "returns :error when target def is absent"
     (let [root (tmp-dir)

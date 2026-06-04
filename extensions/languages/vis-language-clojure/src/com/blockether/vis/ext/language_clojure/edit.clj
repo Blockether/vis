@@ -4,7 +4,9 @@
    Public entry: `(apply-edit! workspace-root opts)` where `opts` is:
 
      {:path     \"src/foo.clj\"        ; required
-      :op       :replace | :insert-before | :insert-after | :replace-sexp
+      :op       :replace | :insert-before | :insert-after | :add | :replace-sexp
+                ; :add inserts after :target, or appends a new top-level form
+                ; at EOF when no :target is given
       :target   sym-name-string         ; defn/def name
                 | [sym-name dispatch]   ; defmethod
                 | {:within sym :match \"(...)\"}    ; for :replace-sexp
@@ -153,6 +155,21 @@
            nil])
         [nil (str "target not found: " target-name)]))))
 
+(defn- op-append!
+  "Append a new top-level form after the last top-level form (EOF append).
+   Used by :add when no :target is given. Spacing is approximate;
+   zprint normalizes it on write (`:format?` defaults true)."
+  [zloc code]
+  (let [[node err-msg] (parse-code code)]
+    (if err-msg
+      [nil err-msg]
+      (let [last-z (z/rightmost zloc)]
+        [(-> last-z
+           (z/insert-right (n/spaces 1))
+           (z/insert-right (n/newlines 2))
+           (z/insert-right node))
+         nil]))))
+
 (defn- op-replace-sexp!
   "Replace the first occurrence of `match-code` inside the body of
    `target-name`. We restrict the search to that top-level form so
@@ -200,9 +217,9 @@
       (not (and (.exists f) (.isFile f)))
       (err (str "file not found: " (.getPath f)) {:opts opts})
 
-      (not (#{:replace :insert-before :insert-after :replace-sexp} op))
+      (not (#{:replace :insert-before :insert-after :add :replace-sexp} op))
       (err (str "invalid :op " (pr-str op))
-        {:expected #{:replace :insert-before :insert-after :replace-sexp}})
+        {:expected #{:replace :insert-before :insert-after :add :replace-sexp}})
 
       (and (not= :replace-sexp op)
         (or (not (string? code)) (str/blank? code)))
@@ -222,6 +239,9 @@
               :replace        (op-replace! zloc tname tdispatch code)
               :insert-before  (op-insert!  zloc tname tdispatch code :before)
               :insert-after   (op-insert!  zloc tname tdispatch code :after)
+              :add            (if tname
+                                (op-insert! zloc tname tdispatch code :after)
+                                (op-append! zloc code))
               :replace-sexp   (op-replace-sexp! zloc tname (:match opts) code))]
         (cond
           err-msg
