@@ -1812,6 +1812,19 @@
         "Could not load previous request usage; first iteration will omit utilization")
       nil)))
 
+(defn- stamp-utilization!
+  "Monotonic update of `:engine/utilization` on the ctx-atom. UPGRADES when a
+   real measurement (`util`) exists; NEVER removes an existing value. A
+   transient nil — iter-1 seed miss, or an errored iteration that returned no
+   usage — must not BLANK an already-shown utilization; that flicker is the
+   `sometimes works / sometimes doesn't` bug. The last value carries on the
+   per-session live atom (`:engine/*` is stripped only at persist time) until
+   a fresh request refreshes it; a brand-new session starts blank because
+   nothing was ever stamped."
+  [ctx-atom util]
+  (when (and ctx-atom util)
+    (swap! ctx-atom assoc :engine/utilization util)))
+
 (defn- runtime-turn-prefix
   [environment]
   (let [id-s (str (or (:session-turn-id (ctx-loop/read-turn-state environment))
@@ -3532,25 +3545,19 @@
                     ;; the window the LAST request used). :engine/* is
                     ;; stripped before persist, so the transient count
                     ;; never enters the durable snapshot.
+                    ;; Stamp :engine/utilization (rendered as :session/utilization
+                    ;; next iter). Monotonic — see `stamp-utilization!`: a
+                    ;; transient req=0 keeps the last value instead of blanking.
                     _util-stamp
                     (when-let [ca (:ctx-atom environment)]
                       (let [u   @usage-atom
                             req (if (pos? (long (:iter-count u)))
                                   (long (:last-iter-input u))
                                   (long (:previous-request-input u)))]
-                        ;; Monotonic: only UPGRADE when we have a real
-                        ;; measurement; NEVER dissoc. A transient req=0 (iter-1
-                        ;; seed miss, or an errored iteration that returned no
-                        ;; usage) must not BLANK an already-shown utilization —
-                        ;; that flicker is the "sometimes works, sometimes not"
-                        ;; bug. Keep the last known value until a fresh request
-                        ;; updates it; a brand-new session still starts blank
-                        ;; because nothing was ever stamped.
-                        (when-let [util (ctx-engine/utilization
-                                          req effective-context-limit
-                                          (:input-tokens u)
-                                          safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS)]
-                          (swap! ca assoc :engine/utilization util))))
+                        (stamp-utilization! ca
+                          (ctx-engine/utilization req effective-context-limit
+                            (:input-tokens u)
+                            safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))))
                     ;; D12: foundation hooks emit hook-task shapes
                     ;; `{:id <kw> :task <task-map>}`. Route each through
                     ;; `apply-mutator :task-set!` so the standard write
