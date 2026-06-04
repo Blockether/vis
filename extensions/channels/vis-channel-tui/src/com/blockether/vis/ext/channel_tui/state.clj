@@ -1056,6 +1056,12 @@
   (fn [db [_ loading?]]
     (assoc db :title-loading? (boolean loading?))))
 
+(reg-event-db :toggle-help
+  ;; Flip the Ctrl+H / F1 keyboard-shortcut overlay. Pure render flag —
+  ;; `components/help-overlay!` paints it when `:help-open?` is set.
+  (fn [db _]
+    (update db :help-open? not)))
+
 (reg-event-db :set-title
   (fn [db [_ title]]
     (let [db' (assoc db :title title :title-loading? false)
