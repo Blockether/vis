@@ -1060,14 +1060,14 @@
   ;; Flip the Ctrl+H / F1 keyboard-shortcut overlay. Pure render flag —
   ;; `components/help-overlay!` paints it when `:help-open?` is set.
   (fn [db _]
-    (update db :help-open? not)))
+    (-> db (update :help-open? not) (assoc :tasks-open? false))))
 
 (reg-event-db :toggle-tasks
   ;; Flip the F2 context panel (W3). Pure render flag — the panel reads the
   ;; cached `:ctx-by-session` snapshot (refreshed at each turn end) and
   ;; `components/context-overlay!` paints it when `:tasks-open?` is set.
   (fn [db _]
-    (update db :tasks-open? not)))
+    (-> db (update :tasks-open? not) (assoc :help-open? false))))
 
 (reg-event-db :set-ctx-panel
   ;; Cache a session's `:session/{tasks,facts}` snapshot for the F2 context
