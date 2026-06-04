@@ -186,6 +186,7 @@
                           "(clj/edit {:path \"src/a.clj\" :op :replace :target [\"area\" :rectangle] :code \"...\"})"
                           "(clj/edit {:path \"src/a.clj\" :op :insert-after :target \"foo\" :code \"(defn bar [] 1)\"})"
                           "(clj/edit {:path \"src/a.clj\" :op :add :code \"(defn baz [] 2)\"})"
+                          "(clj/edit {:path \"src/a.clj\" :op :replace-doc :target \"foo\" :code \"Doubles x.\"})"
                           "(clj/edit {:path \"src/a.clj\" :op :replace-sexp :target \"foo\" :match \"(+ 1 1)\" :code \"(+ 2 2)\"})"]})))
    (extension/success {:result (edit/apply-edit! (env-root env) arg)})))
 
@@ -201,7 +202,7 @@
 (def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{:code :port? :host? :ns? :timeout-ms?}`. Returns `{:value :values :out :err :ns :status :ex :root-ex :ms :port :host :timed-out?}`. Default port is the first `(clj/ports)` hit; throws `:clj/no-port` when nothing is running."
        :arglists '([arg])} eval clj-eval-fn)
 
-(def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{:path :op :target :code [:match] [:format?]}`. `:op` ∈ #{:replace :insert-before :insert-after :add :replace-sexp}. `:add` inserts after `:target`, or appends a new top-level form at EOF when no `:target` is given. `:target` is a defn/def name string, `[name dispatch]` for defmethod, or the wrapping form name for `:replace-sexp` (use `:match` for the sexp text to swap). Writes only when the result round-trips parse-clean. `:format? true` (default) runs zprint before writing."
+(def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{:path :op :target :code [:match] [:format?]}`. `:op` ∈ #{:replace :insert-before :insert-after :add :replace-doc :replace-sexp}. `:add` inserts after `:target`, or appends a new top-level form at EOF when no `:target` is given. `:replace-doc` swaps `:target`'s docstring (inserting one if absent) — here `:code` is the docstring TEXT, a plain string, not a quoted form. `:target` is a defn/def name string, `[name dispatch]` for defmethod, or the wrapping form name for `:replace-sexp` (use `:match` for the sexp text to swap). Writes only when the result round-trips parse-clean. `:format? true` (default) runs zprint before writing."
        :arglists '([opts])} edit clj-edit-fn)
 
 ;; Each `:render-fn` is a structured IR builder over the raw
