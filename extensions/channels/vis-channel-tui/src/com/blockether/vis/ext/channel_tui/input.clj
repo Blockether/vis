@@ -1045,7 +1045,6 @@
         {:action :continue :state (insert-newline state)}
         {:action :send :state state})
 
-      KeyType/F2         {:action :continue :state state}
       ;; Ctrl+H is ASCII 0x08 = Backspace; terminals that DO set the ctrl
       ;; modifier deliver Ctrl+H here as Ctrl+Backspace. Route that to the help
       ;; overlay (the user's intent) — delete-to-line-start already lives on

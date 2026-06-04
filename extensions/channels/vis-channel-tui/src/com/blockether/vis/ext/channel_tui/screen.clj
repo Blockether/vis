@@ -2479,6 +2479,8 @@
                              (if-let [hit (cr/lookup mx my)]
                                (case (:kind hit)
                                  :copy-id (copy-session-id! (:text hit))
+                                 :toggle-tasks (state/dispatch [:toggle-tasks])
+                                 :toggle-help (state/dispatch [:toggle-help])
                                  :switch-session (switch-session! {:action :switch,
                                                                    :id (:text hit)})
                                  :workspace-entry
@@ -2547,6 +2549,8 @@
                                    ;; cross-channel notifications system
                                    ;; carries the feedback.
                                :copy-id (copy-session-id! (:text hit))
+                               :toggle-tasks (state/dispatch [:toggle-tasks])
+                               :toggle-help (state/dispatch [:toggle-help])
                                :switch-session (switch-session! {:action :switch,
                                                                  :id (:text hit)})
                                :workspace-entry
