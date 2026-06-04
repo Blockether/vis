@@ -54,6 +54,28 @@
                       (or (nil? first-mut) (< (:position %) first-mut)))
              iters))))
 
+(defn- form-failed?
+  "A form whose eval/tool result signals failure: an edit/tool REJECTION
+   (`:status :error` — clj/edit bad op or missing target, patch no-match,
+   write error) or a downstream eval EXCEPTION (`:root-ex` non-nil — how a
+   broken-paren patch surfaces at require/reload). The safety-vs-corruption
+   signal for the patch-vs-clj/edit question."
+  [form]
+  (let [r (str (:result form))]
+    (boolean (or (re-find #":status :error" r)
+                 (and (re-find #":root-ex" r)
+                   (not (re-find #":root-ex nil" r)))))))
+
+(defn- count-failures [iters] (count (filter form-failed? (mapcat :forms iters))))
+
+(defn- reread-waste
+  "Confirm-read-forgiving locate waste: like `locate-before-edit` but turn 1's
+   discovery is free (legit) and ONE pre-edit read per follow-up turn is
+   forgiven (a single `cat` before a structural rewrite is prudent, not the
+   amnesia the raw metric flags). Counts only the EXCESS re-reads."
+  [turn-pos iters]
+  (if (= 1 turn-pos) 0 (max 0 (dec (locate-before-edit iters)))))
+
 (defn session-signals
   "Raw signal map for a session — safe to diff across runs."
   [db sid]
@@ -71,6 +93,8 @@
                     :summarize    (count-verb #"summarize" its)
                     :multi-form   (count (filter #(> (count (:forms %)) 1) its))
                     :locate-waste (locate-before-edit its)
+                    :reread-waste (reread-waste (:position t) its)
+                    :edit-fails   (count-failures its)
                     :in-tokens    (:input-tokens t)
                     :out-tokens   (:output-tokens t)}))
         all-its (mapcat #(turn-iters db %) turns)
@@ -87,8 +111,11 @@
      ;; batching signal
      :forms-per-iter (frequencies (map #(count (:forms %)) all-its))
      :multi-form-iters (count (filter #(> (count (:forms %)) 1) all-its))
-     ;; re-discovery waste
+     ;; re-discovery waste — raw (every pre-edit locate on follow-ups) and
+     ;; confirm-read-forgiving (excess only). edit-failures = safety signal.
      :locate-waste-total (reduce + (map :locate-waste per))
+     :reread-waste-total (reduce + (map :reread-waste per))
+     :edit-failures-total (count-failures all-its)
      ;; final engine state — did anything durable accumulate?
      :final-tasks    (count (:session/tasks latest))
      :final-facts    (count (:session/facts latest))
@@ -118,12 +145,13 @@
                (:ctx-add-calls s) (:recall-calls s)))
     (println (format "  forms-per-iter=%s  multi-form-iters=%d"
                (:forms-per-iter s) (:multi-form-iters s)))
-    (println (format "  locate-before-edit waste=%d iters" (:locate-waste-total s)))
+    (println (format "  locate-before-edit waste=%d (reread-excess=%d)  edit-failures=%d"
+               (:locate-waste-total s) (:reread-waste-total s) (:edit-failures-total s)))
     (println (format "  final engine state: tasks=%d facts=%d (model-authored facts=%d)"
                (:final-tasks s) (:final-facts s) (:final-facts-model-authored s)))
     (println "────────────────────────────────────────────────────────────")
     (println "PER-TURN:")
     (pp/print-table [:turn :iters :task-set :fact-set :recall :multi-form
-                     :locate-waste :in-tokens :out-tokens :request]
+                     :locate-waste :reread-waste :edit-fails :in-tokens :out-tokens :request]
       (:per-turn s))
     s))
