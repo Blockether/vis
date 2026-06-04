@@ -3,7 +3,7 @@
 
    Produces a bounded map the model reads each iter:
 
-     {:host       {:cwd :os :shell :clock}
+     {:host       {:os :shell :clock}   ; cwd lives in :session/workspace :workspace/root
       :project    {:kind :primary-language? :extension-count? :agents-md?}
       :extensions {:active-count :aliases}}
 
@@ -71,11 +71,12 @@
    the active workspace cwd instead of the shell from which Vis launched."
   []
   (try
-    (let [cwd   (.getPath (workspace/cwd))
-          os    (normalize-os (System/getProperty "os.name"))
+    (let [os    (normalize-os (System/getProperty "os.name"))
           shell (normalize-shell (System/getenv "SHELL"))
           clock (iso-clock)]
-      (cond-> {:cwd cwd :os os}
+      ;; No :cwd — it duplicates :session/workspace :workspace/root (both the
+      ;; active workspace dir). The model reads the cwd from the workspace block.
+      (cond-> {:os os}
         shell (assoc :shell shell)
         clock (assoc :clock clock)))
     (catch Throwable _ nil)))

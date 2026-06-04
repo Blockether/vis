@@ -26,11 +26,6 @@
         (delete path)
         (delete-if-exists path)
         (exists? path)
-        (cwd)
-        (parent path)
-        (file-name path)
-        (extension path)
-        (relativize from to)
 
    Hard guard: every path must stay inside the session's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."

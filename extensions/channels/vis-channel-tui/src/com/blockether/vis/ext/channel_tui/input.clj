@@ -1046,10 +1046,15 @@
         {:action :send :state state})
 
       KeyType/F2         {:action :continue :state state}
-      KeyType/Backspace  {:action :continue :state (cond
-                                                     (.isAltDown key)  (delete-word-backward state)
-                                                     (.isCtrlDown key) (delete-line-backward state)
-                                                     :else             (delete-backward state))}
+      ;; Ctrl+H is ASCII 0x08 = Backspace; terminals that DO set the ctrl
+      ;; modifier deliver Ctrl+H here as Ctrl+Backspace. Route that to the help
+      ;; overlay (the user's intent) — delete-to-line-start already lives on
+      ;; Ctrl+U, so this binding was redundant. Plain/Alt Backspace unchanged.
+      KeyType/Backspace  (if (.isCtrlDown key)
+                           {:action :toggle-help :state state}
+                           {:action :continue :state (if (.isAltDown key)
+                                                       (delete-word-backward state)
+                                                       (delete-backward state))})
       KeyType/ArrowLeft  {:action :continue :state (if (.isAltDown key)
                                                      (move-word-left state)
                                                      (move-left state))}

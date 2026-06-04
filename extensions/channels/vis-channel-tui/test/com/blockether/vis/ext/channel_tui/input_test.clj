@@ -251,7 +251,9 @@
                        (assoc :ccol 0))]
       (expect (= {:action :continue :state word-gone}
                 (input/handle-key (alt-special-key KeyType/Backspace) state)))
-      (expect (= {:action :continue :state line-gone}
+      ;; Ctrl+Backspace ≡ Ctrl+H → toggles the help overlay (state untouched);
+      ;; delete-to-line-start moved fully to Ctrl+U (below).
+      (expect (= {:action :toggle-help :state state}
                 (input/handle-key (ctrl-special-key KeyType/Backspace) state)))
       (expect (= {:action :continue :state line-gone}
                 (input/handle-key (ctrl-key (Character. \u)) state))))))
