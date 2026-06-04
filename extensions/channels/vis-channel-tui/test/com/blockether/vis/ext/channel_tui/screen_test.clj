@@ -650,8 +650,8 @@
     (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
           summary     [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file"]]]
           display     [:ir {} [:p {} [:span {} huge-result]]]
-          trace       [{:forms [{:code          "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
-                                 :channel       [{:position 0 :form "(v/patch)" :symbol :v/patch :op :v/patch
+          trace       [{:forms [{:code          "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
+                                 :channel       [{:position 0 :form "(patch)" :symbol :patch :op :patch
                                                   :tag :mutation :success? true :error nil
                                                   :result {:summary summary :display display}}]
                                  :result-render summary

@@ -234,10 +234,10 @@
           To jump, pass your own {:offset N}. A clipped value's :vis/full
           handle IS the first (recall …) of this scroll.
       SEARCH — find a scope/id you don't have:
-        (recall {:match \"v/patch auth\" :scope-after \"t2/i1\"})
+        (recall {:match \"patch auth\" :scope-after \"t2/i1\"})
           → [{:scope :preview :rank}]. :match REQUIRED, :limit 10. Over
-            NON-summarized iters only. HISTORY search, NOT files (v/rg …).
-        (doc 'sym)        ; QUOTED symbol ('v/cat, not v/cat) — docstring
+            NON-summarized iters only. HISTORY search, NOT files (rg …).
+        (doc 'sym)        ; QUOTED symbol ('cat, not cat) — docstring
                           ; + arglists + SOURCE in one call
         (apropos \"text\")  ; fuzzy name/doc search; arg is a plain STRING,
                           ; not a symbol or regex
@@ -272,10 +272,10 @@
           When a summarized range READ or CHANGED a file, you MUST add :files:
           FULL path + the interesting :regions. Carry the VERBATIM :src (so the
           region is readable + editable from memory) AND its :from-hash/:to-hash
-          — the per-line hashes from the v/cat gutter — so you can re-patch it by
+          — the per-line hashes from the cat gutter — so you can re-patch it by
           hash with no re-cat. This lets the big raw file-read pins be dropped:
           never re-cat a region you've kept. If you must refresh one, read it
-          back by content with (v/cat path :hash from-hash to-hash) — not by line
+          back by content with (cat path :hash from-hash to-hash) — not by line
           number (those drift).
         trailer range → one recap stub; N facts/tasks → one new summary
         fact, originals → :archived. Nothing is lost: (recall \"t<N>/i<M>\")
@@ -297,7 +297,7 @@
             don't probe. Filesystem/VCS go through extension tools
             (foundation `v/`, `git/`).
 
-    ERRORS  On form error, read it before retrying. Failed v/patch?
+    ERRORS  On form error, read it before retrying. Failed patch?
             Re-cat the region for current text. Same approach failing
             twice? Change strategy.
     "))
@@ -414,9 +414,15 @@
   [ext body]
   (let [body (extension/normalize-prompt-text body)]
     (when (and (string? body) (not (str/blank? body)))
-      (str ";; -- EXTENSION " (extension-prompt-id ext) " --\n"
-        body
-        (when-not (str/ends-with? body "\n") "\n")))))
+      (if (extension/ext-builtin? ext)
+        ;; BUILT-IN (core kernel, e.g. foundation): render the body bare — NO
+        ;; `;; -- EXTENSION … --` header — so its prompt reads as part of the
+        ;; core surface, not a droppable plug-in fragment. Mirrors the bare
+        ;; sandbox symbol binding.
+        (str body (when-not (str/ends-with? body "\n") "\n"))
+        (str ";; -- EXTENSION " (extension-prompt-id ext) " --\n"
+          body
+          (when-not (str/ends-with? body "\n") "\n"))))))
 
 (defn- extensions-prompt-block
   "Collect prompt text from every active extension that declares
@@ -424,7 +430,11 @@
    registration). Non-blank results are normalized, wrapped as labeled
    extension fragments, then joined into one extension context block."
   [environment active-extensions]
-  (let [fragments (keep (fn [ext]
+  (let [;; Built-ins first so the core kernel prompt (foundation) leads the
+        ;; block, header-less, before any third-party `;; -- EXTENSION --`.
+        active-extensions (sort-by (complement extension/ext-builtin?)
+                            (or active-extensions []))
+        fragments (keep (fn [ext]
                           (when-let [f (:ext/prompt ext)]
                             (try
                               (let [result (call-extension-callback ext f environment)]

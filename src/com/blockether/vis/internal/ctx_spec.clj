@@ -228,8 +228,8 @@
 ;; region is {:src "<verbatim text>" :note "<what/why>" :lines [start end]?}.
 ;;
 ;; Aligned with vis's NATIVE hashline editing (foundation-core editing/patch):
-;; vis edits by CONTENT HASH, not line number. `v/cat` shows `<ln> <hash>│ text`
-;; and `v/patch {:from-hash H1 :to-hash H2 :replace R}` resolves those per-line
+;; vis edits by CONTENT HASH, not line number. `cat` shows `<ln> <hash>│ text`
+;; and `patch {:from-hash H1 :to-hash H2 :replace R}` resolves those per-line
 ;; hashes against LIVE content. So a region carries:
 ;;   :src        verbatim text — the MEMORY (what's there, for reasoning) and a
 ;;               `:search`-patch fallback; required (a 4-hex hash alone is opaque).

@@ -9,9 +9,9 @@
      (clj/eval ...) -> eval in a running nREPL (per-port conn pool)
      (clj/edit {:path :op :target :code}) -> rewrite-clj edit
 
-   No surface duplicates foundation-core's `v/*`. `v/cat`/`v/rg`/
-   `v/patch` stay the right answer for everything Clojure-agnostic —
-   including structure exploration: `v/rg` (with `:context`) plus the
+   No surface duplicates foundation-core's `v/*`. `cat`/`rg`/
+   `patch` stay the right answer for everything Clojure-agnostic —
+   including structure exploration: `rg` (with `:context`) plus the
    engine `v/engine-symbol-documentation` / `-source-code` cover def
    lookup. (The old `clj/outline` / `clj/find` rode a hardcoded
    def-head allowlist that silently dropped `deftest` and any
@@ -247,8 +247,8 @@
     "                                      :port is optional — auto-discovered from the\n"
     "                                      workspace `.nrepl-port` when omitted.\n"
     "  (clj/edit {:path :op :target :code [:match] [:format?]})\n"
-    "For structure exploration use `v/rg` (with `:context`) + the engine `v/engine-symbol-documentation` / `-source-code` — there is no clj outline/find tool.\n"
-    "Use `clj/edit` for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `v/patch` for `.clj/.cljc/.cljs`. Use `clj/eval` to verify behaviour against the running REPL before claiming a fix."))
+    "For structure exploration use `rg` (with `:context`) + the engine `v/engine-symbol-documentation` / `-source-code` — there is no clj outline/find tool.\n"
+    "Use `clj/edit` for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`. Use `clj/eval` to verify behaviour against the running REPL before claiming a fix."))
 
 (def vis-extension
   (vis/extension

@@ -535,7 +535,7 @@
 
   (it "expands local @mentions to a tool-agnostic attached-file directive"
     ;; Per `file-mention->prompt-block` contract: emit a short
-    ;; directive only (no `(v/cat ...)` / `(v/preview ...)`
+    ;; directive only (no `(cat ...)` / `(v/preview ...)`
     ;; boilerplate). The model picks the right tool itself.
     (let [file (java.io.File/createTempFile "vis-input-large" ".clj")]
       (spit file (str/join "\n" (repeat 121 "x")))

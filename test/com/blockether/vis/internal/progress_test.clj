@@ -208,7 +208,7 @@
     (let [tracker (progress/make-progress-tracker)
           on (:on-chunk tracker)]
       (on {:phase :form-result :iteration-count 1 :position 0
-           :code "(v/cat \"x\")"
+           :code "(cat \"x\")"
            :result "alpha\nbeta"})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (empty? (or (:recaps entry) [])))))))

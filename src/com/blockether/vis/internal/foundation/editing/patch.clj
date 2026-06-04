@@ -1,10 +1,10 @@
 (ns com.blockether.vis.internal.foundation.editing.patch
-  "Fuzzy line-based matching toolkit used by `v/patch` exact-replace.
+  "Fuzzy line-based matching toolkit used by `patch` exact-replace.
 
    This namespace USED to also carry the Codex `apply_patch` envelope
    parser, but envelope mode was retired — we consolidated to a single
-   per-intent mutation surface (`v/patch` exact-replace + `v/write` /
-   `v/move` / `v/delete`). The fuzzy matcher stays because it is what
+   per-intent mutation surface (`patch` exact-replace + `write` /
+   `move` / `delete`). The fuzzy matcher stays because it is what
    lets multi-line `:search` blocks tolerate whitespace and typographic
    drift before they fall through to `:no-match`.
 
@@ -332,7 +332,7 @@
 ;;   indices-matching-hash    lines hash      -> [0-based idx …]
 ;;   resolve-hash-edit        content h h2 rep -> {:new-content}|{:error}
 ;;
-;; The gutter the reader SEES is the edit address — `v/patch :from-hash`
+;; The gutter the reader SEES is the edit address — `patch :from-hash`
 ;; resolves the same `line-hash` against live content. Line numbers live
 ;; only in the CAT summary / range headers (navigation), never the gutter:
 ;; hashes replace them.
@@ -375,7 +375,7 @@
    ambiguous and `resolve-hash-edit` refuses it (caller falls back to
    `:search`).
 
-   Hot path: runs once per line on every `v/cat` render AND every patch
+   Hot path: runs once per line on every `cat` render AND every patch
    resolve. Formats with `Integer/toHexString` + a left-pad rather than
    java.util.Formatter, which benches ~1.5x slower; the trimmed
    `String/hashCode` is a JIT intrinsic so we lean on it instead of a
@@ -411,7 +411,7 @@
 
 (defn lines->hashes
   "`{line-number hash}` map of the USABLE anchors in `tuples` (non-blank
-   and unique within the set). The canonical `:hashes` payload `v/cat`
+   and unique within the set). The canonical `:hashes` payload `cat`
    returns — the SINGLE place it is built (read-file / read-file-ranges /
    tail-file all route here). Ambiguous and blank lines are intentionally
    omitted: the model only ever sees hashes it can actually edit by."
@@ -512,11 +512,11 @@
   "Resolve `from-hash` (and `to-hash`, defaulting to `from-hash` for a single
    line) against the LIVE `current` content by recomputing `line-hash` per
    line — so the anchor lands on the right line even if it drifted since the
-   `v/cat` read. Each hash must match EXACTLY one line; a dup-line collision is
+   `cat` read. Each hash must match EXACTLY one line; a dup-line collision is
    refused (caller falls back to `:search`). Returns `{:from-line N :to-line N}`
    (1-based, INCLUSIVE) or `{:error {:reason KW …}}`.
 
-   Shared by `resolve-hash-edit` (WRITE — v/patch :from-hash) and the v/cat
+   Shared by `resolve-hash-edit` (WRITE — patch :from-hash) and the cat
    `:hash` READ path so both address lines by content identically."
   [^String current from-hash to-hash]
   (let [lines   (split-content-lines current)
@@ -549,7 +549,7 @@
   "Content-addressed line-range replace. Resolves `from-hash` (and
    `to-hash`, defaulting to `from-hash` for a single line) against the
    LIVE `current` content by recomputing `line-hash` per line — so the
-   edit lands on the right line even if it drifted since the `v/cat` read.
+   edit lands on the right line even if it drifted since the `cat` read.
    Each hash must match EXACTLY one line; a dup-line collision is refused
    (use `:search`). Returns `{:new-content S :applied-line N}` or
    `{:error {:reason KW …}}`."

@@ -356,13 +356,13 @@
                              (constantly [])) 'recall))]
       (it "joins a hit to its tN/iM scope (default limit 10)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
-                      (fn [_db q _opts] (when (= q "v/rg")
+                      (fn [_db q _opts] (when (= q "rg")
                                           [{:owner-table "session_turn_iteration" :owner-id "it-1b"
-                                            :field "code" :snippet "(v/rg …)" :rank -1.2}]))
+                                            :field "code" :snippet "(rg …)" :rank -1.2}]))
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
-          (let [hits ((mk-recall []) {:match "v/rg"})]
+          (let [hits ((mk-recall []) {:match "rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
       (it "INCLUDES hits inside a summarized range (summarized stays searchable)"

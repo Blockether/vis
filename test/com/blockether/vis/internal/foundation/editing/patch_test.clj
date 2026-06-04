@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.editing.patch-test
   "Fuzzy line-matching toolkit covered here. Envelope-mode parser / hunk
-   applier were retired together with `v/patch`'s envelope grammar; only
+   applier were retired together with `patch`'s envelope grammar; only
    the per-line fuzzy passes remain.
 
    Temp files under `target/editing-test/` stay inside cwd so
@@ -35,7 +35,7 @@
 
 (defdescribe seek-sequence-with-pass-test
   ;; seek-sequence-with-pass is what powers the line-based fuzzy fallback
-  ;; in v/patch exact-replace mode. It MUST report which fuzzy strategy
+  ;; in patch exact-replace mode. It MUST report which fuzzy strategy
   ;; actually fired so the model can tell the difference between an
   ;; expected exact hit and a salvage — the prompt nudges humans toward
   ;; that information.

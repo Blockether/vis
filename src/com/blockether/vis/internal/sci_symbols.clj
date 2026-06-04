@@ -35,8 +35,8 @@
 
 (defn- coerce-symbol
   "Normalize the `(doc ...)` arg. Accepts a symbol, keyword, or string;
-   anything else is stringified. Lets the model pass `'v/cat`, `:v/cat`,
-   or `\"v/cat\"` interchangeably."
+   anything else is stringified. Lets the model pass `'cat`, `:cat`,
+   or `\"cat\"` interchangeably."
   [x]
   (cond
     (symbol? x)  x
@@ -61,7 +61,7 @@
 (defn doc
   "Everything about one SCI symbol in a single map: docstring,
    arglists, macro? flag, and SOURCE. `sym` may be quoted
-   (`'v/cat`), a keyword, or a string.
+   (`'cat`), a keyword, or a string.
 
    Returns `{:symbol :resolved-symbol :found? :doc :arglists :macro?
    :source :source-length}`, or `{:found? false :message ...}` when the
@@ -89,7 +89,7 @@
 (defn- namespace-aliases
   "Reverse the SCI `:ns-aliases` map to `{ns-sym [alias ...]}` so a
    resolved symbol can be re-displayed under the alias the model
-   actually types (e.g. `vis.ext.foundation/cat` → `v/cat`)."
+   actually types (e.g. `vis.ext.foundation/cat` → `cat`)."
   [sci-env]
   (reduce-kv (fn [acc alias ns-sym]
                (update acc (ns-display ns-sym) (fnil conj []) alias))
@@ -108,7 +108,7 @@
 (defn apropos
   "Fuzzy search across every SCI symbol's name + docstring. `query` is
    a plain STRING (case-insensitive substring), not a regex or quoted
-   symbol — so there is no `'v/rg` vs `v/rg` trap.
+   symbol — so there is no `'rg` vs `rg` trap.
 
    Returns `{:query :count :matches [{:symbol :doc :arglists :macro?
    :has-source?} ...]}`; matches are name-sorted and capped. Never

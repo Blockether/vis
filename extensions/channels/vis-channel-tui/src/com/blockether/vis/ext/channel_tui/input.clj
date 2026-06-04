@@ -889,9 +889,9 @@
   "Agent-facing expansion of `@path`. Minimal directive only - tells
    the model the user attached a file and to read it via the normal
    tool surface before answering. Does NOT pre-bind a SCI var, does
-   NOT prescribe a specific `(v/cat ...)` / `(v/cat ...)` form,
+   NOT prescribe a specific `(cat ...)` / `(cat ...)` form,
    does NOT inject a line range. The model picks the right tool
-   (`v/cat`, `z/symbols`, `z/locators`, etc.) based on
+   (`cat`, `z/symbols`, `z/locators`, etc.) based on
    the question.
 
    Unresolved paths fall back to the visible `@path` token verbatim
@@ -912,7 +912,7 @@
    The outbound agent prompt - this function's output - carries the
    directive so the model knows the user attached the file and should
    read it before answering. We deliberately do NOT inject any
-   `(def ...)` / `(v/cat ...)` / `(v/cat ...)` boilerplate; forcing
+   `(def ...)` / `(cat ...)` / `(cat ...)` boilerplate; forcing
    a specific first-observation form makes the model dump focused-range
    previews even when the question is structural and wastes iterations.
    Unknown paths pass through unchanged."

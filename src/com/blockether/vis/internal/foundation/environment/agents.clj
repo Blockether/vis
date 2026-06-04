@@ -4,7 +4,7 @@
    handling is core functionality (drives system prompt + ctx
    digest), so it now lives outside the foundation extension.
 
-   This shim keeps the legacy `v/main-agent-instructions` tool +
+   This shim keeps the legacy `main-agent-instructions` tool +
    any downstream `(:project ctx) :guidance` consumers compiling
    while they migrate to the internal namespace."
   (:require

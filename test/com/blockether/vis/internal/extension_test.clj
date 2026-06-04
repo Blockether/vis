@@ -24,8 +24,8 @@
     ;; summaries slipped through because `[:ir …]` still reads as an IR node.
     ;; The predicate now only checks result presence; the `:ext.sink/result`
     ;; key spec validates the shape against the raw value.
-    (let [entry {:position 0 :form "(v/ls \".\")" :success? true
-                 :symbol 'ls :tag :observation :op :v/ls
+    (let [entry {:position 0 :form "(ls \".\")" :success? true
+                 :symbol 'ls :tag :observation :op :ls
                  :result {:summary {:left   [:strong {} "LS"]
                                     :center [:c {} "."]
                                     :right  "18 entries"}
@@ -37,7 +37,7 @@
     (expect (= :rejected
               (try
                 (extension/assert-sink-entry!
-                  {:position 0 :form "(v/ls)" :success? true
+                  {:position 0 :form "(ls)" :success? true
                    :result [:ir {} [:p {} [:span {} "raw ir, not {:summary :display}"]]]
                    :error nil})
                 :accepted
@@ -227,7 +227,7 @@
 
   ;; Channel entries must carry `:form-idx` so the rebuild path can
   ;; partition the fence's render sink back onto per-form envelopes.
-  ;; Without it, a multi-form fence (\"three v/ls calls in three
+  ;; Without it, a multi-form fence (\"three ls calls in three
   ;; (def …) forms\") restores as one bubble whose first form glues
   ;; the IR for every tool call and the rest restore blank.
   (it "stamps `:form-idx` on every render sink entry from `*current-form-idx*`"

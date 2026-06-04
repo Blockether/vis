@@ -21,7 +21,7 @@
     (let [inspect @#'introspection/foundation-inspect
           result  (inspect {:session-id nil :db-info nil})]
       (expect (extension/tool-result? result))
-      (expect (= :v/session-state (:symbol result)))
+      (expect (= :session-state (:symbol result)))
       (expect (map? (:result result)))))
 
   (it "renders channel output as a {:summary :display} contract (no pr-str data dump)"

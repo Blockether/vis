@@ -309,14 +309,14 @@
 
 (defn- banned-slurp
   "Sandbox `slurp` override that rejects every call. Agent-facing file
-   reads go through `v/cat`, not raw `slurp`. `slurp` returns raw bytes with
+   reads go through `cat`, not raw `slurp`. `slurp` returns raw bytes with
    no path-policy hint and no opinionated prompt surface, making it a
    cache-coherency footgun: a var bound from `slurp` can't be validated
    against the filesystem the next iteration, so the agent silently
    trusts stale content. Better to refuse the call and point at the
    sanctioned `v/` file surface."
   [& _args]
-  (throw (ex-info (str "slurp is banned in the sandbox - use (v/cat \"path\") "
+  (throw (ex-info (str "slurp is banned in the sandbox - use (cat \"path\") "
                     "for full-file reads. The sanctioned file surface stays cwd-safe "
                     "and consistent with the prompt.")
            {:type :tool/banned :tool 'slurp})))
@@ -390,7 +390,7 @@
                        're-seq safe-re-seq
                        're-matches safe-re-matches
                        ;; `slurp` is BANNED. File reads go through the
-                       ;; sanctioned `v/` filesystem surface (`v/cat`
+                       ;; sanctioned `v/` filesystem surface (`cat`
                        ;; for full-file acquisition). `slurp` bypasses
                        ;; the prompt's path-policy and encourages
                        ;; ad-hoc I/O.
@@ -615,7 +615,7 @@
                                                ;; sanctioned `v/` file helpers. Keeping it as a sandbox
                                                ;; binding (not a deny) gives the LLM a useful error
                                                ;; message instead of SCI's generic "not allowed".
-                                               ;; `spit` stays denied - `v/patch` is the sanctioned mutation path.
+                                               ;; `spit` stays denied - `patch` is the sanctioned mutation path.
                                                ;;
                                                ;; `require`, `import`, `find-ns` are NOT denied either
                                                ;; (real Clojure reach for namespace discovery); the tool

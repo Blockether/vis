@@ -144,6 +144,47 @@ region's stored hashes had no read path back. Closed that:
 - `prompt.clj` — `:files` clause notes refresh via `(v/cat path :hash from to)`.
 Now hashline is symmetric: read-by-hash + edit-by-hash, both drift-proof.
 
+**W7 — foundation-core promoted to a CORE module (DONE; de-alias W7c pending).**
+Relocated the whole `vis-foundation-core` extension → `src/com/blockether/vis/
+internal/foundation/**` (ns `…ext.foundation-core.*` → `…internal.foundation.*`);
+tests → `test/…/internal/foundation/**`. Folded deps (babashka.fs, java-diff-utils)
+into root `deps.edn`; removed the `:local/root` + 2 test-path lines; deleted the
+extension dir + its `META-INF/vis-extension/vis.edn` manifest. Internal loads it as a
+BUILT-IN: `extension/discover-extensions!` → `load-builtin-extensions!`
+(`builtin-extension-nses '[…internal.foundation.core]`) BEFORE the third-party
+manifest scan, so its top-level `register-extension!` fires from core — the
+"internal registers tools/renderers" capability — while the public extension API
+stays intact. Verified: clj-kondo **0 errors**; live nREPL — foundation loads, all 16
+extensions register incl. `foundation-core`, `v/cat :hash`/`resolve-hash-range`
+resolve; the one move-caused test (`foundation/core_test` "ships a manifest")
+rewritten → "registers as a BUILT-IN" (6/6). Other ~31 suite failures are
+PRE-EXISTING (render-contract migration in `*/render_test`, TUI fixtures, slash
+content drift) — only 1 structural fingerprint in the full run, now fixed.
+**W7c — de-alias built-ins to BARE symbols (DONE).** Foundation is no longer aliased
+`v/`; its tools bind BARE into the sandbox ns next to the engine verbs:
+`(cat …)`, `(patch …)`, `(rg …)`, `(ls …)`.
+- `:ext/sci` gains `:ext.sci/builtin? true` (replaces `:ext.sci/alias 'v`);
+  `ext-builtin?` accessor; spec predicate `ns-alias-required-when-symbols?` accepts
+  built-ins; `wrap-extension-thunked` (env via thunk) + `builtin-sandbox-bindings`
+  merged into `env-bindings` (loop.clj) so symbols intern bare at sci-context
+  creation, like `done`/`task-set!`.
+- **op-tag classification works automatically**: `tool-call-name` returns `(str sym)`
+  with no alias → canonical op-keywords are bare (`:cat`, `:patch`), so
+  `op-keyword->tag` + the head-tag-resolver classify bare `(patch …)` as `:mutation`.
+  Verified live: `op-tag :patch → :mutation`, `:cat → :observation`.
+- **render-fns preserved** (the explicit requirement): bare symbols route through the
+  same `invoke-symbol-wrapper → write-sink-entries! → render-fn` pipeline; `cat`/`ls`/
+  `rg`/`patch` all carry `render-fn? true`.
+- **Reword:** 650 `v/<sym>` → bare across 50 files (prompt, docstrings, error
+  messages, op-labels, tests). op-friendly-labels keyed bare (`:cat` → READ);
+  3 fallout tests updated (CAT→READ label now correct for the bare op).
+- **Prompt fold:** built-in extension prompts render header-less + first
+  (`extension-prompt-fragment` / `extensions-prompt-block`), so foundation's prompt
+  reads as CORE, not a `;; -- EXTENSION --` fragment.
+- *Deferred:* a few cosmetic `v/` doc-text mentions to non-tool symbols
+  (`v/cwd`, `v/grep`, `:v/tool`, `(v/extensions)`); proper prompt OPTIMIZATION → W4
+  (measured on benches, per the "judge on benches" principle).
+
 **Open / follow-ups.**
 - **Graduation to facts (W2).** `:files` records live on the trailer stub, which
   can itself be re-summarized away — W2 decides whether/when they become durable

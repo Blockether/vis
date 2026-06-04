@@ -3,7 +3,7 @@
 
    These pin the user-visible contract for the canonical fence/block shapes
    the model emits in practice: a git status+add+commit!+push! fence, nested
-   `let` tool calls, a `(def x (v/cat ...))` bind, plain values, value-only
+   `let` tool calls, a `(def x (cat ...))` bind, plain values, value-only
    errors, and the cancellation / timeout / merged-fence edge cases.
 
    Each fixture builds ONE canonical iteration-entry (`:forms` + the per-form
@@ -161,25 +161,25 @@
         (expect (not (some #(str/includes? % "git/status") lines)))))))
 
 ;; ---------------------------------------------------------------------------
-;; Fixture 2 — nested `let`: (let [a (v/cat) b (v/cat)] (v/patch)).
+;; Fixture 2 — nested `let`: (let [a (cat) b (cat)] (patch)).
 ;; Two observations + one mutation, ONE block, three op rows.
 ;; ---------------------------------------------------------------------------
 
 (defn- nested-let-entry []
   (single-form-entry
-    "(let [a (v/cat \"a\")\n      b (v/cat \"b\")]\n  (v/patch [{:path \"x\" :search \"a\" :replace \"b\"}]))"
+    "(let [a (cat \"a\")\n      b (cat \"b\")]\n  (patch [{:path \"x\" :search \"a\" :replace \"b\"}]))"
     "t9/i2/f1"
     [(ok-op 0 :cat     :observation "CAT"   "a")
      (ok-op 1 :cat     :observation "CAT"   "b")
-     (ok-op 2 :v/patch :mutation    "PATCH" "+1 -0")]))
+     (ok-op 2 :patch :mutation    "PATCH" "+1 -0")]))
 
 (defdescribe nested-let-fixture-test
-  (describe "nested (let [a (v/cat) b (v/cat)] (v/patch))"
+  (describe "nested (let [a (cat) b (cat)] (patch))"
     (it "projects ONE block, three ops, 2 observations · 1 mutation"
       (let [block (iteration/iteration-entry->display-block (nested-let-entry))]
         (expect (= 3 (count (:ops block))))
         (expect (= {:observations 2 :mutations 1} (:counts block)))
-        (expect (= [:cat :cat :v/patch] (mapv :op (:ops block))))))
+        (expect (= [:cat :cat :patch] (mapv :op (:ops block))))))
 
     (it "renders ONE header with `2 observations · 1 mutation` and three op rows"
       (let [lines (rendered (nested-let-entry))
@@ -190,16 +190,16 @@
         (expect (= 3 (count (op-rows lines))))))))
 
 ;; ---------------------------------------------------------------------------
-;; Fixture 3 — (def x (v/cat "x")): one block, one op row.
+;; Fixture 3 — (def x (cat "x")): one block, one op row.
 ;; ---------------------------------------------------------------------------
 
 (defn- def-bind-entry []
   (single-form-entry
-    "(def x (v/cat \"x\"))" "t3/i1/f1"
+    "(def x (cat \"x\"))" "t3/i1/f1"
     [(ok-op 0 :cat :observation "CAT" "x")]))
 
 (defdescribe def-bind-fixture-test
-  (describe "(def x (v/cat \"x\"))"
+  (describe "(def x (cat \"x\"))"
     (it "projects ONE block, ONE op"
       (let [block (iteration/iteration-entry->display-block (def-bind-entry))]
         (expect (= 1 (count (:ops block))))

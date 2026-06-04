@@ -89,9 +89,9 @@
           ls-summary [:ir {} [:p {} [:strong {} [:span {} "LS"]]
                               [:span {} "  3 entries"]]]
           turn-id    "123e4567-e89b-12d3-a456-426614174000"
-          form       {:code            "(v/ls \".\")"
+          form       {:code            "(ls \".\")"
                       :comment         nil
-                      :render-segments [{:kind :code :source "(v/ls \".\")"}]
+                      :render-segments [{:kind :code :source "(ls \".\")"}]
                       :channel         [(op-entry ls-summary ls-display)]
                       :result-render   ls-display
                       :result-kind     :tool
@@ -182,11 +182,11 @@
       ;; neutral result-marker band.
       (expect (str/starts-with? op-line p/MARKER_OP_ROW))))
 
-  (it "hides `(def r (v/ls …))` source while keeping the channel preview visible (regression: previous behaviour suppressed both)"
+  (it "hides `(def r (ls …))` source while keeping the channel preview visible (regression: previous behaviour suppressed both)"
     ;; Two-form fence the model emits in practice: bind a tool result
     ;; to a name, then project it via plain Clojure (`select-keys`).
     ;; Pre-fix bug: `code-source-from-render-segments` ignored
-    ;; `:hidden?` so the raw `(def r (v/ls …))` row leaked into the
+    ;; `:hidden?` so the raw `(def r (ls …))` row leaked into the
     ;; trace AND `form-result-kind` saw `:value` (because the
     ;; FENCE's last value was a plain map), so the tool's
     ;; preview pane was suppressed by the `(= :tool result-kind)`
@@ -196,14 +196,14 @@
                       [:code {:lang "text"} ".gitignore\nsrc/"]]
           lines (format-iteration-entry
                   {:iteration 0
-                   :forms [{:code (str "(def r (v/ls \".\"))\n"
+                   :forms [{:code (str "(def r (ls \".\"))\n"
                                     "(select-keys r [:entry-count :file-count])")
                             :comment nil
                             ;; With \":vis/show-raw-code\" OFF (default)
                             ;; the channel hides ALL :code segments — no
                             ;; per-segment :hidden? flag any more.
                             :render-segments [{:kind :code
-                                               :source "(def r (v/ls \".\"))"}
+                                               :source "(def r (ls \".\"))"}
                                               {:kind :code
                                                :source "(select-keys r [:entry-count :file-count])"}]
                             :channel [(op-entry ls-summary ls-display)]
@@ -219,18 +219,18 @@
           badge-line (first (filter #(str/includes? % "LS") visible-lines))]
       ;; Neither raw code row paints; collapsed tool preview shows badge only.
       (expect (not (str/includes? body "(select-keys")))
-      (expect (not (str/includes? body "(def r (v/ls")))
+      (expect (not (str/includes? body "(def r (ls")))
       (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▶") lines))
       (expect (str/includes? body "LS"))
       (expect (not (str/includes? badge-line "t24/i1/b1")))
       (expect (not (str/includes? body ".gitignore")))
       (let [expanded-lines (format-iteration-entry
                              {:iteration 0
-                              :forms [{:code (str "(def r (v/ls \".\"))\n"
+                              :forms [{:code (str "(def r (ls \".\"))\n"
                                                "(select-keys r [:entry-count :file-count])")
                                        :comment nil
                                        :render-segments [{:kind :code
-                                                          :source "(def r (v/ls \".\"))"}
+                                                          :source "(def r (ls \".\"))"}
                                                          {:kind :code
                                                           :source "(select-keys r [:entry-count :file-count])"}]
                                        :channel [(op-entry ls-summary ls-display)]
@@ -257,12 +257,12 @@
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file  changed=1"]]]
           lines (format-iteration-entry
                   {:iteration 0
-                   :forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
+                   :forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
                             :comment nil
                             :render-segments [{:kind :code
-                                               :source "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"}]
+                                               :source "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])"}]
                             :scope "t24/i1/f1"
-                            :channel [(op-entry 0 :v/patch :mutation summary summary true)]
+                            :channel [(op-entry 0 :patch :mutation summary summary true)]
                             :result-render summary
                             :result-kind :tool
                             :result-detail nil
@@ -359,7 +359,7 @@
       (expect (not (str/includes? body "▶ ERROR")))))
 
   (it "keeps other op rows while hiding duplicate inline error op rows"
-    (let [code "(v/cat \"src/com/blockether/vis/internal/ctx/render.clj\")"
+    (let [code "(cat \"src/com/blockether/vis/internal/ctx/render.clj\")"
           msg  "File not found: /Users/fierycod/vis/src/com/blockether/vis/internal/ctx/render.clj"
           err  {:type :clojure.lang/exception-info
                 :message msg
@@ -372,7 +372,7 @@
                                          :error err
                                          :forms [{:code code :comment nil :render-segments nil
                                                   :channel [(op-entry 0 :rg/files :observation rg-summary rg-display true)
-                                                            {:position 1 :symbol :v/cat :op :v/cat
+                                                            {:position 1 :symbol :cat :op :cat
                                                              :tag :observation :success? false
                                                              :error err :result nil}]
                                                   :result-render nil :result-kind :error
@@ -708,7 +708,7 @@
         stid    "abcd1234-5678-9999"
         frag    "tabcd1234"
         trace   [(block "t7/i1/f1" 1200 [(op-entry 0 :git/status :observation (summary "STATUS") (summary "STATUS") true)
-                                         (op-entry 1 :v/ls :observation (summary "LS") (summary "LS") true)])
+                                         (op-entry 1 :ls :observation (summary "LS") (summary "LS") true)])
                  (block "t7/i2/f1" 3300 [(op-entry 0 :git/commit! :mutation (summary "COMMIT") (summary "COMMIT") true)])]
         render* (fn [dx]
                   (->> (:lines (render/format-answer-with-thinking-data*
@@ -1623,7 +1623,7 @@
     ;; renders no result pane, no PREVIEW/RAW switcher, no toggle.
     (render/invalidate-cache!)
     (let [body "only line of preview output"
-          trace [{:forms [{:code "(v/cat file)" :comment nil :render-segments nil :result-render body :result-kind :preview :result-detail {:raw "{:secret \"raw-only\"}"} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+          trace [{:forms [{:code "(cat file)" :comment nil :render-segments nil :result-render body :result-kind :preview :result-detail {:raw "{:secret \"raw-only\"}"} :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:session-id "session"
@@ -1660,8 +1660,8 @@
   (it "renders the tool op summary without retired operation badge noise"
     (render/invalidate-cache!)
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file changed"]]]
-          trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                           :channel [(op-entry 0 :v/patch :mutation summary summary true)]
+          trace [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                           :channel [(op-entry 0 :patch :mutation summary summary true)]
                            :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
@@ -1678,8 +1678,8 @@
     (let [diff (str/join " " (repeat 500 "diff-line"))
           summary [:ir {} [:p {} [:strong {} [:span {} "Patched file."]]]]
           display [:ir {} [:p {} [:strong {} [:span {} "Patched file."]]] [:code {:lang "text"} diff]]
-          trace       [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                                 :channel [(op-entry 0 :v/patch :mutation summary display true)]
+          trace       [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                                 :channel [(op-entry 0 :patch :mutation summary display true)]
                                  :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload     (render/format-answer-with-thinking-data
                         nil trace 96 {:show-iterations true} nil false
@@ -1695,8 +1695,8 @@
     (render/invalidate-cache!)
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "RG"]]
                            [:span {} "  Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)."]]]
-          trace   [{:forms [{:code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil
-                             :channel [(op-entry 0 :v/rg :observation summary summary true)]
+          trace   [{:forms [{:code "(rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil
+                             :channel [(op-entry 0 :rg :observation summary summary true)]
                              :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
@@ -1805,8 +1805,8 @@
                      [:p {} [:span {} "alpha line"]]
                      [:p {} [:span {} "beta line"]]
                      [:p {} [:span {} "gamma line"]]]
-            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                             :channel [(op-entry 0 :v/patch :mutation summary display true)]
+            trace [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                             :channel [(op-entry 0 :patch :mutation summary display true)]
                              :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
@@ -1822,8 +1822,8 @@
       (render/invalidate-cache!)
       (let [summary [:ir {} [:p {} [:strong {} [:span {} "EDITED"]] [:span {} "  src/a.clj"]]]
             display [:ir {} [:p {} [:span {} "1 hunk applied"]]]
-            trace [{:forms [{:code "(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                             :channel [(op-entry 0 :v/patch :mutation summary display true)]
+            trace [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
+                             :channel [(op-entry 0 :patch :mutation summary display true)]
                              :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"}
@@ -2494,7 +2494,7 @@
 
 (defn- cat-sink-entry*
   [position file]
-  {:position position :form (str "(v/cat \"" file "\")")
+  {:position position :form (str "(cat \"" file "\")")
    :symbol :cat :op :cat :tag :observation :success? true :error nil
    :result {:summary (vis/ir-root (vis/ir-p (vis/ir-strong file) "  120 lines"))
             :display (vis/ir-root (vis/ir-p (vis/ir-strong file) "  full body"))}})
@@ -2503,9 +2503,9 @@
   [n]
   (let [channel (mapv (fn [i] (cat-sink-entry* i (str "f" i ".txt"))) (range n))]
     {:position 0
-     :code "(doseq [f files] (v/cat f))"
+     :code "(doseq [f files] (cat f))"
      :forms [{:scope "t1/i1/f1" :tag :observation
-              :src "(doseq [f files] (v/cat f))"
+              :src "(doseq [f files] (cat f))"
               :channel channel :duration-ms 4200 :success? true}]}))
 
 (defn- rendered-lines [entry & [opts]]
@@ -2518,9 +2518,10 @@
         (expect (not-any? #(str/includes? % "100 observations") lines))
         (expect (not-any? #(str/includes? % "observations") lines))))
 
-    (it "emits ONE synthetic grouped row `▶ CAT × 100 (…)`"
+    (it "emits ONE synthetic grouped row `▶ READ × 100 (…)`"
+      ;; `:cat` is the bare canonical op now; its friendly label is READ.
       (let [lines (rendered-lines (fanout-entry* 100))
-            grouped (filter #(str/includes? % "CAT × 100") lines)]
+            grouped (filter #(str/includes? % "READ × 100") lines)]
         (expect (= 1 (count grouped)))
         (expect (str/includes? (first grouped) "▶"))
         (expect (str/includes? (first grouped) "f0.txt"))))
@@ -2530,7 +2531,7 @@
                     {:detail-expansions {:vis.channel-tui/expand-all-details? true}})
             per-op (filter #(str/includes? % "120 lines") lines)]
         ;; The grouped row uses ▼ when open; every underlying op shows below.
-        (expect (some #(str/includes? % "▼ CAT × 100") lines))
+        (expect (some #(str/includes? % "▼ READ × 100") lines))
         (expect (= 100 (count per-op)))))
 
     (it "does not surface the retired soft BATCH HINT header note"

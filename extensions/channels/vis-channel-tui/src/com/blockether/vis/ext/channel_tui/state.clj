@@ -1403,7 +1403,7 @@
   ;;   2. `@path/to/file` mentions inserted by the file picker. Those
   ;;      stay concise in the visible transcript, but expand into
   ;;      a short read-now directive for the AGENT; the model picks
-  ;;      the right tool (`v/cat`, `z/symbols`, etc.) itself.
+  ;;      the right tool (`cat`, `z/symbols`, etc.) itself.
   (fn [db [_ text workspace-id]]
     (let [workspace-id (or workspace-id (current-tab-id db))
           source-db    (db-for-tab db workspace-id)

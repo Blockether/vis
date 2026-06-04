@@ -11,7 +11,7 @@
       :code     \"(defn bar [] ...)\"  ; new form text
       :format?  true                   ; default true; zprint-on-write}
 
-   Why structure-aware: text-level `v/patch` is fragile on Clojure
+   Why structure-aware: text-level `patch` is fragile on Clojure
    because docstrings, metadata, and whitespace make uniqueness
    anchors hard. Name-addressed edits cannot collide.
 

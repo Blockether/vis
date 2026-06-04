@@ -663,12 +663,12 @@
     (let [env    (lp/create-environment ::router {:db :memory})
           answer (str "# What went wrong\n\n"
                    "```clojure\n"
-                   "(v/rg {:any [\":ext/slash-commands\"] :paths [\"extensions\" \"src\"]})\n"
+                   "(rg {:any [\":ext/slash-commands\"] :paths [\"extensions\" \"src\"]})\n"
                    "```\n"
                    "Done.")
           raw    (str "```clojure\n(done {:answer " (pr-str answer) "})\n```")
-          torn   "(done {:answer \"# What went wrong\n\n```clojure\n(v/rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"
-          example "(v/rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"]
+          torn   "(done {:answer \"# What went wrong\n\n```clojure\n(rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"
+          example "(rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"]
       (try
         (with-redefs [svar/ask-code! (fn [_ _]
                                        {:blocks [{:lang "clojure" :source torn}
@@ -692,7 +692,7 @@
                    "```\n"
                    "Use archived introspection later.")
           raw    (str "```clojure\n"
-                   "(v/rg {:any [\"ttl-for\"] :paths [\"src\"]})\n"
+                   "(rg {:any [\"ttl-for\"] :paths [\"src\"]})\n"
                    "(done {:answer " (pr-str answer) "})\n"
                    "```")]
       (try
@@ -911,7 +911,7 @@
                 {}
                 1
                 [{:id 0
-                  :code "(v/cat \"deps.edn\")"
+                  :code "(cat \"deps.edn\")"
                   :channel [{:success? true :result [:ir {}]}]
                   :error nil}]
                 {:answer "done"}

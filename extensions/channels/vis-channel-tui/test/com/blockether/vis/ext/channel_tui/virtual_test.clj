@@ -67,37 +67,37 @@
    dumps, and one answer bubble. Payload text is synthetic; operation mix and
    cardinality are the regression signal."
   []
-  (let [ops      (vec (take 304 (cycle [:v/cat :v/cat :v/ls :v/patch :z/locators :v/rg])))
+  (let [ops      (vec (take 304 (cycle [:cat :cat :ls :patch :z/locators :rg])))
         huge     (str/join "\n" (map #(str "locator-" % " (defn huge-fixture [] :ok)") (range 240)))
         preview  (str/join "\n" (map #(str % ": selected preview line") (range 1 61)))
         mk-form  (fn [idx op]
                    {:code (str "(" (namespace op) "/" (name op) " \"fixture-" idx "\")")
                     :result (case op
-                              :v/cat preview
+                              :cat preview
                               :z/locators huge
-                              :v/ls "directory listing"
-                              :v/patch "1 file changed"
-                              :v/rg "12 matches"
+                              :ls "directory listing"
+                              :patch "1 file changed"
+                              :rg "12 matches"
                               "read 20 lines")
-                    :kind (if (= op :v/cat) :preview :tool)
+                    :kind (if (= op :cat) :preview :tool)
                     :detail {:op op
                              :tag (case op
-                                    (:v/cat :z/locators :v/rg :v/ls) :observation
-                                    :v/patch :mutation
+                                    (:cat :z/locators :rg :ls) :observation
+                                    :patch :mutation
                                     :observation)
                              :presentation-kind (case op
-                                                  (:v/cat :z/locators) :tool/read
-                                                  :v/rg :tool/search
-                                                  :v/patch :tool/edit
-                                                  :v/ls :tool/read
+                                                  (:cat :z/locators) :tool/read
+                                                  :rg :tool/search
+                                                  :patch :tool/edit
+                                                  :ls :tool/read
                                                   :tool/meta)
                              :color-role (case op
-                                           (:v/cat :z/locators) :tool-color/read
-                                           :v/rg :tool-color/search
-                                           :v/patch :tool-color/edit
-                                           :v/ls :tool-color/read
+                                           (:cat :z/locators) :tool-color/read
+                                           :rg :tool-color/search
+                                           :patch :tool-color/edit
+                                           :ls :tool-color/read
                                            :tool-color/meta)
-                             :raw (when (= op :v/cat) (pr-str preview))}})
+                             :raw (when (= op :cat) (pr-str preview))}})
         forms    (mapv mk-form (range) ops)
         trace    (->> forms
                    (partition-all 12)

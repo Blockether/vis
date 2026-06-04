@@ -47,9 +47,9 @@
     ;; collapses the code lines but still keeps the form in the
     ;; iteration trace.
     (expect (= [{:kind :code
-                 :source "(def render-sb-code (v/cat \"x.clj\"))"}]
+                 :source "(def render-sb-code (cat \"x.clj\"))"}]
               (render/parse-block-display
-                "(def render-sb-code (v/cat \"x.clj\"))"))))
+                "(def render-sb-code (cat \"x.clj\"))"))))
 
   (it "hides plain (def x 1) so the DEF SINK is the single source of bound-var truth"
     ;; Pre-fix the renderer kept bare def source visible because the
@@ -123,14 +123,14 @@
 
   (it "hides def docstring form when wrapping a tool call"
     (expect (= [{:kind :code
-                 :source "(def named \"docstring\" (v/cat \"x.clj\"))"}]
+                 :source "(def named \"docstring\" (cat \"x.clj\"))"}]
               (render/parse-block-display
-                "(def named \"docstring\" (v/cat \"x.clj\"))"))))
+                "(def named \"docstring\" (cat \"x.clj\"))"))))
 
   (it "hides bare qualified tool calls so the result pane speaks for itself"
     (expect (= [{:kind :code
-                 :source "(v/cat \"src/foo.clj\")"}]
-              (render/parse-block-display "(v/cat \"src/foo.clj\")"))))
+                 :source "(cat \"src/foo.clj\")"}]
+              (render/parse-block-display "(cat \"src/foo.clj\")"))))
 
   (it "classifies ctx mutators as structured recap segments (engine-only — raw source is hidden)"
     ;; Only task-set! / fact-set! survive; spec-set! and proof extraction
@@ -144,19 +144,19 @@
 
   (it "coalesces neighboring hidden tool calls into one hidden segment"
     (let [out (render/parse-block-display
-                "(v/cat \"a.clj\")\n(v/cat \"b.clj\")")]
+                "(cat \"a.clj\")\n(cat \"b.clj\")")]
       (expect (= 1 (count out)))
       (expect (= :code (-> out first :kind)))))
 
   (it "def and tool call both render hidden so the bubble shows only recap / result rows"
     (let [out (render/parse-block-display
-                "(def x 1)\n(v/cat \"a.clj\")")]
+                "(def x 1)\n(cat \"a.clj\")")]
       ;; Both forms hidden — same :hidden? flag means the coalesce
       ;; pass merges them into one hidden code segment.
       (expect (= 1 (count out)))
       (expect (= :code (-> out first :kind)))))
 
-  (it "marks `(def r (v/ls …))` + `(select-keys r […])` BOTH hidden so the channel preview speaks alone"
+  (it "marks `(def r (ls …))` + `(select-keys r […])` BOTH hidden so the channel preview speaks alone"
     ;; Real-world fence the model emits when it wants to bind a tool
     ;; result and then project a sub-value. The def wrapping AND the
     ;; accessor row are both bookkeeping; the value rides on the DEF
@@ -164,7 +164,7 @@
     ;; renderer coalesces consecutive hidden code segments into one
     ;; entry, so the result is a single suppressed source row.
     (let [out (render/parse-block-display
-                "(def r (v/ls \".\"))\n(select-keys r [:entry-count :file-count])")]
+                "(def r (ls \".\"))\n(select-keys r [:entry-count :file-count])")]
       (expect (= 1 (count out)))
       (expect (= :code (-> out first :kind))))))
 

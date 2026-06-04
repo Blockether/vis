@@ -95,9 +95,9 @@
   (describe "apply-done"
     (let [ctx (-> (eng/empty-ctx)
                 (assoc :session/trailer
-                  [(pin "t1/i1" "v/cat")
-                   (pin "t2/i1" "v/patch")
-                   (pin "t2/i2" "v/cat")
+                  [(pin "t1/i1" "cat")
+                   (pin "t2/i1" "patch")
+                   (pin "t2/i2" "cat")
                    (pin "t2/i3" "tests")
                    (pin "t3/i1" "more")]))]
 

@@ -366,7 +366,7 @@
                  :session/trailer
                  [{:scope "t3/i2"
                    :forms [{:scope "t3/i2/f1" :tag :observation
-                            :src "(v/cat \"src/auth.clj\")"
+                            :src "(cat \"src/auth.clj\")"
                             :result "(ns auth) …"}]}
                   {:scope-start "t6/i1" :scope-end "t6/i2"
                    :summary "verified bcrypt ok; tests green"
