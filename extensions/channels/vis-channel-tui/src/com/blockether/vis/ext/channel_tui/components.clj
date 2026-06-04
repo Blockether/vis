@@ -55,24 +55,35 @@
 (def ^:private close-button-glyph " ✕ ")
 
 (defn close-button!
-  "Draw an INVERTED ` ✕ ` close button at (col,row): the host cell's
-   (`cell-fg`,`cell-bg`) are SWAPPED so the button always reads as a distinct
-   padded block regardless of the host's own colors, and register its
-   `:close-tab` click region for `workspace-id`. Returns the consumed width
-   (`close-button-width`)."
-  [g col row cell-fg cell-bg workspace-id register?]
+  "Draw a SUBTLE ` ✕ ` close affordance at (col,row), painted on the tab's
+   own `tab-bg`: dim grey by default, bright + bold when the pointer is over
+   it (so it reads as a quiet affordance, not a harsh inverted block).
+   Registers its `:close-tab` click region for `workspace-id`. Returns the
+   consumed width (`close-button-width`)."
+  [g col row tab-bg workspace-id register?]
+  (let [hovered  (cr/hovered)
+        hovered? (and (= :close-tab (:kind hovered))
+                   (= workspace-id (:workspace-id hovered)))]
+    (p/clear-styles! g)
+    (p/set-colors! g (if hovered? t/header-hover-fg t/footer-fg-muted) tab-bg)
+    (when hovered? (p/enable! g p/BOLD))
+    (p/put-str! g col row close-button-glyph)
+    (p/clear-styles! g)
+    (when register?
+      (cr/register! {:bounds       {:row row :col col :width close-button-width}
+                     :kind         :close-tab
+                     :workspace-id workspace-id
+                     :text         workspace-id
+                     :enabled?     true}))
+    close-button-width))
+
+(defn tab-divider!
+  "Paint a 1-col vertical `│` divider between two tabs at (col,row)."
+  [g col row]
   (p/clear-styles! g)
-  (p/set-colors! g cell-bg cell-fg)            ; inverted vs the host cell
-  (p/enable! g p/BOLD)
-  (p/put-str! g col row close-button-glyph)
-  (p/clear-styles! g)
-  (when register?
-    (cr/register! {:bounds       {:row row :col col :width close-button-width}
-                   :kind         :close-tab
-                   :workspace-id workspace-id
-                   :text         workspace-id
-                   :enabled?     true}))
-  close-button-width)
+  (p/set-colors! g t/border-fg t/terminal-bg)
+  (p/put-str! g col row "│")
+  (p/clear-styles! g))
 
 ;; ── tab cell ────────────────────────────────────────────────────────────────
 
@@ -115,7 +126,7 @@
                      :enabled?     true}))
     (when show-close?
       (close-button! g (+ (long left) width (- close-button-width)) row
-        fg bg workspace-id register?))))
+        bg workspace-id register?))))
 
 ;; ── inert title ─────────────────────────────────────────────────────────────
 
