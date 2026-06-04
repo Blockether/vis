@@ -312,21 +312,28 @@
 
    Returns 0 for nil/empty input."
   ^long [s]
-  (if (or (nil? s) (zero? (.length ^CharSequence s)))
+  ;; Coerce to String FIRST. `s` is usually a String, but a caller that
+  ;; maps display-width over a string (or hands us a Character / number)
+  ;; must never crash the render thread — a single ClassCastException here
+  ;; throws every frame and freezes the whole TUI. `(str s)` makes any input
+  ;; measurable; nil → 0.
+  (if (nil? s)
     0
-    (let [^String safe (sanitize-control-chars (str s))
-          cells (TextCharacter/fromString safe)
-          n     (alength cells)]
-      (loop [i 0 width 0]
-        (if (>= i n)
-          width
-          (let [tc ^TextCharacter (aget cells i)
-                g  ^String (.getCharacterString tc)
-                w  (cond
-                     (inline-sentinel? g) 0
-                     (.isDoubleWidth tc)  2
-                     :else                1)]
-            (recur (inc i) (+ width w))))))))
+    (let [^String safe (sanitize-control-chars (str s))]
+      (if (zero? (.length safe))
+        0
+        (let [cells (TextCharacter/fromString safe)
+              n     (alength cells)]
+          (loop [i 0 width 0]
+            (if (>= i n)
+              width
+              (let [tc ^TextCharacter (aget cells i)
+                    g  ^String (.getCharacterString tc)
+                    w  (cond
+                         (inline-sentinel? g) 0
+                         (.isDoubleWidth tc)  2
+                         :else                1)]
+                (recur (inc i) (+ width w))))))))))
 
 (defn col-prefix-end
   "Return the char-index `i` such that `(subs s 0 i)` is the longest
