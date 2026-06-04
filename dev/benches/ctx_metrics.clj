@@ -25,8 +25,11 @@
   (p/db-create-connection! {:backend :sqlite :path path}))
 
 ;; --- form classification (matches the INVESTIGATION.md analysis) ---
-(def ^:private locate-re #"\(v/rg|\(v/cat|\(v/ls|\(apropos|\(v/grep|engine-symbol")
-(def ^:private mutate-re #"\(v/patch|\(clj/edit|\(git/|\(v/write|\(v/append")
+;; foundation-core is a CORE built-in now → BARE tools (cat/ls/rg/patch/write),
+;; not the old v/-alias. Match both (optional `v/`) with word boundaries so
+;; bare `(cat` doesn't false-match `(catch`/`(category`.
+(def ^:private locate-re #"\((?:v/)?(?:rg|cat|ls)\b|\((?:apropos|doc)\b")
+(def ^:private mutate-re #"\((?:v/)?(?:patch|write|append)\b|\(clj/edit|\(git/")
 
 (defn- has? [re it] (boolean (re-find re (str (:code it)))))
 (defn- locate? [it] (has? locate-re it))
