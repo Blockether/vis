@@ -3538,12 +3538,19 @@
                             req (if (pos? (long (:iter-count u)))
                                   (long (:last-iter-input u))
                                   (long (:previous-request-input u)))]
-                        (if-let [util (ctx-engine/utilization
-                                        req effective-context-limit
-                                        (:input-tokens u)
-                                        safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS)]
-                          (swap! ca assoc :engine/utilization util)
-                          (swap! ca dissoc :engine/utilization))))
+                        ;; Monotonic: only UPGRADE when we have a real
+                        ;; measurement; NEVER dissoc. A transient req=0 (iter-1
+                        ;; seed miss, or an errored iteration that returned no
+                        ;; usage) must not BLANK an already-shown utilization —
+                        ;; that flicker is the "sometimes works, sometimes not"
+                        ;; bug. Keep the last known value until a fresh request
+                        ;; updates it; a brand-new session still starts blank
+                        ;; because nothing was ever stamped.
+                        (when-let [util (ctx-engine/utilization
+                                          req effective-context-limit
+                                          (:input-tokens u)
+                                          safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS)]
+                          (swap! ca assoc :engine/utilization util))))
                     ;; D12: foundation hooks emit hook-task shapes
                     ;; `{:id <kw> :task <task-map>}`. Route each through
                     ;; `apply-mutator :task-set!` so the standard write
