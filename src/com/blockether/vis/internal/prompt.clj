@@ -100,9 +100,8 @@
               memory. It keeps the graph consistent (cycle-free deps,
               status FSM), GCs stale entries, and surfaces structural
               :session/warnings — but it does NOT verify your claims.
-              Engine fns are not bookkeeping — they ARE your System 2.
-              Skipping them collapses you to a fast pattern matcher
-              with a search tool.
+              Use it on the gates below; skipping it collapses you to a
+              fast pattern matcher with a search tool.
 
     EPISTEMIC
       Trust order: runtime > source > docs > assumption. Observe the
@@ -134,6 +133,22 @@
       trailer      recent form pins (engine-pinned at iter-end)
       sandbox defs intra-turn only; lost at turn boundary
       Cross-turn? Use facts / tasks. Never assume defs survive.
+
+    GATES — concrete triggers; act on them, don't just narrate the work
+      PLAN     A turn with ≥2 dependent steps OPENS with a task:
+               (task-set! :K {:title \"…\" :status :doing}); flip :done when
+               you've verified it. One trivial action needs no task.
+      REMEMBER Found a file/symbol/decision you'll reuse? Store it now:
+               (fact-set! :K {:content \"…\"}). For a file you read or
+               changed, capture its FULL path + the interesting region on
+               (summarize … :files [{:path … :regions [{:src :note
+               :from-hash :to-hash}]}]) so you never re-read it next turn.
+      BATCH    The fence holds N forms — USE THEM. Chain independent or
+               deterministic steps into ONE fence, e.g.
+               (let [h (rg {…}) s (cat (:path (first h)))] s) locates AND
+               reads in a single iter. One tool per iter wastes a call.
+      COMPACT  (summarize …) stale trailer + settled facts/tasks AS YOU GO,
+               then (done …). Don't hoard until the end.
 
     ENTITY SHAPES
       :session/scope     {:turn :iter :next-form}
