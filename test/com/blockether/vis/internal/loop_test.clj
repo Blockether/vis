@@ -179,6 +179,33 @@
                   (constantly [{:position 1 :input-tokens 0}])]
       (expect (nil? (previous-request-usage {:session-id "s1" :db-info ::db} "t2"))))))
 
+(defdescribe stamp-utilization-monotonic-test
+  ;; Regression: the stamp used to (dissoc :engine/utilization) on a nil
+  ;; measurement, so a transient req=0 (iter-1 seed miss / errored iter)
+  ;; BLANKED an already-shown :session/utilization — the "sometimes works,
+  ;; sometimes doesn't" flicker. The stamp must be monotonic.
+  (let [stamp (var-get #'lp/stamp-utilization!)
+        util1 {:last-request-tokens 5000 :pct-of-limit 3}
+        util2 {:last-request-tokens 9000 :pct-of-limit 5}]
+
+    (it "stamps a real measurement onto the ctx-atom"
+      (let [ca (atom {})]
+        (stamp ca util1)
+        (expect (= util1 (:engine/utilization @ca)))))
+
+    (it "NEVER blanks an existing value on a transient nil measurement"
+      (let [ca (atom {:engine/utilization util1})]
+        (stamp ca nil)
+        (expect (= util1 (:engine/utilization @ca)))))
+
+    (it "upgrades to a fresh measurement when one arrives"
+      (let [ca (atom {:engine/utilization util1})]
+        (stamp ca util2)
+        (expect (= util2 (:engine/utilization @ca)))))
+
+    (it "is a no-op on a nil ctx-atom"
+      (expect (nil? (stamp nil util1))))))
+
 (defdescribe turn-position-state-test
   (it "seeds turn-state with persisted turn position before iteration render"
     (let [seen (atom nil)
