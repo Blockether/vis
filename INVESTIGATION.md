@@ -354,6 +354,38 @@ per-task traces. `vis_agent.py` drives Vis; results live under `results/<ITER_TA
 metrics pass that reads the trace ctx (like this investigation did)? Which subset is
 fastest to iterate on?
 
+**Status: harness built + FIRST model-driven A/B run done.**
+- `dev/benches/w6_multiturn.sh` drives `bin/vis --json --persist`/`--session-id`
+  through a 3-turn SAME-FILE scenario (create+add → add subtract → rename add→sum);
+  `benches.ctx-metrics/report` scores the resulting session. Both models run via the
+  configured providers (`--provider/--model`).
+- A/B signals — baseline `b117af1a` (opus, OLD prompt) vs the new prompt:
+
+  | signal            | baseline opus | glm-5.1 (new) | opus (new) |
+  |-------------------|---------------|---------------|------------|
+  | forms-per-iter    | `{1 41}`      | `{1 4,2 1,3 1,4 2}` | `{1 11,2 1}` |
+  | multi-form iters  | 0             | **4**         | **1**      |
+  | locate-waste      | 13            | 0             | 0          |
+  | task-set! calls   | 0             | 0             | 0          |
+  | fact-set! calls   | 0             | 0             | 0          |
+  | model-authored facts | 0          | 0             | 0          |
+  | iters total       | 41            | 8             | 12         |
+
+- **Verdict (honest):**
+  - **BATCH gate WORKS** — multi-form iterations went 0 → 4 (glm) / 1 (opus). The
+    engine always supported N forms/fence; the prompt now gets the model to use it.
+  - **PLAN/REMEMBER gates do NOT fire yet** — neither model called `task-set!` /
+    `fact-set!`; the final `tasks=1 facts=3-4` are hook-tasks + auto answer-facts,
+    not model-authored. The gates need stronger wording OR the scenario must warrant
+    explicit planning (a 3-step file edit is judged trivial).
+  - **`locate-waste=0` is INCONCLUSIVE** — `calc.clj` is tiny (a 2-line file needs no
+    re-grep), unlike the baseline's big real file (`components.clj`). The scenario is
+    too easy to prove the cross-turn re-location win; needs a harder, big-file
+    scenario to be conclusive.
+- **Next W6 iterations:** (a) a HARDER scenario (large real files, ≥4 steps) to
+  stress re-location + force planning; (b) strengthen the PLAN/REMEMBER gates and
+  re-measure; (c) add `verify`-based pass/fail (filewrite) alongside the signals.
+
 ---
 
 ## How we proceed
