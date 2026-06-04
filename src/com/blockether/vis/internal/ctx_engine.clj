@@ -575,7 +575,7 @@
             (str "`(def " n
               " …)` has been rebound " rebind-loop-threshold
               "+ iters in a row." " The current tactic is not converging—switch to a"
-              " different probe or call `(done {:summarize {:trailer …}})`"
+              " different probe or call `(summarize {:trailer …})`"
               " before another rebind.")))))))
 (defn derive-warnings
   "Run the STRUCTURAL invariant passes and return a sorted, deduped vec of
@@ -1120,7 +1120,7 @@
                      (warn
                        :done-archive-missing-entity
                        [kind k]
-                       (str (name kind) " " k " listed in (done {:summarize …}) does not exist"))))]
+                       (str (name kind) " " k " listed in (summarize …) does not exist"))))]
     {:ctx ctx', :warnings warns}))
 (defn- summarize-entities
   "Collapse listed entity keys of one `kind` (:fact|:task) into a single

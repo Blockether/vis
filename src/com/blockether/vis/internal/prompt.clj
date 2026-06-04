@@ -272,9 +272,10 @@
         which scopes, WHAT was done, WHY now stale: \"t3/i2-i5: read auth.clj
         + grepped token check, patched expiry to <=, tests pass — done\".
         A bare \"explored auth\" is useless.
-        Mid-turn:  (summarize {:trailer […] :facts […] :tasks […]})
-        At close:  (done {:answer … :summarize {… same shape …}})
-          :summarize {:trailer [{:scope-start \"t<N>/i<M>\"
+        ONE verb, any iter — to compact at close, batch a final
+        (summarize …) right before (done …) in the SAME fence. There is no
+        done :summarize; the engine fn is identical either way.
+        (summarize {:trailer [{:scope-start \"t<N>/i<M>\"
                                  :scope-end   \"t<N>/i<M>\"
                                  :summary \"t3/i2-i5: read X, patched Y, why\"
                                  :files [{:path \"full/path.clj\"
@@ -282,7 +283,7 @@
                                                      :note \"what/why it matters\"
                                                      :from-hash \"a1b2\" :to-hash \"c3d4\"}]}]} ...]
                       :facts   [{:keys [:a :b] :into :k :summary \"recap + why\"} ...]
-                      :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap + why\"} ...]}
+                      :tasks   [{:keys [:t1 :t2] :into :k :summary \"recap + why\"} ...]})
           A summarized range that read/changed a file MUST carry :files (the
           REMEMBER-gate region shape) so the regions survive the fold and the
           big raw read pins drop. Refresh a stale region by content, never line
@@ -290,8 +291,7 @@
         trailer range → one recap stub; N facts/tasks → one new summary
         fact, originals → :archived. Nothing is lost: (recall \"t<N>/i<M>\")
         windows archived trace, (recall :K) windows an archived entity,
-        (recall {:match …}) finds a scope. :summarize is data, not a boolean.
-        Do NOT emit :summarize? true.
+        (recall {:match …}) finds a scope.
         Session titles are host-generated; do not spend a form on title setup.
 
     ANSWER  :answer is Markdown. Final user-facing output.
