@@ -346,42 +346,54 @@
   [label]
   [[label t/header-active-tab-accent true]])
 (defn context-overlay!
-  "Centered modal showing the session's working memory — `:session/tasks` AND
-   `:session/facts` — the W3 user-visible panel. Mirrors `help-overlay!` chrome
-   (own background, no click regions; caller dismisses on F2 / any key). Title
-   carries a tasks-done + facts count summary; a TASKS section (status-sorted,
-   colored glyphs, acceptance sub-lines, verify badges) then a FACTS section
-   (active first, `⛁N` for file-bearing facts). `ctx` is `{:tasks … :facts …}`.
-   No-op when the terminal is too small."
+  "Dialog showing the session's working memory — `:session/tasks` AND
+   `:session/facts` — the W3 user-visible panel (F2). Uses the shared
+   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it looks like every other
+   modal (shadow, border, accent title bar, hint row). Title carries a
+   tasks-done + facts count summary; a TASKS section (status-sorted, colored
+   glyphs, acceptance sub-lines, verify badges) then a FACTS section (active
+   first, `⛁N` for file-bearing facts). The dialog SIZES to its content (grows
+   to fit, clamped to the terminal); if it still overflows, the last row shows
+   a `… N more` footer so nothing is silently dropped. Registers no click
+   regions; the caller dismisses on F2. `ctx` is `{:tasks … :facts …}`."
   [g cols rows {:keys [tasks facts]}]
-  (let [total  (count tasks)
-        done   (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
-        title  (str "Context"
-                 (when (pos? total)         (format "  ·  tasks %d/%d done" done total))
-                 (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
-        hint   "F2 to close"
-        ;; Regular-dialog chrome: shadow, border, accent title bar, separators,
-        ;; hint row — the same look every other modal uses.
-        bounds (dialogs/draw-dialog-chrome! g cols rows title (+ (count tasks) (count facts) 4))
+  (let [total   (count tasks)
+        done    (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
+        title   (str "Context"
+                  (when (pos? total)         (format "  ·  tasks %d/%d done" done total))
+                  (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
+        hint    "F2 to close"
+        ;; Build lines at a generous width, then size the dialog to the actual
+        ;; content (golden-dialog-size clamps width+height to the terminal).
+        body-w  (dialogs/default-content-width cols)
+        blank   [["" t/dialog-hint false]]
+        lines   (vec (concat [(section-line "TASKS")] (task-overlay-lines tasks body-w)
+                       [blank]
+                       [(section-line "FACTS")] (fact-overlay-lines facts body-w)))
+        line-w  (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))
+        content-w (reduce max (p/display-width title) (map line-w lines))
+        bounds  (dialogs/draw-dialog-chrome! g cols rows title content-w (count lines))
         {:keys [left inner-w]} bounds
-        body-w (max 8 (- inner-w 2))
-        blank  [["" t/dialog-hint false]]
-        lines  (vec (concat [(section-line "TASKS")] (task-overlay-lines tasks body-w)
-                      [blank]
-                      [(section-line "FACTS")] (fact-overlay-lines facts body-w)))
-        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds (count lines))]
-    ;; Body: paint each line's colored segments, clipped to the content width.
-    (dotimes [i (min (count lines) content-h)]
-      (let [r (+ content-top i)]
-        (loop [x (+ left 1), ss (nth lines i)]
-          (when-let [[text color bold?] (first ss)]
-            (let [avail (max 0 (- (+ left 1 inner-w) x))
-                  shown (clip-str (str text) avail)]
-              (p/clear-styles! g)
-              (p/set-colors! g color t/dialog-bg)
-              (when bold? (p/enable! g p/BOLD))
-              (p/put-str! g x r shown)
-              (recur (+ x (p/display-width shown)) (next ss)))))))
+        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds (count lines))
+        n       (count lines)
+        overflow? (> n content-h)
+        shown-n (if overflow? (max 0 (dec content-h)) n)
+        paint-line
+        (fn [i segs]
+          (let [r (+ content-top i)]
+            (loop [x (+ left 1), ss segs]
+              (when-let [[text color bold?] (first ss)]
+                (let [avail (max 0 (- (+ left 1 inner-w) x))
+                      shown (clip-str (str text) avail)]
+                  (p/clear-styles! g)
+                  (p/set-colors! g color t/dialog-bg)
+                  (when bold? (p/enable! g p/BOLD))
+                  (p/put-str! g x r shown)
+                  (recur (+ x (p/display-width shown)) (next ss)))))))]
+    (dotimes [i shown-n] (paint-line i (nth lines i)))
+    (when overflow?
+      (paint-line shown-n [[(str "… " (- n shown-n) " more — full working memory lives in ctx")
+                            t/dialog-hint false]]))
     ;; Centered dim close hint on the dialog's hint row.
     (when hint-row
       (p/clear-styles! g)
