@@ -385,12 +385,16 @@
       (components/nav-arrow! g row (+ left width (- arrow-w)) vh/workspace-arrow-right :next
         *register-click-regions?*))
     (when (and (pos? n) (pos? entries-width))
-      (let [base (quot entries-width n)
-            extra (rem entries-width n)
-            ;; Lay out each tab cell, then hand the drawing to the
-            ;; `components/tab-cell!` component — it owns the slab, the
-            ;; centered label, and the always-visible ✕ close button (plus
-            ;; both click regions). `label` carries the run-dot / spinner
+      ;; Reserve a 1-col `│` divider between each adjacent pair of tabs, then
+      ;; share the rest of the width across the tabs.
+      (let [divider-w (max 0 (dec n))
+            tab-total (max 0 (- entries-width divider-w))
+            base  (quot tab-total n)
+            extra (rem tab-total n)
+            ;; Lay out each tab cell (the loop advances an extra col past
+            ;; each tab for its trailing divider), then hand the drawing to
+            ;; `components/tab-cell!` (slab + centered label + hover-✕ close
+            ;; button + click regions). `label` carries the run-dot / spinner
             ;; prefix: `●` for an in-flight turn, the braille spinner while
             ;; this active tab's title is generating.
             cells (loop [idx 0 x entries-left out []]
@@ -404,20 +408,24 @@
                                       (not (:title-loading? entry))) (str "● ")
                                     (:title-loading? entry) (str (title-spinner-frame) " "))]
                         (recur (inc idx)
-                          (+ x cell-w)
+                          (+ x cell-w (if (< idx (dec n)) 1 0))
                           (conj out (assoc entry
                                       :left x
                                       :width cell-w
                                       :label label
-                                      :active? active?))))))]
-        (doseq [{:keys [left width active? label id]
+                                      :active? active?
+                                      :last? (= idx (dec n))))))))]
+        (doseq [{:keys [left width active? label id last?]
                  idx :header/original-index}
                 cells
                 :when (pos? (long width))]
           (components/tab-cell! g
             {:left left :row row :width width :label label
              :active? active? :workspace-id id :index idx
-             :register? *register-click-regions?*}))
+             :register? *register-click-regions?*})
+          ;; `│` divider after every tab but the last.
+          (when-not last?
+            (components/tab-divider! g row (+ (long left) (long width)))))
         cells))))
 
 (defn draw-header!
@@ -462,13 +470,7 @@
         right-w action-w
         right-col (max right-x (- cols edge-pad right-w))
         action-col right-col
-        active-id (active-tab-entry-id db workspaces)
-        ;; In a draft, the centre title shows `<label> (DRAFT)`; on trunk it's
-        ;; the session title.
-        single-title (let [ws (:workspace db)]
-                       (if (some? (:fork-ms ws))
-                         (str (or (not-empty (:label ws)) "draft") " (DRAFT)")
-                         (some-> workspaces first p/tab-display-label)))]
+        active-id (active-tab-entry-id db workspaces)]
     (components/band-rule! g top-rule-row cols)
 
     (p/clear-styles! g)
@@ -479,10 +481,10 @@
     ;; (Draft status lives in the footer — one indicator, not two.)
     (components/notification-slot! g (+ left-x edge-pad) content-row left-text left-level)
 
-    ;; CENTER 60%: one inert title, or a switcher when multiple workspaces exist.
-    (if (> (count workspaces) 1)
-      (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
-      (components/title! g content-row center-x center-w single-title))
+    ;; CENTER 60%: the workspace tab strip. Even a single session renders as a
+    ;; real tab (with its ✕), so there's one consistent affordance — no special
+    ;; inert-title path.
+    (draw-center-workspaces! g workspaces active-id content-row center-x center-w)
 
     ;; RIGHT 20%: stable session-id copy affordance only.
     (components/id-badge! g action-col content-row id-copy-text full-uuid

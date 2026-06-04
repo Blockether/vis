@@ -157,10 +157,10 @@
       (expect (not-any? #(= status (:text %)) @writes)))))
 
 (defdescribe draw-header-color-test
-  (it "renders the lone workspace title as inert center text, not on the left"
-    ;; Fresh session has no `:tabs` in app-db. The
-    ;; header synthesises one workspace label for the centre slot,
-    ;; but does not render a switcher when there is nothing to switch.
+  (it "renders the lone session as a single active tab in the center"
+    ;; Fresh session has no `:tabs` in app-db. The header synthesises one
+    ;; workspace and now renders it as a real (active) tab — one consistent
+    ;; affordance, no special inert-title path.
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -182,10 +182,11 @@
             write-by-text (fn [text]
                             (some #(when (= text (:text %)) %) @writes))]
         (expect (some? placeholder-write))
-        (expect (= t/header-fg (:fg placeholder-write)))
-        (expect (= t/terminal-bg (:bg placeholder-write)))
+        ;; A single session now renders as a real (active) tab — not inert
+        ;; title text — so it carries the active-tab colors.
+        (expect (= t/header-active-tab-fg (:fg placeholder-write)))
+        (expect (= t/header-active-tab-bg (:bg placeholder-write)))
         (expect (empty? left-slot-writes))
-        (expect (not-any? #(= :workspace-entry (:kind %)) (cr/current)))
         (expect (= t/header-fg (:fg (write-by-text "123e4567")))))))
 
   (it "uses a subtly different foreground for the hovered header copy affordance only"
@@ -211,8 +212,9 @@
                             @writes)
               write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
-          ;; With one workspace, title stays inert center text, not a switcher entry.
-          (expect (= t/header-fg (:fg title-write)))
+          ;; A single session now renders as an active tab (its label carries
+          ;; the active-tab fg), while the copy badge keeps its own hover fg.
+          (expect (= t/header-active-tab-fg (:fg title-write)))
           (expect (= t/header-hover-fg (:fg (write-by-text "123e4567")))))))))
 
 (defdescribe draw-header-tab-entries-test
@@ -238,7 +240,8 @@
                                         (not (str/blank? (:text %)))
                                         (< (long (or (:col %) 0)) 16))
                                @writes)
-            layout     (p/tab-layout (:tabs db) 16 48 :feature {:gap 0})
+            ;; Tabs now have a 1-col `│` divider between them (gap 1).
+            layout     (p/tab-layout (:tabs db) 16 48 :feature {:gap 1})
             expected   (nth layout 1)
             tab-hit    (some #(when (and (= :workspace-entry (:kind %))
                                       (= 1 (:index %)))
