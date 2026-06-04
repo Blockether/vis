@@ -1,22 +1,16 @@
 (ns com.blockether.vis.internal.foundation.core-test
   (:require
-   [clojure.edn :as edn]
-   [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.foundation.core :as foundation]
    [com.blockether.vis.internal.foundation.environment.agents :as agents]
    [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- foundation-manifest-file []
-  (let [repo-root-file (io/file "extensions/common/vis-foundation-core/resources/META-INF/vis-extension/vis.edn")]
-    (if (.exists repo-root-file)
-      repo-root-file
-      (io/file "resources/META-INF/vis-extension/vis.edn"))))
-
 (defdescribe vis-foundation-aggregator-test
-  (it "registers the unified v/ alias"
-    (expect (= 'v (get-in foundation/vis-extension [:ext/sci :ext.sci/alias])))
-    (expect (= 'vis.ext.v (get-in foundation/vis-extension [:ext/sci :ext.sci/ns]))))
+  (it "is a BUILT-IN with NO alias — symbols bind bare into the sandbox"
+    (expect (true? (get-in foundation/vis-extension [:ext/sci :ext.sci/builtin?])))
+    (expect (nil? (get-in foundation/vis-extension [:ext/sci :ext.sci/alias])))
+    (expect (nil? (get-in foundation/vis-extension [:ext/sci :ext.sci/ns]))))
 
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
@@ -31,8 +25,8 @@
         (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))
         (expect (not (str/includes? prompt "SCAN-WARNINGS")))
         ;; Editing prompt is now compact: canonical path only, no strategy symbol.
-        (expect (str/includes? prompt "v/rg"))
-        (expect (str/includes? prompt "v/ls"))
+        (expect (str/includes? prompt "rg"))
+        (expect (str/includes? prompt "ls"))
         (expect (str/includes? prompt "Canonical path only"))
         (expect (not (str/includes? prompt "v/strategy")))
         (expect (not (str/includes? prompt "clojure.repl/doc")))
@@ -68,11 +62,14 @@
       (expect (not (str/includes? doc "file-link")))
       (expect (not (str/includes? doc "answer builders")))))
 
-  (it "ships a namespace-only manifest"
-    (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
-                     (slurp (foundation-manifest-file)))]
-      (expect (= '[com.blockether.vis.internal.foundation.core] (get-in manifest ['foundation-core :nses])))
-      (expect (not (contains? (get manifest 'foundation-core) :docs)))))
+  (it "registers as a BUILT-IN (no META-INF manifest)"
+    ;; foundation is now a CORE module, not a droppable classpath plug-in:
+    ;; `extension/discover-extensions!` loads it from its built-in list and its
+    ;; top-level `register-extension!` fires. It ships no
+    ;; `META-INF/vis-extension/vis.edn` manifest of its own.
+    (extension/discover-extensions!)
+    (expect (some #(= "foundation-core" (:ext/name %))
+              (extension/registered-extensions))))
 
   (it "defers doctor fn namespace until use and exports no CLI commands"
     (let [calls (atom [])]

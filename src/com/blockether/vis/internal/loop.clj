@@ -3869,7 +3869,7 @@
                         ;; per-form envelope carries the pre-rendered tool
                         ;; sink IR persisted on `session_turn_iteration.forms`.
                         ;; Without this, restored bubbles for any iteration
-                        ;; whose model wrote `(def r (v/patch …))` lost the
+                        ;; whose model wrote `(def r (patch …))` lost the
                         ;; PATCH preview pane (session
                         ;; 311fd734-3640-4288-ba3d-cff83fb7260f turn 8): the
                         ;; channel sink lives on the FENCE atom but the
@@ -3912,7 +3912,7 @@
                         ;; Tag resolver: lift extension-declared
                         ;; observation/mutation tag (`extension/op-tag`)
                         ;; into `classify-form-tag` so extension tools
-                        ;; like `(v/patch …)`, `(git/commit! …)`, etc.
+                        ;; like `(patch …)`, `(git/commit! …)`, etc.
                         ;; classify correctly without the engine
                         ;; hard-coding their head symbol. The bare
                         ;; symbol head is read at envelope-build time;
@@ -4996,8 +4996,8 @@
   "Build the SCI var the model interacts with for an extension symbol.
 
    Forwards `:doc` and `:arglists` from the symbol entry into the SCI var
-   metadata so `(clojure.repl/doc v/cat)`, `(:doc (meta #'v/cat))`, and
-   `(:arglists (meta #'v/cat))` all work inside the sandbox. Without this,
+   metadata so `(clojure.repl/doc cat)`, `(:doc (meta #'cat))`, and
+   `(:arglists (meta #'cat))` all work inside the sandbox. Without this,
    docstrings stayed app-side only and the model could not introspect its
    own callable surface."
   [ext-ns sym val sym-entry]
@@ -5370,6 +5370,14 @@
         ;; {turn → ctx} history map. The loader arg is kept nil for
         ;; call-site compatibility.
         env-bindings             (merge
+                                   ;; BUILT-IN extension kernel (`foundation`):
+                                   ;; cat/ls/rg/patch/… interned BARE into the
+                                   ;; sandbox ns next to the engine verbs — no
+                                   ;; `v/` alias. env resolved lazily (atom not
+                                   ;; built yet). Listed FIRST so engine verbs
+                                   ;; below win any accidental name collision.
+                                   (extension/builtin-sandbox-bindings
+                                     (fn [] @environment-atom))
                                    {'done            answer-fn
                                     'set-session-title! session-title-fn}
                                    ;; build-sci-bindings contributes every

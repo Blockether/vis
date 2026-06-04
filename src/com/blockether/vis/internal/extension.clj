@@ -238,7 +238,7 @@
 (declare op-tag op-tags op-keyword->tag op-keyword->batch-hint tool-call-name)
 
 ;; ---- envelope leaf specs (op/*) ----
-(s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
+(s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :cat, tool symbol e.g. 'cat
 (s/def ::tag        keyword?)        ; #{:observation :mutation}
 (s/def ::result     any?)            ; the actual SCI eval value; shape varies per tool
 (s/def ::success?   boolean?)
@@ -399,7 +399,7 @@
    vec; on rebuild `expanded-blocks` partitions the fence's channel
    slice by `:form-idx` so each form envelope only carries the IR for
    tool calls it actually made. Without per-entry form-idx every tool
-   IR ride-shared on form 0 and a 4-form fence (\"three v/ls calls\")
+   IR ride-shared on form 0 and a 4-form fence (\"three ls calls\")
    restored as one bubble with three pre-rendered IRs glommed onto
    the first `(def ...)` form and nothing on the rest."
   nil)
@@ -554,7 +554,7 @@
    only the canonical shape:
 
      :result   raw SCI eval value; stored under `:result`
-     :op       op symbol e.g. :v/cat (nil for raw user code)
+     :op       op symbol e.g. :cat (nil for raw user code)
      :metadata free-form aux map: :tool, :extension, :source,
                :paths, :hit-count, :command, :started-at-ms,
                :finished-at-ms, :duration-ms, etc.
@@ -766,7 +766,7 @@
 
 ;; Argument signatures, e.g. '([term] [term opts]).
 ;; Shown in var meta :arglists and used by `render-symbol-line` to
-;; build the model-facing call form (e.g. `(v/cat path)`).
+;; build the model-facing call form (e.g. `(cat path)`).
 (s/def :ext.symbol/arglists (s/and vector? seq))
 
 ;; Raw callable helpers compose as normal Clojure values. They bypass the
@@ -1200,8 +1200,11 @@
 ;; Optional SCI namespace alias for this extension's symbols.
 (s/def :ext.sci/ns    (s/and symbol? #(nil? (namespace %))))
 (s/def :ext.sci/alias (s/and symbol? #(nil? (namespace %))))
+;; Built-in extensions ship in the main jar and bind their symbols BARE into the
+;; sandbox ns (no alias), like the engine verbs. Mutually exclusive with :alias.
+(s/def :ext.sci/builtin? boolean?)
 (s/def :ext/sci
-  (s/keys :opt [:ext.sci/ns :ext.sci/alias :ext.sci/symbols
+  (s/keys :opt [:ext.sci/ns :ext.sci/alias :ext.sci/builtin? :ext.sci/symbols
                 :ext.sci/classes :ext.sci/imports]))
 
 ;; Canonical source markers attached to registered extensions via the
@@ -1245,6 +1248,13 @@
   [ext]
   (get-in ext [:ext/sci :ext.sci/alias]))
 
+(defn ext-builtin?
+  "True when this extension is a BUILT-IN: its symbols bind BARE into the
+   sandbox ns (no alias), alongside the engine verbs. See
+   `builtin-sandbox-bindings`."
+  [ext]
+  (boolean (get-in ext [:ext/sci :ext.sci/builtin?])))
+
 (defn ext-sci-ns
   [ext]
   (or (get-in ext [:ext/sci :ext.sci/ns])
@@ -1265,9 +1275,13 @@
   (:ext/name ext))
 
 (defn- ns-alias-required-when-symbols?
+  "Symbols need a home: an `:ext.sci/alias` (third-party → aliased ns) OR
+   `:ext.sci/builtin? true` (core → bare in the sandbox ns). One is required
+   when the extension contributes symbols."
   [ext]
   (or (empty? (ext-symbols ext))
-    (some? (ext-alias-symbol ext))))
+    (some? (ext-alias-symbol ext))
+    (ext-builtin? ext)))
 
 (defn- kind-required-when-symbols?
   [ext]
@@ -1852,7 +1866,7 @@
 
 (defn- ensure-tool-result-op
   "Observed extension tools must carry canonical op metadata. The wrapper
-   derives it deterministically from active alias + symbol (`v/cat`,
+   derives it deterministically from active alias + symbol (`cat`,
    `git/fetch!`, ...). The tag comes from the symbol entry's inline
    `:ext.symbol/tag` (source of truth); a derived op->tag index covers
    call-sites without a sym-entry handle. Missing tag in BOTH places throws
@@ -2205,6 +2219,8 @@
         (fn [cur] (or cur (io/writer log-path :append true))))
       *log-writer*)))
 
+(declare wrap-extension-thunked)
+
 (defn wrap-extension
   "Wrap all function symbols in an extension into invocation fns.
 
@@ -2219,6 +2235,15 @@
 
    Returns every extension symbol."
   [ext env]
+  (wrap-extension-thunked ext (constantly env)))
+
+(defn wrap-extension-thunked
+  "Like `wrap-extension` but resolves the environment LAZILY via `env-thunk`
+   (a 0-arg fn) at CALL time instead of closing over a concrete `env`. Used to
+   intern BUILT-IN extension symbols into the sandbox at sci-context creation —
+   BEFORE the environment map exists — mirroring how `doc`/`apropos` defer
+   through `environment-atom`. Same wrapping/IO-redirect as `wrap-extension`."
+  [ext env-thunk]
   (let [entries (ext-symbols ext)]
     (into {}
       (map (fn [sym-entry]
@@ -2226,10 +2251,12 @@
                (if (contains? sym-entry :ext.symbol/fn)
                  [sym (if (:ext.symbol/raw? sym-entry)
                         (fn [& args]
-                          (binding [workspace/*workspace-root* (workspace/workspace-root env)]
-                            (apply (:ext.symbol/fn sym-entry) args)))
+                          (let [env (env-thunk)]
+                            (binding [workspace/*workspace-root* (workspace/workspace-root env)]
+                              (apply (:ext.symbol/fn sym-entry) args))))
                         (fn [& args]
-                          (let [w (get-log-writer)]
+                          (let [env (env-thunk)
+                                w   (get-log-writer)]
                             (binding [*out* w
                                       *err* w
                                       workspace/*workspace-root* (workspace/workspace-root env)]
@@ -3022,7 +3049,7 @@
    render-fns / ctx hooks, same path third-party extensions use.
 
      foundation — the `v/` kernel (cat/ls/rg/patch + workspace/env ctx). It is
-       mandatory (the sandbox bans `slurp` in favour of `v/cat`; the session
+       mandatory (the sandbox bans `slurp` in favour of `cat`; the session
        workspace block waits for its `:ext/ctx`), so it lives in core, not as a
        droppable extension."
   '[com.blockether.vis.internal.foundation.core])
@@ -3052,6 +3079,21 @@
     (doseq [[id entry] manifests]
       (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
+
+(defn builtin-sandbox-bindings
+  "Bare `{sym -> fn}` bindings for EVERY registered built-in extension
+   (`ext-builtin?`), to be merged into the sandbox ns alongside the engine
+   verbs at sci-context creation. `env-thunk` (0-arg) resolves the live
+   environment at call time, so these can be interned before the env map
+   exists. Loads built-ins first (idempotent) so registration is guaranteed
+   before we read the registry. Later extensions win on key collisions, but
+   built-ins are disjoint by construction (kernel tools vs engine verbs)."
+  [env-thunk]
+  (load-builtin-extensions!)
+  (into {}
+    (comp (filter ext-builtin?)
+      (mapcat (fn [ext] (wrap-extension-thunked ext env-thunk))))
+    (registered-extensions)))
 
 ;; =============================================================================
 ;; CLI bridge -- the `vis ext` parent lives in `internal.main` next to the

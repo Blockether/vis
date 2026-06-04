@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.foundation.editing.hashline-bench-test
   "Microbenchmarks for the hashline layer (`patch/line-hash`,
    `lines->hashes`, `render-hashline-block`) — the per-line hot path
-   that runs on every `v/cat` render and every `v/patch` resolve.
+   that runs on every `cat` render and every `patch` resolve.
 
    NOT auto-run: criterium benches live behind `run-bench!` so the
    default lazytest suite stays fast (see deps.edn `:test` note). One
@@ -31,7 +31,7 @@
     (format (str "%0" w "x") (bit-and (.hashCode (str/trim (str s))) mask))))
 
 (defn- file->tuples
-  "Load `path` as `[[line-number text] ...]` tuples like `v/cat` produces."
+  "Load `path` as `[[line-number text] ...]` tuples like `cat` produces."
   [path]
   (->> (str/split-lines (slurp path))
     (map-indexed (fn [i s] [(inc i) s]))

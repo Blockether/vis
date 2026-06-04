@@ -5,27 +5,27 @@
 
    1. Structured helpers for read / tree / search:
 
-        (v/cat path)            ; -> {:path :lines [[N text]…] :next-offset N? :truncated? B}
-        (v/cat path n)          ; first n lines from line 1
-        (v/cat path offset n)   ; n lines starting at line `offset` (1-based)
-        (v/cat path :tail)      ; last 400 lines (tail)
-        (v/cat path :tail n)    ; last n lines
-        (v/ls path)             ; -> nested {:name :path :type :size :children} tree
-        (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
-        (v/rg spec)            ; -> {:hits :truncated-by}; spec = {:any [literal] :paths [src]}
+        (cat path)            ; -> {:path :lines [[N text]…] :next-offset N? :truncated? B}
+        (cat path n)          ; first n lines from line 1
+        (cat path offset n)   ; n lines starting at line `offset` (1-based)
+        (cat path :tail)      ; last 400 lines (tail)
+        (cat path :tail n)    ; last n lines
+        (ls path)             ; -> nested {:name :path :type :size :children} tree
+        (ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
+        (rg spec)            ; -> {:hits :truncated-by}; spec = {:any [literal] :paths [src]}
                                ; OR {:all [lit1 lit2]}; no regex/query+opts shorthand
 
-   2. Cwd-safe wrappers over the babashka.fs file API. `v/patch` is
+   2. Cwd-safe wrappers over the babashka.fs file API. `patch` is
       the canonical text edit surface:
 
-        (v/cat path)
-        (v/patch [{:path path :search old :replace new}])
-        (v/create-dirs path)
-        (v/copy src dest)
-        (v/move src dest)
-        (v/delete path)
-        (v/delete-if-exists path)
-        (v/exists? path)
+        (cat path)
+        (patch [{:path path :search old :replace new}])
+        (create-dirs path)
+        (copy src dest)
+        (move src dest)
+        (delete path)
+        (delete-if-exists path)
+        (exists? path)
         (v/cwd)
         (v/parent path)
         (v/file-name path)
@@ -57,7 +57,7 @@
 (def ^:private default-list-limit 3000)
 (def ^:private render-preview-chars 3000)
 
-;; v/cat pagination contract:
+;; cat pagination contract:
 ;;   `default-cat-limit`     - lines per window when the model omits `n`.
 ;;                             Industry parity — Claude Code / Roo Code use
 ;;                             2000 by default; Cline uses 1000.
@@ -296,8 +296,8 @@
 (defn- current-dir-read-ancestor-match?
   "True when a read op is targeting `.` (cwd) and the matched rule
    protects only a descendant of `.`. Reading cwd itself must stay
-   usable for every observation tool (v/ls, v/rg, v/cat-on-dir,
-   v/exists?, v/grep, …); hidden protected extension roots (for
+   usable for every observation tool (ls, rg, v/cat-on-dir,
+   exists?, v/grep, …); hidden protected extension roots (for
    example `.bridge/**`) should not make cwd reads fail closed.
 
    Direct rules for `.` (a glob that literally matches `.`) still
@@ -474,11 +474,11 @@
 (defn- validate-cat-args!
   [offset n]
   (when-not (and (integer? offset) (pos? offset))
-    (throw (ex-info "v/cat offset must be a positive integer (1-based line number)."
+    (throw (ex-info "cat offset must be a positive integer (1-based line number)."
              {:type :ext.foundation.editing/invalid-cat-args
               :offset offset})))
   (when-not (and (integer? n) (pos? n))
-    (throw (ex-info "v/cat limit must be a positive integer line count."
+    (throw (ex-info "cat limit must be a positive integer line count."
              {:type :ext.foundation.editing/invalid-cat-args
               :limit n}))))
 
@@ -487,7 +487,7 @@
   (when-not (and (integer? start) (integer? end)
               (pos? start) (pos? end)
               (<= start end))
-    (throw (ex-info "v/cat :range/:ranges start/end must be positive ints with start <= end"
+    (throw (ex-info "cat :range/:ranges start/end must be positive ints with start <= end"
              {:type :ext.foundation.editing/invalid-cat-args
               :start start :end end}))))
 
@@ -503,16 +503,16 @@
                 (vec ranges)
 
                 :else
-                (throw (ex-info "v/cat :ranges expects [[start end] ...]"
+                (throw (ex-info "cat :ranges expects [[start end] ...]"
                          {:type :ext.foundation.editing/invalid-cat-args
                           :ranges ranges})))]
     (when (empty? pairs)
-      (throw (ex-info "v/cat :ranges expects at least one range"
+      (throw (ex-info "cat :ranges expects at least one range"
                {:type :ext.foundation.editing/invalid-cat-args
                 :ranges ranges})))
     (mapv (fn [pair]
             (when-not (and (sequential? pair) (= 2 (count pair)))
-              (throw (ex-info "v/cat :ranges entries must be [start end] pairs"
+              (throw (ex-info "cat :ranges entries must be [start end] pairs"
                        {:type :ext.foundation.editing/invalid-cat-args
                         :range pair})))
             (let [[start end] (vec pair)]
@@ -543,7 +543,7 @@
    the window short mid-file).
    `:mtime` and `:size` mirror `File.lastModified` / `File.length`; pass
    them as `:expected-mtime` / `:expected-size` on a subsequent
-   `v/patch` / `v/write` to fail closed if the file changed since the read.
+   `patch` / `write` to fail closed if the file changed since the read.
    Each call's `:lines` payload is bounded by `max-cat-window-bytes`; that
    is also the persistence-blob ceiling (one Nippy row per call).
    Streaming: never slurps the whole file. Lines outside the window are
@@ -601,30 +601,30 @@
                      nil)))))))))))
 
 (defn- hash-read-error-message
-  "Human message for a `patch/resolve-hash-range` `:error` on the v/cat READ
-   path — mirrors the v/patch hash-error copy and always points back to a
+  "Human message for a `patch/resolve-hash-range` `:error` on the cat READ
+   path — mirrors the patch hash-error copy and always points back to a
    fresh read for current `:hashes`."
   [{:keys [reason which hash lines from-line to-line]}]
   (case reason
     :hash-not-found
-    (str "v/cat :hash failed: " (name which) "-hash " (pr-str hash)
+    (str "cat :hash failed: " (name which) "-hash " (pr-str hash)
       " matches no line (the line changed or the file moved)."
-      " Re-read with (v/cat path) or (v/cat path :tail) for fresh :hashes.")
+      " Re-read with (cat path) or (cat path :tail) for fresh :hashes.")
     :hash-ambiguous
-    (str "v/cat :hash failed: " (name which) "-hash " (pr-str hash)
+    (str "cat :hash failed: " (name which) "-hash " (pr-str hash)
       " matches " (count lines) " lines " (pr-str lines)
-      " — a dup-line collision. Use (v/cat path :range start end) instead.")
+      " — a dup-line collision. Use (cat path :range start end) instead.")
     :hash-range-inverted
-    (str "v/cat :hash failed: :to-hash line " to-line
+    (str "cat :hash failed: :to-hash line " to-line
       " precedes :from-hash line " from-line ".")
-    (str "v/cat :hash failed: " (pr-str reason))))
+    (str "cat :hash failed: " (pr-str reason))))
 
 (defn- read-file-by-hash
   "Read the inclusive window between the lines hashed `from-hash`..`to-hash`
    (`to-hash` defaults to `from-hash` — a single line). Resolves the hashes
    against LIVE file content via `patch/resolve-hash-range`, so the read
    addresses lines BY CONTENT, not by drifting line numbers — the symmetric
-   counterpart of `v/patch :from-hash`. Returns the same shape as `read-file`
+   counterpart of `patch :from-hash`. Returns the same shape as `read-file`
    plus `:range [from-line to-line]`. Throws ex-info on a missing / ambiguous /
    inverted hash; the message points back to a fresh read."
   [path from-hash to-hash]
@@ -747,7 +747,7 @@
 ;; output sidesteps that — every entry is a top-level row the model can
 ;; filter directly.
 (defn- flat-entry
-  "Project a `File` into the flat-list row shape used by v/ls.
+  "Project a `File` into the flat-list row shape used by ls.
    `:path` is workspace-relative; trailing `/` on dir paths is left to
    the renderer so the data shape stays uniform."
   [^File f]
@@ -802,15 +802,15 @@
                files-only? false
                dirs-only?  false}} (or opts {})
          _ (when (and files-only? dirs-only?)
-             (throw (ex-info "v/ls :files-only? and :dirs-only? are mutually exclusive"
+             (throw (ex-info "ls :files-only? and :dirs-only? are mutually exclusive"
                       {:type :ext.foundation.editing/invalid-ls-opts
                        :opts opts})))
          _ (when-not (and (integer? depth) (not (neg? depth)))
-             (throw (ex-info "v/ls :depth must be a non-negative integer"
+             (throw (ex-info "ls :depth must be a non-negative integer"
                       {:type :ext.foundation.editing/invalid-ls-opts
                        :depth depth})))
          _ (when-not (and (integer? limit) (pos? limit))
-             (throw (ex-info "v/ls :limit must be a positive integer"
+             (throw (ex-info "ls :limit must be a positive integer"
                       {:type :ext.foundation.editing/invalid-ls-opts
                        :limit limit})))
          f (safe-path path)
@@ -848,7 +848,7 @@
     (mapv (fn [n]
             (try (java.util.regex.Pattern/compile n)
               (catch java.util.regex.PatternSyntaxException e
-                (throw (ex-info (str "v/rg :regex? true — invalid regex pattern: "
+                (throw (ex-info (str "rg :regex? true — invalid regex pattern: "
                                   (pr-str n))
                          {:type :ext.foundation.editing/invalid-rg-spec
                           :pattern n
@@ -856,7 +856,7 @@
       needles)))
 
 (defn- coerce-rg-spec
-  "Coerce the single public v/rg spec map. Exactly one of :all or :any
+  "Coerce the single public rg spec map. Exactly one of :all or :any
    is required. Every public collection field is a vector; a bare string
    is also accepted and coerced to a 1-element vector (ripgrep/grep
    muscle-memory like a scalar :glob or :any). Accepts compatibility alias :files for :paths,
@@ -873,20 +873,20 @@
                   literal substring otherwise (default)."
   [spec]
   (when-not (map? spec)
-    (throw (ex-info "v/rg takes one spec map: {:all [...] :paths [...]}."
+    (throw (ex-info "rg takes one spec map: {:all [...] :paths [...]}."
              {:type :ext.foundation.editing/invalid-rg-spec
               :got  (type spec)})))
   (let [allowed-keys #{:all :any :paths :path :files :include :glob :exclude :hidden? :respect-gitignore?
                        :limit :context :before :after :files-only? :counts? :regex?}
         unknown-keys (seq (remove allowed-keys (keys spec)))
         _ (when unknown-keys
-            (throw (ex-info "v/rg spec has unknown keys."
+            (throw (ex-info "rg spec has unknown keys."
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :unknown (vec unknown-keys)})))
         has-all? (contains? spec :all)
         has-any? (contains? spec :any)
         _ (when (= has-all? has-any?)
-            (throw (ex-info "v/rg spec must use exactly one of :all or :any."
+            (throw (ex-info "rg spec must use exactly one of :all or :any."
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         vector-of-strings (fn [k default]
@@ -896,12 +896,12 @@
                                   ;; works instead of throwing. Vectors pass through unchanged.
                                   v   (if (string? raw) [raw] raw)]
                               (when-not (and (vector? v) (seq v) (every? string? v))
-                                (throw (ex-info "v/rg spec fields must be non-empty vectors of strings."
+                                (throw (ex-info "rg spec fields must be non-empty vectors of strings."
                                          {:type :ext.foundation.editing/invalid-rg-spec
                                           :field k
                                           :got v})))
                               (when-not (every? #(not (str/blank? %)) v)
-                                (throw (ex-info "v/rg spec string values must be non-blank."
+                                (throw (ex-info "rg spec string values must be non-blank."
                                          {:type :ext.foundation.editing/invalid-rg-spec
                                           :field k
                                           :got v})))
@@ -910,7 +910,7 @@
         ;; memory treatment as :glob for :include). Kept out of the docstring
         ;; / prompt on purpose; canonical stays :paths.
         _ (when (< 1 (count (filter #(contains? spec %) [:paths :files :path])))
-            (throw (ex-info "v/rg spec must use only one of canonical :paths or its aliases (:files / :path)."
+            (throw (ex-info "rg spec must use only one of canonical :paths or its aliases (:files / :path)."
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         path-key (cond (contains? spec :files) :files
@@ -923,7 +923,7 @@
         ;; :include. Kept out of the docstring on purpose; negation
         ;; (!pat) still goes through :exclude.
         _ (when (and (contains? spec :include) (contains? spec :glob))
-            (throw (ex-info "v/rg spec must use only one of :include or :glob."
+            (throw (ex-info "rg spec must use only one of :include or :glob."
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         include-key (cond (contains? spec :include) :include
@@ -946,13 +946,13 @@
                       (when (contains? spec k)
                         (let [v (get spec k)]
                           (when-not (and (integer? v) (not (neg? v)))
-                            (throw (ex-info (str "v/rg :" (name k) " must be a non-negative integer")
+                            (throw (ex-info (str "rg :" (name k) " must be a non-negative integer")
                                      {:type :ext.foundation.editing/invalid-rg-spec
                                       :field k :got v}))))))
         _ (run! nonneg-int! [:limit :context :before :after])
         limit-spec (:limit spec)
         _ (when (and limit-spec (not (pos? limit-spec)))
-            (throw (ex-info "v/rg :limit must be a positive integer"
+            (throw (ex-info "rg :limit must be a positive integer"
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :field :limit :got limit-spec})))
         limit (or limit-spec default-grep-limit)
@@ -962,12 +962,12 @@
         files-only? (boolean (:files-only? spec))
         counts?     (boolean (:counts? spec))
         _ (when (and files-only? counts?)
-            (throw (ex-info "v/rg :files-only? and :counts? are mutually exclusive"
+            (throw (ex-info "rg :files-only? and :counts? are mutually exclusive"
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         _ (when (and (or files-only? counts?)
                   (or (pos? before-ctx) (pos? after-ctx)))
-            (throw (ex-info "v/rg :before / :after / :context only apply to content mode (not :files-only? / :counts?)"
+            (throw (ex-info "rg :before / :after / :context only apply to content mode (not :files-only? / :counts?)"
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         regex? (boolean (:regex? spec))
@@ -1006,11 +1006,11 @@
     :else
     (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
 
-;; Per-line text cap for v/rg hits was retired (was 500 chars,
+;; Per-line text cap for rg hits was retired (was 500 chars,
 ;; mirroring Roo Code). The cap had the same failure mode as the
 ;; trailer cap before it: the `…<+N chars>` marker made the model
 ;; perceive its own data as missing and chase a phantom "full line"
-;; via extra v/cat roundtrips, even on normal source lines that
+;; via extra cat roundtrips, even on normal source lines that
 ;; happened to brush the cap. The model owns its data — see the
 ;; trailer truncation note in `internal/ctx_renderer.clj`.
 ;;
@@ -1076,8 +1076,8 @@
     (catch Throwable _ 0)))
 
 (defn- rg-search
-  "The v/rg search ENGINE: takes the public v/rg spec map and does the
-   actual file scanning. The public `rg-tool` (= `v/rg`) wraps this with
+  "The rg search ENGINE: takes the public rg spec map and does the
+   actual file scanning. The public `rg-tool` (= `rg`) wraps this with
    arity/kwargs handling + the LLM-facing result envelope. Three output
    modes, picked by
    `:files-only?` / `:counts?` / (default content).
@@ -1186,7 +1186,7 @@
 (def ^:private patch-locator-keys
   "Every edit needs EXACTLY ONE locator: `:search` (text match) or
    `:from-hash` (hashline — content-addressed by the per-line hash from
-   `v/cat`). The hashline form re-resolves against LIVE content on every
+   `cat`). The hashline form re-resolves against LIVE content on every
    edit, so it stays correct under line drift (insertions above, or
    earlier edits in the same grouped batch) where raw line numbers would
    silently target the wrong line."
@@ -1217,31 +1217,31 @@
   (let [missing (seq (remove #(contains? group %) patch-group-required-keys))
         unknown (seq (remove patch-group-allowed-keys (keys group)))]
     (when missing
-      (throw (ex-info "v/patch grouped edit missing required keys"
+      (throw (ex-info "patch grouped edit missing required keys"
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :missing (vec missing)
                 :edit group})))
     (when unknown
-      (throw (ex-info "v/patch grouped edit has unknown keys"
+      (throw (ex-info "patch grouped edit has unknown keys"
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :unknown (vec unknown)
                 :allowed (vec patch-group-allowed-keys)
                 :edit group})))
     (when-not (sequential? edits)
-      (throw (ex-info "v/patch grouped :edits must be a vector/seq of edit maps"
+      (throw (ex-info "patch grouped :edits must be a vector/seq of edit maps"
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :edits edits})))
     (when (empty? edits)
-      (throw (ex-info "v/patch grouped :edits must not be empty"
+      (throw (ex-info "patch grouped :edits must not be empty"
                {:type :ext.foundation.editing/invalid-patch-edit-group
                 :edit group})))
     (mapv (fn [edit]
             (when-not (map? edit)
-              (throw (ex-info "v/patch grouped :edits entries must be maps"
+              (throw (ex-info "patch grouped :edits entries must be maps"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
             (when (contains? edit :path)
-              (throw (ex-info "v/patch grouped :edits inherit :path; do not repeat it per edit"
+              (throw (ex-info "patch grouped :edits inherit :path; do not repeat it per edit"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
             (cond-> (assoc edit :path path)
@@ -1253,7 +1253,7 @@
   [edits]
   (let [edits (if (map? edits) [edits] edits)]
     (when-not (sequential? edits)
-      (throw (ex-info "v/patch expects a map, grouped map, or vector of edit maps/groups"
+      (throw (ex-info "patch expects a map, grouped map, or vector of edit maps/groups"
                {:type :ext.foundation.editing/invalid-patch-edits
                 :got  (type edits)})))
     (mapcat (fn [edit]
@@ -1267,28 +1267,28 @@
   (let [edits (normalize-patch-edits-input edits)]
     (mapv (fn [edit]
             (when-not (map? edit)
-              (throw (ex-info "v/patch edit must be a map"
+              (throw (ex-info "patch edit must be a map"
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
             (let [missing (seq (remove #(contains? edit %) patch-required-keys))
                   locators (filter #(contains? edit %) patch-locator-keys)
                   unknown (seq (remove patch-allowed-keys (keys edit)))]
               (when missing
-                (throw (ex-info "v/patch edit missing required keys"
+                (throw (ex-info "patch edit missing required keys"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :missing (vec missing)
                           :edit edit})))
               (when (not= 1 (count locators))
-                (throw (ex-info "v/patch edit needs EXACTLY ONE of :search or :from-hash"
+                (throw (ex-info "patch edit needs EXACTLY ONE of :search or :from-hash"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :locators (vec locators)
                           :edit edit})))
               (when (and (:to-hash edit) (not (:from-hash edit)))
-                (throw (ex-info "v/patch :to-hash requires :from-hash"
+                (throw (ex-info "patch :to-hash requires :from-hash"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :edit edit})))
               (when unknown
-                (throw (ex-info "v/patch edit has unknown keys"
+                (throw (ex-info "patch edit has unknown keys"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :unknown (vec unknown)
                           :allowed (vec patch-allowed-keys)
@@ -1297,7 +1297,7 @@
               (when (and (some? nth-spec)
                       (not (or (#{:first :last :all} nth-spec)
                              (and (integer? nth-spec) (pos? nth-spec)))))
-                (throw (ex-info "v/patch :nth must be :first, :last, :all or a positive integer"
+                (throw (ex-info "patch :nth must be :first, :last, :all or a positive integer"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :nth nth-spec :edit edit}))))
             (update edit :path str))
@@ -1308,7 +1308,7 @@
    Throws on blank needle (would yield infinite matches)."
   [^String haystack ^String needle]
   (when (str/blank? needle)
-    (throw (ex-info "v/patch :search must be non-blank"
+    (throw (ex-info "patch :search must be non-blank"
              {:type :ext.foundation.editing/invalid-patch-search})))
   (loop [idx 0 acc []]
     (let [hit (str/index-of haystack needle idx)]
@@ -1565,7 +1565,7 @@
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
 ;;
 ;; A process-wide atom of `{absolute-path consecutive-fail-count}`. We bump
-;; on every failed v/patch invocation that touched the path and reset to
+;; on every failed patch invocation that touched the path and reset to
 ;; zero when the same path's plan applies cleanly. Once the count crosses
 ;; `patch-fail-loop-threshold`, the error message escalates with a hard
 ;; "stop blind retry" hint that nudges the model out of the loop.
@@ -1587,11 +1587,11 @@
 (defn- patch-loop-hint
   [^long n path]
   (when (>= n patch-fail-loop-threshold)
-    (str "Consecutive v/patch failures on " path ": " n
-      ". STOP retrying with similar :search. Re-read the file (v/cat path :tail"
+    (str "Consecutive patch failures on " path ": " n
+      ". STOP retrying with similar :search. Re-read the file (cat path :tail"
       " or with the offset shown above), then build ONE cohesive edit plan with"
       " :after/:before anchors or :nth selection. If you are rewriting the"
-      " whole file, switch to (v/write).")))
+      " whole file, switch to (write).")))
 
 ;; -----------------------------------------------------------------------------
 ;; Staleness check: :expected-mtime / :expected-size
@@ -1811,7 +1811,7 @@
     (case reason
       :hash-not-found (str head " failed: " (name (:which hash-error)) "-hash "
                         (pr-str (:hash hash-error)) " matches no line (the line changed or"
-                        " the file moved). Re-read with v/cat for fresh :hashes.")
+                        " the file moved). Re-read with cat for fresh :hashes.")
       :hash-ambiguous (str head " failed: " (name (:which hash-error)) "-hash "
                         (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
                         " identical lines " (pr-str (:lines hash-error))
@@ -1850,8 +1850,8 @@
 (defn- patch-failure-message
   [failures]
   (if (= 1 (count failures))
-    (str "v/patch " (explain-failure (first failures)))
-    (str "v/patch " (count failures) " edits failed; first: "
+    (str "patch " (explain-failure (first failures)))
+    (str "patch " (count failures) " edits failed; first: "
       (explain-failure (first failures)))))
 
 (defn- non-exact-passes-for-path
@@ -1881,7 +1881,7 @@
     checks))
 
 (defn patch-safe
-  "Apply exact-replace v/patch edits to the filesystem.
+  "Apply exact-replace patch edits to the filesystem.
 
    Returns a structured map; **never throws on normal failure paths**
    (no-match, anchor-not-found, stale mtime, file not found, path
@@ -1945,14 +1945,14 @@
          :checks checks}))))
 
 ;; =============================================================================
-;; v/write — whole-file write primitive (create or overwrite)
+;; write — whole-file write primitive (create or overwrite)
 ;;
-;; v/patch is great for surgical edits but awkward for full-file rewrites:
+;; patch is great for surgical edits but awkward for full-file rewrites:
 ;; the model would otherwise read the file, use whole content as :search
-;; and submit the new blob as :replace. v/write makes the common case
+;; and submit the new blob as :replace. write makes the common case
 ;; ergonomic: one tool, one map, atomic semantics.
 ;;
-;; Shape (parity with v/patch result):
+;; Shape (parity with patch result):
 ;;   {:success? true
 ;;    :plan   {:path :before :after :op}}
 ;;   {:success? false
@@ -1961,8 +1961,8 @@
 ;;    :message  <human-readable>}
 ;;
 ;; The `:overwrite?` knob defaults to true. `:expected-mtime` /
-;; `:expected-size` provide the same staleness guard as v/patch — pair
-;; them with (:mtime / :size) from a prior v/cat for atomic
+;; `:expected-size` provide the same staleness guard as patch — pair
+;; them with (:mtime / :size) from a prior cat for atomic
 ;; read-modify-write on existing files.
 ;; =============================================================================
 
@@ -1975,24 +1975,24 @@
 (defn- coerce-write-args
   [args]
   (when-not (map? args)
-    (throw (ex-info "v/write expects a single map argument"
+    (throw (ex-info "write expects a single map argument"
              {:type :ext.foundation.editing/invalid-write-args
               :got  (type args)})))
   (let [missing (seq (remove #(contains? args %) write-required-keys))
         unknown (seq (remove write-allowed-keys (keys args)))]
     (when missing
-      (throw (ex-info "v/write missing required keys"
+      (throw (ex-info "write missing required keys"
                {:type :ext.foundation.editing/invalid-write-args
                 :missing (vec missing)
                 :args args})))
     (when unknown
-      (throw (ex-info "v/write has unknown keys"
+      (throw (ex-info "write has unknown keys"
                {:type :ext.foundation.editing/invalid-write-args
                 :unknown (vec unknown)
                 :allowed (vec write-allowed-keys)
                 :args args})))
     (when-not (string? (:content args))
-      (throw (ex-info "v/write :content must be a string"
+      (throw (ex-info "write :content must be a string"
                {:type :ext.foundation.editing/invalid-write-args
                 :got (type (:content args))}))))
   (update args :path str))
@@ -2043,7 +2043,7 @@
          :failures [(cond-> check n (assoc :consecutive-failures n))]
          :checks   [check]
          :loop-hint (when (and file-for-counter n) (patch-loop-hint n path))
-         :message  (str "v/write failed: " (:message perr))})
+         :message  (str "write failed: " (:message perr))})
       (let [^java.io.File file (:file resolved)
             rel (:rel resolved)
             exists? (.exists file)
@@ -2054,12 +2054,12 @@
             fail (cond
                    is-dir?
                    {:reason :path-is-dir
-                    :message (str "v/write target is a directory: " rel)}
+                    :message (str "write target is a directory: " rel)}
 
                    (and (not overwrite?) exists?)
                    {:reason :exists
                     :path rel
-                    :message (str "v/write refused: " rel
+                    :message (str "write refused: " rel
                                " already exists and :overwrite? is false")}
 
                    (and exists? (some? expected-mtime)
@@ -2069,7 +2069,7 @@
                              :expected-mtime expected-mtime
                              :actual-mtime actual-mtime
                              :actual-size actual-size}
-                    :message (str "v/write refused: " rel
+                    :message (str "write refused: " rel
                                " mtime changed since :expected-mtime")}
 
                    (and exists? (some? expected-size)
@@ -2079,7 +2079,7 @@
                              :expected-size expected-size
                              :actual-size actual-size
                              :actual-mtime actual-mtime}
-                    :message (str "v/write refused: " rel
+                    :message (str "write refused: " rel
                                " size changed since :expected-size")})]
         (if fail
           (let [n (bump-patch-fail-count! file)]
@@ -2154,69 +2154,69 @@
 (defn- cat-tool
   "Read a window of a text file.
 
-   Default-first design: `(v/cat path)` reads up to `default-cat-limit`
+   Default-first design: `(cat path)` reads up to `default-cat-limit`
    (2000) lines from line 1, which is the WHOLE FILE for almost every
    source file in a normal repo. Reach for explicit slicing only when
    the file is bigger than 2000 lines OR you specifically want a
    middle/tail section.
 
    Arities:
-     (v/cat path)                       — first 2000 lines (default — use this).
-     (v/cat path :range start end)      — INCLUSIVE 1-based line range [start, end].
+     (cat path)                       — first 2000 lines (default — use this).
+     (cat path :range start end)      — INCLUSIVE 1-based line range [start, end].
                                           Pick when you know both endpoints
-                                          (e.g., a v/rg hit + :context window).
-     (v/cat path :ranges [[s e] ...])   — several inclusive ranges from one file;
+                                          (e.g., a rg hit + :context window).
+     (cat path :ranges [[s e] ...])   — several inclusive ranges from one file;
                                           use this instead of repeated same-file cats.
-     (v/cat path :hash H)               — the single line whose content hash is H.
-     (v/cat path :hash H1 H2)           — INCLUSIVE window between the lines hashed
+     (cat path :hash H)               — the single line whose content hash is H.
+     (cat path :hash H1 H2)           — INCLUSIVE window between the lines hashed
                                           H1..H2. Addresses BY CONTENT (the read
-                                          twin of `v/patch :from-hash`/:to-hash`):
+                                          twin of `patch :from-hash`/:to-hash`):
                                           re-read a region you kept by its stored
                                           hashes, drift-proof — no line numbers.
-                                          A missing/dup hash errors back to v/cat.
-     (v/cat path :tail)                 — LAST 2000 lines.
-     (v/cat path :tail n)               — LAST n lines.
+                                          A missing/dup hash errors back to cat.
+     (cat path :tail)                 — LAST 2000 lines.
+     (cat path :tail n)               — LAST n lines.
 
    Result shape:
-     {:vis.op :v/cat :path P :lines [[<line-number> <text>] …]
+     {:vis.op :cat :path P :lines [[<line-number> <text>] …]
       :hashes {<line-number> <hash> …}
       :next-offset N? :eof? B :truncated? B :mtime :size}
    `:hashes` maps each line number to a stable 6-char content hash (also
    shown in the gutter as `<ln> <hash>│ text`). Feed a pair to
-   `v/patch` as `{:from-hash H1 :to-hash H2 :replace R}` to edit the line
+   `patch` as `{:from-hash H1 :to-hash H2 :replace R}` to edit the line
    range [H1..H2] without reconstructing the source text — anchors are
    content-addressed, so they survive line drift.
    `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
    offset arithmetic. Filter content with `(filter (fn [[_ t]] …) :lines)`.
    Each line's text is verbatim — no per-line cap. `:next-offset` is nil
    at EOF or for tail; integer otherwise — pass to a follow-up
-   `(v/cat path :range next-offset …)` to paginate. `:truncated?` is
+   `(cat path :range next-offset …)` to paginate. `:truncated?` is
    true when the 256KB byte cap chopped the window; paginate regardless.
 
-   The legacy `(v/cat path n)` and `(v/cat path offset n)` arities were
+   The legacy `(cat path n)` and `(cat path offset n)` arities were
    removed because they competed with `:range`. Use:
-     (v/cat path :range 1 N)          ;; first N lines (was (v/cat path N))
-     (v/cat path :range offset (+ offset n -1))  ;; was (v/cat path offset n)"
+     (cat path :range 1 N)          ;; first N lines (was (cat path N))
+     (cat path :range offset (+ offset n -1))  ;; was (cat path offset n)"
   ([path]
    (let [out (read-file path 1 default-cat-limit)]
      (tool-success
-       {:op :v/cat
+       {:op :cat
         :path path
         :kind :file
-        :result (assoc out :vis.op :v/cat)
+        :result (assoc out :vis.op :cat)
         :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path arg]
    (when-not (= arg :tail)
-     (throw (ex-info "v/cat 2-arity must use :tail; for head/range use (v/cat path :range start end)"
+     (throw (ex-info "cat 2-arity must use :tail; for head/range use (cat path :range start end)"
               {:type :ext.foundation.editing/invalid-cat-args
                :got arg})))
    (let [out (tail-file path default-cat-limit)]
      (tool-success
-       {:op :v/cat
+       {:op :cat
         :path path
         :kind :file
-        :result (assoc out :vis.op :v/cat)
+        :result (assoc out :vis.op :cat)
         :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path arg n]
@@ -2224,77 +2224,77 @@
      :tail
      (let [out (tail-file path n)]
        (tool-success
-         {:op :v/cat
+         {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :v/cat)
+          :result (assoc out :vis.op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
      :ranges
      (let [out (read-file-ranges path n)]
        (tool-success
-         {:op :v/cat
+         {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :v/cat)
+          :result (assoc out :vis.op :cat)
           :metadata {:truncated? (:truncated? out)
                      :ranges (mapv :range (:ranges out))}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
      :hash
-     ;; (v/cat path :hash H) — the single line whose content hash is H,
-     ;; addressed by content (the symmetric read for v/patch :from-hash).
+     ;; (cat path :hash H) — the single line whose content hash is H,
+     ;; addressed by content (the symmetric read for patch :from-hash).
      (let [out (read-file-by-hash path n nil)]
        (tool-success
-         {:op :v/cat
+         {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :v/cat)
+          :result (assoc out :vis.op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                      :range (:range out)}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
-     (throw (ex-info "v/cat 3-arity must use :tail, :ranges, or :hash; for one range use (v/cat path :range start end)"
+     (throw (ex-info "cat 3-arity must use :tail, :ranges, or :hash; for one range use (cat path :range start end)"
               {:type :ext.foundation.editing/invalid-cat-args
                :got arg}))))
   ([path mode start end]
    (case mode
-     ;; (v/cat path :range start end) — INCLUSIVE start..end (both 1-based).
+     ;; (cat path :range start end) — INCLUSIVE start..end (both 1-based).
      :range
      (do
        (validate-cat-range! start end)
        (let [n (inc (- (long end) (long start)))
              out (read-file path start n)]
          (tool-success
-           {:op :v/cat
+           {:op :cat
             :path path
             :kind :file
-            :result (assoc out :vis.op :v/cat)
+            :result (assoc out :vis.op :cat)
             :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                        :range [start end]}
             :presentation {:kind :source :path (:path out) :line-key :lines}})))
 
-     ;; (v/cat path :hash from-hash to-hash) — INCLUSIVE window between the
+     ;; (cat path :hash from-hash to-hash) — INCLUSIVE window between the
      ;; lines hashed from-hash..to-hash, addressed by content.
      :hash
      (let [out (read-file-by-hash path start end)]
        (tool-success
-         {:op :v/cat
+         {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :v/cat)
+          :result (assoc out :vis.op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                      :range (:range out)}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
-     (throw (ex-info "v/cat 4-arity must use :range or :hash as the second arg"
+     (throw (ex-info "cat 4-arity must use :range or :hash as the second arg"
               {:type :ext.foundation.editing/invalid-cat-args
                :got mode})))))
 
 (defn- ls-tool
   "List a directory as a FLAT recursive entry list. Returns a plain map:
-     {:vis.op :v/ls
+     {:vis.op :ls
       :path          P            — workspace-relative root path
       :absolute-path AP
       :root-type     :dir|:file
@@ -2304,7 +2304,7 @@
       :depth N :limit N}
 
    Default behaviour: recursive walk up to `:depth 10` and 3000 entries.
-   Paths are workspace-relative (same shape as v/cat / v/patch :path);
+   Paths are workspace-relative (same shape as cat / patch :path);
    `:type :dir` carries no trailing slash on the path — the discriminator
    IS the `:type` field. Sort order: depth-first pre-order; within each
    directory, sub-directories first, then files, both alphabetical.
@@ -2314,11 +2314,11 @@
      (filter #(= :file (:type %)) (:entries r))
    no `tree-seq` walk needed.
 
-   `(v/ls path)` reads with defaults. Opts can be supplied either as
+   `(ls path)` reads with defaults. Opts can be supplied either as
    a trailing map OR as inline kwargs — BOTH calling conventions
    work and are equivalent (Clojure 1.11+ kwargs auto-coercion):
-     (v/ls path {:depth 2 :files-only? true})   ;; map form
-     (v/ls path :depth 2 :files-only? true)     ;; kwargs form
+     (ls path {:depth 2 :files-only? true})   ;; map form
+     (ls path :depth 2 :files-only? true)     ;; kwargs form
 
    Recognised opts (any combination):
      :depth N            — max recursion depth (default 10)
@@ -2330,9 +2330,9 @@
      :respect-gitignore? B  default true"
   ([path & {:as opts}]
    (let [listing (list-files path opts)
-         result  (assoc listing :vis.op :v/ls)]
+         result  (assoc listing :vis.op :ls)]
      (tool-success
-       {:op :v/ls
+       {:op :ls
         :path path
         :kind :dir
         :result result
@@ -2353,8 +2353,8 @@
 
    Spec accepts BOTH calling conventions (Clojure 1.11+ kwargs
    auto-coercion):
-     (v/rg {:any [\"a\"] :paths [\"src\"]})    ;; map form
-     (v/rg :any [\"a\"] :paths [\"src\"])      ;; kwargs form
+     (rg {:any [\"a\"] :paths [\"src\"]})    ;; map form
+     (rg :any [\"a\"] :paths [\"src\"])      ;; kwargs form
 
    Recognised keys:
      {:all [\"a\" \"b\"]      — AND: every needle on same line
@@ -2374,9 +2374,9 @@
    pass :regex? true to treat them as full regex (e.g. `\\bdef login\\b`).
 
    Result shape varies by mode (the tool envelope's `:result` always
-   carries `:vis.op :v/rg` plus a `:mode` discriminator):
+   carries `:vis.op :rg` plus a `:mode` discriminator):
      content     (:mode :content)     {:matches [{:path P :lines [[ln text]...]} ...]  :hit-count N  :file-count N  :first-hit P:L  ...}
-                                     ;; path stated ONCE per file; :lines tuples mirror v/cat's [ln text] shape
+                                     ;; path stated ONCE per file; :lines tuples mirror cat's [ln text] shape
      files-only? (:mode :files-only)  {:files [...] :file-count N ...}
      counts?     (:mode :counts)      {:counts [...] :file-count N ...}"
   [& args]
@@ -2394,7 +2394,7 @@
 
                :else
                (throw (ex-info
-                        "v/rg takes either a single spec map or inline kwargs (e.g. (v/rg :any [\"x\"] :paths [\"src\"]))."
+                        "rg takes either a single spec map or inline kwargs (e.g. (rg :any [\"x\"] :paths [\"src\"]))."
                         {:type :ext.foundation.editing/invalid-rg-arity
                          :expected '([spec-map] [& kwargs])
                          :got args})))
@@ -2404,7 +2404,7 @@
         mode (cond files-only? :files-only
                counts?     :counts
                :else       :content)
-        shared {:vis.op       :v/rg
+        shared {:vis.op       :rg
                 :mode         mode
                 :truncated-by (:truncated-by out)
                 :spec         spec
@@ -2420,7 +2420,7 @@
                        ;; file instead of once per hit. :lines folds each
                        ;; hit's context (:before / match / :after) into one
                        ;; line-sorted, de-duplicated [ln text] vec — the same
-                       ;; tuple shape v/cat emits, so the model reads one
+                       ;; tuple shape cat emits, so the model reads one
                        ;; structure, not a flat path-repeating wall.
                        matches       (mapv (fn [p]
                                              (let [hs    (get by-path p)
@@ -2453,7 +2453,7 @@
                      :file-count (count counts)
                      :total-matches (reduce + 0 (map :count counts)))))]
     (tool-success
-      {:op :v/rg
+      {:op :rg
        :path (if (= 1 (count paths))
                (first paths)
                ".")
@@ -2563,7 +2563,7 @@
 (defn- unified-diff-text
   "Unified diff preview for two file blobs. Normal-sized files use
    `java-diff-utils` for real hunks. Very large files use a linear bounded
-   fallback to keep `v/patch` result rendering from becoming the slow path."
+   fallback to keep `patch` result rendering from becoming the slow path."
   [before after]
   (cond
     (= before after) nil
@@ -2581,8 +2581,8 @@
       (str/join "\n" (cap-diff-lines diff-lines)))))
 
 (defn- patch-result-file-summary
-  "Build a per-file summary map that lives on `:result` of `v/patch` /
-   `v/write`.
+  "Build a per-file summary map that lives on `:result` of `patch` /
+   `write`.
 
    Minimal shape — every key is necessary signal, no redundant counters:
 
@@ -2622,7 +2622,7 @@
 
    Hashline edit (content-addressed — no whitespace reconstruction):
      {:path P :from-hash H1 :to-hash H2? :replace R}
-   H1/H2 are per-line anchors from the `v/cat` `:hashes` map / gutter
+   H1/H2 are per-line anchors from the `cat` `:hashes` map / gutter
    (`<ln> <hash>│ text`). The range is the line carrying H1 through the
    line carrying H2 (inclusive); omit `:to-hash` for a single line. The
    anchors are re-resolved against LIVE content on every edit, so they
@@ -2645,10 +2645,10 @@
    total miss reports the nearest candidate WITH the first differing line
    so you can fix `:search` in one shot instead of re-reading blind.
 
-   Companion primitives — each does ONE thing, no overlap with v/patch:
-     v/write    whole-file create or overwrite
-     v/move     rename / move
-     v/delete   delete (or v/delete-if-exists)
+   Companion primitives — each does ONE thing, no overlap with patch:
+     write    whole-file create or overwrite
+     move     rename / move
+     delete   delete (or delete-if-exists)
 
    The full plan is validated against the live filesystem before any
    write — a single failure aborts the entire batch and no file is
@@ -2659,7 +2659,7 @@
       (let [plans     (:plans result)
             summaries (mapv patch-result-file-summary plans)]
         (tool-success
-          {:op :v/patch
+          {:op :patch
            :path (or (:path (first plans)) ".")
            :kind :file
            :result summaries
@@ -2672,7 +2672,7 @@
       (let [first-failure (first (:failures result))]
         (extension/failure
           {:result   nil
-           :op       :v/patch
+           :op       :patch
            :metadata {:target {:requested (str (or (:path first-failure) "."))
                                :resolved nil
                                :absolute nil
@@ -2693,14 +2693,14 @@
 
    Args accept BOTH calling conventions (Clojure 1.11+ kwargs
    auto-coercion); both forms below are equivalent:
-     (v/write {:path P :content S})
-     (v/write :path P :content S)
+     (write {:path P :content S})
+     (write :path P :content S)
 
-     (v/write {:path P :content S :overwrite? false})     fail if file exists
-     (v/write {:path P :content S :expected-mtime MS})    staleness guard
-     (v/write {:path P :content S :expected-size  BYTES}) staleness guard
+     (write {:path P :content S :overwrite? false})     fail if file exists
+     (write {:path P :content S :expected-mtime MS})    staleness guard
+     (write {:path P :content S :expected-size  BYTES}) staleness guard
 
-   Returns the same per-file summary shape as `v/patch` (so the model
+   Returns the same per-file summary shape as `patch` (so the model
    reads `:diff`, `:changed?`, etc. with one mental model). `:op` is
    `:add` for new files and `:update` for overwrites. Failures land in
    the structured error envelope as `;; ! data {:reason …}` — no
@@ -2711,7 +2711,7 @@
       (let [plan (:plan result)
             summary (patch-result-file-summary plan)]
         (tool-success
-          {:op :v/write
+          {:op :write
            :path (:path plan)
            :kind :file
            :result [summary]
@@ -2722,7 +2722,7 @@
       (let [first-failure (first (:failures result))]
         (extension/failure
           {:result   nil
-           :op       :v/write
+           :op       :write
            :metadata {:target {:requested (str (or (:path first-failure)
                                                  (:path args)
                                                  "."))
@@ -2748,10 +2748,10 @@
   (let [before (fs/exists? (safe-path path))
         out    (create-dirs-safe path)]
     (tool-success
-      {:op :v/create-dirs
+      {:op :create-dirs
        :path path
        :kind :dir
-       :result {:vis.op :v/create-dirs
+       :result {:vis.op :create-dirs
                 :path out
                 :created? (not before)
                 :already-existed? before}
@@ -2764,15 +2764,15 @@
 
    Opts accept BOTH calling conventions (Clojure 1.11+ kwargs
    auto-coercion):
-     (v/copy src dest {:overwrite? true})
-     (v/copy src dest :overwrite? true)"
+     (copy src dest {:overwrite? true})
+     (copy src dest :overwrite? true)"
   ([src dest & {:as opts}]
    (let [out (copy-safe src dest opts)]
      (tool-success
-       {:op :v/copy
+       {:op :copy
         :path dest
         :kind :path
-        :result {:vis.op :v/copy
+        :result {:vis.op :copy
                  :src    src
                  :dest   dest
                  :path   out}
@@ -2785,15 +2785,15 @@
    `(:src r)` / `(:dest r)` / `(:path r)` (alias for dest).
 
    Opts accept BOTH calling conventions:
-     (v/move src dest {:overwrite? true})
-     (v/move src dest :overwrite? true)"
+     (move src dest {:overwrite? true})
+     (move src dest :overwrite? true)"
   ([src dest & {:as opts}]
    (let [out (move-safe src dest opts)]
      (tool-success
-       {:op :v/move
+       {:op :move
         :path dest
         :kind :path
-        :result {:vis.op :v/move
+        :result {:vis.op :move
                  :src    src
                  :dest   dest
                  :path   out}
@@ -2803,51 +2803,51 @@
 
 (defn- delete-tool
   "Delete `path`. Returns the map every `v/*` tool returns so the
-   channel renderer (and `(def r (v/delete p))` consumers) can read
+   channel renderer (and `(def r (delete p))` consumers) can read
    `(:path r)` and `(:deleted? r)` straight off. Previously this
    returned `nil` and the channel preview painted `DELETE nil` —
-   same parity bug we already fixed in `v/exists?`."
+   same parity bug we already fixed in `exists?`."
   [path]
   (delete-safe path)
   (tool-success
-    {:op :v/delete
+    {:op :delete
      :path path
      :kind :path
-     :result {:vis.op :v/delete :path path :deleted? true}
+     :result {:vis.op :delete :path path :deleted? true}
      :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
   "Delete `path` if present. Returns the map every `v/*` tool returns
    so destructuring (and the channel renderer) can read `(:path r)`
    and `(:deleted? r)` directly. Previously this returned a bare
-   boolean which broke `(def r (v/delete-if-exists p))` consumers
-   (same lesson as `v/exists?`)."
+   boolean which broke `(def r (delete-if-exists p))` consumers
+   (same lesson as `exists?`)."
   [path]
   (let [deleted? (delete-if-exists-safe path)]
     (tool-success
-      {:op :v/delete-if-exists
+      {:op :delete-if-exists
        :path path
        :kind :path
-       :result {:vis.op :v/delete-if-exists :path path :deleted? deleted?}
+       :result {:vis.op :delete-if-exists :path path :deleted? deleted?}
        :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
   "Filesystem existence check.
 
-   Returns `{:vis.op :v/exists? :path P :exists? B}` so the model
+   Returns `{:vis.op :exists? :path P :exists? B}` so the model
    destructures the same shape every `v/*` tool uses (industry parity
-   with `v/cat`, `v/ls`, `v/rg`, …). Earlier this returned a bare
-   boolean, which broke `(def r (v/exists? P))` consumers that
+   with `cat`, `ls`, `rg`, …). Earlier this returned a bare
+   boolean, which broke `(def r (exists? P))` consumers that
    reached for `(:exists? r)` — a wholly reasonable assumption given
    the surrounding map-shaped `v/*` API. See conversation
    11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 4 iter 1→2."
   [path]
   (let [exists? (exists-safe? path)]
     (tool-success
-      {:op :v/exists?
+      {:op :exists?
        :path path
        :kind :path
-       :result {:vis.op :v/exists?
+       :result {:vis.op :exists?
                 :path   (str path)
                 :exists? exists?}
        :metadata {:exists? exists?}})))
@@ -2868,7 +2868,7 @@
   (into [:ir {}] (filter some? blocks)))
 
 (defn- flat-entry-line
-  "Render one flat v/ls row as `path/[trailing-slash-for-dirs] (Nb)`.
+  "Render one flat ls row as `path/[trailing-slash-for-dirs] (Nb)`.
    Trailing slash is RENDERER convention (Roo / cline style) so directory
    rows read as filesystem paths; the underlying data shape carries
    `:type :dir` for programmatic discrimination instead."
@@ -2916,7 +2916,7 @@
         first-ln     (ffirst lines)
         ;; Channel/TUI display is a HUMAN surface — line-number gutter,
         ;; not the model's `<hash>│` edit-anchor gutter. Humans navigate
-        ;; v/cat output by line number; the hash anchors live in the
+        ;; cat output by line number; the hash anchors live in the
         ;; model-facing `:lines`/`:hashes` payload (Vis session ac065988).
         body         (if (seq ranges)
                        (patch/render-lineno-range-block ranges)
@@ -3136,92 +3136,92 @@
 (def cat-symbol
   (vis/symbol #'cat-tool
     {:symbol 'cat
-     :before-fn (path-protected-before-fn :v/cat :file :read first-arg-paths)
+     :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
      :tag :observation
      :render-fn channel-render-cat
-     :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
+     :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
 (def ls-symbol
   (vis/symbol #'ls-tool
     {:symbol 'ls
-     :before-fn (path-protected-before-fn :v/ls :dir :read first-arg-paths)
+     :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
      :tag :observation
      :render-fn channel-render-ls
-     :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
+     :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
 (def rg-symbol
   (vis/symbol #'rg-tool
     {:symbol 'rg
-     :before-fn (path-protected-before-fn :v/rg :dir :read rg-arg-paths)
+     :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
      :tag :observation
      :render-fn channel-render-rg
-     :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
+     :on-error-fn (tool-failure-on-error :rg :dir nil)}))
 
 (def patch-symbol
   (vis/symbol #'patch-tool
     {:symbol 'patch
-     :before-fn (path-protected-before-fn :v/patch :file :write patch-arg-paths)
+     :before-fn (path-protected-before-fn :patch :file :write patch-arg-paths)
      :tag :mutation
      :render-fn channel-render-patch
-     :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
+     :on-error-fn (tool-failure-on-error :patch :file nil)}))
 
 (def write-symbol
-  ;; v/write reuses the v/patch channel renderer because its `:result`
+  ;; write reuses the patch channel renderer because its `:result`
   ;; shape is the same single-file summary (just always 1-file long).
   (vis/symbol #'write-tool
     {:symbol 'write
-     :before-fn (path-protected-before-fn :v/write :file :write write-arg-paths)
+     :before-fn (path-protected-before-fn :write :file :write write-arg-paths)
      :tag :mutation
      :render-fn channel-render-patch
-     :on-error-fn (tool-failure-on-error :v/write :file nil)}))
+     :on-error-fn (tool-failure-on-error :write :file nil)}))
 
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
-     :before-fn (path-protected-before-fn :v/create-dirs :dir :write first-arg-paths)
+     :before-fn (path-protected-before-fn :create-dirs :dir :write first-arg-paths)
      :tag :mutation
      :render-fn channel-render-create-dirs
-     :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
+     :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
 
 (def copy-symbol
   (vis/symbol #'copy-tool
     {:symbol 'copy
-     :before-fn (path-protected-before-fn :v/copy :path :write first-two-arg-paths)
+     :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
      :tag :mutation
      :render-fn channel-render-copy
-     :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
+     :on-error-fn (tool-failure-on-error :copy :path nil)}))
 
 (def move-symbol
   (vis/symbol #'move-tool
     {:symbol 'move
-     :before-fn (path-protected-before-fn :v/move :path :write first-two-arg-paths)
+     :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
      :tag :mutation
      :render-fn channel-render-move
-     :on-error-fn (tool-failure-on-error :v/move :path nil)}))
+     :on-error-fn (tool-failure-on-error :move :path nil)}))
 
 (def delete-symbol
   (vis/symbol #'delete-tool
     {:symbol 'delete
-     :before-fn (path-protected-before-fn :v/delete :path :write first-arg-paths)
+     :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
      :tag :mutation
      :render-fn channel-render-delete
-     :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
+     :on-error-fn (tool-failure-on-error :delete :path nil)}))
 
 (def delete-if-exists-symbol
   (vis/symbol #'delete-if-exists-tool
     {:symbol 'delete-if-exists
-     :before-fn (path-protected-before-fn :v/delete-if-exists :path :write first-arg-paths)
+     :before-fn (path-protected-before-fn :delete-if-exists :path :write first-arg-paths)
      :tag :mutation
      :render-fn channel-render-delete-if-exists
-     :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
+     :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
 
 (def exists?-symbol
   (vis/symbol #'exists-tool
     {:symbol 'exists?
-     :before-fn (path-protected-before-fn :v/exists? :path :read first-arg-paths)
+     :before-fn (path-protected-before-fn :exists? :path :read first-arg-paths)
      :tag :observation
      :render-fn channel-render-exists?
-     :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
+     :on-error-fn (tool-failure-on-error :exists? :path nil)}))
 
 (defn available-editing-symbols
   []
@@ -3244,26 +3244,26 @@
      ""
      "CANONICAL FLOW"
      "  Discover repo shape first:"
-     "    (v/ls \".\" {:depth 2})"
+     "    (ls \".\" {:depth 2})"
      "  Locate files from workspace root (default path is .):"
-     "    (v/rg {:any [P] :files-only? true})"
+     "    (rg {:any [P] :files-only? true})"
      "  Open normal source files whole by default:"
-     "    (v/cat path)"
+     "    (cat path)"
      "  For known large files only, use one 400-500 line range or one multi-range call:"
-     "    (v/cat path :range start end)"
-     "    (v/cat path :ranges [[start end] ...])"
-     "  v/cat rows render `HASH| text`; HASH is the per-line content anchor."
+     "    (cat path :range start end)"
+     "    (cat path :ranges [[start end] ...])"
+     "  cat rows render `HASH| text`; HASH is the per-line content anchor."
      "  PATCH STRATEGY — pick the locator by intent, batch edits in one call:"
      "  :from-hash = precise single line/range, drift-safe (DEFAULT for one spot):"
-     "    (v/patch [{:path P :from-hash H :replace R}])               ; one line"
-     "    (v/patch [{:path P :from-hash H1 :to-hash H2 :replace R}])  ; H1..H2 range"
+     "    (patch [{:path P :from-hash H :replace R}])               ; one line"
+     "    (patch [{:path P :from-hash H1 :to-hash H2 :replace R}])  ; H1..H2 range"
      "  :search = bulk + fuzzy (rename-all, repeated edits, dup/blank lines hashes"
      "  can't target):"
-     "    (v/patch {:path P :edits [{:search S1 :replace R1} {:search S2 :replace R2}]})"
-     "    (v/patch [{:path P :search S :replace R :nth :all}])        ; replace EVERY hit"
+     "    (patch {:path P :edits [{:search S1 :replace R1} {:search S2 :replace R2}]})"
+     "    (patch [{:path P :search S :replace R :nth :all}])        ; replace EVERY hit"
      "  Mix locators freely; >1 identical line has no hash — use :search there."
      "  Create/replace whole files only when full content is known:"
-     "    (v/write {:path P :content S})"
+     "    (write {:path P :content S})"
      ""
      "INVARIANTS"
      "  - One canonical call shape: maps for option-bearing tools."

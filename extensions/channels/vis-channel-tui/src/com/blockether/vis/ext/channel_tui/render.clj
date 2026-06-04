@@ -2746,7 +2746,7 @@
 (defn- detail-id-suffix
   ;; User-facing badge displayed at the right edge of disclosure rows.
   ;;   - Render positions (ints), never UUIDs.
-  ;;   - Format: `[turn 7 · iteration 3 · block 0 · tool · v/patch]`
+  ;;   - Format: `[turn 7 · iteration 3 · block 0 · tool · patch]`
   ;;   - Lowercase level words, dot separator (·).
   ;;   - Optional :role and :op-symbol segments after the positions.
   ;;   - No abbreviations: "iteration" not "iter".
@@ -3894,7 +3894,7 @@
                 ;; the only per-form surface now.
                 title-lines   []
                 ;; Hide-by-tag: parse-block-display marks bookkeeping
-                ;; forms (`(def NAME (v/cat …))`, bare `(v/cat …)` tool
+                ;; forms (`(def NAME (cat …))`, bare `(cat …)` tool
                 ;; calls) with `:hidden? true`. The result pane below
                 ;; already shows the OBSERVATION/MUTATION badge + tool
                 ;; output, so the raw source row stays hidden by default.

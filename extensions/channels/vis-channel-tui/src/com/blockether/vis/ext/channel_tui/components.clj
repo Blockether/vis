@@ -49,14 +49,13 @@
 
 (def ^:const close-button-width
   "Cells a `close-button!` occupies: a `│` divider + a space + 1-col `✕` +
-  two trailing padding spaces, so it reads as a distinct close affordance, not a
-  stray glyph."
-  5)
+  a trailing space."
+  4)
 
-(def ^:private close-button-glyph "│ ✕  ")
+(def ^:private close-button-glyph "│ ✕ ")
 
 (defn close-button!
-  "Draw a `│ ✕  ` close affordance (divider + space + ✕ + space) at (col,row) in the tab's OWN foreground
+  "Draw a `│ ✕ ` close affordance (divider + space + ✕ + space) at (col,row) in the tab's OWN foreground
    `tab-fg` on `tab-bg` — so it's high-contrast with the tab (white ✕ on a
    dark tab, dark ✕ on a light tab) without being a solid inverted block.
    Turns red + bold on hover. Registers its `:close-tab` click region for

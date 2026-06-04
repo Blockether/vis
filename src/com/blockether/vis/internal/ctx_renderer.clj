@@ -121,7 +121,7 @@
    :vis/next).
 
    This is THE fix for the c8dc39b1 / 1a9a61ee trailer-bloat class:
-   `(def x (v/cat huge-file))` no longer rides every later prompt
+   `(def x (cat huge-file))` no longer rides every later prompt
    verbatim once it crosses the generous 10k-token evidence window —
    the model sees head + tail + the handle.
 

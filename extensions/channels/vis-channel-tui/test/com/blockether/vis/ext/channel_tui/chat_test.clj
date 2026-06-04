@@ -133,7 +133,7 @@
         (expect (some #(re-find #"Mixed" (str %)) (:render-segments form))))))
 
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
-    ;; `(def x (v/cat ...))` persists the live var value as
+    ;; `(def x (cat ...))` persists the live var value as
     ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's
     ;; channel-rendered text is durable and should be shown on resume.
     ;; In the new shape the channel sink rides on the form envelope.
@@ -146,13 +146,13 @@
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
-                      :code "(def prompt-lines (v/cat \"src/foo.clj\"))"
+                      :code "(def prompt-lines (cat \"src/foo.clj\"))"
                       :forms [{:scope "t1/i1/f1"
                                :tag   :host
-                               :src   "(def prompt-lines (v/cat \"src/foo.clj\"))"
+                               :src   "(def prompt-lines (cat \"src/foo.clj\"))"
                                :result {:vis/ref :expr}
                                :channel [{:position 0
-                                          :form "(v/cat \"src/foo.clj\")"
+                                          :form "(cat \"src/foo.clj\")"
                                           :success? true
                                           :result {:summary [:ir {} [:p {} [:span {} "Read `src/foo.clj` — 10 line(s)."]]]
                                                    :display [:ir {} [:p {} [:span {} "Read `src/foo.clj` — 10 line(s)."]]]}}]}]}])]
@@ -176,13 +176,13 @@
                   (fn [_db _turn-id]
                     [{:id :iter-1
                       :duration-ms 12
-                      :code "(v/patch [])"
+                      :code "(patch [])"
                       :forms [{:scope "t24/i1/f1"
                                :tag :mutation
-                               :src "(v/patch [])"
+                               :src "(patch [])"
                                :result :ok
                                :channel [{:position 0
-                                          :form "(v/patch [])"
+                                          :form "(patch [])"
                                           :success? true
                                           :result "PATCH ok"}]}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -202,18 +202,18 @@
                   vis/db-list-session-turn-iterations
                   (fn [_db _turn-id]
                     [{:id :iter-1
-                      :code (str "(v/cat \"src/foo.clj\")\n(v/cat \"ghost.clj\")")
+                      :code (str "(cat \"src/foo.clj\")\n(cat \"ghost.clj\")")
                       :forms [{:scope "t1/i1/f1"
                                :tag :observation
-                               :src "(v/cat \"src/foo.clj\")"
-                               :result {:vis.op :v/cat :path "src/foo.clj"}
+                               :src "(cat \"src/foo.clj\")"
+                               :result {:vis.op :cat :path "src/foo.clj"}
                                :channel [{:position 0
-                                          :form "(v/cat \"src/foo.clj\")"
+                                          :form "(cat \"src/foo.clj\")"
                                           :success? true
                                           :result "CAT src/foo.clj"}]}
                               {:scope "t1/i1/f2"
                                :tag :observation
-                               :src "(v/cat \"ghost.clj\")"
+                               :src "(cat \"ghost.clj\")"
                                :error {:message "file not found: ghost.clj"}}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             forms   (-> history second :traces first :forms)
@@ -263,7 +263,7 @@
     ;; metadata. Asserts chat layer extracts the canonical keys regardless
     ;; of which extension emitted them.
     (let [tool-out (extension/success
-                     {:op :v/cat
+                     {:op :cat
                       :result {:path "x.txt" :lines ["ok"]}
                       :metadata {:target {:path "x.txt"}}})]
       (with-redefs [extension/render-tool-result (fn [_] "rendered tool")
@@ -276,13 +276,13 @@
                     vis/db-list-session-turn-iterations
                     (fn [_db _turn-id]
                       [{:id :iter-1
-                        :code "(v/cat \"x.txt\")"
+                        :code "(cat \"x.txt\")"
                         :result tool-out}])]
         (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
               trace   (-> history second :traces first)
               form    (-> trace :forms first)]
           (expect (= :tool (:result-kind form)))
-          (expect (= {:symbol :v/cat
+          (expect (= {:symbol :cat
                       :tag :observation
                       :target {:path "x.txt"}}
                     (:result-detail form))))))))

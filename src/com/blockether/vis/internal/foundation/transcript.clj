@@ -12,8 +12,8 @@
    analytics extension consumes the same shape.
 
    Lives in foundation because it's an introspection surface, not host
-   plumbing. The sandbox-visible public surface is `(v/session-state)`
-   for data and `(v/session-report)` for Markdown; this namespace
+   plumbing. The sandbox-visible public surface is `(session-state)`
+   for data and `(session-report)` for Markdown; this namespace
    owns the transcript portion behind that deeper interface.
 
    Public Clojure surface:
@@ -683,7 +683,7 @@
   "Flatten transcript turns/iterations into compact raw-response
    diagnostic rows. Rows exist only when the iteration has persisted
    raw-response or executable-block forensic data. This is presentation
-   support for `v/session-report`; `v/session-state` builds its public convenience
+   support for `session-report`; `session-state` builds its public convenience
    view from the same underlying transcript fields."
   [turns]
   (vec
@@ -731,7 +731,7 @@
 (defn- render-raw-diagnostics
   "Compact raw LLM response diagnostics for the whole report. The
    table is always small; bounded previews live in collapsed details
-   blocks so `v/session-report` answers the first diagnostic question without
+   blocks so `session-report` answers the first diagnostic question without
    forcing users into logs or SQLite."
   [turns]
   (let [rows (raw-diagnostic-rows turns)]

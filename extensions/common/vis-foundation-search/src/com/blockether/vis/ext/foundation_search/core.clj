@@ -9,7 +9,7 @@
    All three bind directly in the primary agent sandbox.
 
    Output shape — parity with the rest of the `:tag :observation`
-   tool surface (v/cat, v/ls, v/rg). Every search fn returns the
+   tool surface (cat, ls, rg). Every search fn returns the
    canonical tool envelope; SCI sees the unwrapped `:result` map:
 
      {:vis.op       :search/web|:search/code|:search/papers

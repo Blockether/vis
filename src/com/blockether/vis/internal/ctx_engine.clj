@@ -1415,7 +1415,7 @@
      • Clojure native mutators that survive the sandbox
        (reset!, swap!, alter-var-root)
 
-   Extension tools (`v/patch`, `v/write`, `git/commit!`, anything an
+   Extension tools (`patch`, `write`, `git/commit!`, anything an
    extension ships) are NOT here. Extensions declare their own
    observation / mutation tag at registration time; the integration
    layer reaches that tag through `extension/op-tag` and passes it to
@@ -1468,7 +1468,7 @@
    resolver wins when it returns a non-nil tag; on nil the engine
    falls back to `core-mutation-heads`. The integration layer in
    `loop.clj` builds the resolver from `extension/op-tag` so every
-   extension-declared tool (`v/patch`, `git/commit!`, anything new an
+   extension-declared tool (`patch`, `git/commit!`, anything new an
    extension ships) classifies correctly without the engine hard-
    coding its symbol."
   ([src] (classify-form-tag src nil))
@@ -1529,11 +1529,11 @@
 
    Why `:channel` is carried through (regression: conversation
    11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 2 \"show me ls\"): the
-   model wraps tool calls in `(def r (v/ls \".\"))` per the engine
+   model wraps tool calls in `(def r (ls \".\"))` per the engine
    contract (\"bind values to defs\"). SCI's `def` unwraps the tool
    envelope to its inner `:result` value before binding `r`, so the
    block's `:result` is a plain map without `:success?` and the TUI's
-   `render-tool-result` cannot dispatch to the v/ls renderer — no
+   `render-tool-result` cannot dispatch to the ls renderer — no
    widget/badge. The pre-rendered IR for every call already lives in
    the per-form channel-sink under `:channel`; carrying it onto the
    envelope lets the TUI replay paint the badge from the sink entry
@@ -1569,7 +1569,7 @@
 
    3-arity passes `head-tag-resolver` (see `classify-form-tag`) through
    to every `block->envelope` call so extension-declared mutation tools
-   (`v/patch`, `git/commit!`, any symbol with inline `:tag` on its
+   (`patch`, `git/commit!`, any symbol with inline `:tag` on its
    `vis/symbol` entry) classify correctly without the engine
    hard-coding their symbol set."
   ([blocks cursor] (blocks->forms blocks cursor nil))

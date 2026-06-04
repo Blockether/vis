@@ -139,7 +139,7 @@
 (defn form->ops
   "All ops contributed by ONE form (proof envelope), in sink `:position`
    order. A form's `:channel` slice holds one sink entry per tool call it
-   touched (regardless of nesting), so a `(let [a (v/cat) b (v/cat)] …)` form
+   touched (regardless of nesting), so a `(let [a (cat) b (cat)] …)` form
    yields the cat/cat/… ops in source order."
   [{:keys [channel]}]
   (->> channel
@@ -312,14 +312,14 @@
 (def ^:private op-friendly-labels
   "Friendly TUI labels for ops whose raw keyword tail is cryptic.
    Keys are full op keywords; values are the display string."
-  {:v/cat "READ"
-   :v/rg  "SEARCH"
-   :v/ls  "LIST"})
+  {:cat "READ"
+   :rg  "SEARCH"
+   :ls  "LIST"})
 
 (defn op-label
   "Short label for an op keyword/symbol. Prefers `op-friendly-labels`,
    then falls back to the tail name upcased.
-   `:git/status` → \"STATUS\", `:v/cat` → \"READ\"."
+   `:git/status` → \"STATUS\", `:cat` → \"READ\"."
   [op]
   (or (get op-friendly-labels op)
     (-> op name (str/split #"/") last str/upper-case)))

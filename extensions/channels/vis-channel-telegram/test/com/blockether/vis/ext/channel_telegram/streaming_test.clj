@@ -63,10 +63,10 @@
 
   (it "renders the running step feed (▸ running, ✓ done)"
     (let [live-bubble-html (p 'live-bubble-html)
-          out (live-bubble-html {:steps [{:label "(v/cat \"a.clj\")" :done? true}
-                                         {:label "(v/rg)" :done? false}]})]
-      (expect (str/includes? out "✓ <code>(v/cat \"a.clj\")</code>"))
-      (expect (str/includes? out "▸ <code>(v/rg)</code>"))))
+          out (live-bubble-html {:steps [{:label "(cat \"a.clj\")" :done? true}
+                                         {:label "(rg)" :done? false}]})]
+      (expect (str/includes? out "✓ <code>(cat \"a.clj\")</code>"))
+      (expect (str/includes? out "▸ <code>(rg)</code>"))))
 
   (it "escapes HTML specials in step labels"
     (let [live-bubble-html (p 'live-bubble-html)

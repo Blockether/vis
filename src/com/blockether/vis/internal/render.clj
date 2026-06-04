@@ -675,7 +675,7 @@
    routinely write the table directly under a text line (ripgrep-style
    muscle memory), so commonmark folds it into the paragraph as literal
    pipes and it never renders. Inject the missing blank line so tolerant
-   authoring just works — mirrors the scalar-tolerant v/rg spec coercion."
+   authoring just works — mirrors the scalar-tolerant rg spec coercion."
   [text]
   (let [lines (str/split-lines text)]
     (->> (range (count lines))
