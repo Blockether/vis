@@ -145,7 +145,7 @@
                :session/warnings. Skip a task ONLY for a pure no-tool answer.
       REMEMBER The moment you locate or edit a file, record it as a DURABLE
                fact BEFORE moving on — full path + the region's verbatim :src
-               and its v/cat gutter hashes:
+               and its cat gutter hashes:
                (fact-set! :calc-add
                  {:content \"calc/add — the sum fn\"
                   :files [{:path \"calc.clj\"
@@ -407,7 +407,7 @@
    Returns a vec of compact, fully-realized data maps - NO functions,
    NO atoms, NO opaque runtime objects. The model walks this with
    `filter` / `keep` / `some` exactly like any other Clojure data
-   structure; never has to reach into `(v/extensions)` just to
+   structure; never has to reach into an `(extensions)` call just to
    discover what's loaded.
 
    Per element:

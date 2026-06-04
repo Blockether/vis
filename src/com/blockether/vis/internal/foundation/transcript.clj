@@ -312,7 +312,7 @@
         result          (if (contains? envelope :result) (:result envelope) (:result envelope))
         success?        (if (contains? envelope :success?) (:success? envelope) (:success? envelope))
         error           (if (contains? envelope :error) (:error envelope) (:error envelope))
-        op              (or (:symbol envelope) (:op tool-meta) :v/tool)
+        op              (or (:symbol envelope) (:op tool-meta) :tool)
         parent-ref      (when block (block-ref turn iteration block))
         ref             (when parent-ref (str parent-ref "/tool/" (op-slug op)))
         status          (event-status error success?
