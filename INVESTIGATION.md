@@ -252,6 +252,23 @@ criteria**. *"This is all wrong and has to be fixed."*
 How does `done` self-assertion interact with verification (engine doesn't verify
 claims today)? What does the user-facing task panel look like (TUI render)?
 
+**Status: engine + prompt DONE; TUI panel deferred.**
+- `::task` gains optional `:acceptance` (the done criterion, string) + `:verified?`
+  (model asserts it checked — engine does NOT verify the claim, consistent with
+  self-asserted done).
+- New SOFT structural pass `pass-task-done-unverified` → `:session/warnings` entry
+  when a task is `:done` with an `:acceptance` but `:verified? not true`. Doesn't
+  block close (done stays self-asserted); it nudges. Wired into `derive-warnings`.
+- Prompt: PLAN gate now states the done-criterion + verify-before-close flow;
+  `task-set!` doc shows `:acceptance`/`:verified?`; warnings list updated. Enforcement
+  is the GATE + the warning (no hard block).
+- Tasks render raw via `(zp tasks)` so `:acceptance`/`:verified?` auto-surface in ctx.
+- Tests: `task-done-unverified-test` (warns/silent matrix + spec). ctx-engine ns
+  123/123; full suite at baseline.
+- **Deferred — USER-visible TUI task panel:** a `:session/tasks` panel in
+  `vis-channel-tui` (status todo/doing/done + acceptance/verified). Larger UI work;
+  next focused piece of W3.
+
 ---
 
 ### W4 — Prompt: shorter AND forces thinking

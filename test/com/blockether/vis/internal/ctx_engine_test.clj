@@ -1063,3 +1063,29 @@
           (expect (not (contains? (get-in c2 [:session/facts :plain]) :files)))
           (expect (s/valid? ::cs/fact (get-in c2 [:session/facts :plain]))))))))
 
+;; =============================================================================
+;; W3 — task acceptance + verification: done-unverified structural warning
+;; =============================================================================
+
+(defdescribe task-done-unverified-test
+  (let [warns (fn [task]
+                (let [ctx (assoc (eng/empty-ctx) :session/tasks {:t1 task})]
+                  (eng/derive-warnings ctx (eng/build-indexes ctx))))
+        unverified? (fn [ws] (boolean (some #(re-find #":verified\? not true" %) ws)))
+        base {:title "x" :status :done :born "t1/i1/f1"}]
+    (describe "pass-task-done-unverified"
+      (it "warns when :done with an :acceptance but :verified? not true"
+        (expect (unverified? (warns (assoc base :acceptance "tests pass")))))
+      (it "is silent when :verified? true"
+        (expect (not (unverified? (warns (assoc base :acceptance "tests pass"
+                                           :verified? true))))))
+      (it "is silent when there is no :acceptance (trivial task)"
+        (expect (not (unverified? (warns base)))))
+      (it "is silent for a :doing task with acceptance (not closed yet)"
+        (expect (not (unverified? (warns (assoc base :status :doing
+                                           :acceptance "tests pass")))))))
+    (describe "::task spec accepts acceptance + verified?"
+      (it "is spec-valid with both fields"
+        (expect (s/valid? ::cs/task (assoc base :acceptance "tests pass"
+                                      :verified? true)))))))
+

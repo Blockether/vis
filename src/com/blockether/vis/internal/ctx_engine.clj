@@ -507,6 +507,20 @@
            (warn :task-done-pending-dep
              [task-id d]
              (str "task " task-id " :done but dep " d " is " (:status dep)))))))
+(defn- pass-task-done-unverified
+  "Structural pass (W3): task :status :done with a stated :acceptance but
+   :verified? not true. Soft only — done is self-asserted; this nudges the
+   model to actually check the acceptance criterion before claiming done."
+  [ctx _indexes]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (vec (for [[task-id task] tasks
+               :when (and (= :done (:status task))
+                       (some? (:acceptance task))
+                       (not (true? (:verified? task))))]
+           (warn :task-done-unverified
+             [task-id]
+             (str "task " task-id " :done but :verified? not true — "
+               "check its :acceptance and set :verified? true"))))))
 (def ^:private rebind-loop-threshold
   "Number of consecutive trailer pins binding the same def-name that
    trigger a `:trailer-rebind-loop` advisory. 3 catches a real loop
@@ -575,6 +589,7 @@
      - contradicting-facts    (`pass-contradicting-facts`)
      - rebind-loop            (`pass-rebind-loop`)
      - task-done-with-non-terminal-dep (`pass-task-done-deps`)
+     - task-done-unverified   (`pass-task-done-unverified`)
 
    `form-results` arg is accepted for call-site compatibility but the
    structural passes do not consult it."
@@ -583,6 +598,7 @@
    (->> (concat (pass-contradicting-facts ctx indexes)
           (pass-task-depends-on-refs ctx indexes)
           (pass-task-done-deps ctx indexes)
+          (pass-task-done-unverified ctx indexes)
           (pass-rebind-loop ctx indexes))
      distinct
      (sort-by (juxt :code (comp str :anchor)))
