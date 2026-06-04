@@ -34,7 +34,7 @@
       (expect (str/includes? text "EPISTEMIC"))
       (expect (str/includes? text "runtime > source > docs > assumption"))
       (expect (str/includes? text "IDENTITY"))
-      (expect (str/includes? text "HOST PROJECT around the sandbox"))
+      (expect (str/includes? text "HOST project"))
       ;; IDENTITY must be project-agnostic: it has to work in any repo.
       (expect (not (str/includes? text "the Vis PROJECT"))))))
 
