@@ -13,6 +13,7 @@
    Components own their visual contract AND their interaction contract
    (the click region's `:kind`), keeping `header.clj` a thin layout caller."
   (:require [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]))
@@ -339,9 +340,11 @@
               shown)]
       (cond-> lines (pos? more) (conj [[(str "    … +" more " more") t/footer-fg-muted false]])))))
 (defn- section-line
-  "A bold section header line (single segment)."
+  "A bold section header line (single segment). Uses a DARK accent
+   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and
+   only legible on the dark title bar, not on the light dialog body."
   [label]
-  [[label t/dialog-title-fg true]])
+  [[label t/header-active-tab-accent true]])
 (defn context-overlay!
   "Centered modal showing the session's working memory — `:session/tasks` AND
    `:session/facts` — the W3 user-visible panel. Mirrors `help-overlay!` chrome
@@ -351,61 +354,38 @@
    (active first, `⛁N` for file-bearing facts). `ctx` is `{:tasks … :facts …}`.
    No-op when the terminal is too small."
   [g cols rows {:keys [tasks facts]}]
-  (let [cols (long cols)
-        rows (long rows)
-        total (count tasks)
-        done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
-        title (str "Context"
-                   (when (pos? total) (format "   tasks %d/%d done" done total))
-                   (when (pos? (count facts)) (format "   facts %d" (count facts))))
-        hint "F2 to close"
-        ;; Width: cap the card to most of the screen; size body to content.
-        max-box (max 24 (- cols 6))
-        body-w (min 72 (max 28 (- max-box 4)))
-        blank [["" t/footer-fg-muted false]]
-        lines (vec (concat [(section-line "TASKS")]
-                           (task-overlay-lines tasks body-w)
-                           [blank]
-                           [(section-line "FACTS")]
-                           (fact-overlay-lines facts body-w)))
-        line-w (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))
-        content-w
-          (reduce max (max (p/display-width title) (+ 2 (p/display-width hint))) (map line-w lines))
-        inner-w (min body-w content-w)
-        box-w (+ inner-w 4)
-        box-h (+ (count lines) 4)
-        left (max 0 (quot (- cols box-w) 2))
-        top (max 0 (quot (- rows box-h) 2))
-        right (+ left box-w -1)
-        bottom (+ top box-h -1)]
-    (when (and (>= cols box-w) (>= rows box-h))
-      ;; Solid slab + border.
-      (p/clear-styles! g)
-      (p/set-colors! g t/border-fg t/dialog-bg)
-      (doseq [r (range top (inc bottom))] (p/fill-rect! g left r box-w 1))
-      (p/put-str! g left top (str "┌" (apply str (repeat (- box-w 2) "─")) "┐"))
-      (p/put-str! g left bottom (str "└" (apply str (repeat (- box-w 2) "─")) "┘"))
-      (doseq [r (range (inc top) bottom)]
-        (p/put-str! g left r "│")
-        (p/put-str! g right r "│"))
-      ;; Title (bold) + right-aligned dim close hint on the same row.
-      (p/clear-styles! g)
-      (p/set-colors! g t/dialog-title-fg t/dialog-bg)
-      (p/enable! g p/BOLD)
-      (p/put-str! g (+ left 2) (inc top) title)
-      (p/clear-styles! g)
-      (p/set-colors! g t/dialog-hint t/dialog-bg)
-      (let [hx (- right 1 (p/display-width hint))]
-        (when (> hx (+ left 2 (p/display-width title))) (p/put-str! g hx (inc top) hint)))
-      ;; Body lines: paint each colored segment left-to-right.
-      (doseq [[i segs] (map-indexed vector lines)]
-        (let [r (+ top 3 i)]
-          (loop [x (+ left 2)
-                 ss segs]
-            (when-let [[text color bold?] (first ss)]
+  (let [total  (count tasks)
+        done   (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
+        title  (str "Context"
+                 (when (pos? total)         (format "  ·  tasks %d/%d done" done total))
+                 (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
+        hint   "F2 to close"
+        ;; Regular-dialog chrome: shadow, border, accent title bar, separators,
+        ;; hint row — the same look every other modal uses.
+        bounds (dialogs/draw-dialog-chrome! g cols rows title (+ (count tasks) (count facts) 4))
+        {:keys [left inner-w]} bounds
+        body-w (max 8 (- inner-w 2))
+        blank  [["" t/dialog-hint false]]
+        lines  (vec (concat [(section-line "TASKS")] (task-overlay-lines tasks body-w)
+                      [blank]
+                      [(section-line "FACTS")] (fact-overlay-lines facts body-w)))
+        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds (count lines))]
+    ;; Body: paint each line's colored segments, clipped to the content width.
+    (dotimes [i (min (count lines) content-h)]
+      (let [r (+ content-top i)]
+        (loop [x (+ left 1), ss (nth lines i)]
+          (when-let [[text color bold?] (first ss)]
+            (let [avail (max 0 (- (+ left 1 inner-w) x))
+                  shown (clip-str (str text) avail)]
               (p/clear-styles! g)
               (p/set-colors! g color t/dialog-bg)
               (when bold? (p/enable! g p/BOLD))
-              (p/put-str! g x r text)
-              (recur (+ x (p/display-width text)) (next ss))))))
-      (p/clear-styles! g))))
+              (p/put-str! g x r shown)
+              (recur (+ x (p/display-width shown)) (next ss)))))))
+    ;; Centered dim close hint on the dialog's hint row.
+    (when hint-row
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-hint t/dialog-bg)
+      (p/put-str! g (+ left 1 (max 0 (quot (- inner-w (p/display-width hint)) 2)))
+        hint-row hint))
+    (p/clear-styles! g)))
