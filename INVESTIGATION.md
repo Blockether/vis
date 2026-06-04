@@ -405,9 +405,20 @@ each editing a DIFFERENT function. opus (same model as the baseline):
   earlier "gates don't fire" result was the weak gate wording + a trivial
   scenario; both addressed.
 
-- **Remaining W6 polish (optional):** glm re-run on the strengthened gates;
-  `verify`-based pass/fail alongside the signals; a still-larger real-repo
-  scenario. Core hypothesis is now empirically confirmed.
+- **W6 polish — DONE.**
+  - **Cross-model confirmed:** the strengthened gates fire on BOTH models on the
+    hard scenario — opus `task-set!=8 fact-set!=4 multi-form=12`, glm-5.1
+    `task-set!=8 fact-set!=4 multi-form=7`; locate-waste 0 for both.
+  - **Verify-based pass/fail:** `w6_hard.sh` now loads the final `service.clj` and
+    asserts all 4 edits behave (price-order nil-guard, apply-discount clamp `[0,1]`,
+    list-orders `:status` arity, total-revenue) → **VERIFY=pass on both models**.
+    So the gains aren't just signal-shaped: the code is correct.
+  - **F2 panel polished to a real dialog:** `components/context-overlay!` now uses
+    the shared `dialogs/draw-dialog-chrome!` + `dialog-layout` (shadow, border,
+    accent title bar, hint row) with DARK section headers
+    (`header-active-tab-accent`, not the white `dialog-title-fg` that was invisible
+    on the light `dialog-bg`).
+  - Core hypothesis empirically confirmed, cross-model, with correctness verified.
 
 ---
 

@@ -146,10 +146,11 @@
       REMEMBER The moment you locate or edit a file, record it as a DURABLE
                fact BEFORE moving on — full path + the region's verbatim :src
                and its v/cat gutter hashes:
-               (fact-set! :calc-add {:content \"calc/add — the sum fn\"
-                          :files [{:path \"calc.clj\"
-                                   :regions [{:src \"(defn add [a b] (+ a b))\"
-                                              :from-hash \"a1b2\"}]}]})
+               (fact-set! :calc-add
+                 {:content \"calc/add — the sum fn\"
+                  :files [{:path \"calc.clj\"
+                           :regions [{:src \"(defn add [a b] (+ a b))\"
+                                      :from-hash \"a1b2\"}]}]})
                Next turn, re-patch that region from the fact BY HASH — never
                re-cat a region you've kept. (The same :files shape also rides
                a (summarize …) trailer stub for transient regions.)
