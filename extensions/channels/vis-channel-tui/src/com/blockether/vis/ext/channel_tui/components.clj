@@ -48,14 +48,15 @@
 ;; ── close button ────────────────────────────────────────────────────────────
 
 (def ^:const close-button-width
-  "Cells a `close-button!` occupies: a 1-col `✕` framed by one padding space
-   on each side, so it reads as a distinct block, not a stray glyph."
-  3)
+  "Cells a `close-button!` occupies: a `│` divider + a space + 1-col `✕` + a
+  trailing padding space, so it reads as a distinct close affordance, not a
+  stray glyph."
+  4)
 
-(def ^:private close-button-glyph " ✕ ")
+(def ^:private close-button-glyph "│ ✕ ")
 
 (defn close-button!
-  "Draw a ` ✕ ` close affordance at (col,row) in the tab's OWN foreground
+  "Draw a `│ ✕ ` close affordance (divider + space + ✕) at (col,row) in the tab's OWN foreground
    `tab-fg` on `tab-bg` — so it's high-contrast with the tab (white ✕ on a
    dark tab, dark ✕ on a light tab) without being a solid inverted block.
    Brightens + bold on hover. Registers its `:close-tab` click region for
@@ -104,11 +105,12 @@
 
    `opts` keys: :left :row :width :label :active? :workspace-id :index
    :register?"
-  [g {:keys [left row width label active? workspace-id index register?]}]
+  [g {:keys [left row width label active? workspace-id index register? closable?]
+      :or   {closable? true}}]
   (let [width       (long width)
         ;; Reserve room for the close button only when the cell can still
         ;; show a sliver of title beside it; otherwise the title wins.
-        show-close? (>= width (+ close-button-width 3))
+        show-close? (and closable? (>= width (+ close-button-width 3)))
         inner-w     (if show-close? (max 0 (- width close-button-width)) width)
         fg          (if active? t/header-active-tab-fg t/border-fg)
         bg          (if active? t/header-active-tab-bg t/dialog-bg)
