@@ -55,17 +55,17 @@
 (def ^:private close-button-glyph " ✕ ")
 
 (defn close-button!
-  "Draw a SUBTLE ` ✕ ` close affordance at (col,row), painted on the tab's
-   own `tab-bg`: dim grey by default, bright + bold when the pointer is over
-   it (so it reads as a quiet affordance, not a harsh inverted block).
-   Registers its `:close-tab` click region for `workspace-id`. Returns the
-   consumed width (`close-button-width`)."
-  [g col row tab-bg workspace-id register?]
+  "Draw a ` ✕ ` close affordance at (col,row) in the tab's OWN foreground
+   `tab-fg` on `tab-bg` — so it's high-contrast with the tab (white ✕ on a
+   dark tab, dark ✕ on a light tab) without being a solid inverted block.
+   Brightens + bold on hover. Registers its `:close-tab` click region for
+   `workspace-id`. Returns the consumed width (`close-button-width`)."
+  [g col row tab-fg tab-bg workspace-id register?]
   (let [hovered  (cr/hovered)
         hovered? (and (= :close-tab (:kind hovered))
                    (= workspace-id (:workspace-id hovered)))]
     (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/header-hover-fg t/footer-fg-muted) tab-bg)
+    (p/set-colors! g (if hovered? t/header-hover-fg tab-fg) tab-bg)
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g col row close-button-glyph)
     (p/clear-styles! g)
@@ -78,10 +78,12 @@
     close-button-width))
 
 (defn tab-divider!
-  "Paint a 1-col vertical `│` divider between two tabs at (col,row)."
+  "Paint a 1-col vertical `│` divider between two tabs at (col,row), in the
+   header's foreground so it stays high-contrast against the surface (white
+   on a dark terminal, dark on a light one)."
   [g col row]
   (p/clear-styles! g)
-  (p/set-colors! g t/border-fg t/terminal-bg)
+  (p/set-colors! g t/footer-fg t/terminal-bg)
   (p/put-str! g col row "│")
   (p/clear-styles! g))
 
@@ -126,7 +128,7 @@
                      :enabled?     true}))
     (when show-close?
       (close-button! g (+ (long left) width (- close-button-width)) row
-        bg workspace-id register?))))
+        fg bg workspace-id register?))))
 
 ;; ── inert title ─────────────────────────────────────────────────────────────
 
