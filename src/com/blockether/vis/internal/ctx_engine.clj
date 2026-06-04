@@ -967,12 +967,16 @@
    `{:batch <vec-of-oldest-pins> :kept <vec-of-survivors> :tokens-freed N}`
    where `kept = (subvec trailer (count batch))`.
 
-   Refuses to collapse the LAST trailer entry — there is no point
-   compacting if the result is one giant summary; the model needs at
-   least one verbatim recent pin to reason against.
+   Refuses to fold into the TWO most recent trailer entries (W5 safety):
+   auto-fold is a blunt budget guard, so it must leave the model enough
+   verbatim recent context to reason against — not just one pin. Folding is
+   oldest-first and recoverable (the stub carries `(recall …)` pointers; the
+   per-form blob stays in the DB), and durable knowledge lives in facts (which
+   are never trailer pins), so this protects the active working window without
+   losing anything.
 
-   Returns `nil` when no batch can hit the target while leaving a tail
-   (i.e. total is already under target, or only one pin exists)."
+   Returns `nil` when no batch can hit the target while leaving ≥2 tail pins
+   (i.e. total is already under target, or ≤2 pins exist)."
   [trailer target-tokens]
   (let [trailer (vec (or trailer []))
         n (count trailer)]
@@ -980,14 +984,14 @@
       (let [sizes (mapv pin-tokens trailer)
             total (reduce + 0 sizes)]
         (when (> total target-tokens)
-          ;; sweep k = 1..n-1 keeping at least one tail entry
+          ;; sweep k = 1.. keeping at least the TWO most recent pins
           (loop [k 1
                  batch-tokens (long (nth sizes 0))]
             (let [remaining (- total batch-tokens)]
               (cond (<= remaining target-tokens) {:batch (subvec trailer 0 k),
                                                   :kept (subvec trailer k),
                                                   :tokens-freed batch-tokens}
-                (>= (inc k) n) nil ;; would have to absorb the tail; refuse
+                (>= (+ k 2) n) nil ;; would leave <2 tail pins; refuse
                 :else (recur (inc k) (+ batch-tokens (long (nth sizes k))))))))))))
 (defn- batch-scope-range
   "Return `[scope-start scope-end]` covering a batch of pins. Works for
