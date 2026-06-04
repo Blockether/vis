@@ -1062,6 +1062,22 @@
   (fn [db _]
     (update db :help-open? not)))
 
+(reg-event-db :toggle-tasks
+  ;; Flip the F2 context panel (W3). Pure render flag — the panel reads the
+  ;; cached `:ctx-by-session` snapshot (refreshed at each turn end) and
+  ;; `components/context-overlay!` paints it when `:tasks-open?` is set.
+  (fn [db _]
+    (update db :tasks-open? not)))
+
+(reg-event-db :set-ctx-panel
+  ;; Cache a session's `:session/{tasks,facts}` snapshot for the F2 context
+  ;; panel. Refreshed ONCE at turn end (not per-paint) by the turn runner;
+  ;; keyed by session id so each tab's panel shows its own working memory.
+  ;; Pure data — no DB read here.
+  (fn [db [_ session-id ctx]]
+    (assoc-in db [:ctx-by-session session-id]
+      {:tasks (or (:tasks ctx) {}) :facts (or (:facts ctx) {})})))
+
 (reg-event-db :set-title
   (fn [db [_ title]]
     (let [db' (assoc db :title title :title-loading? false)
@@ -1702,6 +1718,17 @@
                                   sid (some->> (:id session) (vis/db-latest-session-state-id d))
                                   ws  (when sid (vis/workspace-for-session d sid))]
                               (dispatch [:set-workspace ws]))
+                            (catch Throwable _ nil))
+                          ;; W3: refresh the F2 context panel's snapshot from the
+                          ;; just-completed turn's ctx (tasks + facts). One DB read
+                          ;; at turn end (NOT per-paint); the overlay renders from
+                          ;; this cache.
+                          (try
+                            (when-let [sid (:id session)]
+                              (let [ctx (vis/db-load-latest-ctx (vis/db-info) sid)]
+                                (dispatch [:set-ctx-panel sid
+                                           {:tasks (:session/tasks ctx)
+                                            :facts (:session/facts ctx)}])))
                             (catch Throwable _ nil))
                           (when (:voice-response? turn-features)
                             (speak-answer-async! (:answer result))))))

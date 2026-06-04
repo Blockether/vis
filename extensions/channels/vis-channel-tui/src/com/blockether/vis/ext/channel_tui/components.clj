@@ -179,6 +179,7 @@
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
   [["Ctrl+H · F1"      "Toggle this help"]
+   ["F2"               "Toggle the task panel"]
    ["Enter · Ctrl+X"   "Send message"]
    ["Alt+Enter"        "Insert a newline"]
    ["Esc"              "Clear draft · cancel turn"]
@@ -303,4 +304,155 @@
           (p/clear-styles! g)
           (p/set-colors! g t/footer-fg t/dialog-bg)
           (p/put-str! g (+ left 2 key-w 2) r d)))
+      (p/clear-styles! g))))
+
+;; ── tasks overlay (W3: user-visible :session/tasks) ──────────────────────────
+
+(defn- task-status-glyph [status]
+  (case status :done "✓" :doing "◐" :cancelled "✗" "○"))
+
+(defn- task-status-color [status]
+  (case status
+    :done      t/status-ok
+    :doing     t/warning-fg
+    :cancelled t/cancelled-fg
+    t/footer-fg-muted))
+
+(def ^:private task-status-rank {:doing 0 :todo 1 :done 2 :cancelled 3})
+
+(defn- clip-str
+  "Truncate `s` to `w` display columns with a trailing ellipsis."
+  ^String [^String s ^long w]
+  (if (<= (p/display-width s) w)
+    s
+    (str (subs s 0 (max 0 (dec w))) "…")))
+
+(defn- task-overlay-lines
+  "Build the overlay body as a vec of LINES, each a vec of `[text color bold?]`
+   segments. A task is a primary line (colored status glyph + title + [status]
+   + verify badge) plus, when it has `:acceptance`, a dim indented sub-line.
+   `body-w` is the inner content width segments are clipped to fit."
+  [tasks body-w]
+  (if (empty? tasks)
+    [[["No tasks yet — the model opens one with (task-set! …)." t/footer-fg-muted false]]]
+    (->> tasks
+      (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
+      (mapcat
+        (fn [[k t]]
+          (let [status (or (:status t) :todo)
+                badge  (cond (:verified? t)  ["  ✓ verified"   t/status-ok   false]
+                         (:acceptance t) ["  ⌛ unverified" t/warning-fg  false]
+                         :else           nil)
+                glyph  [(str (task-status-glyph status) " ") (task-status-color status) true]
+                ;; title gets whatever width remains after glyph(2)+badge.
+                badge-w (if badge (p/display-width (first badge)) 0)
+                title-w (max 6 (- body-w 2 badge-w))
+                title  [(clip-str (or (not-empty (str (:title t))) (name k)) title-w)
+                        t/dialog-fg true]
+                primary (cond-> [glyph title] badge (conj badge))
+                accept (when-let [a (not-empty (str (:acceptance t)))]
+                         [[(str "    ▸ " (clip-str a (max 6 (- body-w 6))))
+                           t/footer-fg-muted false]])]
+            (cond-> [primary] accept (into accept))))))))
+
+(defn- fact-overlay-lines
+  "Lines for the FACTS section: a status glyph (active • / superseded ⊘) +
+   `key: content` clipped to width, plus a `⛁N` badge when the fact carries
+   `:files` regions. Active facts first; capped, with a `+N more` tail."
+  [facts body-w]
+  (if (empty? facts)
+    [[["No facts yet — the model records one with (fact-set! …)." t/footer-fg-muted false]]]
+    (let [shown (->> facts
+                  (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
+                  (take 14))
+          more  (max 0 (- (count facts) (count shown)))
+          lines (mapv (fn [[k f]]
+                        (let [super?  (= :superseded (:status f))
+                              fcount  (count (:files f))
+                              badge   (when (pos? fcount)
+                                        [(str "  ⛁" fcount) t/footer-fg-muted false])
+                              badge-w (if badge (p/display-width (first badge)) 0)
+                              glyph   [(if super? "⊘ " "• ")
+                                       (if super? t/footer-fg-muted t/status-ok) true]
+                              txt     (clip-str
+                                        (str (name k) ": "
+                                          (or (not-empty (str (:content f))) ""))
+                                        (max 6 (- body-w 2 badge-w)))]
+                          (cond-> [glyph [txt (if super? t/footer-fg-muted t/dialog-fg) false]]
+                            badge (conj badge))))
+                  shown)]
+      (cond-> lines
+        (pos? more) (conj [[(str "    … +" more " more") t/footer-fg-muted false]])))))
+
+(defn- section-line
+  "A bold section header line (single segment)."
+  [label]
+  [[label t/dialog-title-fg true]])
+
+(defn context-overlay!
+  "Centered modal showing the session's working memory — `:session/tasks` AND
+   `:session/facts` — the W3 user-visible panel. Mirrors `help-overlay!` chrome
+   (own background, no click regions; caller dismisses on F2 / any key). Title
+   carries a tasks-done + facts count summary; a TASKS section (status-sorted,
+   colored glyphs, acceptance sub-lines, verify badges) then a FACTS section
+   (active first, `⛁N` for file-bearing facts). `ctx` is `{:tasks … :facts …}`.
+   No-op when the terminal is too small."
+  [g cols rows {:keys [tasks facts]}]
+  (let [cols    (long cols)
+        rows    (long rows)
+        total   (count tasks)
+        done    (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
+        title   (str "Context"
+                  (when (pos? total) (format "   tasks %d/%d done" done total))
+                  (when (pos? (count facts)) (format "   facts %d" (count facts))))
+        hint    "F2 to close"
+        ;; Width: cap the card to most of the screen; size body to content.
+        max-box (max 24 (- cols 6))
+        body-w  (min 72 (max 28 (- max-box 4)))
+        blank   [["" t/footer-fg-muted false]]
+        lines   (vec (concat [(section-line "TASKS")] (task-overlay-lines tasks body-w)
+                       [blank]
+                       [(section-line "FACTS")] (fact-overlay-lines facts body-w)))
+        line-w  (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))
+        content-w (reduce max
+                    (max (p/display-width title) (+ 2 (p/display-width hint)))
+                    (map line-w lines))
+        inner-w (min body-w content-w)
+        box-w   (+ inner-w 4)
+        box-h   (+ (count lines) 4)
+        left    (max 0 (quot (- cols box-w) 2))
+        top     (max 0 (quot (- rows box-h) 2))
+        right   (+ left box-w -1)
+        bottom  (+ top box-h -1)]
+    (when (and (>= cols box-w) (>= rows box-h))
+      ;; Solid slab + border.
+      (p/clear-styles! g)
+      (p/set-colors! g t/border-fg t/dialog-bg)
+      (doseq [r (range top (inc bottom))]
+        (p/fill-rect! g left r box-w 1))
+      (p/put-str! g left top (str "┌" (apply str (repeat (- box-w 2) "─")) "┐"))
+      (p/put-str! g left bottom (str "└" (apply str (repeat (- box-w 2) "─")) "┘"))
+      (doseq [r (range (inc top) bottom)]
+        (p/put-str! g left r "│")
+        (p/put-str! g right r "│"))
+      ;; Title (bold) + right-aligned dim close hint on the same row.
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-title-fg t/dialog-bg)
+      (p/enable! g p/BOLD)
+      (p/put-str! g (+ left 2) (inc top) title)
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-hint t/dialog-bg)
+      (let [hx (- right 1 (p/display-width hint))]
+        (when (> hx (+ left 2 (p/display-width title)))
+          (p/put-str! g hx (inc top) hint)))
+      ;; Body lines: paint each colored segment left-to-right.
+      (doseq [[i segs] (map-indexed vector lines)]
+        (let [r (+ top 3 i)]
+          (loop [x (+ left 2), ss segs]
+            (when-let [[text color bold?] (first ss)]
+              (p/clear-styles! g)
+              (p/set-colors! g color t/dialog-bg)
+              (when bold? (p/enable! g p/BOLD))
+              (p/put-str! g x r text)
+              (recur (+ x (p/display-width text)) (next ss))))))
       (p/clear-styles! g))))
