@@ -138,11 +138,17 @@
       PLAN     A turn with ≥2 dependent steps OPENS with a task:
                (task-set! :K {:title \"…\" :status :doing}); flip :done when
                you've verified it. One trivial action needs no task.
-      REMEMBER Found a file/symbol/decision you'll reuse? Store it now:
-               (fact-set! :K {:content \"…\"}). For a file you read or
-               changed, capture its FULL path + the interesting region on
-               (summarize … :files [{:path … :regions [{:src :note
-               :from-hash :to-hash}]}]) so you never re-read it next turn.
+      REMEMBER Found a file/symbol/decision you'll reuse? Store it now as a
+               DURABLE fact: (fact-set! :K {:content \"…\"}). For a file you
+               read or changed, attach its FULL path + interesting region to
+               the fact —
+               (fact-set! :K {:content \"…\"
+                              :files [{:path … :regions [{:src :note
+                                       :from-hash :to-hash}]}]}) —
+               so the region survives cross-turn and stays re-patchable by
+               hash; never re-read a region you've kept. (The same :files
+               shape also rides a (summarize …) trailer stub for transient
+               regions.)
       BATCH    The fence holds N forms — USE THEM. Chain independent or
                deterministic steps into ONE fence, e.g.
                (let [h (rg {…}) s (cat (:path (first h)))] s) locates AND
@@ -204,8 +210,12 @@
       edge set; a key you omit leaves it untouched.
         (task-set! :K {:title :status :depends-on [refs]})
                                   ; :todo | :doing | :done | :cancelled
-        (fact-set! :K {:content :status :depends-on [refs] :contradicts [refs]})
+        (fact-set! :K {:content :status :depends-on [refs] :contradicts [refs]
+                       :files [{:path :regions [{:src :note :from-hash :to-hash}]}]})
                                   ; :active | :superseded
+                                  ; :files = durable file regions (verbatim
+                                  ;   :src + hashline anchors) — re-patch from
+                                  ;   memory, no re-cat
       Refs (both keys):
         — bare key IS the same-kind shorthand — USE IT: [:other-key].
           Write :depends-on [:b], NOT :depends-on [[:fact :b]].

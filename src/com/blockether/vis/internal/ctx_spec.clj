@@ -120,13 +120,22 @@
 (s/def :session.fact/done-born  ::scope-form)
 (s/def :session.fact/depends-on (s/coll-of ::entry-key :kind vector?))
 (s/def :session.fact/contradicts (s/coll-of ::entry-key :kind set?))
+;; W2 — file knowledge is a FACT (durable), not just a trailer stub. A fact MAY
+;; carry the SAME structured `:files` regions as a trailer summary (full path +
+;; verbatim `:src` + hashline `:from-hash`/`:to-hash`), so a located/edited
+;; region survives cross-turn as immortal knowledge and stays directly
+;; re-patchable — instead of being lost when the trailer is re-summarized. Shares
+;; the region shape with the trailer summary (`::trailer-summary-file`, defined
+;; below; the forward ref resolves at validation time).
+(s/def :session.fact/files (s/coll-of ::trailer-summary-file :kind vector?))
 
 (s/def ::fact
   (s/keys :req-un [::content ::born]
     :opt-un [:session.fact/status
              :session.fact/done-born
              :session.fact/depends-on
-             :session.fact/contradicts]))
+             :session.fact/contradicts
+             :session.fact/files]))
 
 ;; Soft rules:
 ;;   - :status defaults to :active when omitted (engine assumes :active for legacy facts)
