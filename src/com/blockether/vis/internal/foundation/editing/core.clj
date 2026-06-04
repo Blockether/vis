@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.editing.core
-  "Filesystem tools exposed under the `v/` alias in the SCI sandbox.
+  "Filesystem tools exposed as bare symbols in the SCI sandbox.
 
    Two layers:
 
@@ -2736,7 +2736,7 @@
                       :mode     :write}})))))
 
 (defn- create-dirs-tool
-  "Ensure dir exists. Returns the canonical `v/*` map shape so the
+  "Ensure dir exists. Returns the canonical foundation map shape so the
    model destructures `(:path r)` / `(:created? r)` directly off the
    bound result."
   [path]
@@ -2754,7 +2754,7 @@
                   :already-existed? before}})))
 
 (defn- copy-tool
-  "Copy path. Returns the canonical `v/*` map shape — `(:src r)` /
+  "Copy path. Returns the canonical foundation map shape — `(:src r)` /
    `(:dest r)` / `(:path r)` (alias for dest).
 
    Opts accept BOTH calling conventions (Clojure 1.11+ kwargs
@@ -2776,7 +2776,7 @@
                    :opts opts}}))))
 
 (defn- move-tool
-  "Move/rename path. Returns the canonical `v/*` map shape —
+  "Move/rename path. Returns the canonical foundation map shape —
    `(:src r)` / `(:dest r)` / `(:path r)` (alias for dest).
 
    Opts accept BOTH calling conventions:
@@ -2797,7 +2797,7 @@
                    :opts opts}}))))
 
 (defn- delete-tool
-  "Delete `path`. Returns the map every `v/*` tool returns so the
+  "Delete `path`. Returns the map every foundation tool returns so the
    channel renderer (and `(def r (delete p))` consumers) can read
    `(:path r)` and `(:deleted? r)` straight off. Previously this
    returned `nil` and the channel preview painted `DELETE nil` —
@@ -2812,7 +2812,7 @@
      :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
-  "Delete `path` if present. Returns the map every `v/*` tool returns
+  "Delete `path` if present. Returns the map every foundation tool returns
    so destructuring (and the channel renderer) can read `(:path r)`
    and `(:deleted? r)` directly. Previously this returned a bare
    boolean which broke `(def r (delete-if-exists p))` consumers
@@ -2830,11 +2830,11 @@
   "Filesystem existence check.
 
    Returns `{:vis.op :exists? :path P :exists? B}` so the model
-   destructures the same shape every `v/*` tool uses (industry parity
+   destructures the same shape every foundation tool uses (industry parity
    with `cat`, `ls`, `rg`, …). Earlier this returned a bare
    boolean, which broke `(def r (exists? P))` consumers that
    reached for `(:exists? r)` — a wholly reasonable assumption given
-   the surrounding map-shaped `v/*` API. See conversation
+   the surrounding map-shaped foundation API. See conversation
    11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 4 iter 1→2."
   [path]
   (let [exists? (exists-safe? path)]
@@ -3059,7 +3059,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Mutation tool renderers — strict map shape only.
 ;;
-;; Every `v/*` mutation tool returns `{:vis.op K :path P ...}` (see
+;; Every foundation mutation tool returns `{:vis.op K :path P ...}` (see
 ;; `create-dirs-tool` / `copy-tool` / `move-tool` / `delete-tool` /
 ;; `delete-if-exists-tool` / `exists-tool`). Renderers destructure
 ;; that map directly; bare strings, bare booleans, and nil are NOT
