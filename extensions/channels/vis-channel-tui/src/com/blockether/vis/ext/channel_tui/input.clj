@@ -1009,6 +1009,14 @@
           (and ctrl (= (Character/toLowerCase c) \t))
           {:action :cycle-model :state state}
 
+          ;; Ctrl+H toggles the keyboard-shortcut help. NOTE: Ctrl+H is
+          ;; ASCII 0x08 (BS); many terminals deliver it as KeyType/Backspace
+          ;; instead of a ctrl-char, in which case this branch never fires —
+          ;; F1 (below) is the reliable fallback. We do NOT touch the
+          ;; Backspace path, so editing stays intact either way.
+          (and ctrl (= (Character/toLowerCase c) \h))
+          {:action :toggle-help :state state}
+
           ;; Unbound control / meta chords are ignored instead of inserting their
           ;; letter payload into the prompt.
           (or ctrl alt) {:action :continue :state state}
@@ -1023,6 +1031,10 @@
         {:action :continue :state state})
 
       KeyType/ReverseTab {:action :select-tab-index :workspace-index :next :state state}
+
+      ;; F1: reliable shortcut-help toggle (always distinguishable, unlike
+      ;; Ctrl+H which collides with Backspace on many terminals).
+      KeyType/F1 {:action :toggle-help :state state}
 
       KeyType/Enter
       (if (.isAltDown key)
