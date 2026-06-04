@@ -25,7 +25,6 @@
    render version for any change, so a `(notify! ...)` from anywhere
    nudges this band to repaint immediately."
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
@@ -311,27 +310,9 @@
       (sort-by #(long (or (:updated-at-ms %) 0)))
       last)))
 
-(defn- level->fg
-  "Map a notification level to a foreground color. Falls back to the
-   muted-footer color so an unknown level still renders something."
-  [level]
-  (case level
-    :success t/footer-fg-strong
-    :warn    t/footer-warning-fg
-    :error   t/footer-error-fg
-    :info    t/footer-spinner-fg
-    t/footer-fg-muted))
-
-(defn- draw-rule!
-  "Paint a full-width single-line horizontal rule on `row`."
-  ([g row cols]
-   (draw-rule! g row cols t/footer-fg-muted))
-  ([g row cols fg]
-   (p/clear-styles! g)
-   (p/set-colors! g fg t/terminal-bg)
-   (dotimes [c cols]
-     (p/set-char! g c row p/BOX_H))
-   (p/clear-styles! g)))
+;; `level->fg` (notification color) + the band rule, left notification slot,
+;; and id-copy badge now live in `components` (band-rule!, notification-slot!,
+;; id-badge!).
 
 (defn- id-copy-block-text [id-short]
   (if id-short
@@ -479,7 +460,6 @@
         left-text (when (seq left-raw) (ellipsize left-raw left-cap))
         action-w (p/display-width action-text)
         right-w action-w
-        id-copy-w (p/display-width id-copy-text)
         right-col (max right-x (- cols edge-pad right-w))
         action-col right-col
         active-id (active-tab-entry-id db workspaces)
@@ -489,7 +469,7 @@
                        (if (some? (:fork-ms ws))
                          (str (or (not-empty (:label ws)) "draft") " (DRAFT)")
                          (some-> workspaces first p/tab-display-label)))]
-    (draw-rule! g top-rule-row cols)
+    (components/band-rule! g top-rule-row cols)
 
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)
@@ -497,12 +477,7 @@
 
     ;; LEFT 20%: latest notification, otherwise channel status. No title here.
     ;; (Draft status lives in the footer — one indicator, not two.)
-    (when (seq left-text)
-      (p/clear-styles! g)
-      (p/set-colors! g (level->fg left-level) t/terminal-bg)
-      (p/enable! g p/BOLD)
-      (p/put-str! g (+ left-x edge-pad) content-row left-text)
-      (p/clear-styles! g))
+    (components/notification-slot! g (+ left-x edge-pad) content-row left-text left-level)
 
     ;; CENTER 60%: one inert title, or a switcher when multiple workspaces exist.
     (if (> (count workspaces) 1)
@@ -510,22 +485,8 @@
       (components/title! g content-row center-x center-w single-title))
 
     ;; RIGHT 20%: stable session-id copy affordance only.
-    (when (pos? right-w)
-      (let [hovered-region (cr/hovered)
-            id-hovered? (and (= content-row (get-in hovered-region [:bounds :row]))
-                          (= :copy-id (:kind hovered-region)))]
-        (when (pos? action-w)
-          (p/clear-styles! g)
-          (p/set-colors! g (if id-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
-          (when id-hovered? (p/enable! g p/BOLD))
-          (p/put-str! g action-col content-row id-copy-text)
-          (p/clear-styles! g)
-          (when (and *register-click-regions?* full-uuid)
-            (cr/register!
-              {:bounds {:row content-row :col action-col :width id-copy-w}
-               :kind :copy-id
-               :text full-uuid
-               :enabled? true})))))
+    (components/id-badge! g action-col content-row id-copy-text full-uuid
+      *register-click-regions?*)
 
     ;; Extension-contributed rows.
     (loop [row (inc content-row)
@@ -543,6 +504,6 @@
                 (catch Throwable _ nil))))
           (recur (+ row h) (next specs)))))
 
-    (draw-rule! g bottom-row cols)
+    (components/band-rule! g bottom-row cols)
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)))
