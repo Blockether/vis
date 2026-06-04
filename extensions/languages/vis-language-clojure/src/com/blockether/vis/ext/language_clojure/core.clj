@@ -27,7 +27,7 @@
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.foundation-core.environment.languages :as languages]
+   [com.blockether.vis.internal.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.language-clojure.edit :as edit]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]

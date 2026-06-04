@@ -106,7 +106,8 @@
   {:terminal-bg [255 255 255]
    :text-fg [30 30 30]
    :header-fg [30 30 30]
-   :header-hover-fg [70 70 70]
+   :header-hover-fg [10 50 160]
+   :close-button-hover-fg [200 40 40]
    ;; Active workspace tab in the header. Inverted slab: black bg
    ;; with white fg makes the active tab pop against the light header
    ;; surface; inactive tabs are rendered dim+italic from `border-fg`.
@@ -199,7 +200,8 @@
   {:terminal-bg [12 14 18]
    :text-fg [226 232 240]
    :header-fg [226 232 240]
-   :header-hover-fg [255 255 255]
+   :header-hover-fg [125 211 252]
+   :close-button-hover-fg [248 113 113]
    ;; Inverted slab (see light palette): pure white-on-black for the
    ;; active tab; inactive tabs read as dim italic via `border-fg`.
    :header-active-tab-fg [255 255 255]
