@@ -28,7 +28,7 @@
      * NEVER silent. Every guard fires a warning so the model knows.
 
    Decision authority stays with the model: it can issue its own
-   `(done {:summarize {:trailer ...}})` to override the
+   `(summarize {:trailer ...})` to override the
    engine fold, or `(fact-set! :K {:status :superseded})` to retire a
    fact the engine merely nudged about. Engine never strips data
    behind the model's back."

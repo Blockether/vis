@@ -192,15 +192,12 @@
   nil)
 
 (defn apply-done!
-  "Side-effecting wrapper around `eng/apply-done`.
-
-   When the payload carries `:summarize` (a `{:trailer … :facts …
-   :tasks …}` map), the engine applies it as part of the same swap.
+  "Side-effecting wrapper around `eng/apply-done`. Compaction is the
+   standalone `summarize` verb, not a done arg.
 
    Returns the intent map plus warnings."
   [{:keys [ctx-atom] :as env} {:keys [answer
-                                      user-request turn-summary
-                                      summarize]}]
+                                      user-request turn-summary]}]
   (let [start-ms      (System/nanoTime)
         cursor        (cursor-snapshot env)
         scope         (synthesize-scope env)
@@ -223,21 +220,18 @@
                 (eng/apply-done c+cur scope
                   {:answer         answer
                    :user-request   user-request
-                   :turn-summary   turn-summary
-                   :summarize      summarize})]
+                   :turn-summary   turn-summary})]
             (swap! warns into ws)
             (reset! blocked? (boolean blocked))
             (cond-> (dissoc ctx' :session/scope)
               (seq ws) (update :engine/warnings (fnil into []) ws)))))
       (tel/log! {:level :info :id ::apply-done
                  :data {:answer-present?   (boolean (not (clojure.string/blank? (str answer))))
-                        :summarize         summarize
                         :warnings          @warns
                         :blocked?          @blocked?
                         :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
         "apply-done completed"))
     {:answer answer
-     :summarize summarize
      :blocked? @blocked?
      :warnings @warns}))
 
@@ -406,10 +400,10 @@
                          (when (seq forms)
                            {:scope (str "t" turn "/i" iter) :forms forms})))))]
     {'summarize
-     ;; Mid-turn compression: collapse irrelevant trailer ranges /
-     ;; settled facts+tasks NOW (same {:trailer :facts :tasks} shape and
-     ;; engine fn as `(done {:summarize …})`) so stale forms don't ride
-     ;; every prompt until close-of-turn.
+     ;; The ONLY compaction path (there is no done :summarize): collapse
+     ;; irrelevant trailer ranges / settled facts+tasks NOW so stale forms
+     ;; don't ride every prompt until close-of-turn. Batch one right before
+     ;; (done …) in the same fence to compact at close.
      (fn summarize [spec]
        (let [scope (synthesize-scope env)
              out   (atom nil)]

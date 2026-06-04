@@ -1323,37 +1323,20 @@
       (try (decode (escape-unescaped-quotes body)) (catch Throwable _ nil))
       body)))
 
-(defn- done-payload-from-source
-  [source]
-  (try
-    (let [{:keys [forms parse-error]} (parse-top-level-forms source)
-          form (:form (first forms))]
-      (when (and (nil? parse-error)
-              (turn-answer-call-form? form)
-              (map? (second form)))
-        (second form)))
-    (catch Throwable _ nil)))
-
-(defn- valid-direct-answer-metadata
-  [payload]
-  (cond-> {}
-    (map? (:summarize payload))
-    (assoc :summarize (:summarize payload))))
-
 (defn- raw-response->direct-answer-source
+  "Salvage a torn `(done {… :answer \"…\"})` down to a clean
+   `(done {:answer \"…\"})`. done carries no other meaningful metadata
+   (compaction is the standalone `summarize` verb), so only the answer
+   text is recovered."
   [raw]
   (when-not (str/blank? raw)
     (let [m (re-matcher #"(?s)\(done\s*\{(.*?):answer\s*\"" raw)]
       (when (.find m)
-        (let [prefix     (or (.group m 1) "")
-              body-start (.end m)]
-          (when-let [{:keys [idx tail]} (direct-answer-close raw body-start)]
-            (let [body      (subs raw body-start idx)
-                  answer    (decode-direct-answer-body body)
-                  candidate (str "(done {" prefix " :answer " (pr-str answer) tail)
-                  payload   (or (done-payload-from-source candidate) {})
-                  recovered (assoc (valid-direct-answer-metadata payload) :answer answer)]
-              (str "(done " (pr-str recovered) ")"))))))))
+        (let [body-start (.end m)]
+          (when-let [{:keys [idx]} (direct-answer-close raw body-start)]
+            (let [body   (subs raw body-start idx)
+                  answer (decode-direct-answer-body body)]
+              (str "(done " (pr-str {:answer answer}) ")"))))))))
 
 (defn- direct-answer-block-recoverable?
   [{:keys [source]}]
@@ -1788,6 +1771,45 @@
                         :session-turn-id current-turn-id
                         :error (ex-message t)}}
         "Could not load previous turn context; continuing without Q/A carry")
+      nil)))
+
+(defn- previous-request-usage
+  "Return latest persisted provider request before `current-turn-id`.
+
+   `:session/utilization` is rendered before the next provider call, so iter 1
+   of a new turn cannot use current-turn API usage yet. Seed it from the prior
+   persisted iteration instead; once this turn completes one iteration, live
+   `usage-atom` readings take over."
+  [environment current-turn-id]
+  (try
+    (when-let [session-id (:session-id environment)]
+      (let [db (:db-info environment)
+            turns (or (persistance/db-list-session-turns db session-id) [])
+            current-id (str current-turn-id)]
+        (some (fn [turn]
+                (let [iters (try
+                              (persistance/db-list-session-turn-iterations db (:id turn))
+                              (catch Throwable t
+                                (tel/log! {:level :warn
+                                           :id ::previous-request-iterations-failed
+                                           :data {:session-id session-id
+                                                  :session-turn-id (:id turn)
+                                                  :error (ex-message t)}}
+                                  "Could not load prior turn iterations while seeding utilization")
+                                []))]
+                  (when-let [it (last (filter #(pos? (long (or (:input-tokens %) 0))) iters))]
+                    {:last-request-tokens        (long (:input-tokens it))
+                     :last-request-turn-id       (:id turn)
+                     :last-request-turn-position (:position turn)
+                     :last-request-iteration     (:position it)})))
+          (reverse (remove #(= (str (:id %)) current-id) turns)))))
+    (catch Throwable t
+      (tel/log! {:level :warn
+                 :id ::previous-request-usage-failed
+                 :data {:session-id (:session-id environment)
+                        :session-turn-id current-turn-id
+                        :error (ex-message t)}}
+        "Could not load previous request usage; first iteration will omit utilization")
       nil)))
 
 (defn- runtime-turn-prefix
@@ -3207,6 +3229,7 @@
                             :user-request user-request})
         _session-base (session-snapshot)
         turn-position (session-turn-position environment session-turn-id)
+        previous-usage (previous-request-usage environment session-turn-id)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts})
@@ -3234,9 +3257,15 @@
         ;; thinking-enabled provider already flow into the next iter's
         ;; `prompt_tokens` server-side, so a single last-iter snapshot
         ;; already captures that growth without us re-computing it.
+        ;;
+        ;; Iter 1 of a new user turn has no live provider usage yet. Keep
+        ;; billing fields zeroed, but seed the utilization/hint proxy from
+        ;; latest persisted request in the session so the model still sees
+        ;; `:session/utilization` immediately.
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
                           :cache-creation-tokens 0
                           :last-iter-input 0 :last-iter-reasoning 0
+                          :previous-request-input (long (or (:last-request-tokens previous-usage) 0))
                           :iter-count 0})
         accumulate-usage! (fn [api-usage]
                             (when api-usage
@@ -3487,14 +3516,13 @@
                                        ;; THE NEXT REQUEST instead of the cumulative-turn total.
                                        ;; `:input-tokens` (cumulative) is kept on the snapshot for
                                        ;; budget-aware extensions that want to surface turn-level
-                                       ;; spend separately. Falls back to cumulative on iter 0
-                                       ;; (before any provider call produced a `prompt_tokens`
-                                       ;; reading) so first-iter hints are not gated on a missing
-                                       ;; sample.
+                                       ;; spend separately. Falls back to the previous persisted
+                                       ;; request on iter 0 (before this turn has provider usage)
+                                       ;; so first-iter hints are not gated on a missing sample.
                                        :input-tokens (let [u @usage-atom]
                                                        (if (pos? (long (:iter-count u)))
                                                          (long (:last-iter-input u))
-                                                         (long (:input-tokens u))))
+                                                         (long (:previous-request-input u))))
                                        :cumulative-input-tokens (:input-tokens @usage-atom)
                                        :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
                                        :iter-count (:iter-count @usage-atom)
@@ -3509,7 +3537,7 @@
                       (let [u   @usage-atom
                             req (if (pos? (long (:iter-count u)))
                                   (long (:last-iter-input u))
-                                  (long (:input-tokens u)))]
+                                  (long (:previous-request-input u)))]
                         (if-let [util (ctx-engine/utilization
                                         req effective-context-limit
                                         (:input-tokens u)
@@ -5240,7 +5268,7 @@
         ;; Seeded fresh; reloaded from session_turn_state.ctx (Nippy BLOB)
         ;; on session resume so the model picks up where the last
         ;; (done …) left off. Defined BEFORE answer-fn because answer-fn
-        ;; closes over it when (done …) carries a :summarize arg.
+        ;; closes over it to apply the engine swap at turn close.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
         ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
@@ -5283,7 +5311,6 @@
                                                              (nil? s)                {:answer ""}
                                                              :else                   {:answer (pr-str s)
                                                                                       :vis/coerced? true})
-                                         summarize         (when (map? value) (:summarize value))
                                          ;; Phase F (redesigned): extract :answer + free-form
                                          ;; :turn-summary so the engine can write the
                                          ;; `:turn-N-answer` fact under :session/facts. The fact
@@ -5314,8 +5341,7 @@
                                                              {:answer         answer-text
                                                               :turn-summary   turn-summary
                                                               :user-request   user-request
-                                                              :session-title  current-title
-                                                              :summarize         summarize})]
+                                                              :session-title  current-title})]
                                      (reset! answer-atom
                                        {:value    value
                                         :position (:form-idx @turn-state-atom)})
