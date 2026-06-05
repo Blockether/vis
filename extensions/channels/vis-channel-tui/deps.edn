@@ -9,15 +9,16 @@
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis          {:local/root "../../.."}
-  ;; Blockether fork of mabe02/lanterna 3.1.5 with six patches on top:
+  ;; Blockether fork of mabe02/lanterna 3.1.5 with seven patches on top:
   ;;   1. PR #625 cherry-pick - emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
   ;;   2. BMP `Emoji_Presentation=Yes` width detection - ✅, ⭐, ⚡,
   ;;      ❌, ✨, ☔, ☕, ⏰, etc. (≈30 ranges, ≈100 code points)
   ;;      now correctly counted as 2 terminal columns.
-  ;;   3. VS-16 graphemes are terminal-matched narrow for text-default
-  ;;      symbols like ☑️, 🏷️, and ❤️ so following whitespace/borders
-  ;;      stay aligned in target terminals.
+  ;;   3. VS-16 (emoji-presentation) graphemes are WIDE — ⚠️ ❤️ ☑️ 🏷️
+  ;;      count as 2 columns, matching emoji-wide target terminals so the
+  ;;      following text/border/scrollbar stays aligned. (VS-15 text
+  ;;      presentation stays narrow — patch #4.)
   ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
   ;;   5. East-Asian-Ambiguous (EAW=A) width - curated text punctuation
   ;;      and letters (· — … λ “” • ™, Greek, Cyrillic) are NARROW by
@@ -34,9 +35,13 @@
   ;;      double-width source for both display-width and the paint. Ambiguous
   ;;      (EAW=A) is untouched (still narrow by default); chrome (box/block/
   ;;      geometric/arrows) stays single-width.
+  ;;   7. Emoji=Yes media triangles ▶ U+25B6 / ◀ U+25C0 (Emoji_Presentation=No,
+  ;;      so missed by #2) → 2 columns; the target terminal paints them
+  ;;      emoji-wide. The SMALL triangles ▸ ▾ used for disclosure chevrons
+  ;;      stay single-width (EAW=N, non-emoji).
   ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.9"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.10"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
