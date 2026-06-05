@@ -48,16 +48,16 @@
 
 ;; The BLOCK header is labelled by op COUNTS only — `N observation(s)` /
 ;; `N mutation(s)` (no `ITERATION N`, no status glyph, no duration). It rides
-;; the same ▼/▶ disclosure chevron as the op rows, so we discriminate header
+;; the same ▾/▸ disclosure chevron as the op rows, so we discriminate header
 ;; from op rows by the counts vocabulary.
 (def ^:private counts-re #"observation|mutation")
 
 (defn- op-rows
-  "Visible `▶`/`▼` op rows in a rendered frame. Excludes the BLOCK header,
-   which also carries a ▶/▼ disclosure chevron (the whole block is
+  "Visible `▸`/`▾` op rows in a rendered frame. Excludes the BLOCK header,
+   which also carries a ▸/▾ disclosure chevron (the whole block is
    collapsible) and is identified by its counts label."
   [lines]
-  (filter #(and (or (str/includes? % "▶") (str/includes? % "▼"))
+  (filter #(and (or (str/includes? % "▸") (str/includes? % "▾"))
              (not (re-find counts-re %)))
     lines))
 
@@ -149,7 +149,7 @@
       ;; (the iteration-number is unique within the turn; the display-block
       ;; `:scope` is NOT — it can be duplicated/nil on the rebuild path, so
       ;; keying on it made one click collapse the wrong block).
-      ;; Collapsed → only the header (with ▶) survives; code body + op rows fold away.
+      ;; Collapsed → only the header (with ▸) survives; code body + op rows fold away.
       (let [lines (rendered (git-fence-entry)
                     {:session-id "s1"
                      :detail-expansions {["s1" "iter1:block"] false}})]
@@ -265,7 +265,7 @@
             body  (str/join "\n" lines)]
         (expect (str/includes? body "^"))
         (expect (str/includes? body "Divide by zero"))
-        ;; No `▶`/`▼` op row — value-only errors are inline, not a tool badge.
+        ;; No `▸`/`▾` op row — value-only errors are inline, not a tool badge.
         (expect (= 0 (count (op-rows lines))))))))
 
 ;; ---------------------------------------------------------------------------

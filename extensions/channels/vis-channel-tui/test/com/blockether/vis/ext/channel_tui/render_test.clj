@@ -162,7 +162,7 @@
         (expect (not (str/includes? body ":ir"))))))
 
   (it "renders a channel sink op as a BLOCK op row without EDN dumping"
-    ;; Phase-5: tool output surfaces as ONE `▶ <LABEL> <summary>` op row
+    ;; Phase-5: tool output surfaces as ONE `▸ <LABEL> <summary>` op row
     ;; sourced from the canonical `:channel` op's `{:summary :display}`
     ;; contract — not the legacy per-form `:result-render`. The op-row label
     ;; is the summary's first [:strong]; the row rides the result marker band.
@@ -177,7 +177,7 @@
           op-line (first (filter #(str/includes? (strip-sentinels %) "bold result") lines))]
       (expect (str/includes? body "bold result"))
       (expect (not (str/includes? body ":ir")))
-      (expect (str/includes? (strip-sentinels (strip-ansi (body-of op-line))) "▶"))
+      (expect (str/includes? (strip-sentinels (strip-ansi (body-of op-line))) "▸"))
       ;; Op rows ride their OWN marker band (black-on-white badge), not the
       ;; neutral result-marker band.
       (expect (str/starts-with? op-line p/MARKER_OP_ROW))))
@@ -220,7 +220,7 @@
       ;; Neither raw code row paints; collapsed tool preview shows badge only.
       (expect (not (str/includes? body "(select-keys")))
       (expect (not (str/includes? body "(def r (ls")))
-      (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▶") lines))
+      (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▸") lines))
       (expect (str/includes? body "LS"))
       (expect (not (str/includes? badge-line "t24/i1/b1")))
       (expect (not (str/includes? body ".gitignore")))
@@ -246,13 +246,13 @@
                                    ;; Keyed on the unique iteration-number + turn fragment.
                                    :detail-expansions {["s" "iter1:t123e4567:op0"] true}})
             expanded-body (str/join "\n" (map (comp strip-sentinels strip-ansi body-of) expanded-lines))]
-        (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▼") expanded-lines))
+        (expect (some #(str/includes? (strip-sentinels (strip-ansi %)) "▾") expanded-lines))
         (expect (str/includes? expanded-body "LS"))
         (expect (str/includes? expanded-body ".gitignore")))))
 
   (it "does not render a BLOCK count header or block-level collapse toggle"
     ;; The block header was removed: no `1 mutation` / `2 observations`, no
-    ;; block-level ▶/▼ wrapper, no `ITERATION N`, no `/fK`/`/bK` scope stamp,
+    ;; block-level ▸/▾ wrapper, no `ITERATION N`, no `/fK`/`/bK` scope stamp,
     ;; no timed per-form footer. Per-op status still shows on op rows.
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file  changed=1"]]]
           lines (format-iteration-entry
@@ -278,7 +278,7 @@
       (expect (not-any? #(str/includes? % "t24/i1/b1") visible))
       ;; The op row paints the tool summary.
       (expect (some? op-line))
-      (expect (str/includes? op-line "▶"))))
+      (expect (str/includes? op-line "▸"))))
 
   (it "omits observation/mutation count headers while keeping op rows"
     ;; No card title/count row. Tool rows still source from canonical
@@ -309,7 +309,7 @@
       (expect (not-any? #(str/includes? % "1 observation") visible))
       (expect (not-any? #(str/includes? % "1 mutation") visible))
       (expect (not-any? #(str/includes? % "812ms") visible))
-      (expect (some #(str/includes? % "▶ STATUS") visible))))
+      (expect (some #(str/includes? % "▸ STATUS") visible))))
 
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (doc 'v/git-diff))"
@@ -356,7 +356,7 @@
       (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote msg)) body))))
       (expect (not (str/includes? body "ERROR:")))
       (expect (not (str/includes? body "ERROR —")))
-      (expect (not (str/includes? body "▶ ERROR")))))
+      (expect (not (str/includes? body "▸ ERROR")))))
 
   (it "keeps other op rows while hiding duplicate inline error op rows"
     (let [code "(cat \"src/com/blockether/vis/internal/ctx/render.clj\")"
@@ -382,10 +382,10 @@
                   110 1 {})
           visible (mapv (comp strip-sentinels strip-ansi body-of) lines)
           body (str/join "\n" visible)]
-      (expect (str/includes? body "▶ RG files"))
+      (expect (str/includes? body "▸ RG files"))
       (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote msg)) body))))
-      (expect (not (str/includes? body "▶ ERROR")))
-      (expect (not (str/includes? body "▼ ERROR")))
+      (expect (not (str/includes? body "▸ ERROR")))
+      (expect (not (str/includes? body "▾ ERROR")))
       (expect (not (str/includes? body "ERROR —")))))
 
   (it "renders a non-collapsible op row flush-left with no chevron pad"
@@ -409,11 +409,11 @@
           rg-line    (first (filter #(str/includes? % "RG") visible))
           ports-line (first (filter #(str/includes? % "PORTS") visible))]
       ;; Collapsible RG keeps the chevron + space prefix.
-      (expect (str/starts-with? rg-line "▶ RG"))
+      (expect (str/starts-with? rg-line "▸ RG"))
       ;; Non-collapsible PORTS is flush-left: label first, no chevron pad.
       (expect (str/starts-with? ports-line "PORTS"))
-      (expect (not (str/includes? ports-line "▶")))
-      (expect (not (str/includes? ports-line "▼")))))
+      (expect (not (str/includes? ports-line "▸")))
+      (expect (not (str/includes? ports-line "▾")))))
 
   (it "omits success status footer and keeps only code band edges"
     (with-raw-code-on
@@ -1671,7 +1671,7 @@
       (expect (not (str/includes? (:text payload) "MUTATION patch")))))
 
   (it "renders a huge patch op behind a canonical op-row disclosure"
-    ;; Op rows default collapsed: the `▶ <LABEL> <summary>` row stays visible
+    ;; Op rows default collapsed: the `▸ <LABEL> <summary>` row stays visible
     ;; with a chevron; the `:display` body opens via :toggle-details. The
     ;; LABEL is the summary's first [:strong]; no MUTATION-style badge noise.
     (render/invalidate-cache!)
@@ -1687,8 +1687,8 @@
                          :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
       (expect (not (str/includes? body "MUTATION patch")))
-      (expect (str/includes? body "▶ Patched file."))
-      (expect (not-any? #(str/starts-with? (body-of %) "▶ MUTATION patch") (:lines payload)))
+      (expect (str/includes? body "▸ Patched file."))
+      (expect (not-any? #(str/starts-with? (body-of %) "▸ MUTATION patch") (:lines payload)))
       (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
 
   (it "does not emit vague duplicate search-any rows"
@@ -1830,7 +1830,7 @@
             payload (render/format-answer-with-thinking-data
                       nil trace 96 {:show-iterations true} nil false opts)
             text    (strip-sentinels (strip-ansi (:text payload)))]
-        (expect (str/includes? text "▶ EDITED"))
+        (expect (str/includes? text "▸ EDITED"))
         (expect (str/includes? text "src/a.clj"))))
 
     (it "an errored op surfaces its error summary as the op row"
@@ -2489,7 +2489,7 @@
 ;; ── Phase-4 high-fan-out policy (BLOCK revamp) ──────────────────────────────
 ;;
 ;; A `doseq` fan-out runs the SAME tool many times in one block. The renderer
-;; must collapse the same-op run into ONE synthetic `▶ CAT × N` row without
+;; must collapse the same-op run into ONE synthetic `▸ CAT × N` row without
 ;; resurrecting block count headers.
 
 (defn- cat-sink-entry*
@@ -2518,20 +2518,20 @@
         (expect (not-any? #(str/includes? % "100 observations") lines))
         (expect (not-any? #(str/includes? % "observations") lines))))
 
-    (it "emits ONE synthetic grouped row `▶ READ × 100 (…)`"
+    (it "emits ONE synthetic grouped row `▸ READ × 100 (…)`"
       ;; `:cat` is the bare canonical op now; its friendly label is READ.
       (let [lines (rendered-lines (fanout-entry* 100))
             grouped (filter #(str/includes? % "READ × 100") lines)]
         (expect (= 1 (count grouped)))
-        (expect (str/includes? (first grouped) "▶"))
+        (expect (str/includes? (first grouped) "▸"))
         (expect (str/includes? (first grouped) "f0.txt"))))
 
     (it "expands to the full per-op list when the disclosure is open"
       (let [lines (rendered-lines (fanout-entry* 100)
                     {:detail-expansions {:vis.channel-tui/expand-all-details? true}})
             per-op (filter #(str/includes? % "120 lines") lines)]
-        ;; The grouped row uses ▼ when open; every underlying op shows below.
-        (expect (some #(str/includes? % "▼ READ × 100") lines))
+        ;; The grouped row uses ▾ when open; every underlying op shows below.
+        (expect (some #(str/includes? % "▾ READ × 100") lines))
         (expect (= 100 (count per-op)))))
 
     (it "does not surface the retired soft BATCH HINT header note"
