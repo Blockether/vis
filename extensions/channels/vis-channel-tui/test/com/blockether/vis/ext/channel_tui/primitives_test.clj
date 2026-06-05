@@ -66,16 +66,16 @@
     (it "⚡ high voltage is 2 cols"     (expect (= 2 (p/display-width EMOJI_BMP_BOLT)))))
 
   (describe "VS-16/VS-15 graphemes match observed terminal width (lanterna fork 3.1.5-vis.5 fix)"
-    ;; VS-16 is terminal/font-dependent in practice. Vis target
-    ;; terminals paint these text-default symbols as one cell; counting
-    ;; them as two lets following whitespace/borders drift left.
+    ;; VS-16 (U+FE0F) requests EMOJI presentation — the vis target terminals
+    ;; paint these as TWO cells, so display-width counts them as 2 (deferring to
+    ;; lanterna isDoubleWidth). VS-15 (U+FE0E) requests TEXT presentation = 1.
     (it "❤ heart alone is 1 col"   (expect (= 1 (p/display-width EMOJI_BMP_NARROW))))
-    (it "❤️ heart + VS-16 stays 1 col (the user-terminal-matching fix)"
-      (expect (= 1 (p/display-width (str EMOJI_BMP_NARROW "\uFE0F")))))
-    (it "🏷️ label + VS-16 is 1 col"
-      (expect (= 1 (p/display-width "\uD83C\uDFF7\uFE0F"))))
-    (it "☑️ ballot box + VS-16 is 1 col"
-      (expect (= 1 (p/display-width "\u2611\uFE0F"))))
+    (it "❤️ heart + VS-16 is 2 cols (emoji presentation)"
+      (expect (= 2 (p/display-width (str EMOJI_BMP_NARROW "\uFE0F")))))
+    (it "🏷️ label + VS-16 is 2 cols"
+      (expect (= 2 (p/display-width "\uD83C\uDFF7\uFE0F"))))
+    (it "☑️ ballot box + VS-16 is 2 cols"
+      (expect (= 2 (p/display-width "\u2611\uFE0F"))))
     (it "☑︎ ballot box + VS-15 is 1 col"
       (expect (= 1 (p/display-width "\u2611\uFE0E")))))
 
