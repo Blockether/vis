@@ -197,6 +197,83 @@ The spec library specifies the structure of data.")
             (expect (string? (:url e)))
             (expect (string? (:excerpt e)))))))))
 
+;; Exa stitches non-contiguous page fragments with truncation markers on
+;; their OWN line. Between block-level neighbours (a `# File:` heading and
+;; a ``` fence, two list blocks, …) CommonMark turns a lone marker into
+;; its own paragraph, so it paints on an empty line — and reads the same
+;; way in the model-facing excerpt. Exa also (a) wraps body text in a
+;; spurious, often unterminated ``` fence with `[...]` separators inside,
+;; and (b) starts each code fence with a bare `...` lead marker. The
+;; Code/Highlights body must fold/strip all of these inline while leaving
+;; a genuine `...` code placeholder (e.g. a Python `Ellipsis` stub) alone.
+(def ^:private SAMPLE_EXA_TRUNCATED
+  "Title: clojure/core.async ex-go.clj
+URL: https://github.com/clojure/core.async/blob/x/examples/ex-go.clj
+Code/Highlights:
+# File: clojure/core.async/examples/ex-go.clj
+[...]
+```clj
+(require '[clojure.core.async :as async])
+```
+[...]
+trailing prose fragment")
+
+;; Body wrapped in a spurious unterminated ``` fence with `[...]`
+;; separators inside, AND a Python fence whose lead `...` is an Exa marker
+;; but whose `def f():` / `...` stub body is genuine code.
+(def ^:private SAMPLE_EXA_FENCED
+  "Title: asyncio.gather guide
+URL: https://example.com/asyncio
+Code/Highlights:
+```
+The spec library specifies the structure of data.
+[...]
+- get-spec
+[...]
+- fspec
+```
+```python
+...
+def handler():
+    ...
+```")
+
+(defn- bare-marker-line?
+  [line]
+  (boolean (re-matches #"\s*(?:\[\.\.\.\]|\.\.\.|…)\s*" line)))
+
+(defdescribe excerpt-truncation-marker-test
+  (describe "Exa `[...]` truncation markers never sit on their own line"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_TRUNCATED)]
+      (let [e (first (:citations (envelope-result (search/code "core.async" {}))))
+            excerpt (:excerpt e)
+            lines (str/split-lines excerpt)]
+        (it "no line in the excerpt is a bare truncation marker"
+          (expect (string? excerpt))
+          (expect (not-any? bare-marker-line? lines)))
+        (it "the heading absorbs the marker that preceded the code fence"
+          (expect (str/includes? excerpt
+                    "# File: clojure/core.async/examples/ex-go.clj [...]")))
+        (it "a code fence's own body is left intact"
+          (expect (str/includes? excerpt "(require '[clojure.core.async :as async])"))))))
+
+  (describe "spurious fences + bare lead markers + genuine code placeholders"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_FENCED)]
+      (let [e (first (:citations (envelope-result (search/code "asyncio" {}))))
+            excerpt (:excerpt e)
+            lines (str/split-lines excerpt)]
+        (it "no bare marker line survives — even inside Exa's ``` wrapper"
+          (expect (not-any? bare-marker-line? lines)))
+        (it "`[...]` separators inside the wrapper fold onto prior content"
+          (expect (str/includes? excerpt "the structure of data. [...]"))
+          (expect (str/includes? excerpt "- get-spec [...]")))
+        (it "a genuine `...` Ellipsis stub body is preserved as real code"
+          ;; the `def handler():` stub keeps its `...` body line
+          (expect (str/includes? excerpt "def handler():"))
+          (expect (re-find #"def handler\(\):\n\s*\.\.\." excerpt)))))))
+
 (defdescribe shape-parity-test
   (describe "all three search/* fns return the same envelope+citation shape"
     (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
