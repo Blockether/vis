@@ -451,7 +451,7 @@
    to fit, clamped to the terminal); if it still overflows, the last row shows
    a `… N more` footer so nothing is silently dropped. Registers no click
    regions; the caller dismisses on F2. `ctx` is `{:tasks … :facts …}`."
-  [g cols rows {:keys [tasks facts]}]
+  [g cols rows {:keys [tasks facts archived]}]
   (let [total (count tasks)
         done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
         title (str "Context"
@@ -462,8 +462,12 @@
         ;; content (golden-dialog-size clamps width+height to the terminal).
         body-w (dialogs/default-content-width cols)
         blank [["" t/dialog-hint false]]
+        arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
         lines (vec (concat [(section-line "TASKS") blank]
                            (task-overlay-lines tasks body-w)
+                           (when (seq arch-tasks)
+                             (concat [blank (section-line "ARCHIVED") blank]
+                                     (task-overlay-lines arch-tasks body-w)))
                            [blank (section-line "FACTS") blank]
                            (fact-overlay-lines facts body-w)))
         line-w (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))

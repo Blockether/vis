@@ -404,15 +404,21 @@
   (insert-trunk! db-info nil (file-path root)))
 
 (defn create!
-  "Create a DRAFT: a rift CoW clone of the user's cwd whose folder is
+  "Create a DRAFT: a rift CoW clone of a parent tree whose folder is
    named after `label` (`/draft new feature` → ~/.vis/drafts/<repo>/feature),
    and pin it 1:1 to `:session-state-id` (enters the draft). Captures the
-   fork timestamp (`fork_ms`) for the since-fork diff. Fires :on-spawn."
-  [db-info {:keys [session-state-id label]}]
-  (let [trunk   (trunk-root)
+   fork timestamp (`fork_ms`) for the since-fork diff. Fires :on-spawn.
+
+   The fork PARENT is chosen so `apply!` lands back where it forked from:
+   pass `:from <parent-workspace>` to clone that workspace's `:root` and
+   inherit its `:repo-root` (apply target); otherwise the parent is the
+   user's real cwd (trunk)."
+  [db-info {:keys [session-state-id label from]}]
+  (let [parent  (or (:root from) (trunk-root))
+        trunk   (or (:repo-root from) (trunk-root))
         rid     (repo-id-for trunk)
         nm      (free-draft-name trunk label)
-        clone   (cow-clone! trunk nm)
+        clone   (cow-clone! parent nm)
         ;; Capture AFTER the clone returns: cloned files keep their (older)
         ;; source mtime, so only post-fork agent edits exceed this.
         fork-ms (System/currentTimeMillis)

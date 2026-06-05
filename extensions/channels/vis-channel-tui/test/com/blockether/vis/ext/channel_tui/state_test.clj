@@ -884,7 +884,11 @@
                                   :llm-fallback? true
                                   :llm-routing-trace trace})]
         (rlm-turn-fx :main {:id "c1"} "hello" :token nil nil {} {} "turn-1")
-        (let [[event-id workspace-id _answer metadata] (last @received)]
+        ;; The turn also dispatches workspace re-sync + live F2 ctx-panel
+        ;; refreshes after the answer commits, so don't assume
+        ;; :message-received is the *last* event — select it explicitly.
+        (let [[event-id workspace-id _answer metadata]
+              (->> @received (filter #(= :message-received (first %))) last)]
           (expect (= :message-received event-id))
           (expect (= :main workspace-id))
           (expect (= "m2" (:model metadata)))

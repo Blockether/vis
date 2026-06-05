@@ -882,20 +882,24 @@
   (try (mapv keyword (shared-theme/available-theme-ids))
     (catch Throwable _ [(keyword shared-theme/default-theme-id)])))
 (defn- settings-ui-options
-  "Local-only settings the TUI still owns (theme + dynamic choices).
-   Every former boolean / enum (show-thinking, show-iterations,
-   show-silent, show-timestamps, mouse-selection-copy,
-   voice/respond?, message-meta, reasoning-level,
-   openai-codex-verbosity) was migrated into the toggles registry.
-   Host-owned toggles render on General; extension-owned toggles render
-   on Extensions so the same switch is not duplicated across tabs."
+  "Terminal-UI-owned settings surfaced on the Channels tab: the theme
+   picker plus the mouse-selection auto-copy switch (a TUI-channel
+   concern, unlike the transcript-display toggles that live on
+   General/Extensions). The mouse-selection row is a `:registry-toggle`
+   so flipping it fans out through the toggles registry; it also carries
+   a bare `:key` so the Channels tab can address it semantically."
   []
   [{:key :theme-name,
     :type :choice,
     :choices (theme-choice-order),
     :label "Theme",
     :description
-    "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}])
+    "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}
+   {:key :mouse-selection-copy,
+    :type :registry-toggle,
+    :toggle-id :vis/mouse-selection-copy,
+    :label "Mouse selection auto-copy",
+    :description "Drag-select visible text; copied automatically on mouse release."}])
 (defn- general-toggle-spec?
   [{:keys [owner]}]
   (or (nil? owner) (= :vis owner)))
@@ -968,7 +972,9 @@
 (defn- settings-content-width [cols] (default-content-width cols))
 (defn- settings-content-height [rows] (default-content-height rows))
 (def ^:private settings-tabs
-  [{:id :general, :label "General"} {:id :extensions, :label "Extensions"}])
+  [{:id :channels, :label "Channels"}
+   {:id :providers, :label "Providers & Models"}
+   {:id :extensions, :label "Extensions"}])
 (defn- settings-tab-index
   [tab-id]
   (let [ids (mapv :id settings-tabs)
@@ -1159,24 +1165,55 @@
               (into [{:type :subsection, :label label}]
                 (sort-by (juxt :type :label :name) group-rows)))
       (sort-by first (group-by extension-group-key extension-rows)))))
+(def ^:private settings-model-options
+  "Provider/model knob surfaced on the Providers tab when the active
+   model exposes a configurable reasoning budget. Carries a bare
+   `:reasoning-level` key plus the registry `:toggle-id` so the apply
+   path flips the persisted toggle."
+  [{:key :reasoning-level,
+    :type :registry-toggle,
+    :toggle-id :vis/reasoning-level,
+    :label "Reasoning effort",
+    :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}])
 (defn- settings-rows
-  ([] (settings-rows :general (extension-option-rows)))
+  ([] (settings-rows :channels (extension-option-rows)))
   ([tab-id] (settings-rows tab-id (extension-option-rows)))
   ([tab-id extension-rows]
    (let [active-provider (current-provider-id)
-         extension-tab-rows (filterv #(provider-row-active? active-provider %) extension-rows)
+         all-extension-rows (filterv #(provider-row-active? active-provider %) extension-rows)
+         provider-rows (extension-rows-of-kind all-extension-rows :provider)
+         channel-rows (extension-rows-of-kind all-extension-rows :channel)
+         generic-rows (extension-rows-of-kind all-extension-rows :extension)
          ;; Registry owns migrated host settings; :ext/settings now only
          ;; renders settings still declared by real extensions.
-         model-rows (if (reasoning-effort-configurable?) [] settings-model-no-effort-rows)
+         reasoning-configurable? (reasoning-effort-configurable?)
+         provider-model-rows (if reasoning-configurable?
+                               settings-model-options
+                               settings-model-no-effort-rows)
+         ;; General keeps the reasoning knob solely via the toggles
+         ;; registry (general-toggle-spec?), so don't re-emit it here.
+         general-model-rows (if reasoning-configurable? [] settings-model-no-effort-rows)
          extension-toggle-rows (registry-toggle-rows (complement general-toggle-spec?))]
      (vec
        (case tab-id
+         :channels
+         (concat [{:type :section, :label "Terminal UI"}]
+           (settings-ui-options)
+           (when (seq channel-rows)
+             (concat [{:type :section, :label "Channel Settings"}]
+               (settings-extension-groups channel-rows))))
+         :providers
+         (concat [{:type :section, :label "Models"}]
+           provider-model-rows
+           (when (seq provider-rows)
+             (concat [{:type :section, :label "Provider Settings"}]
+               (settings-extension-groups provider-rows))))
          :extensions
          (let [rows (concat (or extension-toggle-rows [])
                       (or (contributor-rows) [])
-                      (when (seq extension-tab-rows)
+                      (when (seq generic-rows)
                         (concat [{:type :section, :label "Extension Settings"}]
-                          (settings-extension-groups extension-tab-rows))))]
+                          (settings-extension-groups generic-rows))))]
            (if (seq rows)
              rows
              (settings-empty-rows
@@ -1184,9 +1221,9 @@
                "Installed extensions have not declared configurable settings, env vars, toggles, or TUI contributors")))
          :general (concat [{:type :section, :label "Terminal UI"}]
                     (settings-ui-options)
-                    model-rows
+                    general-model-rows
                     (or (registry-toggle-rows general-toggle-spec?) []))
-         (settings-rows :general extension-rows))))))
+         (settings-rows :channels extension-rows))))))
 (defn- extension-env-status-label
   [source]
   (case source
@@ -1438,8 +1475,8 @@
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
    (let [extension-rows (extension-option-rows)
-         active-tab (atom :general)
-         selected (atom (first-selectable-index (settings-rows :general extension-rows)))
+         active-tab (atom :channels)
+         selected (atom (first-selectable-index (settings-rows :channels extension-rows)))
          scroll (atom 0)
          values (atom (or settings {}))
          scrollbar-drag-offset (volatile! nil)

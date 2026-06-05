@@ -296,7 +296,7 @@
         codex-provider? (= :openai-codex provider)
         codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)
         ws        (:workspace db)
-        ws-root   (:root ws)
+        ws-root   (or (:workspace/root db) (:root ws))
         in-draft? (some? (:fork-ms ws))
         git-spans (git-footer-spans
                     (cond-> (if ws-root
@@ -341,8 +341,7 @@
 (defn- build-usage-segments
   [{:keys [messages]}]
   (let [tokens-str (some-> (session-tokens messages)
-                     fmt/format-tokens
-                     (str/replace #"\s*\([^)]*\)\s*$" ""))
+                     fmt/format-tokens)
         cost-str (some-> (session-cost messages)
                    fmt/format-cost)]
     (cond-> []

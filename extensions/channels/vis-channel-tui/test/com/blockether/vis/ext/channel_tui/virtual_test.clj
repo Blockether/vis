@@ -512,17 +512,25 @@
         (expect (nil? (-> trace-row :projected :lines-window)))
         (expect (pos? (count (-> trace-row :projected :prewrapped-lines))))))
 
-    (it "detail toggles do not create a second height-cache universe"
+    (it "caches a SEPARATE height per expansion state (a toggle can't return a stale height)"
+      ;; Regression: the height-cache key used to ignore detail-expansions, so
+      ;; the collapsed height was reused for the expanded render — total-h
+      ;; undercounted and the scroll jumped on expand. The key now includes
+      ;; THIS message's expansion subset: expanding is a distinct cache entry,
+      ;; not a stale hit on the collapsed one.
       (virtual/invalidate-heights!)
       (render/invalidate-cache!)
-      (let [msgs [(plain-assistant-msg "<details>\n<summary>D</summary>\n\nbody\n\n</details>")]]
-        (virtual/layout msgs bubble-w settings nil 20 {}
-          {:session-id "cid" :detail-expansions {}})
+      (let [msgs      [(plain-assistant-msg "<details>\n<summary>D</summary>\n\nbody\n\n</details>")]
+            collapsed (virtual/layout msgs bubble-w settings nil 20 {}
+                        {:session-id "cid" :detail-expansions {}})]
         (expect (= 1 (virtual/height-cache-size)))
-        (virtual/layout msgs bubble-w settings nil 20 {}
-          {:session-id "cid"
-           :detail-expansions {["cid" "answer:d1"] true}})
-        (expect (= 1 (virtual/height-cache-size)))))
+        (let [expanded (virtual/layout msgs bubble-w settings nil 20 {}
+                         {:session-id "cid"
+                          :detail-expansions {["cid" "answer:d1"] true}})]
+          ;; expansion state is keyed → a 2nd entry, NOT a stale collapsed hit
+          (expect (= 2 (virtual/height-cache-size)))
+          ;; and the expanded layout is at least as tall (it reveals the body)
+          (expect (>= (long (:total-h expanded)) (long (:total-h collapsed)))))))
 
     (it "`invalidate-heights!` drops the cache cleanly"
       (virtual/invalidate-heights!)
@@ -570,7 +578,7 @@
           _ (doseq [i (range (count msgs))]
               (let [m  (nth msgs i)
                     pm (project-message m bubble-w settings)]
-                (#'virtual/height-cache-put! m bubble-w settings nil
+                (#'virtual/height-cache-put! m bubble-w settings nil nil
                                              (render/bubble-height pm bubble-w))))
           frame2  (virtual/layout msgs bubble-w settings 1500 inner-h {}
                     {:prev-offsets off1})

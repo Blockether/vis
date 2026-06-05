@@ -127,23 +127,29 @@
        :preview/default-lines
        :message-meta])))
 
-(defn- height-key [message bubble-w settings _detail-expansions]
+(defn- height-key [message bubble-w settings detail-expansions session-id]
   [(message-content-fingerprint message)
    (long bubble-w)
-   (settings-fingerprint settings)])
+   (settings-fingerprint settings)
+   ;; This message's OWN expand/collapse state. Without it a height measured
+   ;; while a block was expanded (or collapsed) leaked across the toggle —
+   ;; the layout then used a stale height, total-h was wrong, and the scroll
+   ;; jumped on the next expand. Scoped to the message's turn so toggling one
+   ;; disclosure doesn't bust every other message's cached height.
+   (render/message-detail-expansions-key session-id message detail-expansions)])
 
 (defn- height-cache-get
   "Peek the sticky height cache. Returns a long or nil."
-  [message bubble-w settings detail-expansions]
+  [message bubble-w settings detail-expansions session-id]
   (locking height-cache
-    (.get height-cache (height-key message bubble-w settings detail-expansions))))
+    (.get height-cache (height-key message bubble-w settings detail-expansions session-id))))
 
 (defn- height-cache-put!
-  "Pin `h` as the real height for `message` at `bubble-w` under
-   `settings`. Returns `h` so callers can chain."
-  [message bubble-w settings detail-expansions h]
+  "Pin `h` as the real height for `message` at `bubble-w` under `settings`
+   + its current expansion state. Returns `h` so callers can chain."
+  [message bubble-w settings detail-expansions session-id h]
   (locking height-cache
-    (.put height-cache (height-key message bubble-w settings detail-expansions) h))
+    (.put height-cache (height-key message bubble-w settings detail-expansions session-id) h))
   h)
 
 (defn invalidate-heights!
@@ -168,6 +174,32 @@
     0
     (long (Math/ceil (double (/ (double a) (double b)))))))
 
+(def ^:const rough-expanded-op-rows
+  "Rough rows an EXPANDED op disclosure adds BEYOND its 1-line summary. The
+   real height takes over once the bubble is measured; this only stops an
+   off-screen expanded block from being estimated as collapsed (which makes
+   total-h undercount and lands the scroll mid-screen). Over-estimate is the
+   safe direction."
+  8)
+
+(defn- estimated-expansion-bonus
+  "Extra estimated rows for a trace message's EXPANDED disclosures. Uses the
+   same per-message expansion subset render keys its projection cache by, so
+   an off-screen expanded block is sized roughly expanded, not collapsed."
+  ^long [message detail-expansions session-id trace]
+  (if (or (nil? detail-expansions) (nil? trace))
+    0
+    (let [k         (render/message-detail-expansions-key session-id message detail-expansions)
+          n-results (long (reduce (fn [^long acc it]
+                                    (+ acc (long (count (filter :result-render (:forms it))))))
+                            0 trace))]
+      (long
+        (cond
+          (= :expand-all k) (* rough-expanded-op-rows n-results)
+          (vector? k)       (* rough-expanded-op-rows
+                              (count (filter (fn [[_ exp?]] (true? exp?)) k)))
+          :else             0)))))
+
 (defn estimated-height
   "Cheap estimate of how many rows a message will paint at width
    `bubble-w`. Order of magnitude only - the full painter is
@@ -188,60 +220,67 @@
    The constants are tuned against session 954bf315; they
    over-estimate slightly on dense bubbles and under-estimate on
    answer-heavy bubbles, but stay within ~2x of real either way."
-  ^long [message ^long bubble-w]
-  (let [content-w (max 1 (- bubble-w 4))
-        chrome-rows 3
-        role     (:role message)
-        trace    (:traces message)
-        ;; Pre-projection rough text estimate: extract plain text from
-        ;; `:ir` so the height heuristic doesn't depend on `:text`
-        ;; (which is only set by the walker AFTER projection).
-        text     (or (:text message)
-                   (some-> (:ir message) ir/extract-text))]
-    (cond
-      (= role :user)
-      (long
-        (+ chrome-rows
-          (div-ceil (char-count text) content-w)))
+  (^long [message ^long bubble-w] (estimated-height message bubble-w nil nil))
+  (^long [message ^long bubble-w detail-expansions session-id]
+   (let [content-w (max 1 (- bubble-w 4))
+         chrome-rows 3
+         role     (:role message)
+         trace    (:traces message)
+         ;; Pre-projection rough text estimate: extract plain text from
+         ;; `:ir` so the height heuristic doesn't depend on `:text`
+         ;; (which is only set by the walker AFTER projection).
+         text     (or (:text message)
+                    (some-> (:ir message) ir/extract-text))]
+     (cond
+       (= role :user)
+       (long
+         (+ chrome-rows
+           (div-ceil (char-count text) content-w)))
 
-      (and (= role :assistant) trace)
-      (let [n-iter   (long (count trace))
-            code-fs  (long (reduce (fn [^long acc it]
-                                     (+ acc (long (count (:forms it)))))
-                             0 trace))
-            res-fs   (long (reduce (fn [^long acc it]
-                                     (+ acc (long
-                                              (count
-                                                (filter :result-render (:forms it))))))
-                             0 trace))
-            think-c  (long (reduce (fn [^long acc it]
-                                     (+ acc (char-count (:thinking it))))
-                             0 trace))
-            ;; Heuristic for answer width: `:text` is the rendered
-            ;; markdown string (assistant-message stores it eagerly
-            ;; via render-answer). The layout pipeline re-wraps from
-            ;; `:ir` IR; this size estimate just picks a
-            ;; ballpark row count.
-            ans-c    (char-count text)]
-        (long
-          (+ chrome-rows
-            n-iter                              ;; iteration headers
-            code-fs                             ;; code-form rows
-            res-fs                              ;; result rows
-            (div-ceil think-c 80)
-            (div-ceil ans-c 60))))
+       (and (= role :assistant) trace)
+       (let [n-iter   (long (count trace))
+             code-fs  (long (reduce (fn [^long acc it]
+                                      (+ acc (long (count (:forms it)))))
+                              0 trace))
+             res-fs   (long (reduce (fn [^long acc it]
+                                      (+ acc (long
+                                               (count
+                                                 (filter :result-render (:forms it))))))
+                              0 trace))
+             think-c  (long (reduce (fn [^long acc it]
+                                      (+ acc (char-count (:thinking it))))
+                              0 trace))
+             ;; Heuristic for answer width: `:text` is the rendered
+             ;; markdown string (assistant-message stores it eagerly
+             ;; via render-answer). The layout pipeline re-wraps from
+             ;; `:ir` IR; this size estimate just picks a
+             ;; ballpark row count.
+             ans-c    (char-count text)
+             ;; EXPANDED disclosures add rows beyond the 1-line summary
+             ;; res-fs counts — without this an expanded block off-screen
+             ;; estimates as collapsed and the scroll jumps on the next
+             ;; expand. Real height takes over once measured.
+             bonus    (estimated-expansion-bonus message detail-expansions session-id trace)]
+         (long
+           (+ chrome-rows
+             n-iter                              ;; iteration headers
+             code-fs                             ;; code-form rows
+             res-fs                              ;; result rows
+             (div-ceil think-c 80)
+             (div-ceil ans-c 60)
+             bonus)))
 
-      (= role :assistant)
-      (long
-        (+ chrome-rows
-          (div-ceil (char-count text) content-w)))
+       (= role :assistant)
+       (long
+         (+ chrome-rows
+           (div-ceil (char-count text) content-w)))
 
-      :else
-      (long (+ chrome-rows (div-ceil (char-count text) content-w))))))
+       :else
+       (long (+ chrome-rows (div-ceil (char-count text) content-w)))))))
 
 (defn- estimated-height-with-turn-separator
-  [_messages _settings bubble-w _idx message]
-  (estimated-height message (long bubble-w)))
+  [_messages _settings bubble-w _idx message detail-expansions session-id]
+  (estimated-height message (long bubble-w) detail-expansions session-id))
 
 (defn- with-turn-separator
   [message _messages _settings _idx]
@@ -548,8 +587,9 @@
         ;; - no more `total-h` jitter on scroll, no more
         ;; click-to-position landing in the wrong row.
         est      (mapv (fn [idx m]
-                         (or (height-cache-get m bubble-w settings detail-expansions)
-                           (estimated-height-with-turn-separator messages settings bubble-w idx m)))
+                         (or (height-cache-get m bubble-w settings detail-expansions session-id)
+                           (estimated-height-with-turn-separator messages settings bubble-w idx m
+                             detail-expansions session-id)))
                    (range n) messages)
         est-off  (vec (reductions + 0 (map long est)))
         est-tot  (long (peek est-off))
@@ -659,7 +699,7 @@
             ;; message identity. Skip live progress and windowed
             ;; slices: neither is a full stable bubble measurement.
             (when (and (not loading-bubble?) (nil? window-total-h))
-              (height-cache-put! m bubble-w settings detail-expansions real-h))
+              (height-cache-put! m bubble-w settings detail-expansions session-id real-h))
             {:idx i :projected pm :height real-h}))
         result
         (if (nil? scroll)
@@ -803,7 +843,7 @@
               :detail-expansions detail-expansions})
         pm (with-turn-separator pm messages settings idx)
         h  (long (render/bubble-height pm bubble-w))]
-    (height-cache-put! m bubble-w settings detail-expansions h)
+    (height-cache-put! m bubble-w settings detail-expansions session-id h)
     h))
 
 (defn pre-warm-recent!
