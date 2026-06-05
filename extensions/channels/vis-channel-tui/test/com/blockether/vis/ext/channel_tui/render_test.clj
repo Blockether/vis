@@ -134,7 +134,7 @@
         (expect (not-any? #(str/includes? % "↻") lines))
         (expect (not-any? #(str/includes? % "1.0s") lines)))))
 
-  (it "renders mixed-block render segments as visible code plus title banner while hiding answer call"
+  (it "renders mixed-block visible code while hiding the title recap and answer call"
     (with-raw-code-on
       (let [lines (format-iteration-entry {:iteration 0
                                            :forms [{:code (str "(def x 1)\n"
@@ -144,10 +144,13 @@
                                                                                                                          {:kind :answer-ref}] :result-render nil :result-kind nil :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                     60 1 {})
             body (str/join "\n" (map (comp strip-ansi body-of) lines))]
+        ;; Plain `:code` segment paints; the foundation `:title` auto-ack and
+        ;; the `:answer-ref` (the `(done …)` call) are both dropped — the TITLE
+        ;; recap rail is retired, and the answer surfaces via the FINAL band,
+        ;; not as a leaked call form.
         (expect (str/includes? body "(def x 1)"))
-        (expect (str/includes? body "TITLE  \"Mixed forms\""))
-      ;; Render-segments path: the raw `(done …)` call form should not
-      ;; leak — the renderer surfaces the answer reference instead.
+        (expect (not (str/includes? body "TITLE")))
+        (expect (not (str/includes? body "Mixed forms")))
         (expect (not (str/includes? body "(done [:ir")))
         (expect (not (str/includes? body "set-session-title!")))))
 

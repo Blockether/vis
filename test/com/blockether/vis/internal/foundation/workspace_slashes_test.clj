@@ -142,17 +142,19 @@
               (fn [store]
                 (let [[env state-id draft] (setup! store base)
                       out   (dispatch! env store state-id "/draft abandon not-good")
-                      fresh (get-in out [:result :slash/data :active-id])]
+                      ;; abandon discards the draft and re-pins the session to a
+                      ;; fresh active workspace (trunk) — read it off the session.
+                      fresh (:id (workspace/for-session store state-id))]
                   (try
                     (expect (= :ok (get-in out [:result :slash/status])))
-                    (expect (= (:id draft) (get-in out [:result :slash/data :abandoned-id])))
-                    ;; a different, fresh draft is now the session's active one
+                    (expect (= (:id draft) (get-in out [:result :slash/data :workspace-id])))
+                    ;; a different, fresh workspace is now the session's active one
                     (expect (some? fresh))
                     (expect (not= (:id draft) fresh))
-                    (expect (= fresh (:id (workspace/for-session store state-id))))
                     (expect (= :discarded (:state (workspace/get store (:id draft)))))
                     (finally
-                      (when fresh
-                        (try (workspace/abandon! store {:workspace-id fresh})
-                          (catch Throwable _ nil))))))))))
+                      ;; abandon! already trashed the draft's clone; this is a
+                      ;; belt-and-braces no-op if the clone is already gone.
+                      (try (workspace/abandon! store {:workspace-id (:id draft)})
+                        (catch Throwable _ nil)))))))))
         (finally (delete-tree! base))))))

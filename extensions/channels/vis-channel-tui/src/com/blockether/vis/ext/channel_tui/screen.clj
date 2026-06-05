@@ -905,7 +905,7 @@
         ;; slash-suggestions) from the active session's cache, refreshed at each
         ;; turn end. The paint body just reads it; no inline let, no DB hit.
         ctx-snapshot      (get-in db [:ctx-by-session (get-in db [:session :id])]
-                            {:tasks {} :facts {}})]
+                            {:tasks {} :facts {} :archived {}})]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome
