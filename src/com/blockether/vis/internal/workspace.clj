@@ -138,6 +138,34 @@
   (rift/remove! {:at clone})
   (rift/gc))
 
+(defn- delete-tree!
+  "Best-effort recursive delete of `dir` (a path string)."
+  [dir]
+  (let [f (io/file dir)]
+    (when (.exists f)
+      (run! #(.delete ^File %) (reverse (file-seq f))))))
+
+(def ^:private rift-supported*
+  ;; One real CoW probe per process: temp src -> rift/init -> rift/create ->
+  ;; cleanup. Memoized via delay so the FS work runs at most once. On an
+  ;; unsupported FS/platform rift throws and we record false.
+  (delay
+    (let [no-attrs (make-array FileAttribute 0)
+          src (str (Files/createTempDirectory "vis-rift-probe-src" no-attrs))
+          dst (str (Files/createTempDirectory "vis-rift-probe-dst" no-attrs))]
+      (try
+        (rift/init {:at src})
+        (boolean (rift/create {:from src :name "probe" :into dst}))
+        (catch Throwable _ false)
+        (finally (run! delete-tree! [src dst]))))))
+
+(defn rift-supported?
+  "True when this filesystem/platform supports a real rift CoW clone.
+   Memoized — the FS probe runs at most once per process. Drafts are only
+   offered when this is true (see `workspace-slashes/specs`)."
+  []
+  @rift-supported*)
+
 ;; =============================================================================
 ;; Since-fork diff — pure mtime, git-free
 ;; =============================================================================
