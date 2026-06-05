@@ -23,7 +23,7 @@
   "Truncate `s` so its display width fits in `max-cols`. When truncation
    actually happens, append `vh/workspace-ellipsis` so overflow is visible."
   ^String [s ^long max-cols]
-  (let [s  (or s "")
+  (let [s (or s "")
         ;; Reserve the ellipsis's ACTUAL display width, not 1: `…` (U+2026) is
         ;; EAW=A and renders TWO columns on ambiguous-wide terminals, so a fixed
         ;; `(dec max-cols)` over-ran the cell by a column.
@@ -79,7 +79,7 @@
    visible — `footer-fg` washed it out."
   [g col row]
   (p/clear-styles! g)
-  (p/set-colors! g t/header-active-tab-accent t/terminal-bg)
+  (p/set-colors! g t/pure-black t/terminal-bg)
   (p/put-str! g col row tab-divider-glyph)
   (p/clear-styles! g))
 ;; ── tab cell ────────────────────────────────────────────────────────────────
@@ -122,8 +122,8 @@
     (p/fill-rect! g left row width 1)
     (p/put-str! g left row text)
     (when (and num-str
-            (<= (+ lead (count num-str)) (count text))
-            (= num-str (subs text lead (+ lead (count num-str)))))
+               (<= (+ lead (count num-str)) (count text))
+               (= num-str (subs text lead (+ lead (count num-str)))))
       (p/clear-styles! g)
       (p/set-colors! g num-fg bg)
       (p/enable! g p/BOLD)
@@ -189,12 +189,12 @@
   [["Ctrl+H · F1" "Toggle this help"] ["F2" "Toggle the task panel"]
    ["Enter · Ctrl+X" "Send message"] ["Alt+Enter" "Insert a newline"]
    ["Esc" "Clear draft · cancel turn"] ["Ctrl+C" "Cancel turn · quit"]
-   ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"] ["Ctrl+W" "Close tab  (or click the ✕)"]
-   ["Ctrl+K" "Command palette"] ["Ctrl+G" "Sessions · workspaces"] ["Ctrl+T" "Cycle model"]
-   ["Ctrl+R" "Cycle reasoning effort"] ["Ctrl+L" "Cycle Codex verbosity"]
-   ["Ctrl+A · Ctrl+E" "Jump to line start · end"] ["Ctrl+U" "Delete to line start"]
-   ["Alt+B · Alt+F" "Move word left · right"] ["Ctrl+V" "Paste"] ["@" "Pick a file"]
-   ["Mouse" "Click a tab to switch · ✕ to close"]])
+   ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
+   ["Ctrl+W" "Close tab  (or click the ✕)"] ["Ctrl+K" "Command palette"]
+   ["Ctrl+G" "Sessions · workspaces"] ["Ctrl+T" "Cycle model"] ["Ctrl+R" "Cycle reasoning effort"]
+   ["Ctrl+L" "Cycle Codex verbosity"] ["Ctrl+A · Ctrl+E" "Jump to line start · end"]
+   ["Ctrl+U" "Delete to line start"] ["Alt+B · Alt+F" "Move word left · right"] ["Ctrl+V" "Paste"]
+   ["@" "Pick a file"] ["Mouse" "Click a tab to switch · ✕ to close"]])
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
   "Paint a full-width single-line horizontal rule across `cols` on `row`."
@@ -233,7 +233,7 @@
     (let [hovered (cr/hovered)
           hovered? (and (= row (get-in hovered [:bounds :row])) (= :copy-id (:kind hovered)))]
       (p/clear-styles! g)
-      (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+      (p/set-colors! g (if hovered? t/header-hover-fg t/pure-black) t/terminal-bg)
       (when hovered? (p/enable! g p/BOLD))
       (p/put-str! g col row text)
       (p/clear-styles! g)
@@ -252,7 +252,7 @@
         hovered? (= kind (:kind hovered))
         w (p/display-width glyph)]
     (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+    (p/set-colors! g (if hovered? t/header-hover-fg t/pure-black) t/terminal-bg)
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g col row glyph)
     (p/clear-styles! g)
@@ -260,23 +260,32 @@
       (cr/register! {:bounds {:row row, :col col, :width w}, :kind kind, :enabled? true}))
     w))
 ;; ── help overlay ────────────────────────────────────────────────────────────
-
 (defn- pad-right
   ^String [^String s ^long w]
   (str s (apply str (repeat (max 0 (- w (p/display-width s))) \space))))
 (defn help-overlay!
-  "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   Pure chrome — registers no click regions; the caller dismisses it\n   (Ctrl+H / F1 / any key)."
+  "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid spans the full dialog inner width (desc column stretches to fill).\n   Pure chrome — registers no click regions; the caller dismisses it\n   (Ctrl+H / F1 / any key)."
   [g cols rows]
   (let [title "Keyboard shortcuts"
         hint "Ctrl+H / F1 to close"
         key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts))
-        lines (mapv (fn [[k d]] [[(pad-right (str k) key-w) t/footer-fg-strong true]
-                                 ["  " t/dialog-fg false] [(str d) t/footer-fg false]])
-                help-shortcuts)
-        line-w (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))
-        content-w (reduce max (p/display-width title) (map line-w lines))
-        bounds (dialogs/draw-dialog-chrome! g cols rows title content-w (count lines))
+        base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts))
+        bd t/dialog-border
+        line-cnt (inc (* 2 (count help-shortcuts)))
+        prov-w (max (p/display-width title) (+ key-w base-desc-w 7))
+        bounds (dialogs/draw-dialog-chrome! g cols rows title prov-w line-cnt)
         {:keys [left inner-w]} bounds
+        desc-w (max base-desc-w (- inner-w key-w 7))
+        bar
+          (fn [l m r]
+            (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r))
+        row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) t/footer-fg-strong true]
+                              [" │ " bd false] [(pad-right (str d) desc-w) t/footer-fg false]
+                              [" │" bd false]])
+        rule (fn [l m r] [[(bar l m r) bd false]])
+        lines (vec (concat [(rule "┌" "┬" "┐")]
+                           (interpose (rule "├" "┼" "┤") (mapv row-segs help-shortcuts))
+                           [(rule "└" "┴" "┘")]))
         {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds (count lines))
         n (count lines)
         shown-n (min n content-h)
@@ -341,14 +350,12 @@
    display width for clean alignment."
   [head indent text w body-color bold?]
   (let [pieces (wrap-cols text (long w))
-        pad    (apply str (repeat (long indent) \space))]
-    (vec
-      (map-indexed
-        (fn [i piece]
-          (if (zero? i)
-            (conj (vec head) [piece body-color bold?])
-            [[(str pad piece) body-color bold?]]))
-        pieces))))
+        pad (apply str (repeat (long indent) \space))]
+    (vec (map-indexed (fn [i piece]
+                        (if (zero? i)
+                          (conj (vec head) [piece body-color bold?])
+                          [[(str pad piece) body-color bold?]]))
+                      pieces))))
 (defn- task-entry-rows
   "Modern multi-row card for ONE task: a colored status glyph + WRAPPED
    title, a dim meta row (status label + verify badge), an optional
@@ -356,22 +363,29 @@
    line, then a blank spacer. Everything wraps to `body-w` — nothing is
    truncated. Rows are `[text color bold?]` segment vecs."
   [k t body-w]
-  (let [status     (or (:status t) :todo)
-        glyph-seg  [(str (task-status-glyph status) " ") (task-status-color status) true]
-        title      (or (not-empty (str (:title t))) (name k))
+  (let [status (or (:status t) :todo)
+        glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
+        title (or (not-empty (str (:title t))) (name k))
         title-rows (wrapped-rows [glyph-seg] 2 title (max 6 (- body-w 2)) t/dialog-fg true)
-        verify     (cond (:verified? t)  ["✓ verified"   t/status-ok]
-                         (:acceptance t) ["⌛ unverified" t/warning-fg]
-                         :else nil)
-        meta-segs  (cond-> [[(str "    " (name status)) (task-status-color status) false]]
-                     verify (conj [(str "   " (first verify)) (second verify) false]))
+        verify (cond (:verified? t) ["✓ verified" t/status-ok]
+                     (:acceptance t) ["⌛ unverified" t/warning-fg]
+                     :else nil)
+        meta-segs (cond-> [[(str "    " (name status)) (task-status-color status) false]]
+                    verify (conj [(str "   " (first verify)) (second verify) false]))
         accept-rows (when-let [a (not-empty (str (:acceptance t)))]
-                      (wrapped-rows [["    ▸ " t/footer-fg-muted false]] 6 a
-                        (max 6 (- body-w 6)) t/footer-fg-muted false))
-        dep-rows   (when (seq (:depends-on t))
-                     (wrapped-rows [["    ↳ needs " t/footer-fg-muted false]] 6
-                       (str/join ", " (map pr-str (:depends-on t)))
-                       (max 6 (- body-w 6)) t/footer-fg-muted false))]
+                      (wrapped-rows [["    ▸ " t/footer-fg-muted false]]
+                                    6
+                                    a
+                                    (max 6 (- body-w 6))
+                                    t/footer-fg-muted
+                                    false))
+        dep-rows (when (seq (:depends-on t))
+                   (wrapped-rows [["    ↳ needs " t/footer-fg-muted false]]
+                                 6
+                                 (str/join ", " (map pr-str (:depends-on t)))
+                                 (max 6 (- body-w 6))
+                                 t/footer-fg-muted
+                                 false))]
     (-> (vec title-rows)
         (conj meta-segs)
         (into accept-rows)
@@ -393,25 +407,31 @@
    joining `⛁N files`, `↳ depends …`, and `⚡ contradicts …` when present,
    then a blank spacer. Nothing truncated — content wraps to `body-w`."
   [k f body-w]
-  (let [super?    (= :superseded (:status f))
+  (let [super? (= :superseded (:status f))
         glyph-seg [(if super? "⊘ " "• ") (if super? t/footer-fg-muted t/status-ok) true]
-        key-row   [glyph-seg [(name k) (if super? t/footer-fg-muted t/header-active-tab-accent) true]]
-        content   (not-empty (str (:content f)))
+        key-row [glyph-seg [(name k) (if super? t/footer-fg-muted t/header-active-tab-accent) true]]
+        content (not-empty (str (:content f)))
         content-rows (when content
-                       (wrapped-rows [["    " t/dialog-fg false]] 4 content
-                         (max 6 (- body-w 4)) (if super? t/footer-fg-muted t/dialog-fg) false))
+                       (wrapped-rows [["    " t/dialog-fg false]]
+                                     4
+                                     content
+                                     (max 6 (- body-w 4))
+                                     (if super? t/footer-fg-muted t/dialog-fg)
+                                     false))
         meta-parts (cond-> []
-                     (pos? (count (:files f)))
-                     (conj (str "⛁" (count (:files f)) " files"))
-                     (seq (:depends-on f))
-                     (conj (str "↳ depends " (str/join ", " (map pr-str (:depends-on f)))))
+                     (pos? (count (:files f))) (conj (str "⛁" (count (:files f)) " files"))
+                     (seq (:depends-on f)) (conj (str "↳ depends "
+                                                      (str/join ", " (map pr-str (:depends-on f)))))
                      (seq (:contradicts f))
-                     (conj (str "⚡ contradicts "
-                             (str/join ", " (map pr-str (sort (:contradicts f)))))))
-        meta-rows  (when (seq meta-parts)
-                     (wrapped-rows [["    " t/footer-fg-muted false]] 4
-                       (str/join "  ·  " meta-parts) (max 6 (- body-w 4))
-                       t/footer-fg-muted false))]
+                       (conj (str "⚡ contradicts "
+                                  (str/join ", " (map pr-str (sort (:contradicts f)))))))
+        meta-rows (when (seq meta-parts)
+                    (wrapped-rows [["    " t/footer-fg-muted false]]
+                                  4
+                                  (str/join "  ·  " meta-parts)
+                                  (max 6 (- body-w 4))
+                                  t/footer-fg-muted
+                                  false))]
     (-> [key-row]
         (into content-rows)
         (into meta-rows)
