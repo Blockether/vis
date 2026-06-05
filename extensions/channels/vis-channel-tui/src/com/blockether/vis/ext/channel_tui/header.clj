@@ -406,28 +406,31 @@
                             entry  (nth entries idx)
                             active? (= (:id entry) active-id)
                             tab-no (inc (long (:header/original-index entry)))
-                            label (cond->> (p/tab-display-label entry)
+                            prefix (cond
                                     (and (:running? entry)
                                       (not (:title-loading? entry))) (str (title-spinner-frame) " ")
                                     (and (not (:running? entry))
                                       (:unread? entry)
                                       (not (:title-loading? entry))) (str "● ")
-                                    (:title-loading? entry) (str (title-spinner-frame) " "))]
+                                    (:title-loading? entry) (str (title-spinner-frame) " ")
+                                    :else "")
+                            label (p/tab-display-label entry)]
                         (recur (inc idx)
                           (+ x cell-w (if (< idx (dec n)) 1 0))
                           (conj out (assoc entry
                                       :left x
                                       :width cell-w
                                       :label label
+                                      :prefix prefix
                                       :tab-no tab-no
                                       :active? active?
                                       :last? (= idx (dec n))))))))]
-        (doseq [{:keys [left width active? label id last? tab-no]
+        (doseq [{:keys [left width active? label prefix id last? tab-no]
                  idx :header/original-index}
                 cells
                 :when (pos? (long width))]
           (components/tab-cell! g
-            {:left left :row row :width width :label label :tab-no tab-no
+            {:left left :row row :width width :label label :prefix prefix :tab-no tab-no
              :active? active? :workspace-id id :index idx
              :register? *register-click-regions?* :closable? multi?})
           ;; `│` divider after every tab but the last.

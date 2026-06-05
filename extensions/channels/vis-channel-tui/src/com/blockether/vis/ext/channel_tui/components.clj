@@ -16,6 +16,7 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]))
 ;; ── text layout ─────────────────────────────────────────────────────────────
@@ -99,8 +100,8 @@
    `opts` keys: :left :row :width :label :active? :workspace-id :index
    :register?"
   [g
-   {:keys [left row width label tab-no active? workspace-id index register? closable?],
-    :or {closable? true}}]
+   {:keys [left row width label prefix tab-no active? workspace-id index register? closable?],
+    :or {closable? true, prefix ""}}]
   (let [width (long width)
         ;; Reserve room for the close button only when the cell can still
         ;; show a sliver of title beside it; otherwise the title wins.
@@ -108,13 +109,18 @@
         inner-w (if show-close? (max 0 (- width close-button-width)) width)
         fg (if active? t/header-active-tab-fg t/border-fg)
         bg (if active? t/header-active-tab-bg t/dialog-bg)
+        prefix (let [p (or prefix "")
+                     w (long (p/display-width p))]
+                 (if (< w 2) (str p (apply str (repeat (- 2 w) \space))) p))
         num-str (when tab-no (str tab-no))
-        display (if num-str (str num-str " " label) label)
+        display (if num-str (str prefix num-str " | " label) (str prefix label))
         text (center-padded display inner-w)
         ;; Where the tab number lands once `display` is centre-padded, so we can
         ;; repaint just those digits in a contrasting colour — the index reads
         ;; as a distinct badge instead of blending into the title text.
-        lead (count (take-while #(= \space %) text))
+        lead (+ (count (take-while #(= \space %) text))
+                (- (long (p/display-width prefix))
+                   (count (take-while #(= \space %) prefix))))
         num-fg (if active? t/header-tab-number-fg t/header-active-tab-accent)]
     (p/clear-styles! g)
     (p/set-colors! g fg bg)
@@ -128,6 +134,12 @@
       (p/set-colors! g num-fg bg)
       (p/enable! g p/BOLD)
       (p/put-str! g (+ (long left) lead) row num-str))
+    (when (and num-str
+               (<= (+ lead (count num-str) 3) (count text)))
+      (p/clear-styles! g)
+      (p/set-colors! g fg bg)
+      (when active? (p/enable! g p/BOLD))
+      (p/put-str! g (+ (long left) lead (count num-str) 1) row "|"))
     (p/clear-styles! g)
     (when register?
       (cr/register! {:bounds {:row row, :col left, :width width},
@@ -186,7 +198,7 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [["Ctrl+H · F1" "Toggle this help"] ["F2" "Toggle the task panel"]
+  [["F1" "Toggle this help"] ["F2" "Toggle the task panel"]
    ["Enter · Ctrl+X" "Send message"] ["Alt+Enter" "Insert a newline"]
    ["Esc" "Clear draft · cancel turn"] ["Ctrl+C" "Cancel turn · quit"]
    ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
@@ -267,7 +279,7 @@
   "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid spans the full dialog inner width (desc column stretches to fill).\n   Pure chrome — registers no click regions; the caller dismisses it\n   (Ctrl+H / F1 / any key)."
   [g cols rows]
   (let [title "Keyboard shortcuts"
-        hint "Ctrl+H / F1 to close"
+        hint "F1 to close"
         key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts))
         base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts))
         bd t/dialog-border
@@ -463,7 +475,7 @@
    to fit, clamped to the terminal); if it still overflows, the last row shows
    a `… N more` footer so nothing is silently dropped. Registers no click
    regions; the caller dismisses on F2. `ctx` is `{:tasks … :facts …}`."
-  [g cols rows {:keys [tasks facts archived]}]
+  [g cols rows {:keys [tasks facts archived]} scroll]
   (let [total (count tasks)
         done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
         title (str "Context"
@@ -484,32 +496,53 @@
                            (fact-overlay-lines facts body-w)))
         line-w (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))
         content-w (reduce max (p/display-width title) (map line-w lines))
-        bounds (dialogs/draw-dialog-chrome! g cols rows title content-w (count lines))
-        {:keys [left inner-w]} bounds
-        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds (count lines))
         n (count lines)
-        overflow? (> n content-h)
-        shown-n (if overflow? (max 0 (dec content-h)) n)
+        ;; Cap the dialog to the shared modal footprint so the panel takes a
+        ;; consistent, smaller slice of the screen instead of growing to fill
+        ;; the terminal; the rest of the content is reachable by scrolling.
+        cap-h (dialogs/default-content-height rows)
+        req-h (min n cap-h)
+        bounds (dialogs/draw-dialog-chrome! g cols rows title content-w req-h)
+        {:keys [left inner-w]} bounds
+        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h)
+        visible content-h
+        max-scroll (max 0 (- n visible))
+        eff (max 0 (min (long (or scroll 0)) max-scroll))
+        sb? (> n visible)
+        body-right (+ left 1 inner-w)
+        ;; Reserve the rightmost inner column for the scrollbar when overflowing.
+        text-right (if sb? (dec body-right) body-right)
+        shown-n (min visible (- n eff))
         paint-line (fn [i segs]
                      (let [r (+ content-top i)]
                        (loop [x (+ left 1)
                               ss segs]
                          (when-let [[text color bold?] (first ss)]
-                           (let [avail (max 0 (- (+ left 1 inner-w) x))
+                           (let [avail (max 0 (- text-right x))
                                  shown (clip-str (str text) avail)]
                              (p/clear-styles! g)
                              (p/set-colors! g color t/dialog-bg)
                              (when bold? (p/enable! g p/BOLD))
                              (p/put-str! g x r shown)
                              (recur (+ x (p/display-width shown)) (next ss)))))))]
-    (dotimes [i shown-n] (paint-line i (nth lines i)))
-    (when overflow?
-      (paint-line shown-n
-                  [[(str "… " (- n shown-n) " more — full working memory lives in ctx")
-                    t/dialog-hint false]]))
-    ;; Centered dim close hint on the dialog's hint row.
+    (dotimes [i shown-n] (paint-line i (nth lines (+ eff i))))
+    (when sb?
+      (scrollbar/draw! g {:col (dec body-right)
+                          :top content-top
+                          :track-h visible
+                          :total-h n
+                          :inner-h visible
+                          :scroll eff}))
+    ;; Centered close hint + scroll-position indicator on the hint row.
     (when hint-row
-      (p/clear-styles! g)
-      (p/set-colors! g t/dialog-hint t/dialog-bg)
-      (p/put-str! g (+ left 1 (max 0 (quot (- inner-w (p/display-width hint)) 2))) hint-row hint))
-    (p/clear-styles! g)))
+      (let [pos-hint (if sb?
+                       (str hint "    " (inc eff) "–" (+ eff shown-n) " / " n)
+                       hint)]
+        (p/clear-styles! g)
+        (p/set-colors! g t/dialog-hint t/dialog-bg)
+        (p/put-str! g
+                    (+ left 1 (max 0 (quot (- inner-w (p/display-width pos-hint)) 2)))
+                    hint-row
+                    pos-hint)))
+    (p/clear-styles! g)
+    {:scroll eff :max-scroll max-scroll}))
