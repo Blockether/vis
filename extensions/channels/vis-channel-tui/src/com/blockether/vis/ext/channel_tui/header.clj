@@ -494,10 +494,10 @@
 
     ;; RIGHT slot: labeled, clickable chips — terminal-safe stand-ins for the
     ;; F1/F2 accelerators, so they read as what they do. Right-aligned as a
-    ;; cluster immediately left of the id badge: F1 help | F2 tasks | #id.
+    ;; cluster immediately left of the id badge: F1 help | F2 context | #id.
     ;; Separators are plain ASCII `|`. GLYPHS: ASCII-only — earlier ☰ (U+2630)
     ;; is East-Asian AMBIGUOUS-width and drifted on hover.
-    (let [tasks-chip "F2 tasks"
+    (let [tasks-chip "F2 context"
           help-chip  "F1 help"
           tasks-w    (p/display-width tasks-chip)
           help-w     (p/display-width help-chip)

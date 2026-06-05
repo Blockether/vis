@@ -176,9 +176,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- fixture-ir []
-  (let [f (io/file "extensions/channels/vis-channel-tui/test/resources/fixtures/bdc79ae9_answer_ir.edn")]
-    (when (.exists f)
-      (edn/read-string (slurp f)))))
+  ;; Resolve through the classpath (the extension's `test/` dir is a test
+  ;; root in both deps.edn files), so the fixture is found whether the suite
+  ;; runs from the repo root or from this extension's own directory. The old
+  ;; repo-root-relative `io/file` path only resolved from the repo root and
+  ;; silently returned nil (unreachable fixture) when run from the extension.
+  (when-let [r (io/resource "resources/fixtures/bdc79ae9_answer_ir.edn")]
+    (edn/read-string (slurp r))))
 
 (defdescribe bdc79ae9-walker-test
   (it "fixture is reachable"
