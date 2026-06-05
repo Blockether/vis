@@ -9,7 +9,7 @@
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis          {:local/root "../../.."}
-  ;; Blockether fork of mabe02/lanterna 3.1.5 with seven patches on top:
+  ;; Blockether fork of mabe02/lanterna 3.1.5 with eight patches on top:
   ;;   1. PR #625 cherry-pick - emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
   ;;   2. BMP `Emoji_Presentation=Yes` width detection - ✅, ⭐, ⚡,
@@ -39,9 +39,13 @@
   ;;      so missed by #2) → 2 columns; the target terminal paints them
   ;;      emoji-wide. The SMALL triangles ▸ ▾ used for disclosure chevrons
   ;;      stay single-width (EAW=N, non-emoji).
+  ;;   8. ⚠ U+26A0 WARNING SIGN (Emoji=Yes, Emoji_Presentation=No, also missed
+  ;;      by #2/#3 in its BARE form) → 2 columns; the bare glyph paints emoji-
+  ;;      wide so "⚠ …" status lines no longer jam a tooth into the right
+  ;;      border. The VS-16 form ⚠️ was already wide via #3.
   ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.10"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.11"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
