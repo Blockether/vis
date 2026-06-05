@@ -9,7 +9,7 @@
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis          {:local/root "../../.."}
-  ;; Blockether fork of mabe02/lanterna 3.1.5 with five patches on top:
+  ;; Blockether fork of mabe02/lanterna 3.1.5 with six patches on top:
   ;;   1. PR #625 cherry-pick - emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
   ;;   2. BMP `Emoji_Presentation=Yes` width detection - ✅, ⭐, ⚡,
@@ -26,9 +26,17 @@
   ;;      produced scroll-redraw artifacts / misaligned borders. Opt
   ;;      into wide for genuine ambiguous-wide terminals with the JVM
   ;;      flag `-Dlanterna.eastAsianAmbiguousWide=true`.
+  ;;   6. East-Asian Wide/Fullwidth (EAW=W / EAW=F) width table generated
+  ;;      from Unicode 15.1 EastAsianWidth.txt. W/F symbols OUTSIDE the CJK
+  ;;      Unicode blocks (angle brackets 〈〉, Yi, Bopomofo, CJK compat /
+  ;;      vertical forms) used to slip through isCharCJK and undercount by a
+  ;;      column, drifting the scrollbar / following cells. Now one shared
+  ;;      double-width source for both display-width and the paint. Ambiguous
+  ;;      (EAW=A) is untouched (still narrow by default); chrome (box/block/
+  ;;      geometric/arrows) stays single-width.
   ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.8"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.9"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
