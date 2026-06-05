@@ -1835,16 +1835,18 @@
       (expect (true? (:success? r)))
       (expect (= "X\nd\n" (slurp path)))))
 
-  (it "patch refuses a :from-hash that hits >1 identical line"
+  (it "patch refuses a BARE :from-hash that hits >1 identical line"
     (let [path (write-temp! "hashline/dup.txt" "x\ny\nx\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
-          ;; The dup line 'x' is intentionally ABSENT from :hashes (only
-          ;; usable/unique anchors are surfaced), so feed the raw hash.
+          ;; The dup line 'x' is surfaced as `hash#1` / `hash#2` ordinal
+          ;; anchors (each addressable), but the BARE content hash still
+          ;; hits BOTH lines — feed it raw to exercise the ambiguity refusal.
           hashes (:hashes (read-file path))
           r (patch [{:path path :from-hash (patch/line-hash "x") :replace "NEW"}])]
-      (expect (nil? (get hashes 1)))      ;; ambiguous line omitted from the map
-      (expect (= (patch/line-hash "y") (get hashes 2))) ;; unique line kept
+      (expect (= (str (patch/line-hash "x") "#1") (get hashes 1)))  ;; 1st dup → #1
+      (expect (= (str (patch/line-hash "x") "#2") (get hashes 3)))  ;; 2nd dup → #2
+      (expect (= (patch/line-hash "y") (get hashes 2)))             ;; unique line kept bare
       (expect (false? (:success? r)))
       (expect (= :hash-ambiguous (-> r :failures first :reason)))
       ;; file untouched

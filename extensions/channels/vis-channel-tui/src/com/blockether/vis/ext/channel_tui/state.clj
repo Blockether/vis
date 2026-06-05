@@ -1054,14 +1054,28 @@
                 ;; the tab opens — not only after the first turn. Keyed by the raw
                 ;; session UUID (what screen.clj reads via [:session :id]). One DB
                 ;; read; tolerate any failure (fresh/unsaved session → no-op).
-                ctx (when-let [uid (:id session)]
-                      (try (vis/db-load-latest-ctx (vis/db-info) uid)
-                        (catch Throwable _ nil)))]
+                ctx-panel
+                (when-let [uid (:id session)]
+                  (try
+                    (let [hist (vis/db-load-ctx-history (vis/db-info) uid)]
+                      (if (seq hist)
+                        ;; Merge tasks/facts/archived across ALL turns so the F2
+                        ;; context panel shows the full session history, not just
+                        ;; the latest snapshot. Later turns win on key collision.
+                        (reduce (fn [acc [_turn c]]
+                                  {:tasks    (merge (:tasks acc) (:session/tasks c))
+                                   :facts    (merge (:facts acc) (:session/facts c))
+                                   :archived (merge (:archived acc) (:session/archived c))})
+                          {:tasks {} :facts {} :archived {}}
+                          hist)
+                        ;; Fallback: no per-turn history → latest single snapshot.
+                        (when-let [c (vis/db-load-latest-ctx (vis/db-info) uid)]
+                          {:tasks    (or (:session/tasks c) {})
+                           :facts    (or (:session/facts c) {})
+                           :archived (or (:session/archived c) {})})))
+                    (catch Throwable _ nil)))]
             (cond-> db'
-              ctx (assoc-in [:ctx-by-session (:id session)]
-                    {:tasks    (or (:session/tasks ctx) {})
-                     :facts    (or (:session/facts ctx) {})
-                     :archived (or (:session/archived ctx) {})}))))))))
+              ctx-panel (assoc-in [:ctx-by-session (:id session)] ctx-panel))))))))
 
 (reg-event-db :title-loading
   ;; Host auto-title generation started (true) or ended (false). Drives the

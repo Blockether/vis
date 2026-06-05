@@ -63,7 +63,7 @@
           track-h (long track-h)]
       (doseq [r (range track-h)]
         (p/set-colors! g track-fg track-bg)
-        (p/set-char! g col (+ top (long r)) \|))
+        (p/set-char! g col (+ top (long r)) \│))
       (doseq [r (range thumb-h)]
         (p/set-colors! g thumb-fg thumb-bg)
         (p/set-char! g col (+ top (long thumb-top-rel) (long r)) \█)))

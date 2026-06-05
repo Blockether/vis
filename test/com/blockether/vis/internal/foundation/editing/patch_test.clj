@@ -111,10 +111,13 @@
     (expect (= {1 (patch/line-hash "a") 2 (patch/line-hash "b")}
               (patch/lines->hashes [[1 "a"] [2 "b"]]))))
 
-  (it "lines->hashes OMITS blank lines and duplicate (ambiguous) lines"
-    ;; dup 'x' (lines 1,3) and the blank line 4 can't be hash-addressed,
-    ;; so they never appear in the map — only the unique 'y' survives.
-    (expect (= {2 (patch/line-hash "y")}
+  (it "lines->hashes omits blanks, disambiguates duplicates with #N ordinals"
+    ;; dup 'x' (lines 1,3) gets `hash#1`/`hash#2` ordinal anchors so each
+    ;; stays addressable; the blank line 4 is never a usable anchor and is
+    ;; omitted; the unique 'y' maps to its bare content hash.
+    (expect (= {1 (str (patch/line-hash "x") "#1")
+                2 (patch/line-hash "y")
+                3 (str (patch/line-hash "x") "#2")}
               (patch/lines->hashes [[1 "x"] [2 "y"] [3 "x"] [4 "   "]]))))
 
   (it "render-hashline-block renders a `<hash>| text` gutter, no line numbers"
@@ -125,18 +128,23 @@
       ;; line numbers (7/8) are NOT in the gutter
       (expect (not (re-find #"\b7\b" out)))))
 
-  (it "render-hashline-block blanks the gutter on blank + duplicate lines, kept aligned"
+  (it "render-hashline-block shows ordinal anchors for dups, blank gutter for blanks"
     (let [out   (patch/render-hashline-block [[1 "dup"] [2 "uniq"] [3 "dup"] [4 ""]])
           lines (clojure.string/split-lines out)
-          blank (apply str (repeat (long patch/hash-width) \space))]
-      ;; unique line shows its hash
+          blank (apply str (repeat (long patch/hash-width) \space))
+          hdup  (patch/line-hash "dup")]
+      ;; unique line shows its bare content hash
       (expect (= (str (patch/line-hash "uniq") "│ uniq") (nth lines 1)))
-      ;; duplicate + blank lines get a `hash-width`-space aligned gutter, no hash
-      (expect (= (str blank "│ dup") (nth lines 0)))
-      (expect (= (str blank "│ dup") (nth lines 2)))
+      ;; duplicate lines stay addressable via `hash#N` ordinal anchors
+      (expect (= (str hdup "#1│ dup") (nth lines 0)))
+      (expect (= (str hdup "#2│ dup") (nth lines 2)))
+      ;; blank line is never an anchor — aligned `hash-width`-space gutter, no hash
       (expect (= (str blank "│ ") (nth lines 3)))
-      ;; every gutter column lines up: `│` at the same index on every row
-      (expect (apply = (map #(clojure.string/index-of % "│") lines)))))
+      ;; bare-hash and blank rows share the `hash-width` gutter column; the
+      ;; `#N` ordinal rows are intentionally wider (the suffix keeps dups
+      ;; editable, costing 2 extra columns on those rows only).
+      (expect (= (clojure.string/index-of (nth lines 1) "│")
+                (clojure.string/index-of (nth lines 3) "│")))))
 
   (it "line-hash is exactly hash-width hex chars (aligned), zero-padded"
     (expect (= (long patch/hash-width) (count (patch/line-hash "anything"))))
