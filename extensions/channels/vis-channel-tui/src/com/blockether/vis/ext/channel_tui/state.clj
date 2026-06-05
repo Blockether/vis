@@ -886,6 +886,7 @@
           root      (or (:workspace/root workspace) (:workspace/root opts))
           label     (or (:label opts)
                       (some-> workspace :label not-empty)
+                      (some-> workspace :main :branch not-empty)
                       untitled-session-label)
           entry     (cond-> {:id id :label label :active? true}
                       workspace (assoc :workspace workspace)
@@ -1036,18 +1037,31 @@
               entry (cond-> {:id id :label label :active? true}
                       workspace        (assoc :workspace workspace)
                       (:root workspace) (assoc :workspace/root (:root workspace)))]
-          (-> db
-            (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
-              :active-tab-id id)
-            ;; Make the new tab the live root state (a fresh session view);
-            ;; finalize-db snapshots this back into the tab's locals.
-            (merge (empty-tab-state))
-            (assoc :session session
-              :workspace workspace
-              :workspace/root (:root workspace)
-              :title nil
-              :messages (or history [])
-              :input-history (history-user-texts history))))))))
+          (let [db' (-> db
+                      (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+                        :active-tab-id id)
+                      ;; Make the new tab the live root state (a fresh session view);
+                      ;; finalize-db snapshots this back into the tab's locals.
+                      (merge (empty-tab-state))
+                      (assoc :session session
+                        :workspace workspace
+                        :workspace/root (:root workspace)
+                        :title nil
+                        :messages (or history [])
+                        :input-history (history-user-texts history)))
+                ;; W3 reopen seed: populate the F2 ctx cache immediately from the
+                ;; latest persisted ctx so live + ARCHIVED tasks render the instant
+                ;; the tab opens — not only after the first turn. Keyed by the raw
+                ;; session UUID (what screen.clj reads via [:session :id]). One DB
+                ;; read; tolerate any failure (fresh/unsaved session → no-op).
+                ctx (when-let [uid (:id session)]
+                      (try (vis/db-load-latest-ctx (vis/db-info) uid)
+                        (catch Throwable _ nil)))]
+            (cond-> db'
+              ctx (assoc-in [:ctx-by-session (:id session)]
+                    {:tasks    (or (:session/tasks ctx) {})
+                     :facts    (or (:session/facts ctx) {})
+                     :archived (or (:session/archived ctx) {})}))))))))
 
 (reg-event-db :title-loading
   ;; Host auto-title generation started (true) or ended (false). Drives the
@@ -1075,8 +1089,11 @@
   ;; keyed by session id so each tab's panel shows its own working memory.
   ;; Pure data — no DB read here.
   (fn [db [_ session-id ctx]]
-    (assoc-in db [:ctx-by-session session-id]
-      {:tasks (or (:tasks ctx) {}) :facts (or (:facts ctx) {})})))
+    (let [prev (get-in db [:ctx-by-session session-id])]
+      (assoc-in db [:ctx-by-session session-id]
+        {:tasks (or (:tasks ctx) {})
+         :facts (or (:facts ctx) {})
+         :archived (or (:archived ctx) (:archived prev) {})}))))
 
 (reg-event-db :set-title
   (fn [db [_ title]]
@@ -1745,7 +1762,8 @@
                               (let [ctx (vis/db-load-latest-ctx (vis/db-info) sid)]
                                 (dispatch [:set-ctx-panel sid
                                            {:tasks (:session/tasks ctx)
-                                            :facts (:session/facts ctx)}])))
+                                            :facts (:session/facts ctx)
+                                            :archived (:session/archived ctx)}])))
                             (catch Throwable _ nil))
                           (when (:voice-response? turn-features)
                             (speak-answer-async! (:answer result))))))

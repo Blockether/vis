@@ -718,7 +718,7 @@
           (print-session-id-on-exit!)
           (.flush ps)
           (let [out (.toString bytes "UTF-8")]
-            (expect (= "Resume with:\nvis channels tui --session-id abc123\n" out))))))))
+            (expect (= "\rResume with:\nvis channels tui --session-id abc123\n" out))))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

@@ -12,8 +12,9 @@
 
      - the pure `iteration/iteration-entry->display-block` projection (one
        block, real op counts, status), AND
-     - the rendered TUI lines (`render/format-iteration-entry`) — one BLOCK
-       header, the right op rows, inline carets, no fake badges.
+     - the rendered TUI lines (`render/format-iteration-entry`) — a FLAT
+       block (no count header, no block-level collapse), the right op rows,
+       inline carets, no fake badges.
 
    The display-block is the SAME shape the live progress tracker and the
    resume projection both feed (see `parity-test`), so a fixture that passes
@@ -46,22 +47,26 @@
   ([entry opts]
    (mapv clean (format-iteration-entry entry 80 1 opts))))
 
-;; The BLOCK header is labelled by op COUNTS only — `N observation(s)` /
-;; `N mutation(s)` (no `ITERATION N`, no status glyph, no duration). It rides
-;; the same ▾/▸ disclosure chevron as the op rows, so we discriminate header
-;; from op rows by the counts vocabulary.
+;; The block-level COUNT header (`N observation(s)` / `N mutation(s)`) and the
+;; block-level collapse toggle were retired (see render.clj + render_test:
+;; "does not render a BLOCK count header or block-level collapse toggle"). The
+;; trace now renders FLAT: code body (when shown) + op rows, no card title. We
+;; keep `counts-re`/`header-of` to ASSERT the header's absence; any rendered
+;; line carrying the counts vocabulary would be a regression.
 (def ^:private counts-re #"observation|mutation")
 
 (defn- op-rows
-  "Visible `▸`/`▾` op rows in a rendered frame. Excludes the BLOCK header,
-   which also carries a ▸/▾ disclosure chevron (the whole block is
-   collapsible) and is identified by its counts label."
+  "Visible `▸`/`▾` op rows in a rendered frame. With the count header gone,
+   every disclosure-chevron row is an op row; the counts guard stays as a
+   belt-and-suspenders filter so a regressed header never inflates the count."
   [lines]
   (filter #(and (or (str/includes? % "▸") (str/includes? % "▾"))
              (not (re-find counts-re %)))
     lines))
 
 (defn- header-of
+  "The retired count header, if one ever leaks back in. Always nil now;
+   used by the fixtures to assert headerlessness."
   [lines]
   (some #(when (re-find counts-re %) %) lines))
 
@@ -126,16 +131,14 @@
         (expect (= [:git/status :git/add :git/commit! :git/push!]
                   (mapv :op (:ops block))))))
 
-    (it "renders ONE header `1 observation · 3 mutations` (counts only) and four op rows"
-      (let [lines (rendered (git-fence-entry))
-            hdr   (header-of lines)]
-        (expect (some? hdr))
-        ;; Counts label, no ITERATION word, no status glyph, no scope stamp.
+    (it "renders NO count header (flat block) and four op rows"
+      (let [lines (rendered (git-fence-entry))]
+        ;; The count header / card title is retired: no counts vocabulary,
+        ;; no ITERATION word, no status glyph in the rendered lines.
+        (expect (nil? (header-of lines)))
         (expect (not-any? #(str/includes? % "ITERATION") lines))
-        (expect (not (str/includes? hdr "/f1")))
-        (expect (str/includes? hdr "1 observation"))
-        (expect (str/includes? hdr "3 mutations"))
-        (expect (not (str/includes? hdr "✓")))
+        (expect (not-any? #(str/includes? % "observation") lines))
+        (expect (not-any? #(str/includes? % "mutation") lines))
         ;; Four op rows, one per tool call.
         (let [rows (op-rows lines)]
           (expect (= 4 (count rows)))
@@ -144,21 +147,17 @@
           (expect (some #(str/includes? % "COMMIT") rows))
           (expect (some #(str/includes? % "PUSH") rows)))))
 
-    (it "collapses the whole block (code + op rows) when the header toggle is off"
-      ;; The BLOCK header is a disclosure toggle keyed on `iter<N>:block`
-      ;; (the iteration-number is unique within the turn; the display-block
-      ;; `:scope` is NOT — it can be duplicated/nil on the rebuild path, so
-      ;; keying on it made one click collapse the wrong block).
-      ;; Collapsed → only the header (with ▸) survives; code body + op rows fold away.
+    (it "ignores block-level collapse keys — blocks are not collapsible"
+      ;; The block-level disclosure toggle was retired alongside the count
+      ;; header. A stale `iter<N>:block` collapse key is now a no-op: the
+      ;; code body + op rows stay visible regardless.
       (let [lines (rendered (git-fence-entry)
                     {:session-id "s1"
                      :detail-expansions {["s1" "iter1:block"] false}})]
-        ;; Header still present...
-        (expect (some? (header-of lines)))
-        ;; ...but every op row is gone, and the code body is folded.
-        (expect (zero? (count (op-rows lines))))
-        (expect (not (some #(str/includes? % "STATUS") lines)))
-        (expect (not (some #(str/includes? % "git/status") lines)))))))
+        ;; No header to survive; op rows are still all present.
+        (expect (nil? (header-of lines)))
+        (expect (= 4 (count (op-rows lines))))
+        (expect (some #(str/includes? % "STATUS") lines))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 2 — nested `let`: (let [a (cat) b (cat)] (patch)).
@@ -181,12 +180,10 @@
         (expect (= {:observations 2 :mutations 1} (:counts block)))
         (expect (= [:cat :cat :patch] (mapv :op (:ops block))))))
 
-    (it "renders ONE header with `2 observations · 1 mutation` and three op rows"
-      (let [lines (rendered (nested-let-entry))
-            hdr   (header-of lines)]
+    (it "renders NO count header and three op rows"
+      (let [lines (rendered (nested-let-entry))]
         (expect (not-any? #(str/includes? % "ITERATION") lines))
-        (expect (str/includes? hdr "2 observations"))
-        (expect (str/includes? hdr "1 mutation"))
+        (expect (nil? (header-of lines)))
         (expect (= 3 (count (op-rows lines))))))))
 
 ;; ---------------------------------------------------------------------------
@@ -205,10 +202,10 @@
         (expect (= 1 (count (:ops block))))
         (expect (= {:observations 1 :mutations 0} (:counts block)))))
 
-    (it "renders ONE header and ONE op row"
+    (it "renders NO count header and ONE op row"
       (let [lines (rendered (def-bind-entry))]
         (expect (not-any? #(str/includes? % "ITERATION") lines))
-        (expect (some? (header-of lines)))
+        (expect (nil? (header-of lines)))
         (expect (= 1 (count (op-rows lines))))
         (expect (some #(str/includes? % "CAT") (op-rows lines)))))))
 
@@ -284,12 +281,13 @@
       (let [block (iteration/iteration-entry->display-block (cancelled-entry))]
         (expect (= :cancelled (:status block)))))
 
-    (it "keeps the status glyph OFF the green block header (it lives on the TURN header)"
-      (let [lines (rendered (cancelled-entry))
-            hdr   (header-of lines)]
-        (expect (some? hdr))
-        (expect (not (str/includes? hdr (iteration/status-glyph :cancelled))))
-        (expect (not (str/includes? hdr (iteration/status-glyph :ok))))))))
+    (it "keeps the status glyph OUT of the block render (it lives on the TURN header)"
+      ;; No block header at all, and the per-block projection never paints a
+      ;; status glyph — aggregate status belongs to the parent TURN header.
+      (let [lines (rendered (cancelled-entry))]
+        (expect (nil? (header-of lines)))
+        (expect (not-any? #(str/includes? % (iteration/status-glyph :cancelled)) lines))
+        (expect (not-any? #(str/includes? % (iteration/status-glyph :ok)) lines))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 7 — timeout mid-block → :timeout.
@@ -307,12 +305,13 @@
       (let [block (iteration/iteration-entry->display-block (timeout-entry))]
         (expect (= :timeout (:status block)))))
 
-    (it "keeps the status glyph OFF the green block header (it lives on the TURN header)"
-      (let [lines (rendered (timeout-entry))
-            hdr   (header-of lines)]
-        (expect (some? hdr))
-        (expect (not (str/includes? hdr (iteration/status-glyph :timeout))))
-        (expect (not (str/includes? hdr (iteration/status-glyph :ok))))))))
+    (it "keeps the status glyph OUT of the block render (it lives on the TURN header)"
+      ;; No block header at all, and the per-block projection never paints a
+      ;; status glyph — aggregate status belongs to the parent TURN header.
+      (let [lines (rendered (timeout-entry))]
+        (expect (nil? (header-of lines)))
+        (expect (not-any? #(str/includes? % (iteration/status-glyph :timeout)) lines))
+        (expect (not-any? #(str/includes? % (iteration/status-glyph :ok)) lines))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 8 — merged multi-fence → header annotates `merged N fences`.
@@ -335,8 +334,11 @@
         (expect (= 2 (count (:ops block))))
         (expect (= {:observations 1 :mutations 1} (:counts block)))))
 
-    (it "renders ONE header annotating `merged 2 fences`"
-      (let [lines (rendered (merged-fences-entry))
-            hdr   (header-of lines)]
+    (it "renders NO `merged N fences` header (flat block) but both op rows"
+      ;; The merged-fence annotation lived on the retired count header. The
+      ;; block still projects :merged-fences 2 + both ops; the render is flat.
+      (let [lines (rendered (merged-fences-entry))]
         (expect (not-any? #(str/includes? % "ITERATION") lines))
-        (expect (str/includes? hdr "merged 2 fences"))))))
+        (expect (nil? (header-of lines)))
+        (expect (not-any? #(str/includes? % "merged 2 fences") lines))
+        (expect (= 2 (count (op-rows lines))))))))

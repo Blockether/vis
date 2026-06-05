@@ -154,6 +154,7 @@
     {:summary {:left  (ir-strong "EDIT FAILED")
                :right (ir-code (or error "unknown"))}
      :display (ir-root
+                (ir-p (ir-strong "EDIT FAILED") "  " (str (or error "unknown")))
                 (when target
                   (ir-p "target " (ir-code (str target)))))}
 
@@ -168,4 +169,6 @@
                         (str "  Δ=" (if (pos? delta) "+" "") delta)))))
        :display (ir-root
                   (when path
-                    (ir-p "→ " (ir-code (str path)))))})))
+                    (ir-p "→ " (ir-code (str path))
+                      (when delta
+                        (str "  Δ=" (if (pos? delta) "+" "") delta)))))})))

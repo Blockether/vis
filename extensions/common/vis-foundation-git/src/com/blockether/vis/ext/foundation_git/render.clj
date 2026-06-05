@@ -139,10 +139,15 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- fmt-at [at]
-  (when at
+  (cond
+    (nil? at) nil
+    ;; Epoch millis -> human date. A non-number `at` (already-formatted
+    ;; date string) passes through verbatim; never `(long ...)` a String.
+    (number? at)
     (-> (java.time.Instant/ofEpochMilli (long at))
       (.atZone (java.time.ZoneId/systemDefault))
-      (.format (java.time.format.DateTimeFormatter/ofPattern "MMM d HH:mm")))))
+      (.format (java.time.format.DateTimeFormatter/ofPattern "MMM d HH:mm")))
+    :else (str at)))
 
 (defn- log-row [show-author? {:keys [short-sha author at subject]}]
   (str (pad-right short-sha 9)

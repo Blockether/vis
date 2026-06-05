@@ -2842,6 +2842,22 @@
       sort
       vec)))
 
+(defn message-detail-expansions-key
+  "Per-message disclosure-expansion fingerprint for the height cache: the
+   subset of `detail-expansions` whose disclosure node-ids belong to
+   `message`'s turn (matched by the `:t<short-id>` token every node-id
+   carries), or `:expand-all` when the global expand flag is set. Lets the
+   height cache key a message's height to its OWN expand/collapse state
+   without busting every other message's cached height — the SAME per-turn
+   scoping this file already uses for its projection cache."
+  [session-id message detail-expansions]
+  (if (:vis.channel-tui/expand-all-details? detail-expansions)
+    :expand-all
+    (turn-detail-expansions-key
+      {:session-id session-id
+       :session-turn-id (or (:client-turn-id message) (:session-turn-id message))
+       :detail-expansions detail-expansions})))
+
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
   [{:keys [marker max-w summary hidden-entries collapsed? session-id node-id color-role]
     :as detail-ctx}]

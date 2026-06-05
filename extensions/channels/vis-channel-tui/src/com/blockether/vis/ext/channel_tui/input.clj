@@ -121,7 +121,8 @@
   "True for Alt/Option + character `c`, case-insensitive."
   [^KeyStroke key c]
   (and (alt-modifier? key)
-    (= (Character/toLowerCase (.getCharacter key)) c)))
+    (= (Character/toLowerCase (char (.getCharacter key)))
+      (Character/toLowerCase (char c)))))
 
 (defn reorder-modifier?
   "True when a list key should reorder instead of move.
@@ -148,7 +149,7 @@
 (defn- modified-arrow-keystroke
   [^String s]
   (when-let [final (get s (dec (count s)))]
-    (when-let [ktype (arrow-final->keytype final)]
+    (when-let [^KeyType ktype (arrow-final->keytype final)]
       (let [modifier (Character/digit (.charAt s 4) 10)
             bits (dec modifier)]
         (when (<= 2 modifier 8)

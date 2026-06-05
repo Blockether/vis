@@ -31,6 +31,11 @@
 
 (defn- virtual-screen
   []
+  ;; Clear any interrupt flag leaked onto this (lazytest-reused) thread by a
+  ;; prior cancellation test. Lanterna's DefaultVirtualTerminal.readInput
+  ;; throws "Unexpected interrupt" when Thread.interrupted() is set, which
+  ;; made the wheel-coalescing reads flaky depending on test order.
+  (Thread/interrupted)
   (let [terminal (DefaultVirtualTerminal. (TerminalSize. 80 30))
         screen   (TerminalScreen. terminal)]
     (.startScreen screen)

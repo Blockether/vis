@@ -53,12 +53,18 @@
 
 (defdescribe right-block-text-test
   (it "shows the short session id only"
-    (expect (= "4b1ed602" (right-block-text "4b1ed602")))))
+    ;; The id badge is now `#`-prefixed (intentional design: the `#` reads as
+    ;; "this is an id you can copy"). The full UUID still lands on the
+    ;; clipboard via the click region; only the visible label gained the `#`.
+    (expect (= "#4b1ed602" (right-block-text "4b1ed602")))))
 
 (defdescribe draw-header-copy-region-test
   (it "registers a single click region for id copy (no Markdown copy)"
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
-          id-rendered   "123e4567"
+          ;; The badge now renders a `#`-prefixed short id; the click region
+          ;; spans the whole visible label (`#` included) and still copies the
+          ;; FULL uuid.
+          id-rendered   "#123e4567"
           id-w          (p/display-width id-rendered)
           cols          60
           expected-col  (- cols 1 id-w)
@@ -91,7 +97,8 @@
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
           status-text   "● Recording 00:01"
           notification  "✓ Copied!"
-          id-rendered   "123e4567"
+          ;; `#`-prefixed badge label (see copy-region test); width includes `#`.
+          id-rendered   "#123e4567"
           id-w          (p/display-width id-rendered)
           cols          80
           expected-id-col (- cols 1 id-w)
@@ -187,7 +194,8 @@
         (expect (= t/header-active-tab-fg (:fg placeholder-write)))
         (expect (= t/header-active-tab-bg (:bg placeholder-write)))
         (expect (empty? left-slot-writes))
-        (expect (= t/header-fg (:fg (write-by-text "123e4567")))))))
+        ;; Badge label is `#`-prefixed; the unhovered badge keeps `header-fg`.
+        (expect (= t/header-fg (:fg (write-by-text "#123e4567")))))))
 
   (it "uses a subtly different foreground for the hovered header copy affordance only"
     (cr/reset!)
@@ -215,7 +223,9 @@
           ;; A single session now renders as an active tab (its label carries
           ;; the active-tab fg), while the copy badge keeps its own hover fg.
           (expect (= t/header-active-tab-fg (:fg title-write)))
-          (expect (= t/header-hover-fg (:fg (write-by-text "123e4567")))))))))
+          ;; Badge label is `#`-prefixed; hovering it lifts only that label to
+          ;; the hover fg (the tab keeps its active-tab fg).
+          (expect (= t/header-hover-fg (:fg (write-by-text "#123e4567")))))))))
 
 (defdescribe draw-header-tab-entries-test
   (it "renders workspace switcher entries in the center header slot without adding rows"
@@ -329,10 +339,11 @@
         ;; First and last visible cells must keep at least one padding cell.
         (expect (str/starts-with? (:text main-write) " "))
         (expect (str/ends-with? (:text main-write) " "))
-        ;; Each cell now reserves `components/close-button-width` (4) cells on
-        ;; the right for the always-visible ✕ close button, so the label cell
-        ;; paints 16-4 = 12 cols and a separate "│ ✕ " write covers the rest.
-        (expect (= 12 (p/display-width (:text main-write))))
+        ;; Each cell now reserves `components/close-button-width` (3) cells on
+        ;; the right for the always-visible ✕ close button (` ✕ `, no divider),
+        ;; so the first cell (16 cols wide) paints its label over 16-3 = 13 cols
+        ;; and a separate " ✕ " write covers the rest.
+        (expect (= 13 (p/display-width (:text main-write))))
         (expect (some #(str/includes? (str (:text %)) "✕") tab-writes)))))
 
   (it "omits the ✕ close button when there's only ONE session (the last tab can't be closed)"
