@@ -79,7 +79,7 @@
    visible — `footer-fg` washed it out."
   [g col row]
   (p/clear-styles! g)
-  (p/set-colors! g t/pure-black t/terminal-bg)
+  (p/set-colors! g t/text-fg t/terminal-bg)
   (p/put-str! g col row tab-divider-glyph)
   (p/clear-styles! g))
 ;; ── tab cell ────────────────────────────────────────────────────────────────
@@ -233,7 +233,7 @@
     (let [hovered (cr/hovered)
           hovered? (and (= row (get-in hovered [:bounds :row])) (= :copy-id (:kind hovered)))]
       (p/clear-styles! g)
-      (p/set-colors! g (if hovered? t/header-hover-fg t/pure-black) t/terminal-bg)
+      (p/set-colors! g (if hovered? t/header-hover-fg t/text-fg) t/terminal-bg)
       (when hovered? (p/enable! g p/BOLD))
       (p/put-str! g col row text)
       (p/clear-styles! g)
@@ -252,7 +252,7 @@
         hovered? (= kind (:kind hovered))
         w (p/display-width glyph)]
     (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/header-hover-fg t/pure-black) t/terminal-bg)
+    (p/set-colors! g (if hovered? t/header-hover-fg t/text-fg) t/terminal-bg)
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g col row glyph)
     (p/clear-styles! g)
