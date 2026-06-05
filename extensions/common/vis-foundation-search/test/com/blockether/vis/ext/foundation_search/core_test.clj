@@ -16,6 +16,7 @@
   (:require
    [babashka.http-client :as http]
    [clojure.string :as str]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-search.core :as search]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe describe expect it]]))
@@ -264,8 +265,13 @@ def handler():
       (let [e (first (:citations (envelope-result (search/code "asyncio" {}))))
             excerpt (:excerpt e)
             lines (str/split-lines excerpt)]
-        (it "no bare marker line survives — even inside Exa's ``` wrapper"
-          (expect (not-any? bare-marker-line? lines)))
+        (it "no `[...]` bracket marker survives on its own line anywhere"
+          (expect (not-any? #(re-matches #"\s*\[\.\.\.\]\s*" %) lines)))
+        (it "Exa's bare lead marker after the ```python fence is dropped"
+          ;; the `...` that abutted the opening fence is gone; the only
+          ;; bare line left is the genuine Ellipsis stub body
+          (expect (not (str/includes? excerpt "python\n...")))
+          (expect (= 1 (count (filter bare-marker-line? lines)))))
         (it "`[...]` separators inside the wrapper fold onto prior content"
           (expect (str/includes? excerpt "the structure of data. [...]"))
           (expect (str/includes? excerpt "- get-spec [...]")))
@@ -273,6 +279,73 @@ def handler():
           ;; the `def handler():` stub keeps its `...` body line
           (expect (str/includes? excerpt "def handler():"))
           (expect (re-find #"def handler\(\):\n\s*\.\.\." excerpt)))))))
+
+;; Exa sometimes wraps a result's body PROSE in a bare, unterminated ```
+;; fence, so the whole entry paints as one mono code block. A real
+;; language-tagged manifest in the same excerpt must survive untouched,
+;; while the dangling bare doc-prose fence is unwrapped to native markdown.
+(def ^:private SAMPLE_EXA_DOC_WRAP
+  "Title: K8s Deployment Guide
+URL: https://example.com/k8s
+Highlights:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+```
+```
+## Common Mistakes in Kubernetes YAML
+- Indentation: YAML files are whitespace sensitive and need consistent spaces.
+- Missing fields: ensure all required fields appear in your Deployment manifest.
+A Deployment manages the lifecycle of Pods, including scaling and rolling updates.
+## Frequently Asked Questions
+- A Pod is a single deployable unit while a Deployment orchestrates many Pods here.")
+
+;; A dangling BARE fence whose body is genuine code (no headings, no
+;; bullets, no prose sentences) must NOT be unwrapped — that is exactly
+;; the regression (code mangled into markdown) we are guarding against.
+(def ^:private SAMPLE_EXA_CODE_WRAP
+  "Title: JS sample
+URL: https://example.com/js
+Highlights:
+```
+function add(a, b) {
+  return a + b;
+}
+const total = add(1, 2);")
+
+(defn- ir-nodes
+  "Flatten an excerpt's parsed IR to its block tags + the text under each
+   :code / :h node, for structural assertions."
+  [excerpt]
+  (let [ir (vis/markdown->ir excerpt)]
+    {:code (->> (tree-seq vector? seq ir)
+             (filter #(and (vector? %) (= :code (first %))))
+             (map (fn [c] (apply str (filter string? (rest c))))))
+     :headings (->> (tree-seq vector? seq ir)
+                 (filter #(and (vector? %) (= :h (first %))))
+                 (map (fn [h] (apply str (filter string? (tree-seq vector? seq h))))))}))
+
+(defdescribe spurious-doc-fence-test
+  (describe "a dangling bare ``` wrapping documentation prose is unwrapped"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_DOC_WRAP)]
+      (let [e (first (:citations (envelope-result (search/web "k8s" {}))))
+            {:keys [code headings]} (ir-nodes (:excerpt e))]
+        (it "the real ```yaml manifest survives as a code block"
+          (expect (some #(str/includes? % "apiVersion: apps/v1") code)))
+        (it "the wrapped headings render as real headings, not code"
+          (expect (some #(str/includes? % "Common Mistakes") headings))
+          (expect (some #(str/includes? % "Frequently Asked Questions") headings)))
+        (it "no code block contains the unwrapped prose"
+          (expect (not-any? #(str/includes? % "Common Mistakes") code))))))
+
+  (describe "a dangling bare ``` wrapping real code is left ALONE"
+    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
+                  (mock-mcp SAMPLE_EXA_CODE_WRAP)]
+      (let [e (first (:citations (envelope-result (search/web "js" {}))))
+            {:keys [code]} (ir-nodes (:excerpt e))]
+        (it "the code stays inside a code block (no false unwrap)"
+          (expect (some #(str/includes? % "function add(a, b)") code)))))))
 
 (defdescribe shape-parity-test
   (describe "all three search/* fns return the same envelope+citation shape"
