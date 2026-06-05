@@ -16,7 +16,7 @@
    contain non-ASCII. Plain `count`/`subs` are still allowed for ASCII
    internals (box-drawing strings we authored, single-glyph keystroke
    labels, etc.) where the answer is identical and the call is a hot path."
-  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TextCharacter]
+  (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize Symbols TextCharacter TerminalTextUtils]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
 ;;; ── Color ──────────────────────────────────────────────────────────────────
@@ -640,6 +640,50 @@
   (if (< content-h container-h)
     (quot (- container-h content-h) 2)
     0))
+
+;;; ── Word-wrap & justification ──────────────────────────────────────────────
+;; Backed by the native, grapheme/EAW-aware `TerminalTextUtils` methods in the
+;; lanterna fork, so wrap points and justified widths match what the screen
+;; paints — one implementation, shared by Clojure and Java. Plain text only
+;; (no inline-style sentinels / ANSI); styled-run wrapping lives in render*.
+
+(defn word-wrap
+  "Greedy word-wrap `s` into a vec of lines, each fitting `width` DISPLAY
+   columns. Breaks on whitespace; a token wider than `width` is hard-split at
+   grapheme boundaries (never mid-cluster); embedded newlines are honoured.
+   Blank input or `width` <= 0 yields `[\"\"]`."
+  [s width]
+  (vec (TerminalTextUtils/wordWrap (int width) (str (or s "")))))
+
+(defn justify-line
+  "Full-justify the words on `line` to EXACTLY `width` display columns by
+   distributing inter-word spaces (flush to both margins). A blank or
+   single-word line is left-aligned (right-padded) instead — nothing to
+   stretch."
+  [line width]
+  (TerminalTextUtils/justifyLine (str (or line "")) (int width)))
+
+(defn justify
+  "Word-wrap `s` to `width` columns, then FULL-JUSTIFY every line, leaving each
+   paragraph's final line left-aligned (the standard typographic convention).
+   Pass `justify-last?` true to stretch the final line too. Returns a vec of
+   lines."
+  ([s width] (justify s width false))
+  ([s width justify-last?]
+   (vec (TerminalTextUtils/justify (int width) (str (or s "")) (boolean justify-last?)))))
+
+(defn align
+  "Align `s` to `width` display columns by `mode`:
+     :left    pad on the right (default for any unknown mode)
+     :right   pad on the left
+     :center  pad both sides
+     :justify full-justify the words (flush both margins)."
+  [s width mode]
+  (case mode
+    :right   (pad-left s width)
+    :center  (center-text s width)
+    :justify (justify-line s width)
+    (pad-right s width)))
 
 ;;; ── Flex drawing helpers (layout + draw in one call) ───────────────────────
 

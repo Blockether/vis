@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vis development launcher.
 #
-# Starts the project dev nREPL (`clojure -M:dev`) and optionally launches
+# Starts the project dev nREPL (`clojure -M:test:dev`) and optionally launches
 # development entry points. See `clojure -M:dev --help`.
 
 set -euo pipefail
@@ -87,5 +87,5 @@ case "${VIS_STREAM_TRACE:-1}" in
     ;;
 esac
 
-measure_log "exec cold clojure -M:dev"
-run_measured_or_exec "process cold clojure -M:dev" clojure "${stream_trace_jvm_opts[@]}" -M:dev "$@"
+measure_log "exec cold clojure -M:test:dev"
+run_measured_or_exec "process cold clojure -M:test:dev" clojure "${stream_trace_jvm_opts[@]}" -M:test:dev "$@"

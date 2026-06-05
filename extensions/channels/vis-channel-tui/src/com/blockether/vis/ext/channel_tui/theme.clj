@@ -41,6 +41,7 @@
 (def header-active-tab-fg (rgb :header-active-tab-fg))
 (def header-active-tab-bg (rgb :header-active-tab-bg))
 (def header-active-tab-accent (rgb :header-active-tab-accent))
+(def header-tab-number-fg (rgb :header-tab-number-fg))
 
 ;; Boxes (messages + input)
 (def box-bg         (rgb :box-bg))
@@ -162,6 +163,7 @@
    :header-active-tab-fg #'header-active-tab-fg
    :header-active-tab-bg #'header-active-tab-bg
    :header-active-tab-accent #'header-active-tab-accent
+   :header-tab-number-fg #'header-tab-number-fg
    :box-bg #'box-bg
    :box-fg #'box-fg
    :border-fg #'border-fg

@@ -395,17 +395,22 @@
             ;; Lay out each tab cell (the loop advances an extra col past
             ;; each tab for its trailing divider), then hand the drawing to
             ;; `components/tab-cell!` (slab + centered label + hover-✕ close
-            ;; button + click regions). `label` carries the run-dot / spinner
-            ;; prefix: `●` for an in-flight turn, the braille spinner while
-            ;; this active tab's title is generating.
+            ;; button + click regions). `label` carries the spinner / unread
+            ;; prefix: the braille spinner while a turn is in-flight or this
+            ;; active tab's title is generating, and `●` ONLY for a finished,
+            ;; unread background tab (never while running).
             cells (loop [idx 0 x entries-left out []]
                     (if (= idx n)
                       out
                       (let [cell-w (+ base (if (< idx extra) 1 0))
                             entry  (nth entries idx)
                             active? (= (:id entry) active-id)
+                            tab-no (inc (long (:header/original-index entry)))
                             label (cond->> (p/tab-display-label entry)
                                     (and (:running? entry)
+                                      (not (:title-loading? entry))) (str (title-spinner-frame) " ")
+                                    (and (not (:running? entry))
+                                      (:unread? entry)
                                       (not (:title-loading? entry))) (str "● ")
                                     (:title-loading? entry) (str (title-spinner-frame) " "))]
                         (recur (inc idx)
@@ -414,14 +419,15 @@
                                       :left x
                                       :width cell-w
                                       :label label
+                                      :tab-no tab-no
                                       :active? active?
                                       :last? (= idx (dec n))))))))]
-        (doseq [{:keys [left width active? label id last?]
+        (doseq [{:keys [left width active? label id last? tab-no]
                  idx :header/original-index}
                 cells
                 :when (pos? (long width))]
           (components/tab-cell! g
-            {:left left :row row :width width :label label
+            {:left left :row row :width width :label label :tab-no tab-no
              :active? active? :workspace-id id :index idx
              :register? *register-click-regions?* :closable? multi?})
           ;; `│` divider after every tab but the last.

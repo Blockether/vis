@@ -95,13 +95,13 @@
   (let [q (str/lower-case (or query ""))
         c (str/lower-case (or candidate ""))]
     (cond
-      (str/blank? q) [0 0 0]
-      (str/starts-with? c q) [0 0 (count c)]
-      (str/includes? c q) [1 (or (str/index-of c q) 0) (count c)]
+      (str/blank? q) [0 0]
+      (str/starts-with? c q) [0 0]
+      (str/includes? c q) [1 (or (str/index-of c q) 0)]
       :else
       (loop [qi 0 ci 0 gaps 0 last-ci -1]
         (cond
-          (= qi (count q)) [2 gaps (count c)]
+          (= qi (count q)) [2 gaps]
           (= ci (count c)) nil
           (= (.charAt q qi) (.charAt c ci))
           (recur (inc qi) (inc ci)

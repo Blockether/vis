@@ -3403,7 +3403,20 @@
                 ;; reasoning body — a margin INSIDE the dim band so the
                 ;; label doesn't sit flush against the first reasoning line.
                 {:line (str thinking-marker "") :meta nil}]
-               (tag-copy-block-body shown node-id full-copy)
+               ;; Collapsed: append a dim " …" to the LAST peeked line
+               ;; ITSELF — right where the reasoning is trimmed — so the
+               ;; bottom edge signals "there's more — click the THINKING
+               ;; chevron". One space then …, in-place; NOT a separate
+               ;; ellipsis row on its own line. The trimmed line keeps the
+               ;; header's toggle-details meta so the painter registers it
+               ;; as the SAME hit target. Expanded shows every row → none.
+               (let [body (vec (tag-copy-block-body shown node-id full-copy))]
+                 (if (and (not expanded?) (pos? hidden-n) (seq body))
+                   (let [li (dec (count body))]
+                     (-> body
+                       (assoc-in [li :line] (str (:line (nth body li)) " …"))
+                       (assoc-in [li :meta] (or (:meta (nth body li)) (:meta header)))))
+                   body))
                [{:line (str thinking-marker "") :meta nil}]))))))
 
 (defn- markdown-fence-marker-line?
