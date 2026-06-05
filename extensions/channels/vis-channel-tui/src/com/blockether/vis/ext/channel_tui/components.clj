@@ -69,11 +69,12 @@
   "┊")
 (defn tab-divider!
   "Paint a 1-col dotted `┊` divider (between tabs, or between header-cluster
-   chips) at (col,row), in the header's foreground so it stays high-contrast
-   against the surface (white on a dark terminal, dark on a light one)."
+   chips) at (col,row). Painted in the high-contrast accent (dark on a light
+   terminal, light on a dark one) so the sparse dotted glyph is actually
+   visible — `footer-fg` washed it out."
   [g col row]
   (p/clear-styles! g)
-  (p/set-colors! g t/footer-fg t/terminal-bg)
+  (p/set-colors! g t/header-active-tab-accent t/terminal-bg)
   (p/put-str! g col row tab-divider-glyph)
   (p/clear-styles! g))
 ;; ── tab cell ────────────────────────────────────────────────────────────────
