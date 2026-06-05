@@ -9,43 +9,34 @@
  :deps
  {org.clojure/clojure              {:mvn/version "1.12.4"}
   com.blockether/vis          {:local/root "../../.."}
-  ;; Blockether fork of mabe02/lanterna 3.1.5 with eight patches on top:
-  ;;   1. PR #625 cherry-pick - emoji rendering in
+  ;; Blockether fork of mabe02/lanterna 3.1.5 — STANDARD Unicode widths, so
+  ;; lanterna's column model matches what the terminal paints (mismatch shoves
+  ;; following cells / borders out of alignment). Patches on top of 3.1.5:
+  ;;   1. PR #625 cherry-pick — grapheme-aware emoji rendering in
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
-  ;;   2. BMP `Emoji_Presentation=Yes` width detection - ✅, ⭐, ⚡,
-  ;;      ❌, ✨, ☔, ☕, ⏰, etc. (≈30 ranges, ≈100 code points)
-  ;;      now correctly counted as 2 terminal columns.
-  ;;   3. VS-16 (emoji-presentation) graphemes are WIDE — ⚠️ ❤️ ☑️ 🏷️
-  ;;      count as 2 columns, matching emoji-wide target terminals so the
-  ;;      following text/border/scrollbar stays aligned. (VS-15 text
-  ;;      presentation stays narrow — patch #4.)
+  ;;   2. BMP `Emoji_Presentation=Yes` glyphs (✅ ⭐ ⚡ ❌ ✨ ☔ ☕ ⏰ …) and
+  ;;      genuine astral/surrogate emoji (🏷️ 😊 👀) → 2 columns.
+  ;;   3. VS-16 width is BASE-dependent: a text-default BMP symbol + VS-16
+  ;;      (⚠️ ❤️ ☑️ — base U+26A0/U+2764/U+2611) stays NARROW (1 col); only a
+  ;;      genuine emoji base (astral, or Emoji_Presentation=Yes) widens. Forcing
+  ;;      the text-symbol forms wide over-counted the row and shoved borders left.
   ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
-  ;;   5. East-Asian-Ambiguous (EAW=A) width - curated text punctuation
-  ;;      and letters (· — … λ “” • ™, Greek, Cyrillic) are NARROW by
-  ;;      default (single column), matching modern terminals. Forcing
-  ;;      them wide over-advanced the cursor on ordinary prose and
-  ;;      produced scroll-redraw artifacts / misaligned borders. Opt
-  ;;      into wide for genuine ambiguous-wide terminals with the JVM
-  ;;      flag `-Dlanterna.eastAsianAmbiguousWide=true`.
-  ;;   6. East-Asian Wide/Fullwidth (EAW=W / EAW=F) width table generated
-  ;;      from Unicode 15.1 EastAsianWidth.txt. W/F symbols OUTSIDE the CJK
-  ;;      Unicode blocks (angle brackets 〈〉, Yi, Bopomofo, CJK compat /
-  ;;      vertical forms) used to slip through isCharCJK and undercount by a
-  ;;      column, drifting the scrollbar / following cells. Now one shared
-  ;;      double-width source for both display-width and the paint. Ambiguous
-  ;;      (EAW=A) is untouched (still narrow by default); chrome (box/block/
-  ;;      geometric/arrows) stays single-width.
-  ;;   7. Emoji=Yes media triangles ▶ U+25B6 / ◀ U+25C0 (Emoji_Presentation=No,
-  ;;      so missed by #2) → 2 columns; the target terminal paints them
-  ;;      emoji-wide. The SMALL triangles ▸ ▾ used for disclosure chevrons
-  ;;      stay single-width (EAW=N, non-emoji).
-  ;;   8. ⚠ U+26A0 WARNING SIGN (Emoji=Yes, Emoji_Presentation=No, also missed
-  ;;      by #2/#3 in its BARE form) → 2 columns; the bare glyph paints emoji-
-  ;;      wide so "⚠ …" status lines no longer jam a tooth into the right
-  ;;      border. The VS-16 form ⚠️ was already wide via #3.
-  ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
+  ;;   5. Geometric / symbol glyphs ● ○ ◯ ◎ ◐ ◑ (status dots), ▶ ◀ (media
+  ;;      triangles), ⚠ (warning sign) are ONE column (standard width). They were
+  ;;      briefly force-widened; that mis-aligned e.g. a focused tab's `● ` prefix
+  ;;      (its trailing │ slid one column left). Disclosure chevrons ▸ ▾ already
+  ;;      narrow (EAW=N).
+  ;;   6. East-Asian-Ambiguous (EAW=A) punctuation/letters (· — … λ “” • ™, Greek,
+  ;;      Cyrillic) are NARROW by default (modern terminals); opt into wide with
+  ;;      the JVM flag `-Dlanterna.eastAsianAmbiguousWide=true`.
+  ;;   7. East-Asian Wide/Fullwidth (EAW=W/F) table from Unicode 15.1 for W/F
+  ;;      symbols OUTSIDE the CJK blocks (〈〉, Yi, Bopomofo, CJK compat/vertical)
+  ;;      that isCharCJK missed → 2 columns. One shared source for display-width
+  ;;      and the paint. Chrome (box/block/geometric/arrows) stays single-width.
+  ;;   8. Control chars degrade to a space instead of throwing on the render thread.
+  ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.11"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.12"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
