@@ -303,7 +303,7 @@
         shown-n (min n content-h)
         paint-line (fn [i segs]
                      (let [r (+ content-top i)]
-                       (loop [x (+ left 1)
+                       (loop [x (+ left 2)
                               ss segs]
                          (when-let [[text color bold?] (first ss)]
                            (let [avail (max 0 (- (+ left 1 inner-w) x))
@@ -347,6 +347,15 @@
 (def ^:private overlay-blank-row
   "A single empty overlay row — the spacer between context-dialog entries."
   [["" t/dialog-hint false]])
+(def ^:private overlay-card-indent
+  "Leading columns inset each task/fact card from the dialog's left rail."
+  1)
+(defn- indent-rows
+  "Prefix every row with `overlay-card-indent` leading spaces so the whole
+   card insets one column from the dialog left rail."
+  [rows]
+  (let [pad [(apply str (repeat overlay-card-indent \space)) t/dialog-hint false]]
+    (mapv (fn [row] (into [pad] row)) rows)))
 (defn- wrap-cols
   "Greedy display-width word-wrap to a vec of lines, each fitting `w` columns.
    Delegates to the native, grapheme/EAW-aware `p/word-wrap` (one shared
@@ -402,6 +411,8 @@
         (conj meta-segs)
         (into accept-rows)
         (into dep-rows)
+        indent-rows
+        (conj overlay-blank-row)
         (conj overlay-blank-row))))
 (defn- task-overlay-lines
   "TASKS section body — one `task-entry-rows` card per task, status-sorted
@@ -447,6 +458,8 @@
     (-> [key-row]
         (into content-rows)
         (into meta-rows)
+        indent-rows
+        (conj overlay-blank-row)
         (conj overlay-blank-row))))
 (defn- fact-overlay-lines
   "FACTS section body — one `fact-entry-rows` card per fact, active facts

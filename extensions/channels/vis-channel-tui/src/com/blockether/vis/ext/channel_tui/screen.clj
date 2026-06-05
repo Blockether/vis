@@ -2409,6 +2409,19 @@
                                              (:slash-command-index
                                               db))]
                      (cond
+                       ;; F1 help / F2 task overlay is open: it LOCKS the
+                       ;; screen. Route the wheel to the F2 panel's own
+                       ;; :ctx-scroll and SWALLOW every other mouse event so
+                       ;; clicks / drag never leak through to the tabs, input,
+                       ;; or scrollbar painted behind the overlay (which made
+                       ;; the dialog feel unfocusable - no scroll, no click).
+                       (or (:tasks-open? db) (:help-open? db))
+                       (do (when (and (:tasks-open? db)
+                                   wheel-delta
+                                   (not (zero? (long wheel-delta))))
+                             (state/dispatch [:ctx-scroll-by (* 3 (long wheel-delta))])
+                             (state/dispatch [:bump-render-version]))
+                         (recur))
                        (and (seq slash-suggestions) (neg? (long (or wheel-delta 0))))
                        (do (state/dispatch [:move-slash-command-selection (long wheel-delta)
                                             (count slash-suggestions)])
@@ -2912,7 +2925,9 @@
                              ;; user had typed even one character into the
                              ;; draft, which made hung turns unrecoverable
                              ;; short of killing the JVM.
-                         (cond (:loading? @state/app-db) (do (state/dispatch [:cancel-turn])
+                         (cond (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
+                           (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks]) (recur))
+                           (:loading? @state/app-db) (do (state/dispatch [:cancel-turn])
                                                            (recur))
                            (get-in @state/app-db [:search :active?])
                            (do (state/dispatch [:search-clear])
@@ -3110,9 +3125,11 @@
                                :else
                                (submit-input! @state/app-db state))
                            (recur))
-                         :cancel (do (when (:loading? @state/app-db)
+                         :cancel (cond (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
+                           (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks]) (recur))
+                           :else (do (when (:loading? @state/app-db)
                                        (state/dispatch [:cancel-turn]))
-                                   (recur))
+                                     (recur)))
                          :scroll-up (do (if (:tasks-open? @state/app-db)
                                           (do (state/dispatch [:ctx-scroll-by -10])
                                               (state/dispatch [:bump-render-version]))
