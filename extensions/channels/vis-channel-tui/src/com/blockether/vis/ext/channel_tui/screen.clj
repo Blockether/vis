@@ -807,7 +807,7 @@
   [^TerminalScreen screen cols rows
    {:keys [messages input progress loading? cancelling? turn-start-ms settings
            slash-command-index],
-    :as db} now-ms]
+    :as db} now-ms prev-layout overlay-changed?]
   (let [now-ms (long now-ms)
         g (.newTextGraphics screen)
         text-rows (input-text-rows input cols)
@@ -971,7 +971,19 @@
       (when (:tasks-open? db)
         (components/context-overlay! g cols rows ctx-snapshot))
       (cr/commit-frame!)
-      (.refresh screen Screen$RefreshType/DELTA)
+      ;; Refresh type: DELTA is cheap (only diffed cells) and right for typing,
+      ;; but lanterna's DELTA can leave the trailing cell of a DOUBLE-WIDTH
+      ;; glyph (emoji/CJK/symbols) stale when content shifts — the "sticky
+      ;; letters" residue after scrolling or closing the F2/help overlay. On
+      ;; exactly those two transitions, force a COMPLETE repaint so every cell
+      ;; is rewritten and no wide-glyph half survives. Normal frames stay DELTA
+      ;; (no keystroke flicker).
+      (let [scrolled?  (not= (long (or (:eff-scroll layout) 0))
+                         (long (or (:eff-scroll prev-layout) 0)))
+            complete?  (or overlay-changed? scrolled?)]
+        (.refresh screen (if complete?
+                           Screen$RefreshType/COMPLETE
+                           Screen$RefreshType/DELTA)))
       {:cols cols,
        :rows rows,
        :total-h total-h,
@@ -1376,7 +1388,11 @@
                                                db
                                                now-ms
                                                last-layout) true]
-                              :else [(render-frame! screen cols rows db now-ms) true])]
+                              :else
+                              (let [overlay-changed?
+                                    (or (not= (boolean (:tasks-open? last-db)) (boolean (:tasks-open? db)))
+                                      (not= (boolean (:help-open? last-db)) (boolean (:help-open? db))))]
+                                [(render-frame! screen cols rows db now-ms last-layout overlay-changed?) true]))]
                           ;; Publish layout back to app-db without bumping the version (see
                           ;; no-render-bump-events).
                         (when publish-layout? (state/dispatch [:set-layout layout]))
