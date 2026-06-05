@@ -962,7 +962,7 @@
 (def ^:private duration-marker  p/MARKER_DURATION)
 (def ^:private iteration-hdr-marker  p/MARKER_ITERATION_HDR)
 (def ^:private recap-marker          p/MARKER_RECAP)
-;; BLOCK op rows (`▶ <LABEL>  <summary>`) paint on their OWN marker so the
+;; BLOCK op rows (`▸ <LABEL>  <summary>`) paint on their OWN marker so the
 ;; painter can give them a black-on-white badge look (`answer-fg`/`answer-bg`)
 ;; distinct from the neutral code-block result rows. `` is the next free
 ;; PUA slot after MARKER_RECAP (``).
@@ -2000,7 +2000,7 @@
                       (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
 
-              ;; ── BLOCK op row — black-on-white badge, ▶/▼ disclosure ──
+              ;; ── BLOCK op row — black-on-white badge, ▸/▾ disclosure ──
                     (str/starts-with? line op-row-marker)
                     (do (p/set-colors! g t/answer-fg t/answer-bg)
                       (p/fill-rect! g fbx y iw 1)
@@ -2658,7 +2658,7 @@
   "Reasoning PREVIEW height. Up to this many rows of reasoning are
    ALWAYS shown — short reasoning (≤ this many rows) renders inline with
    no disclosure; longer reasoning shows these first rows as a peek and
-   collapses only the REMAINDER behind a ▶ THINKING `+N more` toggle
+   collapses only the REMAINDER behind a ▸ THINKING `+N more` toggle
    (same affordance as tool op rows). The opening of the reasoning
    (usually the plan) stays visible without the full wall of text."
   6)
@@ -2987,7 +2987,7 @@
 (defn- append-right-label
   "Append `right` so its final cell lands on `max-w`'s right edge.
 
-   Collapsed tool rows (`▶ CAT … tN/iN/bN`) are painted inside a fixed-width
+   Collapsed tool rows (`▸ CAT … tN/iN/bN`) are painted inside a fixed-width
    result/code area. The scope stamp is chrome, not part of the badge label,
    so use display-cell widths all the way through instead of string counts or
    incidental padding."
@@ -3017,7 +3017,7 @@
                                          :section :iteration
                                          :kind kind}))
         expanded?     (detail-expanded? detail-expansions session-id node-id false)
-        chevron       (if expanded? "▼" "▶")
+        chevron       (if expanded? "▾" "▸")
         ;; First entry IS the summary badge by construction: the proof
         ;; envelope's sink `:result` contract is `{:summary :display}` and
         ;; the chokepoints (`progress/format-form-result`,
@@ -3065,7 +3065,7 @@
   "Phase-4 renderer aggregation. For ONE aggregated op (a same-op run longer
    than `iteration/aggregate-threshold`), emit a synthetic collapsible row:
 
-     ▶ CAT × 100 (a, b, c, …)
+     ▸ CAT × 100 (a, b, c, …)
 
    Expanded, the row reveals the full list with one per-op summary line each.
    The disclosure node id follows the Phase-5 contract
@@ -3077,7 +3077,7 @@
    agg]
   (let [node-id   (str block-scope ":op" (:position agg))
         expanded? (detail-expanded? detail-expansions session-id node-id false)
-        chevron   (if expanded? "▼" "▶")
+        chevron   (if expanded? "▾" "▸")
         head      (iteration/aggregate-op-head agg)
         visible   (ellipsize-cols (str chevron " " head) max-w)
         meta      (when (and session-id node-id)
@@ -3101,7 +3101,7 @@
 ;;
 ;; Each non-plain op in a block paints ONE row:
 ;;
-;;   ▶ <LABEL>   <summary-row>
+;;   ▸ <LABEL>   <summary-row>
 ;;
 ;; LABEL is the first `[:strong …]` in the op's `:summary` IR (or the zone
 ;; `:left`), padded to the widest label in the block so the summary columns
@@ -3109,7 +3109,7 @@
 ;;   - zone map → 2-zone (`left … right`) / 3-zone (`left … center … right`)
 ;;     with the right side anchored to the row's right edge
 ;;   - plain IR → left-aligned, ellipsis on overflow
-;; The ▶/▼ chevron is the ONLY disclosure affordance; expand reveals the op's
+;; The ▸/▾ chevron is the ONLY disclosure affordance; expand reveals the op's
 ;; `:display` IR. Disclosure node id is `<block-scope>:op<position>`.
 ;; ---------------------------------------------------------------------------
 
@@ -3200,7 +3200,7 @@
       :else "")))
 
 (defn- op-row-entries
-  "ONE op row: `▶ <LABEL>   <summary-row>`, expandable to the op's `:display`.
+  "ONE op row: `▸ <LABEL>   <summary-row>`, expandable to the op's `:display`.
 
    `label-w` is the block-wide max label width so summaries align; `max-w` is
    the full row width. The disclosure node id is `<block-scope>:op<position>`
@@ -3218,8 +3218,8 @@
         ;; column: there is no chevron to align to, so padding the label in
         ;; from the left is dead space. Collapsible rows keep `chevron + space`.
         prefix    (cond (not has-body?) ""
-                    expanded?           "▼ "
-                    :else               "▶ ")
+                    expanded?           "▾ "
+                    :else               "▸ ")
         prefix-w  (long (p/display-width prefix))
         error?    (= :error (:status op))
         label     (cond->> (op-row-label op)
@@ -3248,7 +3248,7 @@
 (defn- block-op-row-entries
   "Phase-5 BLOCK op rows: ONE row per op in the block, painted from the
    canonical `:aggregated-ops` view so long same-op runs collapse into a
-   single `▶ OP × N (…)` row while individual ops paint `▶ <LABEL> <summary>`.
+   single `▸ OP × N (…)` row while individual ops paint `▸ <LABEL> <summary>`.
 
    Header counts stay REAL (off `:ops`); this is the DISPLAY projection. The
    row order matches the block's source order. Returns a flat vec of
@@ -3324,9 +3324,9 @@
 
    Short reasoning (≤ `reasoning-auto-collapse-line-threshold` rows)
    paints in full with no disclosure. Longer reasoning shows the
-   clickable header `▶ THINKING  +N more` as the band's TOP line and
+   clickable header `▸ THINKING  +N more` as the band's TOP line and
    PEEKS the first N rows below it; clicking expands in place to the
-   full reasoning (`▼ THINKING`). Standard accordion: chevron at the
+   full reasoning (`▾ THINKING`). Standard accordion: chevron at the
    header, content below.
 
    The header carries `:toggle-details` meta on a `thinking-marker`
@@ -3352,9 +3352,9 @@
                         :kind             :reasoning}
             node-id    (detail-node-id detail-ctx)
             expanded?  (detail-expanded? detail-expansions session-id node-id false)
-            ;; Accordion header at the TOP of the band: ▶ collapsed,
-            ;; ▼ expanded (content reveals below the header).
-            chevron    (if expanded? "▼" "▶")
+            ;; Accordion header at the TOP of the band: ▸ collapsed,
+            ;; ▾ expanded (content reveals below the header).
+            chevron    (if expanded? "▾" "▸")
             ;; Full reasoning text is the copy payload for BOTH states
             ;; (a peek still copies everything the model reasoned).
             full-copy  (entries->body-text entries)
@@ -3782,7 +3782,7 @@
                                       (wrap-text thinking-text fill-w)))))))
                           texts)]
             (when (seq entries)
-              ;; THINKING ALWAYS collapses behind the plain ▶ THINKING badge
+              ;; THINKING ALWAYS collapses behind the plain ▸ THINKING badge
               ;; (op-row look) — live or finalized — to match the tool
               ;; affordance. `live-preview?` no longer forces it open; the
               ;; user expands on demand and the state persists across frames.
@@ -3929,7 +3929,7 @@
                 r-marker      (if is-error? err-result-marker result-marker)
                 _ [result-text r-marker]
                 ;; Phase-5: per-form result panes are GONE. Tool output now
-                ;; surfaces as block-level `▶ <LABEL> <summary>` op rows
+                ;; surfaces as block-level `▸ <LABEL> <summary>` op rows
                 ;; painted ONCE per block from the canonical `:ops`
                 ;; (`block-op-row-entries`), not per-form here. The code body
                 ;; stays per-form (forms = the block's source); errors keep
@@ -3941,7 +3941,7 @@
                                 ;; When raw code is hidden (def-wrapped tool
                                 ;; call or any successful tool form), drop the
                                 ;; code chrome entirely: the block-level op
-                                ;; rows (`▶ <LABEL> <summary>`) speak for the
+                                ;; rows (`▸ <LABEL> <summary>`) speak for the
                                 ;; form, and the BLOCK header carries the
                                 ;; aggregate status + duration. Only title
                                 ;; recap rows (ctx mutations like TITLE) stay,
@@ -4032,8 +4032,8 @@
         inline-error-sigs (inline-form-error-signatures forms)
         hide-dup-error-ops? (all-ops-inline-error-duplicates? entry)
         header-lines []
-        ;; Phase-5 op rows: ONE `▶ <LABEL> <summary>` row per op (long same-op
-        ;; runs collapse to `▶ OP × N (…)`), painted ONCE per block from the
+        ;; Phase-5 op rows: ONE `▸ <LABEL> <summary>` row per op (long same-op
+        ;; runs collapse to `▸ OP × N (…)`), painted ONCE per block from the
         ;; canonical `:ops` and placed BELOW the code body.
         op-rows       (when-not hide-dup-error-ops?
                         (block-op-row-entries
