@@ -292,22 +292,6 @@
               (.append sb (if (< (int c) 0x20) / c))
               (recur (inc k)))))))))
 
-(def ^:private ^:const VARIATION_SELECTOR_16 0xFE0F)
-
-(defn- vs16-text-grapheme?
-  "True when grapheme `g` ends in VARIATION SELECTOR-16 (U+FE0F). These
-   are text-default symbols (☑, ❤, 🏷, …) explicitly emoji-presented
-   via VS-16. The vis target terminals paint them as a SINGLE cell, so
-   `display-width` must count them as one column even though the
-   lanterna fork's `TextCharacter.isDoubleWidth()` widens the
-   VS-16-decorated form to two (its emoji-presentation table can't see
-   the per-grapheme override). Counting them as two lets following
-   whitespace/borders drift left — see primitives_test
-   'VS-16/VS-15 graphemes match observed terminal width'."
-  [^String g]
-  (let [n (.length g)]
-    (and (>= n 2)
-      (= VARIATION_SELECTOR_16 (int (.charAt g (dec n)))))))
 
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.
@@ -348,7 +332,11 @@
                     g  ^String (.getCharacterString tc)
                     w  (cond
                          (inline-sentinel? g)     0
-                         (vs16-text-grapheme? g)  1
+                         ;; Defer to lanterna's isDoubleWidth — VS-16 (U+FE0F)
+                         ;; graphemes are emoji presentation = TWO cells on the
+                         ;; target terminals, matching what putString paints.
+                         ;; (Earlier this forced VS-16 narrow; that mismatched
+                         ;; the terminal and clipped the trailing column.)
                          (.isDoubleWidth tc)      2
                          :else                    1)]
                 (recur (inc i) (+ width w))))))))))
