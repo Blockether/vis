@@ -1144,7 +1144,22 @@
   ;; cached `:ctx-by-session` snapshot (refreshed at each turn end) and
   ;; `components/context-overlay!` paints it when `:tasks-open?` is set.
   (fn [db _]
-    (-> db (update :tasks-open? not) (assoc :help-open? false))))
+    (-> db (update :tasks-open? not) (assoc :help-open? false :ctx-scroll 0))))
+
+(reg-event-db :ctx-scroll-by
+  ;; Scroll the F2 context panel by `delta` rows, clamped to [0, the last
+  ;; paint's :ctx-scroll-max]. Callers bump :render-version separately so the
+  ;; otherwise-still overlay repaints.
+  (fn [db [_ delta]]
+    (let [maxs (long (or (:ctx-scroll-max db) 0))
+          cur  (long (or (:ctx-scroll db) 0))]
+      (assoc db :ctx-scroll (max 0 (min maxs (+ cur (long delta))))))))
+
+(reg-event-db :set-ctx-scroll-max
+  ;; Record the F2 panel's max scroll offset (computed during paint) so the
+  ;; scroll event can clamp. Pure assoc — does NOT bump render-version.
+  (fn [db [_ maxs]]
+    (assoc db :ctx-scroll-max (long (or maxs 0)))))
 
 (reg-event-db :set-ctx-panel
   ;; Cache a session's `:session/{tasks,facts}` snapshot for the F2 context

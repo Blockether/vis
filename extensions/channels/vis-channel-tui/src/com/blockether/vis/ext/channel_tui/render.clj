@@ -3412,10 +3412,15 @@
                ;; as the SAME hit target. Expanded shows every row → none.
                (let [body (vec (tag-copy-block-body shown node-id full-copy))]
                  (if (and (not expanded?) (pos? hidden-n) (seq body))
-                   (let [li (dec (count body))]
+                   (let [last-non-blank (loop [i (dec (count body))]
+                                          (if (and (pos? i) (str/blank? (:line (nth body i))))
+                                            (recur (dec i))
+                                            i))]
                      (-> body
-                       (assoc-in [li :line] (str (:line (nth body li)) " …"))
-                       (assoc-in [li :meta] (or (:meta (nth body li)) (:meta header)))))
+                       (assoc-in [last-non-blank :line]
+                                 (str (str/trimr (:line (nth body last-non-blank))) " …"))
+                       (assoc-in [last-non-blank :meta]
+                                 (or (:meta (nth body last-non-blank)) (:meta header)))))
                    body))
                [{:line (str thinking-marker "") :meta nil}]))))))
 

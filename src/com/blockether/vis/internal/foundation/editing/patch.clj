@@ -368,7 +368,7 @@
   ([tuples] (lines->hashes tuples tuples))
   ([visible-tuples freq-tuples]
    (let [[rows freqs ords] (hashed-rows freq-tuples)
-         ord-by-ln  (into {} (map-indexed (fn [i row] [(nth row 0) (nth ords i)]) rows))
+         ord-by-ln (into {} (map-indexed (fn [i row] [(nth row 0) (nth ords i)]) rows))
          hash-by-ln (into {} (map (fn [row] [(nth row 0) (nth row 2)]) rows))]
      (into {}
            (keep (fn [[ln s]]
@@ -432,6 +432,18 @@
                      "-" end
                      " --" (when (seq lines) (str "\n" (render-lineno-block lines)))))))
        (str/join "\n\n")))
+(defn tuples->ranges
+  "Split flat `[[ln text]…]` tuples into contiguous `:ranges` windows\n   `[{:range [start end] :lines [[ln text]…]}…]`, breaking the run whenever\n   the line number jumps by more than 1. Produces exactly the shape\n   `render-lineno-range-block` / `render-hashline-range-block` consume, so a\n   flat tuple list (e.g. grouped grep hits) renders with the same\n   `-- range S-E --` gap headers as a native multi-range read."
+  [tuples]
+  (->> tuples
+       (reduce (fn [groups [ln :as t]]
+                 (let [g (peek groups)
+                       last-ln (when g (first (peek g)))]
+                   (if (and last-ln (= ln (inc last-ln)))
+                     (conj (pop groups) (conj g t))
+                     (conj groups [t]))))
+         [])
+       (mapv (fn [g] {:range [(ffirst g) (first (peek g))], :lines g}))))
 (defn- line-span->char-span
   "Convert a 0-based [line-start line-end) span to a [char-start char-end]
    substring span in `content`, keeping a trailing `\n` OUTSIDE the

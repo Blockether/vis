@@ -2276,7 +2276,10 @@
      (do
        (validate-cat-range! start end)
        (let [n (inc (- (long end) (long start)))
-             out (read-file path start n)]
+             out (read-file path start n)
+             out (assoc out :hashes
+                   (patch/lines->hashes (:lines out)
+                     (read-all-line-tuples (ensure-existing-file! (safe-path path)))))]
          (tool-success
            {:op :cat
             :path path
@@ -3016,9 +3019,10 @@
                             counts))))))})
 
     ;; default: :content (or unset). Grouped by file: the path is stated
-    ;; ONCE as a header, its matches indented beneath as `  <ln>  <text>` —
-    ;; the same :matches data the model now sees, projected as a grep-style
-    ;; block. No per-hit path repetition on either surface.
+    ;; ONCE as a header, then its matches as `-- range S-E --` windows with
+    ;; the human line-number gutter (`<ln>│ <text>`) — IDENTICAL to cat's
+    ;; multi-range render (patch/render-lineno-range-block). Gaps between
+    ;; matched lines surface as new range headers, not a bare divider.
     (let [n  (or hit-count 0)
           fc (or file-count (count matches))]
       {:summary {:left  (ir-strong "RG")
@@ -3032,10 +3036,9 @@
              (bounded-render-text
                (str/join "\n\n"
                  (map (fn [{:keys [path lines]}]
-                        (str/join "\n"
-                          (cons path
-                            (map (fn [[ln text]] (str "  " ln "  " text))
-                              lines))))
+                        (str path "\n"
+                          (patch/render-lineno-range-block
+                            (patch/tuples->ranges lines))))
                    matches)))))
          (ir-root))})))
 
