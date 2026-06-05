@@ -108,12 +108,12 @@
    :header-fg [30 30 30]
    :header-hover-fg [10 50 160]
    :close-button-hover-fg [200 40 40]
-   ;; Active workspace tab in the header. Inverted slab: black bg
-   ;; with white fg makes the active tab pop against the light header
-   ;; surface; inactive tabs are rendered dim+italic from `border-fg`.
-   :header-active-tab-fg [255 255 255]
-   :header-active-tab-bg [0 0 0]
-   :header-active-tab-accent [0 0 0]
+   ;; Active workspace tab in the header. A calm indigo slab with a soft
+   ;; off-white label reads as "selected" without the harsh pure black-on-
+   ;; white invert; inactive tabs stay dim+italic from `border-fg`.
+   :header-active-tab-fg [240 244 252]
+   :header-active-tab-bg [37 99 235]
+   :header-active-tab-accent [37 99 235]
    :box-bg [255 255 255]
    :box-fg [30 30 30]
    :border-fg [80 80 80]
@@ -202,11 +202,12 @@
    :header-fg [226 232 240]
    :header-hover-fg [125 211 252]
    :close-button-hover-fg [248 113 113]
-   ;; Inverted slab (see light palette): pure white-on-black for the
-   ;; active tab; inactive tabs read as dim italic via `border-fg`.
-   :header-active-tab-fg [255 255 255]
-   :header-active-tab-bg [0 0 0]
-   :header-active-tab-accent [255 255 255]
+   ;; Calm blue slab (see light palette) with a soft off-white label for
+   ;; the active tab — no harsh pure black/white invert; inactive tabs read
+   ;; as dim italic via `border-fg`.
+   :header-active-tab-fg [226 232 240]
+   :header-active-tab-bg [37 99 235]
+   :header-active-tab-accent [125 211 252]
    :box-bg [18 22 28]
    :box-fg [226 232 240]
    :border-fg [100 116 139]

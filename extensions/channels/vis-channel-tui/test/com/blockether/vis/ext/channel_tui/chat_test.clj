@@ -261,31 +261,36 @@
   (it "rebuilds tool-result details from canonical op envelope keys"
     ;; Generic envelope shaped like a tool result with command/target
     ;; metadata. Asserts chat layer extracts the canonical keys regardless
-    ;; of which extension emitted them.
-    (let [tool-out (extension/success
-                     {:op :cat
-                      :result {:path "x.txt" :lines ["ok"]}
-                      :metadata {:target {:path "x.txt"}}})]
-      (with-redefs [extension/render-tool-result (fn [_] "rendered tool")
-                    vis/db-info (fn [] :db)
-                    vis/db-list-session-turns
-                    (fn [_db _cid]
-                      [{:id :turn-1
-                        :user-request "run"
-                        :answer-markdown ""}])
-                    vis/db-list-session-turn-iterations
-                    (fn [_db _turn-id]
-                      [{:id :iter-1
-                        :code "(cat \"x.txt\")"
-                        :result tool-out}])]
-        (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-              trace   (-> history second :traces first)
-              form    (-> trace :forms first)]
-          (expect (= :tool (:result-kind form)))
-          (expect (= {:symbol :cat
-                      :tag :observation
-                      :target {:path "x.txt"}}
-                    (:result-detail form))))))))
+    ;; of which extension emitted them. `:cat` is a real foundation op, but
+    ;; this unit test does not load the foundation extension, so its
+    ;; `:observation` tag is unregistered. Envelope construction fails
+    ;; closed on unregistered ops by design (`op-tag`), so stub it to the
+    ;; tag `:cat` carries in production — the envelope is built lazily inside
+    ;; the iteration redef, i.e. while the stub is active.
+    (with-redefs [extension/op-tag (fn [_op] :observation)
+                  extension/render-tool-result (fn [_] "rendered tool")
+                  vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "run"
+                      :answer-markdown ""}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :code "(cat \"x.txt\")"
+                      :result (extension/success
+                                {:op :cat
+                                 :result {:path "x.txt" :lines ["ok"]}
+                                 :metadata {:target {:path "x.txt"}}})}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            trace   (-> history second :traces first)
+            form    (-> trace :forms first)]
+        (expect (= :tool (:result-kind form)))
+        (expect (= {:symbol :cat
+                    :tag :observation
+                    :target {:path "x.txt"}}
+                  (:result-detail form)))))))
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"

@@ -317,6 +317,7 @@
 ;; Turn history
 (def db-turn-history                     persistance/db-turn-history)
 (def db-load-latest-ctx                  persistance/db-load-latest-ctx)
+(def db-load-ctx-history                 persistance/db-load-ctx-history)
 
 ;; Extension aggregate admin/read facade.
 ;; Writes go through ext-* helpers so extension_id is runtime-owned.
