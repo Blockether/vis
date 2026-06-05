@@ -24,18 +24,23 @@
     ;; line-w then mapped display-width over (first seg) = a Character →
     ;; ClassCastException every render frame → frozen TUI. Every element must
     ;; be a vec of segs so line-w only ever sees strings.
-    (it "a task WITH :acceptance yields two well-formed lines (primary + sub)"
+    ;; Cards are now MULTI-ROW (wrapped title + meta row + optional
+    ;; acceptance/deps sub-lines + blank spacer). Exact counts are an
+    ;; implementation detail of the layout; the load-bearing invariants are
+    ;; that EVERY row stays a well-formed vec-of-segs and line-w never sees a
+    ;; bare Character — that is what guards against the freeze regression.
+    (it "a task WITH :acceptance yields a well-formed multi-row card"
       (let [lines (#'comps/task-overlay-lines
                     {:work {:title "do x" :status :doing
                             :acceptance "x compiles; tests pass"}}
                     60)]
-        (expect (= 2 (count lines)))
+        (expect (>= (count lines) 3))
         (expect (every? well-formed-line? lines))
         (expect (every? line-w-survives? lines))))
 
-    (it "a task WITHOUT :acceptance yields one well-formed line"
+    (it "a task WITHOUT :acceptance yields a well-formed multi-row card"
       (let [lines (#'comps/task-overlay-lines {:work {:title "y" :status :done}} 60)]
-        (expect (= 1 (count lines)))
+        (expect (>= (count lines) 2))
         (expect (every? well-formed-line? lines))
         (expect (every? line-w-survives? lines))))
 

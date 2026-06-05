@@ -2568,16 +2568,17 @@
                                           :error             (:error result*)
                                           :envelope          (:envelope result*)
                                           :role              (:role result*)
-                                          ;; :silent? is the channel-facing hide flag. Now the union of:
-                                          ;;   - SCI runtime `:vis/silent` sentinel (legacy host primitives)
-                                          ;;   - block-level structurally-silent? (block contains only
-                                          ;;     answer / title forms; no useful code segments)
-                                          ;; Mixed blocks (`(def x 1)` alongside `(done …)`)
-                                          ;; are NOT silent; the channel reads :render-segments and
-                                          ;; hides only the structural sub-forms.
-                                          :silent?     (boolean (or (:vis/silent result*)
-                                                                  (= :vis/silent (:result result*))
-                                                                  structurally-silent?))
+                                          ;; :silent? is the channel-facing hide flag. A block is
+                                          ;; hidden ONLY when it is structurally code-free —
+                                          ;; `structurally-silent?` (segments carry only
+                                          ;; answer/title recaps, no `:code`). The `:vis/silent`
+                                          ;; RESULT sentinel no longer hides the block: it only
+                                          ;; suppresses the RESULT echo (channels drop a nil
+                                          ;; result-render). This is what lets `task-set!` /
+                                          ;; `fact-set!` — which return `:vis/silent` but now
+                                          ;; classify as `:code` — show their CALL while their
+                                          ;; effect lives in the context dialog.
+                                          :silent?     (boolean structurally-silent?)
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))}))
                              {:block expr
@@ -2640,9 +2641,12 @@
                      (range) form-sources form-results form-segments form-silents))
           silent-form-idxs (into #{}
                              (keep-indexed (fn [idx block]
-                                             (when (or (:vis/silent block)
-                                                     (= :vis/silent (:result block))
-                                                     (:vis/structurally-silent? block))
+                                             ;; Only structurally code-free blocks hide. A
+                                             ;; `:vis/silent` RESULT alone no longer elides a
+                                             ;; code-bearing block (task-set!/fact-set! now show
+                                             ;; their call; their result echo is suppressed
+                                             ;; downstream instead).
+                                             (when (:vis/structurally-silent? block)
                                                idx)))
                              blocks)]
       (if-let [{value :value form-idx :position} @answer-atom]
@@ -4068,6 +4072,11 @@
                                                         :status          :success}
                                      :answer-position  (:answer-position final-result)
                                      :silent-form-idxs (:silent-form-idxs iteration-result)
+                                     ;; Live working-memory snapshot so the F2
+                                     ;; context dialog updates DURING the turn,
+                                     ;; not only after it ends.
+                                     :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
+                                     :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                      :done?            true}))
                         (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                                  :iteration-count (inc iteration)}
@@ -4097,6 +4106,11 @@
                                        :thinking         thinking
                                        :final            nil
                                        :silent-form-idxs (:silent-form-idxs iteration-result)
+                                       ;; Live working-memory snapshot — the F2
+                                       ;; context dialog reflects each iteration's
+                                       ;; task/fact writes mid-turn.
+                                       :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
+                                       :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                        :done?            false}))
                           (let [;; Carry forward all observed iterations
                                 ;; as `[pos {:thinking :blocks}]` for the
