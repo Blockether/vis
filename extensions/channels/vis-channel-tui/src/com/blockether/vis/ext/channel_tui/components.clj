@@ -23,11 +23,15 @@
   "Truncate `s` so its display width fits in `max-cols`. When truncation
    actually happens, append `vh/workspace-ellipsis` so overflow is visible."
   ^String [s ^long max-cols]
-  (let [s (or s "")]
+  (let [s  (or s "")
+        ;; Reserve the ellipsis's ACTUAL display width, not 1: `…` (U+2026) is
+        ;; EAW=A and renders TWO columns on ambiguous-wide terminals, so a fixed
+        ;; `(dec max-cols)` over-ran the cell by a column.
+        ew (long (p/display-width vh/workspace-ellipsis))]
     (cond (<= max-cols 0) ""
           (<= (p/display-width s) max-cols) s
-          (= max-cols 1) (p/truncate-cols vh/workspace-ellipsis 1)
-          :else (str (p/truncate-cols s (dec max-cols)) vh/workspace-ellipsis))))
+          (<= max-cols ew) (p/truncate-cols vh/workspace-ellipsis max-cols)
+          :else (str (p/truncate-cols s (- max-cols ew)) vh/workspace-ellipsis))))
 (defn center-padded
   "Centre `s` inside a `cell-w`-wide cell with `vh/tab-entry-padding`
    reserved on each side; ellipsises overflow."
@@ -95,7 +99,7 @@
    `opts` keys: :left :row :width :label :active? :workspace-id :index
    :register?"
   [g
-   {:keys [left row width label active? workspace-id index register? closable?],
+   {:keys [left row width label tab-no active? workspace-id index register? closable?],
     :or {closable? true}}]
   (let [width (long width)
         ;; Reserve room for the close button only when the cell can still
@@ -104,12 +108,26 @@
         inner-w (if show-close? (max 0 (- width close-button-width)) width)
         fg (if active? t/header-active-tab-fg t/border-fg)
         bg (if active? t/header-active-tab-bg t/dialog-bg)
-        text (center-padded label inner-w)]
+        num-str (when tab-no (str tab-no))
+        display (if num-str (str num-str " " label) label)
+        text (center-padded display inner-w)
+        ;; Where the tab number lands once `display` is centre-padded, so we can
+        ;; repaint just those digits in a contrasting colour — the index reads
+        ;; as a distinct badge instead of blending into the title text.
+        lead (count (take-while #(= \space %) text))
+        num-fg (if active? t/header-tab-number-fg t/header-active-tab-accent)]
     (p/clear-styles! g)
     (p/set-colors! g fg bg)
     (p/enable! g (if active? p/BOLD p/ITALIC))
     (p/fill-rect! g left row width 1)
     (p/put-str! g left row text)
+    (when (and num-str
+            (<= (+ lead (count num-str)) (count text))
+            (= num-str (subs text lead (+ lead (count num-str)))))
+      (p/clear-styles! g)
+      (p/set-colors! g num-fg bg)
+      (p/enable! g p/BOLD)
+      (p/put-str! g (+ (long left) lead) row num-str))
     (p/clear-styles! g)
     (when register?
       (cr/register! {:bounds {:row row, :col left, :width width},
@@ -171,7 +189,7 @@
   [["Ctrl+H · F1" "Toggle this help"] ["F2" "Toggle the task panel"]
    ["Enter · Ctrl+X" "Send message"] ["Alt+Enter" "Insert a newline"]
    ["Esc" "Clear draft · cancel turn"] ["Ctrl+C" "Cancel turn · quit"]
-   ["Tab · Shift+Tab" "Switch tab"] ["Ctrl+W" "Close tab  (or click the ✕)"]
+   ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"] ["Ctrl+W" "Close tab  (or click the ✕)"]
    ["Ctrl+K" "Command palette"] ["Ctrl+G" "Sessions · workspaces"] ["Ctrl+T" "Cycle model"]
    ["Ctrl+R" "Cycle reasoning effort"] ["Ctrl+L" "Cycle Codex verbosity"]
    ["Ctrl+A · Ctrl+E" "Jump to line start · end"] ["Ctrl+U" "Delete to line start"]
@@ -308,39 +326,13 @@
 (def ^:private overlay-blank-row
   "A single empty overlay row — the spacer between context-dialog entries."
   [["" t/dialog-hint false]])
-(defn- hard-split-cols
-  "Split `s` into chunks each ≤ `w` display columns. Used by `wrap-cols`
-   when a SINGLE token is wider than the wrap width (a long path / URL /
-   unbroken CJK run). Guaranteed to terminate: every step consumes ≥1
-   char, measured by display width via `p/truncate-cols`."
-  [s ^long w]
-  (loop [s (str s) out []]
-    (if (<= (p/display-width s) w)
-      (conj out s)
-      (let [prefix (str/trimr (p/truncate-cols s w))
-            n (max 1 (min (count prefix) (count s)))]
-        (recur (subs s n) (conj out (subs s 0 n)))))))
 (defn- wrap-cols
-  "Greedy word-wrap `s` into a vec of strings, each fitting `w` DISPLAY
-   columns (grapheme/wide-char aware via `p/display-width`). Breaks on
-   whitespace; a token longer than `w` is hard-split so nothing overflows
-   the dialog. Blank input yields `[\"\"]` so callers always get ≥1 row."
+  "Greedy display-width word-wrap to a vec of lines, each fitting `w` columns.
+   Delegates to the native, grapheme/EAW-aware `p/word-wrap` (one shared
+   implementation in the lanterna fork) — a token wider than `w` is hard-split
+   at grapheme boundaries, blank input yields `[\"\"]`."
   [s ^long w]
-  (let [s (str/trim (str s))]
-    (if (or (str/blank? s) (<= w 0))
-      [""]
-      (loop [words (str/split s #"\s+"), cur "", out []]
-        (if-let [word (first words)]
-          (if (<= (p/display-width word) w)
-            (let [candidate (if (empty? cur) word (str cur " " word))]
-              (if (<= (p/display-width candidate) w)
-                (recur (rest words) candidate out)
-                (recur words "" (conj out cur))))
-            ;; token wider than the line — flush current, hard-split it
-            (let [out*   (cond-> out (seq cur) (conj cur))
-                  pieces (hard-split-cols word w)]
-              (recur (rest words) (str (last pieces)) (into out* (butlast pieces)))))
-          (cond-> out (seq cur) (conj cur)))))))
+  (p/word-wrap s w))
 (defn- wrapped-rows
   "Rows for `text` wrapped to `w` columns: the FIRST row is prefixed by the
    `head` segments (e.g. a colored glyph) and every continuation row is

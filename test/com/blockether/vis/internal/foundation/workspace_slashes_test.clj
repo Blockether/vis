@@ -79,8 +79,8 @@
 ;; =============================================================================
 
 (defdescribe specs-shape-test
-  (it "exposes 6 slash specs (/draft + 3 subcommands, /dir, /clear)"
-    (expect (= 6 (count ws-slashes/specs))))
+  (it "exposes 5 slash specs (/draft + 3 subcommands, /dir)"
+    (expect (= 5 (count ws-slashes/specs))))
 
   (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
     (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
