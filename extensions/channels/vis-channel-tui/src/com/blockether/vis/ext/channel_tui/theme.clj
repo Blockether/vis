@@ -33,7 +33,6 @@
 ;; Terminal
 (def terminal-bg    (rgb :terminal-bg))
 (def text-fg        (rgb :text-fg))
-(def pure-black     (TextColor$RGB. 0 0 0))
 
 ;; Header
 (def header-fg       (rgb :header-fg))
