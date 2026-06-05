@@ -1020,6 +1020,18 @@
     (not (:mouse-selection db))
     (not slash-suggestions-visible?)
     (live-progress-only-change? previous-db db)))
+(defn- active-view-unchanged?
+  "True when two app-db snapshots paint the SAME active view — they differ only
+   in background tab state (`:tab-locals`), the dirty counter
+   (`:render-version`), or the published `:layout`. The header-spinner-only fast
+   path guards on this so it fires ONLY for a genuine background-spinner tick:
+   any real change to the active view (a tab switch, a new message, a scroll)
+   fails the test and falls through to a full frame, instead of repainting just
+   the header and leaving the previous tab's body frozen on screen. Mirrors
+   `state/active-view-slice` — keep the excluded keys in sync."
+  [a b]
+  (= (dissoc a :tab-locals :render-version :layout)
+    (dissoc b :tab-locals :render-version :layout)))
 (def ^:private header-hover-kinds #{:copy-id :workspace-entry})
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 (defn- header-hover-only-change?
@@ -1394,6 +1406,12 @@
                           (not was-blocked?)
                           (not loading?)
                           (not scroll-anim?)
+                          ;; ONLY a background spinner tick — the active view is
+                          ;; byte-for-byte the last rendered one. Without this
+                          ;; guard a tab switch (or any version bump) while a
+                          ;; background tab streams would repaint just the header
+                          ;; and leave the previous tab's body on screen.
+                          (active-view-unchanged? last-db db)
                           (state/any-background-loading? db))]
                     (if (and (not (:shutdown? db))
                           (not (:dialog-open? db))
