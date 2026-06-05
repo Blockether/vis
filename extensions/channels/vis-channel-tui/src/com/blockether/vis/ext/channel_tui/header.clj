@@ -492,15 +492,20 @@
     (components/id-badge! g action-col content-row id-copy-text full-uuid
       *register-click-regions?*)
 
-    ;; RIGHT slot: clickable tasks/help chips — terminal-safe replacements
-    ;; for the F2/F1 accelerators. Painted at the left edge of the right slot;
-    ;; the id badge stays right-aligned.
-    (let [tasks-glyph " ☰ "
-          badges-x (+ right-x edge-pad)]
-      (components/header-badge! g badges-x content-row tasks-glyph :toggle-tasks
+    ;; RIGHT slot: labeled, clickable chips — terminal-safe stand-ins for the
+    ;; F2/F1 accelerators, so they read as what they do. Right-aligned as a
+    ;; cluster immediately left of the id badge: [☰ context][? help] <id>.
+    ;; ☰ context = the F2 session working-memory panel (tasks + facts);
+    ;; ? help = the F1 / Ctrl+H shortcut overlay.
+    (let [ctx-chip  " ☰ context "
+          help-chip " ? help "
+          gap       1
+          help-col  (max (+ right-x edge-pad) (- action-col gap (p/display-width help-chip)))
+          ctx-col   (max (+ right-x edge-pad) (- help-col (p/display-width ctx-chip)))]
+      (components/header-badge! g ctx-col content-row ctx-chip :toggle-tasks
         *register-click-regions?*)
-      (components/header-badge! g (+ badges-x (p/display-width tasks-glyph)) content-row
-        " ? " :toggle-help *register-click-regions?*))
+      (components/header-badge! g help-col content-row help-chip :toggle-help
+        *register-click-regions?*))
 
     ;; Extension-contributed rows.
     (loop [row (inc content-row)
