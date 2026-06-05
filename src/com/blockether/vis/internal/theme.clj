@@ -114,6 +114,8 @@
    :header-active-tab-fg [240 244 252]
    :header-active-tab-bg [37 99 235]
    :header-active-tab-accent [37 99 235]
+   ;; Tab index badge — bright gold, high contrast on the indigo active-tab slab.
+   :header-tab-number-fg [250 204 21]
    :box-bg [255 255 255]
    :box-fg [30 30 30]
    :border-fg [80 80 80]
@@ -208,6 +210,7 @@
    :header-active-tab-fg [226 232 240]
    :header-active-tab-bg [37 99 235]
    :header-active-tab-accent [125 211 252]
+   :header-tab-number-fg [253 224 71]
    :box-bg [18 22 28]
    :box-fg [226 232 240]
    :border-fg [100 116 139]

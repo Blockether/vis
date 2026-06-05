@@ -2242,7 +2242,7 @@
             left
             hint-row
             inner-w
-            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+N" "new"]
+            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+N" "new"] ["Ctrl+F" "fork"] ["Ctrl+D" "delete"]
              ["Alt+U" (if @show-empty-untitled? "hide empty" "show empty")]
              ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
@@ -2311,6 +2311,22 @@
                 (= KeyType/Character (.getKeyType key))
                 (some-> (.getCharacter key) Character/toLowerCase (= \n)))
               {:action :new}
+
+              ;; Ctrl+F → fork the highlighted session into a new tab.
+              (and (input/ctrl-modifier? key)
+                (= KeyType/Character (.getKeyType key))
+                (some-> (.getCharacter key) Character/toLowerCase (= \f)))
+              (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                {:action :fork :id id}
+                (recur))
+
+              ;; Ctrl+D → delete the highlighted session.
+              (and (input/ctrl-modifier? key)
+                (= KeyType/Character (.getKeyType key))
+                (some-> (.getCharacter key) Character/toLowerCase (= \d)))
+              (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
+                {:action :delete :id id}
+                (recur))
 
               (input/alt-char? key \u)
               (do (swap! show-empty-untitled? not) (reset-list!) (recur))

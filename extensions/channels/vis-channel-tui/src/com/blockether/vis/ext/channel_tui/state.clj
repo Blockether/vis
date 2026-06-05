@@ -657,12 +657,15 @@
       entries
       [(base-tab-entry db)])))
 
+(defn- label-from-title
+  [title fallback]
+  (if (and (string? title) (not (str/blank? title)))
+    title
+    (or fallback untitled-session-label)))
+
 (defn- active-tab-label
   [db fallback]
-  (let [title (:title db)]
-    (if (and (string? title) (not (str/blank? title)))
-      title
-      (or fallback untitled-session-label))))
+  (label-from-title (:title db) fallback))
 
 (defn- ensure-tabs
   [db]
@@ -690,7 +693,8 @@
       (fn [entries]
         (mapv (fn [entry]
                 (cond-> (dissoc entry :active?)
-                  (= (:id entry) workspace-id) (assoc :active? true)))
+                  (= (:id entry) workspace-id)
+                  (-> (assoc :active? true) (dissoc :unread?))))
           entries)))
     (restore-tab workspace-id)))
 
@@ -1028,9 +1032,39 @@
           db       (-> db ensure-tabs sync-active-tab)
           entries  (vec (:tabs db))
           existing (when sid
-                     (some #(when (= sid (tab-session-id db (:id %))) %) entries))]
+                     (some #(when (= sid (tab-session-id db (:id %))) %) entries))
+          ;; W3 reopen seed: populate the F2 ctx cache immediately from the full
+          ;; persisted ctx history so live + ARCHIVED tasks render the instant the
+          ;; tab opens — for BOTH a freshly minted tab AND an already-open one.
+          ;; Hoisted out of the `new tab` branch so a restored/restarted session
+          ;; (which hits `existing` → activate-tab) no longer shows an empty F2
+          ;; until its first turn end. Keyed by the raw session UUID (what
+          ;; screen.clj reads via [:session :id]). One DB read; tolerate failure.
+          ctx-panel
+          (when-let [uid (:id session)]
+            (try
+              (let [hist (vis/db-load-ctx-history (vis/db-info) uid)]
+                (if (seq hist)
+                  ;; Merge tasks/facts/archived across ALL turns so the F2 context
+                  ;; panel shows the full session history, not just the latest
+                  ;; snapshot. Later turns win on key collision.
+                  (reduce (fn [acc [_turn c]]
+                            {:tasks    (merge (:tasks acc) (:session/tasks c))
+                             :facts    (merge (:facts acc) (:session/facts c))
+                             :archived (merge (:archived acc) (:session/archived c))})
+                    {:tasks {} :facts {} :archived {}}
+                    hist)
+                  ;; Fallback: no per-turn history → latest single snapshot.
+                  (when-let [c (vis/db-load-latest-ctx (vis/db-info) uid)]
+                    {:tasks    (or (:session/tasks c) {})
+                     :facts    (or (:session/facts c) {})
+                     :archived (or (:session/archived c) {})})))
+              (catch Throwable _ nil)))
+          seed-ctx (fn [d]
+                     (cond-> d
+                       ctx-panel (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
       (if existing
-        (activate-tab db (:id existing))
+        (seed-ctx (activate-tab db (:id existing)))
         (let [n     (next-tab-number entries)
               id    (keyword (str "tab-" n))
               label (or (some-> workspace :label not-empty) untitled-session-label)
@@ -1048,34 +1082,8 @@
                         :workspace/root (:root workspace)
                         :title nil
                         :messages (or history [])
-                        :input-history (history-user-texts history)))
-                ;; W3 reopen seed: populate the F2 ctx cache immediately from the
-                ;; latest persisted ctx so live + ARCHIVED tasks render the instant
-                ;; the tab opens — not only after the first turn. Keyed by the raw
-                ;; session UUID (what screen.clj reads via [:session :id]). One DB
-                ;; read; tolerate any failure (fresh/unsaved session → no-op).
-                ctx-panel
-                (when-let [uid (:id session)]
-                  (try
-                    (let [hist (vis/db-load-ctx-history (vis/db-info) uid)]
-                      (if (seq hist)
-                        ;; Merge tasks/facts/archived across ALL turns so the F2
-                        ;; context panel shows the full session history, not just
-                        ;; the latest snapshot. Later turns win on key collision.
-                        (reduce (fn [acc [_turn c]]
-                                  {:tasks    (merge (:tasks acc) (:session/tasks c))
-                                   :facts    (merge (:facts acc) (:session/facts c))
-                                   :archived (merge (:archived acc) (:session/archived c))})
-                          {:tasks {} :facts {} :archived {}}
-                          hist)
-                        ;; Fallback: no per-turn history → latest single snapshot.
-                        (when-let [c (vis/db-load-latest-ctx (vis/db-info) uid)]
-                          {:tasks    (or (:session/tasks c) {})
-                           :facts    (or (:session/facts c) {})
-                           :archived (or (:session/archived c) {})})))
-                    (catch Throwable _ nil)))]
-            (cond-> db'
-              ctx-panel (assoc-in [:ctx-by-session (:id session)] ctx-panel))))))))
+                        :input-history (history-user-texts history)))]
+            (seed-ctx db')))))))
 
 (reg-event-db :title-loading
   ;; Host auto-title generation started (true) or ended (false). Drives the
@@ -1109,18 +1117,38 @@
          :facts (or (:facts ctx) {})
          :archived (or (:archived ctx) (:archived prev) {})}))))
 
+(defn tab-id-for-session
+  "Resolve a session-id string to its tab id. The active tab's session lives
+   at the db root; background tabs' sessions live in `:tab-locals`."
+  [db session-id]
+  (when-let [sid (some-> session-id str)]
+    (let [active-id (current-tab-id db)]
+      (or (when (= sid (some-> db :session :id str)) active-id)
+        (some #(when (= sid (tab-session-id db (:id %))) (:id %)) (:tabs db))))))
+
 (reg-event-db :set-title
-  (fn [db [_ title]]
-    (let [db' (assoc db :title title :title-loading? false)
-          active-id (current-tab-id db')]
-      (cond-> db'
-        active-id
+  ;; `title` lands on a specific tab. With no `arg` we target the active tab
+  ;; (legacy callers). With a session-id `arg` — what the title listener now
+  ;; passes for EVERY session, focused or not — we resolve the owning tab and
+  ;; relabel it directly, so a background session's title updates live without
+  ;; the user opening the tab. An unresolvable arg is a no-op.
+  (fn [db [_ title arg]]
+    (let [active-id (current-tab-id db)
+          target-id (if arg (tab-id-for-session db arg) active-id)]
+      (cond-> db
+        (= target-id active-id)
+        (assoc :title title :title-loading? false)
+
+        (and target-id (not= target-id active-id))
+        (assoc-in [:tab-locals target-id :title] title)
+
+        target-id
         (update :tabs
           (fn [entries]
             (mapv (fn [entry]
                     (cond-> entry
-                      (= (:id entry) active-id)
-                      (assoc :label (active-tab-label db' (:label entry)))))
+                      (= (:id entry) target-id)
+                      (assoc :label (label-from-title title (:label entry)))))
               entries)))))))
 
 (reg-event-db :update-input
@@ -1565,6 +1593,35 @@
         {:db (assoc db :cancelling? true)
          :fx [[:notify "Cancelling current turn..." :info cancel-notification-ttl-ms]]}))))
 
+(defn background-loading-tokens
+  "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active
+   tab held at the db root) whose turn is in flight. Ctrl+C quit consults these so
+   a quit while other tabs are still working can warn + cancel them instead of
+   orphaning their worker futures (orphans keep the JVM alive ~60s → looks frozen)."
+  [db]
+  (let [active (current-tab-id db)]
+    (->> (:tab-locals db)
+      (keep (fn [[tab-id snap]]
+              (when (and (not= tab-id active) (:loading? snap))
+                (:cancel-token snap))))
+      vec)))
+
+(defn any-background-loading?
+  "True when a non-active tab has a turn in flight."
+  [db]
+  (boolean (seq (background-loading-tokens db))))
+
+(reg-event-fx :cancel-all-turns
+  ;; Cancel EVERY in-flight turn — the active tab (root :cancel-token) plus every
+  ;; background tab in :tab-locals. Used by the Ctrl+C quit-confirm path so quitting
+  ;; actually tears down all worker futures instead of leaving orphans behind.
+  (fn [db _]
+    (doseq [tok (background-loading-tokens db)]
+      (try (vis/cancel! tok) (catch Throwable _ nil)))
+    (when (:loading? db)
+      (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil)))
+    {:db (assoc db :cancelling? true)}))
+
 (reg-event-db :set-progress-iterations
   (fn [db [_ a b]]
     (let [[workspace-id iterations] (if (keyword? a)
@@ -1651,17 +1708,20 @@
                                    (seq (:pending-sends ws-final)))
                              (vreset! drain? true))
                            ws-final)))))]
-      {:db db'
-       :fx (cond-> []
-             @drain? (conj [:dispatch [:drain-pending workspace-id]])
-             ;; Ring the terminal bell ONLY when a background (unfocused) tab
-             ;; finishes in a state that actually needs you — awaiting input
-             ;; or errored. A routine "agent did its work" completion is NOT a
-             ;; notification, so it stays silent (no more bell-on-everything).
-             ;; Focused-tab finishes never ring; you can see those complete.
+      {:db (cond-> db'
+             ;; Persistent unread dot: a BACKGROUND tab that just FINISHED a
+             ;; turn (same gate as the bell) lights a dot that stays until the
+             ;; user focuses it (cleared in `activate-tab`).
              (and (not= workspace-id (current-tab-id db))
-               (contains? #{:needs-input :error} status))
-             (conj [:bell]))})))
+               (not= :cancelled status))
+             (update :tabs
+               (fn [entries]
+                 (mapv (fn [entry]
+                         (cond-> entry
+                           (= (:id entry) workspace-id) (assoc :unread? true)))
+                   entries))))
+       :fx (cond-> []
+             @drain? (conj [:dispatch [:drain-pending workspace-id]]))})))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 

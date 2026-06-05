@@ -1018,6 +1018,12 @@
           (and ctrl (= (Character/toLowerCase c) \h))
           {:action :toggle-help :state state}
 
+          ;; Alt+1..9 jumps directly to tab N (1-based on screen, 0-based index).
+          (and alt (Character/isDigit c) (not= c \0))
+          {:action :select-tab-index
+           :workspace-index (dec (Character/digit c 10))
+           :state state}
+
           ;; Unbound control / meta chords are ignored instead of inserting their
           ;; letter payload into the prompt.
           (or ctrl alt) {:action :continue :state state}

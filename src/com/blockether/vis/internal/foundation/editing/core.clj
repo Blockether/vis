@@ -614,6 +614,20 @@
       " precedes :from-hash line " from-line ".")
     (str "cat :hash failed: " (pr-str reason))))
 
+(defn- read-all-line-tuples
+  "Stream the WHOLE file into a vec of `[line-number text]` tuples. Feeds
+   `patch/lines->hashes` as the FILE-WIDE freq/ordinal source for windowed
+   reads (range / tail / by-hash) so a duplicate line OUTSIDE the read window
+   still renders `hash#N` — keeping `cat` anchors consistent with patch's
+   file-wide hash resolution. Holds line text only; callers are the edit read
+   paths, which patch already slurps whole."
+  [^java.io.File f]
+  (with-open [^java.io.BufferedReader rdr (io/reader f)]
+    (loop [acc (transient []) ln 1]
+      (if-let [raw (.readLine rdr)]
+        (recur (conj! acc [ln raw]) (inc ln))
+        (persistent! acc)))))
+
 (defn- read-file-by-hash
   "Read the inclusive window between the lines hashed `from-hash`..`to-hash`
    (`to-hash` defaults to `from-hash` — a single line). Resolves the hashes
@@ -632,7 +646,9 @@
                (merge {:type :ext.foundation.editing/invalid-cat-args} err)))
       (let [{:keys [from-line to-line]} res
             n (inc (- (long to-line) (long from-line)))]
-        (assoc (read-file path from-line n) :range [from-line to-line])))))
+        (let [out (read-file path from-line n)]
+          (assoc out :range [from-line to-line]
+            :hashes (patch/lines->hashes (:lines out) (read-all-line-tuples f))))))))
 
 (defn- read-file-ranges
   "Read several inclusive 1-based line ranges from one file. Result keeps both
@@ -649,7 +665,7 @@
         f       (ensure-existing-file! (safe-path path))]
     {:path        (rel-path f)
      :lines       (vec (mapcat :lines windows))
-     :hashes      (patch/lines->hashes (mapcat :lines windows))
+     :hashes      (patch/lines->hashes (vec (mapcat :lines windows)) (read-all-line-tuples f))
      :ranges      windows
      :next-offset nil
      :eof?        (every? :eof? windows)
@@ -711,7 +727,7 @@
                   numbered     (mapv vector (iterate inc start-line) final-lines)]
               {:path        (rel-path f)
                :lines       numbered
-               :hashes      (patch/lines->hashes numbered)
+               :hashes      (patch/lines->hashes numbered (read-all-line-tuples f))
                :next-offset nil
                :eof?        true
                :truncated?  bytes-truncated?
@@ -3238,8 +3254,12 @@
     ["Editing tools (bare: cat/ls/rg/patch/write + copy/move/delete/exists?). Canonical path only."
      ""
      "FLOW"
-     "  Shape:  (ls \".\" {:depth 2})"
-     "  Locate: (rg {:any [P] :files-only? true})"
+     "  LOCATE — pick by what you already know, cheapest first:"
+     "    0. Already located it?      → it's a FACT. Re-patch by :from-hash. DON'T grep/cat again."
+     "    1. Know the path?           → scoped (rg {:path …}) + (cat …) batched in ONE fence."
+     "    2. Know content, not file?  → (rg {… :files-only? true}) wide+cheap, THEN cat the hits."
+     "    3. Tree unfamiliar?         → (ls …) for Shape — ONCE, not per turn."
+     "  Wide CONTENT grep is last resort, not default (dumps junk into ctx)."
      "  Read:   (cat path)  — whole by default; large files use one 400-500 line range:"
      "    (cat path :range start end)"
      "    (cat path :ranges [[start end] ...])"

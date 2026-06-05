@@ -267,32 +267,45 @@
     (if-let [available? (:slash/availability-fn spec)]
       (try (boolean (available? {:channel/id :tui})) (catch Throwable _ false))
       true)))
+(def ^:private registry-slash-commands-cache
+  "Memo cell for the harvested registry slash commands. The engine slash
+   registry is stable within a session, so harvest ONCE and reuse — the first
+   `/` no longer pays a cold harvest + class-load + compile mid-frame (which
+   dropped a frame and flickered the popup on first open). Only NON-empty
+   results are cached so a transient registry hiccup (caught → []) can't
+   poison the cell; the next call simply retries."
+  (atom nil))
 (defn- registry-slash-commands
   "All slashes harvested from the engine registry for typed `/`
    suggestions / exact slash submission in the TUI. Both top-level
    and nested commands are included. Hidden specs and non-TUI channel
    specs stay out; this prevents Telegram menu commands (`/help`,
-   `/models`, ...) from leaking into TUI slash UX."
+   `/models`, ...) from leaking into TUI slash UX. Memoized via
+   `registry-slash-commands-cache` (registry is session-stable) so the
+   first `/` is already warm."
   []
-  (try
-    (let [specs        (filter slash-available-in-tui? (vis/registered-slashes))
-          ;; A spec is a "group root" when some other visible spec
-          ;; names its path as `:slash/parent`. Its own `:slash/run-fn`
-          ;; only prints the subcommand list the palette already shows
-          ;; inline, so suppress the redundant root entry. The engine
-          ;; `slash/dispatch` still resolves a typed `/workspace`
-          ;; (handled as a raw message submission), so the root stays
-          ;; reachable — it just isn't a palette suggestion.
-          parent-paths (into #{}
-                         (keep (fn [s]
-                                 (let [p (vec (:slash/parent s))]
-                                   (when (seq p) p))))
-                         specs)
-          leaf?        (fn [s]
-                         (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
-                           (not (contains? parent-paths path))))]
-      (mapv slash-spec->menu-command (filter leaf? specs)))
-    (catch Throwable _t [])))
+  (or @registry-slash-commands-cache
+      (let [v (try
+                (let [specs        (filter slash-available-in-tui? (vis/registered-slashes))
+                      ;; A spec is a "group root" when some other visible spec
+                      ;; names its path as `:slash/parent`. Its own `:slash/run-fn`
+                      ;; only prints the subcommand list the palette already shows
+                      ;; inline, so suppress the redundant root entry. The engine
+                      ;; `slash/dispatch` still resolves a typed `/workspace`
+                      ;; (handled as a raw message submission), so the root stays
+                      ;; reachable — it just isn't a palette suggestion.
+                      parent-paths (into #{}
+                                     (keep (fn [s]
+                                             (let [p (vec (:slash/parent s))]
+                                               (when (seq p) p))))
+                                     specs)
+                      leaf?        (fn [s]
+                                     (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
+                                       (not (contains? parent-paths path))))]
+                  (mapv slash-spec->menu-command (filter leaf? specs)))
+                (catch Throwable _t []))]
+        (when (seq v) (reset! registry-slash-commands-cache v))
+        v)))
 (defn- command-palette-extra-commands
   "Extra commands appended to Ctrl+K.
 
@@ -1325,6 +1338,7 @@
                         rows (.getRows size)
                         now-ms (System/currentTimeMillis)
                         loading? (boolean (:loading? db))
+                        any-loading? (or loading? (state/any-background-loading? db))
                         scroll-anim? (scroll-anim-active? db)
                           ;; F1 (help) / F2 (context) overlays LOCK the
                           ;; background: while one is up we suppress every
@@ -1338,7 +1352,7 @@
                           ;; that repaints the overlay cleanly on top.
                         overlay-open? (or (:help-open? db) (:tasks-open? db))
                         animate? (and (not overlay-open?)
-                                   (or (and loading?
+                                   (or (and any-loading?
                                          (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
                                      scroll-anim?))
                         same-size? (and (= last-cols cols) (= last-rows rows))
@@ -1372,7 +1386,15 @@
                                           db
                                           same-size?
                                           last-layout
-                                          slash-suggestions-visible?))]
+                                          slash-suggestions-visible?))
+                        header-spinner-only?
+                        (and (not overlay-open?)
+                          same-size?
+                          last-layout
+                          (not was-blocked?)
+                          (not loading?)
+                          (not scroll-anim?)
+                          (state/any-background-loading? db))]
                     (if (and (not (:shutdown? db))
                           (not (:dialog-open? db))
                           (or (not= last-v version)
@@ -1390,6 +1412,9 @@
                                                db
                                                now-ms
                                                last-layout) true]
+                              header-spinner-only?
+                              (do (render-header-hover-frame! screen cols rows db)
+                                [last-layout false])
                               :else [(render-frame! screen cols rows db now-ms) true])]
                           ;; Publish layout back to app-db without bumping the version (see
                           ;; no-render-bump-events).
@@ -1419,7 +1444,8 @@
             ;; stays smooth without spamming repaints.
             (locking state/render-monitor
               (let [v-now (long (or (:render-version @state/app-db) 0))
-                    loading? (boolean (:loading? @state/app-db))]
+                    loading? (or (boolean (:loading? @state/app-db))
+                               (state/any-background-loading? @state/app-db))]
                 (when (= v-now version)
                   (try (.wait ^Object state/render-monitor
                          (long (cond (scroll-anim-active? @state/app-db) scroll-anim-tick-ms
@@ -1563,8 +1589,10 @@
   (let [session-id (str session-id)
         listener (vis/add-title-listener! session-id
                    (fn [new-title]
-                     (when (= session-id (current-session-id))
-                       (state/dispatch [:set-title (or new-title "")]))))
+                     ;; Dispatch for EVERY session (focused or not), carrying our
+                     ;; session-id so `:set-title` can relabel the owning tab even
+                     ;; when it's in the background.
+                     (state/dispatch [:set-title (or new-title "") session-id])))
         ;; Host signals when auto-title generation starts/ends so the
         ;; header can spinner the active tab. Scoped to the active session,
         ;; same as the value listener — a background generation must not
@@ -1917,6 +1945,15 @@
            ;; the first frame as soon as `:render-version` is non-zero (every
            ;; init dispatch above bumps it).
            (vreset! render-thread (start-render-thread! screen))
+           ;; Prewarm the slash-command machinery OFF the hot path so the
+           ;; FIRST `/` keystroke doesn't pay cold JIT + registry harvest
+           ;; (registry-slash-commands → menu-commands → slash/suggestions →
+           ;; fuzzy-score) mid-frame — that dropped a frame and flickered the
+           ;; popup on first open. Also fills the registry memo cell. Fire-
+           ;; and-forget; failure is harmless (the live path recomputes).
+           (future
+             (try (slash-suggestions-for-input screen (input-state-from-text "/"))
+                  (catch Throwable _ nil)))
            (vreset! provider-limits-thread (start-provider-limits-thread!))
            ;; Local UI state that lives only in the input thread.
            ;;
@@ -2059,9 +2096,15 @@
                    (cond
                      (= :new (:action choice)) (when-let [config (:config @state/app-db)]
                                                  (open-session-tab! (chat/make-session config)
-                                                   true))
+                                                   true)
+                                                 ;; `/new-session <TEXT>` (optional): once the fresh
+                                                 ;; tab is focused, submit the trailing text as its
+                                                 ;; FIRST message so the new session starts on that
+                                                 ;; prompt instead of an empty buffer.
+                                                 (when-let [seed (some-> (:seed-text choice) str/trim not-empty)]
+                                                   (state/dispatch [:send-message seed])))
                      (= :fork (:action choice))
-                     (if-let [current-id (current-session-id)]
+                     (if-let [current-id (or (:id choice) (current-session-id))]
                        (let [db (vis/db-info)
                                      ;; Each fork gets its own workspace pin (1:1).
                                      ;; Mint a fresh rift clone of cwd for the new state.
@@ -2086,6 +2129,26 @@
                        (vis/notify! "No current session to fork"
                          :level :warn
                          :ttl-ms copy-success-ttl-ms))
+                     (= :delete (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (when (with-dialog-lock
+                               #(dlg/confirm-dialog! screen
+                                  "Delete session"
+                                  "Permanently delete this session? This cannot be undone."))
+                         (let [current? (= (str target-id) (current-session-id))]
+                           (try (vis/delete! target-id) (catch Throwable _ nil))
+                           (if current?
+                             ;; Deleting the active session: drop into a fresh tab.
+                             (when-let [config (:config @state/app-db)]
+                               (let [old-tab-id (:active-tab-id @state/app-db)]
+                                 (open-session-tab! (chat/make-session config) true)
+                                 (when old-tab-id (state/dispatch [:close-tab old-tab-id]))))
+                             ;; Non-current: if it's open in a background tab, close
+                             ;; that now-dangling tab so it doesn't linger.
+                             (when-let [tab-id (state/tab-id-for-session @state/app-db target-id)]
+                               (state/dispatch [:close-tab tab-id])))
+                           (vis/notify! "Deleted session" :level :success :ttl-ms copy-success-ttl-ms))))
+
                      (= :switch (:action choice))
                      ;; Focus the tab already bound to this session, or open a
                      ;; new one — `:open-session-tab` decides. Switching to a
@@ -2148,7 +2211,7 @@
                        (when-let [chosen (with-dialog-lock
                                            #(dlg/directory-picker-dialog! screen start))]
                          (open-dir-tab! chosen)))))
-                 show-sessions! (fn []
+                 show-sessions! (fn show-sessions! []
                                   (when-not (:dialog-open? @state/app-db)
                                     (let [sessions (mapv enrich-session-row (tui-session-summaries))]
                                       (when-let [choice (with-dialog-lock
@@ -2157,7 +2220,11 @@
                                                              {:sessions sessions
                                                               :active-session-id (current-session-id)
                                                               :db @state/app-db}))]
-                                        (switch-session! choice)))))]
+                                        (switch-session! choice)
+                                        ;; After a delete, reopen the picker on the
+                                        ;; refreshed list so pruning can continue.
+                                        (when (= :delete (:action choice))
+                                          (show-sessions!))))))]
              ;; Restore the rest of this place's saved tabs (tab 1 is already
              ;; the first saved session). Reopen each in order, then focus the
              ;; one that was active — `open-session-tab!` focuses an
@@ -2735,7 +2802,15 @@
                                      (state/dispatch [:reset-input])))
                                  :else (when-not (:dialog-open? @state/app-db)
                                          (case cmd-id
-                                           :new-session (switch-session! {:action :new})
+                                           :new-session (do
+                                                          ;; Reset the ORIGINATING tab's input FIRST,
+                                                          ;; before switch-session! focuses the new tab —
+                                                          ;; otherwise the post-call [:reset-input] below
+                                                          ;; clears the NEW session and `/new-session`
+                                                          ;; lingers in this tab's buffer.
+                                                          (state/dispatch [:reset-input])
+                                                          (switch-session! {:action    :new
+                                                                            :seed-text (not-empty (str/trim (str args)))}))
                                                    ;; Workspace ops (`:workspace`,
                                                    ;; `:apply-workspace-to-trunk`,
                                                    ;; `:discard-workspace-{soft,hard}`) live as
@@ -2787,9 +2862,24 @@
                              ;; turn instead of quitting. A second Ctrl+C
                              ;; with no turn running falls through to nil and
                              ;; the TUI exits as before.
-                         (if (:loading? @state/app-db)
-                           (do (state/dispatch [:cancel-turn]) (recur))
-                           nil)
+                         (let [db @state/app-db]
+                           (cond
+                             (:loading? db)
+                             (do (state/dispatch [:cancel-turn]) (recur))
+
+                             (state/any-background-loading? db)
+                             (let [n   (count (state/background-loading-tokens db))
+                                   ok? (with-dialog-lock
+                                         #(dlg/confirm-dialog! screen
+                                            "Abort running tasks?"
+                                            [(str n " background task" (when (> n 1) "s")
+                                               " still running in other tab" (when (> n 1) "s") ".")
+                                             "Abort them and quit?"]))]
+                               (if ok?
+                                 (do (state/dispatch [:cancel-all-turns]) nil)
+                                 (recur)))
+
+                             :else nil))
                          :clear-input
                              ;; Priority order while a turn is loading:
                              ;;  1. cancel the turn (Esc/Ctrl+C is the user's

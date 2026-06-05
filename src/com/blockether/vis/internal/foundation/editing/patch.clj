@@ -352,15 +352,30 @@
   [row _freqs]
   (not (str/blank? (nth row 1))))
 (defn lines->hashes
-  "`{line-number anchor}` map of the USABLE anchors in `tuples` (every\n   non-blank line). Unique lines map to their bare content hash; duplicate\n   lines map to a `hash#N` ordinal anchor (`hash-anchor`). The canonical\n   `:hashes` payload `cat` returns — the SINGLE place it is built\n   (read-file / read-file-ranges / tail-file all route here). Blank lines\n   are omitted: the model only ever sees anchors it can actually edit by."
-  [tuples]
-  (let [[rows freqs ords] (hashed-rows tuples)]
-    (into {}
-          (keep-indexed (fn [i row]
-                          (when (row-usable? row freqs)
-                            [(nth row 0)
-                             (hash-anchor (nth row 2) (get freqs (nth row 2)) (nth ords i))])))
-          rows)))
+  "`{line-number anchor}` map of the USABLE anchors in `visible-tuples`
+   (every non-blank line). Unique lines map to their bare content hash;
+   duplicate lines map to a `hash#N` ordinal anchor (`hash-anchor`). The
+   canonical `:hashes` payload `cat` returns — the SINGLE place it is built
+   (read-file / read-file-ranges / tail-file all route here). Blank lines
+   are omitted: the model only ever sees anchors it can actually edit by.
+
+   2-arity: `freq-tuples` is the FULL-FILE `[line-number text]` set used to
+   count hash freq + ordinals, while anchors are emitted only for the
+   `visible-tuples` window. This keeps the `#N` ordinal FILE-WIDE for ranged /
+   tail / by-hash reads, so a duplicate line living OUTSIDE the read window
+   still renders `hash#N` — matching patch's file-wide hash resolution
+   instead of rendering bare and then ambiguously refusing the patch."
+  ([tuples] (lines->hashes tuples tuples))
+  ([visible-tuples freq-tuples]
+   (let [[rows freqs ords] (hashed-rows freq-tuples)
+         ord-by-ln  (into {} (map-indexed (fn [i row] [(nth row 0) (nth ords i)]) rows))
+         hash-by-ln (into {} (map (fn [row] [(nth row 0) (nth row 2)]) rows))]
+     (into {}
+           (keep (fn [[ln s]]
+                   (when-not (str/blank? (str s))
+                     (let [h (get hash-by-ln ln (line-hash s))]
+                       [ln (hash-anchor h (get freqs h 1) (get ord-by-ln ln 1))]))))
+           visible-tuples))))
 (def ^:const hashline-gutter
   "Separator between the hash anchor and the line text in rendered output."
   "│ ")
