@@ -46,6 +46,29 @@
    computed sizes for the input thread to read."
   #{:set-layout})
 
+(def ^:private always-bump-events
+  "Events that MUST wake the painter even though they change nothing in the
+   active view's app-db slice. `:bump-render-version` is the universal escape
+   hatch — notifications, prewarm completion, the cursor blink, mouse hover,
+   and the F2 reopen seed all ride it to force exactly one repaint — so it has
+   to bypass the `active-view-changed?` gate below."
+  #{:bump-render-version})
+
+(defn- active-view-slice
+  "The portion of app-db the ACTIVE view paints. Excludes background tab state
+   (`:tab-locals`), the dirty counter (`:render-version`), and the render
+   thread's published layout (`:layout`). A mutation that leaves this slice
+   untouched — e.g. a turn streaming into an UNFOCUSED tab, which only rewrites
+   `:tab-locals[<bg-id>]` — is invisible to the user, so it must not wake the
+   painter. Without this gate a background turn forces a full active-tab repaint
+   per streamed token and starves the focused tab (it can't even echo typing)."
+  [db]
+  (dissoc db :tab-locals :render-version :layout))
+
+(defn- active-view-changed?
+  [old-db new-db]
+  (not= (active-view-slice old-db) (active-view-slice new-db)))
+
 (defn- notify-render! []
   (locking render-monitor (.notifyAll render-monitor)))
 
@@ -171,24 +194,42 @@
 
 (defn dispatch
   "Dispatch an event vector, e.g. (dispatch [:send-message \"hello\"]).
-   Bumps `:render-version` and wakes the render thread for every event
-   except those in `no-render-bump-events`."
+   Wakes the render thread when the event changes the ACTIVE view. An event
+   bumps `:render-version` and notifies the painter unless it is in
+   `no-render-bump-events`, AND either it is in `always-bump-events` or it
+   actually mutated the active-view slice (see `active-view-slice`). A turn
+   streaming into a background tab only rewrites `:tab-locals`, so it no longer
+   wakes the painter — the header tab spinner still animates on the render
+   loop's own wall-clock tick."
   [[id :as event-vec]]
   (if-let [{:keys [type] :as handler} (get @event-registry id)]
-    (let [bump? (not (no-render-bump-events id))]
+    (let [allow-bump? (not (no-render-bump-events id))
+          force?      (contains? always-bump-events id)
+          bumped?     (volatile! false)
+          decide-bump (fn [old-db new-db]
+                        (and allow-bump?
+                          (or force? (active-view-changed? old-db new-db))))]
       (case type
         :db (swap! app-db
               (fn [db]
-                (let [db' (finalize-db ((:fn handler) db event-vec))]
-                  (if bump? (bump-version db') db'))))
-        :fx (let [{:keys [db fx]} ((:fn handler) @app-db event-vec)]
-              (when db
-                (let [db' (finalize-db db)]
-                  (reset! app-db (if bump? (bump-version db') db'))))
+                (let [db'  (finalize-db ((:fn handler) db event-vec))
+                      eff? (decide-bump db db')]
+                  (vreset! bumped? eff?)
+                  (if eff? (bump-version db') db'))))
+        :fx (let [old-db @app-db
+                  {:keys [db fx]} ((:fn handler) old-db event-vec)]
+              (if db
+                (let [db'  (finalize-db db)
+                      eff? (decide-bump old-db db')]
+                  (vreset! bumped? eff?)
+                  (reset! app-db (if eff? (bump-version db') db')))
+                ;; Pure-effect handler (no :db): preserve the prior contract —
+                ;; notify whenever the event is allowed to bump at all.
+                (vreset! bumped? allow-bump?))
               (doseq [[fx-id & args] fx]
                 (when-let [fx-fn (get @fx-registry fx-id)]
                   (apply fx-fn args)))))
-      (when bump? (notify-render!)))
+      (when @bumped? (notify-render!)))
     (throw (ex-info (str "No handler registered for event: " id) {:event event-vec}))))
 
 ;;; ── State shape ────────────────────────────────────────────────────────────
