@@ -982,7 +982,9 @@
         (components/help-overlay! g cols rows))
       ;; F2 context panel (W3) — paints last, from the derived `ctx-snapshot`.
       (when (:tasks-open? db)
-        (components/context-overlay! g cols rows ctx-snapshot))
+        (let [geom (components/context-overlay! g cols rows ctx-snapshot (:ctx-scroll db))]
+          (when (not= (:max-scroll geom) (:ctx-scroll-max db))
+            (state/dispatch [:set-ctx-scroll-max (:max-scroll geom)]))))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols,
@@ -2820,15 +2822,17 @@
                                      (state/dispatch [:reset-input])))
                                  :else (when-not (:dialog-open? @state/app-db)
                                          (case cmd-id
-                                           :new-session (do
-                                                          ;; Reset the ORIGINATING tab's input FIRST,
-                                                          ;; before switch-session! focuses the new tab —
-                                                          ;; otherwise the post-call [:reset-input] below
-                                                          ;; clears the NEW session and `/new-session`
-                                                          ;; lingers in this tab's buffer.
+                                           :new-session (let [seed (some-> (not-empty (str/trim (str args)))
+                                                                    (input/expand-paste-placeholders (:pastes @state/app-db)))]
+                                                          ;; Expand `[Pasted #N: ...]` against the ORIGINATING
+                                                          ;; tab's `:pastes` BEFORE [:reset-input] clears that
+                                                          ;; registry. The new session's `:pastes` is empty, so
+                                                          ;; deferring expansion to its [:send-message] ships the
+                                                          ;; cosmetic token to the provider instead of the pasted
+                                                          ;; payload (the `/new-session` paste-loss bug).
                                                           (state/dispatch [:reset-input])
                                                           (switch-session! {:action    :new
-                                                                            :seed-text (not-empty (str/trim (str args)))}))
+                                                                            :seed-text seed}))
                                                    ;; Workspace ops (`:workspace`,
                                                    ;; `:apply-workspace-to-trunk`,
                                                    ;; `:discard-workspace-{soft,hard}`) live as
@@ -2979,8 +2983,16 @@
                            (recur))
                          :toggle-help (do (state/dispatch [:toggle-help]) (recur))
                          :toggle-tasks (do (state/dispatch [:toggle-tasks]) (recur))
-                         :history-up (do (state/dispatch [:history-up]) (recur))
-                         :history-down (do (state/dispatch [:history-down]) (recur))
+                         :history-up (do (if (:tasks-open? @state/app-db)
+                                           (do (state/dispatch [:ctx-scroll-by -1])
+                                               (state/dispatch [:bump-render-version]))
+                                           (state/dispatch [:history-up]))
+                                         (recur))
+                         :history-down (do (if (:tasks-open? @state/app-db)
+                                             (do (state/dispatch [:ctx-scroll-by 1])
+                                                 (state/dispatch [:bump-render-version]))
+                                             (state/dispatch [:history-down]))
+                                           (recur))
                          :cycle-reasoning (do (state/dispatch [:cycle-reasoning-level]) (recur))
                          :cycle-verbosity (do (state/dispatch [:cycle-codex-verbosity]) (recur))
                          :cycle-model (do (state/dispatch [:cycle-model]) (recur))
@@ -3101,11 +3113,17 @@
                          :cancel (do (when (:loading? @state/app-db)
                                        (state/dispatch [:cancel-turn]))
                                    (recur))
-                         :scroll-up (do (state/dispatch [:scroll-up arrow-scroll-step total-h
-                                                         inner-h])
+                         :scroll-up (do (if (:tasks-open? @state/app-db)
+                                          (do (state/dispatch [:ctx-scroll-by -10])
+                                              (state/dispatch [:bump-render-version]))
+                                          (state/dispatch [:scroll-up arrow-scroll-step total-h
+                                                           inner-h]))
                                       (recur))
-                         :scroll-down (do (state/dispatch [:scroll-down arrow-scroll-step total-h
-                                                           inner-h])
+                         :scroll-down (do (if (:tasks-open? @state/app-db)
+                                            (do (state/dispatch [:ctx-scroll-by 10])
+                                                (state/dispatch [:bump-render-version]))
+                                            (state/dispatch [:scroll-down arrow-scroll-step total-h
+                                                             inner-h]))
                                         (recur))
                          :continue (recur))))))))
            (finally
