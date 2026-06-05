@@ -135,6 +135,9 @@
                    {:success? false :result nil :info {} :error error}))))
         (sort-by :position channel)))
     (= :vis/answer result)           nil
+    ;; Engine mutator sentinel — render the call as code, suppress the
+    ;; result echo (parity with the live `format-form-result` path).
+    (= :vis/silent result)           nil
     (runtime-ref? result)            "<legacy runtime value; not restorable>"
     (extension/tool-result? result)  (extension/render-fn-result->ir
                                        (extension/render-tool-result result))
@@ -160,9 +163,12 @@
    :result-detail   (form-result-detail block)
    :error           (:error block)
    :success?        (nil? (:error block))
+   ;; A restored form is hidden ONLY when structurally code-free (answer /
+   ;; title recap blocks). A `:vis/silent` RESULT no longer hides a
+   ;; code-bearing block — task-set! / fact-set! restore as visible code,
+   ;; parity with the live path.
    :silent?         (and (nil? (:error block))
                       (or (:vis/silent block)
-                        (= :vis/silent (:result block))
                         (structurally-silent-block? block)))})
 
 (defn- it->iteration-entry

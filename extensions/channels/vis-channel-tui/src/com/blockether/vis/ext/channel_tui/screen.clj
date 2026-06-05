@@ -1326,9 +1326,21 @@
                         now-ms (System/currentTimeMillis)
                         loading? (boolean (:loading? db))
                         scroll-anim? (scroll-anim-active? db)
-                        animate? (or (and loading?
-                                       (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
-                                   scroll-anim?)
+                          ;; F1 (help) / F2 (context) overlays LOCK the
+                          ;; background: while one is up we suppress every
+                          ;; incremental repaint path (spinner tick, scroll
+                          ;; ease, header-hover, partial-live). The overlay
+                          ;; paints once on the version bump that opened it
+                          ;; and then sits still — no streaming bubble redraw
+                          ;; underneath flickering through it. A real change
+                          ;; (overlay toggle, live ctx update, resize) still
+                          ;; bumps :render-version and forces ONE full frame
+                          ;; that repaints the overlay cleanly on top.
+                        overlay-open? (or (:help-open? db) (:tasks-open? db))
+                        animate? (and (not overlay-open?)
+                                   (or (and loading?
+                                         (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
+                                     scroll-anim?))
                         same-size? (and (= last-cols cols) (= last-rows rows))
                           ;; The slash-command suggestions popup is
                           ;; drawn JUST ABOVE the input box, which
@@ -1348,12 +1360,14 @@
                           ;; after a dialog session held draw-lock: see
                           ;; the no-got-lock branch above.
                         header-hover-only?
-                        (and same-size?
+                        (and (not overlay-open?)
+                          same-size?
                           last-layout
                           (not animate?)
                           (not was-blocked?)
                           (header-hover-only-change? last-db db last-hover current-hover))
-                        partial-live? (and (not was-blocked?)
+                        partial-live? (and (not overlay-open?)
+                                        (not was-blocked?)
                                         (partial-live-frame? last-db
                                           db
                                           same-size?

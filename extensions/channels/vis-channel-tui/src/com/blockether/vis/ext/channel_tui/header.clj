@@ -493,29 +493,33 @@
       *register-click-regions?*)
 
     ;; RIGHT slot: labeled, clickable chips — terminal-safe stand-ins for the
-    ;; F2/F1 accelerators, so they read as what they do. Right-aligned as a
-    ;; cluster immediately left of the id badge: F2 tasks ┊ F1 help ┊ #id.
-    ;; GLYPHS: ASCII-only. Earlier ☰ (U+2630, Misc Symbols) is East-Asian
-    ;; AMBIGUOUS-width — lanterna measures it as 1 col but many terminals/fonts
-    ;; paint it as 2, so the chip drifted/resized on hover. `?` is plain ASCII
-    ;; (always 1 col). Any icon must come from the box-drawing/block class the
-    ;; borders+scrollbar already use, never an ambiguous Misc-Symbol.
+    ;; F1/F2 accelerators, so they read as what they do. Right-aligned as a
+    ;; cluster immediately left of the id badge: F1 help | F2 tasks | #id.
+    ;; Separators are plain ASCII `|`. GLYPHS: ASCII-only — earlier ☰ (U+2630)
+    ;; is East-Asian AMBIGUOUS-width and drifted on hover.
     (let [tasks-chip "F2 tasks"
           help-chip  "F1 help"
           tasks-w    (p/display-width tasks-chip)
           help-w     (p/display-width help-chip)
-          ;; right→left cluster: tasks ┊ help ┊ #id (id badge already painted at
-          ;; action-col). One space of breathing room on each side of every ┊.
-          help-div-col  (max (+ right-x edge-pad) (- action-col 2))
-          help-col      (max (+ right-x edge-pad) (- help-div-col 1 help-w))
-          tasks-div-col (max (+ right-x edge-pad) (- help-col 2))
-          tasks-col     (max (+ right-x edge-pad) (- tasks-div-col 1 tasks-w))]
-      (components/header-badge! g tasks-col content-row tasks-chip :toggle-tasks
-        *register-click-regions?*)
-      (components/tab-divider! g content-row tasks-div-col)
+          ;; Floor the cluster at a STATIC column (edge-pad), never a width %.
+          floor      edge-pad
+          pipe!      (fn [col]
+                       (p/clear-styles! g)
+                       (p/set-colors! g t/header-active-tab-accent t/terminal-bg)
+                       (p/put-str! g col content-row "|")
+                       (p/clear-styles! g))
+          ;; left→right: help | tasks | #id (id badge already painted at
+          ;; action-col). One space of breathing room on each side of every |.
+          tasks-div-col (max floor (- action-col 2))
+          tasks-col     (max floor (- tasks-div-col 1 tasks-w))
+          help-div-col  (max floor (- tasks-col 2))
+          help-col      (max floor (- help-div-col 1 help-w))]
       (components/header-badge! g help-col content-row help-chip :toggle-help
         *register-click-regions?*)
-      (components/tab-divider! g content-row help-div-col))
+      (pipe! help-div-col)
+      (components/header-badge! g tasks-col content-row tasks-chip :toggle-tasks
+        *register-click-regions?*)
+      (pipe! tasks-div-col))
 
     ;; Extension-contributed rows.
     (loop [row (inc content-row)

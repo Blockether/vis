@@ -324,19 +324,23 @@
                                   com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                                   (fn [_db sid] (get iters sid))]
                       (f)))]
-      (it "recall \"tN/iM/fK\" windows a big form result with a cursor"
+      (it "recall \"tN/iM/fK\" windows a big form result with a token-budget cursor"
         (with-db
-          #(let [r (recall "t1/i1/f1" {:offset 0 :limit 1000})]
-             (expect (= [0 1000] (:vis/window r)))
-             (expect (integer? (:vis/size r)))      ; chars int, not a map
-             (expect (some? (:vis/next r)))         ; scroll continue-call
-             (expect (nil? (:vis/rewind r)))        ; rewind is GONE
-             (expect (= 1000 (count (:view r)))))))
-
+          (fn []
+            (let [r (recall "t1/i1/f1" {:offset 0 :limit 200})]
+              (expect (= 0 (first (:vis/window r))))    ; window starts at the offset
+              (expect (pos? (second (:vis/window r))))  ; advanced forward by a token budget
+              (expect (< (second (:vis/window r)) (:vis/size r)))
+              (expect (integer? (:vis/size r)))         ; chars int, not a map
+              (expect (some? (:vis/next r)))            ; scroll continue-call
+              (expect (nil? (:vis/rewind r)))           ; rewind is GONE
+              (expect (pos? (count (:view r))))         ; non-empty slice
+              (expect (< (count (:view r)) (:vis/size r)))))))
       (it "recall unknown scope → :recall-target-not-found"
         (with-db
-          #(expect (= :recall-target-not-found
-                     (:vis/error (recall "t9/i9/f9")))))))))
+          (fn []
+            (expect (= :recall-target-not-found
+                      (:vis/error (recall "t9/i9/f9"))))))))))
 
 (defdescribe recall-search-test
   (describe "recall {:match …} searches the raw iteration trace (summarized stays searchable)"

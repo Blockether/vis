@@ -1681,9 +1681,26 @@
                                              (fn [[_ timeline]]
                                                (try (dispatch [:set-progress-iterations workspace-id timeline])
                                                  (catch Throwable _ nil))))
-                          {:keys [on-chunk]}
+                          {track-chunk :on-chunk}
                           (vis/make-progress-tracker
                             {:on-update progress-update!})
+                          ;; LIVE F2 context dialog: every `:iteration-final`
+                          ;; chunk carries the working-memory snapshot
+                          ;; (`:tasks`/`:facts`) from the loop's live ctx-atom.
+                          ;; Push it to `:ctx-by-session` mid-turn so the panel
+                          ;; reflects task/fact writes as they happen — not only
+                          ;; after the turn ends (the turn-end DB reload still
+                          ;; runs in `:message-received` as the durable sync).
+                          ;; The `dispatch` bumps `:render-version`, so an open
+                          ;; overlay repaints with the fresh snapshot.
+                          sid (:id session)
+                          on-chunk (fn [chunk]
+                                     (when (and sid (= :iteration-final (:phase chunk))
+                                             (or (:tasks chunk) (:facts chunk)))
+                                       (try (dispatch [:set-ctx-panel sid
+                                                       {:tasks (:tasks chunk) :facts (:facts chunk)}])
+                                         (catch Throwable _ nil)))
+                                     (track-chunk chunk))
                           result (chat/turn! session text
                                    {:on-chunk          on-chunk
                                     ;; Pass the cancellation TOKEN, not the
