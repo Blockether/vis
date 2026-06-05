@@ -494,10 +494,13 @@
 
     ;; RIGHT slot: labeled, clickable chips — terminal-safe stand-ins for the
     ;; F2/F1 accelerators, so they read as what they do. Right-aligned as a
-    ;; cluster immediately left of the id badge: [☰ context][? help] <id>.
-    ;; ☰ context = the F2 session working-memory panel (tasks + facts);
-    ;; ? help = the F1 / Ctrl+H shortcut overlay.
-    (let [ctx-chip  " ☰ context "
+    ;; cluster immediately left of the id badge: [context][? help] <id>.
+    ;; GLYPHS: ASCII-only. Earlier ☰ (U+2630, Misc Symbols) is East-Asian
+    ;; AMBIGUOUS-width — lanterna measures it as 1 col but many terminals/fonts
+    ;; paint it as 2, so the chip drifted/resized on hover. `?` is plain ASCII
+    ;; (always 1 col). Any icon must come from the box-drawing/block class the
+    ;; borders+scrollbar already use, never an ambiguous Misc-Symbol.
+    (let [ctx-chip  " context "
           help-chip " ? help "
           gap       1
           help-col  (max (+ right-x edge-pad) (- action-col gap (p/display-width help-chip)))
