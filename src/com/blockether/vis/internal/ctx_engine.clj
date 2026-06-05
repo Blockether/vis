@@ -1296,29 +1296,52 @@
 ;; Pure halves live here; the effectful DB/ctx-atom halves live in
 ;; `ctx-loop/build-introspect-bindings`.
 ;; =============================================================================
-(def ^:private RECALL_DEFAULT_LIMIT_CHARS
-  "Default recall window in chars (~2000 tok). Bounded so the recall
-   result itself stays under FORM_RESULT_TOKEN_LIMIT and renders
-   verbatim — the window is GUARANTEED visible, never re-clipped."
-  8000)
+(def ^:private RECALL_DEFAULT_LIMIT_TOKENS
+  "Default recall window in TOKENS, matched to the renderer's
+   FORM_RESULT_TOKEN_LIMIT (10 000 tok) so a default `recall` returns the
+   SAME evidence budget a `cat`/form-result gets before it is head+tail
+   clipped — recall and cat now share one window size. Held just under that
+   ceiling (envelope headroom) so the recall result itself renders verbatim
+   and is never re-clipped."
+  9000)
+(defn- token-fit-end
+  "Largest char index `end` ≥ `off` such that the slice `(subs s off end)`,
+   as it renders into the recall envelope (pr-str-escaped), weighs ≤ `budget`
+   tokens under cl100k. Over-allocates chars (~4/tok) then shrinks to fit;
+   always advances ≥1 char so the cursor makes forward progress."
+  ^long [^String s ^long off ^long budget]
+  (let [total (count s)]
+    (if (>= off total)
+      total
+      (loop [end (min total (+ off (* (max 1 budget) 4)))]
+        (cond
+          (<= end (inc off))
+          (min total (inc off))
+          (<= (tokens/count-pr-tokens (subs s off end)) budget)
+          end
+          :else
+          (recur (max (inc off) (long (+ off (* (- end off) 0.85))))))))))
 (defn recall-window
-  "Pure char-window over `(pr-str v)` with a stateless cursor. Returns a
-   self-describing map: the slice plus the exact `(recall … {:offset N})`
-   continue-call, so the model scrubs a big value the trailer clip would
-   otherwise hide the middle of.
+  "Pure token-bounded window over `(pr-str v)` with a stateless char cursor.
+   Returns a self-describing map: the slice plus the exact
+   `(recall … {:offset N})` continue-call, so the model scrubs a big value
+   the trailer clip would otherwise hide the middle of. The default window
+   carries `RECALL_DEFAULT_LIMIT_TOKENS` — the same evidence budget `cat`/any
+   form-result gets — so recall and cat read the same amount by default.
 
    `addr-str` is the pr-str of the recovery address (form scope string
-   or entity keyword) echoed into the continue-call."
-  ([addr-str v] (recall-window addr-str v 0 RECALL_DEFAULT_LIMIT_CHARS))
-  ([addr-str v offset limit]
+   or entity keyword) echoed into the continue-call. `budget` is a TOKEN
+   count (not chars); `offset` stays a char cursor for stateless scrolling."
+  ([addr-str v] (recall-window addr-str v 0 RECALL_DEFAULT_LIMIT_TOKENS))
+  ([addr-str v offset budget]
    (let [s     (try (pr-str v) (catch Throwable _ (str v)))
          total (count s)
          off   (max 0 (min (long (or offset 0)) total))
-         lim   (max 1 (long (or limit RECALL_DEFAULT_LIMIT_CHARS)))
-         end   (min total (+ off lim))]
+         bud   (max 1 (long (or budget RECALL_DEFAULT_LIMIT_TOKENS)))
+         end   (token-fit-end s off bud)]
      (cond-> {:vis/recall addr-str
               :vis/window [off end]      ; char range of this slice
-              :vis/size   total          ; total chars (offset bound)
+              :vis/size   total          ; total chars (offset cursor bound)
               :view       (subs s off end)}
        (< end total) (assoc :vis/next (str "(recall " addr-str " {:offset " end "})"))))))
 (defn find-entity-by-id

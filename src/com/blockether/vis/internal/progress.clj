@@ -195,6 +195,12 @@
         (extension/render-fn-result->ir
           (extension/render-tool-result (:result chunk)))
 
+        ;; `:vis/silent` is the engine mutator sentinel (task-set! / fact-set!
+        ;; / done / …). The CALL is rendered as code; its result is a quiet
+        ;; effect (visible in the context dialog), so emit NO result echo —
+        ;; never the literal `:vis/silent` keyword tag.
+        (= :vis/silent (:result chunk)) nil
+
         :else
         (fmt/bounded-value-str (:result chunk))))))
 
@@ -211,10 +217,13 @@
     idx))
 
 (defn- silent-chunk?
+  "Whether a chunk's whole form is hidden from the trace. Driven by the
+   loop's structural `:silent?` flag (code-free blocks: answer / title
+   recaps). A `:vis/silent` RESULT no longer hides the form — code-bearing
+   mutators (task-set! / fact-set!) show their call; only the result echo
+   is suppressed (see `format-form-result`)."
   [chunk]
-  (boolean
-    (or (:silent? chunk)
-      (= :vis/silent (:result chunk)))))
+  (boolean (:silent? chunk)))
 
 ;; Engine-form detection ("is this form silent UI chrome?") delegates
 ;; to `ctx-engine/engine-form-src?`. It edamame-parses the head symbol

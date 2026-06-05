@@ -51,7 +51,7 @@
       (expect (= 1 (p/display-width \a)))
       (expect (= 1 (p/display-width \space)))
       (expect (= 0 (p/display-width nil)))
-      (expect (= 1 (p/display-width 7))))))
+      (expect (= 1 (p/display-width 7)))))
 
   (describe "BMP `Emoji_Presentation=Yes` chars are TWO columns (lanterna fork fix)"
     ;; Pre-fix lanterna's TextCharacter.isDoubleWidth() returned false

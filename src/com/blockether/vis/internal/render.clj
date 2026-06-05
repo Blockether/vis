@@ -1401,13 +1401,18 @@
                                      (= :vis.foundation/session-title k)
                                      []
 
+                                     ;; `task-set!` / `fact-set!` render as VISIBLE
+                                     ;; CODE — same as `summarize` and every other
+                                     ;; model-authored form. The user wants to see
+                                     ;; the model open/close tasks and record facts;
+                                     ;; the EFFECT already shows in the F2 context
+                                     ;; dialog, so we surface the CALL (not a recap
+                                     ;; chip, not a hidden `:vis/silent` tag). A
+                                     ;; `:code` segment also makes the block
+                                     ;; non-`structurally-silent?` so a fence
+                                     ;; containing only a mutator still paints.
                                      :else
-                                     [(cond-> {:kind kind
-                                               :id   k}
-                                        (some-> payload :partial :status)
-                                        (assoc :status (-> payload :partial :status))
-                                        (some-> payload :partial :title)
-                                        (assoc :title  (-> payload :partial :title)))]))
+                                     [{:kind :code :source (str/trim slice)}]))
                                  :code
                                  [{:kind :code :source (str/trim slice)}])))
                            (map-indexed vector forms)))

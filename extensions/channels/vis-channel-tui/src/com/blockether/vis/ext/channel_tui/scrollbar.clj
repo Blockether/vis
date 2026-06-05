@@ -19,11 +19,8 @@
   (:import [com.googlecode.lanterna Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.input MouseAction MouseActionType]))
-
 (def ^:const THUMB_H 1)
-
 ;;; ── Geometry ───────────────────────────────────────────────────────────────
-
 (defn geometry
   "Compute thumb geometry for a vertical scrollbar.
 
@@ -40,97 +37,82 @@
    Returns `{:thumb-top-rel :thumb-h :max-scroll :track-h}` when the
    content overflows the viewport, otherwise `nil` (no thumb should be
    drawn and every click hit-test below should return off-thumb)."
-  ([total-h inner-h scroll]
-   (geometry total-h inner-h inner-h scroll))
+  ([total-h inner-h scroll] (geometry total-h inner-h inner-h scroll))
   ([total-h inner-h track-h scroll]
    (let [total-h (long total-h)
          inner-h (long inner-h)
          track-h (long track-h)]
      (when (and (pos? inner-h) (pos? track-h) (> total-h inner-h))
        (let [max-scroll (max 1 (- total-h inner-h))
-             eff        (let [s (long (or scroll max-scroll))]
-                          (max 0 (min s max-scroll)))
-             thumb-h    THUMB_H
-             thumb-top  (long (* (- track-h thumb-h)
-                                (/ (double eff) max-scroll)))]
-         {:thumb-top-rel thumb-top
-          :thumb-h       thumb-h
-          :max-scroll    max-scroll
-          :track-h       track-h})))))
-
+             eff (let [s (long (or scroll max-scroll))] (max 0 (min s max-scroll)))
+             thumb-h THUMB_H
+             thumb-top (long (* (- track-h thumb-h) (/ (double eff) max-scroll)))]
+         {:thumb-top-rel thumb-top, :thumb-h thumb-h, :max-scroll max-scroll, :track-h track-h})))))
 ;;; ── Drawing ────────────────────────────────────────────────────────────────
-
 (defn draw!
-  "Paint a vertical scrollbar.
-
-   Required opts: `:col :top :track-h :total-h :inner-h :scroll`.
-   Optional opts: `:track-fg :track-bg :thumb-fg :thumb-bg`
-   (default = dialog palette, used by every modal scrollbar).
-
-   Returns the geometry map (or nil when no overflow, in which case
-   nothing is painted)."
-  [^TextGraphics g {:keys [col top track-h total-h inner-h scroll
-                           track-fg track-bg thumb-fg thumb-bg]
-                    :or   {track-fg t/dialog-border
-                           track-bg t/dialog-bg
-                           thumb-fg t/dialog-hint-key
-                           thumb-bg t/dialog-bg}}]
-  (when-let [{:keys [thumb-top-rel thumb-h] :as geom}
-             (geometry total-h inner-h track-h scroll)]
-    (let [col (long col) top (long top) track-h (long track-h)]
+  "Paint a vertical scrollbar.\n\n   Required opts: `:col :top :track-h :total-h :inner-h :scroll`.\n   Optional opts: `:track-fg :track-bg :thumb-fg :thumb-bg`\n   (default = dialog palette, used by every modal scrollbar).\n\n   Returns the geometry map (or nil when no overflow, in which case\n   nothing is painted)."
+  [^{:tag TextGraphics} g
+   {:keys [col top track-h total-h inner-h scroll track-fg track-bg thumb-fg thumb-bg],
+    :or {track-fg t/dialog-border,
+         track-bg t/dialog-bg,
+         thumb-fg t/dialog-hint-key,
+         thumb-bg t/dialog-bg}}]
+  (when-let [{:keys [thumb-top-rel thumb-h], :as geom} (geometry total-h inner-h track-h scroll)]
+    (let [col (long col)
+          top (long top)
+          track-h (long track-h)]
       (doseq [r (range track-h)]
         (p/set-colors! g track-fg track-bg)
-        (p/set-char! g col (+ top (long r)) Symbols/SINGLE_LINE_VERTICAL))
+        (p/set-char! g col (+ top (long r)) \|))
       (doseq [r (range thumb-h)]
         (p/set-colors! g thumb-fg thumb-bg)
         (p/set-char! g col (+ top (long thumb-top-rel) (long r)) \█)))
     geom))
-
 ;;; ── Mouse / wheel helpers ──────────────────────────────────────────────────
-
 (defn wheel-delta
   "Return -1 for SCROLL_UP, +1 for SCROLL_DOWN, else nil. Accepts a
    Lanterna KeyStroke or MouseAction; non-mouse events return nil."
   [event]
   (when (instance? MouseAction event)
     (let [a (.getActionType ^MouseAction event)]
-      (cond
-        (= a MouseActionType/SCROLL_UP)   -1
-        (= a MouseActionType/SCROLL_DOWN)  1
-        :else nil))))
-
+      (cond (= a MouseActionType/SCROLL_UP) -1
+            (= a MouseActionType/SCROLL_DOWN) 1
+            :else nil))))
 (defn wheel-step
   "Wheel delta multiplied by the coalesced event count carried in
    `MouseAction#getButton`. Lanterna stuffs the coalesced count into
    the button field when an upstream input loop drains a wheel flood,
    so one mouse tick can move multiple rows."
   [event]
-  (when-let [d (wheel-delta event)]
-    (* (long d) (max 1 (long (.getButton ^MouseAction event))))))
-
+  (when-let [d (wheel-delta event)] (* (long d) (max 1 (long (.getButton ^MouseAction event))))))
 (defn on-track?
   "True when (mx,my) falls inside the scrollbar column at any track row.
 
    `bar` is `{:col :top :track-h [:x-band]}`. `:x-band` widens the
    x-axis tolerance (default 1) — chat messages use 3 so users don't
    need pixel-perfect aim on the right gutter."
-  [mx my {:keys [col top track-h x-band] :or {x-band 1}}]
-  (let [mx (long mx) my (long my) col (long col) top (long top)
-        track-h (long track-h) x-band (long x-band)]
-    (and (>= mx (- col (dec x-band))) (<= mx col)
-      (>= my top) (< my (+ top track-h)))))
-
+  [mx my {:keys [col top track-h x-band], :or {x-band 1}}]
+  (let [mx (long mx)
+        my (long my)
+        col (long col)
+        top (long top)
+        track-h (long track-h)
+        x-band (long x-band)]
+    (and (>= mx (- col (dec x-band))) (<= mx col) (>= my top) (< my (+ top track-h)))))
 (defn on-thumb?
   "True when (mx,my) lands on the thumb. `bar` carries `:col :top
    [:x-band]`; `geom` is the result of `geometry`."
-  [mx my {:keys [col top x-band] :or {x-band 1}}
-   {:keys [thumb-top-rel thumb-h]}]
-  (let [mx (long mx) my (long my) col (long col) top (long top)
+  [mx my {:keys [col top x-band], :or {x-band 1}} {:keys [thumb-top-rel thumb-h]}]
+  (let [mx (long mx)
+        my (long my)
+        col (long col)
+        top (long top)
         x-band (long x-band)
         thumb-top (+ top (long thumb-top-rel))]
-    (and (>= mx (- col (dec x-band))) (<= mx col)
-      (>= my thumb-top) (< my (+ thumb-top (long thumb-h))))))
-
+    (and (>= mx (- col (dec x-band)))
+         (<= mx col)
+         (>= my thumb-top)
+         (< my (+ thumb-top (long thumb-h))))))
 (defn scroll-from-mouse-y
   "Convert a mouse Y on the track into a clamped scroll value.
 
@@ -151,9 +133,9 @@
          inner-h (long inner-h)
          track-h (long track-h)]
      (when (and (pos? inner-h) (pos? track-h) (> total-h inner-h))
-       (let [thumb-h    THUMB_H
+       (let [thumb-h THUMB_H
              max-scroll (max 0 (- total-h inner-h))
-             rel        (- (long mouse-y) (long top) (long (or grip-offset 0)))
-             denom      (max 1 (- track-h thumb-h))
-             frac       (max 0.0 (min 1.0 (double (/ rel denom))))]
+             rel (- (long mouse-y) (long top) (long (or grip-offset 0)))
+             denom (max 1 (- track-h thumb-h))
+             frac (max 0.0 (min 1.0 (double (/ rel denom))))]
          (long (Math/round (* frac max-scroll))))))))

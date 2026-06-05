@@ -114,10 +114,11 @@
               (render/parse-block-display
                 "(set-session-title! \"Greeting\")\n(task-set! :vis.foundation/session-title {:status :done})"))))
 
-  (it "keeps the model's own task-set! recaps for non-engine ids"
-    ;; A model-emitted task-set! that ISN'T the session-title
-    ;; auto-ack still surfaces as a `Task — …` recap row.
-    (expect (= [{:kind :task-update :id :user/migration :status :doing}]
+  (it "renders the model's own task-set! as visible code (effect shows in the context dialog)"
+    ;; A model-emitted task-set! that ISN'T the session-title auto-ack
+    ;; renders as the visible CALL — same as summarize and every other
+    ;; model form. The effect surfaces in the F2 context dialog.
+    (expect (= [{:kind :code :source "(task-set! :user/migration {:status :doing})"}]
               (render/parse-block-display
                 "(task-set! :user/migration {:status :doing})"))))
 
@@ -132,14 +133,16 @@
                  :source "(cat \"src/foo.clj\")"}]
               (render/parse-block-display "(cat \"src/foo.clj\")"))))
 
-  (it "classifies ctx mutators as structured recap segments (engine-only — raw source is hidden)"
-    ;; Only task-set! / fact-set! survive; spec-set! and proof extraction
-    ;; are gone. task-set! recap carries :status / :title only.
-    (expect (= [{:kind :task-update :id :K :status :done}]
+  (it "renders ctx mutators (task-set! / fact-set!) as visible code"
+    ;; The CALL is shown like summarize and every other model form; the
+    ;; effect surfaces in the F2 context dialog, so no recap chip and no
+    ;; hidden :vis/silent tag. The foundation session-title auto-ack is
+    ;; still dropped (separate test above).
+    (expect (= [{:kind :code :source "(task-set! :K {:status :done})"}]
               (render/parse-block-display "(task-set! :K {:status :done})")))
-    (expect (= [{:kind :task-update :id :K :title "x"}]
+    (expect (= [{:kind :code :source "(task-set! :K {:title \"x\"})"}]
               (render/parse-block-display "(task-set! :K {:title \"x\"})")))
-    (expect (= [{:kind :fact-update :id :K}]
+    (expect (= [{:kind :code :source "(fact-set! :K {:content \"f\"})"}]
               (render/parse-block-display "(fact-set! :K {:content \"f\"})"))))
 
   (it "coalesces neighboring hidden tool calls into one hidden segment"
