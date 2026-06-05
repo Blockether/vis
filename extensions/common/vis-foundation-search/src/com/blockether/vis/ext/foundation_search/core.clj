@@ -531,6 +531,60 @@
               (if fence? (not in-fence?) in-fence?)
               (conj out ln))))))))
 
+(def ^:private fence-open-re
+  "A ``` fence delimiter, capturing the language tag (group 1, blank for a
+   bare fence)."
+  #"^\s*```(\S*)\s*$")
+
+(defn- doc-prose?
+  "True when a fenced body is documentation PROSE (headings, bullet lists,
+   sentences) rather than source code. Conservative on purpose — it gates
+   `unwrap-doc-fences`, and a false positive would render real code as
+   markdown (mangling `+`/`-`/`#` prefixes). Requires a genuine prose
+   signal (a sentence or ≥2 bullets), ≥60% doc-shaped lines, and NO `+`
+   diff lines. The trailing ` [...]` that `normalize-exa-excerpt` folds on
+   is stripped first so it doesn't hide a sentence's terminal period."
+  [body-lines]
+  (let [strip (fn [s] (str/replace s #"\s*\[\.\.\.\]\s*$" ""))
+        lines (map strip (remove str/blank? body-lines))
+        n     (count lines)
+        bul   (count (filter #(re-find #"^\s*[-*]\s+\S" %) lines))
+        hd    (count (filter #(re-find #"^#{1,6}\s+\S" %) lines))
+        plus  (count (filter #(re-find #"^\s*\+\s" %) lines))
+        sent  (count (filter #(and (> (count %) 55) (re-find #"\.\s*$" %)) lines))]
+    (and (>= n 3)
+      (zero? plus)
+      (or (>= sent 1) (>= bul 2))
+      (>= (+ bul hd sent) (* 0.6 n)))))
+
+(defn- unwrap-doc-fences
+  "Exa sometimes wraps a result's body PROSE in a bare ``` fence and never
+   closes it, so CommonMark paints the whole entry as one mono code block
+   (and the model reads it as code). Strip the opening delimiter of a
+   DANGLING (unterminated) BARE fence whose body is `doc-prose?`, letting
+   the headings / lists / paragraphs render natively.
+
+   Deliberately narrow — only the trailing unclosed bare fence is a
+   candidate, so language-tagged fences (```clj …), balanced fences, and
+   real-code bodies (a YAML manifest, SQL, shell) are all left intact.
+   Runs AFTER `normalize-exa-excerpt` so folded `[...]` markers don't
+   dilute the prose ratio."
+  [excerpt]
+  (let [lines (vec (str/split-lines (or excerpt "")))]
+    (loop [i 0, open nil]
+      (if (>= i (count lines))
+        (if (and open
+              (str/blank? (:lang open))
+              (doc-prose? (subvec lines (inc (:idx open)))))
+          (str/join "\n" (into (subvec lines 0 (:idx open))
+                           (subvec lines (inc (:idx open)))))
+          excerpt)
+        (let [m (re-matches fence-open-re (nth lines i))]
+          (cond
+            (and m (nil? open)) (recur (inc i) {:idx i :lang (second m)})
+            (and m open)        (recur (inc i) nil)
+            :else               (recur (inc i) open)))))))
+
 (defn- parse-exa-text
   "Split Exa MCP's blob into a vec of per-result citation maps.
    Exa returns plain markdown with this per-entry header pattern:
@@ -591,8 +645,9 @@
                       ;; and keep the rest as the excerpt.
                       (drop-while #(re-matches #"^(URL|Published|Author|Code/Highlights):.*" %)
                         rest-lines)))
-                  excerpt (normalize-exa-excerpt
-                            (str/trim (str/join "\n" excerpt-lines)))]]
+                  excerpt (-> (str/trim (str/join "\n" excerpt-lines))
+                            normalize-exa-excerpt
+                            unwrap-doc-fences)]]
         (cond-> {:type    citation-type
                  :title   title
                  :url     (or url "")
