@@ -316,7 +316,7 @@
 
 (defn- id-copy-block-text [id-short]
   (if id-short
-    id-short
+    (str "#" id-short)
     ""))
 
 (def ^:dynamic *register-click-regions?*
@@ -494,21 +494,28 @@
 
     ;; RIGHT slot: labeled, clickable chips — terminal-safe stand-ins for the
     ;; F2/F1 accelerators, so they read as what they do. Right-aligned as a
-    ;; cluster immediately left of the id badge: [context][? help] <id>.
+    ;; cluster immediately left of the id badge: F2 tasks ┊ F1 help ┊ #id.
     ;; GLYPHS: ASCII-only. Earlier ☰ (U+2630, Misc Symbols) is East-Asian
     ;; AMBIGUOUS-width — lanterna measures it as 1 col but many terminals/fonts
     ;; paint it as 2, so the chip drifted/resized on hover. `?` is plain ASCII
     ;; (always 1 col). Any icon must come from the box-drawing/block class the
     ;; borders+scrollbar already use, never an ambiguous Misc-Symbol.
-    (let [ctx-chip  " context "
-          help-chip " ? help "
-          gap       1
-          help-col  (max (+ right-x edge-pad) (- action-col gap (p/display-width help-chip)))
-          ctx-col   (max (+ right-x edge-pad) (- help-col (p/display-width ctx-chip)))]
-      (components/header-badge! g ctx-col content-row ctx-chip :toggle-tasks
+    (let [tasks-chip "F2 tasks"
+          help-chip  "F1 help"
+          tasks-w    (p/display-width tasks-chip)
+          help-w     (p/display-width help-chip)
+          ;; right→left cluster: tasks ┊ help ┊ #id (id badge already painted at
+          ;; action-col). One space of breathing room on each side of every ┊.
+          help-div-col  (max (+ right-x edge-pad) (- action-col 2))
+          help-col      (max (+ right-x edge-pad) (- help-div-col 1 help-w))
+          tasks-div-col (max (+ right-x edge-pad) (- help-col 2))
+          tasks-col     (max (+ right-x edge-pad) (- tasks-div-col 1 tasks-w))]
+      (components/header-badge! g tasks-col content-row tasks-chip :toggle-tasks
         *register-click-regions?*)
+      (components/tab-divider! g content-row tasks-div-col)
       (components/header-badge! g help-col content-row help-chip :toggle-help
-        *register-click-regions?*))
+        *register-click-regions?*)
+      (components/tab-divider! g content-row help-div-col))
 
     ;; Extension-contributed rows.
     (loop [row (inc content-row)

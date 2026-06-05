@@ -62,14 +62,19 @@
                      :text workspace-id,
                      :enabled? true}))
     close-button-width))
+(def ^{:private true} tab-divider-glyph
+  ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
+  ;; reads gentler than a solid │ between tabs / cluster chips. Box-drawing
+  ;; (EAW=A → one column in target terminals, same class as the borders).
+  "┊")
 (defn tab-divider!
-  "Paint a 1-col vertical `│` divider between two tabs at (col,row), in the
-   header's foreground so it stays high-contrast against the surface (white
-   on a dark terminal, dark on a light one)."
+  "Paint a 1-col dotted `┊` divider (between tabs, or between header-cluster
+   chips) at (col,row), in the header's foreground so it stays high-contrast
+   against the surface (white on a dark terminal, dark on a light one)."
   [g col row]
   (p/clear-styles! g)
   (p/set-colors! g t/footer-fg t/terminal-bg)
-  (p/put-str! g col row "│")
+  (p/put-str! g col row tab-divider-glyph)
   (p/clear-styles! g))
 ;; ── tab cell ────────────────────────────────────────────────────────────────
 (defn tab-cell!
@@ -303,9 +308,14 @@
     t/footer-fg-muted))
 (def ^:private task-status-rank {:doing 0, :todo 1, :done 2, :cancelled 3})
 (defn- clip-str
-  "Truncate `s` to `w` display columns with a trailing ellipsis."
+  "Truncate `s` to `w` display columns with a trailing ellipsis.
+   MUST clip by display width, not char index: `subs` indexes characters, so
+   for any string with wide graphemes (display-width > char-count) `(dec w)`
+   could exceed `(.length s)` and throw StringIndexOutOfBoundsException every
+   frame — which froze the whole F2 context overlay. `p/truncate-cols` walks
+   graphemes and never overruns the string."
   ^String [^String s ^long w]
-  (if (<= (p/display-width s) w) s (str (subs s 0 (max 0 (dec w))) "…")))
+  (if (<= (p/display-width s) w) s (str (p/truncate-cols s (max 0 (dec w))) "…")))
 (defn- task-overlay-lines
   "Build the overlay body as a vec of LINES, each a vec of `[text color bold?]`
    segments. A task is a primary line (colored status glyph + title + [status]
