@@ -455,6 +455,82 @@
      :max-lines (min (positive-long (:max-lines opts) (:max-lines cfg))
                   (:max-lines cfg))}))
 
+(def ^:private exa-bracket-marker-re
+  "A line that is ONLY Exa's bracketed `[...]` separator. Unambiguously a
+   fragment boundary — never valid source — so it folds inline even
+   inside a (often unterminated) ``` fence Exa wrapped the body in."
+  #"^\s*\[\.\.\.\]\s*$")
+
+(def ^:private exa-bare-marker-re
+  "A line that is ONLY a bare `...` / `…`. Treated as a separator only in
+   prose (outside fences), where a lone ellipsis line can't be real code."
+  #"^\s*(?:\.\.\.|…)\s*$")
+
+(def ^:private code-fence-re #"^\s*```")
+
+(defn- normalize-exa-excerpt
+  "Exa stitches non-contiguous page fragments together with a bare
+   `[...]` truncation marker on its OWN line. Between block-level
+   neighbours (a heading and a code fence, two list blocks, …)
+   CommonMark turns that lone marker into its own paragraph, so it
+   paints on an empty line by itself — and reads the same way in the
+   model-facing `:excerpt` text. (In free prose CommonMark already
+   soft-joins it inline, which is why the behaviour looks inconsistent.)
+
+   Fold every standalone marker into the END of the nearest preceding
+   content line so the ellipsis always stays inline. Constraints:
+     - A bracketed `[...]` folds anywhere (incl. inside Exa's spurious
+       ``` body wrapper).
+     - A bare `...` / `…` folds inline in PROSE; inside a fence it is
+       dropped ONLY when it abuts the opening ``` (Exa's lead-truncation
+       marker) — a genuine mid-code `...` (e.g. a Python `Ellipsis`
+       stub body) is left untouched.
+     - The backward fold scan stops at a fence delimiter, so a marker is
+       never fused onto a ``` line; if it abuts one it is dropped.
+     - A leading marker with no content to attach to is dropped.
+     - Consecutive markers collapse (a line already ending in the marker
+       is not doubled)."
+  [excerpt]
+  (let [lines  (str/split-lines (or excerpt ""))
+        marker " [...]"]
+    (loop [ls lines, in-fence? false, out []]
+      (if (empty? ls)
+        (str/join "\n" out)
+        (let [ln       (first ls)
+              fence?   (re-find code-fence-re ln)
+              bracket? (and (not fence?) (re-matches exa-bracket-marker-re ln))
+              bare?    (and (not fence?) (re-matches exa-bare-marker-re ln))
+              ;; Nearest non-blank content line above, or nil when a fence
+              ;; delimiter / the start is hit first (marker abuts a fence).
+              prev     (when (or bracket? bare?)
+                         (loop [i (dec (count out))]
+                           (when (>= i 0)
+                             (let [s (nth out i)]
+                               (cond
+                                 (str/blank? s)            (recur (dec i))
+                                 (re-find code-fence-re s) nil
+                                 :else                     i)))))]
+          (cond
+            ;; `[...]` anywhere, or a bare ellipsis in prose → fold inline
+            ;; (or drop when it abuts a fence / the start).
+            (or bracket? (and bare? (not in-fence?)))
+            (recur (rest ls) in-fence?
+              (cond-> out
+                (and prev (not (str/ends-with? (nth out prev) marker)))
+                (update prev str marker)))
+
+            ;; Bare ellipsis right after an opening fence → Exa lead
+            ;; marker → drop (prev is nil ⇒ the only thing above is the
+            ;; opening ```). A mid-code `...` has real content above and
+            ;; falls through to :else, preserved verbatim.
+            (and bare? in-fence? (nil? prev))
+            (recur (rest ls) in-fence? out)
+
+            :else
+            (recur (rest ls)
+              (if fence? (not in-fence?) in-fence?)
+              (conj out ln))))))))
+
 (defn- parse-exa-text
   "Split Exa MCP's blob into a vec of per-result citation maps.
    Exa returns plain markdown with this per-entry header pattern:
@@ -515,7 +591,8 @@
                       ;; and keep the rest as the excerpt.
                       (drop-while #(re-matches #"^(URL|Published|Author|Code/Highlights):.*" %)
                         rest-lines)))
-                  excerpt (str/trim (str/join "\n" excerpt-lines))]]
+                  excerpt (normalize-exa-excerpt
+                            (str/trim (str/join "\n" excerpt-lines)))]]
         (cond-> {:type    citation-type
                  :title   title
                  :url     (or url "")
