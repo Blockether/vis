@@ -925,6 +925,20 @@
          :timeout? true})
       execution-result)))
 
+(defn- py-op-error
+  "Map a throwable from the Python eval path to the op-error shape: a GraalPy
+   PolyglotException goes through env_python/map-polyglot-error (proper
+   :python/syntax|runtime|host phase + line/column); anything else falls back to
+   extension/ex->op-error. Class checked by NAME so this ns never imports the
+   GraalPy classes (they stay off the default classpath)."
+  [e code]
+  (try
+    (if (= "org.graalvm.polyglot.PolyglotException" (.getName (class e)))
+      ((requiring-resolve 'com.blockether.vis.internal.env-python/map-polyglot-error) e code)
+      (extension/ex->op-error e {:form-source code}))
+    (catch Throwable _
+      {:message (or (ex-message e) (.getName (class e)))})))
+
 (defn- run-python-code
   "Embedded-GraalPy twin of `run-sci-code`. Reuses the worker-future +
    cancellation + tool-event/render sinks + `*1`/`*e` recovery stack, but the
@@ -955,9 +969,7 @@
                           (catch Throwable e
                             (reset! thrown e)
                             {:result nil :channel @channel-sink :lru {} :forms []
-                             :error (try (extension/ex->op-error e {:form-source code})
-                                      (catch Throwable _
-                                        {:message (or (ex-message e) (.getName (class e)))}))}))))
+                             :error (py-op-error e code)}))))
         dispose-cancel-hook (when cancel-token
                               (cancellation/on-cancel! cancel-token
                                 (fn [] (try (.cancel ^java.util.concurrent.Future exec-future true)
@@ -970,9 +982,7 @@
                              (try (.cancel ^java.util.concurrent.Future exec-future true)
                                (catch Throwable _ nil))
                              {:result nil :channel @channel-sink :lru {}
-                              :error (try (extension/ex->op-error e {:form-source code})
-                                       (catch Throwable _
-                                         {:message (or (ex-message e) (.getName (class e)))}))})
+                              :error (py-op-error e code)})
                            (finally
                              (when dispose-cancel-hook
                                (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
