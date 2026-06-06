@@ -10,8 +10,7 @@
    per-frame call ~315 ns once warm, but cold-opening a long
    session paid the full ~500 ms format cost per big trace
    bubble before the FIRST frame ever made it to the terminal.
-   Session 954bf315 (2 x ~500ms bubbles -> ~870 ms cold paint
-   plus a separate `parse-md-refs` regex bug - see `links.clj`)
+   Session 954bf315 (2 x ~500ms bubbles -> ~870 ms cold paint)
    was the live trigger: the screen stayed bg-fill until both big
    bubbles formatted, which read as \"frozen TUI on open\".
 
@@ -124,8 +123,7 @@
   (hash
     (select-keys settings
       [:show-thinking :show-iterations :show-silent :show-iteration-headers
-       :preview/default-lines
-       :message-meta])))
+       :preview/default-lines])))
 
 (defn- height-key [message bubble-w settings detail-expansions session-id]
   [(message-content-fingerprint message)
@@ -418,11 +416,9 @@
     {:keys [session-id detail-expansions tail-lines
             window-start window-num window-total-h]}]
    (let [show-timestamps? (boolean (get settings :show-timestamps false))
-         meta-mode        (get settings :message-meta :full)
          strip-ts (fn [m]
                     (cond-> m
-                      (not show-timestamps?)        (dissoc :timestamp)
-                      (= :assistant (:role m))      (assoc :message-meta-mode meta-mode)))
+                      (not show-timestamps?)        (dissoc :timestamp)))
          ;; Mid-window walker fast path: when caller specifies a
          ;; window into the bubble (only the bottom assistant
          ;; message during genuine mid-scroll), bypass the cached
@@ -834,7 +830,7 @@
   [messages idx bubble-w settings session-id detail-expansions]
   ;; Warm EVERY message, not just assistants. User-message
   ;; bubble-height is cheap, but the *real* value is
-  ;; `chrome+lines+refs+1` while `estimated-height` can undershoot
+  ;; `chrome+lines+1` while `estimated-height` can undershoot
   ;; by 1 for short prompts. Skipping users means total-h drifts the
   ;; first time they scroll into view.
   (let [m  (nth messages idx)

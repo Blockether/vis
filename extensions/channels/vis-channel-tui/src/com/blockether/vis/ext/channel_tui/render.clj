@@ -3,7 +3,6 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
-            [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
@@ -37,7 +36,6 @@
 ;; bubble while we re-format from scratch" cliff like the old
 ;; clear-the-whole-thing strategy.
 (def ^:private ^:const fmt-cache-cap 4096)
-(def ^:private ^:const max-link-ref-text-chars 24000)
 (defn- make-fmt-cache
   ^LinkedHashMap []
   (proxy [LinkedHashMap] [64 0.75 true] ;; true = access-order (LRU)
@@ -1086,202 +1084,6 @@
                    (or seg-start-char char-pos)
                    (or seg-start-col col-pos))))))))
 ;; ---------------------------------------------------------------------------
-;; Link / image / file-link resources
-;;
-;; Markdown references (`[text](url)`, `![alt](url)`,
-;; `[path:line](path#Lline)`) are collected from the message body,
-;; surfaced as one compact top-right resources badge, then shown in a
-;; modal picker when clicked. The old one-row-per-link strip helpers
-;; stay here for compatibility with tests and potential future layouts,
-;; but the active chat layout uses the badge + popup path.
-;;
-;; Why a badge instead of inline clickable spans:
-;;
-;;   - The inline tokeniser already runs over `:answer` text and
-;;     intentionally drops link/image markup as plain prose. Touching
-;;     it would force a second pass through the styled-line painter
-;;     and risk regressions in the existing markdown rendering.
-;;
-;;   - A single row-level click target is easier to hit in terminal
-;;     mouse mode than a set of mid-line spans.
-;;
-;;   - The badge gives a clean discoverability cue without pushing the
-;;     answer body down by one row per resource.
-;;
-;; Resources are OPT-OUT for callers that pass `:hide-links? true` on
-;; the message map. Today that flag isn’t set anywhere; reserved as
-;; an escape hatch for warnings / cancelled messages where we deem
-;; the chrome noise.
-(def ^:private link-icon-image "\uD83D\uDCF7")
-; 📷
-(def ^:private link-icon-link "\uD83D\uDD17")
-; 🔗
-(def ^:private link-icon-file "\uD83D\uDCC4")
-; 📄
-(def ^:private link-icon-blocked "\uD83D\uDEAB")
-; 🚫
-(def ^:private resources-icon "\uD83D\uDCDA")
-; 📚
-(defn- resources-badge-label
-  "Return the widest resources badge that fits `max-w` display cells,
-   or nil when even the compact count cannot fit. The top-row badge is
-   intentionally compact because it shares the right edge with the
-   timestamp."
-  [n max-w]
-  (let [candidates [(str resources-icon " Resources " n) (str resources-icon " Resources")
-                    (str "Resources " n) (str resources-icon " " n) resources-icon]]
-    (some #(when (<= (p/display-width %) max-w) %) candidates)))
-(defn- in-viewport?
-  "True when `abs-row` is inside the currently-painted messages
-   viewport `[viewport-top, viewport-top + viewport-h)`."
-  [^long viewport-top ^long viewport-h ^long abs-row]
-  (and (>= abs-row viewport-top) (< abs-row (+ viewport-top viewport-h))))
-(defn- paint-resources-badge!
-  "Paint and register the clickable top-row resources badge for one
-   bubble. Clicking opens a resources popup instead of opening a single
-   URL immediately."
-  [^TextGraphics g label refs x y width abs-col-base abs-row viewport-top viewport-h]
-  (let [hovered (cr/hovered)
-        hovered? (and (= :resources (:kind hovered))
-                      (= abs-row (:row (:bounds hovered)))
-                      (= (+ abs-col-base x) (:col (:bounds hovered))))
-        bg (if hovered? t/link-chrome-hover-bg t/terminal-bg)
-        fg (if hovered? t/link-chrome-hover-fg t/link-chrome-fg)]
-    (p/clear-styles! g)
-    (p/set-colors! g fg bg)
-    (when hovered? (p/fill-rect! g x y width 1))
-    (p/put-str! g x y label)
-    (when (in-viewport? viewport-top viewport-h abs-row)
-      (cr/register! {:bounds {:row abs-row, :col (+ abs-col-base x), :width width},
-                     :kind :resources,
-                     :refs refs,
-                     :enabled? true}))))
-(defn- ref-icon
-  "Return the chrome icon string for `ref`. Disabled refs always
-   render with the blocked icon regardless of kind so the user
-   reads “this one is dead” before reading the URL."
-  ^String [{:keys [kind enabled?]}]
-  (cond (not enabled?) link-icon-blocked
-        (= kind :image) link-icon-image
-        (= kind :file) link-icon-file
-        :else link-icon-link))
-;; Inline-style sentinel codepoints in the U+E110-U+E117 PUA range
-;; (BOLD/ITALIC/STRIKE/CODE on/off pairs) are emitted upstream by the
-;; canonical IR walker. The chrome strip doesn't paint per-character
-;; SGR — it's a single-tone hover band — so we strip the sentinels
-;; back out before display, leaving plain text. The pre-pass lifts
-;; `**bold**` to `bold`, `*italic*` to `italic`, `` `code` `` to
-;; `code`, while unmatched openers (`*half`, `**incomplete`) stay
-;; literal — same behaviour the prose body gets. Without this pass
-;; the chrome shows raw markdown markup verbatim, e.g.
-;;   [See **here**](url) -> "🔗 See **here** -> url"
-;; which looks like a typo to the user.
-(defn- ir-node-visible-text
-  "Recursive walk: concatenate every visible text segment from a
-   canonical IR node, dropping link URLs and image srcs (we only
-   want the visible label, not the target). Used by chrome rows
-   where `[See **here**](url)` should read `See here`, not
-   `See here (url)` (which is what `extract-text`'s plain renderer
-   would emit for a link whose label differs from its href)."
-  ^String [node]
-  (cond (string? node) node
-        (not (vector? node)) ""
-        :else (let [tag (first node)
-                    children (drop 2 node)]
-                (case tag
-                  :br " "
-                  :img ""
-                  (:span :c :code :kbd) (or (some #(when (string? %) %) children) "")
-                  (apply str (map ir-node-visible-text children))))))
-(defn- strip-inline-markup
-  "Strip inline markdown markup (`**bold**`, `` `code` ``, link
-   decoration, etc.) from `text`, yielding the plain visible label.
-   Used by chrome-row rendering so refs like `[See **here**](url)`
-   show as `🔗 See here -> url` (visible label only) instead of
-   leaking asterisks or the URL inside the bracket portion.
-
-   Lifts through `vis/markdown->ir` (commonmark parser) then walks the
-   IR concatenating only visible text — link/image targets dropped."
-  ^String [^String text]
-  (let [s (or text "")]
-    (if (str/blank? s) s (str/trim (ir-node-visible-text (vis/markdown->ir s))))))
-(defn- chrome-display-text
-  "Build the visible chrome row for a ref:
-     <icon> <text> -> <url>
-   The url tail is shortened to fit `max-w`. Pure.
-
-   `text` is run through `strip-inline-markup` so inline emphasis
-   inside the bracket portion (e.g. `[See **here**](url)`,
-   ``[Title with `code`](url)``) renders as plain text in the
-   chrome row instead of leaking raw `**` / backticks / `*`."
-  ^String [ref ^long max-w]
-  (let [icon (ref-icon ref)
-        text (strip-inline-markup (or (:text ref) ""))
-        url (or (:url ref) "")
-        sep " -> "
-        ;; Reserve room: icon (2 cols) + space + sep + at least 8 cols of url.
-        head (str icon " " text)
-        head-w (p/display-width head)
-        sep-w (p/display-width sep)
-        avail (max 0 (- max-w head-w sep-w))
-        url-disp (if (<= (count url) avail)
-                   url
-                   (let [keep (max 0 (- avail 1))]
-                     (str (subs url 0 (min (count url) keep)) "...")))]
-    (str head sep url-disp)))
-(defn extract-link-refs*
-  "Pure ref extractor. Walks `text` once and returns the vec of
-   refs `links/parse-md-refs` produces, plus a synthesised
-   `:display` string for chrome painting at width `max-w`."
-  [^String text ^long max-w]
-  (let [refs (links/parse-md-refs text)]
-    (mapv (fn [r] (assoc r :display (chrome-display-text r max-w))) refs)))
-(defn extract-link-refs
-  "Memoised wrapper around `extract-link-refs*`. Keyed by the
-   message text’s identity-hash + width - the same trick
-   `bubble-height` uses to dodge re-walking immutable message bodies
-   on every paint."
-  [{:keys [text hide-links?]} max-w]
-  (if (or hide-links? (> (count (or text "")) max-link-ref-text-chars))
-    []
-    (cached* [::refs (System/identityHashCode text) (long max-w)]
-             #(extract-link-refs* (or text "") max-w))))
-#_{:clj-kondo/ignore [:unused-private-var]}
-(defn- paint-link-chrome-row!
-  "Paint one chrome row at `(x, y)` (clip-relative coords) inside a
-   `bubble-w`-wide column. When the row’s absolute screen position
-   `abs-row` is inside the viewport AND the ref is enabled, register
-   a click region.
-
-   The row paints `<icon> <text> -> <url>` in three colour zones so
-   the affordance reads cleanly (link colour for the text, muted
-   gray for the arrow + url tail). Hover state inverts the row to a
-   pale blue band."
-  [^TextGraphics g {:keys [display enabled?], :as ref} x y bubble-w abs-col-base abs-row
-   viewport-top viewport-h]
-  (let [hovered? (and enabled? (= abs-row (:row (:bounds (cr/hovered)))))
-        bg (cond hovered? t/link-chrome-hover-bg
-                 :else t/terminal-bg)
-        fg-text (cond (not enabled?) t/link-chrome-blocked-fg
-                      hovered? t/link-chrome-hover-fg
-                      :else t/link-chrome-fg)]
-    (p/clear-styles! g)
-    (p/set-colors! g t/text-fg bg)
-    (p/fill-rect! g x y bubble-w 1)
-    ;; Whole row painted in one colour pass; the text/arrow/url
-    ;; tri-tone is a future polish - the single-tone read is
-    ;; already obviously a link, the tri-tone added complexity
-    ;; without changing the click affordance.
-    (p/set-colors! g fg-text bg)
-    (p/put-str! g x y display)
-    (when (and enabled? (in-viewport? viewport-top viewport-h abs-row))
-      (cr/register! {:bounds {:row abs-row, :col (+ abs-col-base x), :width bubble-w},
-                     :url (:url ref),
-                     :kind (:kind ref),
-                     :line (:line ref),
-                     :scheme (:scheme ref),
-                     :enabled? true}))))
-;; ---------------------------------------------------------------------------
 (defn- tool-color-role->fg
   [role]
   (case role
@@ -1342,33 +1144,13 @@
            (when (or from to) (str " " (or from "unknown") " → " (or to "unknown")))
            (when (seq suffix-parts) (str " — " (str/join ", " suffix-parts)))))))
 (defn- assistant-meta-line
-  ;; The footer is a Settings-driven toggle. `:message-meta-mode` rides on
-  ;; the message map (injected by virtual.clj projection) so both the
-  ;; painter and `bubble-height*` see the same mode without threading
-  ;; settings through every call. Missing key → `:light` (very-light
-  ;; synthetic / pre-projection messages).
-  ;;   :full  -> model / iters / tokens / cost / duration (+ suffix)
-  ;;   :short -> cost / duration (+ suffix); drops model, iters, tokens
-  ;;   :light -> cost only (+ suffix); very-light default — just the price
-  ;;   :off   -> nil → bubble drops footer-gap + footer rows entirely
-  [{:keys [iteration-count duration-ms tokens cost message-meta-mode], :as message}]
-  (let [mode (or message-meta-mode :off)]
-    (when-not (= mode :off)
-      (let [short? (= mode :short)
-            light? (= mode :light)
-            line (vis/format-meta-line
-                   (cond-> {:iteration-count iteration-count,
-                            :silent-count (silent-form-count message),
-                            :duration-ms duration-ms,
-                            :tokens tokens,
-                            :cost cost}
-                     short? (assoc :iteration-count nil :silent-count nil :duration-ms nil
-                              :tokens (some-> tokens (select-keys [:input :output]))
-                              :cost (cond-> cost (map? cost) (select-keys [:total-cost])))
-                     light? (assoc :iteration-count nil :tokens nil :duration-ms nil))
-                   (cond-> {:suffix (when-let [fallback (fallback-summary message)] [fallback])}
-                     (or short? light?) (assoc :model false)))]
-        (when-not (str/blank? line) line)))))
+  [{:keys [tokens cost], :as message}]
+  (let [line
+          (vis/format-meta-line
+            {:iteration-count nil, :silent-count nil, :duration-ms nil, :tokens tokens, :cost cost}
+            (cond-> {:model false}
+              (fallback-summary message) (assoc :suffix [(fallback-summary message)])))]
+    (when-not (str/blank? line) line)))
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1392,9 +1174,9 @@
 
    Extra params:
      `viewport-top` and `viewport-h` describe the absolute screen
-     window the messages-area paints into. They’re only consulted
-     by the link-chrome painter to decide whether to register a
-     click region for an off-screen chrome row (it doesn’t).
+     window the messages-area paints into. They’re consulted by the
+     per-row click-region painters to decide whether to register a
+     click region for an off-screen row (they don’t).
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
   [^TextGraphics g {:keys [role text timestamp status], :as message} start-row left max-w &
@@ -1475,11 +1257,8 @@
         ;; Cancelled turns skip the whole block; there's no answer to
         ;; attribute and "0 iters / no model" reads as clutter under
         ;; a "Cancelled" placeholder.
-        meta-str (when (and (not user?) (not cancelled?)) (assistant-meta-line message))
-        refs (extract-link-refs message bubble-w)]
-    ;; Role label (bold, role-colored) + optional resources badge +
-    ;; timestamp. Resources sit in the top-right chrome instead of
-    ;; taking one row per link under the answer body.
+        meta-str (when (and (not user?) (not cancelled?)) (assistant-meta-line message))]
+    ;; Role label (bold, role-colored) + timestamp.
     (when (pos? top-sep-h)
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-border t/terminal-bg)
@@ -1488,28 +1267,10 @@
       (p/clear-styles! g)
       (p/set-colors! g role-fg t/terminal-bg)
       (p/styled g [p/BOLD] (p/put-str! g bx label-row label))
-      (let [right-edge (+ bx bubble-w)
-            time-w (if time-str (p/display-width time-str) 0)
-            time-x (when time-str (- right-edge time-w))
-            badge-end (if time-x (- time-x 2) right-edge)
-            badge-min-x (+ bx (p/display-width label) 2)
-            badge-max-w (max 0 (- badge-end badge-min-x))
-            badge-label (when (pos? (count refs)) (resources-badge-label (count refs) badge-max-w))
-            badge-w (if badge-label (p/display-width badge-label) 0)
-            badge-x (- badge-end badge-w)
-            abs-row (+ (long viewport-top) (long label-row))]
-        (when badge-label
-          (paint-resources-badge! g
-                                  badge-label
-                                  refs
-                                  badge-x
-                                  label-row
-                                  badge-w
-                                  0
-                                  abs-row
-                                  (long viewport-top)
-                                  (long viewport-h)))
-        (when time-str
+      (when time-str
+        (let [right-edge (+ bx bubble-w)
+              time-w (p/display-width time-str)
+              time-x (- right-edge time-w)]
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g time-x label-row time-str))))
     ;; Content begins directly under the role banner for ASSISTANT
@@ -2305,13 +2066,10 @@
                 (recur (inc i))))))
         ;; Below-content footer row: optional right-aligned meta, with
         ;; one breathing row between answer body and footer.
-        ;; Resource links are exposed through the header badge, so they
-        ;; no longer consume one extra chrome row per link under the
-        ;; answer body.
         ;;
         ;; Final per-message layout (no outer box, no bg fill, no
         ;; horizontal rule under the label):
-        ;;   row 0                    : label + resources badge + timestamp
+        ;;   row 0                    : label + timestamp
         ;;   row 1 ... N                : wrapped content (with marker-zone fills)
         ;;   row 1+N                  : bottom pad (user only)
         ;;   row 1+N+P                : blank footer margin, when meta present row 2+N+P
@@ -3124,49 +2882,46 @@
         ;; One neutral blank above, then the dim band: top edge, the
         ;; THINKING header, reasoning (peek or full), bottom edge — all one thinking bubble.
         (vec
-          (concat [{:line "", :meta nil} {:line (str thinking-marker ""), :meta nil} header
-                   ;; One blank band row between the THINKING badge and the
-                   ;; reasoning body — a margin INSIDE the dim band so the
-                   ;; label doesn't sit flush against the first reasoning line.
-                   {:line (str thinking-marker ""), :meta nil}]
-                  ;; Collapsed: append a dim " …" to the LAST peeked line
-                  ;; ITSELF — right where the reasoning is trimmed — so the
-                  ;; bottom edge signals "there's more — click the THINKING
-                  ;; chevron". One space then …, in-place; NOT a separate
-                  ;; ellipsis row on its own line. The trimmed line keeps the
-                  ;; header's toggle-details meta so the painter registers it
-                  ;; as the SAME hit target. Expanded shows every row → none.
-                  (let [body (vec (tag-copy-block-body shown node-id full-copy))
-                        ;; A row is visually blank once its leading structural
-                        ;; paint marker is stripped: thinking rows are prefixed
-                        ;; with the zero-width thinking marker (`​`), which
-                        ;; `str/blank?` does NOT count as whitespace, so the raw
-                        ;; line always reads non-blank. Strip the marker first.
-                        blank-row? (fn [row]
-                                     (let [line (:line row)
-                                           [_ rest] (split-structural-line-marker line)]
-                                       (str/blank? (or rest line))))]
-                    (if (and (not expanded?) (pos? hidden-n) (seq body))
-                      ;; Drop trailing visually-blank peek rows so " …" lands on
-                      ;; the last row that actually shows reasoning — not on a
-                      ;; paragraph separator (whose only glyph is the invisible
-                      ;; thinking marker), which would make " …" appear to float
-                      ;; on its own line.
-                      (let [trimmed (loop [b body]
-                                      (if (and (> (count b) 1) (blank-row? (peek b)))
-                                        (recur (pop b))
-                                        b))
-                            last-i (dec (count trimmed))]
-                        (-> trimmed
-                       (assoc-in [last-i :line]
-                                 ;; Append the dim " …" marker, width-clamped via
-                                 ;; truncate-with-suffix so it stays on the SAME row.
-                                 (truncate-with-suffix
-                                   (:line (nth trimmed last-i)) " …" max-w))
-                            (assoc-in [last-i :meta]
-                                      (or (:meta (nth trimmed last-i)) (:meta header)))))
-                      body))
-                  [{:line (str thinking-marker ""), :meta nil}]))))))
+          (concat
+            [{:line "", :meta nil} {:line (str thinking-marker ""), :meta nil} header
+             ;; One blank band row between the THINKING badge and the
+             ;; reasoning body — a margin INSIDE the dim band so the
+             ;; label doesn't sit flush against the first reasoning line.
+             {:line (str thinking-marker ""), :meta nil}]
+            ;; Collapsed: append a dim " …" to the LAST peeked line
+            ;; ITSELF — right where the reasoning is trimmed — so the
+            ;; bottom edge signals "there's more — click the THINKING
+            ;; chevron". One space then …, in-place; NOT a separate
+            ;; ellipsis row on its own line. The trimmed line keeps the
+            ;; header's toggle-details meta so the painter registers it
+            ;; as the SAME hit target. Expanded shows every row → none.
+            (let [body (vec (tag-copy-block-body shown node-id full-copy))
+                  ;; A row is visually blank once its leading structural
+                  ;; paint marker is stripped: thinking rows are prefixed
+                  ;; with the zero-width thinking marker (`​`), which
+                  ;; `str/blank?` does NOT count as whitespace, so the raw
+                  ;; line always reads non-blank. Strip the marker first.
+                  blank-row? (fn [row]
+                               (let [line (:line row)
+                                     [_ rest] (split-structural-line-marker line)]
+                                 (str/blank? (or rest line))))]
+              (if (and (not expanded?) (pos? hidden-n) (seq body))
+                ;; Drop trailing visually-blank peek rows so " …" lands on
+                ;; the last row that actually shows reasoning — not on a
+                ;; paragraph separator (whose only glyph is the invisible
+                ;; thinking marker), which would make " …" appear to float
+                ;; on its own line.
+                (let [trimmed (loop [b body]
+                                (if (and (> (count b) 1) (blank-row? (peek b))) (recur (pop b)) b))
+                      last-i (dec (count trimmed))]
+                  (-> trimmed
+                      (assoc-in [last-i :line]
+                                ;; Append the dim " …" marker, width-clamped via
+                                ;; truncate-with-suffix so it stays on the SAME row.
+                                (truncate-with-suffix (:line (nth trimmed last-i)) " …" max-w))
+                      (assoc-in [last-i :meta] (or (:meta (nth trimmed last-i)) (:meta header)))))
+                body))
+            [{:line (str thinking-marker ""), :meta nil}]))))))
 (defn- markdown-fence-marker-line?
   "True for standalone Markdown fence opener/closer lines. Tool
    results are output, not prose; TUI result panes must not parse or

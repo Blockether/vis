@@ -772,10 +772,6 @@
      #(try (if (= :file kind) (opener/open-file-in-editor! url) (opener/open! url))
         (catch Throwable _ nil))))
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
-(defn- open-resources-popup!
-  [^TerminalScreen screen refs]
-  (when-let [ref (with-dialog-lock #(dlg/resources-dialog! screen refs))]
-    (open-click-target! screen ref)))
 (defn- screen-size
   "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
    held (or before the render thread is started) because
@@ -2684,7 +2680,6 @@
                                  :preview-switcher (state/dispatch [:select-preview-mode
                                                                     (:session-id hit)
                                                                     (:node-id hit) (:mode hit)])
-                                 :resources (open-resources-popup! screen (:refs hit))
                                  (open-click-target! screen hit))
                                (let [point (selection/point mx my)
                                      disclosure-hit (bubble-copy-hit
@@ -2752,11 +2747,9 @@
                                :preview-switcher (state/dispatch [:select-preview-mode
                                                                   (:session-id hit)
                                                                   (:node-id hit) (:mode hit)])
-                               :resources (open-resources-popup! screen (:refs hit))
-                                   ;; Default (markdown link / image /
-                                   ;; file-link chrome): hand the URL to
-                                   ;; the OS opener on a side thread -
-                                   ;; a slow `xdg-open` cannot freeze the
+                                   ;; Default: hand any direct-open hit to
+                                   ;; the OS opener on a side thread - a
+                                   ;; slow `xdg-open` cannot freeze the
                                    ;; input loop's redraw cadence.
                                (open-click-target! screen hit)))
                            (when selection-copy?

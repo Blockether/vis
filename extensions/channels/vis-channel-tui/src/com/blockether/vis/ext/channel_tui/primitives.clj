@@ -262,15 +262,13 @@
    don't pay a StringBuilder allocation on every grapheme-width
    call.
 
-   Session 954bf315 was the live trigger: a buggy
-   `parse-md-refs` regex pulled multi-line prose into a `:text`
-   field, `chrome-display-text` joined it into a chrome row,
-   `display-width` was called on it, Lanterna's
-   `TextCharacter.fromString` threw on `0x0a`, the render thread's
-   catch-all swallowed the throw, the bubble silently failed to
-   paint, and the user saw a blank scrollback. The regex got fixed
-   upstream; this is the belt-and-braces fallback for any future
-   caller that lets a control char slip into a paint string.
+   Session 954bf315 was the live trigger: a multi-line string with
+   an embedded `0x0a` reached `display-width`, Lanterna's
+   `TextCharacter.fromString` threw on the control char, the render
+   thread's catch-all swallowed the throw, the bubble silently
+   failed to paint, and the user saw a blank scrollback. This is the
+   belt-and-braces fallback for any caller that lets a control char
+   slip into a paint string.
 
    Inline-span sentinels (\uE110...\uE117) live in the BMP
    private-use area, not C0, so they pass through untouched."
@@ -308,8 +306,8 @@
 
    Stray ASCII control bytes (0x00-0x1F) get sanitized to `/`
    before reaching Lanterna - see `sanitize-control-chars` for the
-   why. Without that, a single rogue `\n` from a misbehaving link
-   parse used to take down the entire render thread.
+   why. Without that, a single rogue `\n` in a paint string used to
+   take down the entire render thread.
 
    Returns 0 for nil/empty input."
   ^long [s]

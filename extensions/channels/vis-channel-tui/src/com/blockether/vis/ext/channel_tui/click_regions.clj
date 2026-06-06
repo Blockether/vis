@@ -41,8 +41,7 @@
 ;;
 ;;   {:bounds   {:row R :col C :width W}   ; W cells starting at (C, R), height 1
 ;;    :url      \"https://...\"             ; direct-open target, when applicable
-;;    :kind     :url | :image | :file | :resources | :copy-id | ...
-;;    :refs     [...]                       ; only for :resources popup badges
+;;    :kind     :url | :image | :file | :copy-id | ...
 ;;    :line     N | nil                     ; only for :file with a line anchor
 ;;    :scheme   :http | :https | :file | :rel | :rejected
 ;;    :enabled? true | false}
