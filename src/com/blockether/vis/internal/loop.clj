@@ -4402,8 +4402,11 @@
                             (if forced?
                               (do (log-stage! :final iteration {:reason :loop-forced
                                                                 :iteration-count (inc iteration)})
+                                ;; NB: no `:status` key — mirrors the normal
+                                ;; success path so prior_outcome derives to
+                                ;; `complete` (a bare `:status :success` violates
+                                ;; the session_turn_state.prior_outcome CHECK).
                                 (-> (merge {:answer forced-answer
-                                            :status :success
                                             :trace (conj trace trace-entry)
                                             :iteration-count (inc iteration)
                                             :utilization (let [u @usage-atom

@@ -3136,20 +3136,35 @@
                   ;; ellipsis row on its own line. The trimmed line keeps the
                   ;; header's toggle-details meta so the painter registers it
                   ;; as the SAME hit target. Expanded shows every row → none.
-                  (let [body (vec (tag-copy-block-body shown node-id full-copy))]
+                  (let [body (vec (tag-copy-block-body shown node-id full-copy))
+                        ;; A row is visually blank once its leading structural
+                        ;; paint marker is stripped: thinking rows are prefixed
+                        ;; with the zero-width thinking marker (`​`), which
+                        ;; `str/blank?` does NOT count as whitespace, so the raw
+                        ;; line always reads non-blank. Strip the marker first.
+                        blank-row? (fn [row]
+                                     (let [line (:line row)
+                                           [_ rest] (split-structural-line-marker line)]
+                                       (str/blank? (or rest line))))]
                     (if (and (not expanded?) (pos? hidden-n) (seq body))
-                      (let [last-non-blank (loop [i (dec (count body))]
-                                             (if (and (pos? i) (str/blank? (:line (nth body i))))
-                                               (recur (dec i))
-                                               i))]
-                        (-> body
-                       (assoc-in [last-non-blank :line]
+                      ;; Drop trailing visually-blank peek rows so " …" lands on
+                      ;; the last row that actually shows reasoning — not on a
+                      ;; paragraph separator (whose only glyph is the invisible
+                      ;; thinking marker), which would make " …" appear to float
+                      ;; on its own line.
+                      (let [trimmed (loop [b body]
+                                      (if (and (> (count b) 1) (blank-row? (peek b)))
+                                        (recur (pop b))
+                                        b))
+                            last-i (dec (count trimmed))]
+                        (-> trimmed
+                       (assoc-in [last-i :line]
                                  ;; Append the dim " …" marker, width-clamped via
                                  ;; truncate-with-suffix so it stays on the SAME row.
                                  (truncate-with-suffix
-                                   (:line (nth body last-non-blank)) " …" max-w))
-                            (assoc-in [last-non-blank :meta]
-                                      (or (:meta (nth body last-non-blank)) (:meta header)))))
+                                   (:line (nth trimmed last-i)) " …" max-w))
+                            (assoc-in [last-i :meta]
+                                      (or (:meta (nth trimmed last-i)) (:meta header)))))
                       body))
                   [{:line (str thinking-marker ""), :meta nil}]))))))
 (defn- markdown-fence-marker-line?

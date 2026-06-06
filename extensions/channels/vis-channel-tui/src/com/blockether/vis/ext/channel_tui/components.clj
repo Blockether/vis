@@ -509,7 +509,7 @@
   ([tasks body-w] (task-overlay-lines tasks body-w overlay-card-indent))
   ([tasks body-w indent]
    (if (empty? tasks)
-     [[["No tasks yet — the model opens one with (task-set! …)." t/footer-fg-muted false]]]
+     (indent-rows [[["No tasks yet — the model opens one with (task-set! …)." t/footer-fg-muted false]]] indent)
      (->> tasks
           (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
           (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
@@ -556,7 +556,7 @@
    first then superseded. Empty state is a single hint row."
   [facts body-w]
   (if (empty? facts)
-    [[["No facts yet — the model records one with (fact-set! …)." t/footer-fg-muted false]]]
+    (indent-rows [[["No facts yet — the model records one with (fact-set! …)." t/footer-fg-muted false]]])
     (->> facts
          (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
          (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)))))
