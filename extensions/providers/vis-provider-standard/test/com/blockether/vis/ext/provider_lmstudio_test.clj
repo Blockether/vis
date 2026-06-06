@@ -18,6 +18,17 @@
   (it "exposes a context-detection hook"
     (expect (ifn? (:provider/enrich-models-fn (vis/provider-by-id :lmstudio)))))
 
+  (it "ships anti-loop sampler defaults in :extra-body (Qwen/DeepSeek thinking loops)"
+    ;; Local thinking models spiral into endless reasoning under the default
+    ;; greedy sampler; the preset carries vendor-recommended anti-loop params
+    ;; that svar merges as the provider base layer (per-turn :extra-body wins).
+    (let [eb (get-in (vis/provider-by-id :lmstudio) [:provider/preset :extra-body])]
+      (expect (= 0.6 (:temperature eb)))
+      (expect (= 0.95 (:top_p eb)))
+      (expect (= 20 (:top_k eb)))
+      (expect (= 0.0 (:min_p eb)))
+      (expect (= 1.5 (:presence_penalty eb)))))
+
   (describe "enrich-models"
     (it "short-circuits (no network) when every model already has :context"
       ;; svar/models! redef'd to throw — proves it is never called.
