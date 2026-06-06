@@ -204,24 +204,31 @@
                                 :source? :hook-id? :importance?}}
       :session/trailer   [{:scope :forms [{:scope :tag :form :result? :error?}]}]
       :session/symbols   {sym → {:arglists? :doc? :born}}
-      :session/hints  [\"<short advisory hint>\" …]  ; engine structural + extension
+      :session/hints     [{:source :content :importance :depends-on?} …]
+      :session/archive-digest {:summary [{:source :content :importance :recall?}]
+                               :covered-ids :count :updated-turn}
+
+      Hint and archive-digest entries share ONE vocabulary:
+        :source     who/where it came from (:engine | <hook-id> | :archive)
+        :content    the text
+        :importance  :high | :medium | :low
+        :recall      (digest only) the exact (recall …) call to restore the original
+        :depends-on (hints only) related entity refs
 
       Project rules (AGENTS.md / CLAUDE.md) ride in a separate system
       block — not in :session/env. Read :session/env BEFORE calling
       ad-hoc environment probes; CTX covers workspace/VCS truth.
 
-      :session/hints is the unified advisory feed — short strings, advisory,
-      NOT verified. It carries BOTH engine-detected structural issues AND
-      extension-contributed hints. The engine's own entries flag graph
-      inconsistencies it noticed:
+      :session/hints is the unified advisory feed — advisory, NOT verified.
+      It carries BOTH engine-detected structural issues AND extension-
+      contributed hints. The engine's own entries flag graph inconsistencies:
         - dangling dep ref (a :depends-on points at a missing entity)
         - dependency cycle rejected (a write that would loop was refused)
         - task :done while a dep is still non-terminal
         - task :done with an :acceptance but :verified? not true
         - two :active facts declared contradictory
       Address them when real; they do NOT block close. There are NO
-      `;; ⚠` line-comment warnings inside the ctx EDN body — structural
-      issues surface here as plain strings.
+      `;; ⚠` line-comments inside the ctx EDN body — issues surface here as data.
 
     ENGINE FNS (bare symbols — never namespace-qualify)
 

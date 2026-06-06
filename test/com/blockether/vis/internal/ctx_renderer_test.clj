@@ -79,15 +79,18 @@
           (expect (= opens closes)))))))
 
 (defdescribe render-warnings-test
-  (describe ":session/hints vec-of-strings section"
+  (describe ":session/hints vec-of-hint-maps section"
 
-    (it "renders a :session/hints section when warnings are present"
+    (it "renders a :session/hints section (as {:source :content :importance} maps) when advisories are present"
       (let [out (r/render-ctx {:ctx base-ctx
                                :warnings ["task :t1 :done but dep :t2 is :doing"
                                           "fact :a contradicts :b"]})]
         (expect (str/includes? out ":session/hints"))
+        ;; engine advisories are wrapped into hint maps; their :content text survives verbatim
         (expect (str/includes? out "\"task :t1 :done but dep :t2 is :doing\""))
-        (expect (str/includes? out "\"fact :a contradicts :b\""))))
+        (expect (str/includes? out "\"fact :a contradicts :b\""))
+        (expect (str/includes? out ":source"))
+        (expect (str/includes? out ":importance"))))
 
     (it "omits the :session/hints section entirely when empty"
       (let [out (r/render-ctx {:ctx base-ctx :warnings []})]
