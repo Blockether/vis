@@ -1,5 +1,8 @@
 (ns com.blockether.vis.internal.foundation.workspace-ctx-test
-  "`:session/workspace` CTX block render — git-free rift model."
+  "`:session/workspace` CTX block render. Sandbox-ness rides on
+   `:workspace/sandbox?`; `:vcs/kind` reports the real underlying repo VCS
+   (`:git` inside a repo, else `:none`) — never `:rift` (a non-VCS, and not
+   in the ctx-spec set)."
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.internal.foundation.workspace-ctx :as wctx]
@@ -19,15 +22,22 @@
     (io/delete-file f true)))
 
 (defdescribe render-block-test
-  (it "workspace identity: root, sandbox? always true, :vcs/kind :rift"
+  (it "workspace identity: root, sandbox? always true, :vcs/kind :none outside a repo (never :rift)"
     (let [base (temp-dir "vis-wctx-id")]
       (try
         (let [block (wctx/render-block {:workspace {:id "ws-1" :root base}})]
           (expect (= base (:workspace/root block)))
           (expect (true? (:workspace/sandbox? block)))
-          (expect (= :rift (:vcs/kind block)))
+          ;; temp dir is not a git repo → :none; sandbox-ness is on :workspace/sandbox?
+          (expect (= :none (:vcs/kind block)))
+          (expect (not= :rift (:vcs/kind block)))
           (expect (= "ws-1" (:workspace/id block))))
         (finally (delete-tree! base)))))
+
+  (it "reports :vcs/kind :git when the workspace root is inside a git repo"
+    ;; the project cwd is a git repo
+    (let [block (wctx/render-block {:workspace {:id "ws-git" :root (workspace/cwd)}})]
+      (expect (= :git (:vcs/kind block)))))
 
   (it "nil workspace falls back to the bound cwd"
     (let [base (temp-dir "vis-wctx-nil")]
@@ -36,7 +46,7 @@
           (let [block (wctx/render-block {:workspace nil})]
             (expect (= base (:workspace/root block)))
             (expect (true? (:workspace/sandbox? block)))
-            (expect (= :rift (:vcs/kind block)))))
+            (expect (= :none (:vcs/kind block)))))
         (finally (delete-tree! base)))))
 
   (it "surfaces since-fork changed paths (mtime newer than the fork ms)"

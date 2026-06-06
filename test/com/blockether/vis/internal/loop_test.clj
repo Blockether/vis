@@ -962,18 +962,21 @@
                 (:render-segments entry))))))
 
 (defdescribe final-answer-gate-test
-  (it "rejects answers from iterations that called extension tools"
-    (let [err (lp/final-answer-gate-error
-                {}
-                1
-                [{:id 0
-                  :code "(cat \"deps.edn\")"
-                  :channel [{:success? true :result [:ir {}]}]
-                  :error nil}]
-                {:answer "done"}
-                nil)]
-      (expect (string? err))
-      (expect (str/includes? err "extension/tool"))))
+  ;; The structural "called a tool this iteration" floor was REMOVED from the
+  ;; gate. A (done …) that ran alongside tool calls is now a PROPOSAL
+  ;; (run-iteration sets :answer-proposed? and the loop asks the model to
+  ;; confirm/refine), not a hard reject. The gate now only carries extension
+  ;; :turn.answer/validate vetoes.
+  (it "no longer rejects a (done) that ran alongside tool calls (now a proposal)"
+    (expect (nil? (lp/final-answer-gate-error
+                    {}
+                    1
+                    [{:id 0
+                      :code "(cat \"deps.edn\")"
+                      :channel [{:success? true :result [:ir {}]}]
+                      :error nil}]
+                    {:answer "done"}
+                    nil))))
 
   (it "allows answer-only iterations when no extension tool ran"
     (expect (nil? (lp/final-answer-gate-error
@@ -1028,3 +1031,64 @@
       (it "returns nil on empty / blank input"
         (expect (nil? (leak-err "")))
         (expect (nil? (leak-err "   \n  ")))))))
+
+(defdescribe repetition-loop-detection-test
+  "Repetition-only loop detector + decision-checkpoint. No iteration/budget
+   counting — fires solely on a non-finalizing (done) repeated, or identical
+   non-(done) action code repeated."
+  (let [detect (var-get #'lp/repetition-loop-state)
+        msg    (var-get #'lp/loop-checkpoint-message)]
+    (describe "repetition-loop-state"
+      (it "is not stuck on a single (done) that didn't finalize"
+        (let [r (detect [{:code "(done \"hi\")"}] nil)]
+          (expect (false? (:stuck? r)))
+          (expect (= 1 (:done-streak r)))))
+
+      (it "trips when a non-finalizing (done) repeats (streak reaches 2)"
+        (let [r1 (detect [{:code "(let [x 1] (done \"a\"))"}] nil)
+              r2 (detect [{:code "(let [x 2] (done \"b\"))"}] {:done-streak (:done-streak r1)})]
+          (expect (true? (:stuck? r2)))
+          (expect (= 2 (:done-streak r2)))))
+
+      (it "trips when identical non-(done) action code repeats"
+        (let [blocks [{:code "(rg {:any [\"cancel\"]})"} {:code "(cat \"x.clj\")"}]
+              r1 (detect blocks nil)
+              r2 (detect blocks {:last-sig (:action-sig r1)})]
+          (expect (false? (:stuck? r1)))
+          (expect (true? (:stuck? r2)))))
+
+      (it "resets the (done) streak on an iteration with no (done)"
+        (let [r (detect [{:code "(rg {:any [\"x\"]})"}] {:done-streak 1})]
+          (expect (false? (:stuck? r)))
+          (expect (zero? (:done-streak r)))))
+
+      (it "does not trip on distinct action code across iterations"
+        (let [r1 (detect [{:code "(rg {:any [\"a\"]})"}] nil)
+              r2 (detect [{:code "(rg {:any [\"b\"]})"}] {:last-sig (:action-sig r1)})]
+          (expect (false? (:stuck? r2))))))
+
+    (describe "loop-checkpoint-message"
+      (it "shows the sticky best-answer and forces a decision"
+        (let [m (msg "The atom and token serve distinct roles.")]
+          (expect (str/includes? m "STOP"))
+          (expect (str/includes? m "best answer so far"))
+          (expect (str/includes? m "The atom and token serve distinct roles."))
+          (expect (str/includes? m "(done"))))
+      (it "handles no answer yet"
+        (let [m (msg nil)]
+          (expect (str/includes? m "NOT produced any answer")))))))
+
+(defdescribe done-proposal-confirm-test
+  "A (done …) emitted alongside tool calls is a PROPOSAL, not an error: the
+   model is asked to confirm/refine after seeing results, never hard-rejected."
+  (let [msg (var-get #'lp/proposal-confirm-message)]
+    (it "shows the proposed answer and asks to confirm or refine"
+      (let [m (msg "Token = cooperative cancel; atom = local interrupt flag.")]
+        (expect (str/includes? m "PROPOSAL"))
+        (expect (str/includes? m "proposed answer"))
+        (expect (str/includes? m "Token = cooperative cancel; atom = local interrupt flag."))
+        (expect (str/includes? m "(done"))
+        ;; must not read as a rejection/error
+        (expect (not (str/includes? m "rejected")))))
+    (it "handles a proposal with no captured text"
+      (expect (string? (msg nil))))))
