@@ -351,31 +351,25 @@
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
 
-  (it "shows cumulative token and cost splits in the second footer row right side"
+  (it "shows the real context-window utilization gauge on the second footer row right side"
+    ;; Cumulative per-turn token/cost noise is retired (commit "real
+    ;; context-window utilization gauge in footer"). The `:right` region now
+    ;; carries a single color-coded pct-of-limit gauge sourced from the
+    ;; engine's `:utilization`, and emits nothing until a request is measured.
     (let [build-limits-segments @#'footer/build-limits-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai
                                                           :reasoning? false})}
         (fn []
-          (expect (= ["total tok 150→45 (cached 70)"
-                      "cost ~$0.015000 (in ~$0.006000, cached ~$0.002000, out ~$0.007000)"]
-                    (->> (build-limits-segments {:messages [{:role :assistant
-                                                             :tokens {:input 100 :output 30 :cached 60}
-                                                             :cost {:total-cost 0.01
-                                                                    :input-uncached-cost 0.004
-                                                                    :input-cached-cost 0.001
-                                                                    :output-cost 0.005}}
-                                                            {:role :assistant
-                                                             :tokens {:input 50 :output 15
-                                                                      :cached-input 10}
-                                                             :cost {:total-cost 0.005
-                                                                    :input-uncached-cost 0.002
-                                                                    :input-cached-cost 0.001
-                                                                    :output-cost 0.002}}]
-                                                 :settings {}}
+          (expect (= ["◗ 73%"]
+                    (->> (build-limits-segments {:messages [] :settings {}
+                                                 :utilization {:pct-of-limit 73}}
                            0)
                       (filter #(= :right (:region %)))
-                      (mapv :text))))))))
+                      (mapv :text))))
+          (expect (empty? (->> (build-limits-segments {:messages [] :settings {}} 0)
+                            (filter #(= :right (:region %)))
+                            (mapv :text))))))))
 
   (it "joins shortcuts to their labels without separator dots"
     (let [spans-width @#'footer/spans-width]

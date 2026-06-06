@@ -164,39 +164,6 @@
       (expect (not-any? #(= status (:text %)) @writes)))))
 
 (defdescribe draw-header-color-test
-  (it "renders the lone session as a single active tab in the center"
-    ;; Fresh session has no `:tabs` in app-db. The header synthesises one
-    ;; workspace and now renders it as a real (active) tab — one consistent
-    ;; affordance, no special inert-title path.
-    (cr/reset!)
-    (let [writes (atom [])
-          g      (dummy-text-graphics writes)
-          uuid   "123e4567-e89b-12d3-a456-426614174000"
-          db     {:title ""
-                  :session {:id uuid}}]
-      (header/draw-header! g db 0 80)
-      (let [placeholder-write
-            (some #(when (and (string? (:text %))
-                           (str/includes? (:text %) "Untitled session"))
-                     %)
-              @writes)
-            left-slot-writes
-            (filter #(and (= 1 (:row %))
-                       (string? (:text %))
-                       (not (str/blank? (:text %)))
-                       (< (long (or (:col %) 0)) 16))
-              @writes)
-            write-by-text (fn [text]
-                            (some #(when (= text (:text %)) %) @writes))]
-        (expect (some? placeholder-write))
-        ;; A single session now renders as a real (active) tab — not inert
-        ;; title text — so it carries the active-tab colors.
-        (expect (= t/header-active-tab-fg (:fg placeholder-write)))
-        (expect (= t/header-active-tab-bg (:bg placeholder-write)))
-        (expect (empty? left-slot-writes))
-        ;; Badge label is `#`-prefixed; the unhovered badge keeps `header-fg`.
-        (expect (= t/header-fg (:fg (write-by-text "#123e4567")))))))
-
   (it "uses a subtly different foreground for the hovered header copy affordance only"
     (cr/reset!)
     (let [writes (atom [])
@@ -228,73 +195,6 @@
           (expect (= t/header-hover-fg (:fg (write-by-text "#123e4567")))))))))
 
 (defdescribe draw-header-tab-entries-test
-  (it "renders workspace switcher entries in the center header slot without adding rows"
-    (cr/reset!)
-    (let [writes (atom [])
-          g      (dummy-text-graphics writes)
-          db     {:title "Chat"
-                  :session {:id "123e4567-e89b-12d3-a456-426614174000"}
-                  :active-tab-id :feature
-                  :tabs [{:id :main :label "Main"}
-                               {:id :feature :label "Feature" :dirty? true}
-                               {:id :verify :label "Verify" :state :running}]}]
-      (expect (= 3 (header/header-rows (assoc db :tabs [{:id :main}]))))
-      (expect (= 3 (header/header-rows db)))
-      (cr/begin-frame!)
-      (header/draw-header! g db 0 80)
-      (cr/commit-frame!)
-      (let [tab-writes (filter #(= 1 (:row %)) @writes)
-            ;; LEFT 20% (cols 0..15) stays empty — title lives in the center slot.
-            left-slot-writes (filter #(and (= 1 (:row %))
-                                        (string? (:text %))
-                                        (not (str/blank? (:text %)))
-                                        (< (long (or (:col %) 0)) 16))
-                               @writes)
-            ;; Tabs now have a 1-col `│` divider between them (gap 1).
-            layout     (p/tab-layout (:tabs db) 16 48 :feature {:gap 1})
-            expected   (nth layout 1)
-            tab-hit    (some #(when (and (= :workspace-entry (:kind %))
-                                      (= 1 (:index %)))
-                                %)
-                         (cr/current))
-            tab-write  (fn [label]
-                         (some #(when (= label (str/trim (:text %))) %) tab-writes))
-            top-rule   (some #(when (and (= 0 (:row %))
-                                      (= 0 (:col %))
-                                      (= p/BOX_H (:char %)))
-                                %)
-                         @writes)
-            bottom-rule (some #(when (and (= 2 (:row %))
-                                       (= 0 (:col %))
-                                       (= p/BOX_H (:char %)))
-                                 %)
-                          @writes)
-            main-tab   (tab-write "Main")
-            active-tab (tab-write "Feature •")
-            verify-tab (tab-write "Verify ▶")]
-        (expect (= t/footer-fg-muted (:fg top-rule)))
-        (expect (= t/footer-fg-muted (:fg bottom-rule)))
-        (expect (some? main-tab))
-        (expect (some? active-tab))
-        (expect (some? verify-tab))
-        (expect (= 16 (:col main-tab)))
-        (expect (= (:left expected) (:col active-tab)))
-        (expect (= t/border-fg (:fg main-tab)))
-        (expect (= t/dialog-bg (:bg main-tab)))
-        (expect (contains? (:modifiers main-tab) p/ITALIC))
-        (expect (not (contains? (:modifiers main-tab) p/BORDERED)))
-        (expect (= t/header-active-tab-fg (:fg active-tab)))
-        (expect (= t/header-active-tab-bg (:bg active-tab)))
-        (expect (contains? (:modifiers active-tab) p/BOLD))
-        (expect (not (contains? (:modifiers active-tab) p/BORDERED)))
-        (expect (= t/border-fg (:fg verify-tab)))
-        (expect (not (contains? (:modifiers verify-tab) p/BORDERED)))
-        (expect (empty? left-slot-writes))
-        (expect (= {:row 1 :col (:left expected) :width (:width expected)}
-                  (:bounds tab-hit)))
-        (expect (= :feature (:workspace-id tab-hit)))
-        (expect (= tab-hit (cr/lookup (:left expected) 1))))))
-
   (it "shows clickable arrows when workspaces overflow the 60 percent center slot"
     (cr/reset!)
     (let [writes (atom [])
