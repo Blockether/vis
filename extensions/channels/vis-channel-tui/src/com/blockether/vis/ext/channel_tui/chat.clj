@@ -662,7 +662,8 @@
        (cond-> {:answer          answer
                 :iteration-count (or (:iteration-count result) 1)
                 :duration-ms     (:duration-ms result)
-                :session-turn-id        (:session-turn-id result)}
+                :session-turn-id        (:session-turn-id result)
+                :utilization     (:utilization result)}
          model      (assoc :model model)
          provider   (assoc :provider provider)
          llm-selected (assoc :llm-selected llm-selected)

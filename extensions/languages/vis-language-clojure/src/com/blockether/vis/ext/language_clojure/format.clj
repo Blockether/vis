@@ -1,17 +1,21 @@
 (ns com.blockether.vis.ext.language-clojure.format
   "zprint-backed pretty printer used by `clj/edit` for format-on-write.
 
-   Kept as a private seam so callers don't reach into zprint
-   directly. The root `vis` project already pulls in `zprint/zprint`
-   for its sandbox pretty-printer (see top-level deps.edn), so we
-   inherit it transitively and don't redeclare the dep here.
+   Routes format-on-write through the root vis
+   `internal.format/safe-zprint-file-str` so it shares the SAME
+   process-wide zprint lock as the TUI render path. zprint keeps
+   global in-flight state and throws an `Attempted to run zprint
+   with type :structure ... type :zipper` re-entrancy error when a
+   format-on-write races a render-side pretty-print;
+   the shared gate serializes both surfaces. vis already pulls in
+   `zprint/zprint` (top-level deps.edn), inherited transitively here.
 
    Failure mode: if zprint refuses (parse error, runaway expansion,
    anything that throws), `format-string` returns the original
    source unchanged. We never silently corrupt a file because the
    formatter choked."
   (:require
-   [zprint.core :as zp]))
+   [com.blockether.vis.internal.format :as vfmt]))
 
 (def ^:private default-opts
   ;; Conservative defaults. `:width 100` matches the Vis house style;
@@ -30,5 +34,5 @@
    (if-not (and (string? source) (seq source))
      source
      (try
-       (zp/zprint-file-str source "vis-clj-edit" (merge default-opts opts))
+       (vfmt/safe-zprint-file-str source "vis-clj-edit" (merge default-opts opts))
        (catch Throwable _ source)))))
