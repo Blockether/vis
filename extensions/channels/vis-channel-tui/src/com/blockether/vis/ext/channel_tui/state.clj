@@ -348,7 +348,7 @@
 
    Every other former settings key (`:show-thinking`,
    `:show-iterations`, `:show-silent`, `:show-timestamps`,
-   `:mouse-selection-copy`, `:voice/respond?`, `:message-meta`,
+   `:mouse-selection-copy`, `:voice/respond?`,
    `:reasoning-level`, `:openai-codex-verbosity`) now lives in the
    toggles registry. The `:settings` map in app-db is a cached
    projection of (registry + these two locals); a listener wired in
@@ -374,7 +374,6 @@
    :show-timestamps (vis/toggle-enabled? :vis/show-timestamps),
    :mouse-selection-copy (vis/toggle-enabled? :vis/mouse-selection-copy),
    :voice/respond? (vis/toggle-enabled? :voice/respond?),
-   :message-meta (vis/toggle-value :vis/message-meta),
    :reasoning-level (vis/toggle-value :vis/reasoning-level),
    :openai-codex-verbosity (vis/toggle-value :openai-codex/verbosity)})
 (def default-settings

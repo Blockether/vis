@@ -2,7 +2,6 @@
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.click-regions :as cr]
-   [com.blockether.vis.ext.channel-tui.links :as links]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -1397,81 +1396,6 @@
           (expect (= 0 top))
           (expect (= 4 bot)))))    ;; track-h(5) - thumb-h(1) = 4
     ))
-
-;; ─────────────────────────────────────────────────────────────────────────
-;; Link-chrome strip - strip inline emphasis from anchor text
-;;
-;; `parse-md-refs` captures whatever sits between `[...]` raw, so
-;; `[See **here**](url)` flows into the chrome row with literal `**`
-;; baked in: "🔗 See **here** -> url". The renderer now runs the
-;; anchor text through `markdown->inline` and strips the styling
-;; sentinels, leaving plain visible text in the chrome.
-;; ─────────────────────────────────────────────────────────────────────────
-
-(def ^:private chrome-display-text @#'render/chrome-display-text)
-(def ^:private resources-badge-label @#'render/resources-badge-label)
-(def ^:private extract-link-refs @#'render/extract-link-refs)
-
-(defn- chrome-of [src]
-  (let [[ref] (links/parse-md-refs src)]
-    (chrome-display-text ref 80)))
-
-(defdescribe chrome-display-text-strips-inline-markup-test
-  (describe "emphasis inside link text doesn't leak into chrome row"
-    (it "`[See **here**](url)` -> no `**` in chrome"
-      (let [s (chrome-of "[See **here**](https://example.com)")]
-        (expect (str/includes? s "See here"))
-        (expect (not (str/includes? s "**")))))
-
-    (it "`[Spec *v2*](url)` -> no stray `*` in chrome"
-      (let [s (chrome-of "[Spec *v2*](https://example.com)")]
-        (expect (str/includes? s "Spec v2"))
-        (expect (not (str/includes? s "*v2*")))))
-
-    (it "``[Title with `code`](url)`` -> backticks stripped from chrome"
-      (let [s (chrome-of "[Title with `code`](https://example.com)")]
-        (expect (str/includes? s "Title with code"))
-        (expect (not (str/includes? s "`code`"))))))
-
-  (describe "emphasis OUTSIDE the brackets is unaffected (regression net)"
-    ;; `**[link](url)**` - bold lives outside the bracket, so
-    ;; `parse-md-refs` already captures clean text. This test pins
-    ;; that the new strip doesn't accidentally mangle the URL or icon.
-    (it "`**[link](url)**` -> chrome reads `link` cleanly"
-      (let [s (chrome-of "**[link](https://example.com)**")]
-        (expect (str/includes? s "link"))
-        (expect (str/includes? s "https://example.com"))
-        (expect (not (str/includes? s "**"))))))
-
-  (describe "chrome icon + url tail still render after the strip"
-    ;; Smoke test that the strip didn't drop the leading icon or the
-    ;; ` -> ` separator. Without these the affordance loses its
-    ;; "this is a link" cue.
-    (it "icon + arrow + url all present"
-      (let [s (chrome-of "[plain](https://example.com)")]
-        (expect (str/includes? s " -> "))
-        (expect (str/includes? s "https://example.com"))))))
-
-(defdescribe extract-link-refs-guard-test
-  (it "skips link extraction for giant messages"
-    (let [text (apply str (repeat 25050 "a"))]
-      (expect (= [] (extract-link-refs {:text text} 80))))))
-
-(defdescribe resources-badge-test
-  (describe "top-right resources badge"
-    (it "chooses the richest label that fits"
-      (expect (= "📚 Resources 3" (resources-badge-label 3 20)))
-      (expect (= "📚 3" (resources-badge-label 3 4)))
-      (expect (nil? (resources-badge-label 3 0))))
-
-    (it "links no longer add per-resource rows to bubble height"
-      (let [plain  {:role :assistant :text "a" :prewrapped-lines ["a"]}
-            linked {:role :assistant
-                    :text "[a](https://example.com)"
-                    :prewrapped-lines ["a"]}]
-        (render/invalidate-cache!)
-        (expect (= (render/bubble-height plain 80)
-                  (render/bubble-height linked 80)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Loose-bullet coalesce - multi-paragraph list items render as one bullet

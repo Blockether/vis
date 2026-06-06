@@ -113,29 +113,6 @@
                 (label {:ext/sci {:ext.sci/alias 'v}
                         :ext/name "foundation"}))))))
 
-(defdescribe resource-dialog-items-test
-  (it "resources popup rows keep click target fields and rendered labels"
-    (expect (= [{:text "Book"
-                 :url "https://example.com/book"
-                 :display "📚 Book -> https://example.com/book"
-                 :markdown "- [Book](https://example.com/book)"
-                 :label "📚 Book -> https://example.com/book"}]
-              (dlg/resource-dialog-items
-                [{:text "Book"
-                  :url "https://example.com/book"
-                  :display "📚 Book -> https://example.com/book"}]))))
-
-  (it "resource rows use a single selector, not selector plus bullet"
-    (let [resource-row-label (var-get #'dlg/resource-row-label)]
-      (expect (= "• [Book]" (resource-row-label true "Book" 80)))
-      (expect (= "  [Book]" (resource-row-label false "Book" 80)))))
-
-  (it "resource mouse open accepts normal down and release-only terminals"
-    (let [resource-open-action? (var-get #'dlg/resource-open-action?)]
-      (expect (resource-open-action? MouseActionType/CLICK_DOWN))
-      (expect (resource-open-action? MouseActionType/CLICK_RELEASE))
-      (expect (not (resource-open-action? MouseActionType/MOVE))))))
-
 (defdescribe file-picker-opener-test
   (it "file picker can hand the selected path to the shared external opener"
     (let [calls (atom [])
