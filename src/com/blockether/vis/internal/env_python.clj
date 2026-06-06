@@ -93,6 +93,16 @@
                               (persistent! m))))
     :else               v))
 
+(defn sym->py-name
+  "Clojure tool/binding symbol -> a Python-LEGAL global name. Python identifiers
+   can't contain `-`/`?`/`!`, so `task-set!` -> `task_set`, `fact-set!` ->
+   `fact_set`, `cat`/`done`/`ctx` unchanged. FULL SNAKE: this is how the agent
+   actually reaches the tools — `task_set(...)` calls the Clojure `task-set!`."
+  ^String [sym]
+  (-> (str sym)
+    (str/replace #"[?!]" "")
+    (str/replace "-" "_")))
+
 (defn- wrap-ifn
   "Wrap a Clojure fn as a Python-callable `ProxyExecutable`. Positional Python
    args are marshalled to Clojure, the fn is applied, and the result marshalled
@@ -200,7 +210,7 @@
    callables; everything else is marshalled. (Name kept from the SCI twin for
    drop-in compatibility.)"
   [py-ctx sym val]
-  (.putMember (py-globals py-ctx) (str sym)
+  (.putMember (py-globals py-ctx) (sym->py-name sym)
     (if (fn? val) (wrap-ifn val) (->py val))))
 
 (defn bind-and-bump!
@@ -281,9 +291,9 @@
     ;; REPL recovery slots first (so they land in the baseline and get filtered
     ;; out of the model-visible live-vars view, like SCI's *1/*2/*3/*e).
     (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))
-    ;; Tool fns + engine values.
+    ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
     (doseq [[sym val] (or custom-bindings {})]
-      (.putMember g (str sym) (if (fn? val) (wrap-ifn val) (->py val))))
+      (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
     {:sci-ctx ctx
      :sandbox-ns :python
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
