@@ -222,6 +222,27 @@
     (expect (= "tab draft" (input/input->text (:input @state/app-db))))
     (expect (= ["tab prompt"] (:input-history @state/app-db))))
 
+  (it "tab switch clears the stale :layout and strips :scroll :pos (scroll-jump regression)"
+    ;; The leaving tab's :layout (total-h/offsets) and the eased on-screen :pos
+    ;; are derived/display state anchored to the OLD document. restore-tab drops
+    ;; both so the first post-switch frame recomputes layout for THIS tab and
+    ;; re-resolves the scroll offset, instead of clamping against a foreign
+    ;; total-h (the visible \"jump to bottom\").
+    (reset! state/app-db {:session {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}]
+                          :scroll {:mode :at :offset 40 :pos 900}
+                          :layout {:total-h 5000 :offsets [0 100 900]}
+                          :tabs [{:id :main :label "Main" :active? true}
+                                 {:id :tab-1 :label "Tab 1"}]
+                          :active-tab-id :main
+                          :tab-locals {:tab-1 {:session {:id "tab-c"}
+                                               :messages [{:role :user :text "tab prompt"}]
+                                               :scroll {:mode :at :offset 5 :pos 7}}}
+                          :render-version 0})
+    (state/dispatch [:select-tab-index 1])
+    (expect (nil? (:layout @state/app-db)))
+    (expect (= {:mode :at :offset 5} (:scroll @state/app-db))))
+
   (it "selects workspaces by zero-based index and cycles to the next workspace"
     (reset! state/app-db {:tabs [{:id :main :label "Main"}
                                        {:id :tab-1 :label "Tab 1" :active? true}

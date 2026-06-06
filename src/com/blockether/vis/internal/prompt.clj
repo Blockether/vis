@@ -236,6 +236,13 @@
       done is self-asserted: (task-set! :K {:status :done}) is taken as-is;
         engine stamps :done-born, does NOT verify. Correctness is on you.
 
+      MARKDOWN  Every human-facing memory text field — task :title and
+                :acceptance, fact :content, and EVERY :summary — renders
+                as Markdown in the TUI context panel. WRITE THESE IN
+                MARKDOWN: lead with a short **bold** phrase, use `code`
+                spans for symbols/paths, and `-` bullets when listing.
+                Keep it tight — these are glanceable cards, not essays.
+
       Recovery — ONE verb, (recall …): pull back evidence the trailer
       clipped or :summarize compressed. Dispatches on arg shape.
         Every fact/task carries a stable :id — :t<N>/<key> (its birth

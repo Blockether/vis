@@ -338,23 +338,20 @@
       ;; Git lives here. Provider usage moved to the second row so it sits
       ;; directly under the repository state instead of competing with it.
       )))
-(defn- build-usage-segments
-  [{:keys [messages]}]
-  (let [tokens-str (some-> (session-tokens messages)
-                     fmt/format-tokens)
-        cost-str (some-> (session-cost messages)
-                   fmt/format-cost)]
-    (cond-> []
-      tokens-str (conj {:text (str "total " tokens-str),
-                        :fg t/footer-fg-muted,
-                        :bold? false,
-                        :region :right,
-                        :priority 2})
-      cost-str (conj {:text (str "cost " cost-str),
-                      :fg t/footer-fg-muted,
-                      :bold? false,
-                      :region :right,
-                      :priority 3}))))
+
+(defn- build-utilization-segments
+  "Right-side context-window gauge from engine `:utilization` (the REAL
+   single-request pct-of-limit, not cumulative billing tokens). Color-coded:
+   muted < 50%, warning 50-79%, error >= 80%. Empty until a request is measured."
+  [{:keys [utilization]}]
+  (let [pct (:pct-of-limit utilization)]
+    (if (number? pct)
+      (let [p  (long pct)
+            fg (cond (>= p 80) t/footer-error-fg
+                     (>= p 50) t/footer-warning-fg
+                     :else     t/footer-fg-muted)]
+        [{:text (str "\u25d7 " p "%"), :fg fg, :bold? false, :region :right, :priority 2}])
+      [])))
 (defn- build-limits-segments
   [db now-ms]
   (let [provider (some-> (chosen-model-info)
@@ -363,7 +360,7 @@
     (into (cond-> []
             text (conj
                    {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
-      (build-usage-segments db))))
+      (build-utilization-segments db))))
 ;;; ── Footer subtitle (contextual key helpers) ───────────────────────────────
 (defn- input-empty?
   "True when the input editor has no text."
