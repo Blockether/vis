@@ -1117,15 +1117,22 @@
   (or (some-> id namespace (subs 1) parse-long) 0))
 
 (defn- dummy-archive-digest
-  "Deterministic archive gist when no companion model is supplied: prior
-   gist (if any) plus a terse list of the freshly-folded entry labels."
+  "Deterministic archive digest when no companion model is supplied: the
+   previous entry maps plus one normalized `{:source :content :importance
+   :recall}` map per freshly folded entry — SAME shape as the companion-LLM
+   path and the same vocabulary as `:session/hints` entries, so consumers
+   never branch on source or field name."
   [entries prev-summary]
   (let [label (fn [{:keys [title content id]}]
                 (let [s (str (or title content id))]
-                  (if (> (count s) 60) (str (subs s 0 60) "…") s)))]
-    (str (when (not (str/blank? (str prev-summary))) (str prev-summary " │ "))
-      "archived " (count entries) " item(s): "
-      (str/join "; " (map label entries)))))
+                  (if (> (count s) 80) (str (subs s 0 80) "…") s)))
+        new-entries (mapv (fn [{:keys [id] :as e}]
+                            {:source     :archive
+                             :content    (label e)
+                             :importance :low
+                             :recall     (str "(recall " (pr-str id) ")")})
+                      entries)]
+    (into (vec prev-summary) new-entries)))
 
 (defn- archived-uncovered
   "Archived entries whose id is NOT yet folded into the digest's
@@ -1499,6 +1506,19 @@
         (pos? win) (assoc :model-input-limit win
                      :pct-of-limit (long (Math/round (* 100.0 (/ (double req) (double win))))))))))
 
+(defn normalize-importance
+  "Collapse the various importance vocabularies (severity-style
+   :critical/:warn/:info, salience-style :high/:medium/:low, strings) onto
+   the ONE scale shared by `:session/hints` entries AND
+   `:session/archive-digest` entries: `:high | :medium | :low`. Unknown/nil
+   → :medium."
+  [v]
+  (case (some-> v name clojure.string/lower-case)
+    ("critical" "high" "blocker" "error") :high
+    ("warn" "warning" "medium" "med")     :medium
+    ("info" "low" "trivial" "debug")      :low
+    :medium))
+
 (def model-facing-keys
   "EXACT set of `:session/*` keys the model is meant to see — the same
    keys `ctx-renderer/render-ctx` serializes into the `;; ctx` EDN. This
@@ -1532,25 +1552,40 @@
      - keep ONLY `model-facing-keys` (so archive / engine bookkeeping can
        NEVER leak)
      - project `:engine/utilization` → `:session/utilization`
-     - CONJOIN hints into ONE `:session/hints` feed: engine structural
-       advisories (`warnings`) ++ extension hook hints (the titles of
-       active `:source :hook` tasks). Those hook-sourced entries are
-       MOVED OUT of `:session/tasks` so the unified advisory surface owns
-       them and the task list stays the model's own work. The hook tasks
-       still live in the ctx-atom untouched (satisfaction / lifetime / GC
-       all operate there) — this is a render-layer projection only.
+     - CONJOIN hints into ONE `:session/hints` feed of HINT MAPS:
+         {:source <:engine | hook-id>  ; WHO raised it
+          :content <string>            ; the advisory text
+          :importance <:info|:warn|:critical>
+          :depends-on [refs]}          ; optional — related entities
+       Engine structural advisories (`warnings`) become `:source :engine`
+       hints; extension hook hints (active `:source :hook` tasks) become
+       `:source <hook-id>` hints and are MOVED OUT of `:session/tasks` so
+       the unified advisory surface owns them and the task list stays the
+       model's own work. The hook tasks still live in the ctx-atom
+       untouched (satisfaction / lifetime / GC all operate there) — this
+       is a render-layer projection only. Sorted critical → warn → info.
    Pure; never throws on a well-formed ctx map."
   ([ctx] (session-view ctx nil))
   ([ctx warnings]
-   (let [tasks       (:session/tasks ctx)
-         hook?       (fn [[_ v]] (= :hook (:source v)))
-         own-tasks   (into {} (remove hook?) tasks)
-         hook-hints  (->> tasks
-                       (filter hook?)
-                       (map (comp :title val))
-                       (filter (fn [t] (and (string? t) (not (str/blank? t)))))
-                       vec)
-         hints       (into (vec warnings) hook-hints)]
+   (let [tasks        (:session/tasks ctx)
+         hook?        (fn [[_ v]] (= :hook (:source v)))
+         own-tasks    (into {} (remove hook?) tasks)
+         engine-hints (->> warnings
+                        (filter (fn [s] (and (string? s) (not (str/blank? s)))))
+                        (map (fn [s] {:source :engine :content s :importance :medium})))
+         hook-hints   (->> tasks
+                        (filter hook?)
+                        (keep (fn [[k v]]
+                                (let [t (:title v)]
+                                  (when (and (string? t) (not (str/blank? t)))
+                                    (cond-> {:source     (or (:hook-id v) k)
+                                             :content    t
+                                             :importance (normalize-importance (:importance v))}
+                                      (seq (:depends-on v)) (assoc :depends-on (vec (:depends-on v)))))))))
+         rank         {:critical 0 :warn 1 :info 2}
+         hints        (->> (concat engine-hints hook-hints)
+                        (sort-by (fn [h] (rank (:importance h) 3)))
+                        vec)]
      (cond-> (select-keys ctx model-facing-keys)
        (contains? ctx :session/tasks) (assoc :session/tasks own-tasks)
        (:engine/utilization ctx)      (assoc :session/utilization (:engine/utilization ctx))

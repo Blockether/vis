@@ -2,6 +2,7 @@
   "Tests for the loop integration adapter — scope synthesis, ctx atom
    swapping, mutator binding wiring (tasks + facts model)."
   (:require
+   [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.ctx-loop :as cl]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.persistance]
@@ -170,9 +171,12 @@
         (expect (every? string? (:warnings @captured)))
         (expect (seq (:warnings @captured))))
 
-      (it "rendered ctx carries :session/hints as the same string vec"
-        (expect (= (:warnings @captured) (:session/hints rendered)))
-        (expect (every? string? (:session/hints rendered))))
+      (it "session-view conjoins the structural warns into :session/hints maps"
+        (let [hints (:session/hints (eng/session-view (:ctx @captured) (:warnings @captured)))]
+          (expect (seq hints))
+          (expect (every? map? hints))
+          (expect (every? #(= :engine (:source %)) hints))
+          (expect (= (set (:warnings @captured)) (set (map :content hints))))))
 
       (it "rendered ctx carries NO :session/stages"
         (expect (not (contains? rendered :session/stages)))))))
