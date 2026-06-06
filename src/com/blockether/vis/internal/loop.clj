@@ -1586,17 +1586,18 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
-(defn- extension-call-block?
+(defn- mutation-block?
+  "True when `block` ran a tool/op tagged `:mutation` (e.g. `v/patch`, a file
+   write) — as opposed to a read-only `:observation` (`rg`/`cat`/`ls`). Drives
+   the `(done …)`-as-proposal gate: a `(done)` in the same fence as a MUTATION
+   is decided before the mutation's outcome is observed, so it's surfaced for
+   confirm/refine; a `(done)` after pure reads finalizes directly. The engine
+   stamps every op envelope with `:tag :observation | :mutation`."
   [block]
-  (boolean
-    (or (seq (:channel block))
-      (extension/tool-result? (:result block))
-      (some #(extension/tool-result? (:result %)) (:forms block)))))
-
-(defn- final-answer-structural-error
-  [blocks]
-  (when (some extension-call-block? blocks)
-    "Final answer rejected: this iteration called an extension/tool. Run another iteration, read the tool output, then call `(done ...)` using observed evidence."))
+  (let [mut? (fn [env] (and (extension/tool-result? env) (= :mutation (:tag env))))]
+    (boolean
+      (or (mut? (:result block))
+        (some #(mut? (:result %)) (:forms block))))))
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -1628,24 +1629,28 @@
                      :blocks blocks
                      :answer answer-value}
                extra-ctx)]
-     (or (final-answer-structural-error blocks)
-       (some (fn [ext]
-               (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
-                       (when (= :turn.answer/validate phase)
-                         (binding [extension/*current-extension* ext
-                                   extension/*current-symbol* nil]
-                           (try
-                             (let [hit (hook-fn ctx)]
-                               (cond
-                                 (s/valid? ::extension/answer-validation-reject hit)
-                                 (answer-validation-rejection-message hook hit)
+     ;; Extension `:turn.answer/validate` vetoes only. The structural
+     ;; "called a tool this iteration" case is NO LONGER a hard reject —
+     ;; run-iteration treats it as a PROPOSAL (see `:answer-proposed?`):
+     ;; the answer is surfaced back next turn with the now-visible tool
+     ;; results for the model to confirm or refine.
+     (some (fn [ext]
+             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                     (when (= :turn.answer/validate phase)
+                       (binding [extension/*current-extension* ext
+                                 extension/*current-symbol* nil]
+                         (try
+                           (let [hit (hook-fn ctx)]
+                             (cond
+                               (s/valid? ::extension/answer-validation-reject hit)
+                               (answer-validation-rejection-message hook hit)
 
-                                 (and (map? hit) (:reject hit))
-                                 (answer-validation-invalid-return-message ext id hit)))
-                             (catch Throwable t
-                               (answer-validation-hook-error-message ext id t))))))
-                 (or (:ext/hooks ext) [])))
-         (answer-validation-extensions environment active-extensions))))))
+                               (and (map? hit) (:reject hit))
+                               (answer-validation-invalid-return-message ext id hit)))
+                           (catch Throwable t
+                             (answer-validation-hook-error-message ext id t))))))
+               (or (:ext/hooks ext) [])))
+       (answer-validation-extensions environment active-extensions)))))
 
 (defn- iteration-start-hook-hit
   "Normalise the value returned by a `:turn.iteration/start` hook into a
@@ -2704,6 +2709,15 @@
                                  (error/final-answer-code-error-message own-form-error)
                                  gate-error
                                  gate-error)
+              ;; PROPOSAL: a `(done …)` emitted in the same fence as tool /
+              ;; extension calls was decided BEFORE those results were
+              ;; observed. Don't finalize and DON'T error — flag it so the
+              ;; turn loop shows the proposed answer back next iteration (with
+              ;; the now-visible results) and asks the model to confirm or
+              ;; refine. The proposed text is already captured as the sticky
+              ;; best-answer by `answer-fn`.
+              answer-proposed? (and (nil? validation-error)
+                                 (boolean (some mutation-block? blocks)))
               ;; Surface the validation error on the answer-bearing
               ;; form's row so the model sees \"my (done ...) was
               ;; rejected because...\" right next to its own code.
@@ -2766,31 +2780,37 @@
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}
             (let [final-answer* (append-runtime-appendices environment final-answer value)]
-              {:thinking thinking
-               :blocks blocks
-               :final-result {:final?           true
-                              :answer           final-answer*
-                              ;; Index of the form that called
-                            ;; `(done ...)`. Channels use this to
-                            ;; ELIDE the answer-bearing form from the
-                            ;; per-iteration code trace (the channel
-                            ;; renders the answer text below; showing
-                            ;; `(done "...")` above it is
-                              ;; redundant prose-as-code).
-                              :answer-position  form-idx}
-               :api-usage api-usage
-               :duration-ms (or (:duration-ms ask-result) 0)
-               :silent-form-idxs silent-form-idxs
-               :llm-messages messages :llm-provider provider :llm-model model-name
-               :llm-selected-provider (:provider resolved-model)
-               :llm-selected-model (some-> (:name resolved-model) str)
-               :llm-actual-provider provider
-               :llm-actual-model model-name
-               :llm-routing-trace (:routed/trace ask-result)
-               :llm-raw-response (:raw ask-result)
-               :llm-executable-blocks (:blocks ask-result)
-               :llm-returned-empty-code? (empty? blocks)
-               :assistant-message (:assistant-message ask-result)})))
+              (cond->
+                {:thinking thinking
+                 :blocks blocks
+                 ;; nil when the answer is only a PROPOSAL (tools ran in the
+                 ;; same fence) — the turn does not finalize; the loop asks the
+                 ;; model to confirm/refine next iteration. Otherwise finalize.
+                 :final-result (when-not answer-proposed?
+                                 {:final?           true
+                                  :answer           final-answer*
+                                  ;; Index of the form that called
+                                  ;; `(done ...)`. Channels use this to
+                                  ;; ELIDE the answer-bearing form from the
+                                  ;; per-iteration code trace (the channel
+                                  ;; renders the answer text below; showing
+                                  ;; `(done "...")` above it is
+                                  ;; redundant prose-as-code).
+                                  :answer-position  form-idx})
+                 :api-usage api-usage
+                 :duration-ms (or (:duration-ms ask-result) 0)
+                 :silent-form-idxs silent-form-idxs
+                 :llm-messages messages :llm-provider provider :llm-model model-name
+                 :llm-selected-provider (:provider resolved-model)
+                 :llm-selected-model (some-> (:name resolved-model) str)
+                 :llm-actual-provider provider
+                 :llm-actual-model model-name
+                 :llm-routing-trace (:routed/trace ask-result)
+                 :llm-raw-response (:raw ask-result)
+                 :llm-executable-blocks (:blocks ask-result)
+                 :llm-returned-empty-code? (empty? blocks)
+                 :assistant-message (:assistant-message ask-result)}
+                answer-proposed? (assoc :answer-proposed? true)))))
           ;; Normal path
         {:thinking thinking
          :blocks blocks
@@ -3341,6 +3361,74 @@
       (select-keys acc cost-map-keys)
       (select-keys extra-cost cost-map-keys))))
 
+(def ^:private loop-give-up-text
+  "Markdown surfaced when a turn is force-finalized after the model kept
+   repeating without ever landing — and produced no usable answer to fall
+   back on."
+  (str "I kept repeating the same steps without converging on a confident "
+    "answer, so I stopped to avoid spinning. See the iteration trace above "
+    "for what I gathered."))
+
+(defn- repetition-loop-state
+  "Pure repetition-only loop detector. Given this iteration's executed `blocks`
+   and the prior `:stuck` carry, returns the next `:stuck` fields plus `:stuck?`.
+
+   Two signals, no iteration/budget counting:
+     - a `(done …)` that reached this point did NOT finalize the turn
+       (gated / discarded / retracted); two in a row ⇒ stuck.
+     - identical non-`(done)` action code repeated across iterations (the model
+       reran the same search / rebuilt the same parser) ⇒ stuck."
+  [blocks prev-stuck]
+  (let [had-done?   (boolean (some #(re-find #"\(done\b" (str (:code %))) blocks))
+        action-code (mapv :code (remove #(re-find #"\(done\b" (str (:code %))) blocks))
+        action-sig  (when (seq action-code) (hash action-code))
+        done-streak (if had-done? (inc (long (or (:done-streak prev-stuck) 0))) 0)
+        sig-repeat? (boolean (and action-sig (= action-sig (:last-sig prev-stuck))))]
+    {:stuck?      (or (>= done-streak 2) sig-repeat?)
+     :done-streak done-streak
+     :action-sig  action-sig}))
+
+(defn- loop-checkpoint-message
+  "The repetition decision-checkpoint, injected as a user turn the moment the
+   model loops (a `(done …)` that didn't finalize, repeated; or identical
+   non-`(done)` action code repeated). Confronts the one-shot urge: shows the
+   best answer so far and forces a commit / justified-continue / blocked
+   decision instead of yet another open-ended probe. `sticky-md` is the best
+   answer so far (Markdown) or nil."
+  [sticky-md]
+  (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
+    "you have now looped without finalizing.\n\n"
+    (if (str/blank? (str sticky-md))
+      "You have NOT produced any answer yet.\n\n"
+      (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
+    "DECIDE NOW — run NO tools/searches this iteration:\n"
+    "1. COMMIT — if the answer above is good enough, call `(done \"…\")` with it "
+    "(refine the wording if you must).\n"
+    "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
+    "another iteration, then fetch ONLY that. Repeating a prior search/parse "
+    "is not allowed.\n"
+    "3. BLOCKED — call `(done \"…\")` stating exactly what blocks you.\n"
+    "Pick one. Do not investigate further."))
+
+(defn- proposal-confirm-message
+  "Injected when the model called `(done …)` in the SAME fence as tool/extension
+   calls — so that answer was a proposal decided before the results (now visible
+   in the trace above) came back. Asks it to confirm or refine, rather than the
+   old hard rejection. `proposed-md` is the proposed answer (Markdown) or nil."
+  [proposed-md]
+  (str "You called `(done …)` in the same step as a MUTATION (a file change / "
+    "patch) — so that answer was a PROPOSAL, decided before the mutation's "
+    "outcome was observed. The result is now in the trace above.\n\n"
+    (if (str/blank? (str proposed-md))
+      ""
+      (str "Your proposed answer:\n\n---\n" proposed-md "\n---\n\n"))
+    "Now that you can SEE the actual results:\n"
+    "- If the answer still holds, re-call `(done \"…\")` on its OWN (no other "
+    "tool calls this iteration) to finalize — refine the wording with the "
+    "observed evidence if useful.\n"
+    "- If the results change your conclusion, fix it, then `(done \"…\")`.\n"
+    "Do not re-run the same tools just to double-check."))
+
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
@@ -3376,6 +3464,10 @@
         resolved-model (resolve-effective-model (:router environment))
         effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
+        ;; Clear any sticky best-answer from a PRIOR turn (the atom lives on
+        ;; the per-session env) so this turn's cancel-fallback only ever
+        ;; surfaces an answer THIS turn actually produced.
+        _ (some-> (:best-answer-atom environment) (reset! nil))
         has-reasoning? (reasoning-effort-configurable? resolved-model)
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per session turn. Threaded through both
@@ -3626,7 +3718,10 @@
             (cond
               (when cancel-atom @cancel-atom)
               (do (log-stage! :error iteration {:reason :cancelled})
-                (let [result (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
+                ;; Sticky best-answer: surface the latest non-blank `(done …)`
+                ;; candidate this turn produced instead of a blank answer.
+                (let [sticky (some-> (:best-answer-atom environment) deref :value)
+                      result (merge {:answer sticky :status :cancelled :status-id (status->id :cancelled)
                                      :trace trace :iteration-count iteration} (finalize-cost))]
                   result))
 
@@ -3922,7 +4017,8 @@
                   ;; result that the top-of-loop branch would have produced.
                   (if (and cancel-atom @cancel-atom)
                     (do (log-stage! :error iteration {:reason :cancelled})
-                      (let [result (merge {:answer nil :status :cancelled
+                      (let [sticky (some-> (:best-answer-atom environment) deref :value)
+                            result (merge {:answer sticky :status :cancelled
                                            :status-id (status->id :cancelled)
                                            :trace trace :iteration-count iteration}
                                      (finalize-cost))]
@@ -4252,29 +4348,17 @@
                         (do (log-stage! :iteration/stop iteration
                               {:blocks (count blocks) :errors (count (filter :error blocks))
                                :times (mapv block-duration-ms blocks)})
-                          ;; Non-terminal iteration-final chunk: per-form
-                          ;; chunks already streamed; this is the
-                          ;; \"iteration done, more iterations coming\"
-                          ;; marker. `:final` is nil because the
-                          ;; turn isn't done yet.
-                          (when on-chunk
-                            (on-chunk {:phase            :iteration-final
-                                       :iteration        (inc (long iteration))
-                                       :thinking         thinking
-                                       :final            nil
-                                       :silent-form-idxs (:silent-form-idxs iteration-result)
-                                       ;; Live working-memory snapshot — the F2
-                                       ;; context dialog reflects each iteration's
-                                       ;; task/fact writes mid-turn.
-                                       :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
-                                       :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
-                                       :done?            false}))
-                          (let [;; Carry forward all observed iterations
-                                ;; as `[pos {:thinking :blocks}]` for the
-                                ;; next iteration's trailer. The renderer
-                                ;; drops oldest entries by window, not
-                                ;; by token count.
-                                _ blocks
+                          (let [_ blocks
+                                ;; Repetition-only loop detection (no iteration or
+                                ;; budget counting): a `(done …)` that reached here
+                                ;; did NOT finalize, 2 in a row ⇒ stuck; or identical
+                                ;; non-`(done)` action code repeats ⇒ stuck.
+                                {:keys [stuck? done-streak action-sig]} (repetition-loop-state blocks (:stuck loop-state))
+                                nudged?       (boolean (:nudged? (:stuck loop-state)))
+                                sticky        (some-> (:best-answer-atom environment) deref :value)
+                                ;; Checkpoint already shown AND still stuck ⇒ force-finalize.
+                                forced?       (and nudged? stuck?)
+                                forced-answer (or sticky {:answer loop-give-up-text})
                                 next-recent (conj (vec (or trailer-iters []))
                                               [(inc (long iteration))
                                                {:thinking thinking
@@ -4290,11 +4374,70 @@
                                                   ;; `:preserved-thinking/replay? false`.
                                                 :assistant-message (:assistant-message iteration-result)
                                                 :preserved-thinking/replay? true}])]
-                            (recur (merge (dissoc loop-state :llm-provider)
-                                     {:iteration          (inc iteration)
-                                      :messages           messages
-                                      :trace              (conj trace trace-entry)
-                                      :trailer-iters      next-recent}))))))))))))))))
+                            ;; ONE iteration-final chunk, AFTER the decision. Terminal
+                            ;; (:done? true + :final answer) when force-finalizing so
+                            ;; live channels render the forced answer — the bug fix:
+                            ;; previously a non-terminal chunk fired BEFORE the
+                            ;; force-finalize, so the forced answer never showed.
+                            (when on-chunk
+                              (on-chunk (if forced?
+                                          {:phase            :iteration-final
+                                           :iteration-count  (inc (long iteration))
+                                           :thinking         thinking
+                                           :final            {:answer          forced-answer
+                                                              :iteration-count (inc iteration)
+                                                              :status          :success}
+                                           :silent-form-idxs (:silent-form-idxs iteration-result)
+                                           :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
+                                           :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
+                                           :done?            true}
+                                          {:phase            :iteration-final
+                                           :iteration        (inc (long iteration))
+                                           :thinking         thinking
+                                           :final            nil
+                                           :silent-form-idxs (:silent-form-idxs iteration-result)
+                                           :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
+                                           :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
+                                           :done?            false})))
+                            (if forced?
+                              (do (log-stage! :final iteration {:reason :loop-forced
+                                                                :iteration-count (inc iteration)})
+                                (-> (merge {:answer forced-answer
+                                            :status :success
+                                            :trace (conj trace trace-entry)
+                                            :iteration-count (inc iteration)
+                                            :utilization (let [u @usage-atom
+                                                               req (if (pos? (long (:iter-count u)))
+                                                                     (long (:last-iter-input u))
+                                                                     (long (:previous-request-input u)))]
+                                                           (ctx-engine/utilization req effective-context-limit
+                                                             (:input-tokens u)
+                                                             safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                      (finalize-cost))
+                                  (attach-llm-routing-summary pre-resolved-model iteration-result)))
+                              (recur (merge (dissoc loop-state :llm-provider)
+                                       {:iteration          (inc iteration)
+                                        ;; Inject ONE guidance turn:
+                                        ;;  - repetition detected → stern
+                                        ;;    decision-checkpoint;
+                                        ;;  - else a mutation `(done)` proposal →
+                                        ;;    gentle confirm/refine.
+                                        :messages           (cond-> messages
+                                                              stuck?
+                                                              (conj {:role "user"
+                                                                     :content (loop-checkpoint-message
+                                                                                (when sticky (answer-markdown sticky)))})
+
+                                                              (and (not stuck?)
+                                                                (:answer-proposed? iteration-result))
+                                                              (conj {:role "user"
+                                                                     :content (proposal-confirm-message
+                                                                                (when sticky (answer-markdown sticky)))}))
+                                        :trace              (conj trace trace-entry)
+                                        :trailer-iters      next-recent
+                                        :stuck              {:done-streak done-streak
+                                                             :last-sig    action-sig
+                                                             :nudged?     stuck?}})))))))))))))))))
 
 (defn- slash-ctx-for-env
   "Build the slash dispatch ctx from a turn env. Pure data; carries
@@ -5386,6 +5529,14 @@
         ;; itself errored (Option C scoping - sibling errors do NOT
         ;; gate the answer). Reset to nil before every iteration runs.
         answer-atom              (atom nil)
+        ;; Sticky best-answer: the LATEST non-blank answer any `(done …)` call
+        ;; produced this turn, retained ACROSS iterations (NOT reset per-iter,
+        ;; unlike answer-atom). When a turn ends without a clean terminal
+        ;; answer — user cancel, or a model that kept investigating/retracting
+        ;; and never landed an accepted `(done)` (GPT one-shot / over-
+        ;; investigation pattern) — the turn surfaces this instead of a blank
+        ;; answer. Best-effort: a tentative answer beats nothing.
+        best-answer-atom         (atom nil)
         ;; SINGLE turn-state atom replaces the legacy soup
         ;; (current-{turn-position,iteration,form-idx,iteration-id,
         ;;  session-turn-id,user-request}-atom). All six fields live
@@ -5537,6 +5688,16 @@
                                      (reset! answer-atom
                                        {:value    value
                                         :position (:form-idx @turn-state-atom)})
+                                     ;; Sticky best-answer: retain the latest
+                                     ;; non-blank candidate across iterations so
+                                     ;; a cancelled/never-finalized turn can
+                                     ;; surface it instead of a blank answer.
+                                     ;; Survives downstream gating/retraction —
+                                     ;; captured at the call site.
+                                     (when-not (str/blank? (str answer-text))
+                                       (reset! best-answer-atom
+                                         {:value           value
+                                          :answer-markdown answer-text}))
                                      :vis/answer))
         ;; SCI binding for the session title:
         ;;   `(set-session-title! \"...\")` - writes the title through
@@ -5625,9 +5786,11 @@
               (assoc :workspace          active-workspace
                 :workspace/id       (:id active-workspace)
                 :workspace/root     (:root active-workspace)
-                ;; Every workspace is a rift clone now — always a sandbox.
-                :workspace/sandbox? true
-                :vcs/kind           :rift))
+                ;; Every workspace is a rift CoW clone — always a sandbox.
+                ;; Reported on :workspace/sandbox?, NOT as a VCS. The
+                ;; model-facing :vcs/kind is the real repo VCS, computed in
+                ;; foundation.workspace-ctx/render-block.
+                :workspace/sandbox? true))
         env (assoc env
               ;; CTX engine atoms — visible to the rest of the loop so the
               ;; renderer / per-iter capture / done snapshot can read and
@@ -5647,6 +5810,7 @@
               :def-resolve-lru-atom              (atom {})
               :router                            router
               :answer-atom                       answer-atom
+              :best-answer-atom                  best-answer-atom
               :session-title-atom           session-title-atom
               :extensions                        (atom [])
               :active-extensions                 (atom []))]

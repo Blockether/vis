@@ -50,6 +50,20 @@
     (with-open [_ repo] true)
     false))
 
+(defn vcs-kind
+  "The `:vcs/kind` for a workspace `root`: `:git` when the root sits inside
+   a git repository, else `:none`. Single source of truth so the model-facing
+   CTX, the env, and channels all agree — and stay inside the ctx-spec set
+   #{:git :hg :jj :fossil :none}. NOTE: `:rift` (the CoW-clone sandbox
+   mechanism) is NOT a VCS and must never appear here; sandbox-ness lives on
+   `:workspace/sandbox?`."
+  [root]
+  (if (and root
+        (let [f (File. (str root))]
+          (and (.exists f) (in-repository? f))))
+    :git
+    :none))
+
 (defn repo-name
   "Human label for a repository, currently its work-tree directory name."
   [^Repository repo]

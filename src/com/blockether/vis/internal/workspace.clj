@@ -356,8 +356,11 @@
             :workspace/exists?  exists?
             :workspace/changed  (or changed 0)
             :workspace/dirty?   (boolean (and changed (pos? changed)))
+            ;; Sandbox-ness is on :workspace/sandbox?, not :vcs/kind — `:rift`
+            ;; is the CoW-clone mechanism, not a VCS, and isn't in the ctx-spec
+            ;; set. The real :vcs/kind is computed model-side in
+            ;; foundation.workspace-ctx (this status fn is intentionally git-free).
             ;; Back-compat alias for channels still reading `:vcs/dirty?`.
-            :vcs/kind           :rift
             :vcs/dirty?         (boolean (and changed (pos? changed)))))
         (catch Throwable t
           (assoc ws
