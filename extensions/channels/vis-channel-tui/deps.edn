@@ -16,10 +16,10 @@
   ;;      StreamBasedTerminal/AbstractTextGraphics putString.
   ;;   2. BMP `Emoji_Presentation=Yes` glyphs (✅ ⭐ ⚡ ❌ ✨ ☔ ☕ ⏰ …) and
   ;;      genuine astral/surrogate emoji (🏷️ 😊 👀) → 2 columns.
-  ;;   3. VS-16 width is BASE-dependent: a text-default BMP symbol + VS-16
-  ;;      (⚠️ ❤️ ☑️ — base U+26A0/U+2764/U+2611) stays NARROW (1 col); only a
-  ;;      genuine emoji base (astral, or Emoji_Presentation=Yes) widens. Forcing
-  ;;      the text-symbol forms wide over-counted the row and shoved borders left.
+  ;;   3. VS-16 (emoji presentation) graphemes are WIDE — ⚠️ ❤️ ☑️ 🏷️ count as
+  ;;      2 columns, matching how the target terminals paint emoji-presentation
+  ;;      sequences. This is independent of the BARE base glyph: a bare ⚠ / ● / ▶
+  ;;      (no VS-16) is text/geometric presentation and stays 1 column (patch #5).
   ;;   4. VS-15 text-presentation graphemes (☑︎) stay single-width.
   ;;   5. Geometric / symbol glyphs ● ○ ◯ ◎ ◐ ◑ (status dots), ▶ ◀ (media
   ;;      triangles), ⚠ (warning sign) are ONE column (standard width). They were
@@ -36,7 +36,7 @@
   ;;   8. Control chars degrade to a space instead of throwing on the render thread.
   ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.12"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.13"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
