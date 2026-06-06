@@ -925,11 +925,79 @@
          :timeout? true})
       execution-result)))
 
+(defn- run-python-code
+  "Embedded-GraalPy twin of `run-sci-code`. Reuses the worker-future +
+   cancellation + tool-event/render sinks + `*1`/`*e` recovery stack, but the
+   eval core is `env-python/run-python-block` (whole-block; tools fire in order
+   through their ProxyExecutable wrappers, which read the SAME dynamic sinks the
+   Clojure tools already use). env-python is resolved lazily so GraalPy stays
+   off the default classpath."
+  [py-ctx code & {:keys [tool-event-fn env]}]
+  (let [thrown        (atom nil)
+        tool-counts   (atom {})
+        cancel-token  (:cancel-token env)
+        channel-sink  (atom [])
+        sink-pos      (atom -1)
+        record-tool-event (fn [event]
+                            (let [op (:op event)
+                                  n  (get (swap! tool-counts update op (fnil inc 0)) op)
+                                  event* (cond-> event
+                                           (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
+                              (when tool-event-fn (tool-event-fn event*))))
+        run-block   (requiring-resolve 'com.blockether.vis.internal.env-python/run-python-block)
+        exec-future (cancellation/worker-future "vis-python-eval"
+                      (fn []
+                        (try
+                          (binding [extension/*tool-event-sink* record-tool-event
+                                    extension/*render-sink*      channel-sink
+                                    extension/*sink-position*    sink-pos]
+                            (assoc (run-block py-ctx code) :channel @channel-sink :lru {}))
+                          (catch Throwable e
+                            (reset! thrown e)
+                            {:result nil :channel @channel-sink :lru {} :forms []
+                             :error (try (extension/ex->op-error e {:form-source code})
+                                      (catch Throwable _
+                                        {:message (or (ex-message e) (.getName (class e)))}))}))))
+        dispose-cancel-hook (when cancel-token
+                              (cancellation/on-cancel! cancel-token
+                                (fn [] (try (.cancel ^java.util.concurrent.Future exec-future true)
+                                         (catch Throwable _ nil)))))
+        timeout-ms  (long *eval-timeout-ms*)
+        execution-result (try
+                           (deref exec-future timeout-ms nil)
+                           (catch Throwable e
+                             (reset! thrown e)
+                             (try (.cancel ^java.util.concurrent.Future exec-future true)
+                               (catch Throwable _ nil))
+                             {:result nil :channel @channel-sink :lru {}
+                              :error (try (extension/ex->op-error e {:form-source code})
+                                       (catch Throwable _
+                                         {:message (or (ex-message e) (.getName (class e)))}))})
+                           (finally
+                             (when dispose-cancel-hook
+                               (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
+    (when env
+      (let [push-result (requiring-resolve 'com.blockether.vis.internal.env-python/push-eval-result!)
+            push-error  (requiring-resolve 'com.blockether.vis.internal.env-python/push-eval-error!)]
+        (cond
+          (nil? execution-result)          (push-error env (or @thrown (ex-info "Eval timeout" {})))
+          (nil? (:error execution-result)) (push-result env (:result execution-result))
+          :else (push-error env (or @thrown (ex-info (or (:message (:error execution-result))
+                                                       "eval error") {}))))))
+    (if (nil? execution-result)
+      (do (.cancel ^java.util.concurrent.Future exec-future true)
+        {:result nil :channel @channel-sink :lru {}
+         :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")} :timeout? true})
+      execution-result)))
+
 (defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn env]
-  (let [execution-result (if timeout-ms
-                           (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)]
-                             (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn :env env))
-                           (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn :env env))
+  (let [run! (fn []
+               (if (= :python (:engine env))
+                 (run-python-code sci-ctx code :tool-event-fn tool-event-fn :env env)
+                 (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn :env env)))
+        execution-result (if timeout-ms
+                           (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)] (run!))
+                           (run!))
         finished-time    (System/currentTimeMillis)
         execution-time   (- finished-time start-time)]
     (cond-> execution-result
@@ -968,19 +1036,28 @@
     (when sci-ctx
       (try
         (when-let [snap (ctx-loop/session-snapshot environment)]
-          (env/sci-update-binding! sci-ctx 'ctx snap))
+          (if (= :python (:engine environment))
+            ((requiring-resolve 'com.blockether.vis.internal.env-python/sci-update-binding!) sci-ctx 'ctx snap)
+            (env/sci-update-binding! sci-ctx 'ctx snap)))
         (catch Throwable _ nil)))
     (let [start-time (System/currentTimeMillis)
+          python?    (= :python (:engine environment))
           exec       (try
-                       (let [{:keys [parse-error repaired-source]} (parse-top-level-forms code)
-                             validation-code (or repaired-source code)]
-                         (when-not parse-error
-                           (env/validate-non-empty-block! validation-code)
-                           (env/validate-no-banned-defs! validation-code)))
+                       ;; Clojure block validation (edamame parse + banned def
+                       ;; heads) is SCI-only. The Python path surfaces its own
+                       ;; syntax/empty-block errors via run-python-block.
+                       (when-not python?
+                         (let [{:keys [parse-error repaired-source]} (parse-top-level-forms code)
+                               validation-code (or repaired-source code)]
+                           (when-not parse-error
+                             (env/validate-non-empty-block! validation-code)
+                             (env/validate-no-banned-defs! validation-code))))
                        (run-with-timing sci-ctx code sandbox-ns timeout-ms
                          start-time tool-event-fn environment)
                        (catch Throwable e
-                         (env/push-eval-error! environment e)
+                         (if python?
+                           ((requiring-resolve 'com.blockether.vis.internal.env-python/push-eval-error!) environment e)
+                           (env/push-eval-error! environment e))
                          {:result nil
                           :channel []
                           :lru {}
@@ -3683,7 +3760,9 @@
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
-    (env/reset-eval-bindings! environment)
+    (if (= :python (:engine environment))
+      ((requiring-resolve 'com.blockether.vis.internal.env-python/reset-eval-bindings!) environment)
+      (env/reset-eval-bindings! environment))
     ;; Hot symbol archival runs only after a final successful answer.
     ;; Failed/cancelled turns keep their live scratch symbols for
     ;; recovery. This is SCI namespace pruning — unrelated to CTX
@@ -5102,9 +5181,11 @@
           db-info                (:db-info env)
           custom-bindings        (custom-bindings env)
           sci-ctx                (:sci-ctx env)
-          _                      (doseq [[sym val] (or custom-bindings {})]
-                                   (when val
-                                     (env/sci-update-binding! sci-ctx sym val)))
+          _                      (let [upd (if (= :python (:engine env))
+                                             (requiring-resolve 'com.blockether.vis.internal.env-python/sci-update-binding!)
+                                             env/sci-update-binding!)]
+                                   (doseq [[sym val] (or custom-bindings {})]
+                                     (when val (upd sci-ctx sym val))))
           ;; Workspace pin lives on the env itself (set in create-environment).
           ;; Opts may carry namespaced `:workspace/*` overrides for unusual
           ;; per-turn cases; the bare `:workspace` key is not accepted
@@ -5556,7 +5637,8 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id]}]
+  [router {:keys [db session channel external-id title workspace-id engine]
+           :or {engine :clojure}}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
@@ -5814,9 +5896,15 @@
                                    ;; from `environment-atom` at call time.
                                    (sci-symbols/build-symbol-bindings
                                      (fn [] @environment-atom)))
+        ;; Engine substrate: :clojure → SCI (default, unchanged); :python →
+        ;; embedded GraalPy (env_python, drop-in twin). env-python is resolved
+        ;; LAZILY so the GraalPy deps (under the :graalpy alias, ~100MB) stay
+        ;; off the default/native classpath unless a Python session is created.
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
-        (env/create-sci-context (merge env-bindings
-                                  (:custom-bindings @state-atom)))
+        (let [merged (merge env-bindings (:custom-bindings @state-atom))]
+          (if (= :python engine)
+            ((requiring-resolve 'com.blockether.vis.internal.env-python/create-sci-context) merged)
+            (env/create-sci-context merged)))
         env (cond-> {:environment-id                    environment-id
                      :session-id                   session-id
                      :session/state-id                  session-state-id
@@ -5846,6 +5934,9 @@
               :sci-ctx                           sci-ctx
               :sandbox-ns                        sandbox-ns
               :initial-ns-keys                   initial-ns-keys
+              ;; :clojure (SCI) | :python (embedded GraalPy). Read by the eval
+              ;; dispatch (run-with-timing) to pick the substrate.
+              :engine                            engine
              ;; Long-lived per-env LRU map: `{var-name-string →
              ;; last-used-turn-pos}`. Merged from each iteration's
              ;; `:lru` after eval. Drives the trailer's live-vars
