@@ -525,6 +525,7 @@
                    :llm-actual {:provider "openai-codex"
                                 :model "gpt-5.3-codex"}
                    :llm-fallback? true
+                   :message-meta-mode :full
                    :llm-routing-trace [{:event/type :llm.routing/provider-fallback
                                         :from-provider "anthropic-coding-plan"
                                         :from-model "claude-opus-4-7"
@@ -545,6 +546,7 @@
                    :llm-actual {:provider "openai-codex"
                                 :model "gpt-5.3-codex"}
                    :llm-fallback? true
+                   :message-meta-mode :full
                    :llm-routing-trace
                    [{:event/type :llm.routing/provider-retry :status 429 :attempt 1 :delay-ms 2000}
                     {:event/type :llm.routing/provider-retry :status 429 :attempt 2 :delay-ms 3000}
@@ -564,6 +566,7 @@
                    :llm-selected {:provider "a" :model "m1"}
                    :llm-actual   {:provider "b" :model "m2"}
                    :llm-fallback? true
+                   :message-meta-mode :full
                    :llm-routing-trace
                    [{:event/type :llm.routing/provider-retry :status 429 :attempt 1 :delay-ms 2000}
                     {:event/type :llm.routing/provider-fallback :status 429 :reason :rate-limit-budget-exhausted}]}]
@@ -574,6 +577,7 @@
     (let [base {:role :assistant
                 :text "Done."
                 :timestamp nil
+                :message-meta-mode :full
                 :prewrapped-lines ["Done."]}
           routed (assoc base
                    :llm-selected {:provider "anthropic-coding-plan"
@@ -1940,6 +1944,7 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :assistant
                       :text "hello"
+                      :message-meta-mode :full
                       :tokens {:input 100 :output 20 :cached 70}}
                      4 2 60 {:viewport-h 40})]
       (expect (= 5 height))
@@ -1964,6 +1969,7 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :assistant
                       :text "hello"
+                      :message-meta-mode :full
                       :tokens {:input 100 :output 20 :cached 0}}
                      4 2 60 {:viewport-h 40})]
       (expect (= 5 height))
@@ -1990,6 +1996,7 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :assistant
                       :text "hello"
+                      :message-meta-mode :full
                       :tokens {:input 100 :output 20}}
                      4 2 60 {:viewport-h 40})
           answer-row (:row (first (filter #(= "hello" (:text %)) @puts)))
@@ -2015,6 +2022,7 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :assistant
                       :text "hello"
+                      :message-meta-mode :full
                       :iteration-count 3
                       :traces [{:forms [{:silent? true}
                                         {:silent? false}]}
