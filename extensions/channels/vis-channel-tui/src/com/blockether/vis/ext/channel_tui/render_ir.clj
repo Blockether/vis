@@ -216,8 +216,14 @@
         ;; code, the `cat` hash gutter's blank-anchor pad) and must
         ;; survive; only continuation segments drop it on reflow.
         cont?  (volatile! false)
-        flush! (fn []
-                 (vswap! out conj {:runs @line})
+        ;; `soft?` marks a line flushed because the next word would
+        ;; overflow `width` — a true word-wrap continuation point. Such
+        ;; lines are full-justifiable downstream. A line flushed by a
+        ;; `:break?` atom (hard break / paragraph end) is NOT soft, nor
+        ;; is the trailing final line below — those are the natural,
+        ;; ragged-right ends of a paragraph and must never be stretched.
+        flush! (fn [soft?]
+                 (vswap! out conj (cond-> {:runs @line} soft? (assoc :wrap? true)))
                  (vreset! line  cont-runs)
                  (vreset! lw    cont-w)
                  (vreset! prefix-w cont-w)
@@ -228,7 +234,7 @@
     (doseq [a atoms]
       (cond
         (:break? a)
-        (flush!)
+        (flush! false)
 
         (str/blank? (:text a))
         ;; whitespace atom — on a continuation segment, drop it when at
@@ -249,10 +255,10 @@
 
             ;; current line still has only the prefix → force-fit
             (= @lw @prefix-w)
-            (do (push! a) (flush!))
+            (do (push! a) (flush! true))
 
             :else
-            (do (flush!) (push! a))))))
+            (do (flush! true) (push! a))))))
     (when (> (line-width {:runs @line}) @prefix-w)
       (vswap! out conj {:runs @line}))
     @out))
