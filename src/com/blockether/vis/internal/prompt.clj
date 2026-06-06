@@ -114,7 +114,7 @@
       conventions from THIS repo; assume no specific stack.
 
     VOCAB
-      TURN  := user-msg → … → (done {…})
+      TURN  := user-msg → … → (done "…")
       ITER  := 1 provider call ⇒ exactly 1 ```clojure``` fence
       FORM  := 1 top-level (…) — eval unit; iter holds N forms
       FENCE := the ```clojure``` markdown block
@@ -295,7 +295,7 @@
         (apropos \"text\")  ; fuzzy name/doc; arg is a STRING, not sym/regex
 
       Control:
-        (done {:answer \"Markdown answer\"})
+        (done \"Markdown answer\")   ; ONE positional Markdown string — the final answer
         SUMMARIZE AS YOU GO — ONE verb, :summarize (never drop; compress N→1).
         Call MID-TURN the moment a trailer chunk goes stale — don't hoard.
         (Engine only auto-folds oldest pins under size pressure; YOU do the
@@ -327,8 +327,8 @@
         (recall {:match …}) finds a scope.
         Session titles are host-generated; do not spend a form on title setup.
 
-    ANSWER  :answer is Markdown. Final user-facing output.
-            Deliver ALL prose via the (done ...) call. The
+    ANSWER  (done \"…\") takes ONE positional Markdown string — the final
+            user-facing output. Deliver ALL prose via that string; the
             ```clojure``` fence is for eval-able forms ONLY.
 
     DEFS    Only `def` / `defn`. defrecord/deftype/defprotocol/gen-class/
