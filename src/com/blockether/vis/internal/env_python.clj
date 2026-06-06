@@ -20,7 +20,7 @@
   (:require
    [clojure.string :as str])
   (:import
-   [org.graalvm.polyglot Context Value PolyglotAccess]
+   [org.graalvm.polyglot Context Value PolyglotAccess PolyglotException]
    [org.graalvm.polyglot.io IOAccess]
    [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
    [java.util ArrayList HashMap]))
@@ -301,6 +301,49 @@
   [py-ctx code]
   {:source code
    :result (->clj (.eval ^Context py-ctx "python" (str code)))})
+
+(defn map-polyglot-error
+  "Map a GraalPy `PolyglotException` into the engine's op-error shape, mirroring
+   `extension/ex->op-error` for the SCI path. `:phase` is `:python/syntax` for
+   parse errors, else `:python/runtime`; `:line`/`:column` come from the Python
+   source location when present. A host (Clojure-tool) exception is unwrapped so
+   its real message surfaces."
+  [^PolyglotException e _code]
+  (let [host?  (.isHostException e)
+        cause  (when host? (.asHostException e))
+        loc    (.getSourceLocation e)
+        msg    (or (when cause (or (ex-message cause) (.getMessage cause)))
+                 (.getMessage e))]
+    {:message msg
+     :data (cond-> {:phase (cond host?              :python/host
+                                 (.isSyntaxError e) :python/syntax
+                                 :else              :python/runtime)}
+             (some? loc) (assoc :line (.getStartLine loc)
+                                :column (.getStartColumn loc))
+             ;; ex-data from a Clojure tool's ex-info rides through verbatim so
+             ;; e.g. :tool/banned, :vis/* keep their type for the trailer.
+             (and cause (instance? clojure.lang.IExceptionInfo cause))
+             (merge (ex-data cause)))}))
+
+(defn run-python-block
+  "Evaluate one Python `code` block in `py-ctx`, returning the SAME outcome
+   contract `run-sci-code` produces in loop.clj:
+
+     {:result <last-value-or-nil> :forms [{:source :result}|{:source :error}]
+      :error <op-error-or-nil>}
+
+   The whole block is one unit (v1): Python executes top-to-bottom and tool
+   calls fire in order through the ProxyExecutable wrappers, so per-statement
+   envelope splitting (via `ast.get_source_segment`) is a later refinement.
+   The caller (loop) binds `extension/*tool-event-sink*` etc. around this so the
+   existing Clojure tools' instrumentation fires unchanged."
+  [py-ctx code]
+  (try
+    (let [v (->clj (.eval ^Context py-ctx "python" (str code)))]
+      {:result v :forms [{:source code :result v}] :error nil})
+    (catch PolyglotException e
+      (let [err (map-polyglot-error e code)]
+        {:result nil :forms [{:source code :error err}] :error err}))))
 
 ;; =============================================================================
 ;; Engine-owned sandbox names + restore (NOOP) — parity with the SCI twin
