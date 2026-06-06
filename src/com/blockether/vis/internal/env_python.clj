@@ -367,25 +367,82 @@
              (and cause (instance? clojure.lang.IExceptionInfo cause))
              (merge (ex-data cause)))}))
 
+(def ^:private split-top-level-py
+  "Python that splits the source into top-level statements, each as
+   [source kind bound-name]. kind ∈ expr|assign|def|stmt; bound-name is the
+   target of a simple `x = …` or the name of a def/class (else None). Drives
+   per-form evaluation (the SCI `eval-form` analogue)."
+  (str "import ast as _a\n"
+    "def _vis_split(_s):\n"
+    "    out = []\n"
+    "    for n in _a.parse(_s).body:\n"
+    "        src = _a.get_source_segment(_s, n)\n"
+    "        if isinstance(n, _a.Expr):\n"
+    "            out.append([src, 'expr', None])\n"
+    "        elif isinstance(n, (_a.FunctionDef, _a.AsyncFunctionDef, _a.ClassDef)):\n"
+    "            out.append([src, 'def', n.name])\n"
+    "        elif isinstance(n, _a.Assign) and len(n.targets)==1 and isinstance(n.targets[0], _a.Name):\n"
+    "            out.append([src, 'assign', n.targets[0].id])\n"
+    "        else:\n"
+    "            out.append([src, 'stmt', None])\n"
+    "    return out\n"))
+
+(defn- split-top-level
+  "Return a vec of {:src :kind :name} for each top-level Python statement in
+   `code`. Throws PolyglotException on a syntax error (caller maps it)."
+  [^Context ctx code]
+  (let [g (.getBindings ctx "python")
+        existing (.getMember g "_vis_split")]
+    (when (or (nil? existing) (.isNull existing))
+      (.eval ctx "python" split-top-level-py))
+    (.putMember g "__vis_src__" (str code))
+    (let [v (.eval ctx "python" "_vis_split(__vis_src__)")]
+      (mapv (fn [i]
+              (let [t (.getArrayElement v (long i))
+                    nm (.getArrayElement t 2)]
+                {:src  (.asString (.getArrayElement t 0))
+                 :kind (.asString (.getArrayElement t 1))
+                 :name (when-not (.isNull nm) (.asString nm))}))
+        (range (.getArraySize v))))))
+
 (defn run-python-block
-  "Evaluate one Python `code` block in `py-ctx`, returning the SAME outcome
-   contract `run-sci-code` produces in loop.clj:
+  "Evaluate one Python `code` block in `py-ctx` PER-FORM, returning the SAME
+   outcome contract `run-sci-code` produces in loop.clj:
 
-     {:result <last-value-or-nil> :forms [{:source :result}|{:source :error}]
-      :error <op-error-or-nil>}
+     {:result <last-form-value-or-nil>
+      :forms  [{:source :result}|{:source :error} …]
+      :error  <op-error-or-nil>}
 
-   The whole block is one unit (v1): Python executes top-to-bottom and tool
-   calls fire in order through the ProxyExecutable wrappers, so per-statement
-   envelope splitting (via `ast.get_source_segment`) is a later refinement.
-   The caller (loop) binds `extension/*tool-event-sink*` etc. around this so the
-   existing Clojure tools' instrumentation fires unchanged."
+   Each top-level statement is evaluated on its own (the SCI `eval-form`
+   analogue), so the form result reflects its nature — an expression yields its
+   value, `x = …` yields x's bound value, a `def`/`class` yields the defined
+   object. Tools fire in order through their ProxyExecutable wrappers. Stops at
+   the first form that errors (its entry carries `:error`)."
   [py-ctx code]
-  (try
-    (let [v (->clj (.eval ^Context py-ctx "python" (str code)))]
-      {:result v :forms [{:source code :result v}] :error nil})
-    (catch PolyglotException e
-      (let [err (map-polyglot-error e code)]
-        {:result nil :forms [{:source code :error err}] :error err}))))
+  (let [ctx ^Context py-ctx
+        g   (.getBindings ctx "python")
+        forms (try (split-top-level ctx code)
+                (catch PolyglotException e {::syntax e}))]
+    (if-let [se (and (map? forms) (::syntax forms))]
+      (let [err (map-polyglot-error se code)]
+        {:result nil :forms [{:source code :error err}] :error err})
+      (loop [todo forms, acc [], last-res nil]
+        (if (empty? todo)
+          {:result last-res :forms acc :error nil}
+          (let [{:keys [src kind name]} (first todo)
+                outcome (try
+                          (let [v (.eval ctx "python" ^String src)
+                                res (cond
+                                      (= kind "expr") (->clj v)
+                                      (or (= kind "assign") (= kind "def"))
+                                      (->clj (.getMember g name))
+                                      :else nil)]
+                            {:source src :result res})
+                          (catch PolyglotException e
+                            {:source src :error (map-polyglot-error e src)}))]
+            (if (:error outcome)
+              {:result nil :forms (conj acc outcome) :error (:error outcome)}
+              (recur (rest todo) (conj acc outcome) (:result outcome)))))))))
 
 ;; =============================================================================
 ;; Engine-owned sandbox names + restore (NOOP) — parity with the SCI twin
