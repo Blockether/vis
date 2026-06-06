@@ -13,9 +13,11 @@
    Components own their visual contract AND their interaction contract
    (the click region's `:kind`), keeping `header.clj` a thin layout caller."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]))
@@ -119,8 +121,7 @@
         ;; repaint just those digits in a contrasting colour — the index reads
         ;; as a distinct badge instead of blending into the title text.
         lead (+ (count (take-while #(= \space %) text))
-                (- (long (p/display-width prefix))
-                   (count (take-while #(= \space %) prefix))))
+                (- (long (p/display-width prefix)) (count (take-while #(= \space %) prefix))))
         num-fg (if active? t/header-tab-number-fg t/header-active-tab-accent)]
     (p/clear-styles! g)
     (p/set-colors! g fg bg)
@@ -134,8 +135,7 @@
       (p/set-colors! g num-fg bg)
       (p/enable! g p/BOLD)
       (p/put-str! g (+ (long left) lead) row num-str))
-    (when (and num-str
-               (<= (+ lead (count num-str) 3) (count text)))
+    (when (and num-str (<= (+ lead (count num-str) 3) (count text)))
       (p/clear-styles! g)
       (p/set-colors! g fg bg)
       (when active? (p/enable! g p/BOLD))
@@ -198,10 +198,9 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [["F1" "Toggle this help"] ["F2" "Toggle the task panel"]
-   ["Enter · Ctrl+X" "Send message"] ["Alt+Enter" "Insert a newline"]
-   ["Esc" "Clear draft · cancel turn"] ["Ctrl+C" "Cancel turn · quit"]
-   ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
+  [["F1" "Toggle this help"] ["F2" "Toggle the task panel"] ["Enter · Ctrl+X" "Send message"]
+   ["Alt+Enter" "Insert a newline"] ["Esc" "Clear draft · cancel turn"]
+   ["Ctrl+C" "Cancel turn · quit"] ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
    ["Ctrl+W" "Close tab  (or click the ✕)"] ["Ctrl+K" "Command palette"]
    ["Ctrl+G" "Sessions · workspaces"] ["Ctrl+T" "Cycle model"] ["Ctrl+R" "Cycle reasoning effort"]
    ["Ctrl+L" "Cycle Codex verbosity"] ["Ctrl+A · Ctrl+E" "Jump to line start · end"]
@@ -287,7 +286,7 @@
         prov-w (max (p/display-width title) (+ key-w base-desc-w 7))
         bounds (dialogs/draw-dialog-chrome! g cols rows title prov-w line-cnt)
         {:keys [left inner-w]} bounds
-        desc-w (max base-desc-w (- inner-w key-w 7))
+        desc-w (max base-desc-w (- inner-w key-w 8))
         bar
           (fn [l m r]
             (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r))
@@ -347,9 +346,9 @@
 (def ^:private overlay-blank-row
   "A single empty overlay row — the spacer between context-dialog entries."
   [["" t/dialog-hint false]])
-(def ^:private overlay-card-indent
-  "Leading columns inset each task/fact card from the dialog's left rail."
-  1)
+(def ^{:private true} overlay-card-indent
+  "Leading columns inset each task/fact card from BOTH dialog rails (left via\n   indent-rows, right via the narrowed body width at the call sites)."
+  2)
 (defn- indent-rows
   "Prefix every row with `overlay-card-indent` leading spaces so the whole
    card insets one column from the dialog left rail."
@@ -363,20 +362,85 @@
    at grapheme boundaries, blank input yields `[\"\"]`."
   [s ^long w]
   (p/word-wrap s w))
+(defn- justify-line
+  "Full-justify `s` to `w` display columns by spreading extra spaces between\n   words. Returns `s` untouched when it has fewer than two words or already\n   fills `w`."
+  [s ^{:tag long} w]
+  (let [words (str/split (str/trim s) #"\s+")
+        n (count words)]
+    (if (< n 2)
+      s
+      (let [text-w (reduce + (map p/display-width words))
+            gaps (dec n)
+            slack (- w text-w gaps)]
+        (if (<= slack 0)
+          s
+          (let [base (quot slack gaps)
+                extra (rem slack gaps)]
+            (apply str
+              (interleave
+                words
+                (concat (map (fn [i] (apply str (repeat (+ 1 base (if (< i extra) 1 0)) \space)))
+                          (range gaps))
+                        [""])))))))))
 (defn- wrapped-rows
-  "Rows for `text` wrapped to `w` columns: the FIRST row is prefixed by the
-   `head` segments (e.g. a colored glyph) and every continuation row is
-   indented by `indent` spaces so it aligns under the head. Each row is a
-   vec of `[text color bold?]` segments. `indent` MUST equal the head's
-   display width for clean alignment."
+  "Rows for `text` wrapped to `w` columns: the FIRST row is prefixed by the\n   `head` segments (e.g. a colored glyph) and every continuation row is\n   indented by `indent` spaces so it aligns under the head. Non-final lines\n   are full-justified to `w`. Each row is a vec of `[text color bold?]`\n   segments. `indent` MUST equal the head's display width for clean alignment."
   [head indent text w body-color bold?]
   (let [pieces (wrap-cols text (long w))
+        last-i (dec (count pieces))
         pad (apply str (repeat (long indent) \space))]
     (vec (map-indexed (fn [i piece]
-                        (if (zero? i)
-                          (conj (vec head) [piece body-color bold?])
-                          [[(str pad piece) body-color bold?]]))
+                        (let [piece (if (< i last-i) (justify-line piece (long w)) piece)]
+                          (if (zero? i)
+                            (conj (vec head) [piece body-color bold?])
+                            [[(str pad piece) body-color bold?]])))
                       pieces))))
+(defn- run->seg
+  "Convert one styled IR run into a `[text color bold?]` overlay segment.
+   `code` / link spans take the accent color; `bold` (or the caller's
+   `base-bold?`) sets the bold flag; everything else inherits `base-color`."
+  [{:keys [text style]} base-color base-bold?]
+  (let [accent? (or (contains? style :code) (contains? style :link))]
+    [text (if accent? t/header-active-tab-accent base-color)
+     (boolean (or base-bold? (contains? style :bold)))]))
+(defn- justify-segs
+  "Full-justify a row of `[text color bold?]` segments to `w` display columns by\n   widening every inter-word whitespace run across the segments. Returns the\n   segments untouched when there are no gaps or no slack (single word / already\n   full). The styled twin of `justify-line` for `md-wrapped-rows`."
+  [segs ^{:tag long} w]
+  (let [texts (map first segs)
+        gap-count (reduce + (map (fn [t] (count (re-seq #"\s+" t))) texts))
+        text-w (reduce + (map p/display-width texts))
+        slack (- w text-w)]
+    (if (or (< gap-count 1) (<= slack 0))
+      segs
+      (let [base (quot slack gap-count)
+            extra (rem slack gap-count)
+            idx (atom -1)]
+        (mapv (fn [[t color bold?]] [(str/replace t
+                                                  #"\s+"
+                                                  (fn [m]
+                                                    (let [i (swap! idx inc)
+                                                          add (+ base (if (< i extra) 1 0))]
+                                                      (str m (apply str (repeat add \space))))))
+                                     color bold?])
+          segs)))))
+(defn- md-wrapped-rows
+  "Markdown-aware `wrapped-rows`: `text` is lifted to canonical IR via\n   `vis/markdown->ir`, wrapped to `w` columns by the shared IR walker, and\n   each line's styled runs become `[text color bold?]` segments — **bold**,\n   `code`, and links render inline (markup stripped). The FIRST row is\n   prefixed by `head`; continuation rows indent `indent` spaces. Blank\n   inter-block lines are dropped so cards stay tight; `-`/`1.` list items\n   keep a `• ` marker. Non-final lines are full-justified to `w` via\n   `justify-segs`."
+  [head indent text w base-color base-bold?]
+  (let [ir (vis/markdown->ir (str text))
+        lines (->> (ir-tui/ir->lines ir (long w))
+                   (remove (fn [{:keys [runs]}]
+                             (every? (fn* [p1__53154#] (str/blank? (:text p1__53154#))) runs)))
+                   vec)
+        pad (apply str (repeat (long indent) \space))
+        last-i (dec (count lines))]
+    (if (empty? lines)
+      [(vec head)]
+      (vec (map-indexed
+             (fn [i {:keys [runs]}]
+               (let [segs (mapv (fn* [p1__53155#] (run->seg p1__53155# base-color base-bold?)) runs)
+                     segs (if (seq segs) segs [["" base-color base-bold?]])
+                     segs (if (< i last-i) (justify-segs segs (long w)) segs)]
+                 (if (zero? i) (into (vec head) segs) (into [[pad base-color base-bold?]] segs))))
+             lines)))))
 (defn- task-entry-rows
   "Modern multi-row card for ONE task: a colored status glyph + WRAPPED
    title, a dim meta row (status label + verify badge), an optional
@@ -387,19 +451,19 @@
   (let [status (or (:status t) :todo)
         glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
         title (or (not-empty (str (:title t))) (name k))
-        title-rows (wrapped-rows [glyph-seg] 2 title (max 6 (- body-w 2)) t/dialog-fg true)
+        title-rows (md-wrapped-rows [glyph-seg] 2 title (max 6 (- body-w 2)) t/dialog-fg true)
         verify (cond (:verified? t) ["✓ verified" t/status-ok]
                      (:acceptance t) ["⌛ unverified" t/warning-fg]
                      :else nil)
         meta-segs (cond-> [[(str "    " (name status)) (task-status-color status) false]]
                     verify (conj [(str "   " (first verify)) (second verify) false]))
         accept-rows (when-let [a (not-empty (str (:acceptance t)))]
-                      (wrapped-rows [["    ▸ " t/footer-fg-muted false]]
-                                    6
-                                    a
-                                    (max 6 (- body-w 6))
-                                    t/footer-fg-muted
-                                    false))
+                      (md-wrapped-rows [["    ▸ " t/footer-fg-muted false]]
+                                       6
+                                       a
+                                       (max 6 (- body-w 6))
+                                       t/footer-fg-muted
+                                       false))
         dep-rows (when (seq (:depends-on t))
                    (wrapped-rows [["    ↳ needs " t/footer-fg-muted false]]
                                  6
@@ -422,7 +486,7 @@
     [[["No tasks yet — the model opens one with (task-set! …)." t/footer-fg-muted false]]]
     (->> tasks
          (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
-         (mapcat (fn [[k t]] (task-entry-rows k t body-w)))
+         (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 overlay-card-indent)))))
          vec)))
 (defn- fact-entry-rows
   "Modern multi-row card for ONE fact: a status glyph (active • / superseded
@@ -435,12 +499,12 @@
         key-row [glyph-seg [(name k) (if super? t/footer-fg-muted t/header-active-tab-accent) true]]
         content (not-empty (str (:content f)))
         content-rows (when content
-                       (wrapped-rows [["    " t/dialog-fg false]]
-                                     4
-                                     content
-                                     (max 6 (- body-w 4))
-                                     (if super? t/footer-fg-muted t/dialog-fg)
-                                     false))
+                       (md-wrapped-rows [["    " t/dialog-fg false]]
+                                        4
+                                        content
+                                        (max 6 (- body-w 4))
+                                        (if super? t/footer-fg-muted t/dialog-fg)
+                                        false))
         meta-parts (cond-> []
                      (pos? (count (:files f))) (conj (str "⛁" (count (:files f)) " files"))
                      (seq (:depends-on f)) (conj (str "↳ depends "
@@ -469,7 +533,7 @@
     [[["No facts yet — the model records one with (fact-set! …)." t/footer-fg-muted false]]]
     (->> facts
          (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
-         (mapcat (fn [[k f]] (fact-entry-rows k f body-w)))
+         (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)))))
          vec)))
 (defn- section-line
   "A bold section header line (single segment). Uses a DARK accent
@@ -540,17 +604,16 @@
                              (recur (+ x (p/display-width shown)) (next ss)))))))]
     (dotimes [i shown-n] (paint-line i (nth lines (+ eff i))))
     (when sb?
-      (scrollbar/draw! g {:col (dec body-right)
-                          :top content-top
-                          :track-h visible
-                          :total-h n
-                          :inner-h visible
-                          :scroll eff}))
+      (scrollbar/draw! g
+                       {:col (dec body-right),
+                        :top content-top,
+                        :track-h visible,
+                        :total-h n,
+                        :inner-h visible,
+                        :scroll eff}))
     ;; Centered close hint + scroll-position indicator on the hint row.
     (when hint-row
-      (let [pos-hint (if sb?
-                       (str hint "    " (inc eff) "–" (+ eff shown-n) " / " n)
-                       hint)]
+      (let [pos-hint (if sb? (str hint "    " (inc eff) "–" (+ eff shown-n) " / " n) hint)]
         (p/clear-styles! g)
         (p/set-colors! g t/dialog-hint t/dialog-bg)
         (p/put-str! g
@@ -558,4 +621,4 @@
                     hint-row
                     pos-hint)))
     (p/clear-styles! g)
-    {:scroll eff :max-scroll max-scroll}))
+    {:scroll eff, :max-scroll max-scroll}))

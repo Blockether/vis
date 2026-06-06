@@ -101,7 +101,7 @@
      `:boolean` (default) -- simple ON/OFF.
      `:enum`              -- a closed set of named values
                              (e.g. `:vis/message-meta` cycles
-                             `:full -> :short -> :off`).
+                             `:off -> :short`).
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
@@ -406,15 +406,6 @@
       {:id :voice/respond? :label "Voice respond to answers"
        :description "Speak the final answer aloud via the foundation-voice extension."
        :default false :owner :vis :group :tui-display :persist? true})
-
-    (register-toggle!
-      {:id :vis/message-meta :label "Per-message meta footer"
-       :description (str "Footer under each assistant bubble. :full = model /"
-                      " iters / tokens / cost / duration, :short = cost +"
-                      " duration only, :off = hidden (also drops the breathing"
-                      " row above it).")
-       :type :enum :choices [:full :short :off]
-       :default :full :owner :vis :group :tui-display :persist? true})
 
     (register-toggle!
       {:id :vis/reasoning-level :label "Reasoning effort"

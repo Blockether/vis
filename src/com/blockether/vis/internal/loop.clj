@@ -4079,7 +4079,14 @@
                                      :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                      :done?            true}))
                         (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
-                                                 :iteration-count (inc iteration)}
+                                                 :iteration-count (inc iteration)
+                                                 :utilization (let [u @usage-atom
+                                                                    req (if (pos? (long (:iter-count u)))
+                                                                          (long (:last-iter-input u))
+                                                                          (long (:previous-request-input u)))]
+                                                                (ctx-engine/utilization req effective-context-limit
+                                                                  (:input-tokens u)
+                                                                  safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))}
                                            (finalize-cost))
                                        (attach-llm-routing-summary pre-resolved-model iteration-result))]
                           (auto-archive-hot-symbols! environment)
@@ -4852,7 +4859,7 @@
    iteration / duration / tokens / $total` after a restart."
   [{:keys [db-info root-model root-provider]}
    {:keys [session-turn-id start-time iteration-count status status-id trace locals
-           answer confidence reasoning total-tokens-atom total-cost-atom]}]
+           answer confidence reasoning utilization total-tokens-atom total-cost-atom]}]
   (let [duration-ms (util/elapsed-since start-time)
         cost-with-model (cond-> @total-cost-atom
                           (and root-model (not (:model @total-cost-atom)))
@@ -4909,7 +4916,8 @@
                  :iteration-count iteration-count
                  :duration-ms     duration-ms
                  :tokens          @total-tokens-atom
-                 :cost            cost-with-model}
+                 :cost            cost-with-model
+                 :utilization     utilization}
           (some? confidence) (assoc :confidence confidence)
           (some? reasoning)  (assoc :reasoning reasoning))))))
 
@@ -5006,6 +5014,7 @@
                     :answer            iteration-answer
                     :confidence        confidence
                     :reasoning         reasoning
+                    :utilization       (:utilization iteration-result)
                     :total-tokens-atom total-tokens-atom
                     :total-cost-atom   total-cost-atom}))]
            result))))))
