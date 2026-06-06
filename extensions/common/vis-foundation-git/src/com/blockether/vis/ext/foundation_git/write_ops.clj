@@ -654,17 +654,41 @@
                       (pr-str op))
              {:type :foundation-git/invalid-opts :operation op}))))
 
+(defn- rebase-hint
+  "Actionable next-step for a non-OK rebase `status` name, or nil. The
+   model reads this straight off the result instead of burning a separate
+   `git/status` / `(doc 'git/rebase!)` round-trip to figure out recovery."
+  [status-name]
+  (case status-name
+    "UNCOMMITTED_CHANGES"
+    "Working tree has uncommitted changes (see :uncommitted-changes). Commit or stash them, or just re-run with {:autostash? true} to stash+restore them around the rebase."
+    "CONFLICTS"
+    "Rebase hit conflicts (see :conflicts). Resolve them, (git/add ...) the files, then (git/rebase! {:operation :continue}). Bail with (git/rebase! {:operation :abort})."
+    "STOPPED"
+    "Rebase paused on an edit/reword step (see :current-commit). Make the change, (git/add ...), then (git/rebase! {:operation :continue}). Skip with {:operation :skip} or bail with {:operation :abort}."
+    "STASH_APPLY_CONFLICTS"
+    "Rebase finished but re-applying the auto-stash hit conflicts. Resolve them and (git/add ...); the stashed changes are preserved (see :autostash-ref)."
+    "FAILED"
+    "Rebase failed and was rolled back (see :failing-paths). Inspect those paths, clean the tree, and retry."
+    nil))
+
 (defn- rebase-result->map
   [^RebaseResult result]
   (let [status (.getStatus result)
+        sname  (.name status)
         new-head (.getCurrentCommit result)]
-    {:status            (.name status)
+    {:status            sname
      :successful?       (.isSuccessful status)
      :conflicts         (when-let [cs (.getConflicts result)] (vec cs))
      :failing-paths     (when-let [fp (.getFailingPaths result)]
                           (vec (.keySet fp)))
+     ;; JGit hands back the exact paths that block a :begin rebase; surfacing
+     ;; them here is what lets the model skip the extra `git/status` call.
+     :uncommitted-changes (when-let [u (.getUncommittedChanges result)]
+                            (vec u))
      :current-commit    (when new-head (.getName new-head))
-     :short-current     (short-sha (some-> new-head .getName))}))
+     :short-current     (short-sha (some-> new-head .getName))
+     :hint              (rebase-hint sname)}))
 
 (defn rebase!
   "Rewind onto an upstream, re-applying commits. Use for non-interactive
@@ -696,7 +720,7 @@
 
    Returns: {:op :git/rebase :status :successful? :conflicts :failing-paths
              :current-commit :short-current}"
-  [{:keys [operation upstream onto preserve-merges? edit-todos-fn reword-message-fn]
+  [{:keys [operation upstream onto preserve-merges? edit-todos-fn reword-message-fn autostash?]
     :or   {reword-message-fn (fn [_sha msg] msg)}}]
   (with-open [git (open-git)]
     (let [op    (or operation (when upstream :begin))
@@ -749,8 +773,46 @@
               ;; per-sha rewrites should iterate manually via reset!
               ;; + commit! pattern instead.
               (or (reword-message-fn nil commit-msg) commit-msg)))))
-      (assoc (rebase-result->map (.call cmd))
-        :op :git/rebase :operation op))))
+      ;; Autostash: park tracked working-tree changes before a :begin rebase
+      ;; and restore them after. JGit's RebaseCommand has no setStash in this
+      ;; version, so we drive stashCreate/Apply/Drop here — the supported
+      ;; replacement for the manual "WIP commit + mixed reset" dance. A clean
+      ;; tree makes stashCreate return nil, so the gate is "got a stash back".
+      (let [stash (when (and autostash? (= op :begin))
+                    (.call (.stashCreate git)))
+            ref   (some-> ^org.eclipse.jgit.revwalk.RevCommit stash .getName)
+            base  (assoc (rebase-result->map (.call cmd))
+                    :op :git/rebase :operation op)]
+        (cond
+          (nil? stash)
+          base
+
+          (:successful? base)
+          ;; Rebase landed; replay the parked changes on top.
+          (try
+            (.call (doto (.stashApply git) (.setStashRef ^String ref)))
+            (.call (.stashDrop git))
+            (assoc base :autostash-applied? true)
+            (catch Exception _
+              ;; Rebase OK but parked changes don't re-apply cleanly. Keep the
+              ;; stash (don't drop) so the work stays recoverable.
+              (assoc base :autostash-applied? false
+                :autostash-ref ref
+                :status "STASH_APPLY_CONFLICTS"
+                :hint (rebase-hint "STASH_APPLY_CONFLICTS"))))
+
+          :else
+          ;; Rebase couldn't complete (conflicts / stopped). Roll it back and
+          ;; restore the tree so :autostash? is fully reversible — nothing is
+          ;; left half-applied or stranded in a stash the model can't reach.
+          (do
+            (.call (.setOperation (.rebase git) RebaseCommand$Operation/ABORT))
+            (.call (doto (.stashApply git) (.setStashRef ^String ref)))
+            (.call (.stashDrop git))
+            (assoc base :autostash-applied? true
+              :hint (str "Auto-stash restored and rebase aborted — it could not "
+                      "complete cleanly (" (:status base) "). Commit your changes "
+                      "first, then rebase, so conflicts surface against committed work."))))))))
 
 ;; ============================================================================
 ;; SCI tool wrappers
@@ -859,7 +921,26 @@
 
 (defn rebase!-tool
   "Rewind onto an upstream and re-apply commits; optionally interactive.
-   Opts: {:operation :upstream :onto :preserve-merges? :edit-todos-fn :reword-message-fn}."
+
+   Opts: {:upstream :onto :operation :autostash? :preserve-merges?
+          :edit-todos-fn :reword-message-fn}.
+     :upstream    rev to replay onto (commits strictly after it move).
+                  Implies :operation :begin.
+     :operation   #{:begin :continue :skip :abort} — drive a paused rebase.
+     :autostash?  true → stash dirty tracked files before a :begin rebase
+                  and restore them after. Fully reversible: if the rebase
+                  can't complete it is aborted and the tree restored. Use
+                  this instead of a manual WIP-commit dance.
+
+   Result :status (string) and what to do next (also in :hint):
+     OK / FAST_FORWARD / UP_TO_DATE  → done, :successful? true.
+     UNCOMMITTED_CHANGES → tree dirty; blocking paths in :uncommitted-changes.
+                           Re-run with {:autostash? true}, or commit/stash first.
+     CONFLICTS → resolve files in :conflicts, (git/add ...), then
+                 (git/rebase! {:operation :continue}); or {:operation :abort}.
+     STOPPED   → paused on edit/reword; fix, (git/add ...),
+                 (git/rebase! {:operation :continue}).
+     FAILED    → rolled back; see :failing-paths."
   [opts] (ok (rebase! opts)))
 
 (def add-symbol         (extension/symbol #'add-tool         {:symbol 'add         :tag :mutation :render-fn render-edn}))
