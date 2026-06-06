@@ -83,6 +83,9 @@
   ^File [p]
   ;; Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
   ;; the working directory.
+  (when (str/blank? (str p))
+    (throw (ex-info "Path is nil or blank — cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (map :path (:matches r)), not the rg result itself"
+             {:type :ext.foundation.editing/blank-path :path p})))
   (let [cwd (workspace/cwd)
         resolved (.toAbsolutePath (fs/path cwd (str p)))
         normalized (.normalize resolved)
@@ -3260,7 +3263,8 @@
      "  LOCATE — pick by what you already know, cheapest first:"
      "    0. Already located it?      → it's a FACT. Re-patch by :from-hash. DON'T grep/cat again."
      "    1. Know the path?           → scoped (rg {:path …}) + (cat …) batched in ONE fence."
-     "    2. Know content, not file?  → (rg {… :files-only? true}) wide+cheap, THEN cat the hits."
+     "    2. Know content, not file?  → (rg {… :files-only? true}) → {:files [paths]}; cat each path."
+     "       rg ALWAYS returns a MAP, never a seq — content→{:matches [{:path :lines}…]}, files-only→{:files […]}, counts→{:counts …}. Map over (:matches r)/(:files r), NEVER (rg …) itself."
      "    3. Tree unfamiliar?         → (ls …) for Shape — ONCE, not per turn."
      "  Wide CONTENT grep is last resort, not default (dumps junk into ctx)."
      "  Read:   (cat path)  — whole by default; large files use one 400-500 line range:"

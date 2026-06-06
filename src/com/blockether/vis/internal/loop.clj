@@ -392,9 +392,10 @@
     (not (str/blank? (:answer/text v)))))
 
 (defn markdown-answer?
-  "True for a canonical final-answer payload: `{:answer string}`.
-   This is the ONLY shape `(done ...)` accepts for a final answer
-   (the other allowed shape is the `needs-input-answer?` map)."
+  "True for the canonical final-answer VALUE: `{:answer string}`.
+   `(done \"…\")` takes a positional string which `answer-fn` wraps into this
+   shape; the legacy `(done {:answer \"…\"})` map maps to it directly. The only
+   other accepted value is the `needs-input-answer?` map."
   [v]
   (and (map? v)
     (string? (:answer v))))
@@ -625,8 +626,8 @@
         "terminal channel — printing makes no sense here (that is why "
         "`*out*`/`println`/`with-out-str` are unavailable). Return the value "
         "directly (the transcript renders it), or build a formatted string with "
-        "`(pp/pprint-str x)` (it RETURNS a string) and put that in "
-        "`(done {:answer …})`."))))
+        "`(pp/pprint-str x)` (it RETURNS a string) and pass that to "
+        "`(done \"…\")`."))))
 
 (defn- pre-eval-lint-hint
   "Return a hint string when a parsed form would clearly fail at eval time
@@ -5464,15 +5465,20 @@
         ;; request visible.
         answer-fn                (fn done [s]
                                    ;; Canonical final-answer shape:
-                                   ;;   (done {:answer "markdown string"})
+                                   ;;   (done "markdown string")
                                    ;;
-                                   ;; The map form leaves room for future
-                                   ;; metadata (`:format`, `:lang`, `:tags`,
-                                   ;; `:attachments`, ...). The Markdown
+                                   ;; ONE positional Markdown string — this is
+                                   ;; what the prompt advertises and what GPT-
+                                   ;; class models reliably emit. The Markdown
                                    ;; string IS the answer source of truth;
                                    ;; channels derive IR via
                                    ;; `render/markdown->ir` when they need
                                    ;; layout.
+                                   ;;
+                                   ;; The legacy map form `(done {:answer "…"})`
+                                   ;; is still accepted (back-compat + the
+                                   ;; needs-input map + optional `:turn-summary`
+                                   ;; metadata), but is no longer advertised.
                                    ;;
                                    ;; Needs-input maps stay data-shaped so
                                    ;; the prompt-flow gate reads them as
