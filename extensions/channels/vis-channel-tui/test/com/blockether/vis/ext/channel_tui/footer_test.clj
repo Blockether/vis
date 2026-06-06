@@ -351,19 +351,19 @@
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
 
-  (it "shows the real context-window utilization gauge on the second footer row right side"
-    ;; Cumulative per-turn token/cost noise is retired (commit "real
-    ;; context-window utilization gauge in footer"). The `:right` region now
-    ;; carries a single color-coded pct-of-limit gauge sourced from the
-    ;; engine's `:utilization`, and emits nothing until a request is measured.
+  (it "shows cumulative token usage + price on the second footer row right side"
+    ;; The old context-window pct gauge is retired. The `:right` region now
+    ;; carries the billing-relevant cumulative numbers: tokens in→out and the
+    ;; running session price, and emits nothing until a turn carries usage.
     (let [build-limits-segments @#'footer/build-limits-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai
                                                           :reasoning? false})}
         (fn []
-          (expect (= ["◗ 73%"]
-                    (->> (build-limits-segments {:messages [] :settings {}
-                                                 :utilization {:pct-of-limit 73}}
+          (expect (= ["tok 100→20" "$0.0042"]
+                    (->> (build-limits-segments {:messages [{:tokens {:input 100 :output 20}
+                                                             :cost {:total-cost 0.0042}}]
+                                                 :settings {}}
                            0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))
