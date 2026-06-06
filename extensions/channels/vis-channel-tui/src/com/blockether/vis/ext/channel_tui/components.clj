@@ -423,22 +423,25 @@
                                      color bold?])
           segs)))))
 (defn- md-wrapped-rows
-  "Markdown-aware `wrapped-rows`: `text` is lifted to canonical IR via\n   `vis/markdown->ir`, wrapped to `w` columns by the shared IR walker, and\n   each line's styled runs become `[text color bold?]` segments — **bold**,\n   `code`, and links render inline (markup stripped). The FIRST row is\n   prefixed by `head`; continuation rows indent `indent` spaces. Blank\n   inter-block lines are dropped so cards stay tight; `-`/`1.` list items\n   keep a `• ` marker. Non-final lines are full-justified to `w` via\n   `justify-segs`."
+  "Markdown-aware `wrapped-rows`: `text` is lifted to canonical IR via\n   `vis/markdown->ir`, wrapped to `w` columns by the shared IR walker, and\n   each line's styled runs become `[text color bold?]` segments — **bold**,\n   `code`, and links render inline (markup stripped). The FIRST row is\n   prefixed by `head`; continuation rows indent `indent` spaces. Blank\n   inter-block lines are dropped so cards stay tight; `-`/`1.` list items\n   keep a `• ` marker. Only lines the wrapper broke on overflow (those\n   the IR walker tags `:wrap?`) are full-justified to `w` via\n   `justify-segs`; paragraph/block-terminal lines stay ragged-right so\n   short tails aren't stretched edge-to-edge."
   [head indent text w base-color base-bold?]
   (let [ir (vis/markdown->ir (str text))
         lines (->> (ir-tui/ir->lines ir (long w))
                    (remove (fn [{:keys [runs]}]
                              (every? (fn* [p1__53154#] (str/blank? (:text p1__53154#))) runs)))
                    vec)
-        pad (apply str (repeat (long indent) \space))
-        last-i (dec (count lines))]
+        pad (apply str (repeat (long indent) \space))]
     (if (empty? lines)
       [(vec head)]
       (vec (map-indexed
-             (fn [i {:keys [runs]}]
+             (fn [i {:keys [runs wrap?]}]
                (let [segs (mapv (fn* [p1__53155#] (run->seg p1__53155# base-color base-bold?)) runs)
                      segs (if (seq segs) segs [["" base-color base-bold?]])
-                     segs (if (< i last-i) (justify-segs segs (long w)) segs)]
+                     ;; Only lines the wrapper broke on overflow (`:wrap?`)
+                     ;; get full-justified. Paragraph/block-terminal lines
+                     ;; are short and ragged-right by nature — stretching
+                     ;; them edge-to-edge is the "4 words, mega holes" bug.
+                     segs (if wrap? (justify-segs segs (long w)) segs)]
                  (if (zero? i) (into (vec head) segs) (into [[pad base-color base-bold?]] segs))))
              lines)))))
 (defn- task-entry-rows
