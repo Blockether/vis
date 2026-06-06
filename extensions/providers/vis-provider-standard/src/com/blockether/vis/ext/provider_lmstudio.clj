@@ -56,6 +56,24 @@
      :ext/license   "Apache-2.0"
      :ext/providers [{:provider/id                :lmstudio
                       :provider/label             "LM Studio"
-                      :provider/preset            {:base-url "http://localhost:1234/v1"}
+                      :provider/preset            {:base-url "http://localhost:1234/v1"
+                                                   ;; Sampler defaults for local LM Studio models.
+                                                   ;; Qwen3/Qwen3.5 thinking models (and DeepSeek-R1
+                                                   ;; distills) fall into endless reasoning loops under
+                                                   ;; the default greedy sampler — emitting tens of
+                                                   ;; thousands of `reasoning_content` chars and almost
+                                                   ;; no answer (see LM Studio bug-tracker #1018, QwenLM
+                                                   ;; #145). These are the vendor-recommended anti-loop
+                                                   ;; params: temp 0.6 (DeepSeek's "avoid endless
+                                                   ;; repetition" value), top_p/top_k/min_p per Qwen,
+                                                   ;; and presence_penalty 1.5 to break repetition.
+                                                   ;; Merged as the provider base layer in svar
+                                                   ;; (router/inject-routed-params) — a per-turn
+                                                   ;; `:extra-body` still overrides any of these.
+                                                   :extra-body {:temperature      0.6
+                                                                :top_p            0.95
+                                                                :top_k            20
+                                                                :min_p            0.0
+                                                                :presence_penalty 1.5}}
                       :provider/status-fn         #'status
                       :provider/enrich-models-fn  #'enrich-models}]}))
