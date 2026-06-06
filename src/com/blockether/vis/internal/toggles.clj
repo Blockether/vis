@@ -100,8 +100,8 @@
    Two kinds of toggles share the same registry:
      `:boolean` (default) -- simple ON/OFF.
      `:enum`              -- a closed set of named values
-                             (e.g. `:vis/message-meta` cycles
-                             `:off -> :short`).
+                             (e.g. `:vis/reasoning-level` cycles
+                             `:quick -> :balanced -> :deep`).
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
