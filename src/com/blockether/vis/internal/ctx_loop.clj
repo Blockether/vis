@@ -255,6 +255,38 @@
   [{:keys [ctx-atom] :as env}]
   (when ctx-atom (stamp-cursor env @ctx-atom)))
 
+(defn session-snapshot
+  "Read-only data mirror of the `;; ctx` EDN the model reads — the value
+   bound to the bare `ctx` symbol in the sandbox (re-interned before each
+   eval, see loop/execute-code).
+
+   Built to MATCH the rendered shape, NOT the raw atom: the atom stores
+   `:engine/utilization` (the renderer projects it to
+   `:session/utilization`) and carries `:engine/*` bookkeeping the model
+   must never see. So we:
+     - stamp the live cursor (`current-ctx`)
+     - attach the cheap base `:session/env` digest (host/project/ext
+       counts — NO extension `:ext/ctx` hooks, so this is side-effect-free
+       and safe to call per-block)
+     - keep ONLY `:session/*` keys
+     - re-key `:engine/utilization` → `:session/utilization`
+
+   The shape projection itself is NOT done here — it goes through the
+   ONE canonical `eng/session-view`, the same fn the EDN renderer uses, so
+   the bound `ctx` and the rendered `;; ctx` text cannot drift. This fn
+   only supplies the LIGHT per-block enrichment (live cursor + cheap base
+   `:session/env`; no derive-warnings/indexes/`:ext/ctx` hooks).
+
+   The result is an immutable map with ZERO connection to `:ctx-atom`:
+   `(assoc ctx …)` is a throwaway, and engine state changes only through
+   the mutators (`task-set!`/`fact-set!` → `apply-and-record!` → swap!).
+   That is the read-only guarantee. Returns nil when ctx-atom is absent."
+  [env]
+  (when-let [ctx (current-ctx env)]
+    (let [env-block (try (env-digest/base-digest env) (catch Throwable _ nil))]
+      (eng/session-view (cond-> ctx
+                          (seq env-block) (assoc :session/env env-block))))))
+
 (defn trailer->form-results
   "Flatten every trailer pin's :forms vec into a `{scope envelope}` map.
    Used at render time so engine's `classify-scope` pass can look up
@@ -276,7 +308,7 @@
      deref ctx-atom → stamp cursor → attach `:session/env` digest +
      extension `:ext/ctx` contributions → build form-results map from
      trailer → build indexes → drain mutator warnings + derive
-     render-time warnings → assoc `:session/warnings` → call renderer.
+     render-time warnings → assoc `:session/hints` → call renderer.
 
    `:session/env` lives on the rendered ctx but is NOT pushed back into
    `ctx-atom`: extension contributions are recomputed each iter so
@@ -322,12 +354,12 @@
                                    (concat [title-blocker]
                                      (remove #(#{:missing-title :stale-title} (:id %))
                                        (or bs [])))))))
-          ;; `:session/warnings` is a render-only key: a vec of short
+          ;; `:session/hints` is a render-only key: a vec of short
           ;; strings (structural warnings + drained mutator warnings)
           ;; surfaced to the model in the rendered ctx. NOT pushed back
           ;; into ctx-atom.
           ctx-rendered     (cond-> ctx-with-blocker
-                             (seq warns) (assoc :session/warnings warns))]
+                             (seq warns) (assoc :session/hints warns))]
       (renderer-fn {:ctx ctx-rendered :warnings warns}))))
 
 ;; =============================================================================

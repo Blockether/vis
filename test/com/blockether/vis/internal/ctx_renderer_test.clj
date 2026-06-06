@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.ctx-renderer-test
   "Phase G renderer tests. Asserts the prompt-side derived view: pure EDN
-   body, a single `:session/warnings` section (vec of short strings,
+   body, a single `:session/hints` section (vec of short strings,
    rendered only when non-empty), NO trailing `;; …` line-comment
    annotations, trailer pins keep `:form` as native Clojure list (no
    `;; src` verbatim block)."
@@ -79,23 +79,23 @@
           (expect (= opens closes)))))))
 
 (defdescribe render-warnings-test
-  (describe ":session/warnings vec-of-strings section"
+  (describe ":session/hints vec-of-strings section"
 
-    (it "renders a :session/warnings section when warnings are present"
+    (it "renders a :session/hints section when warnings are present"
       (let [out (r/render-ctx {:ctx base-ctx
                                :warnings ["task :t1 :done but dep :t2 is :doing"
                                           "fact :a contradicts :b"]})]
-        (expect (str/includes? out ":session/warnings"))
+        (expect (str/includes? out ":session/hints"))
         (expect (str/includes? out "\"task :t1 :done but dep :t2 is :doing\""))
         (expect (str/includes? out "\"fact :a contradicts :b\""))))
 
-    (it "omits the :session/warnings section entirely when empty"
+    (it "omits the :session/hints section entirely when empty"
       (let [out (r/render-ctx {:ctx base-ctx :warnings []})]
-        (expect (not (str/includes? out ":session/warnings")))))
+        (expect (not (str/includes? out ":session/hints")))))
 
-    (it "omits the :session/warnings section when warnings key absent"
+    (it "omits the :session/hints section when warnings key absent"
       (let [out (r/render-ctx {:ctx base-ctx})]
-        (expect (not (str/includes? out ":session/warnings")))))
+        (expect (not (str/includes? out ":session/hints")))))
 
     (it "warnings render as pure EDN strings (no `;;` annotations)"
       (let [out  (r/render-ctx {:ctx base-ctx :warnings ["a missing dep"]})
@@ -199,8 +199,8 @@
         (expect (not (str/includes? out ":session/tasks")))
         (expect (not (str/includes? out ":session/facts"))))
 
-      (it "omits :session/warnings when there are none"
-        (expect (not (str/includes? out ":session/warnings"))))
+      (it "omits :session/hints when there are none"
+        (expect (not (str/includes? out ":session/hints"))))
 
       (it "carries no comment annotations anywhere"
         (let [body (str/replace-first out #"^;; ctx\n" "")]

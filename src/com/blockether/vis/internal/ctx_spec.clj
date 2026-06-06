@@ -35,7 +35,7 @@
    Refs are bare keys (same-kind shorthand) or typed `[:task :K]` /
    `[:fact :K]` vectors. The engine HARD-rejects writes that would
    introduce a `:depends-on` cycle across kinds; dangling refs are a
-   soft `:session/warnings` entry.
+   soft `:session/hints` entry.
 
    Scope cursor (`:session/scope`) is engine-stamped before render so
    the model always knows where it is. User-supplied `::scope-form`
@@ -55,7 +55,7 @@
 
    Invariants the engine enforces are split HARD (cycle, malformed scope,
    partial-overlap trailer-summarize) vs SOFT (everything else, surfaced
-   as `:session/warnings` short strings in rendered ctx)."
+   as `:session/hints` short strings in rendered ctx)."
   (:require [clojure.spec.alpha :as s]
             [clojure.spec.gen.alpha :as gen]))
 
@@ -179,7 +179,7 @@
 ;; W3 — acceptance + verification. A task SHOULD carry `:acceptance` (the
 ;; concrete criterion that means it's truly done) and, once met, `:verified?
 ;; true` (the model asserts it checked — engine does NOT verify the claim). The
-;; engine emits a SOFT `:session/warnings` nudge when a task is closed `:done`
+;; engine emits a SOFT `:session/hints` nudge when a task is closed `:done`
 ;; with an `:acceptance` but `:verified? not true` — so "done" isn't claimed
 ;; without a stated, checked criterion.
 (s/def :session.task/acceptance string?)

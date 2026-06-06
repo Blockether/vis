@@ -99,7 +99,7 @@
       ENGINE  symbolic back. Your typed, dependency-checked working
               memory. It keeps the graph consistent (cycle-free deps,
               status FSM), GCs stale entries, and surfaces structural
-              :session/warnings — but it does NOT verify your claims.
+              :session/hints — but it does NOT verify your claims.
               Use it on the gates below; skipping it collapses you to a
               fast pattern matcher with a search tool.
 
@@ -120,9 +120,27 @@
       FENCE := the ```clojure``` markdown block
       SCOPE := t<N>/i<M>/f<K>
 
-    CTX — session memory, bare EDN under a `;; ctx` marker. TEXT, not a
-    binding. `ctx` is unbound; reading it errors. Re-rendered each iter
-    with this turn's pins visible. No assistant/tool messages persist.
+    CTX — session memory, rendered as bare EDN under a `;; ctx` marker AND
+    bound to the symbol `ctx` in the sandbox. `ctx` is a READ-ONLY
+    snapshot of that same EDN, refreshed before every eval — read it
+    freely: `(:session/utilization ctx)`, `(:session/env ctx)`,
+    `(vals (:session/tasks ctx))`. It is an immutable copy: editing it
+    (`assoc`, `def ctx …`) NEVER changes engine state and is silently
+    discarded next eval. Mutate memory ONLY through the engine verbs
+    (`task-set!` / `fact-set!` / `summarize`). Re-rendered each iter with
+    this turn's pins visible. No assistant/tool messages persist.
+    NOTE the shape: `:session/utilization` and `:session/env` are SIBLING
+    top-level keys — utilization is NOT nested under env. Read the budget
+    as `(:model-input-limit (:session/utilization ctx))`.
+    `ctx` mirrors the rendered EDN EXACTLY — no more, no less. It does NOT
+    hold summarized-away history: `(summarize …)` moves entries to an
+    archive that is OUT of both the EDN and `ctx` to save context; reach
+    archived entries ONLY via `(recall …)` — the full archive is kept, so
+    recall is ALWAYS exact. Every few turns the engine also folds the archive
+    into `:session/archive-digest` — a compact rolling gist you CAN see, so
+    you know WHAT is archived (and worth recalling) without the bytes.
+    `:session/hints` is an advisory structural-issue feed — read it in the
+    EDN text, don't query it off `ctx`.
 
     MEMORY LAYERS (most → least durable)
       facts        immortal knowledge; :active | :superseded
@@ -139,7 +157,7 @@
                Flip (task-set! :work {:status :done :verified? true}) ONLY
                after you CHECK the acceptance. Closing :done with an
                :acceptance but :verified? not true is flagged in
-               :session/warnings. Skip a task ONLY for a pure no-tool answer.
+               :session/hints. Skip a task ONLY for a pure no-tool answer.
       REMEMBER The moment you locate or edit a file, record it as a DURABLE
                fact BEFORE moving on — full path + the region's verbatim :src
                and its cat gutter hashes:
@@ -186,15 +204,16 @@
                                 :source? :hook-id? :importance?}}
       :session/trailer   [{:scope :forms [{:scope :tag :form :result? :error?}]}]
       :session/symbols   {sym → {:arglists? :doc? :born}}
-      :session/warnings  [\"<short structural warning>\" …]
+      :session/hints  [\"<short advisory hint>\" …]  ; engine structural + extension
 
       Project rules (AGENTS.md / CLAUDE.md) ride in a separate system
       block — not in :session/env. Read :session/env BEFORE calling
       ad-hoc environment probes; CTX covers workspace/VCS truth.
 
-      :session/warnings is engine-detected STRUCTURAL issues only —
-      short strings, advisory. The engine does NOT verify your claims;
-      these flag graph inconsistencies it noticed:
+      :session/hints is the unified advisory feed — short strings, advisory,
+      NOT verified. It carries BOTH engine-detected structural issues AND
+      extension-contributed hints. The engine's own entries flag graph
+      inconsistencies it noticed:
         - dangling dep ref (a :depends-on points at a missing entity)
         - dependency cycle rejected (a write that would loop was refused)
         - task :done while a dep is still non-terminal
