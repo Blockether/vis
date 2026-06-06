@@ -190,4 +190,20 @@
           :ns-default build}
 
   :antq  {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}
-          :main-opts ["-m" "antq.core"]}}}
+          :main-opts ["-m" "antq.core"]}
+
+  ;; Opt-in embedded GraalPy (Python sandbox) — experimental alternative to
+  ;; the SCI substrate (see internal/env_python.clj). Kept OUT of the default
+  ;; classpath: the GraalPy language + stdlib vfs is ~100+ MB and we don't
+  ;; want it in the production/native build until the spike proves out.
+  ;; Version matches the runtime (Oracle GraalVM 25.0.1) so Truffle gets its
+  ;; Graal JIT (fast) instead of the interpreter fallback.
+  ;;   clojure -M:dev:graalpy ...
+  :graalpy
+  {:extra-deps {org.graalvm.polyglot/polyglot       {:mvn/version "25.0.1"}
+                org.graalvm.python/python-language  {:mvn/version "25.0.1"}
+                org.graalvm.python/python-resources {:mvn/version "25.0.1"}
+                org.graalvm.truffle/truffle-runtime {:mvn/version "25.0.1"}}
+   :jvm-opts   ["-XX:+IgnoreUnrecognizedVMOptions"
+                "--enable-native-access=ALL-UNNAMED"
+                "--sun-misc-unsafe-memory-access=allow"]}}}
