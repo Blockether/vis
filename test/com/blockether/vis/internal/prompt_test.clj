@@ -91,3 +91,24 @@
       (expect (= 1 @calls))
       (prompt/assemble-stable-prompt-messages env {:active-extensions active})
       (expect (= 1 @calls)))))
+
+(defdescribe reasoning-via-comments-nudge-test
+  "Reason-via-code-comments fallback for non-reasoning models."
+  (it "inserts a system nudge after leading system messages, before the conversation"
+    (let [msgs [{:role "system" :content "core"}
+                {:role "system" :content "project"}
+                {:role "user" :content "do the thing"}]
+          out  (prompt/with-reasoning-comments-nudge msgs)]
+      ;; one message added
+      (expect (= (inc (count msgs)) (count out)))
+      ;; inserted at the system/conversation boundary (index 2), still a system msg
+      (expect (= "system" (:role (nth out 2))))
+      (expect (str/includes? (:content (nth out 2)) ";;"))
+      ;; leading systems untouched, user message still last
+      (expect (= "core" (:content (first out))))
+      (expect (= "user" (:role (last out))))))
+
+  (it "prepends when there are no leading system messages"
+    (let [out (prompt/with-reasoning-comments-nudge [{:role "user" :content "x"}])]
+      (expect (= "system" (:role (first out))))
+      (expect (= 2 (count out))))))

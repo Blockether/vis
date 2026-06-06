@@ -2229,6 +2229,14 @@
                                   (throw (ex-info "Invalid :reasoning-level."
                                            {:type :vis/invalid-reasoning-level
                                             :got reasoning-level}))))
+          ;; Reasoning fallback: when the turn asked for reasoning but the model
+          ;; has no native thinking channel (`:reasoning?` absent — e.g. a local
+          ;; LM Studio model), give it a scratchpad in the code itself via
+          ;; `;;` comments. Effort-configurable models reason natively and skip it.
+          reason-via-comments? (and (some? reasoning-level)
+                                 (not (:reasoning? resolved-model)))
+          messages (cond-> messages
+                     reason-via-comments? prompt/with-reasoning-comments-nudge)
           ;; Reset the per-environment answer-atom before this iteration.
           ;; The SCI sandbox's `(done "...")` fn `reset!`s it during
           ;; code evaluation; we read it back after all forms run.

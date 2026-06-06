@@ -512,6 +512,30 @@
   (when (and (string? content) (not (str/blank? content)))
     {:role "system" :content content}))
 
+(def reason-via-comments-instruction
+  "Reasoning fallback for models with no native thinking channel. The host
+   injects this (see `with-reasoning-comments-nudge`) only when a reasoning
+   level was requested AND the resolved model is not `:reasoning?`-capable —
+   giving weaker / local models (e.g. LM Studio) a scratchpad in the one
+   channel they always have: the code itself."
+  (str "You do not have a separate reasoning channel. Think before you act: "
+    "at the top of your Clojure code, reason through the problem step-by-step "
+    "in `;;` comments — state the goal, your approach, and any edge cases — "
+    "then write the implementation below. Treat those comments as your "
+    "scratchpad; they are where your reasoning lives."))
+
+(defn with-reasoning-comments-nudge
+  "Append the reason-via-code-comments instruction as a turn-scoped system
+   message, after any leading system messages and before the conversation.
+   Use when a reasoning level was requested but the model cannot reason
+   natively. No-op-safe: returns `messages` unchanged if the nudge can't build."
+  [messages]
+  (if-let [nudge (stable-prompt-message
+                   (prompt-block "reasoning-via-comments" reason-via-comments-instruction))]
+    (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
+      (vec (concat leading-systems [nudge] rest-msgs)))
+    messages))
+
 (defn stable-prompt-text
   "Join stable prompt message contents for token budgeting and debug bindings only.
    Provider sends the original message vector; this is not a send path."
