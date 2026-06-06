@@ -610,7 +610,13 @@
       (expect (every? #(str/includes? % "│") [header active-label inactive-label]))
       (expect (str/includes? header "ID"))
       (expect (str/includes? header "Turns"))
-      (expect (str/includes? active-label "●"))
+      ;; The active marker sits in a width-1 gutter column. `●` (U+25CF) is
+      ;; display-width 2, so the boxed-row justify clips it to the 1-col
+      ;; ellipsis; inactive rows leave that column blank. Assert the marker
+      ;; *cell* (between the first two │) rather than the raw glyph, which
+      ;; cannot survive a single-column cell.
+      (expect (= " … " (second (str/split active-label #"│"))))
+      (expect (= "   " (second (str/split inactive-label #"│"))))
       (expect (str/includes? active-label "│ 123e4567 │"))
       (expect (str/includes? active-label "│     2 │"))
       (expect (str/includes? active-label "2024-01-03"))
