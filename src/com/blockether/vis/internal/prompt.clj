@@ -166,16 +166,19 @@
         iter 2  WRITE — one side effect, then stop and look:
           (patch [{:path \"calc.clj\" :from-hash \"a1b2\"
                    :replace \"(defn add [a b] (+ a b))\\n(defn subtract [a b] (- a b))\"}])
-        iter 3  REMEMBER + VERIFY + COMPACT + done — the iter-2 diff is already
-        in view, so NO re-cat:
+        iter 3  VERIFY — exercise it, don't trust the diff: eval the logic and
+        SEE the result next iter.
+          ((fn [a b] (- a b)) 5 3)             ; ⇒ expect 2 (a-b)
+        iter 4  REMEMBER + flip :verified? + COMPACT + done — iter-3 result is
+        in view, so the close is earned; NO re-cat (the diff was iter 2):
           (fact-set! :calc-subtract
             {:content \"`calc/subtract` — returns a-b\"
              :files [{:path \"calc.clj\"
                       :regions [{:src \"(defn subtract [a b] (- a b))\" :from-hash \"c3d4\"}]}]})
-          (task-set! :work {:status :done :verified? true})
-          (summarize {:trailer [{:scope-start \"t1/i1\" :scope-end \"t1/i2\"
-                                 :summary \"t1/i1-i2: cat calc.clj, patched `subtract` after `add` — done\"}]})
-          (done \"Added `subtract` to `calc.clj`. ns loads clean; returns a-b.\")
+          (task-set! :work {:status :done :verified? true})  ; ONLY now, after i3
+          (summarize {:trailer [{:scope-start \"t1/i1\" :scope-end \"t1/i3\"
+                                 :summary \"t1/i1-i3: patched `subtract`, eval'd (5,3)→2 — done\"}]})
+          (done \"Added `subtract` to `calc.clj`; verified (5,3)→2.\")
 
     STANCE
       EPISTEMIC  Trust: runtime > source > docs > assumption. Probe the live
