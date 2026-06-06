@@ -289,7 +289,7 @@
       (expect (= 2048 (:output-tokens ctx)))
       (expect (str/includes? (:message ctx) "max_tokens"))
       (expect (str/includes? (:message ctx) "hidden reasoning"))
-      (expect (str/includes? (:hint ctx) ":session/warnings"))
+      (expect (str/includes? (:hint ctx) ":session/hints"))
       (expect (str/includes? (:hint ctx) "canonical"))
       (expect (not (str/includes? (:hint ctx) "v/strategy")))
       (expect (not (str/includes? (:hint ctx) ":start/:max-lines")))))

@@ -16,7 +16,7 @@
 
    3. **Warnings are their own subtree.** The engine's `derive-warnings`
       yields a vec of short strings; the renderer prints them under
-      `:session/warnings` (only when non-empty) as the single \"what needs
+      `:session/hints` (only when non-empty) as the single \"what needs
       attention\" surface. No `;; ⚠` line-comments inside any EDN value.
 
    Output skeleton:
@@ -32,7 +32,7 @@
       :session/tasks {…}
       :session/facts   {…}
       :session/trailer […]
-      :session/warnings [\"task :t1 :done but dep :t2 is :doing\"]}"
+      :session/hints [\"task :t1 :done but dep :t2 is :doing\"]}"
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -320,7 +320,7 @@
        (seq (:contradicts f))    (assoc :contradicts (vec (sort (:contradicts f)))))])
 
 (defn- render-warnings-value
-  "Render `:session/warnings` — the vec of short warning STRINGS from
+  "Render `:session/hints` — the vec of short warning STRINGS from
    `eng/derive-warnings`. This is the single \"what needs attention\"
    surface (replaces the legacy `:session/stages` derived view and the
    trailing `;; warn` line-comments). Pure EDN data; the model reads the
@@ -337,7 +337,7 @@
   "Render the engine view as the bare-EDN text block embedded under `;; ctx`
    in the user message.
 
-   `:session/warnings` is the only derived field: a flat vec of short
+   `:session/hints` is the only derived field: a flat vec of short
    warning STRINGS from `eng/derive-warnings` (dep target missing,
    contradicting facts, rebind loop, task :done with a non-terminal dep).
    It is the single 'what needs attention' surface and replaces the legacy
@@ -355,30 +355,37 @@
    Output: a string starting with `;; ctx\\n{` and ending with `}`.
    No trailing line-comments anywhere."
   [{:keys [ctx warnings]}]
-  (let [warnings* (vec (or warnings []))]
+  ;; Serialize from the SINGLE canonical projection. `eng/session-view` is
+  ;; the one place that defines the model-facing `:session/*` shape; the
+  ;; bound `ctx` snapshot (ctx-loop/session-snapshot) derives from the same
+  ;; fn, so the EDN below and the value the model reads as `ctx` cannot drift.
+  (let [view      (eng/session-view ctx warnings)
+        warnings* (vec (:session/hints view))]
     (str
       ";; ctx\n"
-      "{" (zp :session/id)    "        " (zp (:session/id ctx))    "\n"
-      " " (zp :session/turn)  "      "   (zp (:session/turn ctx))  "\n"
-      " " (zp :session/scope) "     "    (zp (:session/scope ctx)) "\n"
-      (when-let [util (:engine/utilization ctx)]
+      "{" (zp :session/id)    "        " (zp (:session/id view))    "\n"
+      " " (zp :session/turn)  "      "   (zp (:session/turn view))  "\n"
+      " " (zp :session/scope) "     "    (zp (:session/scope view)) "\n"
+      (when-let [util (:session/utilization view)]
         (str " " (zp :session/utilization) " " (zp util) "\n"))
       "\n"
       (render-section :session/workspace
-        (zp (or (:session/workspace ctx) {})) nil)                "\n\n"
-      (when-let [env-block (:session/env ctx)]
+        (zp (or (:session/workspace view) {})) nil)                "\n\n"
+      (when-let [env-block (:session/env view)]
         (str (render-section :session/env (zp env-block) nil) "\n\n"))
-      (when-let [symbols (not-empty (:session/symbols ctx))]
+      (when-let [symbols (not-empty (:session/symbols view))]
         (str (render-section :session/symbols (zp symbols) nil) "\n\n"))
-      (when-let [tasks (not-empty (:session/tasks ctx))]
+      (when-let [tasks (not-empty (:session/tasks view))]
         (str (render-section :session/tasks (zp tasks) nil) "\n\n"))
-      (when-let [facts (not-empty (:session/facts ctx))]
+      (when-let [facts (not-empty (:session/facts view))]
         (str (render-section :session/facts (zp facts) nil) "\n\n"))
       (render-section :session/trailer
-        (render-trailer-value (or (:session/trailer ctx) [])) nil)
+        (render-trailer-value (or (:session/trailer view) [])) nil)
+      (when-let [digest (:session/archive-digest view)]
+        (str "\n\n" (render-section :session/archive-digest (zp digest) nil)))
       (when (seq warnings*)
         (str "\n\n"
-          (render-section :session/warnings
+          (render-section :session/hints
             (render-warnings-value warnings*) nil)))
       "}")))
 

@@ -249,19 +249,30 @@
    (->svar-model nil model))
   ([provider-id model]
    (when-let [n (some-> (model-name model) str str/trim not-empty)]
-     (cond-> {:name n}
-       (and (github-copilot-provider-id? provider-id)
-         (github-copilot-claude-model? n))
-       (assoc :api-style :openai-compatible-chat
-         :reasoning? true
-         :reasoning-style :openai-effort
-         :reasoning-effort? true)
+     (let [m (when (map? model) model)]
+       (cond-> {:name n}
+         ;; Carry through model metadata svar honors but vis historically
+         ;; dropped. `:context` is the override knob for providers whose API
+         ;; can't report a window (LM Studio's OpenAI-compatible /v1/models);
+         ;; it's persisted into config from `svar/models!`'s native-endpoint
+         ;; detection so the router uses the real window instead of svar's
+         ;; conservative DEFAULT_CONTEXT_LIMIT. No value → svar falls back.
+         (:context m)      (assoc :context (:context m))
+         (:output-limit m) (assoc :output-limit (:output-limit m))
+         (some? (:tool-call? m)) (assoc :tool-call? (:tool-call? m))
 
-       (and (zai-provider-id? provider-id)
-         (zai-thinking-model? n))
-       (assoc :reasoning? true
-         :reasoning-style :zai-thinking
-         :reasoning-effort? false)))))
+         (and (github-copilot-provider-id? provider-id)
+           (github-copilot-claude-model? n))
+         (assoc :api-style :openai-compatible-chat
+           :reasoning? true
+           :reasoning-style :openai-effort
+           :reasoning-effort? true)
+
+         (and (zai-provider-id? provider-id)
+           (zai-thinking-model? n))
+         (assoc :reasoning? true
+           :reasoning-style :zai-thinking
+           :reasoning-effort? false))))))
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,

@@ -24,6 +24,7 @@
    [com.blockether.vis.internal.sci-symbols :as sci-symbols]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.workspace :as workspace]
    [edamame.core :as edamame]
@@ -915,6 +916,18 @@
     ;; it parses, repairs delimiter slips when safe, then evaluates parsed
     ;; forms. Guard validators run against the repaired source when one exists
     ;; so a stray close paren does not block repair before eval.
+    ;; Re-intern the bare `ctx` snapshot BEFORE every eval. SCI interns
+    ;; sandbox bindings once at session start, so a static value would go
+    ;; stale by iter 2; refreshing here keeps `ctx` == the rendered EDN the
+    ;; model just read (and reflects intra-iter mutations across blocks).
+    ;; The snapshot is an immutable read-only map — see
+    ;; ctx-loop/session-snapshot for the read-only guarantee. Re-interning
+    ;; also erases any `(def ctx …)` the model wrote in a prior block.
+    (when sci-ctx
+      (try
+        (when-let [snap (ctx-loop/session-snapshot environment)]
+          (env/sci-update-binding! sci-ctx 'ctx snap))
+        (catch Throwable _ nil)))
     (let [start-time (System/currentTimeMillis)
           exec       (try
                        (let [{:keys [parse-error repaired-source]} (parse-top-level-forms code)
@@ -2894,7 +2907,7 @@
                output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
                max-tokens-exhaust?
-               "Shorten next iteration. Follow current :session/tasks and heed :session/warnings; keep tool procedure canonical and compact. Drop unrelated defs and emit `(done ...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               "Shorten next iteration. Follow current :session/tasks and heed :session/hints; keep tool procedure canonical and compact. Drop unrelated defs and emit `(done ...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
                :else
                "Adjust your approach or finish with `(done ...)` using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate
@@ -3026,15 +3039,40 @@
 
 (defonce ^:private router-atom (atom nil))
 
+(defn- enrich-provider-models
+  "Apply a provider's optional `:provider/enrich-models-fn` hook to a
+   svar-shaped provider at router-build time. Providers whose backend can
+   report a model's real context window (LM Studio via its native endpoint)
+   register this hook to resolve `:context`/`:tool-call?`; the host stays
+   provider-agnostic — no per-provider branching here.
+
+   Runs only at router build (`get-router` / `rebuild-router!`, both memoized
+   via `router-atom`), so any network the hook does is once-per-build, never
+   per turn. Failure-safe: a throwing or empty hook leaves models untouched and
+   svar falls back to its conservative DEFAULT_CONTEXT_LIMIT."
+  [svar-provider router-opts]
+  (if-let [f (:provider/enrich-models-fn (registry/provider-by-id (:id svar-provider)))]
+    (try
+      (let [models (f svar-provider router-opts)]
+        (cond-> svar-provider
+          (seq models) (assoc :models (vec models))))
+      (catch Throwable _ svar-provider))
+    svar-provider))
+
 (defn- runtime-router-providers
   "Resolve durable provider config into the svar runtime shape.
 
    On-disk config intentionally omits ephemeral credentials for OAuth-backed
    providers such as OpenAI Codex. Resolve those fields immediately before
    constructing a router so each provider can refresh tokens and attach any
-   provider-specific headers."
+   provider-specific headers.
+
+   Each provider may also enrich its own models via `:provider/enrich-models-fn`
+   (e.g. LM Studio resolving real context windows)."
   [config]
-  (mapv config/->svar-provider (:providers config)))
+  (let [ropts (config/router-opts config)]
+    (mapv #(enrich-provider-models (config/->svar-provider %) ropts)
+      (:providers config))))
 
 (defn get-router
   "Get or create the shared LLM router.
