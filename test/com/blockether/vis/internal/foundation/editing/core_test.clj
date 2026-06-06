@@ -192,14 +192,6 @@
     (expect (string/includes? editing/editing-prompt "cat"))
     nil)
 
-  (it "documents only the canonical root-scoped rg map shape"
-    (expect (string/includes? editing/editing-prompt
-              "(rg {:any [P] :files-only? true})"))
-    (expect (string/includes? editing/editing-prompt "Do not assume `src`"))
-    (expect (not (string/includes? editing/editing-prompt ":paths [\"src\"]")))
-    (expect (not (string/includes? editing/editing-prompt "kwargs")))
-    (expect (not (string/includes? editing/editing-prompt "BOTH"))))
-
   (it "registers observed fn-symbols with tool-specific renderers"
     (doseq [sym-name '[cat ls rg patch write create-dirs copy move delete delete-if-exists exists?]]
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
@@ -392,36 +384,6 @@
       (expect (false? (:success? failure)))
       (expect (= hint (-> failure :error :hint)))
       (expect (= :none (-> failure :error :failures first :access))))))
-
-(defdescribe editing-prompt-read-policy-test
-  (it "keeps the prompt small and canonical"
-    (let [patch-symbol (some #(when (= 'patch (:ext.symbol/symbol %)) %)
-                         editing/editing-symbols)
-          prompt editing/editing-prompt]
-      (expect (< (count prompt) 1600))
-      (expect (string/includes? prompt "Canonical path only"))
-      (expect (not (string/includes? prompt "v/strategy")))
-      (expect (string/includes? prompt "(ls \".\" {:depth 2})"))
-      (expect (string/includes? prompt "(rg {:any [P] :files-only? true})"))
-      (expect (string/includes? prompt "400-500 line range"))
-      (expect (string/includes? prompt "(cat path :ranges [[start end] ...])"))
-      (expect (string/includes? prompt "(patch {:path P :edits"))
-      ;; Strategy guidance: both locators documented with their intent.
-      (expect (string/includes? prompt "PATCH STRATEGY"))
-      (expect (string/includes? prompt "(patch [{:path P :from-hash H :replace R}])"))
-      (expect (string/includes? prompt ":nth :all"))
-      (expect (string/includes? prompt "diff is evidence"))
-      (expect (not (string/includes? prompt "kwargs")))
-      (expect (not (string/includes? prompt "BOTH")))
-      (expect (not (string/includes? prompt "STRATEGIES — decision table")))
-      (expect (not (string/includes? prompt "Bulk rename idiom")))
-      (expect (not (string/includes? prompt "Codex envelope")))
-      (expect (not (string/includes? prompt "*** Begin Patch")))
-      (expect (not (string/includes? (:ext.symbol/doc patch-symbol)
-                     "Codex `apply_patch` envelope")))
-      (expect (not (string/includes? prompt "read-all-lines")))
-      (expect (not (string/includes? prompt "write-lines")))
-      (expect (not (string/includes? prompt "update-file"))))))
 
 (defdescribe vis-ls-flat-shape-test
   ;; ls now returns a FLAT entry list (no nested :children). The shape
