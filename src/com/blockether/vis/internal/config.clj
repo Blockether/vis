@@ -157,6 +157,7 @@
             (:api-style svar-md))          (assoc :api-style (or (:api-style provider-md)
                                                                (:api-style svar-md)))
           (:default-models provider-md)    (assoc :default-models (:default-models provider-md))
+          (:extra-body provider-md)        (assoc :extra-body (:extra-body provider-md))
           (:hidden? provider-md)           (assoc :hidden? true))))))
 
 (defn provider-presets
@@ -302,6 +303,11 @@
         explicit-api-style    (or (:api-style provider) (:api-style template))
         explicit-headers      (:llm-headers provider)
         explicit-responses    (:responses-path provider)
+        ;; Provider-default request-body params (e.g. LM Studio sampler
+        ;; defaults from the preset). svar merges these as the lowest
+        ;; precedence layer, so an explicit per-provider config override
+        ;; and any per-turn :extra-body still win.
+        merged-extra-body     (not-empty (merge (:extra-body template) (:extra-body provider)))
         get-token-fn          (when (nil? api-key)
                                 (some-> (registry/provider-by-id pid) :provider/get-token-fn))]
     (if get-token-fn
@@ -313,13 +319,15 @@
           url               (assoc :base-url url)
           explicit-api-style (assoc :api-style explicit-api-style)
           merged-response   (assoc :responses-path merged-response)
-          merged-headers    (assoc :llm-headers merged-headers)))
+          merged-headers    (assoc :llm-headers merged-headers)
+          merged-extra-body (assoc :extra-body merged-extra-body)))
       (cond-> {:id pid :models models}
         api-key             (assoc :api-key api-key)
         explicit-url        (assoc :base-url explicit-url)
         explicit-api-style  (assoc :api-style explicit-api-style)
         explicit-responses  (assoc :responses-path explicit-responses)
-        explicit-headers    (assoc :llm-headers explicit-headers)))))
+        explicit-headers    (assoc :llm-headers explicit-headers)
+        merged-extra-body   (assoc :extra-body merged-extra-body)))))
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
