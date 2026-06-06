@@ -3141,6 +3141,105 @@
                    "")]
     (assoc resp :text text)))
 
+(def ^:private archive-digest-entry-spec
+  "One digest entry: a compressed archived concern with its importance and the
+   exact call to pull the full original back."
+  (svar/spec :archive-digest-entry
+    (svar/field svar/NAME :content
+      svar/TYPE svar/TYPE_STRING svar/CARDINALITY svar/CARDINALITY_ONE
+      svar/DESCRIPTION "One archived concern, terse — what it was and the outcome.")
+    (svar/field svar/NAME :importance
+      svar/TYPE svar/TYPE_STRING svar/CARDINALITY svar/CARDINALITY_ONE
+      svar/VALUES ["high" "medium" "low"]
+      svar/DESCRIPTION "How likely this is worth recalling later.")
+    (svar/field svar/NAME :recall
+      svar/TYPE svar/TYPE_STRING svar/CARDINALITY svar/CARDINALITY_ONE
+      svar/DESCRIPTION (str "The exact call to pull the full original back, e.g. (recall :t3/auth). "
+                         "Use an id taken from the entries you summarized."))))
+
+(def ^:private archive-digest-spec
+  "Structured-output spec for the archive-digest side-channel — svar `ask!` +
+   spec (same discipline as `auto-title-spec`). svar parses the response into a
+   REGULAR CLOJURE DATA STRUCTURE: a vector of `{:content :importance :recall}`
+   entry maps under `:entries`, most-important-first."
+  (svar/spec :archive-digest {:refs [archive-digest-entry-spec]}
+    (svar/field svar/NAME :entries
+      svar/TYPE svar/TYPE_REF svar/TARGET :archive-digest-entry
+      svar/CARDINALITY svar/CARDINALITY_MANY
+      svar/DESCRIPTION "Digest entries, MOST-IMPORTANT first.")))
+
+(defn- archive-rollup-summarizer
+  "Build a `ctx-engine/roll-archive` summarizer-fn bound to `router`. Compresses
+   the freshly-archived entries (+ the previous digest) via svar `ask!` +
+   `:spec` into a vector of `{:source :content :importance :recall}` maps — a regular
+   Clojure data structure, most-important-first, each with the `(recall …)` call
+   to restore the full original. Cheapest+fastest model. Returns
+   `{:summary <vec-of-entry-maps> :source :companion-llm}` or nil on failure
+   (roll-archive then falls back to its deterministic gist)."
+  [router]
+  (fn [{:keys [entries prev-digest]}]
+    (let [resp    (try
+                    (svar/ask! router
+                      (with-default-ask-code-idle-timeout
+                        {:messages  [{:role "system"
+                                      :content (str "You maintain a digest of an AI agent's ARCHIVED working memory. "
+                                                 "Given the previous digest and the newly-archived entries, return the "
+                                                 "UPDATED digest as entries (most-important first): one entry per distinct "
+                                                 "concern with a terse :content, an :importance, and a :recall call that "
+                                                 "references an id from the entries. Merge redundant concerns.")}
+                                     {:role "user"
+                                      :content (pr-str {:previous-digest prev-digest :newly-archived entries})}]
+                         :spec      archive-digest-spec
+                         :reasoning :off
+                         :routing   {:optimize [:cost :speed]}}))
+                    (catch Throwable t
+                      (tel/log! {:level :warn :id ::archive-rollup-call-failed
+                                 :data {:error (ex-message t)}}
+                        "Archive-digest rollup LLM call failed; falling back to deterministic gist")
+                      nil))
+          summary (some->> (:entries (:result resp))
+                    (keep (fn [{:keys [content importance recall]}]
+                            (when (and (string? content) (not (str/blank? content)))
+                              (cond-> {:source     :archive
+                                       :content    content
+                                       :importance (ctx-engine/normalize-importance importance)}
+                                (not (str/blank? (str recall))) (assoc :recall (str recall))))))
+                    vec)]
+      (when (seq summary) {:summary summary :source :companion-llm}))))
+
+(defonce ^:private archive-rolling?
+  ;; session-ids with an in-flight rollup — guards against concurrent rolls.
+  (atom #{}))
+
+(defn- maybe-roll-archive!
+  "Fire-and-forget `:session/archive-digest` refresh, OFF the critical path.
+   When the digest is due (`archive-digest-due?` — every
+   `ARCHIVE-DIGEST-CADENCE` turns with newly-archived entries), run the
+   cheapest-model gist on a worker thread, then race-safely set the fresh
+   digest back onto the ctx-atom. `:session/archived` is never evicted, so the
+   swap only assocs the digest; entries archived during the call are absorbed
+   next cadence. One roll per session at a time."
+  [{:keys [ctx-atom session-id router]}]
+  (when (and ctx-atom router
+          (ctx-engine/archive-digest-due? @ctx-atom)
+          (not (contains? @archive-rolling? session-id)))
+    (swap! archive-rolling? conj session-id)
+    (cancellation/worker-future "vis-archive-rollup"
+      (fn []
+        (try
+          (let [{:keys [ctx rolled source]} (ctx-engine/roll-archive @ctx-atom
+                                              {:summarizer-fn (archive-rollup-summarizer router)})]
+            (when (pos? (long rolled))
+              (swap! ctx-atom assoc :session/archive-digest (:session/archive-digest ctx))
+              (tel/log! {:level :info :id ::archive-digest-refreshed
+                         :data {:session-id session-id :rolled rolled :source source}})))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::archive-rollup-failed
+                       :data {:session-id session-id :error (ex-message t)}}))
+          (finally
+            (swap! archive-rolling? disj session-id))))))
+  nil)
+
 (defn resolve-effective-model
   "Best-effort root model descriptor from router config.
 
@@ -3435,6 +3534,10 @@
     (when-let [ctx-atom (:ctx-atom environment)]
       (swap! ctx-atom
         (fn [c] (ctx-engine/enter-turn c (or turn-position 1)))))
+    ;; Archive-of-archive: refresh `:session/archive-digest` off the critical
+    ;; path every few turns (enter-turn's gc-pass just populated the archive).
+    ;; Fire-and-forget; never blocks the turn.
+    (maybe-roll-archive! environment)
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.

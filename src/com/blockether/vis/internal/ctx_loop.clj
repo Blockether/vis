@@ -354,12 +354,12 @@
                                    (concat [title-blocker]
                                      (remove #(#{:missing-title :stale-title} (:id %))
                                        (or bs [])))))))
-          ;; `:session/hints` is a render-only key: a vec of short
-          ;; strings (structural warnings + drained mutator warnings)
-          ;; surfaced to the model in the rendered ctx. NOT pushed back
-          ;; into ctx-atom.
-          ctx-rendered     (cond-> ctx-with-blocker
-                             (seq warns) (assoc :session/hints warns))]
+          ;; `:session/hints` is owned by `eng/session-view` (the single
+          ;; projection): it wraps these structural `warns` into hint maps
+          ;; and conjoins the extension hook hints. We pass the raw `warns`
+          ;; as `:warnings`; we do NOT assoc `:session/hints` here, so the
+          ;; data map and the rendered string can never disagree on shape.
+          ctx-rendered     ctx-with-blocker]
       (renderer-fn {:ctx ctx-rendered :warnings warns}))))
 
 ;; =============================================================================

@@ -14,10 +14,11 @@
       the only thing the renderer itself writes; it never tries to inject
       text inside a zp'd value.
 
-   3. **Warnings are their own subtree.** The engine's `derive-warnings`
-      yields a vec of short strings; the renderer prints them under
-      `:session/hints` (only when non-empty) as the single \"what needs
-      attention\" surface. No `;; ⚠` line-comments inside any EDN value.
+   3. **Hints are their own subtree.** `eng/session-view` conjoins engine
+      structural advisories + extension hook hints into `:session/hints` — a
+      vec of `{:source :content :importance}` maps; the renderer prints them
+      (only when non-empty) as the single \"what needs attention\" surface.
+      No `;; ⚠` line-comments inside any EDN value.
 
    Output skeleton:
 
@@ -32,7 +33,7 @@
       :session/tasks {…}
       :session/facts   {…}
       :session/trailer […]
-      :session/hints [\"task :t1 :done but dep :t2 is :doing\"]}"
+      :session/hints [{:source :engine :content \"task :t1 :done but dep :t2 is :doing\" :importance :medium}]}"
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -319,15 +320,15 @@
        (seq (:files f))          (assoc :files (:files f))
        (seq (:contradicts f))    (assoc :contradicts (vec (sort (:contradicts f)))))])
 
-(defn- render-warnings-value
-  "Render `:session/hints` — the vec of short warning STRINGS from
-   `eng/derive-warnings`. This is the single \"what needs attention\"
-   surface (replaces the legacy `:session/stages` derived view and the
-   trailing `;; warn` line-comments). Pure EDN data; the model reads the
-   strings and acts on them. Caller only renders this section when the
+(defn- render-hints-value
+  "Render `:session/hints` — the vec of `{:source :content :importance}` hint
+   maps produced by `eng/session-view` (engine structural advisories +
+   extension hook hints). This is the single \"what needs attention\" surface
+   (replaces the legacy `:session/stages` view and the `;; warn`
+   line-comments). Pure EDN data. Caller only renders this section when the
    vec is non-empty, so an empty vec never reaches here."
-  [warnings]
-  (zp (vec warnings)))
+  [hints]
+  (zp (vec hints)))
 
 ;; =============================================================================
 ;; Top-level
@@ -337,11 +338,12 @@
   "Render the engine view as the bare-EDN text block embedded under `;; ctx`
    in the user message.
 
-   `:session/hints` is the only derived field: a flat vec of short
-   warning STRINGS from `eng/derive-warnings` (dep target missing,
-   contradicting facts, rebind loop, task :done with a non-terminal dep).
-   It is the single 'what needs attention' surface and replaces the legacy
-   `:session/stages` view plus the trailing `;; warn ...` line-comments.
+   `:session/hints` is the derived advisory field: a vec of
+   `{:source :content :importance}` maps that `eng/session-view` conjoins
+   from engine structural advisories (dep target missing, contradicting
+   facts, rebind loop, task :done with a non-terminal dep) AND extension
+   hook hints. It is the single 'what needs attention' surface and replaces
+   the legacy `:session/stages` view plus the `;; warn ...` line-comments.
    The model reads pure EDN data, no embedded prose.
 
    Raw entity subtrees (`:session/tasks` / `:session/facts`) ride directly
@@ -350,7 +352,8 @@
 
    Input map keys:
      :ctx       full ::cs/ctx (validated upstream)
-     :warnings  vec of short strings from `eng/derive-warnings`
+     :warnings  vec of short engine-advisory strings; `session-view` wraps
+                them into `:source :engine` hint maps
 
    Output: a string starting with `;; ctx\\n{` and ending with `}`.
    No trailing line-comments anywhere."
@@ -360,7 +363,7 @@
   ;; bound `ctx` snapshot (ctx-loop/session-snapshot) derives from the same
   ;; fn, so the EDN below and the value the model reads as `ctx` cannot drift.
   (let [view      (eng/session-view ctx warnings)
-        warnings* (vec (:session/hints view))]
+        hints*    (vec (:session/hints view))]
     (str
       ";; ctx\n"
       "{" (zp :session/id)    "        " (zp (:session/id view))    "\n"
@@ -383,9 +386,9 @@
         (render-trailer-value (or (:session/trailer view) [])) nil)
       (when-let [digest (:session/archive-digest view)]
         (str "\n\n" (render-section :session/archive-digest (zp digest) nil)))
-      (when (seq warnings*)
+      (when (seq hints*)
         (str "\n\n"
           (render-section :session/hints
-            (render-warnings-value warnings*) nil)))
+            (render-hints-value hints*) nil)))
       "}")))
 
