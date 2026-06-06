@@ -265,6 +265,36 @@
 ;; Python sandbox context creation
 ;; =============================================================================
 
+(defn- install-introspection!
+  "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
+   sandbox's own discovery surface, mirroring SCI's `apropos`/`doc`. Both read
+   the wired member keys; `doc` also reports callable-ness + any registered
+   `__vis_docs__` text."
+  [^Context ctx]
+  (let [g (.getBindings ctx "python")
+        names (fn [] (sort (filter #(not (str/starts-with? % "__vis"))
+                             (map str (seq (.getMemberKeys g))))))]
+    (.putMember g "apropos"
+      (reify ProxyExecutable
+        (execute [_ args]
+          (let [pat (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")]
+            (->py (filterv #(str/includes? % pat) (names)))))))
+    (.putMember g "doc"
+      (reify ProxyExecutable
+        (execute [_ args]
+          (let [nm (when (pos? (alength args)) (.asString ^Value (aget args 0)))
+                m  (when nm (.getMember g nm))
+                docs (let [d (.getMember g "__vis_docs__")]
+                       (when (and d (not (.isNull d)) (.hasHashEntries d) nm
+                               (.hasHashEntry d (->py nm)))
+                         (.asString (.getHashValue d (->py nm)))))]
+            (cond
+              (nil? nm)                  "doc(name): describe a sandbox global"
+              (or (nil? m) (.isNull m))  (str nm ": <not found> — try apropos(\"\")")
+              :else (str nm
+                      (when (.canExecute m) " (callable)")
+                      (when docs (str " — " docs))))))))))
+
 (defn create-sci-context
   "Create the embedded-GraalPy sandbox context with all available bindings.
    Drop-in twin of the SCI `create-sci-context`.
@@ -294,6 +324,8 @@
     ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
     (doseq [[sym val] (or custom-bindings {})]
       (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
+    ;; Sandbox self-discovery (apropos / doc) over the wired globals.
+    (install-introspection! ctx)
     {:sci-ctx ctx
      :sandbox-ns :python
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
