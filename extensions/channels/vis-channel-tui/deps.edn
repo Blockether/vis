@@ -34,9 +34,14 @@
   ;;      that isCharCJK missed → 2 columns. One shared source for display-width
   ;;      and the paint. Chrome (box/block/geometric/arrows) stays single-width.
   ;;   8. Control chars degrade to a space instead of throwing on the render thread.
+  ;;   9. Scroll-ghost fix: refreshByDelta skips a wide glyph's trailing half-cell
+  ;;      (the 2-cell glyph covers it), but when content scrolls out from under a
+  ;;      wide char that skipped column kept a stale half-glyph — a "floating"
+  ;;      ghost ONLY on emoji/CJK rows. Now the wide char is re-emitted whenever its
+  ;;      trailing cell changed, repainting over the ghost.
   ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.13"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.14"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
