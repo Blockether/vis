@@ -133,6 +133,18 @@
   [key]
   (let [key (normalize-modal-key key)]
     (and key (not (instance? MouseAction key)) (= KeyType/Escape (.getKeyType key)))))
+(def ^:private modal-close-bounds (ThreadLocal/withInitial #(atom nil)))
+(defn modal-close-click?
+  "True when `key` is a mouse click on the dialog close (✕) button."
+  [key]
+  (when (instance? MouseAction key)
+    (let [a (.getActionType ^MouseAction key)]
+      (when (= a MouseActionType/CLICK_RELEASE)
+        (when-let [b @(.get ^ThreadLocal modal-close-bounds)]
+          (let [pos (.getPosition ^MouseAction key)
+                cx (.getColumn pos)
+                cy (.getRow pos)]
+            (and (= cy (:y b)) (>= cx (:x0 b)) (<= cx (:x1 b)))))))))
 (defn read-modal-input!
   "Read one modal input event. Consecutive pending wheel events are drained
    and returned as one `:scroll-delta`, so a wheel flood costs one redraw.
@@ -142,15 +154,18 @@
   (let [pending-key (.get ^ThreadLocal modal-pending-key)
         key (normalize-modal-key (or @pending-key (.readInput screen)))]
     (reset! pending-key nil)
-    (if-let [delta (modal-wheel-delta key)]
-      (loop [acc (long delta)]
-        (if-let [next-key (some-> (.pollInput screen)
-                            normalize-modal-key)]
-          (if-let [next-delta (modal-wheel-delta next-key)]
-            (recur (+ acc (long next-delta)))
-            (do (reset! pending-key next-key) {:scroll-delta acc}))
-          {:scroll-delta acc}))
-      {:key key})))
+    (cond
+      (modal-close-click? key) {:key (KeyStroke. KeyType/Escape)}
+      :else
+      (if-let [delta (modal-wheel-delta key)]
+        (loop [acc (long delta)]
+          (if-let [next-key (some-> (.pollInput screen)
+                              normalize-modal-key)]
+            (if-let [next-delta (modal-wheel-delta next-key)]
+              (recur (+ acc (long next-delta)))
+              (do (reset! pending-key next-key) {:scroll-delta acc}))
+            {:scroll-delta acc}))
+        {:key key}))))
 (defn read-modal-key!
   "Like `Screen/readInput`, but drains wheel floods into one synthetic wheel
    event. Existing modal loops can use it without bespoke scroll-delta code."
@@ -269,6 +284,17 @@
     (p/fill-rect! g input-left (inc row) input-w 1)
     (p/put-str! g input-left (inc row) visible)
     (p/cursor-pos (+ input-left (- cursor h-off)) (inc row))))
+(defn draw-dialog-close-button!
+  "Paint a clickable ✕ close button at a dialog's top-right title row and
+   record its click bounds (thread-local) so `read-modal-input!` can turn a
+   click into Escape. Every dialog inherits it via `draw-dialog-chrome!`."
+  [g box-right title-row]
+  (let [label " ✕ "
+        x1 (- box-right 1)
+        x0 (- x1 (dec (count label)))]
+    (p/set-colors! g t/dialog-title-bg t/dialog-title-fg)
+    (p/put-str! g x0 title-row label)
+    (reset! (.get ^ThreadLocal modal-close-bounds) {:x0 x0 :x1 x1 :y title-row})))
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
 
@@ -318,6 +344,7 @@
        ;; Title text
        (p/set-fg! g t/dialog-title-fg)
        (p/put-str! g tx title-row title-text)
+       (draw-dialog-close-button! g box-right title-row)
        ;; Top separator - below title bar
        (p/set-colors! g t/dialog-border t/dialog-bg)
        (p/draw-separator! g box-left box-right (inc title-row))

@@ -1362,7 +1362,9 @@
                             :duration-ms duration-ms,
                             :tokens tokens,
                             :cost cost}
-                     short? (assoc :iteration-count nil :tokens nil)
+                     short? (assoc :iteration-count nil :silent-count nil :duration-ms nil
+                              :tokens (some-> tokens (select-keys [:input :output]))
+                              :cost (cond-> cost (map? cost) (select-keys [:total-cost])))
                      light? (assoc :iteration-count nil :tokens nil :duration-ms nil))
                    (cond-> {:suffix (when-let [fallback (fallback-summary message)] [fallback])}
                      (or short? light?) (assoc :model false)))]
