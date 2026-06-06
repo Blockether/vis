@@ -109,9 +109,12 @@
                  \"done\", which makes :verified? a lie. Skip the task ONLY for a
                  pure no-tool answer.
       2 READ     Batch reads: the fence holds N forms — use them for READ-ONLY
-                 or deterministic steps, e.g. (let [h (rg {…})
-                 s (cat (:path (first h)))] s) locates AND reads in one iter.
-                 One pure read per iter wastes a call.
+                 or deterministic steps, e.g.
+                 (let [h (rg {:any [\"defn add\"] :path \"calc.clj\"})
+                       p (:path (first (:matches h)))] (cat p)) locates AND
+                 reads in one iter. rg ALWAYS returns a MAP — map over
+                 (:matches h) (or (:files h) with :files-only?), NEVER
+                 (first h). One pure read per iter wastes a call.
       3 WRITE    Sequence writes: each side-effecting form (write, patch, any
                  `…!` verb) gets its OWN iteration — emit it, SEE the
                  result/diff next iter, THEN the next. Never chain edit→edit,
@@ -135,13 +138,38 @@
       6 COMPACT  (summarize …) stale trailer + settled facts/tasks AS YOU GO —
                  don't hoard until the end — then (done …).
 
-      Batch the reads; sequence the writes. A typical file turn's iter 1 —
-      ONE fence, plan + read batched:
-        (task-set! :work {:title \"add subtract to calc.clj\" :status :doing
-                          :acceptance \"calc/subtract returns a-b; ns loads clean\"})
-        (let [hit (rg {:any [\"defn add\"] :path \"calc.clj\"})
-              src (cat (:path (first hit)))]
-          src)   ; → next iter: patch, fact-set! the region, verify + done
+      Batch the reads; sequence the writes.
+
+      WORKED EXAMPLE — \"add subtract to calc.clj\", the WHOLE turn.
+
+      BAD — one fence, everything crammed (the measured #1 failure):
+        (let [_ (cat \"calc.clj\")                          ; locate
+              _ (patch [{:path \"calc.clj\"
+                         :search \"(defn add [a b] (+ a b))\"
+                         :replace \"(defn add [a b] (+ a b))\\n(defn subtract [a b] (- a b))\"}])]
+          (cat \"calc.clj\"))                               ; re-cat to \"check\" — locate-waste
+        \"added subtract, looks fine\"                       ; bare prose → SILENTLY DROPPED
+        ;; no task (nothing to verify), patch ran on unobserved state, the
+        ;; region was never kept as a fact, and the user got NO answer.
+
+      GOOD — gates in order, ONE mutation per iter:
+        iter 1  PLAN + READ, batched in ONE fence:
+          (task-set! :work {:title \"add subtract to calc.clj\" :status :doing
+                            :acceptance \"calc/subtract returns a-b; ns loads clean\"})
+          (cat \"calc.clj\")          ; rows are `HASH| text`; note add's tail hash a1b2
+        iter 2  WRITE — one side effect, then stop and look:
+          (patch [{:path \"calc.clj\" :from-hash \"a1b2\"
+                   :replace \"(defn add [a b] (+ a b))\\n(defn subtract [a b] (- a b))\"}])
+        iter 3  REMEMBER + VERIFY + COMPACT + done — the iter-2 diff is already
+        in view, so NO re-cat:
+          (fact-set! :calc-subtract
+            {:content \"`calc/subtract` — returns a-b\"
+             :files [{:path \"calc.clj\"
+                      :regions [{:src \"(defn subtract [a b] (- a b))\" :from-hash \"c3d4\"}]}]})
+          (task-set! :work {:status :done :verified? true})
+          (summarize {:trailer [{:scope-start \"t1/i1\" :scope-end \"t1/i2\"
+                                 :summary \"t1/i1-i2: cat calc.clj, patched `subtract` after `add` — done\"}]})
+          (done \"Added `subtract` to `calc.clj`. ns loads clean; returns a-b.\")
 
     STANCE
       EPISTEMIC  Trust: runtime > source > docs > assumption. Probe the live
