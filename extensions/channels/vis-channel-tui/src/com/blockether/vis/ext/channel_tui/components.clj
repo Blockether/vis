@@ -603,14 +603,6 @@
         ;; the terminal; the rest of the content is reachable by scrolling.
         cap-h (dialogs/default-content-height rows)
         req-h (min n cap-h)
-        ;; Full-screen opaque scrim BEFORE the dialog chrome: overwrite the chat
-        ;; back-buffer with terminal-bg spaces so the centered modal fully obscures
-        ;; it. Without this, native terminal selection (option/shift-drag, which
-        ;; bypasses mouse reporting) grabs the chat visible AROUND the modal on the
-        ;; same rows — copying "F2 + main content". App-side copy is already scoped.
-        _scrim (do (p/clear-styles! g)
-                   (p/set-colors! g t/dialog-hint t/terminal-bg)
-                   (p/fill-rect! g 0 0 cols rows))
         bounds (dialogs/draw-dialog-chrome! g cols rows title content-w req-h)
         {:keys [left inner-w]} bounds
         {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h)

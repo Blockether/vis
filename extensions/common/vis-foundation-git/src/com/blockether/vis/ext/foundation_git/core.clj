@@ -378,7 +378,7 @@
     "    (git/show sha | {:rev :patch?})         one commit: per-file numstat (+ :patch)\n"
     "    (git/blame path | {:path :from :to :ignore-revs})  per-line blame\n"
     "  WRITE (mutating):\n"
-    "    (git/add paths) (git/commit {:message …}) (git/amend! …)\n"
+    "    (git/add paths) (git/commit! {:message …}) (git/amend! …)\n"
     "    (git/push! …) (git/fetch! …) (git/reset! …) (git/branch! …)\n"
     "    (git/checkout! …) (git/cherry-pick! …) (git/rebase! …)\n"
     "  MERGE-RESOLVE (only inside an active merge):\n"

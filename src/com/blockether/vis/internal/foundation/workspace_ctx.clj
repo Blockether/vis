@@ -1,14 +1,17 @@
 (ns com.blockether.vis.internal.foundation.workspace-ctx
-  "Pre-turn `:session/workspace` CTX block — git-free rift-clone shape.
+  "Pre-turn `:session/workspace` CTX block.
 
    Every session works inside a `rift` CoW clone of the user's cwd
-   (trunk). The model reads `:session/workspace` to know the active root
-   and what it has changed since the fork. There are no branches /
-   commits / merges to report: `apply` lands the clone's file edits back
-   into cwd. The block is stamped once per turn at engine start;
-   ctx_renderer serialises it into the prompt verbatim."
+   (trunk) — that sandbox-ness is reported on `:workspace/sandbox?`, NOT
+   as a VCS. `:vcs/kind` reports the UNDERLYING repository VCS (`:git`
+   when the root is inside a git repo, else `:none`) so it matches the
+   ctx-spec set and the `git/` extension surface, which activates on the
+   same predicate. The model reads `:session/workspace` to know the active
+   root and what it has changed since the fork. The block is stamped once
+   per turn at engine start; ctx_renderer serialises it verbatim."
   (:require
    [clojure.java.io :as io]
+   [com.blockether.vis.internal.git :as git-core]
    [com.blockether.vis.internal.workspace :as workspace]))
 
 (defn- canonical-path
@@ -35,7 +38,7 @@
                     (catch Throwable _ nil)))]
     (cond-> {:workspace/root     root
              :workspace/sandbox? true
-             :vcs/kind           :rift}
+             :vcs/kind           (git-core/vcs-kind root)}
       (:id workspace)        (assoc :workspace/id (:id workspace))
       (:label workspace)     (assoc :workspace/label (:label workspace))
       changed                (assoc :workspace/changed (count changed)

@@ -114,7 +114,7 @@
       conventions from THIS repo; assume no specific stack.
 
     VOCAB
-      TURN  := user-msg → … → (done "…")
+      TURN  := user-msg → … → (done \"…\")
       ITER  := 1 provider call ⇒ exactly 1 ```clojure``` fence
       FORM  := 1 top-level (…) — eval unit; iter holds N forms
       FENCE := the ```clojure``` markdown block
@@ -169,10 +169,16 @@
                Next turn, re-patch that region from the fact BY HASH — never
                re-cat a region you've kept. (The same :files shape also rides
                a (summarize …) trailer stub for transient regions.)
-      BATCH    The fence holds N forms — USE THEM. Chain independent or
-               deterministic steps into ONE fence, e.g.
+      BATCH    The fence holds N forms — USE THEM, but ONLY for READ-ONLY or
+               deterministic steps, e.g.
                (let [h (rg {…}) s (cat (:path (first h)))] s) locates AND
-               reads in a single iter. One tool per iter wastes a call.
+               reads in a single iter. One pure read per iter wastes a call.
+               MUTATIONS ARE DIFFERENT: each side-effecting form (write,
+               patch, any `…!` write verb) gets its OWN iteration — emit it,
+               SEE the result/diff next iter, THEN do the next one. Never
+               chain edit→edit, or locate→edit, or a whole multi-step task
+               (e.g. add→commit→push) into one fence: you'd be acting on
+               unobserved state. Batch the reads; sequence the writes.
       COMPACT  (summarize …) stale trailer + settled facts/tasks AS YOU GO,
                then (done …). Don't hoard until the end.
 
@@ -338,7 +344,18 @@
             Runtime/getRuntime, Runtime/exec, clojure.java.shell,
             clojure.java.process, babashka.process, sh — all unbound;
             don't probe. Filesystem goes through bare foundation tools
-            (cat/ls/rg/patch/write); VCS through `git/`.
+            (cat/ls/rg/patch/write).
+
+    TOOL SURFACE — your ENTIRE toolset is: the bare foundation symbols
+            (cat/ls/rg/patch/write + the engine verbs above) PLUS whatever
+            verbs each ACTIVE `;; -- EXTENSION … --` block below documents.
+            If a capability is NOT listed there, it DOES NOT EXIST here:
+            do not invent verbs, do not write shell commands as strings, do
+            not fake an action through `patch`/`write` (patch/write edit real
+            files in the workspace by path — never a command, never an
+            imaginary path). VCS/git verbs exist ONLY when a `git/` extension
+            block is present. If the task needs a tool you don't have, say so
+            plainly in `(done …)` instead of improvising.
 
     ERRORS  On form error, read it before retrying. Failed patch?
             Re-cat the region for current text. Same approach failing
@@ -524,14 +541,39 @@
     "then write the implementation below. Treat those comments as your "
     "scratchpad; they are where your reasoning lives."))
 
+(def weak-model-operating-rules
+  "The few rules weaker / local models most often break, restated in plain
+   imperative form. Injected (with `reason-via-comments-instruction`) only for
+   non-`:reasoning?` models — the same audience that drowns in the full system
+   prompt. Recency-weighted: it rides right before the conversation. Keep it
+   SHORT; it reinforces, it does not re-teach the whole surface."
+  (str "Five rules that override any temptation to do more:\n"
+    "1. Exactly ONE ```clojure``` fence per reply. All prose goes in "
+    "(done \"…\"), never inside the fence, never in a second fence.\n"
+    "2. Your only tools are the ones written above (the bare foundation "
+    "symbols + the verbs each active EXTENSION block lists). If a verb is not "
+    "written there, it does not exist — do NOT invent it, do NOT put shell "
+    "commands in strings, do NOT fake an action with patch/write. patch/write "
+    "edit real files by path, nothing else.\n"
+    "3. One step at a time. Do a SINGLE edit or action, look at its result on "
+    "the next turn, then do the next. Do not try to finish a multi-step task "
+    "(e.g. add → commit → push) in one fence.\n"
+    "4. Check `ctx` and the live runtime before acting; read an error fully "
+    "before retrying — and change approach if it fails twice.\n"
+    "5. If the available tools can't do what was asked, say so plainly in "
+    "(done \"…\"). Do not improvise a fake solution."))
+
 (defn with-reasoning-comments-nudge
-  "Append the reason-via-code-comments instruction as a turn-scoped system
-   message, after any leading system messages and before the conversation.
-   Use when a reasoning level was requested but the model cannot reason
-   natively. No-op-safe: returns `messages` unchanged if the nudge can't build."
+  "Append the reason-via-code-comments instruction PLUS the weak-model
+   operating rules as a single turn-scoped system message, after any leading
+   system messages and before the conversation. Use when a reasoning level was
+   requested but the model cannot reason natively. No-op-safe: returns
+   `messages` unchanged if the nudge can't build."
   [messages]
   (if-let [nudge (stable-prompt-message
-                   (prompt-block "reasoning-via-comments" reason-via-comments-instruction))]
+                   (prompt-block "reasoning-via-comments"
+                     (str reason-via-comments-instruction
+                       "\n\n" weak-model-operating-rules)))]
     (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
       (vec (concat leading-systems [nudge] rest-msgs)))
     messages))
