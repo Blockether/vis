@@ -1946,6 +1946,10 @@
     (row->extension-aggregate
       (query-one! db-info (assoc (extension-aggregate-select opts) :limit 1)))))
 
+(defn- fts5-phrase-literal
+  [query]
+  (str "\"" (str/replace (str query) "\"" "\"\"") "\""))
+
 (defn db-search
   "Full-text search over the FTS5 `search` index. Returns a vector of
    hits sorted by FTS5 rank (highest relevance first), each entry
@@ -1957,26 +1961,30 @@
       :snippet      String   ; FTS5 snippet with `[match]` markers around hit terms
       :rank         double}  ; FTS5 rank (lower = better match)
 
-   `query` is a literal FT5 MATCH expression (`\"foo bar\"` for AND,
-   `\"foo OR bar\"`, prefix `foo*`, etc.); see SQLite FTS5 docs.
+   `query` is interpreted according to `:query-mode`.
 
    `opts` may include:
      :limit        max hits returned (default 50)
      :owner-table  filter to one table (string)
-     :field        filter to one field (string)"
+     :field        filter to one field (string)
+     :query-mode   `:fts` (default) or `:literal-text`"
   ([db-info query] (db-search db-info query nil))
-  ([db-info query {:keys [limit owner-table field]}]
+  ([db-info query {:keys [limit owner-table field query-mode]
+                   :or   {query-mode :fts}}]
    (when (and (ds db-info) (string? query) (not (str/blank? query)))
      ;; SQLite FTS5 spells the match operator as `<table> MATCH ?`,
      ;; which HoneySQL's vocabulary doesn't model directly. Raw SQL
      ;; with positional params is the simplest faithful expression.
-     (let [base "SELECT owner_table, owner_id, field, snippet(search, 3, '[', ']', '…', 32) AS snippet, rank FROM search WHERE search MATCH ?"
+     (let [base        "SELECT owner_table, owner_id, field, snippet(search, 3, '[', ']', '…', 32) AS snippet, rank FROM search WHERE search MATCH ?"
+           match-query (case query-mode
+                         :literal-text (fts5-phrase-literal query)
+                         query)
            [filt-sql filt-params] (cond-> ["" []]
                                     owner-table (-> (update 0 str " AND owner_table = ?")
                                                   (update 1 conj owner-table))
                                     field       (-> (update 0 str " AND field = ?")
                                                   (update 1 conj field)))
-           sql-vec (into [(str base filt-sql " ORDER BY rank ASC LIMIT ?") query]
+           sql-vec (into [(str base filt-sql " ORDER BY rank ASC LIMIT ?") match-query]
                      (conj filt-params (max 1 (long (or limit 50)))))]
        (mapv
          (fn [row]

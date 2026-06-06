@@ -360,14 +360,37 @@
                              (constantly [])) 'recall))]
       (it "joins a hit to its tN/iM scope (default limit 10)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
-                      (fn [_db q _opts] (when (= q "rg")
-                                          [{:owner-table "session_turn_iteration" :owner-id "it-1b"
-                                            :field "code" :snippet "(rg …)" :rank -1.2}]))
+                      (fn [_db q opts]
+                        (when (and (= q "rg") (= :literal-text (:query-mode opts)))
+                          [{:owner-table "session_turn_iteration" :owner-id "it-1b"
+                            :field "code" :snippet "(rg …)" :rank -1.2}]))
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
           (let [hits ((mk-recall []) {:match "rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
+
+      (it "passes plain-text search through for punctuation-heavy literals"
+        (with-redefs [com.blockether.vis.internal.persistance/db-search
+                      (fn [_db q opts]
+                        (expect (= "located in /vis" q))
+                        (expect (= :literal-text (:query-mode opts)))
+                        [{:owner-table "session_turn_iteration" :owner-id "it-1b"
+                          :field "code" :snippet "located in [/vis]" :rank -1.2}])
+                      com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
+                      com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                      (fn [_db sid] (get iters sid))]
+          (let [hits ((mk-recall []) {:match "located in /vis"})]
+            (expect (= ["t1/i2"] (mapv :scope hits))))))
+
+      (it "returns a structured error when backend search fails"
+        (with-redefs [com.blockether.vis.internal.persistance/db-search
+                      (fn [_db _q _opts]
+                        (throw (ex-info "fts blew up" {})))]
+          (let [r ((mk-recall []) {:match "located in /vis"})]
+            (expect (= :recall-search-failed (:vis/error r)))
+            (expect (= "located in /vis" (:query r)))
+            (expect (re-find #"plain-text history search" (:hint r))))))
 
       (it "INCLUDES hits inside a summarized range (summarized stays searchable)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
