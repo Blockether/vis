@@ -428,85 +428,101 @@
      (fn recall
        ([arg] (recall arg nil))
        ([arg opts]
-        (cond
-          ;; --- restore mode (entities → subtree, scopes → trailer) ----
-          (and (map? arg) (or (contains? arg :ids) (contains? arg :scopes)))
-          (let [{:keys [ids scopes why]} arg]
-            (if (str/blank? (str why))
-              {:vis/error :recall-requires-why
-               :hint "(recall {:ids […] :why \"…\"}) — :why is REQUIRED to restore (say why it's back)"}
-              (let [scope (synthesize-scope env)
-                    ids-out    (atom [])
-                    scopes-out (atom [])
-                    ;; recall-entity resolves LIVE (same-turn :archived)
-                    ;; OR :session/archived (GC'd in a past turn — final
-                    ;; state captured AT gc, in-memory). One map lookup,
-                    ;; no snapshot scan.
-                    restore-id
-                    (fn [id]
-                      (let [out (atom nil)]
+        (let [v      (addr-value arg)
+              offset (when (map? opts) (:offset opts))
+              limit  (when (map? opts) (:limit opts))]
+          (cond
+            ;; --- restore mode (entities → subtree, scopes → trailer) ----
+            (and (map? arg) (or (contains? arg :ids) (contains? arg :scopes)))
+            (let [{:keys [ids scopes why]} arg]
+              (if (str/blank? (str why))
+                {:vis/error :recall-requires-why
+                 :hint "(recall {:ids […] :why \"…\"}) — :why is REQUIRED to restore (say why it's back)"}
+                (let [scope (synthesize-scope env)
+                      ids-out    (atom [])
+                      scopes-out (atom [])
+                      ;; recall-entity resolves LIVE (same-turn :archived)
+                      ;; OR :session/archived (GC'd in a past turn — final
+                      ;; state captured AT gc, in-memory). One map lookup,
+                      ;; no snapshot scan.
+                      restore-id
+                      (fn [id]
+                        (let [out (atom nil)]
+                          (when-let [ca (:ctx-atom env)]
+                            (swap! ca (fn [c]
+                                        (let [r (eng/recall-entity c id scope (str why))]
+                                          (reset! out r)
+                                          (:ctx r)))))
+                          (if (:found? @out)
+                            {:id id :restored (:kind @out) :key (:key @out)}
+                            {:id id :vis/error :not-found})))]
+                  (doseq [id (or ids [])]
+                    (swap! ids-out conj (restore-id id)))
+                  (doseq [sc (or scopes [])]
+                    (if-let [pin (iter-pin sc)]
+                      (do
                         (when-let [ca (:ctx-atom env)]
-                          (swap! ca (fn [c] (let [r (eng/recall-entity c id scope (str why))]
-                                              (reset! out r) (:ctx r)))))
-                        (if (:found? @out)
-                          {:id id :restored (:kind @out) :key (:key @out)}
-                          {:id id :vis/error :not-found})))]
-                (doseq [id (or ids [])]
-                  (swap! ids-out conj (restore-id id)))
-                (doseq [sc (or scopes [])]
-                  (if-let [pin (iter-pin sc)]
-                    (do (when-let [ca (:ctx-atom env)]
                           (swap! ca update :session/trailer
                             (fn [tr] (eng/sort-trailer (conj (vec tr) pin)))))
-                      (swap! scopes-out conj {:scope sc :forms (count (:forms pin))}))
-                    (swap! scopes-out conj {:scope sc :vis/error :scope-not-found})))
-                {:recalled {:ids @ids-out :scopes @scopes-out}
-                 :why why
-                 :trailer-size (count (:session/trailer (live-ctx)))})))
-          ;; --- search mode -------------------------------------------
-          (and (map? arg) (contains? arg :match))
-          (let [{:keys [match scope-after limit]} arg]
-            (if (str/blank? (str match))
-              {:vis/error :recall-requires-match
-               :hint "(recall {:match \"text\"}) — :match is REQUIRED for search"}
-              (let [hits   (persistance/db-search db (str match)
-                             {:owner-table "session_turn_iteration"
-                              :field       "code"
-                              :limit       (max 1 (long (or limit 10)))})
-                    turns  (or (persistance/db-list-session-turns db sid) [])
-                    turn-by-soul  (into {} (map (juxt :id :position)) turns)
-                    iter-cache    (atom {})
-                    iter-rows-for (fn [tid]
-                                    (or (get @iter-cache tid)
-                                      (let [rows (persistance/db-list-session-turn-iterations db tid)]
-                                        (swap! iter-cache assoc tid rows) rows)))
-                    cursor (when (string? scope-after) (parse-iter-scope scope-after))
-                    after? (fn [{:keys [turn iter]}]
-                             (or (nil? cursor)
-                               (> turn (:turn cursor))
-                               (and (= turn (:turn cursor)) (> iter (:iter cursor)))))]
-                (vec
-                  (for [{:keys [owner-id snippet rank]} hits
-                        :let [pair (some (fn [t] (some #(when (= owner-id (:id %)) [t %])
-                                                   (iter-rows-for (:id t)))) turns)
-                              [trow it] pair
-                              tp (turn-by-soul (:id trow))
-                              ip (:position it)
-                              sc (when (and tp ip) (str "t" tp "/i" ip))]
-                        ;; Summarized scopes are INTENTIONALLY still
-                        ;; searchable: summarize compresses the trailer
-                        ;; view, it does not erase the iteration rows.
-                        ;; Search is an explicit recovery pull, so a hit
-                        ;; in a summarized range is exactly what the model
-                        ;; wants — it can then (recall {:scopes …}) to
-                        ;; re-materialise the observation forms from the DB.
-                        :when (and sc
-                                (after? {:turn tp :iter ip}))]
-                    {:scope sc :preview snippet :rank rank})))))
-          ;; --- window mode -------------------------------------------
-          :else
-          (let [{:keys [offset limit]} (or opts {})
-                v (addr-value arg)]
+                        (swap! scopes-out conj {:scope sc :forms (count (:forms pin))}))
+                      (swap! scopes-out conj {:scope sc :vis/error :scope-not-found})))
+                  {:recalled {:ids @ids-out :scopes @scopes-out}
+                   :why why
+                   :trailer-size (count (:session/trailer (live-ctx)))})))
+
+            ;; --- search mode -------------------------------------------
+            (and (map? arg) (contains? arg :match))
+            (let [{:keys [match scope-after limit]} arg]
+              (if (str/blank? (str match))
+                {:vis/error :recall-requires-match
+                 :hint "(recall {:match \"text\"}) — :match is REQUIRED for search"}
+                (try
+                  (let [hits   (persistance/db-search db (str match)
+                                 {:owner-table "session_turn_iteration"
+                                  :field       "code"
+                                  :query-mode  :literal-text
+                                  :limit       (max 1 (long (or limit 10)))})
+                        turns  (or (persistance/db-list-session-turns db sid) [])
+                        turn-by-soul  (into {} (map (juxt :id :position)) turns)
+                        iter-cache    (atom {})
+                        iter-rows-for (fn [tid]
+                                        (or (get @iter-cache tid)
+                                          (let [rows (persistance/db-list-session-turn-iterations db tid)]
+                                            (swap! iter-cache assoc tid rows)
+                                            rows)))
+                        cursor (when (string? scope-after) (parse-iter-scope scope-after))
+                        after? (fn [{:keys [turn iter]}]
+                                 (or (nil? cursor)
+                                   (> turn (:turn cursor))
+                                   (and (= turn (:turn cursor))
+                                     (> iter (:iter cursor)))))]
+                    (->> hits
+                      (map (fn [{:keys [owner-id snippet rank]}]
+                             (let [pair (some (fn [t]
+                                                (some #(when (= owner-id (:id %)) [t %])
+                                                  (iter-rows-for (:id t))))
+                                          turns)
+                                   [trow it] pair
+                                   tp (turn-by-soul (:id trow))
+                                   ip (:position it)
+                                   sc (when (and tp ip) (str "t" tp "/i" ip))]
+                                  ;; Summarized scopes are INTENTIONALLY still
+                                  ;; searchable: summarize compresses the trailer
+                                  ;; view, it does not erase the iteration rows.
+                                  ;; Search is an explicit recovery pull, so a hit
+                                  ;; in a summarized range is exactly what the model
+                                  ;; needs to find. Filtering them out here would
+                                  ;; make summarize lossy.
+                               (when (and sc (after? {:turn tp :iter ip}))
+                                 {:scope sc :preview snippet :rank rank}))))
+                      (remove nil?)
+                      vec))
+                  (catch Exception _
+                    {:vis/error :recall-search-failed
+                     :query     (str match)
+                     :hint      "`recall {:match ...}` performs plain-text history search. Advanced/raw FTS query syntax is not exposed yet."}))))
+
+            :else
             (if (nil? v)
               {:vis/error :recall-target-not-found :addr arg
                :hint "address is a form scope \"tN/iM/fK\" or an existing fact/task key"}

@@ -263,8 +263,8 @@
           ~8000/window. :vis/next is the literal next call — eval verbatim to
           scroll; absent at end. A clipped value's :vis/full IS its first (recall).
       SEARCH — find a scope/id (HISTORY, not files — use rg for files):
-        (recall {:match \"patch auth\" :scope-after \"t2/i1\"}) ; → [{:scope :preview :rank}]
-          :match REQUIRED, :limit 10, non-summarized iters only.
+        (recall {:match \"patch auth\" :scope-after \"t2/i1\"}) ; plain-text search → [{:scope :preview :rank}]
+          :match REQUIRED, :limit 10, non-summarized iters only. Advanced/raw FTS query syntax is not exposed here.
         (doc 'sym)        ; QUOTED sym ('cat) → docstring + arglists + SOURCE
         (apropos \"text\")  ; fuzzy name/doc; arg is a STRING, not sym/regex
 
