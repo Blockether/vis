@@ -6074,7 +6074,7 @@
     new-cfg))
 
 (defn- open-env!
-  [id {:keys [channel external-id title workspace-id]}]
+  [id {:keys [channel external-id title workspace-id engine]}]
   (let [router (get-router)
         env    (create-environment router
                  (cond-> {:db (config/resolve-db-spec)}
@@ -6082,7 +6082,9 @@
                    channel     (assoc :channel channel)
                    external-id (assoc :external-id external-id)
                    title       (assoc :title title)
-                   workspace-id (assoc :workspace-id workspace-id)))]
+                   workspace-id (assoc :workspace-id workspace-id)
+                   ;; Engine substrate (:clojure default | :python GraalPy).
+                   engine      (assoc :engine engine)))]
     env))
 
 (defn- ensure-env!
@@ -6117,11 +6119,13 @@
                     When omitted, a trunk workspace is auto-minted in
                     create-environment."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id]}]
+  ([channel {:keys [title external-id workspace-id engine]}]
    (let [env  (open-env! nil (cond-> {:channel     channel
                                       :external-id (some-> external-id str)
                                       :title       title}
-                               workspace-id (assoc :workspace-id workspace-id)))
+                               workspace-id (assoc :workspace-id workspace-id)
+                               ;; :engine :python -> embedded GraalPy substrate.
+                               engine       (assoc :engine engine)))
          id   (:session-id env)
          _    (cache-env! id env)]
      {:id           id                ; UUID
