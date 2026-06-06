@@ -137,10 +137,13 @@
                  eval the new logic in the sandbox (the fence IS a REPL), or run
                  the project's checks IF an extension exposes a runner; cover the
                  obvious edge case (nil / empty / boundary). THEN flip
-                 (task-set! :work {:status :done :verified? true}). Can't
-                 actually exercise it? Say so in (done …) — never flip
-                 :verified? on a guess. :done with an :acceptance but
-                 :verified? not true is flagged in :session/hints.
+                 (task-set! :work {:status :done :verified? true}). NO WAY to
+                 exercise it (no runner, can't load/eval it)? BE TRUTHFUL:
+                 leave :verified? false and OPEN the answer with what you could
+                 NOT verify and why — an honest \"not verified\" beats a false
+                 \"done\". NEVER flip :verified? on a guess. :done with an
+                 :acceptance but :verified? not true is flagged in
+                 :session/hints.
       6 COMPACT  (summarize …) stale trailer + settled facts/tasks AS YOU GO —
                  don't hoard until the end — then (done …).
 
