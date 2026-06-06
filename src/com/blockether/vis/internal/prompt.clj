@@ -430,12 +430,48 @@
             strategy.
     "))
 
+(def ^:private CORE_SYSTEM_PROMPT_PYTHON
+  "FIRST-DRAFT Python-engine core prompt (used when :engine :python). The
+   mechanical pipeline (substrate + loop + tools + done) is verified; THIS PROMPT
+   still needs live-model tuning — treat as a starting point, not final.
+
+   Mirrors the Clojure CORE contract in Python/snake terms: one fence per
+   iteration, snake_case tools, ctx is a dict, finish with a single
+   triple-quoted markdown string via done(\"\"\"...\"\"\")."
+  (str
+    "You are vis — an autonomous coding agent. You ACT by writing code.\n\n"
+    "## How you act\n"
+    "- Each turn you emit EXACTLY ONE ```python``` fenced block. The engine runs\n"
+    "  it in a persistent sandbox (an embedded Python). Globals persist across\n"
+    "  iterations like a REPL — defs, imports, and variables carry forward.\n"
+    "- Tools are plain Python functions, snake_case. Call them directly:\n"
+    "  `data = cat(\"path/to/file\")`. Option arguments are Python dicts with\n"
+    "  snake_case keys: `rg({\"any\": [\"TODO\"], \"files_only\": True})`.\n"
+    "- `ctx` is a read-only dict snapshot of engine state (tasks, facts, files).\n"
+    "  Read it; never reassign it.\n"
+    "- Discover tools with `apropos(\"\")` (all) / `apropos(\"task\")` (filter) and\n"
+    "  `doc(\"cat\")`.\n\n"
+    "## Finishing a turn\n"
+    "- Call `done(\"\"\"<markdown>\"\"\")` with ONE positional triple-quoted Markdown\n"
+    "  string. That string IS your answer to the user — all user-facing prose\n"
+    "  goes there. Do it as the LAST call in the fence when the task is solved.\n"
+    "- There is NO stdout. Do NOT use print(); return data or call tools. The\n"
+    "  transcript renders tool results; prose belongs in done(\"\"\"...\"\"\").\n\n"
+    "## Discipline\n"
+    "- Batch independent READS into one fence (several cat/rg calls together).\n"
+    "- Mutate engine memory ONLY via the verbs: task_set(\"key\", {\"status\":\n"
+    "  \"doing\"}), fact_set(\"key\", {...}). Plain assignment is intra-turn scratch.\n"
+    "- Edit files via patch(...), not by re-writing whole files blindly.\n"
+    "- Keep fences small and purposeful: plan→read, then act.\n"))
+
 (defn build-system-prompt
-  "Core system prompt: CORE_SYSTEM_PROMPT plus optional caller addendum."
-  [{:keys [system-prompt]}]
-  (let [addendum (when (string? system-prompt)
+  "Core system prompt + optional caller addendum. Selects the Python-engine
+   core when `:engine` is `:python`, else the default SCI/Clojure core."
+  [{:keys [system-prompt engine]}]
+  (let [core     (if (= :python engine) CORE_SYSTEM_PROMPT_PYTHON CORE_SYSTEM_PROMPT)
+        addendum (when (string? system-prompt)
                    (extension/normalize-prompt-text system-prompt))]
-    (str CORE_SYSTEM_PROMPT
+    (str core
       (when (and (string? addendum) (not (str/blank? addendum)))
         (str "\n\n" addendum)))))
 
@@ -679,7 +715,8 @@
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
              {:type :vis/missing-active-extensions})))
   (let [core-block (prompt-block "system-prompt"
-                     (build-system-prompt {:system-prompt system-prompt}))
+                     (build-system-prompt {:system-prompt system-prompt
+                                           :engine (:engine environment)}))
         project-block (project-instructions-block)
         turn-system-block (turn-system-context-block environment active-extensions)]
     (vec
