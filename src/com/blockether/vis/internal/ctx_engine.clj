@@ -44,8 +44,8 @@
      - depends-on cycle introduced by task-set! / fact-set! / *-depends!
      - partial-overlap trailer-summarize at done-time
 
-   Everything else is a soft warning surfaced via `derive-warnings` as a
-   simple `:session/warnings` vec of short strings. The engine NEVER refuses
+   Everything else is a soft hint surfaced via `derive-warnings` as a
+   simple `:session/hints` vec of short strings. The engine NEVER refuses
    a write outside the three hard rules above."
   (:require [clojure.set :as set]
             [clojure.string :as str]
@@ -579,7 +579,7 @@
               " before another rebind.")))))))
 (defn derive-warnings
   "Run the STRUCTURAL invariant passes and return a sorted, deduped vec of
-   short warning STRINGS — the `:session/warnings` shape surfaced verbatim
+   short hint STRINGS — the `:session/hints` shape surfaced verbatim
    in the rendered ctx (no stages, no `;; ⚠` inside EDN). Each pass yields
    `{:code :anchor :message}` maps internally for stable ordering; only the
    `:message` strings are projected out.
@@ -1087,6 +1087,103 @@
                         ". Full data via (recall \""
                         scope-start
                         "\")."))]}))))
+;; =============================================================================
+;; Archive rollup — "archive of archive"
+;;
+;; `:session/archived` is ALWAYS FULL: GC + summarize stash entries there and
+;; they are NEVER evicted, so `(recall :K)` is always byte-exact. What we add
+;; is a SECOND, rendered surface — `:session/archive-digest` — a compact
+;; rolling gist of the archive, REFRESHED ON A TURN CADENCE (every
+;; ARCHIVE-DIGEST-CADENCE turns). Each refresh folds the entries archived
+;; since the last digest, plus the previous gist, into one fresh gist — that
+;; fold IS the archive-of-archive, and it keeps the RENDERED cost bounded
+;; while the raw archive stays complete behind `recall`.
+;; Like `summarize-trailer-with-companion`, this is pure and parameterised
+;; over a `summarizer-fn`; the loop supplies the cheapest-model call OFF the
+;; critical path (async). nil summarizer-fn → deterministic gist.
+;; =============================================================================
+
+(def ARCHIVE-DIGEST-CADENCE
+  "Turns between `:session/archive-digest` refreshes. The raw
+   `:session/archived` is untouched (full, exactly recallable); only the
+   rendered gist refreshes on this cadence."
+  5)
+
+(defn- archived-entry-turn
+  "Birth turn of an archived entry, parsed from its stable `:t<N>/<key>`
+   id (namespace `t<N>`). Used for stable oldest-first ordering. 0 when
+   unparseable."
+  [[id _]]
+  (or (some-> id namespace (subs 1) parse-long) 0))
+
+(defn- dummy-archive-digest
+  "Deterministic archive gist when no companion model is supplied: prior
+   gist (if any) plus a terse list of the freshly-folded entry labels."
+  [entries prev-summary]
+  (let [label (fn [{:keys [title content id]}]
+                (let [s (str (or title content id))]
+                  (if (> (count s) 60) (str (subs s 0 60) "…") s)))]
+    (str (when (not (str/blank? (str prev-summary))) (str prev-summary " │ "))
+      "archived " (count entries) " item(s): "
+      (str/join "; " (map label entries)))))
+
+(defn- archived-uncovered
+  "Archived entries whose id is NOT yet folded into the digest's
+   `:covered-ids` — the delta a refresh needs to absorb."
+  [ctx]
+  (let [covered (set (:covered-ids (:session/archive-digest ctx)))]
+    (into {} (remove (fn [[id _]] (covered id)) (or (:session/archived ctx) {})))))
+
+(defn- ctx-turn [ctx]
+  (long (or (:turn (:session/scope ctx)) (:session/turn ctx) 0)))
+
+(defn archive-digest-due?
+  "True when the rolling digest is stale: there ARE archived entries not yet
+   folded in AND at least `cadence` turns have passed since the last refresh
+   (or no digest exists). `:session/archived` is never evicted — this only
+   gates the rendered gist refresh. The async rollup trigger polls this."
+  ([ctx] (archive-digest-due? ctx ARCHIVE-DIGEST-CADENCE))
+  ([ctx cadence]
+   (and (seq (archived-uncovered ctx))
+     (>= (- (ctx-turn ctx) (long (or (:updated-turn (:session/archive-digest ctx)) 0)))
+       (long (or cadence ARCHIVE-DIGEST-CADENCE))))))
+
+(defn roll-archive
+  "Refresh `:session/archive-digest` from the archive WITHOUT evicting
+   anything — `:session/archived` stays full, so `(recall :K)` is always
+   exact. Folds the not-yet-covered archived entries + the previous gist
+   into a fresh digest via `summarizer-fn`.
+
+   Pure; parameterised over `summarizer-fn :: (fn [{:keys [entries
+   prev-digest]}]) -> {:summary str :source kw}` (the loop wires the
+   cheapest-model async call; nil → deterministic `dummy-archive-digest`).
+
+   Returns `{:ctx new-ctx :rolled N :source kw}`, or `{:ctx ctx :rolled 0}`
+   when nothing new to fold. Never throws on a well-formed ctx."
+  [ctx {:keys [summarizer-fn]}]
+  (let [fresh (archived-uncovered ctx)]
+    (if (empty? fresh)
+      {:ctx ctx :rolled 0}
+      (let [prev       (:session/archive-digest ctx)
+            entries    (mapv (fn [[id v]]
+                               (assoc (select-keys v [:content :title :status :vis/kind :vis/key])
+                                 :id id))
+                         (sort-by archived-entry-turn fresh))
+            summarized (when summarizer-fn
+                         (try (summarizer-fn {:entries entries :prev-digest (:summary prev)})
+                           (catch Throwable _ nil)))
+            gist       (or (:summary summarized) (dummy-archive-digest entries (:summary prev)))
+            source     (or (:source summarized) :engine-dummy)
+            covered    (into (set (:covered-ids prev)) (map :id) entries)
+            digest     {:summary      gist
+                        :covered-ids  covered
+                        :count        (count covered)
+                        :source       source
+                        :updated-turn (ctx-turn ctx)}]
+        {:ctx    (assoc ctx :session/archive-digest digest)
+         :rolled (count entries)
+         :source source}))))
+
 (defn- apply-entity-archive
   "Flip the listed `:facts` / `:tasks` entity keys to the `:archived`
    terminal status (distinct from `:done` / `:cancelled` /
@@ -1401,6 +1498,63 @@
                :auto-compress-above (long (or fold-cap 0))}
         (pos? win) (assoc :model-input-limit win
                      :pct-of-limit (long (Math/round (* 100.0 (/ (double req) (double win))))))))))
+
+(def model-facing-keys
+  "EXACT set of `:session/*` keys the model is meant to see — the same
+   keys `ctx-renderer/render-ctx` serializes into the `;; ctx` EDN. This
+   is the SINGLE definition of 'model-facing'; `session-view` selects on
+   it so nothing else can leak into the bound `ctx`.
+
+   Deliberately EXCLUDED:
+     :session/archived  the `(summarize …)` store — compressed OUT of the
+                        prompt to free tokens, reachable ONLY via
+                        `(recall …)`. Inlining it would undo compaction.
+     :session/hints     internal/legacy; never rendered.
+     :engine/*          bookkeeping (`:engine/utilization` is projected to
+                        `:session/utilization` below; the rest stays hidden).
+   `:session/utilization` is derived (from `:engine/utilization`) and
+   `:session/hints` is render-derived, so neither is listed here —
+   both are folded in by `session-view`."
+  [:session/id :session/turn :session/scope :session/workspace
+   :session/env :session/symbols :session/tasks :session/facts
+   :session/trailer :session/archive-digest])
+
+(defn session-view
+  "THE single projection from engine-internal ctx to the model-facing
+   `:session/*` view — the ONE way the ctx is shaped for the model.
+
+   Both consumers derive from this, so the EDN the model reads and the
+   value bound to the bare `ctx` symbol are the same map by construction:
+     - `ctx-renderer/render-ctx`  serializes this view to the `;; ctx` text
+     - `ctx-loop/session-snapshot` binds this view as read-only `ctx`
+
+   Rules (mirroring exactly what the renderer shows):
+     - keep ONLY `model-facing-keys` (so archive / engine bookkeeping can
+       NEVER leak)
+     - project `:engine/utilization` → `:session/utilization`
+     - CONJOIN hints into ONE `:session/hints` feed: engine structural
+       advisories (`warnings`) ++ extension hook hints (the titles of
+       active `:source :hook` tasks). Those hook-sourced entries are
+       MOVED OUT of `:session/tasks` so the unified advisory surface owns
+       them and the task list stays the model's own work. The hook tasks
+       still live in the ctx-atom untouched (satisfaction / lifetime / GC
+       all operate there) — this is a render-layer projection only.
+   Pure; never throws on a well-formed ctx map."
+  ([ctx] (session-view ctx nil))
+  ([ctx warnings]
+   (let [tasks       (:session/tasks ctx)
+         hook?       (fn [[_ v]] (= :hook (:source v)))
+         own-tasks   (into {} (remove hook?) tasks)
+         hook-hints  (->> tasks
+                       (filter hook?)
+                       (map (comp :title val))
+                       (filter (fn [t] (and (string? t) (not (str/blank? t)))))
+                       vec)
+         hints       (into (vec warnings) hook-hints)]
+     (cond-> (select-keys ctx model-facing-keys)
+       (contains? ctx :session/tasks) (assoc :session/tasks own-tasks)
+       (:engine/utilization ctx)      (assoc :session/utilization (:engine/utilization ctx))
+       (seq hints)                    (assoc :session/hints hints)))))
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================

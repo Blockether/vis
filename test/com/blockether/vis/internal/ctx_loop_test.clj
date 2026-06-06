@@ -152,7 +152,7 @@
       (expect (= "main" (get-in rendered [:session/workspace :vcs/ref]))))))
 
 (defdescribe render-block-payload-test
-  (describe "render-block! passes {:ctx :warnings} and surfaces :session/warnings"
+  (describe "render-block! passes {:ctx :warnings} and surfaces :session/hints"
     (let [env (mk-env)
           {task-set 'task-set!} (cl/build-sci-bindings env)
           ;; produce a structural warning: task :done with a non-terminal dep
@@ -170,9 +170,9 @@
         (expect (every? string? (:warnings @captured)))
         (expect (seq (:warnings @captured))))
 
-      (it "rendered ctx carries :session/warnings as the same string vec"
-        (expect (= (:warnings @captured) (:session/warnings rendered)))
-        (expect (every? string? (:session/warnings rendered))))
+      (it "rendered ctx carries :session/hints as the same string vec"
+        (expect (= (:warnings @captured) (:session/hints rendered)))
+        (expect (every? string? (:session/hints rendered))))
 
       (it "rendered ctx carries NO :session/stages"
         (expect (not (contains? rendered :session/stages)))))))
