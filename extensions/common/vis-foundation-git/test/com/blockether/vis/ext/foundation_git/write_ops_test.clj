@@ -334,6 +334,71 @@
                   (expect (keyword? (:action t))))))))
         (finally (cleanup root))))))
 
+(defn- diverge-and-dirty!
+  "Build a real divergence (feature needs replaying onto trunk) and leave
+   an uncommitted tracked modification, so a :begin rebase hits
+   UNCOMMITTED_CHANGES. Returns the dirty file's rel path + content."
+  [^java.io.File root]
+  ;; trunk = f0,f1 ; feature branches off f0 and adds a commit → diverged.
+  (wo/branch! {:op :create :name "feature/as" :from "HEAD~1"})
+  (wo/checkout! {:branch "feature/as"})
+  (spit-rel root "feature.txt" "feature work")
+  (with-open [g (Git/open root)]
+    (-> g .add (.addFilepattern "feature.txt") .call)
+    (-> g .commit (.setMessage "feature commit") .call))
+  ;; Dirty an unrelated tracked file (shared base content → no merge clash).
+  (let [rel "src/f0.clj" content "(ns f0) ;; DIRTY uncommitted\n"]
+    (spit-rel root rel content)
+    {:rel rel :content content}))
+
+(defdescribe rebase!-autostash-test
+  (it "surfaces blocking paths + a recovery hint on UNCOMMITTED_CHANGES"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root 2)
+        (with-workspace root
+          (diverge-and-dirty! root)
+          (let [r (wo/rebase! {:operation :begin :upstream trunk-branch})]
+            (expect (= "UNCOMMITTED_CHANGES" (:status r)))
+            (expect (false? (:successful? r)))
+            ;; The exact dirty paths ride along — no separate git/status needed.
+            (expect (seq (:uncommitted-changes r)))
+            (expect (some #(str/includes? % "f0.clj") (:uncommitted-changes r)))
+            ;; The hint points at the fix the model otherwise has to invent.
+            (expect (string? (:hint r)))
+            (expect (str/includes? (:hint r) ":autostash?"))))
+        (finally (cleanup root)))))
+
+  (it ":autostash? true stashes, rebases, and restores the dirty file"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root 2)
+        (with-workspace root
+          (let [{:keys [rel content]} (diverge-and-dirty! root)
+                r (wo/rebase! {:operation :begin :upstream trunk-branch
+                               :autostash? true})]
+            (expect (true? (:successful? r)))
+            (expect (true? (:autostash-applied? r)))
+            ;; Rebase actually moved (feature.txt from trunk now present)…
+            (expect (.exists (io/file root "src/f1.clj")))
+            ;; …and the parked uncommitted change is back on disk untouched.
+            (expect (= content (slurp (io/file root rel))))))
+        (finally (cleanup root)))))
+
+  (it ":autostash? is a no-op gate on a clean tree"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root 1)
+        (with-workspace root
+          (wo/branch! {:op :create :name "feature/clean"})
+          (wo/checkout! {:branch "feature/clean"})
+          (let [r (wo/rebase! {:operation :begin :upstream trunk-branch
+                               :autostash? true})]
+            (expect (true? (:successful? r)))
+            ;; Nothing was stashed, so no restore flag is set.
+            (expect (nil? (:autostash-applied? r)))))
+        (finally (cleanup root))))))
+
 ;; ----------------------------------------------------------------------------
 ;; Integration shape: every history-rewrite tool symbol is wired
 ;; ----------------------------------------------------------------------------
