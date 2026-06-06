@@ -959,17 +959,33 @@
     ;; the SAME render frame, which can't happen because each event
     ;; bumps version and the render loop processes one version at a
     ;; time. See autoresearch A11.
-    (let [need-cells? (or (:mouse-selection db) (boolean (get-in db [:search :active?])))
+    (let [overlay-geom (when (:tasks-open? db)
+                         (components/context-overlay! g cols rows ctx-snapshot (:ctx-scroll db)))
+          overlay-selectable-ranges (:selectable-ranges overlay-geom)
+          sel (:mouse-selection db)
+          overlay-sel? (= :overlay (:source sel))
+          need-cells? (or sel (boolean (get-in db [:search :active?])))
+          ;; F2 context panel (W3) is painted by the `overlay-geom` binding ABOVE
+          ;; this `screen-cells` capture, so its text lands in the back buffer in
+          ;; time to be copyable. The panel used to paint LAST (after capture),
+          ;; which is exactly why its cells were never selectable.
           screen-cells (when need-cells? (capture-screen-cells screen cols rows))
-          viewport {:viewport-top text-top, :eff-scroll (:eff-scroll layout)}]
-      (when-let [sel (:mouse-selection db)]
+          viewport (if overlay-sel?
+                     {:viewport-top 0, :eff-scroll 0}
+                     {:viewport-top text-top, :eff-scroll (:eff-scroll layout)})]
+      (when overlay-geom
+        (when (not= (:max-scroll overlay-geom) (:ctx-scroll-max db))
+          (state/dispatch [:set-ctx-scroll-max (:max-scroll overlay-geom)])))
+      (when sel
         (paint-selection! screen
           sel
           cols
           rows
-          (selectable-ranges-for-source (:source sel)
-            transcript-selectable-ranges
-            input-selectable-ranges)
+          (if overlay-sel?
+            overlay-selectable-ranges
+            (selectable-ranges-for-source (:source sel)
+              transcript-selectable-ranges
+              input-selectable-ranges))
           viewport))
       ;; Inline highlight of in-session search hits. Runs AFTER
       ;; the main paint and AFTER mouse-selection overlay so a search
@@ -977,14 +993,10 @@
       ;; (the modifier is idempotent — stacking it doesn't double-flip).
       (paint-search-hits! screen layout text-top inner-h cols db)
       ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
-      ;; registers no click regions, so order vs. commit-frame! is moot.
+      ;; registers its dedicated close-button click region, which commit-frame!
+      ;; below publishes so the locked-overlay mouse branch can dismiss on click.
       (when (:help-open? db)
         (components/help-overlay! g cols rows))
-      ;; F2 context panel (W3) — paints last, from the derived `ctx-snapshot`.
-      (when (:tasks-open? db)
-        (let [geom (components/context-overlay! g cols rows ctx-snapshot (:ctx-scroll db))]
-          (when (not= (:max-scroll geom) (:ctx-scroll-max db))
-            (state/dispatch [:set-ctx-scroll-max (:max-scroll geom)]))))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols,
@@ -1001,7 +1013,8 @@
        :transcript-selectable-ranges transcript-selectable-ranges,
        :transcript-bubble-copy-regions transcript-bubble-copy-regions,
        :transcript-disclosure-copy-regions transcript-disclosure-copy-regions,
-       :input-selectable-ranges input-selectable-ranges})))
+       :input-selectable-ranges input-selectable-ranges,
+       :overlay-selectable-ranges overlay-selectable-ranges})))
 (defn- live-progress-only-change?
   "True when the next frame only changed live progress bookkeeping.
    Those frames should keep the 80ms heartbeat but not repaint the header,
@@ -2416,12 +2429,73 @@
                        ;; or scrollbar painted behind the overlay (which made
                        ;; the dialog feel unfocusable - no scroll, no click).
                        (or (:tasks-open? db) (:help-open? db))
-                       (do (when (and (:tasks-open? db)
-                                   wheel-delta
-                                   (not (zero? (long wheel-delta))))
-                             (state/dispatch [:ctx-scroll-by (* 3 (long wheel-delta))])
-                             (state/dispatch [:bump-render-version]))
-                         (recur))
+                       (let [overlay-ranges (get-in db [:layout :overlay-selectable-ranges])
+                             f2-only? (and (:tasks-open? db) (not (:help-open? db)))
+                             over-panel? (and f2-only? selection-copy?
+                                           (selection/point-in-ranges?
+                                             (selection/point mx my) overlay-ranges))]
+                         (cond
+                           ;; Mouse-wheel scrolls the F2 panel body.
+                           (and (:tasks-open? db) wheel-delta
+                             (not (zero? (long wheel-delta))))
+                           (do (state/dispatch [:ctx-scroll-by (* 3 (long wheel-delta))])
+                             (state/dispatch [:bump-render-version])
+                             (recur))
+                           ;; F2 text selection — arm on a press inside the panel body.
+                           ;; Anchors live in SCREEN coords; the paint path uses an
+                           ;; identity viewport for :overlay selections so screen==doc.
+                           (and over-panel? (= atype MouseActionType/CLICK_DOWN))
+                           (let [p (selection/point mx my)]
+                             (vreset! mouse-selection-anchor p)
+                             (vreset! mouse-selection-focus p)
+                             (vreset! mouse-selection-source :overlay)
+                             (vreset! click-action-fired? true)
+                             (state/dispatch [:set-mouse-selection
+                                              {:anchor p, :focus p, :source :overlay}])
+                             (state/dispatch [:bump-render-version])
+                             (recur))
+                           ;; F2 drag — extend the active overlay selection.
+                           (and f2-only? selection-copy?
+                             (= atype MouseActionType/DRAG)
+                             (= :overlay @mouse-selection-source)
+                             (some? @mouse-selection-anchor))
+                           (let [p (selection/point mx my)]
+                             (vreset! mouse-selection-focus p)
+                             (state/dispatch [:set-mouse-selection
+                                              {:anchor @mouse-selection-anchor,
+                                               :focus p, :source :overlay}])
+                             (state/dispatch [:bump-render-version])
+                             (recur))
+                           ;; Release — finish an F2 selection (copy), else fall back
+                           ;; to the dedicated close-button dismissal + hover.
+                           (= atype MouseActionType/CLICK_RELEASE)
+                           (let [anchor @mouse-selection-anchor
+                                 focus (or @mouse-selection-focus anchor)
+                                 overlay-sel? (= :overlay @mouse-selection-source)]
+                             (vreset! click-action-fired? false)
+                             (vreset! mouse-selection-anchor nil)
+                             (vreset! mouse-selection-focus nil)
+                             (vreset! mouse-selection-source nil)
+                             (if (and overlay-sel? anchor (not= anchor focus))
+                               (let [payload (selection/selected-text
+                                               (get-in db [:layout :screen-cells])
+                                               {:anchor anchor, :focus focus, :source :overlay}
+                                               overlay-ranges)]
+                                 (state/dispatch [:clear-mouse-selection])
+                                 (when-not (str/blank? payload)
+                                   (copy-selection! payload :overlay)))
+                               (do (state/dispatch [:clear-mouse-selection])
+                                 (when-let [hit (cr/lookup mx my)]
+                                   (case (:kind hit)
+                                     :toggle-help (state/dispatch [:toggle-help])
+                                     :toggle-tasks (state/dispatch [:toggle-tasks])
+                                     nil))))
+                             (recur))
+                           (= atype MouseActionType/MOVE)
+                           (do (when (cr/set-hovered! (cr/lookup mx my))
+                                 (state/dispatch [:bump-render-version]))
+                             (recur))
+                           :else (recur)))
                        (and (seq slash-suggestions) (neg? (long (or wheel-delta 0))))
                        (do (state/dispatch [:move-slash-command-selection (long wheel-delta)
                                             (count slash-suggestions)])
