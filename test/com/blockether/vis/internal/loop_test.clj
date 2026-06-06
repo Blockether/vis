@@ -1092,3 +1092,30 @@
         (expect (not (str/includes? m "rejected")))))
     (it "handles a proposal with no captured text"
       (expect (string? (msg nil))))))
+
+(defdescribe forced-loop-termination-test
+  "STERN PATH (integration): a model that emits the SAME non-(done) action every
+   iteration trips the repetition detector → decision-checkpoint → force-finalize,
+   so the turn TERMINATES with a (give-up) answer instead of looping forever.
+   Pre-fix this would loop until cancel; the safety cap below turns a regression
+   into a loud failure instead of a hang."
+  (it "force-finalizes a repeating turn instead of looping forever"
+    (let [router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
+          env   (lp/create-environment router-stub {:db :memory})
+          calls (atom 0)]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_ _]
+                        (when (> (swap! calls inc) 12)
+                          (throw (ex-info "force-finalize never fired — looped >12x" {})))
+                        ;; identical non-(done) action every iteration → action-sig repeats
+                        {:blocks [{:lang "clojure" :source "(def probe 1)"}]
+                         :raw    "```clojure\n(def probe 1)\n```"
+                         :tokens {}})]
+          (let [result (lp/turn! env [(svar/user "go in circles")] {})]
+            (expect (some? result))
+            ;; terminated via force-finalize, not a hang / not blank
+            (expect (not (str/blank? (str (lp/answer-markdown (:answer result))))))
+            ;; converged fast: iter1 (seed) → iter2 (stuck+checkpoint) → iter3 (force)
+            (expect (<= @calls 5))))
+        (finally (lp/dispose-environment! env))))))
