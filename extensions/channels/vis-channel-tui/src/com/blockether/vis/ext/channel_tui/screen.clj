@@ -2471,7 +2471,8 @@
                            (= atype MouseActionType/CLICK_RELEASE)
                            (let [anchor @mouse-selection-anchor
                                  focus (or @mouse-selection-focus anchor)
-                                 overlay-sel? (= :overlay @mouse-selection-source)]
+                                 overlay-sel? (= :overlay @mouse-selection-source)
+                                 already-handled? @click-action-fired?]
                              (vreset! click-action-fired? false)
                              (vreset! mouse-selection-anchor nil)
                              (vreset! mouse-selection-focus nil)
@@ -2485,7 +2486,7 @@
                                  (when-not (str/blank? payload)
                                    (copy-selection! payload :overlay)))
                                (do (state/dispatch [:clear-mouse-selection])
-                                 (when-let [hit (cr/lookup mx my)]
+                                 (when-let [hit (and (not already-handled?) (cr/lookup mx my))]
                                    (case (:kind hit)
                                      :toggle-help (state/dispatch [:toggle-help])
                                      :toggle-tasks (state/dispatch [:toggle-tasks])

@@ -472,7 +472,7 @@
                  (if (zero? i) (into (vec head) segs) (into [[pad base-color base-bold?]] segs))))
              lines)))))
 (defn- task-entry-rows
-  "Modern multi-row card for ONE task: a colored status glyph + WRAPPED\n   title, a dim meta row (status label + verify badge), an optional\n   wrapped `:acceptance` sub-line, an optional `↳ needs …` dependency\n   line, then a blank spacer. Everything wraps to `body-w` — nothing is\n   truncated. `indent` left-insets the whole card. Rows are\n   `[text color bold?]` segment vecs."
+  "Modern multi-row card for ONE task: a colored status glyph + WRAPPED\n   title, a dim meta row (status label + verify badge), an optional\n   wrapped `:acceptance` sub-line, an optional `↳ needs …` dependency\n   line, then a blank spacer. Sub-rows inset only 2 cols (the glyph\n   width) so they line up UNDER the title text instead of drifting\n   further right. Everything wraps to `body-w`. `indent` left-insets the\n   whole card. Rows are `[text color bold?]` segment vecs."
   [k t body-w indent]
   (let [status (or (:status t) :todo)
         glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
@@ -481,20 +481,20 @@
         verify (cond (:verified? t) ["✓ verified" t/status-ok]
                      (:acceptance t) ["⌛ unverified" t/warning-fg]
                      :else nil)
-        meta-segs (cond-> [[(str "    " (name status)) (task-status-color status) false]]
+        meta-segs (cond-> [[(str "  " (name status)) (task-status-color status) false]]
                     verify (conj [(str "   " (first verify)) (second verify) false]))
         accept-rows (when-let [a (not-empty (str (:acceptance t)))]
-                      (md-wrapped-rows [["    ▸ " t/footer-fg-muted false]]
-                                       6
+                      (md-wrapped-rows [["  ▸ " t/footer-fg-muted false]]
+                                       4
                                        a
-                                       (max 6 (- body-w 6))
+                                       (max 6 (- body-w 4))
                                        t/footer-fg-muted
                                        false))
         dep-rows (when (seq (:depends-on t))
-                   (wrapped-rows [["    ↳ needs " t/footer-fg-muted false]]
-                                 6
+                   (wrapped-rows [["  ↳ needs " t/footer-fg-muted false]]
+                                 4
                                  (str/join ", " (map pr-str (:depends-on t)))
-                                 (max 6 (- body-w 6))
+                                 (max 6 (- body-w 4))
                                  t/footer-fg-muted
                                  false))]
     (-> (vec title-rows)
@@ -603,6 +603,14 @@
         ;; the terminal; the rest of the content is reachable by scrolling.
         cap-h (dialogs/default-content-height rows)
         req-h (min n cap-h)
+        ;; Full-screen opaque scrim BEFORE the dialog chrome: overwrite the chat
+        ;; back-buffer with terminal-bg spaces so the centered modal fully obscures
+        ;; it. Without this, native terminal selection (option/shift-drag, which
+        ;; bypasses mouse reporting) grabs the chat visible AROUND the modal on the
+        ;; same rows — copying "F2 + main content". App-side copy is already scoped.
+        _scrim (do (p/clear-styles! g)
+                   (p/set-colors! g t/dialog-hint t/terminal-bg)
+                   (p/fill-rect! g 0 0 cols rows))
         bounds (dialogs/draw-dialog-chrome! g cols rows title content-w req-h)
         {:keys [left inner-w]} bounds
         {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h)
@@ -644,7 +652,9 @@
         (p/set-colors! g t/dialog-hint t/dialog-bg)
         (p/put-str! g (- body-right pw) hint-row pos)))
     (p/clear-styles! g)
-    {:scroll eff, :max-scroll max-scroll,
+    {:scroll eff,
+     :max-scroll max-scroll,
      :selectable-ranges (vec (for [i (range shown-n)]
-                               {:row (+ content-top i), :col (+ left 1),
+                               {:row (+ content-top i),
+                                :col (+ left 1),
                                 :width (max 0 (- text-right (+ left 1)))}))}))
