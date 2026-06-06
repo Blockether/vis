@@ -1119,3 +1119,31 @@
             ;; converged fast: iter1 (seed) → iter2 (stuck+checkpoint) → iter3 (force)
             (expect (<= @calls 5))))
         (finally (lp/dispose-environment! env))))))
+
+(defdescribe append-runtime-appendices-unverified-test
+  (describe "truthful backstop: tasks closed :done + :acceptance but not :verified?"
+    (let [env-with (fn [tasks] {:ctx-atom (atom {:session/tasks tasks})})]
+      (it "appends an Unverified note naming the offending task"
+        (let [env (env-with {:work {:status :done :title "add subtract"
+                                    :acceptance "returns a-b" :verified? false}})
+              md  (:answer (lp/append-runtime-appendices env {:answer "Added subtract."} nil))]
+          (expect (str/includes? md "Added subtract."))
+          (expect (str/includes? md "Unverified"))
+          (expect (str/includes? md "add subtract"))))
+      (it "leaves a verified done task untouched"
+        (let [env (env-with {:work {:status :done :title "x" :acceptance "y" :verified? true}})
+              ans {:answer "All good."}]
+          (expect (= ans (lp/append-runtime-appendices env ans nil)))))
+      (it "ignores a :done task with no :acceptance"
+        (let [env (env-with {:work {:status :done :title "x"}})
+              ans {:answer "All good."}]
+          (expect (= ans (lp/append-runtime-appendices env ans nil)))))
+      (it "passes needs-input answers through untouched"
+        (let [env (env-with {:work {:status :done :title "x" :acceptance "y" :verified? false}})
+              ans {:vis/answer-mode :needs-input :answer/text "Which DB?"}]
+          (expect (= ans (lp/append-runtime-appendices env ans nil)))))
+      (it "appends into the wrapped {:result {:answer …}} shape"
+        (let [env (env-with {:work {:status :done :title "tw" :acceptance "y" :verified? false}})
+              out (lp/append-runtime-appendices env {:result {:answer "Body."}} nil)]
+          (expect (str/includes? (get-in out [:result :answer]) "Unverified"))
+          (expect (str/includes? (get-in out [:result :answer]) "tw")))))))

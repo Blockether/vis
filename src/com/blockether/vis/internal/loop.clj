@@ -416,13 +416,54 @@
       (markdown-answer? v)    (:answer v)
       :else                   nil)))
 
+(defn- unverified-done-tasks
+  "Task titles the model closed as :done with a stated :acceptance but
+   :verified? not true — work presented as done that was never confirmed.
+   Pure; returns a vec of title strings (empty when none)."
+  [ctx]
+  (->> (vals (:session/tasks ctx))
+    (filter (fn [t] (and (= :done (:status t))
+                      (some? (:acceptance t))
+                      (not (true? (:verified? t))))))
+    (mapv (fn [t] (or (:title t) "task")))))
+
+(defn- with-answer-markdown
+  "Return `answer` with its Markdown `:answer` string replaced by `new-md`,
+   handling both the bare `{:answer s}` and wrapped `{:result {:answer s}}`
+   shapes. Any other value is returned unchanged."
+  [answer new-md]
+  (cond
+    (and (map? (:result answer)) (string? (:answer (:result answer))))
+    (assoc-in answer [:result :answer] new-md)
+    (string? (:answer answer))
+    (assoc answer :answer new-md)
+    :else answer))
+
 (defn append-runtime-appendices
-  "Pass-through on the Markdown-answer pipeline. Needs-input maps stay
-   data-shaped so the prompt-flow gate can still read `:answer/text`
-   without a render hop; Markdown-answer maps stay map-shaped so the
-   persistence layer can read `:answer` verbatim."
-  [_environment answer _answer-value]
-  answer)
+  "Truthful close-of-turn backstop on the Markdown-answer pipeline.
+
+   When the model closed tasks as :done with a stated :acceptance but never
+   set :verified? true, append an `⚠ Unverified` note listing them to the
+   answer Markdown — so vis NEVER presents unconfirmed work as done. Soft and
+   honest BY DESIGN: it does NOT block the turn (verification may be
+   impossible — vis has no test runner), it just tells the truth. Needs-input
+   maps and non-Markdown values pass through untouched.
+
+   Needs-input maps stay data-shaped so the prompt-flow gate can still read
+   `:answer/text` without a render hop; Markdown-answer maps stay map-shaped so
+   the persistence layer can read `:answer` verbatim."
+  [environment answer _answer-value]
+  (let [ctx (some-> (:ctx-atom environment) deref)
+        unv (when ctx (unverified-done-tasks ctx))
+        v   (:result answer answer)]
+    (if (and (seq unv) (markdown-answer? v))
+      (with-answer-markdown answer
+        (str (:answer v)
+          "\n\n---\n⚠ **Unverified** — closed without a verification check"
+          (when (> (count unv) 1) (str " (" (count unv) ")"))
+          ":\n"
+          (str/join "\n" (map #(str "- " %) unv))))
+      answer)))
 
 (def edamame-opts
   {:all true
