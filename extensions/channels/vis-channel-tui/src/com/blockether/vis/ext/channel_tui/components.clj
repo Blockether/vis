@@ -274,11 +274,33 @@
 (defn- pad-right
   ^String [^String s ^long w]
   (str s (apply str (repeat (max 0 (- w (p/display-width s))) \space))))
+(defn dialog-close-button!
+  "Draw a clickable `✕` close chip at a dialog's top-right title corner —
+   the SAME button every modal dialog shows — and register its `kind`
+   click region (`:toggle-help` / `:toggle-tasks`) so a mouse click
+   dismisses the overlay. Inverted title chip at rest; red pill on hover.
+   Returns nil."
+  [g bounds kind]
+  (let [{:keys [top right]} bounds
+        hovered (cr/hovered)
+        hovered? (= kind (:kind hovered))
+        title-row (inc (long top))
+        label " ✕ "
+        w (p/display-width label)
+        col (- (long right) w)]
+    (p/clear-styles! g)
+    (p/set-colors! g
+                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
+                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
+    (when hovered? (p/enable! g p/BOLD))
+    (p/put-str! g col title-row label)
+    (p/clear-styles! g)
+    (cr/register! {:bounds {:row title-row, :col col, :width w}, :kind kind, :enabled? true})
+    nil))
 (defn help-overlay!
   "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid spans the full dialog inner width (desc column stretches to fill).\n   Pure chrome — registers no click regions; the caller dismisses it\n   (Ctrl+H / F1 / any key)."
   [g cols rows]
   (let [title "Keyboard shortcuts"
-        hint "F1 to close"
         key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts))
         base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts))
         bd t/dialog-border
@@ -313,10 +335,7 @@
                              (p/put-str! g x r shown)
                              (recur (+ x (p/display-width shown)) (next ss)))))))]
     (dotimes [i shown-n] (paint-line i (nth lines i)))
-    (when hint-row
-      (p/clear-styles! g)
-      (p/set-colors! g t/dialog-hint t/dialog-bg)
-      (p/put-str! g (+ left 1 (max 0 (quot (- inner-w (p/display-width hint)) 2))) hint-row hint))
+    (dialog-close-button! g bounds :toggle-help)
     (p/clear-styles! g)))
 ;; ── tasks overlay (W3: user-visible :session/tasks) ──────────────────────────
 (defn- task-status-glyph
@@ -350,11 +369,11 @@
   "Leading columns inset each task/fact card from BOTH dialog rails (left via\n   indent-rows, right via the narrowed body width at the call sites)."
   2)
 (defn- indent-rows
-  "Prefix every row with `overlay-card-indent` leading spaces so the whole
-   card insets one column from the dialog left rail."
-  [rows]
-  (let [pad [(apply str (repeat overlay-card-indent \space)) t/dialog-hint false]]
-    (mapv (fn [row] (into [pad] row)) rows)))
+  "Prefix every row with `indent` (default `overlay-card-indent`) leading\n   spaces so the whole card insets from the dialog left rail. Archived\n   tasks pass a larger indent so their cards nest under the indented\n   ARCHIVED TASKS header."
+  ([rows] (indent-rows rows overlay-card-indent))
+  ([rows indent]
+   (let [pad [(apply str (repeat indent \space)) t/dialog-hint false]]
+     (mapv (fn [row] (into [pad] row)) rows))))
 (defn- wrap-cols
   "Greedy display-width word-wrap to a vec of lines, each fitting `w` columns.
    Delegates to the native, grapheme/EAW-aware `p/word-wrap` (one shared
@@ -423,13 +442,21 @@
                                      color bold?])
           segs)))))
 (defn- md-wrapped-rows
-  "Markdown-aware `wrapped-rows`: `text` is lifted to canonical IR via\n   `vis/markdown->ir`, wrapped to `w` columns by the shared IR walker, and\n   each line's styled runs become `[text color bold?]` segments — **bold**,\n   `code`, and links render inline (markup stripped). The FIRST row is\n   prefixed by `head`; continuation rows indent `indent` spaces. Blank\n   inter-block lines are dropped so cards stay tight; `-`/`1.` list items\n   keep a `• ` marker. Only lines the wrapper broke on overflow (those\n   the IR walker tags `:wrap?`) are full-justified to `w` via\n   `justify-segs`; paragraph/block-terminal lines stay ragged-right so\n   short tails aren't stretched edge-to-edge."
+  "Markdown-aware `wrapped-rows`: `text` is lifted to canonical IR via\n   `vis/markdown->ir`, wrapped to `w` columns by the shared IR walker, and\n   each line's styled runs become `[text color bold?]` segments — **bold**,\n   `code`, and links render inline (markup stripped). The FIRST row is\n   prefixed by `head`; continuation rows indent `indent` spaces. Runs of\n   blank inter-block lines collapse to a single separator; `-`/`1.` list items\n   keep a `• ` marker. Only lines the wrapper broke on overflow (those\n   the IR walker tags `:wrap?`) are full-justified to `w` via\n   `justify-segs`; paragraph/block-terminal lines stay ragged-right so\n   short tails aren't stretched edge-to-edge."
   [head indent text w base-color base-bold?]
   (let [ir (vis/markdown->ir (str text))
+        blank-line? (fn [{:keys [runs]}] (every? (fn [r] (str/blank? (:text r))) runs))
         lines (->> (ir-tui/ir->lines ir (long w))
-                   (remove (fn [{:keys [runs]}]
-                             (every? (fn* [p1__53154#] (str/blank? (:text p1__53154#))) runs)))
-                   vec)
+                   ;; Collapse runs of blank inter-block lines to a single
+                   ;; separator (and trim leading/trailing) so multi-paragraph /
+                   ;; bulleted task bodies keep their block breaks instead of
+                   ;; rendering as one crushed run — without opening huge gaps.
+                   (reduce (fn [acc line]
+                             (if (blank-line? line)
+                               (if (or (empty? acc) (blank-line? (peek acc))) acc (conj acc line))
+                               (conj acc line)))
+                     [])
+                   ((fn [v] (if (and (seq v) (blank-line? (peek v))) (pop v) v))))
         pad (apply str (repeat (long indent) \space))]
     (if (empty? lines)
       [(vec head)]
@@ -445,12 +472,8 @@
                  (if (zero? i) (into (vec head) segs) (into [[pad base-color base-bold?]] segs))))
              lines)))))
 (defn- task-entry-rows
-  "Modern multi-row card for ONE task: a colored status glyph + WRAPPED
-   title, a dim meta row (status label + verify badge), an optional
-   wrapped `:acceptance` sub-line, an optional `↳ needs …` dependency
-   line, then a blank spacer. Everything wraps to `body-w` — nothing is
-   truncated. Rows are `[text color bold?]` segment vecs."
-  [k t body-w]
+  "Modern multi-row card for ONE task: a colored status glyph + WRAPPED\n   title, a dim meta row (status label + verify badge), an optional\n   wrapped `:acceptance` sub-line, an optional `↳ needs …` dependency\n   line, then a blank spacer. Everything wraps to `body-w` — nothing is\n   truncated. `indent` left-insets the whole card. Rows are\n   `[text color bold?]` segment vecs."
+  [k t body-w indent]
   (let [status (or (:status t) :todo)
         glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
         title (or (not-empty (str (:title t))) (name k))
@@ -478,19 +501,19 @@
         (conj meta-segs)
         (into accept-rows)
         (into dep-rows)
-        indent-rows
+        (indent-rows indent)
         (conj overlay-blank-row)
         (conj overlay-blank-row))))
 (defn- task-overlay-lines
-  "TASKS section body — one `task-entry-rows` card per task, status-sorted
-   (doing → todo → done → cancelled). Empty state is a single hint row."
-  [tasks body-w]
-  (if (empty? tasks)
-    [[["No tasks yet — the model opens one with (task-set! …)." t/footer-fg-muted false]]]
-    (->> tasks
-         (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
-         (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 overlay-card-indent)))))
-         vec)))
+  "TASKS section body — one `task-entry-rows` card per task, status-sorted\n   (doing → todo → done → cancelled). Empty state is a single hint row.\n   `indent` (default `overlay-card-indent`) lets ARCHIVED TASKS cards nest\n   under their indented header."
+  ([tasks body-w] (task-overlay-lines tasks body-w overlay-card-indent))
+  ([tasks body-w indent]
+   (if (empty? tasks)
+     [[["No tasks yet — the model opens one with (task-set! …)." t/footer-fg-muted false]]]
+     (->> tasks
+          (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
+          (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
+          vec))))
 (defn- fact-entry-rows
   "Modern multi-row card for ONE fact: a status glyph (active • / superseded
    ⊘) + bold key, the WRAPPED content indented under it, then a dim meta row
@@ -539,11 +562,10 @@
          (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)))))
          vec)))
 (defn- section-line
-  "A bold section header line (single segment). Uses a DARK accent
-   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and
-   only legible on the dark title bar, not on the light dialog body."
-  [label]
-  [[label t/header-active-tab-accent true]])
+  "A bold section header line (single segment). Uses a DARK accent\n   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and\n   only legible on the dark title bar, not on the light dialog body.\n   Optional `indent` left-pads the label with that many columns so a\n   subsection can nest visually under its parent (e.g. ARCHIVED TASKS\n   under TASKS)."
+  ([label] (section-line label 0))
+  ([label indent]
+   [[(str (apply str (repeat indent \space)) label) t/header-active-tab-accent true]]))
 (defn context-overlay!
   "Dialog showing the session's working memory — `:session/tasks` AND
    `:session/facts` — the W3 user-visible panel (F2). Uses the shared
@@ -561,18 +583,17 @@
         title (str "Context"
                    (when (pos? total) (format "  ·  tasks %d/%d done" done total))
                    (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
-        hint "F2 to close"
         ;; Build lines at a generous width, then size the dialog to the actual
         ;; content (golden-dialog-size clamps width+height to the terminal).
         body-w (dialogs/default-content-width cols)
         blank [["" t/dialog-hint false]]
         arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
-        lines (vec (concat [(section-line "TASKS") blank]
+        lines (vec (concat [(section-line "TASKS" 2) blank]
                            (task-overlay-lines tasks body-w)
                            (when (seq arch-tasks)
-                             (concat [blank (section-line "ARCHIVED") blank]
-                                     (task-overlay-lines arch-tasks body-w)))
-                           [blank (section-line "FACTS") blank]
+                             (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
+                                     (task-overlay-lines arch-tasks body-w 4)))
+                           [blank (section-line "FACTS" 2) blank]
                            (fact-overlay-lines facts body-w)))
         line-w (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))
         content-w (reduce max (p/display-width title) (map line-w lines))
@@ -614,14 +635,16 @@
                         :total-h n,
                         :inner-h visible,
                         :scroll eff}))
-    ;; Centered close hint + scroll-position indicator on the hint row.
-    (when hint-row
-      (let [pos-hint (if sb? (str hint "    " (inc eff) "–" (+ eff shown-n) " / " n) hint)]
+    ;; Top-right ✕ close button + scroll-position indicator on the hint row.
+    (dialog-close-button! g bounds :toggle-tasks)
+    (when (and hint-row sb?)
+      (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n)
+            pw (p/display-width pos)]
         (p/clear-styles! g)
         (p/set-colors! g t/dialog-hint t/dialog-bg)
-        (p/put-str! g
-                    (+ left 1 (max 0 (quot (- inner-w (p/display-width pos-hint)) 2)))
-                    hint-row
-                    pos-hint)))
+        (p/put-str! g (- body-right pw) hint-row pos)))
     (p/clear-styles! g)
-    {:scroll eff, :max-scroll max-scroll}))
+    {:scroll eff, :max-scroll max-scroll,
+     :selectable-ranges (vec (for [i (range shown-n)]
+                               {:row (+ content-top i), :col (+ left 1),
+                                :width (max 0 (- text-right (+ left 1)))}))}))
