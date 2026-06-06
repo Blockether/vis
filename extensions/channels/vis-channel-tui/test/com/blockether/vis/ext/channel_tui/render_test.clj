@@ -769,6 +769,41 @@
                                     ["sid" op-node] true}})]
         (expect (= [[block1-node false] [op-node true]] k))))))
 
+(defdescribe collapsed-thinking-ellipsis-test
+  ;; Regression: the collapsed `▸ THINKING +N more` peek appends a dim
+  ;; " …" to its LAST visible reasoning line. Thinking rows carry a
+  ;; zero-width thinking marker (`​`) prefix that `str/blank?` does
+  ;; NOT count as whitespace, so the old detection treated every row —
+  ;; including paragraph-separator blanks — as non-blank. When the
+  ;; 6-row peek window ended on a blank separator the " …" landed there
+  ;; and rendered alone on its own otherwise-empty line.
+  (let [;; A thinking text whose 6th wrapped row is a blank paragraph
+        ;; separator, with enough rows after it to force the collapse.
+        thinking (str "The patch was applied successfully. Now I need to verify the change "
+                      "works by evaluating the namespace in the REPL, then close the task.\n\n"
+                      "Let me verify by loading the file or at least checking the changed "
+                      "lines look correct.\n\n"
+                      "The diff looks correct.\n\n"
+                      "More reasoning after the diff that should be hidden.\n"
+                      "Even more hidden reasoning lines here.\n")
+        stid     "abcd1234-5678-9999"
+        visible  (->> (:lines (render/format-answer-with-thinking-data*
+                                nil [{:thinking thinking}] 80
+                                {:show-thinking true :show-iterations true} nil false
+                                {:session-id "sid" :session-turn-id stid :detail-expansions {}}))
+                   (mapv (comp str/trimr strip-sentinels strip-ansi body-of)))]
+
+    (it "renders the collapsed THINKING peek with a +N more header"
+      (expect (some #(str/includes? % "THINKING  +") visible)))
+
+    (it "appends the ellipsis to the last visible reasoning line, never on its own row"
+      (let [ellipsis-lines (filter #(str/includes? % "…") visible)]
+        ;; Exactly one ellipsis marker, and it carries real reasoning
+        ;; text — it is NOT a lone " …" floating on an empty row.
+        (expect (= 1 (count ellipsis-lines)))
+        (expect (every? #(str/includes? % "correct.") ellipsis-lines))
+        (expect (not-any? #(= "…" (str/trim %)) visible))))))
+
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
     ;; Regression: the "Vis is calling the provider" spinner used to

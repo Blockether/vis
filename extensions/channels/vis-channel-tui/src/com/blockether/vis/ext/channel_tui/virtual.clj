@@ -418,7 +418,7 @@
     {:keys [session-id detail-expansions tail-lines
             window-start window-num window-total-h]}]
    (let [show-timestamps? (boolean (get settings :show-timestamps false))
-         meta-mode        (get settings :message-meta :off)
+         meta-mode        (get settings :message-meta :full)
          strip-ts (fn [m]
                     (cond-> m
                       (not show-timestamps?)        (dissoc :timestamp)
