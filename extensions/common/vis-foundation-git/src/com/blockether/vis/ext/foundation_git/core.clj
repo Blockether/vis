@@ -10,6 +10,7 @@
    a git repo. No host `git` binary is required for observation tools."
   (:require
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-git.merge-ops :as merge-ops]
    [com.blockether.vis.ext.foundation-git.render :as gr]
@@ -185,6 +186,29 @@
    :until  (:until m)
    :author (when-let [a (:author m)] (when (string? a) a))})
 
+(defn- slim-commit
+  "Drop redundant/derivable fields from a canonical commit map so a log of
+   N commits doesn't repeat author==committer / at==committed-at / empty
+   bodies / single-parent lists N times.
+
+   ALWAYS keeps :sha :short-sha :author :email :at :subject. Keeps
+   :body only when non-blank; :committer / :committer-email / :committed-at
+   only when they DIFFER from :author / :email / :at; :parents only for a
+   merge commit (>1 parent)."
+  [{:keys [sha short-sha author email at subject body
+           committer committer-email committed-at parents]}]
+  (cond-> {:sha       sha
+           :short-sha short-sha
+           :author    author
+           :email     email
+           :at        at
+           :subject   subject}
+    (and (string? body) (seq (str/trim body)))   (assoc :body body)
+    (not= committer author)                       (assoc :committer committer)
+    (not= committer-email email)                  (assoc :committer-email committer-email)
+    (not= committed-at at)                         (assoc :committed-at committed-at)
+    (> (count parents) 1)                          (assoc :parents (vec parents))))
+
 (defn git-log-fn
   "Recent commits in the active workspace. Default limit is 20; max 200.
 
@@ -195,8 +219,16 @@
      git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path
      git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha
 
-   Each commit map now carries: :sha :short-sha :author :email :at
-   :committer :committer-email :committed-at :subject :body :parents."
+   Each commit dict ALWAYS carries: sha, short_sha, author, email, at,
+   subject. To avoid repeating derivable data on every row, the rest are
+   present ONLY when they add information:
+     body          -> only when non-blank
+     committer / committer_email / committed_at
+                   -> only when they DIFFER from author / email / at
+     parents       -> only for a merge commit (more than one parent)
+   So a normal commit is just {sha, short_sha, author, email, at, subject}.
+   Read them in Python like r[\"commits\"][0][\"subject\"]; guard the
+   optional keys (e.g. c.get(\"body\"), c.get(\"committer\"))."
   ([env] (git-log-fn env nil))
   ([env arg]
    (let [root    (io/file (env-root env))
@@ -207,9 +239,10 @@
            (map? arg)     (coerce-log-opts arg)
            :else          (do (coerce-log-limit arg) nil))
          status  (git-core/status-snapshot root)
-         commits (vec (or (git-core/recent-commits root limit
+         commits (->> (or (git-core/recent-commits root limit
                             {:path   path  :ref   ref
-                             :since  since :until until :author author}) []))]
+                             :since  since :until until :author author}) [])
+                   (mapv slim-commit))]
      (extension/success
        {:result {:branch  (:branch status)
                  :commits commits}}))))
@@ -248,6 +281,38 @@
                   {:type :foundation-git/unknown-rev :rev rev})))
        (extension/success {:result result})))))
 
+(defn- legendize-blame
+  "Reshape a raw blame result into a commit-legend form so per-line commit
+   identity (author/email/at) is stated ONCE per distinct commit instead of
+   on every consecutive line.
+
+   In : {:path :head :total :truncated? :ignored-revs
+         :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}
+   Out: {:path :head :total :truncated? :ignored-revs
+         :commits {<short-sha> {:sha <full> :author :email :at} ...}
+         :lines   [{:line N :sha <short-sha> :content} ...]}
+
+   `:commits` keys are SHORT-sha strings (clean Python dict keys); each line's
+   :sha is that same short string, used as the legend key. Per-line
+   :author/:email/:at/:source-line are dropped (now in the legend)."
+  [{:keys [lines] :as result}]
+  (let [commits (persistent!
+                  (reduce
+                    (fn [acc {:keys [sha short-sha author email at]}]
+                      (if (and short-sha (not (contains? acc short-sha)))
+                        (assoc! acc short-sha {:sha    sha
+                                               :author author
+                                               :email  email
+                                               :at     at})
+                        acc))
+                    (transient {})
+                    lines))]
+    (-> result
+      (assoc :commits commits)
+      (assoc :lines (mapv (fn [{:keys [line short-sha content]}]
+                            {:line line :sha short-sha :content content})
+                      lines)))))
+
 (defn git-blame-fn
   "Per-line blame for one tracked file.
 
@@ -263,8 +328,17 @@
    Useful for skipping noisy whitespace / formatter / mass-rename
    commits so the real authorship surfaces.
 
-   Returns `{:path :head :total :ignored-revs :lines [...]}`. Outside the
-   work tree or on untracked files throws `:foundation-git/not-tracked`."
+   Returns a commit-legend shape so commit identity is stated ONCE per
+   distinct commit instead of on every line:
+
+     {path, head, total, ignored_revs,
+      commits: {<short_sha>: {sha, author, email, at}, ...},
+      lines:   [{line, sha, content}, ...]}
+
+   Each line's `sha` is the SHORT sha used as the `commits` legend key.
+   Read author in Python like r[\"commits\"][line[\"sha\"]][\"author\"].
+   Outside the work tree or on untracked files throws
+   `:foundation-git/not-tracked`."
   ([env arg]
    (let [{:keys [path from to ignore_revs]}
          (cond
@@ -293,7 +367,7 @@
          (throw (ex-info (str "git_blame refused: " path " is a binary blob, per-line blame is meaningless. "
                            "Use git_log({\"path\": \"" path "\"}) for commit history instead.")
                   {:type :foundation-git/binary :path path :head (:head result)})))
-       (extension/success {:result result})))))
+       (extension/success {:result (legendize-blame result)})))))
 
 (def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts dict: {\"from\": ref, \"to\": ref, \"path\": P, \"is_patch\": bool} for arbitrary range + path filter; is_patch true includes per-file unified-diff text (truncated at ~64KB/file). to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [{:file :+ :- [:patch]}] :porcelain [...]}. JGit-backed; no host git binary needed."
        :arglists '([] [opts])} diff git-diff-fn)
@@ -301,13 +375,13 @@
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}. JGit-backed; no host git binary needed."
        :arglists '([])} status git-status-fn)
 
-(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a dict {\"limit\": N, \"path\": P, \"ref\": R, \"since\": D, \"until\": D, \"author\": S}. since/until accept ISO date strings, epoch ms/s, or java.util.Date. author is a case-insensitive substring match on name OR email. Returns {:branch :commits [{:sha :short-sha :author :email :at :committer :committer-email :committed-at :subject :body :parents [...]} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a dict {\"limit\": N, \"path\": P, \"ref\": R, \"since\": D, \"until\": D, \"author\": S}. since/until accept ISO date strings, epoch ms/s, or java.util.Date. author is a case-insensitive substring match on name OR email. Returns {:branch :commits [...]}. Each commit dict ALWAYS has sha, short_sha, author, email, at, subject; the rest appear only when they add info: body only when non-blank; committer/committer_email/committed_at only when they DIFFER from author/email/at; parents only for a merge (>1 parent). So a normal commit is just {sha, short_sha, author, email, at, subject}. JGit-backed; no host git binary needed."
        :arglists '([] [arg])} log git-log-fn)
 
 (def ^{:doc "Detailed view of one commit. Accepts a sha string or {\"rev\": sha, \"is_patch\": bool}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. With is_patch true each file entry also carries :patch with the unified-diff text. JGit-backed; no host git binary needed."
        :arglists '([arg])} show git-show-fn)
 
-(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {\"path\": P, \"from\": L, \"to\": L, \"ignore_revs\": [sha ...]}. ignore_revs peels past noisy commits (whitespace/formatters/renames) by re-blaming from each ignored commit's parent. Returns {:path :head :total :ignored-revs :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {\"path\": P, \"from\": L, \"to\": L, \"ignore_revs\": [sha ...]}. ignore_revs peels past noisy commits (whitespace/formatters/renames) by re-blaming from each ignored commit's parent. Returns a commit-legend shape: {:path :head :total :ignored-revs :commits {<short-sha> {:sha :author :email :at}} :lines [{:line :sha :content} ...]}. Each line's :sha is the SHORT sha — the legend key; read author via r[\"commits\"][line[\"sha\"]][\"author\"]. Commit identity is stated once per distinct commit, not on every line. JGit-backed; no host git binary needed."
        :arglists '([arg])} blame git-blame-fn)
 
 (defn- inject-env
@@ -375,9 +449,9 @@
     "  OBSERVE (read-only):\n"
     "    git_status()                              -> {branch, head, clean, entries}\n"
     "    git_diff({\"from\":.., \"to\":.., \"path\":.., \"is_patch\":True})  stat+porcelain; is_patch adds unified text\n"
-    "    git_log({\"limit\":.., \"path\":.., \"ref\":.., \"since\":.., \"until\":.., \"author\":..})  commits (default 20, max 200)\n"
+    "    git_log({\"limit\":.., \"path\":.., \"ref\":.., \"since\":.., \"until\":.., \"author\":..})  commits (default 20, max 200); each has sha/short_sha/author/email/at/subject, plus body/committer*/parents only when they add info\n"
     "    git_show(sha)  or  git_show({\"rev\":.., \"is_patch\":True})  one commit: per-file numstat (+ patch)\n"
-    "    git_blame(path)  or  git_blame({\"path\":.., \"from\":.., \"to\":..})  per-line blame\n"
+    "    git_blame(path)  or  git_blame({\"path\":.., \"from\":.., \"to\":..})  per-line blame -> {commits:{<short_sha>:{author,email,at}}, lines:[{line,sha,content}]}; author via r[\"commits\"][line[\"sha\"]][\"author\"]\n"
     "  WRITE (mutating):\n"
     "    git_add(paths)  git_commit({\"message\": ..})  git_amend(..)\n"
     "    git_push(..)  git_fetch(..)  git_reset(..)  git_branch(..)\n"
