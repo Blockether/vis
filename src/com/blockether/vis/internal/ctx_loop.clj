@@ -33,6 +33,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt :as prompt]
+            [com.blockether.vis.internal.resources :as resources]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -283,9 +284,13 @@
    That is the read-only guarantee. Returns nil when ctx-atom is absent."
   [env]
   (when-let [ctx (current-ctx env)]
-    (let [env-block (try (env-digest/base-digest env) (catch Throwable _ nil))]
+    (let [env-block (try (env-digest/base-digest env) (catch Throwable _ nil))
+          ;; Session-scoped live resources — same registry the footer reads, so
+          ;; `context["session_resources"]` and the footer can never disagree.
+          rsrc      (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
       (eng/session-view (cond-> ctx
-                          (seq env-block) (assoc :session/env env-block))))))
+                          (seq env-block) (assoc :session/env env-block)
+                          (seq rsrc)      (assoc :session/resources rsrc))))))
 
 (defn trailer->form-results
   "Flatten every trailer pin's :forms vec into a `{scope envelope}` map.
@@ -329,8 +334,13 @@
                              (tel/log! {:level :warn :id ::env-digest-failed
                                         :data  {:error (ex-message t)}})
                              nil))
+          ;; Session-scoped managed resources (nREPLs, daemons, …). Computed
+          ;; fresh each render like :session/env so the model + footer see live
+          ;; lifecycle without pushing transient state into the ctx-atom.
+          rsrc           (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))
           ctx*           (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx :session/env))
-                           (seq env-block) (assoc :session/env env-block))
+                           (seq env-block) (assoc :session/env env-block)
+                           (seq rsrc)      (assoc :session/resources rsrc))
           fr             (trailer->form-results (:session/trailer ctx*))
           idx            (eng/build-indexes ctx*)
           drained-warns  (drain-warnings! env)

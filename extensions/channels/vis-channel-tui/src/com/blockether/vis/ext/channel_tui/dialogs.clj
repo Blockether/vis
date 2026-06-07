@@ -412,6 +412,59 @@
                                     (recur))
                 KeyType/Enter (when (pos? total) (nth items @selected))
                 (recur)))))))))
+;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
+(defn resources-dialog!
+  "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).
+   ↑/↓ move · s = stop · r = restart · Esc = close. Stop/restart go through
+   `vis/stop-resource!` / `vis/restart-resource!` — the SAME canonical path the
+   agent's `resource_stop`/`resource_restart` tools use, so footer, agent and
+   this dialog all drive one definition. The list re-reads every loop, so an
+   item vanishes the instant it's stopped."
+  [^TerminalScreen screen session-id]
+  (let [selected (atom 0)]
+    (loop []
+      (let [items  (vec (try (vis/list-resources session-id) (catch Throwable _ nil)))
+            total  (count items)
+            size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols   (.getColumns size)
+            rows   (.getRows size)
+            g      (.newTextGraphics screen)
+            bounds (draw-dialog-chrome! g cols rows "Resources" (max 1 total))
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
+        (swap! selected #(clamp % 0 (max 0 (dec total))))
+        (if (zero? total)
+          (draw-list-item! g left content-top inner-w false "  (no managed resources)")
+          (dotimes [i (min total content-h)]
+            (let [r     (nth items i)
+                  port  (get-in r [:detail :port])
+                  label (str (name (:kind r)) "  " (:label r)
+                          (when port (str "  :" port))
+                          "  [" (name (:status r)) "]")]
+              (draw-list-item! g left (+ content-top i) inner-w (= i @selected) label))))
+        (draw-hint-bar! g left hint-row inner-w
+          [["↑/↓" "move"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (read-modal-key! screen)]
+          (if (nil? key)
+            (recur)
+            (condp = (.getKeyType key)
+              KeyType/Escape    nil
+              KeyType/ArrowUp   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+              KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+              KeyType/Character
+              (let [c (Character/toLowerCase ^char (.getCharacter key))]
+                (when (pos? total)
+                  (let [r (nth items (clamp @selected 0 (dec total)))]
+                    (cond
+                      (= c \s) (do (vis/stop-resource! session-id (:id r))
+                                 (vis/notify! (str "Stopped " (:label r)) :level :info :ttl-ms 3000))
+                      (= c \r) (when (:can-restart r)
+                                 (vis/restart-resource! session-id (:id r))
+                                 (vis/notify! (str "Restarted " (:label r)) :level :info :ttl-ms 3000)))))
+                (recur))
+              (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
 (defn text-view-dialog!
   "Show read-only lines in a scrollable modal. Returns nil after close."

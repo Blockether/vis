@@ -12,7 +12,7 @@
    tool surface (cat, ls, rg). Every search fn returns the
    canonical tool envelope; SCI sees the unwrapped `:result` map:
 
-     {:vis.op       :search/web|:search/code|:search/papers
+     {:op       :search/web|:search/code|:search/papers
       :query        \"…\"
       :citations    [{:type :title :url :excerpt :source …} …]
       :citation-count N
@@ -686,7 +686,7 @@
 (defn- search-result-payload
   "Canonical SCI-facing :result map for a successful search call."
   [{:keys [op query citations source endpoint truncated?]}]
-  (cond-> {:vis.op         op
+  (cond-> {:op         op
            :query          (str query)
            :citations      (vec citations)
            :citation-count (count citations)
@@ -770,7 +770,7 @@
 (defn web
   "Live web search via Exa MCP. Returns the canonical tool envelope;
    SCI sees the unwrapped `:result` map:
-     {:vis.op :search/web :query :citations [{:type :web :title :url
+     {:op :search/web :query :citations [{:type :web :title :url
       :excerpt :published? :authors? :source :exa} …]
       :citation-count :truncated? :endpoint :source}
 
@@ -798,7 +798,7 @@
    `site:github.com X` or `<repo> X`).
 
    Returns the canonical tool envelope; SCI sees:
-     {:vis.op :search/code :query :citations [{:type :code :title :url
+     {:op :search/code :query :citations [{:type :code :title :url
       :excerpt :source :exa} …] :citation-count :truncated? :endpoint
       :source}
    `:excerpt` is markdown (commonmark-rendered by the channel layer).
@@ -857,7 +857,7 @@
 
 (defn papers
   "arxiv paper search. Returns the canonical tool envelope; SCI sees:
-     {:vis.op :search/papers :query :citations [{:type :paper :title
+     {:op :search/papers :query :citations [{:type :paper :title
       :url :excerpt :authors :published :source :arxiv} …]
       :citation-count :truncated? :source}
 
@@ -994,7 +994,7 @@
   "Zone summary for a search result: label on the left, the query in the
    center, the citation count (plus truncated/failed/source markers) anchored
    right. First `[:strong …]` of `:left` is the badge label by convention."
-  [{op :vis.op :keys [query citations citation-count truncated? source error?]}]
+  [{op :op :keys [query citations citation-count truncated? source error?]}]
   (let [n      (or citation-count (count citations))
         metric (str n " citation" (when (not= 1 n) "s")
                  (when truncated? " (truncated)")
@@ -1008,7 +1008,7 @@
 (defn- search-display
   "Full expanded IR body: a header paragraph echoing the query/count, then
    one card per citation (markdown-parsed excerpts), separated by rules."
-  [{op :vis.op :keys [query citations citation-count truncated? source endpoint error?]}]
+  [{op :op :keys [query citations citation-count truncated? source endpoint error?]}]
   (let [head   (ir-p (ir-strong (search-badge-label op))
                  "  " [:c {} (or query "")]
                  "  " (str (or citation-count (count citations)) " citation"
@@ -1028,7 +1028,7 @@
 
 (defn channel-render-search
   "Render a search result to the `{:summary :display}` contract. Reads the
-   structured `:result` map (`{:vis.op :query :citations …}`) directly — no
+   structured `:result` map (`{:op :query :citations …}`) directly — no
    markdown round-trip on the result blob itself.
 
    `:summary` is a zone badge (label · query · citation count); `:display`

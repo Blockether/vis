@@ -300,7 +300,12 @@
                                               (git/cached-working-tree-status))
                                       in-draft? (assoc :draft?
                                                   true :draft-root
-                                                  (str ws-root))))]
+                                                  (str ws-root))))
+        ;; Session-scoped managed resources (nREPLs, daemons…). Bare ● is a
+        ;; NARROW 1-cell glyph (matches the terminal grid; VS-16 emoji would be
+        ;; wide and desync the paint). Shown only when this session owns ≥1.
+        res-count (count (try (lp/list-resources (get-in db [:session :id]))
+                           (catch Throwable _ nil)))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
@@ -327,6 +332,13 @@
                              :bold? false,
                              :region :left,
                              :priority 5})
+      ;; ── RIGHT: managed-resource count (● N), like Claude's background tasks.
+      ;; Press the resources key to open the stop/restart dialog.
+      (pos? res-count) (conj {:text     (str "● " res-count),
+                              :fg       t/footer-fg-muted,
+                              :bold?    false,
+                              :region   :right,
+                              :priority 2})
       ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
       ;; The bubble's `progress->text` already carries live activity, and
       ;; user-facing cancellation feedback is emitted as a host notification.

@@ -455,7 +455,7 @@
     ;;   model wrote `(def r (ls \".\"))` per the engine contract
     ;;   (\"bind values to defs\"). SCI's def unwrapped the tool envelope
     ;;   to its inner :result, so the persisted block's :result is a
-    ;;   plain `{:vis.op :ls …}` map without `:success?`. The TUI's
+    ;;   plain `{:op :ls …}` map without `:success?`. The TUI's
     ;;   `render-tool-result` then refused to dispatch to the ls
     ;;   renderer (envelope guard) and the bubble showed plain EDN —
     ;;   no widget, no badge. The pre-rendered IR already lives on
@@ -468,7 +468,7 @@
                     :error nil}]
           env (eng/block->envelope
                 {:code "(def r (ls \".\"))"
-                 :result {:vis.op :ls :path "." :entry-count 844}
+                 :result {:op :ls :path "." :entry-count 844}
                  :channel channel}
                 1 {:turn 2 :iter 1})]
       (expect (= (vec channel) (:channel env)))

@@ -2192,7 +2192,7 @@
      (cat path :tail n)               — LAST n lines.
 
    Result shape:
-     {:vis.op :cat :path P :lines [[<line-number> <text>] …]
+     {:op :cat :path P :lines [[<line-number> <text>] …]
       :hashes {<line-number> <hash> …}
       :next-offset N? :eof? B :truncated? B :mtime :size}
    `:hashes` maps each line number to a stable 6-char content hash (also
@@ -2217,7 +2217,7 @@
        {:op :cat
         :path path
         :kind :file
-        :result (assoc out :vis.op :cat)
+        :result (assoc out :op :cat)
         :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path arg]
@@ -2248,7 +2248,7 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :cat)
+          :result (assoc out :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
@@ -2264,7 +2264,7 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :cat)
+          :result (assoc out :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
@@ -2274,7 +2274,7 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :cat)
+          :result (assoc out :op :cat)
           :metadata {:truncated? (:truncated? out)
                      :ranges (mapv :range (:ranges out))}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
@@ -2287,7 +2287,7 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :cat)
+          :result (assoc out :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                      :range (:range out)}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
@@ -2310,7 +2310,7 @@
            {:op :cat
             :path path
             :kind :file
-            :result (assoc out :vis.op :cat)
+            :result (assoc out :op :cat)
             :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                        :range [start end]}
             :presentation {:kind :source :path (:path out) :line-key :lines}})))
@@ -2323,7 +2323,7 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :vis.op :cat)
+          :result (assoc out :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                      :range (:range out)}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
@@ -2333,44 +2333,41 @@
                :got mode})))))
 
 (defn- ls-tool
-  "List a directory as a FLAT recursive entry list. Returns a plain map:
-     {:vis.op :ls
-      :path          P            — workspace-relative root path
-      :absolute-path AP
-      :root-type     :dir|:file
-      :entries       [{:path :type :size} ...]  — entries under root
-      :entry-count N :file-count F :dir-count D
-      :truncated?    B            — true when the :limit clamped the walk
-      :depth N :limit N}
+  "List a directory as a FLAT recursive entry list. Returns a dict:
+     {\"path\": P,             # workspace-relative root path
+      \"absolute_path\": AP,
+      \"root_type\": \"dir\"|\"file\",
+      \"entries\": [{\"path\":.., \"type\":.., \"size\":..}, ...],
+      \"entry_count\": N, \"file_count\": F, \"dir_count\": D,
+      \"truncated\": bool,     # True when limit clamped the walk
+      \"depth\": N, \"limit\": N}
 
-   Default behaviour: recursive walk up to `:depth 10` and 3000 entries.
-   Paths are workspace-relative (same shape as cat / patch :path);
-   `:type :dir` carries no trailing slash on the path — the discriminator
-   IS the `:type` field. Sort order: depth-first pre-order; within each
+   Default behaviour: recursive walk up to depth 10 and 3000 entries.
+   Paths are workspace-relative (same shape as cat / patch path); a
+   \"dir\" entry carries no trailing slash on the path — the discriminator
+   IS the \"type\" field. Sort order: depth-first pre-order; within each
    directory, sub-directories first, then files, both alphabetical.
 
-   Filter directly on `:entries`:
-     (filter #(str/ends-with? (:path %) \".py\") (:entries r))
-     (filter #(= :file (:type %)) (:entries r))
-   no `tree-seq` walk needed.
+   Filter directly on entries with a comprehension:
+     [e for e in r[\"entries\"] if e[\"path\"].endswith(\".py\")]
+     [e for e in r[\"entries\"] if e[\"type\"] == \"file\"]
 
-   `(ls path)` reads with defaults. Opts can be supplied either as
-   a trailing map OR as inline kwargs — BOTH calling conventions
-   work and are equivalent (Clojure 1.11+ kwargs auto-coercion):
-     (ls path {:depth 2 :is_files_only true})   ;; map form
-     (ls path :depth 2 :is_files_only true)     ;; kwargs form
+   ls() (no args) and ls(\".\") both list the current directory
+   (Pythonic, like os.listdir()). Options are a trailing dict with
+   snake_case keys:
+     ls(path, {\"depth\": 2, \"is_files_only\": True})
 
-   Recognised opts (any combination):
-     :depth N            — max recursion depth (default 10)
-     :limit N            — stop after N entries (default 3000;
-                           sets :truncated? true)
-     :is_files_only B      — emit only file entries (no directories)
-     :is_dirs_only  B      — emit only directory entries
-     :is_hidden B          — include dotfiles / dotdirs (default false)
-     :is_respect_gitignore B  default true"
+   Recognised options (any combination):
+     depth N                 max recursion depth (default 10)
+     limit N                 stop after N entries (default 3000; sets truncated True)
+     is_files_only B         emit only file entries (no directories)
+     is_dirs_only B          emit only directory entries
+     is_hidden B             include dotfiles / dotdirs (default False)
+     is_respect_gitignore B  default True"
+  ([] (ls-tool "."))
   ([path & {:as opts}]
    (let [listing (list-files path opts)
-         result  (assoc listing :vis.op :ls)]
+         result  (assoc listing :op :ls)]
      (tool-success
        {:op :ls
         :path path
@@ -2414,7 +2411,7 @@
    pass :is_regex true to treat them as full regex (e.g. `\\bdef login\\b`).
 
    Result shape varies by mode (the tool envelope's `:result` always
-   carries `:vis.op :rg` plus a `:mode` discriminator):
+   carries `:op :rg` plus a `:mode` discriminator):
      content     (:mode :content)     {:matches [{:path P :lines [[ln text]...]} ...]  :hit-count N  :file-count N  :first-hit P:L  ...}
                                      ;; path stated ONCE per file; :lines tuples mirror cat's [ln text] shape
      is_files_only (:mode :files-only)  {:files [...] :file-count N ...}
@@ -2444,7 +2441,7 @@
         mode (cond is_files_only :files-only
                is_counts     :counts
                :else       :content)
-        shared {:vis.op       :rg
+        shared {:op       :rg
                 :mode         mode
                 :truncated-by (:truncated-by out)
                 :spec         spec
@@ -2791,7 +2788,7 @@
       {:op :create-dirs
        :path path
        :kind :dir
-       :result {:vis.op :create-dirs
+       :result {:op :create-dirs
                 :path out
                 :created? (not before)
                 :already-existed? before}
@@ -2812,7 +2809,7 @@
        {:op :copy
         :path dest
         :kind :path
-        :result {:vis.op :copy
+        :result {:op :copy
                  :src    src
                  :dest   dest
                  :path   out}
@@ -2833,7 +2830,7 @@
        {:op :move
         :path dest
         :kind :path
-        :result {:vis.op :move
+        :result {:op :move
                  :src    src
                  :dest   dest
                  :path   out}
@@ -2853,7 +2850,7 @@
     {:op :delete
      :path path
      :kind :path
-     :result {:vis.op :delete :path path :deleted? true}
+     :result {:op :delete :path path :deleted? true}
      :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
@@ -2868,13 +2865,13 @@
       {:op :delete-if-exists
        :path path
        :kind :path
-       :result {:vis.op :delete-if-exists :path path :deleted? deleted?}
+       :result {:op :delete-if-exists :path path :deleted? deleted?}
        :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
   "Filesystem existence check.
 
-   Returns `{:vis.op :exists? :path P :exists? B}` so the model
+   Returns `{:op :exists? :path P :exists? B}` so the model
    destructures the same shape every foundation tool uses (industry parity
    with `cat`, `ls`, `rg`, …). Earlier this returned a bare
    boolean, which broke `(def r (exists? P))` consumers that
@@ -2887,7 +2884,7 @@
       {:op :exists?
        :path path
        :kind :path
-       :result {:vis.op :exists?
+       :result {:op :exists?
                 :path   (str path)
                 :exists? exists?}
        :metadata {:exists? exists?}})))
@@ -3104,7 +3101,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Mutation tool renderers — strict map shape only.
 ;;
-;; Every foundation mutation tool returns `{:vis.op K :path P ...}` (see
+;; Every foundation mutation tool returns `{:op K :path P ...}` (see
 ;; `create-dirs-tool` / `copy-tool` / `move-tool` / `delete-tool` /
 ;; `delete-if-exists-tool` / `exists-tool`). Renderers destructure
 ;; that map directly; bare strings, bare booleans, and nil are NOT

@@ -22,6 +22,7 @@
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.workspace :as workspace]
    [edamame.core :as edamame]
@@ -5237,6 +5238,12 @@
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
                                    {'done            answer-fn}
+                                   ;; Canonical stateful-resource lifecycle:
+                                   ;; `resource_stop(id)` / `resource_restart(id)`
+                                   ;; (B-dispatch — act by id; ctx advertises
+                                   ;; can_stop/can_restart). Session-scoped so the
+                                   ;; agent only touches THIS session's resources.
+                                   (resources/sandbox-bindings session-id)
                                    ;; build-sci-bindings contributes every
                                    ;; engine mutator (task/fact + contradicts).
                                    (ctx-loop/build-sci-bindings ctx-loop-env)
