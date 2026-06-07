@@ -88,6 +88,13 @@
   io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
   metosin/malli                                   {:mvn/version "0.20.1"}
   org.babashka/sci                                {:mvn/version "0.12.51"}
+  ;; Embedded GraalPy — THE agent action substrate (replaces SCI). Default deps
+  ;; now (was the opt-in :graalpy alias). Version matches the runtime (Oracle
+  ;; GraalVM 25.0.1) so Truffle gets its Graal JIT. ~100MB (lang + stdlib vfs).
+  org.graalvm.polyglot/polyglot                   {:mvn/version "25.0.1"}
+  org.graalvm.python/python-language              {:mvn/version "25.0.1"}
+  org.graalvm.python/python-resources             {:mvn/version "25.0.1"}
+  org.graalvm.truffle/truffle-runtime             {:mvn/version "25.0.1"}
   borkdude/edamame                                {:mvn/version "1.5.39"}
   org.clojars.oakes/parinfer                      {:mvn/version "0.4.0"}
   zprint/zprint                                   {:mvn/version "1.3.0"}
