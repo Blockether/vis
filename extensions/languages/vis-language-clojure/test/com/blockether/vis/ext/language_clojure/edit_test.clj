@@ -41,6 +41,26 @@
           (expect (re-find #"defmulti area" (slurp f))))
         (finally (cleanup root))))))
 
+(defdescribe op-as-python-snake-string
+  ;; The Python caller sends op as a snake_case STRING (e.g. "insert_after"),
+  ;; not a Clojure keyword. apply-edit! must normalize it to the kebab op
+  ;; (:insert-after) the dispatch expects — else every clj_edit fails with
+  ;; "invalid op". Regression guard for the GraalPy migration.
+  (it "accepts a snake_case string op and dispatches like the keyword"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f base-src)
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj"
+                     :op   "insert_after"
+                     :target "foo"
+                     :code "(defn bar [] 1)"
+                     :is_format false})]
+          (expect (= :ok (:status res)))
+          (expect (re-find #"defn bar" (slurp f))))
+        (finally (cleanup root))))))
+
 (defdescribe replace-defmethod
   (it "swaps a defmethod by [name dispatch]"
     (let [root (tmp-dir)

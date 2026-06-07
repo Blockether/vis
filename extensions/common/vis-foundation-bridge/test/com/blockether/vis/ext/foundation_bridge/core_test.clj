@@ -60,8 +60,8 @@
                        (get-in bridge/vis-extension [:ext/sci :ext.sci/symbols])))))
       (expect (str/includes? prompt-text "use `br_check()` first"))
       (expect (str/includes? prompt-text "summarize the returned map instead of pasting it raw"))
-      (expect (str/includes? prompt-text ":status-summary"))
-      (expect (str/includes? prompt-text ":required-obligations"))
+      (expect (str/includes? prompt-text "status_summary"))
+      (expect (str/includes? prompt-text "required_obligations"))
       (expect (str/includes? prompt-text "Keep policy obligations and runnable evidence ids distinct"))
       (expect (fn? (:ext/protected-paths bridge/vis-extension)))
 
