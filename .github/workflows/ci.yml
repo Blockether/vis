@@ -20,7 +20,7 @@ jobs:
     name: tests / aggregate
     steps:
       - uses: actions/checkout@v6
-      - uses: DeLaGuardo/setup-clojure@13.6.0
+      - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
       - uses: actions/cache@v5
@@ -53,7 +53,7 @@ jobs:
           - vis-extension
     steps:
       - uses: actions/checkout@v6
-      - uses: DeLaGuardo/setup-clojure@13.6.0
+      - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
       - uses: actions/cache@v5
@@ -90,7 +90,7 @@ jobs:
           - extensions/common/vis-common-editing
     steps:
       - uses: actions/checkout@v6
-      - uses: DeLaGuardo/setup-clojure@13.6.0
+      - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
       - uses: actions/cache@v5
@@ -113,7 +113,7 @@ jobs:
     needs: [test-aggregate, test-package, classpath-sanity]
     steps:
       - uses: actions/checkout@v6
-      - uses: DeLaGuardo/setup-clojure@13.6.0
+      - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
       - uses: actions/cache@v5
