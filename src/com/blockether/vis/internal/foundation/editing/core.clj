@@ -605,16 +605,16 @@
   [{:keys [reason which hash lines from-line to-line]}]
   (case reason
     :hash-not-found
-    (str "cat :hash failed: " (name which) "-hash " (pr-str hash)
+    (str "cat hash failed: " (name which) "-hash " (pr-str hash)
       " matches no line (the line changed or the file moved)."
-      " Re-read with (cat path) or (cat path :tail) for fresh :hashes.")
+      " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh hashes.")
     :hash-ambiguous
-    (str "cat :hash failed: " (name which) "-hash " (pr-str hash)
+    (str "cat hash failed: " (name which) "-hash " (pr-str hash)
       " matches " (count lines) " lines " (pr-str lines)
-      " — a dup-line collision. Use (cat path :range start end) instead.")
+      " — a dup-line collision. Use cat(path, {\"range\": [start, end]}) instead.")
     :hash-range-inverted
-    (str "cat :hash failed: :to_hash line " to-line
-      " precedes :from_hash line " from-line ".")
+    (str "cat hash failed: to_hash line " to-line
+      " precedes from_hash line " from-line ".")
     (str "cat :hash failed: " (pr-str reason))))
 
 (defn- read-all-line-tuples
@@ -1602,10 +1602,10 @@
   [^long n path]
   (when (>= n patch-fail-loop-threshold)
     (str "Consecutive patch failures on " path ": " n
-      ". STOP retrying with similar :search. Re-read the file (cat path :tail"
+      ". STOP retrying with similar search. Re-read the file (cat(path, {\"tail\": N})"
       " or with the offset shown above), then build ONE cohesive edit plan with"
-      " :after/:before anchors or :nth selection. If you are rewriting the"
-      " whole file, switch to (write).")))
+      " from_hash..to_hash anchors or nth selection. If you are rewriting the"
+      " whole file, switch to write(...).")))
 
 ;; -----------------------------------------------------------------------------
 ;; Staleness check: :expected_mtime / :expected_size
@@ -2292,7 +2292,7 @@
                      :range (:range out)}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
-     (throw (ex-info "cat 3-arity must use :tail, :ranges, or :hash; for one range use (cat path :range start end)"
+     (throw (ex-info "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"hash\": H}; for one range use {\"range\": [start, end]}"
               {:type :ext.foundation.editing/invalid-cat-args
                :got arg}))))
   ([path mode start end]
@@ -2328,7 +2328,7 @@
                      :range (:range out)}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
-     (throw (ex-info "cat 4-arity must use :range or :hash as the second arg"
+     (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"hash\": [from, to]}"
               {:type :ext.foundation.editing/invalid-cat-args
                :got mode})))))
 
@@ -2388,34 +2388,32 @@
    optional context); `:is_files_only true` returns just distinct paths;
    `:is_counts true` returns per-file match counts.
 
-   Spec accepts BOTH calling conventions (Clojure 1.11+ kwargs
-   auto-coercion):
-     (rg {:any [\"a\"] :paths [\"src\"]})    ;; map form
-     (rg :any [\"a\"] :paths [\"src\"])      ;; kwargs form
+   Call with a single options dict (snake_case string keys):
+     rg({\"any\": [\"a\"], \"paths\": [\"src\"]})
 
    Recognised keys:
-     {:all [\"a\" \"b\"]      — AND: every needle on same line
-      :any [\"a\" \"b\"]      — OR: at least one needle on a line
-      :paths [\"src\"]        — search roots/files (default [\".\"])
-      :include [\"**/*.clj\"] — glob filters (vector)
-      :exclude [\"**/test/**\"]
-      :is_hidden false :is_respect_gitignore true
-      :limit 250            — cap hits / files / counts (default 250)
-      :context N            — N lines before AND after each hit (alias)
-      :before  N            — lines before each hit
-      :after   N            — lines after  each hit
-      :is_files_only false    — return only distinct paths (no line text)
-      :is_counts     false    — return per-file match counts
-      :is_regex      false}   — needles are java.util.regex patterns
-   Exactly one of :all/:any. Strings are literal substrings by default;
-   pass :is_regex true to treat them as full regex (e.g. `\\bdef login\\b`).
+     {\"all\": [\"a\", \"b\"]      — AND: every needle on same line
+      \"any\": [\"a\", \"b\"]      — OR: at least one needle on a line
+      \"paths\": [\"src\"]         — search roots/files (default [\".\"])
+      \"include\": [\"**/*.py\"]   — glob filters (list)
+      \"exclude\": [\"**/test/**\"]
+      \"is_hidden\": False, \"is_respect_gitignore\": True,
+      \"limit\": 250            — cap hits / files / counts (default 250)
+      \"context\": N            — N lines before AND after each hit (alias)
+      \"before\": N             — lines before each hit
+      \"after\": N              — lines after  each hit
+      \"is_files_only\": False   — return only distinct paths (no line text)
+      \"is_counts\": False       — return per-file match counts
+      \"is_regex\": False}       — needles are java.util.regex patterns
+   Exactly one of \"all\"/\"any\". Strings are literal substrings by default;
+   pass \"is_regex\": True to treat them as full regex (e.g. \\bdef login\\b).
 
-   Result shape varies by mode (the tool envelope's `:result` always
-   carries `:op :rg` plus a `:mode` discriminator):
-     content     (:mode :content)     {:matches [{:path P :lines [[ln text]...]} ...]  :hit-count N  :file-count N  :first-hit P:L  ...}
-                                     ;; path stated ONCE per file; :lines tuples mirror cat's [ln text] shape
-     is_files_only (:mode :files-only)  {:files [...] :file-count N ...}
-     is_counts     (:mode :counts)      {:counts [...] :file-count N ...}"
+   Result shape varies by mode (the result dict always carries \"op\": \"rg\"
+   plus a \"mode\" discriminator):
+     content     (mode \"content\")     {\"matches\": [{\"path\": P, \"lines\": [[ln, text]...]} ...], \"hit_count\": N, \"file_count\": N, \"first_hit\": \"P:L\", ...}
+                                     # path stated ONCE per file; \"lines\" tuples mirror cat's [ln, text] shape
+     is_files_only (mode \"files-only\")  {\"files\": [...], \"file_count\": N ...}
+     is_counts     (mode \"counts\")      {\"counts\": [...], \"file_count\": N ...}"
   [& args]
   ;; Accept either a single spec map OR inline kwargs. Manual dispatch
   ;; (instead of `& {:as spec}`) so that malformed input — a stray
@@ -2431,7 +2429,7 @@
 
                :else
                (throw (ex-info
-                        "rg takes either a single spec map or inline kwargs (e.g. (rg :any [\"x\"] :paths [\"src\"]))."
+                        "rg takes a single options dict, e.g. rg({\"any\": [\"x\"], \"paths\": [\"src\"]})."
                         {:type :ext.foundation.editing/invalid-rg-arity
                          :expected '([spec-map] [& kwargs])
                          :got args})))
@@ -3302,7 +3300,7 @@
      "    patch({\"path\": P, \"edits\": [{\"search\": S1, \"replace\": R1}]})"
      "    patch([{\"path\": P, \"search\": S, \"replace\": R, \"nth\": \"all\"}])  # every hit"
      "  Whole files:  write({\"path\": P, \"content\": S})"
-     "  File ops: exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
+     "  File ops: is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"
      "  - Dicts (snake_case keys) for option-bearing tools. Don't assume paths; root-search before reading."

@@ -3,19 +3,19 @@
 
    Public entry: `(apply-edit! workspace-root opts)` where `opts` is:
 
-     {:path     \"src/foo.clj\"        ; required
-      :op       :replace | :insert-before | :insert-after | :add
-                | :replace-doc | :replace-sexp
-                ; :add inserts after :target, or appends a new top-level form
-                ; at EOF when no :target is given
-                ; :replace-doc swaps :target's docstring (inserts one if absent)
-      :target   sym-name-string         ; defn/def name
-                | [sym-name dispatch]   ; defmethod
-                | {:within sym :match \"(...)\"}    ; for :replace-sexp
-      :code     \"(defn bar [] ...)\"  ; new form text
-                ; for :replace-doc, :code is the docstring TEXT (a plain
-                ; string, not a quoted form)
-      :format?  true                   ; default true; zprint-on-write}
+     {:path      \"src/foo.clj\"        ; required
+      :op        :replace | :insert-before | :insert-after | :add
+                 | :replace-doc | :replace-sexp
+                 ; :add inserts after :target, or appends a new top-level form
+                 ; at EOF when no :target is given
+                 ; :replace-doc swaps :target's docstring (inserts one if absent)
+      :target    sym-name-string         ; defn/def name
+                 | [sym-name dispatch]   ; defmethod
+                 | {:within sym :match \"(...)\"}    ; for :replace-sexp
+      :code      \"(defn bar [] ...)\"  ; new form text
+                 ; for :replace-doc, :code is the docstring TEXT (a plain
+                 ; string, not a quoted form)
+      :is_format true                   ; default true; zprint-on-write}
 
    Why structure-aware: text-level `patch` is fragile on Clojure
    because docstrings, metadata, and whitespace make uniqueness
@@ -162,7 +162,7 @@
 (defn- op-append!
   "Append a new top-level form after the last top-level form (EOF append).
    Used by :add when no :target is given. Spacing is approximate;
-   zprint normalizes it on write (`:format?` defaults true)."
+   zprint normalizes it on write (`is_format` defaults true)."
   [zloc code]
   (let [[node err-msg] (parse-code code)]
     (if err-msg
@@ -234,8 +234,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn apply-edit!
-  [workspace-root {:keys [path op target code format?]
-                   :or   {format? true}
+  [workspace-root {:keys [path op target code is_format]
+                   :or   {is_format true}
                    :as   opts}]
   (let [f (if (.isAbsolute (io/file path))
             (io/file path)
@@ -280,7 +280,7 @@
 
           :else
           (let [new-src   (root-string zloc')
-                new-src   (if format? (fmt/format-string new-src) new-src)]
+                new-src   (if is_format (fmt/format-string new-src) new-src)]
             (if-not (round-trip-clean? new-src)
               (err "edited source did not round-trip parse — refusing to write"
                 {:opts opts})

@@ -35,7 +35,7 @@
                      :op   :replace
                      :target "foo"
                      :code "(defn foo [x] (+ x 1))"
-                     :format? false})]
+                     :is_format false})]
           (expect (= :ok (:status res)))
           (expect (re-find #"\(\+ x 1\)" (slurp f)))
           (expect (re-find #"defmulti area" (slurp f))))
@@ -52,7 +52,7 @@
                      :op :replace
                      :target ["area" :rectangle]
                      :code "(defmethod area :rectangle [{:keys [w h]}] (+ w h))"
-                     :format? false})]
+                     :is_format false})]
           (expect (= :ok (:status res)))
           (let [s (slurp f)]
             (expect (re-find #"\(\+ w h\)" s))
@@ -71,7 +71,7 @@
                      :op :insert-after
                      :target "foo"
                      :code "(defn bar [] :bar)"
-                     :format? false})]
+                     :is_format false})]
           (expect (= :ok (:status res)))
           (let [s (slurp f)]
             (expect (re-find #"defn foo" s))
@@ -163,7 +163,7 @@
                      :op :replace
                      :target "nope"
                      :code "(defn nope [] 1)"
-                     :format? false})]
+                     :is_format false})]
           (expect (= :error (:status res)))
           (expect (re-find #"target not found" (:error res))))
         (finally (cleanup root))))))

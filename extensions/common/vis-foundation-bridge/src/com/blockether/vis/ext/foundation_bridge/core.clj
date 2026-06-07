@@ -42,19 +42,34 @@
     (sequential? x) (vec x)
     :else [x]))
 
+(defn- py-tool-name
+  "Convert a `br/foo-bar` tool name to a Python snake_case function name."
+  [tool]
+  (-> (str tool)
+    (str/replace "/" "_")
+    (str/replace "-" "_")))
+
+(defn- py-arg
+  "Render a single arg as a Python literal (strings quoted, nil → None)."
+  [x]
+  (cond
+    (nil? x)     "None"
+    (string? x)  (str "\"" x "\"")
+    (boolean? x) (if x "True" "False")
+    :else        (str x)))
+
 (defn- tool-call
   [tool args]
   {:tool tool
    :args (vec args)
-   :call (str "(" tool
-           (when (seq args)
-             (str " " (pr-str (first args))
-               (apply str (map #(str " " (pr-str %)) (rest args)))))
+   :call (str (py-tool-name tool)
+           "("
+           (str/join ", " (map py-arg args))
            ")")})
 
 (defn- render-tool-call
   [{:keys [call]}]
-  (or call "(br/init)"))
+  (or call "br_init()"))
 
 (defn- action->extension-op
   [action]
@@ -153,7 +168,7 @@
   {:message (if explicit-profile?
               "Bridge profile path was provided but no profile was found there."
               "No Bridge profile is configured for this workspace.")
-   :hint (str "Initialize Bridge with bare `(br/init)`, or pass `{:profile \"/abs/path/to/.bridge/profile.edn\"}`. "
+   :hint (str "Initialize Bridge with bare `br_init()`, or pass `{\"profile\": \"/abs/path/to/.bridge/profile.edn\"}`. "
            "Workspace root: " workspace-root)
    :details {:profile-path profile-path
              :searched-paths searched-paths}})
@@ -300,8 +315,8 @@
 
 (defn- selected-opts
   [opts]
-  (select-keys opts [:profile :policy :changed-files :subject :out-dir
-                     :out :timeout-seconds :dry-run?]))
+  (select-keys opts [:profile :policy :changed_files :subject :out_dir
+                     :out :timeout_seconds :is_dry_run]))
 
 (defn- tool-success
   [op started-at-ms result opts]
@@ -346,7 +361,7 @@
     opts
     (fn [opts]
       (let [{:keys [profile policy profile-path policy-path]} (load-profile+policy env opts)
-            status (br-next/build-status profile {:changed-files (ensure-vector (:changed-files opts))
+            status (br-next/build-status profile {:changed-files (ensure-vector (:changed_files opts))
                                                   :policy policy})
             required-obligations (mapv obligation->flat
                                    (concat (:failed-obligations status)
@@ -416,7 +431,7 @@
        :title (str "Bridge is not configured for this workspace. "
                 "Initialize it via bare " (render-tool-call (:op (unconfigured-next-step)))
                 " before asking for Bridge status or evidence work. "
-                "Then `(task-set! :vis.foundation/bridge {:status :done})`.")}
+                "Then `task_set(\"vis.foundation/bridge\", {\"status\": \"done\"})`.")}
       (let [status-result (:result (bridge-check env {}))]
         (when (and status-result
                 (pos? (long (or (:issue-count status-result) 0))))
@@ -425,7 +440,7 @@
                     "Inspect the next suggested Bridge action via bare "
                     (render-tool-call (tool-call "br/next" []))
                     ". Do not execute evidence work from this hint unless verification is already in scope for the current task. "
-                    "Then `(task-set! :vis.foundation/bridge {:status :done})`.")})))))
+                    "Then `task_set(\"vis.foundation/bridge\", {\"status\": \"done\"})`.")})))))
 
 (defn init
   "Initialize Bridge in the current workspace. Optional opts: {:root path}. Returns existing configuration when Bridge is already set up."
@@ -477,7 +492,7 @@
              :policy-loaded? (boolean policy)}))))))
 
 (defn check
-  "Run Bridge check for the workspace. Optional opts: {:profile path :policy path :changed-files [path ...]}."
+  "Run Bridge check for the workspace. Optional opts: {:profile path :policy path :changed_files [path ...]}."
   [env & [opts]]
   (let [opts* (normalize-opts opts)
         discovery (profile-discovery (workspace-root env) opts*)]
@@ -487,12 +502,12 @@
           :status "unconfigured"
           :issue-count 1
           :next-step (unconfigured-next-step)
-          :changed-files (ensure-vector (:changed-files opts*)))
+          :changed-files (ensure-vector (:changed_files opts*)))
         opts*)
       (bridge-check env opts*))))
 
 (defn next
-  "Return the next suggested Bridge action as Vis extension operations. Optional opts: {:profile path :policy path :changed-files [path ...]}."
+  "Return the next suggested Bridge action as Vis extension operations. Optional opts: {:profile path :policy path :changed_files [path ...]}."
   [env & [opts]]
   (let [opts* (normalize-opts opts)
         discovery (profile-discovery (workspace-root env) opts*)]
@@ -503,7 +518,7 @@
           :issue-count 1
           :next-step (unconfigured-next-step)
           :suggestions [(unconfigured-next-step)]
-          :changed-files (ensure-vector (:changed-files opts*)))
+          :changed-files (ensure-vector (:changed_files opts*)))
         opts*)
       (tool-success :br/next (now-ms)
         (next-result (:result (bridge-check env opts*)))
@@ -526,7 +541,7 @@
              :commands (evidence/list-commands profile)}))))))
 
 (defn run-evidence
-  "Run one configured Bridge evidence command and write its receipt. Args: evidence id string, optional opts {:profile path :subject s :out path :out-dir path :timeout-seconds n :dry-run? true}."
+  "Run one configured Bridge evidence command and write its receipt. Args: evidence id string, optional opts {:profile path :subject s :out path :out_dir path :timeout_seconds n :is_dry_run true}."
   [env id & [opts]]
   (bridge-tool
     :br/run-evidence
@@ -542,11 +557,11 @@
           {:profile-path profile-path
            :result (evidence/run-command profile
                      (str id)
-                     {:out-dir (:out-dir opts)
+                     {:out-dir (:out_dir opts)
                       :out-path (:out opts)
                       :subject (:subject opts)
-                      :timeout-seconds (:timeout-seconds opts)
-                      :dry-run? (boolean (:dry-run? opts))})})))))
+                      :timeout-seconds (:timeout_seconds opts)
+                      :dry-run? (boolean (:is_dry_run opts))})})))))
 
 (defn- inject-env
   [env f args]
@@ -586,18 +601,18 @@
 (def bridge-prompt
   (str/join
     " "
-    ["`br/` Bridge verification tools:"
-     "use `(br/init)` to bootstrap Bridge in a new repo,"
-     "use `(br/check)` first when asked for Bridge status,"
-     "use `(br/next)` to inspect the immediate next action,"
-     "use `(br/list-evidence)` to inspect configured evidence commands,"
-     "and use `(br/run-evidence id opts?)` only when the configured command should actually run."
-     "`(br/run-evidence id {:dry-run? true})` previews the execution plan without writing a receipt."
+    ["`br_*` Bridge verification tools:"
+     "use `br_init()` to bootstrap Bridge in a new repo,"
+     "use `br_check()` first when asked for Bridge status,"
+     "use `br_next()` to inspect the immediate next action,"
+     "use `br_list_evidence()` to inspect configured evidence commands,"
+     "and use `br_run_evidence(id, opts?)` only when the configured command should actually run."
+     "`br_run_evidence(id, {\"is_dry_run\": True})` previews the execution plan without writing a receipt."
      "When answering status questions, summarize the returned map instead of pasting it raw."
      "Prefer `:status-summary`, `:required-obligations`, `:evidence-receipts`, and `:next-action` when they are present."
      "Call out `:status`, `:issue-count`, open or failed obligations, and any evidence receipts that are already present."
      "Keep policy obligations and runnable evidence ids distinct: for example `unit-tests` is not the same thing as the runnable `unit` command."
-     "Prefer the `br/next` suggestions over shell commands because they stay inside the Vis tool surface."]))
+     "Prefer the `br_next` suggestions over shell commands because they stay inside the Vis tool surface."]))
 
 (def bridge-hooks
   [{:id :vis.bridge/next
@@ -661,7 +676,7 @@
         (nil? head) opts
 
         (= "--dry-run" head)
-        (recur (vec tail) (assoc opts :dry-run? true))
+        (recur (vec tail) (assoc opts :is_dry_run true))
 
         (#{"--profile" "--policy" "--subject" "--out" "--out-dir"} head)
         (let [k (case head
@@ -669,16 +684,16 @@
                   "--policy"  :policy
                   "--subject" :subject
                   "--out"     :out
-                  "--out-dir" :out-dir)]
+                  "--out-dir" :out_dir)]
           (recur (vec (rest tail)) (assoc opts k (first tail))))
 
         (= "--changed-file" head)
         (recur (vec (rest tail))
-          (update opts :changed-files (fnil conj []) (first tail)))
+          (update opts :changed_files (fnil conj []) (first tail)))
 
         (= "--timeout-seconds" head)
         (recur (vec (rest tail))
-          (assoc opts :timeout-seconds (parse-long (str (first tail)))))
+          (assoc opts :timeout_seconds (parse-long (str (first tail)))))
 
         (str/starts-with? (str head) "--")
         (throw (ex-info (str "Unknown bridge flag: " head)

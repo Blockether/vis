@@ -110,14 +110,21 @@
     :else               v))
 
 (defn sym->py-name
-  "Clojure tool/binding symbol -> a Python-LEGAL global name. Python identifiers
-   can't contain `-`/`?`/`!`, so `task-set!` -> `task_set`, `fact-set!` ->
-   `fact_set`, `cat`/`done`/`ctx` unchanged. FULL SNAKE: this is how the agent
-   actually reaches the tools — `task_set(...)` calls the Clojure `task-set!`."
+  "Clojure tool/binding symbol -> a Python-LEGAL global name. Purely mechanical:
+   `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
+   marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
+   `git/status` -> `git_status`, `git/commit!` -> `git_commit`, `search/web` ->
+   `search_web`, `task-set!` -> `task_set`, `exists?` -> `is_exists`. FULL SNAKE:
+   this is how the agent reaches the tools — `git_status()` calls `git/status`."
   ^String [sym]
-  (-> (str sym)
-    (str/replace #"[?!]" "")
-    (str/replace "-" "_")))
+  (let [s     (str sym)
+        pred? (str/ends-with? s "?")
+        base  (-> s
+                (str/replace "?" "")
+                (str/replace "!" "")
+                (str/replace "/" "_")
+                (str/replace "-" "_"))]
+    (if pred? (str "is_" base) base)))
 
 (defn- wrap-ifn
   "Wrap a Clojure fn as a Python-callable `ProxyExecutable`. Positional Python

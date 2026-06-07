@@ -83,20 +83,20 @@
   ([env] (git-diff-fn env nil))
   ([env opts]
    (when (and (some? opts) (not (map? opts)))
-     (throw (ex-info (str "git/diff expected optional opts map, got " (pr-str opts) ". "
-                       "Call (git/diff), (git/diff {:from \"sha\"}), or (git/diff {:from \"a\" :to \"b\" :path \"src\"}).")
+     (throw (ex-info (str "git_diff expected optional opts dict, got " (pr-str opts) ". "
+                       "Call git_diff(), git_diff({\"from\": \"sha\"}), or git_diff({\"from\": \"a\", \"to\": \"b\", \"path\": \"src\"}).")
               {:type :foundation-git/invalid-opts
                :opts opts
                :expected "nil or map"
-               :examples ["(git/diff)"
-                          "(git/diff {:from \"HEAD~3\"})"
-                          "(git/diff {:from \"main\" :to \"feature\"})"
-                          "(git/diff {:path \"src/foo.clj\"})"
-                          "(git/diff {:from \"HEAD~1\" :patch? true})"]})))
+               :examples ["git_diff()"
+                          "git_diff({\"from\": \"HEAD~3\"})"
+                          "git_diff({\"from\": \"main\", \"to\": \"feature\"})"
+                          "git_diff({\"path\": \"src/foo.clj\"})"
+                          "git_diff({\"from\": \"HEAD~1\", \"is_patch\": True})"]})))
    (let [{:keys [from to path]} (or opts {})
          _ (doseq [[k v] {:from from :to to :path path}]
              (when (and (some? v) (not (string? v)))
-               (throw (ex-info (str "git/diff " k " must be a string, got " (pr-str v))
+               (throw (ex-info (str "git_diff " k " must be a string, got " (pr-str v))
                         {:type :foundation-git/invalid-opts :opts opts :key k :value v}))))
          root        (env-root env)
          root-file   (io/file root)
@@ -113,7 +113,7 @@
                        (and from (not ws-base)) nil  ;; :from + no :to -> base..WT
                        ws-base                  "HEAD"  ;; default workspace shape
                        :else                    nil)
-         patch?      (boolean (:patch? opts))
+         patch?      (boolean (:is_patch opts))
          status      (git-core/status-snapshot root-file)
          files       (vec (or (git-core/diff-numstat root-file base new-rev path patch?) []))
          porcelain   (if new-rev [] (vec (or (:entries status) [])))
@@ -148,7 +148,7 @@
     (extension/success {:result snapshot})))
 
 (defn- coerce-log-limit
-  "Normalize the (git/log ...) argument into a 1..200 integer.
+  "Normalize the git_log() argument into a 1..200 integer.
    Accepts nil, a positive integer, or a map carrying `:limit` / `:n`.
    Throws a `:foundation-git/invalid-opts` ex-info with examples for
    anything else, so the model sees a clear usage error instead of a
@@ -160,13 +160,13 @@
               (map? arg)     (or (:limit arg) (:n arg) 20)
               :else          ::bad)]
     (when (or (= raw ::bad) (not (integer? raw)) (neg? (long raw)))
-      (throw (ex-info (str "git/log expected nil, a positive integer, or {:limit N}, got "
+      (throw (ex-info (str "git_log expected nil, a positive integer, or {\"limit\": N}, got "
                         (pr-str arg) ". "
-                        "Call (git/log), (git/log 50), or (git/log {:limit 50}).")
+                        "Call git_log(), git_log(50), or git_log({\"limit\": 50}).")
                {:type :foundation-git/invalid-opts
                 :opts arg
-                :expected "nil, positive integer, or {:limit N}"
-                :examples ["(git/log)" "(git/log 50)" "(git/log {:limit 50})"]})))
+                :expected "nil, positive integer, or {\"limit\": N}"
+                :examples ["git_log()" "git_log(50)" "git_log({\"limit\": 50})"]})))
     (max 1 (min 200 (long raw)))))
 
 (defn- coerce-log-opts
@@ -176,7 +176,7 @@
    :foundation-git/invalid-opts shape as `coerce-log-limit`."
   [m]
   (when-not (map? m)
-    (throw (ex-info (str "git/log expected a map, got " (pr-str m))
+    (throw (ex-info (str "git_log expected a dict, got " (pr-str m))
              {:type :foundation-git/invalid-opts :opts m})))
   {:limit  (coerce-log-limit (or (:limit m) (:n m)))
    :path   (when-let [p (:path m)] (when (string? p) p))
@@ -189,11 +189,11 @@
   "Recent commits in the active workspace. Default limit is 20; max 200.
 
    Signatures:
-     (git/log)                                 ; default 20
-     (git/log 50)                              ; integer limit
-     (git/log {:limit 50})                     ; map form, also accepts :n
-     (git/log {:path \"src/foo.clj\" :limit 5})  ; commits touching that path
-     (git/log {:ref \"main\" :limit 5})          ; log from a branch/sha
+     git_log()                                              ; default 20
+     git_log(50)                                            ; integer limit
+     git_log({\"limit\": 50})                                ; dict form, also accepts \"n\"
+     git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path
+     git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha
 
    Each commit map now carries: :sha :short-sha :author :email :at
    :committer :committer-email :committed-at :subject :body :parents."
@@ -218,31 +218,31 @@
   "Detailed view of one commit.
 
    Signatures:
-     (git/show \"sha\")
-     (git/show {:rev \"sha\"})
-     (git/show {:rev \"sha\" :patch? true})  ; per-file unified diff
+     git_show(\"sha\")
+     git_show({\"rev\": \"sha\"})
+     git_show({\"rev\": \"sha\", \"is_patch\": True})  ; per-file unified diff
 
    Returns the canonical commit map (sha, author, email, committer,
    committed-at, parents, subject, body) plus :files (per-file +/-
    numstat against the first parent) and :stat totals. With
-   `:patch? true` every file entry also carries `:patch` with the
+   `is_patch: True` every file entry also carries `:patch` with the
    unified-diff text (truncated at ~64KB per file)."
   ([env arg]
-   (let [{:keys [rev patch?]}
+   (let [{:keys [rev is_patch]}
          (cond
            (string? arg) {:rev arg}
            (map? arg)    arg
-           :else         (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
+           :else         (throw (ex-info (str "git_show expected a sha string or {\"rev\": sha}, got " (pr-str arg))
                                   {:type :foundation-git/invalid-opts :opts arg
-                                   :examples ["(git/show \"HEAD\")"
-                                              "(git/show \"abc1234\")"
-                                              "(git/show {:rev \"HEAD~1\"})"
-                                              "(git/show {:rev \"HEAD\" :patch? true})"]})))]
+                                   :examples ["git_show(\"HEAD\")"
+                                              "git_show(\"abc1234\")"
+                                              "git_show({\"rev\": \"HEAD~1\"})"
+                                              "git_show({\"rev\": \"HEAD\", \"is_patch\": True})"]})))]
      (when-not (and (string? rev) (seq rev))
-       (throw (ex-info (str "git/show expected a sha string or {:rev sha}, got " (pr-str arg))
+       (throw (ex-info (str "git_show expected a sha string or {\"rev\": sha}, got " (pr-str arg))
                 {:type :foundation-git/invalid-opts :opts arg})))
      (let [root   (io/file (env-root env))
-           result (git-core/show-commit root rev {:with-patch? (boolean patch?)})]
+           result (git-core/show-commit root rev {:with-patch? (boolean is_patch)})]
        (when-not result
          (throw (ex-info (str "git/show could not resolve revision: " rev)
                   {:type :foundation-git/unknown-rev :rev rev})))
@@ -252,12 +252,12 @@
   "Per-line blame for one tracked file.
 
    Signatures:
-     (git/blame \"src/foo.clj\")                      ; whole file
-     (git/blame {:path \"src/foo.clj\" :from 10 :to 40})  ; line range
-     (git/blame {:path \"src/foo.clj\"
-                 :ignore-revs [\"abc123\" \"def456\"]}) ; peel past those commits
+     git_blame(\"src/foo.clj\")                                          ; whole file
+     git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40})       ; line range
+     git_blame({\"path\": \"src/foo.clj\",
+                \"ignore_revs\": [\"abc123\", \"def456\"]})                ; peel past those commits
 
-   `:ignore-revs` accepts sha prefixes or full shas. For every line
+   `ignore_revs` accepts sha prefixes or full shas. For every line
    attributed to one of those commits, the function re-blames the file
    from that commit's parent and re-maps the line by content proximity.
    Useful for skipping noisy whitespace / formatter / mass-rename
@@ -266,48 +266,48 @@
    Returns `{:path :head :total :ignored-revs :lines [...]}`. Outside the
    work tree or on untracked files throws `:foundation-git/not-tracked`."
   ([env arg]
-   (let [{:keys [path from to ignore-revs]}
+   (let [{:keys [path from to ignore_revs]}
          (cond
            (string? arg) {:path arg}
            (map? arg)    arg
-           :else         (throw (ex-info (str "git/blame expected a path string or opts map, got " (pr-str arg))
+           :else         (throw (ex-info (str "git_blame expected a path string or opts dict, got " (pr-str arg))
                                   {:type :foundation-git/invalid-opts :opts arg
-                                   :examples ["(git/blame \"src/foo.clj\")"
-                                              "(git/blame {:path \"src/foo.clj\" :from 10 :to 40})"
-                                              "(git/blame {:path \"src/foo.clj\" :ignore-revs [\"abc1234\"]})"]})))]
+                                   :examples ["git_blame(\"src/foo.clj\")"
+                                              "git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40})"
+                                              "git_blame({\"path\": \"src/foo.clj\", \"ignore_revs\": [\"abc1234\"]})"]})))]
      (when-not (and (string? path) (seq path))
-       (throw (ex-info (str "git/blame requires a non-blank :path, got " (pr-str arg))
+       (throw (ex-info (str "git_blame requires a non-blank path, got " (pr-str arg))
                 {:type :foundation-git/invalid-opts :opts arg})))
-     (when (and (some? ignore-revs) (not (sequential? ignore-revs)))
-       (throw (ex-info (str "git/blame :ignore-revs must be a vector/list of sha strings, got " (pr-str ignore-revs))
-                {:type :foundation-git/invalid-opts :opts arg :key :ignore-revs})))
+     (when (and (some? ignore_revs) (not (sequential? ignore_revs)))
+       (throw (ex-info (str "git_blame ignore_revs must be a list of sha strings, got " (pr-str ignore_revs))
+                {:type :foundation-git/invalid-opts :opts arg :key :ignore_revs})))
      (let [root   (io/file (env-root env))
            result (git-core/blame-file root path
                     {:from from :to to
-                     :ignore-revs (when (seq ignore-revs)
-                                    (vec (filter string? ignore-revs)))})]
+                     :ignore-revs (when (seq ignore_revs)
+                                    (vec (filter string? ignore_revs)))})]
        (when-not result
-         (throw (ex-info (str "git/blame failed: file is outside the repo or not tracked: " path)
+         (throw (ex-info (str "git_blame failed: file is outside the repo or not tracked: " path)
                   {:type :foundation-git/not-tracked :path path})))
        (when (:binary? result)
-         (throw (ex-info (str "git/blame refused: " path " is a binary blob, per-line blame is meaningless. "
-                           "Use (git/log {:path \"" path "\"}) for commit history instead.")
+         (throw (ex-info (str "git_blame refused: " path " is a binary blob, per-line blame is meaningless. "
+                           "Use git_log({\"path\": \"" path "\"}) for commit history instead.")
                   {:type :foundation-git/binary :path path :head (:head result)})))
        (extension/success {:result result})))))
 
-(def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts map: {:from ref :to ref :path P :patch? bool} for arbitrary range + path filter; :patch? true includes per-file unified-diff text (truncated at ~64KB/file). :to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [{:file :+ :- [:patch]}] :porcelain [...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts dict: {\"from\": ref, \"to\": ref, \"path\": P, \"is_patch\": bool} for arbitrary range + path filter; is_patch true includes per-file unified-diff text (truncated at ~64KB/file). to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [{:file :+ :- [:patch]}] :porcelain [...]}. JGit-backed; no host git binary needed."
        :arglists '([] [opts])} diff git-diff-fn)
 
 (def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}. JGit-backed; no host git binary needed."
        :arglists '([])} status git-status-fn)
 
-(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a `{:limit N :path P :ref R :since D :until D :author S}` map. :since/:until accept ISO date strings, epoch ms/s, or java.util.Date. :author is a case-insensitive substring match on name OR email. Returns {:branch :commits [{:sha :short-sha :author :email :at :committer :committer-email :committed-at :subject :body :parents [...]} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a dict {\"limit\": N, \"path\": P, \"ref\": R, \"since\": D, \"until\": D, \"author\": S}. since/until accept ISO date strings, epoch ms/s, or java.util.Date. author is a case-insensitive substring match on name OR email. Returns {:branch :commits [{:sha :short-sha :author :email :at :committer :committer-email :committed-at :subject :body :parents [...]} ...]}. JGit-backed; no host git binary needed."
        :arglists '([] [arg])} log git-log-fn)
 
-(def ^{:doc "Detailed view of one commit. Accepts a sha string or {:rev sha :patch? bool}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. With :patch? true each file entry also carries :patch with the unified-diff text. JGit-backed; no host git binary needed."
+(def ^{:doc "Detailed view of one commit. Accepts a sha string or {\"rev\": sha, \"is_patch\": bool}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. With is_patch true each file entry also carries :patch with the unified-diff text. JGit-backed; no host git binary needed."
        :arglists '([arg])} show git-show-fn)
 
-(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {:path P :from L :to L :ignore-revs [sha ...]}. :ignore-revs peels past noisy commits (whitespace/formatters/renames) by re-blaming from each ignored commit's parent. Returns {:path :head :total :ignored-revs :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {\"path\": P, \"from\": L, \"to\": L, \"ignore_revs\": [sha ...]}. ignore_revs peels past noisy commits (whitespace/formatters/renames) by re-blaming from each ignored commit's parent. Returns {:path :head :total :ignored-revs :lines [{:line :sha :short-sha :author :email :at :content :source-line} ...]}. JGit-backed; no host git binary needed."
        :arglists '([arg])} blame git-blame-fn)
 
 (defn- inject-env
@@ -368,23 +368,24 @@
 
 (def ^:private prompt-text
   (str
-    "git/ surface active — JGit-backed, no host git binary needed. Workspace\n"
-    "VCS truth (branch, head, dirty?, mainline) already rides in ctx under\n"
-    "`:session/workspace`; read it there before probing. Symbols under `git/`:\n"
+    "git_ surface active — JGit-backed, no host git binary needed. Workspace\n"
+    "VCS truth (branch, head, dirty, mainline) already rides in context under\n"
+    "context[\"session_workspace\"]; read it there before probing. Bare Python\n"
+    "functions (snake_case, dict options with snake_case keys):\n"
     "  OBSERVE (read-only):\n"
-    "    (git/status)                            {:branch :head :clean? :entries}\n"
-    "    (git/diff [{:from :to :path :patch?}])  stat+porcelain; :patch? adds unified text\n"
-    "    (git/log [N | {:limit :path :ref :since :until :author}])  commits (default 20, max 200)\n"
-    "    (git/show sha | {:rev :patch?})         one commit: per-file numstat (+ :patch)\n"
-    "    (git/blame path | {:path :from :to :ignore-revs})  per-line blame\n"
+    "    git_status()                              -> {branch, head, clean, entries}\n"
+    "    git_diff({\"from\":.., \"to\":.., \"path\":.., \"is_patch\":True})  stat+porcelain; is_patch adds unified text\n"
+    "    git_log({\"limit\":.., \"path\":.., \"ref\":.., \"since\":.., \"until\":.., \"author\":..})  commits (default 20, max 200)\n"
+    "    git_show(sha)  or  git_show({\"rev\":.., \"is_patch\":True})  one commit: per-file numstat (+ patch)\n"
+    "    git_blame(path)  or  git_blame({\"path\":.., \"from\":.., \"to\":..})  per-line blame\n"
     "  WRITE (mutating):\n"
-    "    (git/add paths) (git/commit! {:message …}) (git/amend! …)\n"
-    "    (git/push! …) (git/fetch! …) (git/reset! …) (git/branch! …)\n"
-    "    (git/checkout! …) (git/cherry-pick! …) (git/rebase! …)\n"
+    "    git_add(paths)  git_commit({\"message\": ..})  git_amend(..)\n"
+    "    git_push(..)  git_fetch(..)  git_reset(..)  git_branch(..)\n"
+    "    git_checkout(..)  git_cherry_pick(..)  git_rebase(..)\n"
     "  MERGE-RESOLVE (only inside an active merge):\n"
-    "    (git/merge-status) (git/merge-accept-ours) (git/merge-accept-theirs)\n"
-    "    (git/merge-mark-resolved) (git/merge-continue!) (git/merge-abort!)\n"
-    "`(doc 'git/<verb>)` for full opts — do NOT apropos to rediscover this surface."))
+    "    git_merge_status()  git_merge_accept_ours()  git_merge_accept_theirs()\n"
+    "    git_merge_mark_resolved()  git_merge_continue()  git_merge_abort()\n"
+    "doc(\"git_status\"), doc(\"git_diff\"), etc. for full opts — do NOT apropos to rediscover this surface."))
 
 ;; =============================================================================
 ;; Extension manifest

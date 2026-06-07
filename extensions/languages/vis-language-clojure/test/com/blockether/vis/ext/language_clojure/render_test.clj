@@ -86,7 +86,7 @@
       (expect (re-find #"42" t))))
 
   (it "timed-out? → TIMEOUT badge in summary"
-    (let [res (r/render-eval {:timed-out? true :status #{"done" "timeout"} :port 7888})]
+    (let [res (r/render-eval {:timed_out true :status #{"done" "timeout"} :port 7888})]
       (expect (contract? res))
       (expect (re-find #"TIMEOUT" (summary-text (:summary res))))))
 

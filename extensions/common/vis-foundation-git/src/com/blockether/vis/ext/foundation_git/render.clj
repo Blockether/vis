@@ -265,7 +265,7 @@
                         [(when head (str "HEAD=" (short-sha head)))
                          (when merge-head (str "MERGE_HEAD=" (short-sha merge-head)))])))])
            (when (zero? n)
-             [(ir-p "ready for (git/merge-continue!)")])
+             [(ir-p "ready for git_merge_continue()")])
            (when (seq conflicts)
              [(ir-code-block "text"
                 (cap (str/join "\n"

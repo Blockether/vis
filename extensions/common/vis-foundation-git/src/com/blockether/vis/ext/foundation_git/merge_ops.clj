@@ -2,14 +2,14 @@
   "Merge-resolve SCI op family.
 
    Lives under the `git/` alias alongside the rest of the JGit
-   observation surface (`git/diff`, `git/status`, `git/log`, ...):
+   observation surface (git_diff, git_status, git_log, ...):
 
-     (git/merge-status)                  read the current merge state
-     (git/merge-accept-ours \"foo.txt\")   keep the trunk side of a conflict
-     (git/merge-accept-theirs \"foo.txt\") keep the branch side
-     (git/merge-mark-resolved \"foo.txt\") stage a manually-edited file
-     (git/merge-continue! {:message ...}) commit the merge (default msg 'merge-resolve')
-     (git/merge-abort!)                   restore HEAD via `git reset --merge`
+     git_merge_status()                             read the current merge state
+     git_merge_accept_ours(\"foo.txt\")               keep the trunk side of a conflict
+     git_merge_accept_theirs(\"foo.txt\")             keep the branch side
+     git_merge_mark_resolved(\"foo.txt\")             stage a manually-edited file
+     git_merge_continue({\"message\": ...})           commit the merge (default msg 'merge-resolve')
+     git_merge_abort()                              restore HEAD via `git reset --merge`
 
    Operations run against `(workspace/cwd)` via JGit (`Git/open`).
    The merge-resolve sub-session pins to the parent workspace whose

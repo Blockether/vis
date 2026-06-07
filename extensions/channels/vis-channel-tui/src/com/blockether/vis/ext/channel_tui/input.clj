@@ -1047,6 +1047,16 @@
       ;; acceptance, and verification.
       KeyType/F2 {:action :toggle-tasks :state state}
 
+      ;; F4: managed-resources dialog (nREPLs, daemons…) — stop/restart by id.
+      ;; (F3/Shift+F3 are in-session search.)
+      KeyType/F4 {:action :open-resources :state state}
+
+      ;; F5/F6: F-key aliases for the command palette (also Ctrl+K) and the
+      ;; session/workspace navigator (also Ctrl+G), so the whole dialog family
+      ;; is reachable from one row of function keys.
+      KeyType/F5 {:action :show-palette :state state}
+      KeyType/F6 {:action :show-sessions :state state}
+
       KeyType/Enter
       (if (.isAltDown key)
         {:action :continue :state (insert-newline state)}
