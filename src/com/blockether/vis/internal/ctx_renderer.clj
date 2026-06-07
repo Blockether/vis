@@ -1,43 +1,39 @@
 (ns com.blockether.vis.internal.ctx-renderer
-  "Pure-fn renderer: turn `{:ctx :warnings}` into the bare-EDN text block
-   embedded under `;; ctx` in every user message.
+  "Pure-fn renderer: turn `{:ctx :warnings}` into the agent-facing `ctx`
+   snapshot — a real PYTHON DICT under a `# ctx` comment, in every user message.
 
    Design rules:
 
-   1. **ONE printer.** Every Clojure VALUE the renderer emits goes through
-      `zp` — a single locked entry into `safe-zprint-str` with a sealed
-      `ZP_OPTS` config (no commas, sorted keys, width 100). No `pr-str`, no
-      `pprint`, no ad-hoc string concat for value bodies.
+   1. **Python makes the string.** `render-ctx` builds the projected map
+      (`project-ctx`) and hands it to `env/ctx->python-str`, which JSON-bridges it
+      into GraalPy where `__vis_pp__` (Python) stringifies it. The text is THE
+      canonical Python representation — same JSON, same printer — so it matches
+      the live `ctx` dict (bound via `env/bind-ctx!`) byte-for-byte.
 
-   2. **Top-level structure is hand-assembled.** The renderer interleaves
-      `:session/X` headers with their zp'd values. That structural layer is
-      the only thing the renderer itself writes; it never tries to inject
-      text inside a zp'd value.
+   2. **Top-level structure is an ordered map.** `project-ctx` builds an array-map
+      in canonical key order and omits empty entity/hint subtrees.
 
    3. **Hints are their own subtree.** `eng/session-view` conjoins engine
-      structural advisories + extension hook hints into `:session/hints` — a
-      vec of `{:source :content :importance}` maps; the renderer prints them
-      (only when non-empty) as the single \"what needs attention\" surface.
-      No `;; ⚠` line-comments inside any EDN value.
+      structural advisories + extension hook hints into `session_hints` — a list
+      of `{source, content, importance}` dicts; rendered only when non-empty.
 
    Output skeleton:
 
-     ;; ctx
-     {:session/id        \"01HXYZ\"
-      :session/turn      7
-      :session/scope     {:turn 7 :iter 3 :next-form 1}
-
-      :session/workspace {…}
-      :session/symbols   {…}
-
-      :session/tasks {…}
-      :session/facts   {…}
-      :session/trailer […]
-      :session/hints [{:source :engine :content \"task :t1 :done but dep :t2 is :doing\" :importance :medium}]}"
+     # ctx
+     {
+      \"session_id\": \"01HXYZ\",
+      \"session_turn\": 7,
+      \"session_scope\": {\"turn\": 7, \"iter\": 3, \"next_form\": 1},
+      \"session_workspace\": {...},
+      \"session_tasks\": {...},
+      \"session_facts\": {...},
+      \"session_trailer\": [...],
+      \"session_hints\": [{\"source\": \"engine\", \"content\": \"...\", \"importance\": \"medium\"}]
+     }"
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
-   [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.tokens :as tokens]))
 
@@ -64,8 +60,6 @@
 ;; through to the provider verbatim. If a payload is genuinely too
 ;; large to fit a prompt, that must be addressed at the source — not
 ;; by silently dropping bytes here.
-(def ^:private NEXT_ACTIONS_BUDGET 5)
-(def ^:private WIDTH 100)
 
 ;; ---------------------------------------------------------------------------
 ;; Safe-guards
@@ -141,67 +135,13 @@
 
 ;; =============================================================================
 ;; The single value printer
+;;
+;; The `<context>` STRING is produced canonically by GraalPy: `render-ctx` builds
+;; the projected Clojure map, and `env/ctx->python-str` JSON-bridges it into a
+;; DEDICATED printer Context where `__vis_pp__` (Python) stringifies it — separate
+;; from the eval sandbox Context. So the printed text and the live `context` dict
+;; (bound via `env/bind-ctx!` from the SAME projection) cannot drift.
 ;; =============================================================================
-
-(def ^:private ZP_OPTS
-  "Sealed zprint config — every value the renderer emits flows through this.
-   No commas (bare EDN), deterministic key order (sort?), preserve namespace
-   keywords (no shortening)."
-  {:width WIDTH
-   :map   {:comma? false :sort? true}
-   :style :community})
-
-(defn- compact-form-head-opts
-  "Return zprint opts that classify this trailer form's head as `:none`.
-   zprint otherwise hangs many unknown/namespaced calls (`v/*`, `clj/*`,
-   `git/*`, extension aliases) even when they fit. Derive from actual form,
-   never from a stale global allowlist."
-  [form]
-  (if-let [head (and (seq? form) (symbol? (first form)) (first form))]
-    (let [heads (cond-> [(str head)]
-                  (namespace head) (conj (name head)))]
-      (update ZP_OPTS :fn-map merge (zipmap heads (repeat :none))))
-    ZP_OPTS))
-
-(defn- zp
-  "Render any Clojure value to a multi-line bare-EDN string. Trim trailing
-   newline. This is the renderer's ONLY printer surface — see ns docstring."
-  ([v] (zp v ZP_OPTS))
-  ([v opts]
-   (str/trim-newline (fmt/safe-zprint-str v opts))))
-
-;; =============================================================================
-;; Indent helpers (no value-string surgery — only structural padding)
-;; =============================================================================
-
-(defn- pad [n] (apply str (repeat n \space)))
-
-(defn- indent-rest
-  "Prefix every line AFTER the first with `n` spaces. First line stays
-   verbatim so the caller can position it under its key. Single-line
-   input is a no-op; built off a single `str/replace` so the regex
-   matches newlines and inserts indentation in one pass."
-  [s n]
-  (str/replace s #"\n" (str "\n" (pad n))))
-
-;; =============================================================================
-;; Section + bounded subtrees
-;; =============================================================================
-
-(defn- render-section
-  "One top-level `:session/X` key plus its value, with an optional annotation
-   tail underneath. `value-text` is already zp'd (or hand-built for trailer /
-   next-actions). Output column rules:
-
-     :session/X
-     <value-text indented by 1 space>
-     ;; ⚠ …   (also indented by 1 space)
-  "
-  [k value-text annotation-block]
-  (let [body (str " " (zp k) "\n " (indent-rest value-text 1))]
-    (if annotation-block
-      (str body "\n " annotation-block)
-      body)))
 
 ;; ---------------------------------------------------------------------------
 ;; Trailer pins — render :src verbatim, NOT as a Clojure-escaped string.
@@ -253,142 +193,72 @@
   [form]
   (apply dissoc (bound-form-result form) prompt-trailer-form-noise-keys))
 
-(defn- render-form-pin
-  "Render one `:forms` entry as a single Clojure map. ALL pins are pure
-   EDN data — model-emitted forms, consult-resolution pins, summary
-   pins, every kind. No `;; src` verbatim block. No `;; consult` summary
-   line. The model reads the map directly: `:scope :tag :form :result`
-   (or `:scope :tag :id :result` for consult pins). Picking out what
-   matters is the model's job, not the renderer's."
-  [form indent]
-  (let [proj     (presentation-form form)
-        map-text (zp proj (compact-form-head-opts (:form proj)))]
-    (str (pad indent) (indent-rest map-text indent))))
-
-(defn- render-trailer-pin
-  "Render one top-level trailer entry. Summary pins (carry `:summary`) zp
-   straight through — their text has no `:src` field. Form pins
-   (`:forms` vec) are rendered with `render-form-pin` per envelope so the
-   raw source survives unescaped."
-  [pin indent]
-  (cond
-    ;; summary pin — no :src, safe to zp directly
-    (contains? pin :summary)
-    (str (pad indent) (indent-rest (zp pin) indent))
-
-    ;; forms pin — :scope + :forms
-    (vector? (:forms pin))
-    (let [pad-i  (pad indent)
-          inner  (+ indent 2)
-          forms-text (str/join "\n" (map #(render-form-pin % inner) (:forms pin)))]
-      (str pad-i "{:scope " (zp (:scope pin)) "\n"
-        pad-i " :forms\n"
-        pad-i " [\n" forms-text "\n"
-        pad-i "  ]}"))
-
-    :else
-    (str (pad indent) (indent-rest (zp pin) indent))))
-
-(defn- render-trailer-value
-  "Render the full trailer vector verbatim. No entry cap, no per-form
-   payload cap — see the trailer truncation note at the top of this
-   file. Each pin is rendered with `render-trailer-pin` so form-source
-   survives without quote-escape corruption. Returns a multi-line
-   string positioned under the trailer key (caller indents the first
-   line)."
-  [trailer]
-  (if (empty? trailer)
-    "[]"
-    (str "[\n"
-      (str/join "\n" (map #(render-trailer-pin % 1) trailer))
-      "\n ]")))
-
-(defn- project-fact
-  "LLM-facing projection of a fact. Drops engine-internal flags; keeps
-   `:content`, `:status`, `:born`, `:depends-on`, `:contradicts` (vec),
-   and `:files` (durable file regions — path + verbatim src + hash anchors).
-   Raw shape stays in storage; `(recall :K)` windows it. `:id` is the
-   stable turn-qualified handle the model passes to `(recall {:ids …})`;
-   `:recalled` shows it was brought back + why."
-  [[k f]]
-  [k (cond-> {:status (or (:status f) :active)}
-       (:id f)                   (assoc :id (:id f))
-       (some? (:content f))      (assoc :content (:content f))
-       (:born f)                 (assoc :born (:born f))
-       (:recalled f)             (assoc :recalled (:recalled f))
-       (seq (:depends-on f))     (assoc :depends-on (:depends-on f))
-       (seq (:files f))          (assoc :files (:files f))
-       (seq (:contradicts f))    (assoc :contradicts (vec (sort (:contradicts f)))))])
-
-(defn- render-hints-value
-  "Render `:session/hints` — the vec of `{:source :content :importance}` hint
-   maps produced by `eng/session-view` (engine structural advisories +
-   extension hook hints). This is the single \"what needs attention\" surface
-   (replaces the legacy `:session/stages` view and the `;; warn`
-   line-comments). Pure EDN data. Caller only renders this section when the
-   vec is non-empty, so an empty vec never reaches here."
-  [hints]
-  (zp (vec hints)))
+(defn- project-trailer-pin
+  "Prompt-facing copy of one trailer entry. Form pins (`:forms` vec) get each
+   envelope passed through `presentation-form` to strip channel/engine noise
+   keys; summary pins pass through untouched. The result is plain data that
+   `env/ctx->python-str` renders as a Python dict."
+  [pin]
+  (if (vector? (:forms pin))
+    (update pin :forms #(mapv presentation-form %))
+    pin))
 
 ;; =============================================================================
 ;; Top-level
 ;; =============================================================================
 
+(defn project-ctx
+  "THE canonical projection of a `session-view` into the agent-facing ordered map
+   — the SINGLE source of truth for both the rendered `# ctx` text AND the live
+   `ctx` dict bound in the sandbox (loop/execute-code binds this same shape via
+   `env/bind-ctx!`). array-map fixes canonical key order; empty entity/hint
+   subtrees are omitted; trailer pins are noise-stripped via `project-trailer-pin`.
+
+   Takes a `session-view` map (from `eng/session-view`). The bound-ctx path and
+   the render path differ only in whether `:session/hints` is present (the light
+   per-block snapshot skips `derive-warnings`), which falls out of `(seq hints)`."
+  [view]
+  (let [hints (vec (:session/hints view))]
+    (cond-> (array-map
+              :session/id    (:session/id view)
+              :session/turn  (:session/turn view)
+              :session/scope (:session/scope view))
+      (:session/utilization view)         (assoc :session/utilization (:session/utilization view))
+      true                                (assoc :session/workspace (or (:session/workspace view) {}))
+      (:session/env view)                 (assoc :session/env (:session/env view))
+      (not-empty (:session/symbols view)) (assoc :session/symbols (:session/symbols view))
+      (not-empty (:session/tasks view))   (assoc :session/tasks (:session/tasks view))
+      (not-empty (:session/facts view))   (assoc :session/facts (:session/facts view))
+      true                                (assoc :session/trailer
+                                            (mapv project-trailer-pin (or (:session/trailer view) [])))
+      (:session/archive-digest view)      (assoc :session/archive-digest (:session/archive-digest view))
+      (seq hints)                         (assoc :session/hints hints))))
+
 (defn render-ctx
-  "Render the engine view as the bare-EDN text block embedded under `;; ctx`
-   in the user message.
+  "Render the engine view as the agent-facing `ctx` snapshot — a real PYTHON
+   DICT under a `# ctx` comment, STRINGIFIED BY PYTHON (GraalPy). Keys + keyword
+   values are snake_case, literals are Python (True/False/None, \"strings\",
+   [lists], {dicts}), so the block reads EXACTLY like the `ctx` dict the agent
+   holds in the sandbox — by construction, since both come from `project-ctx` and
+   the same `env/...->python` path.
 
-   `:session/hints` is the derived advisory field: a vec of
-   `{:source :content :importance}` maps that `eng/session-view` conjoins
-   from engine structural advisories (dep target missing, contradicting
-   facts, rebind loop, task :done with a non-terminal dep) AND extension
-   hook hints. It is the single 'what needs attention' surface and replaces
-   the legacy `:session/stages` view plus the `;; warn ...` line-comments.
-   The model reads pure EDN data, no embedded prose.
-
-   Raw entity subtrees (`:session/tasks` / `:session/facts`) ride directly
-   into the prompt when non-empty so `(recall :K)` etc. have their
-   canonical sources visible.
+   `session_hints` is the derived advisory field: a list of
+   `{source, content, importance}` dicts (engine structural advisories +
+   extension hook hints) — the single 'what needs attention' surface.
 
    Input map keys:
      :ctx       full ::cs/ctx (validated upstream)
      :warnings  vec of short engine-advisory strings; `session-view` wraps
-                them into `:source :engine` hint maps
+                them into `{source: engine}` hint dicts
 
-   Output: a string starting with `;; ctx\\n{` and ending with `}`.
-   No trailing line-comments anywhere."
+   Wrapped in a `<context>` tag (with a one-line lead-in) so the model can't skim
+   past it — XML delimiters are a strong salience signal. The body is the live
+   value of the `context` Python dict.
+
+   Output: `<context>\\n<lead-in>\\n{ …python dict… }\\n</context>`."
   [{:keys [ctx warnings]}]
-  ;; Serialize from the SINGLE canonical projection. `eng/session-view` is
-  ;; the one place that defines the model-facing `:session/*` shape; the
-  ;; bound `ctx` snapshot (ctx-loop/session-snapshot) derives from the same
-  ;; fn, so the EDN below and the value the model reads as `ctx` cannot drift.
-  (let [view      (eng/session-view ctx warnings)
-        hints*    (vec (:session/hints view))]
-    (str
-      ";; ctx\n"
-      "{" (zp :session/id)    "        " (zp (:session/id view))    "\n"
-      " " (zp :session/turn)  "      "   (zp (:session/turn view))  "\n"
-      " " (zp :session/scope) "     "    (zp (:session/scope view)) "\n"
-      (when-let [util (:session/utilization view)]
-        (str " " (zp :session/utilization) " " (zp util) "\n"))
-      "\n"
-      (render-section :session/workspace
-        (zp (or (:session/workspace view) {})) nil)                "\n\n"
-      (when-let [env-block (:session/env view)]
-        (str (render-section :session/env (zp env-block) nil) "\n\n"))
-      (when-let [symbols (not-empty (:session/symbols view))]
-        (str (render-section :session/symbols (zp symbols) nil) "\n\n"))
-      (when-let [tasks (not-empty (:session/tasks view))]
-        (str (render-section :session/tasks (zp tasks) nil) "\n\n"))
-      (when-let [facts (not-empty (:session/facts view))]
-        (str (render-section :session/facts (zp facts) nil) "\n\n"))
-      (render-section :session/trailer
-        (render-trailer-value (or (:session/trailer view) [])) nil)
-      (when-let [digest (:session/archive-digest view)]
-        (str "\n\n" (render-section :session/archive-digest (zp digest) nil)))
-      (when (seq hints*)
-        (str "\n\n"
-          (render-section :session/hints
-            (render-hints-value hints*) nil)))
-      "}")))
+  (str "<context>\n"
+    "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
+    (env/ctx->python-str (project-ctx (eng/session-view ctx warnings)))
+    "\n</context>"))
 

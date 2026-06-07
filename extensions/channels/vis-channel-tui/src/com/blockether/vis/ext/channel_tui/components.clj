@@ -490,10 +490,10 @@
                                        (max 6 (- body-w 4))
                                        t/footer-fg-muted
                                        false))
-        dep-rows (when (seq (:depends-on t))
+        dep-rows (when (seq (:depends_on t))
                    (wrapped-rows [["  ↳ needs " t/footer-fg-muted false]]
                                  4
-                                 (str/join ", " (map pr-str (:depends-on t)))
+                                 (str/join ", " (map pr-str (:depends_on t)))
                                  (max 6 (- body-w 4))
                                  t/footer-fg-muted
                                  false))]
@@ -533,8 +533,8 @@
                                         false))
         meta-parts (cond-> []
                      (pos? (count (:files f))) (conj (str "⛁" (count (:files f)) " files"))
-                     (seq (:depends-on f)) (conj (str "↳ depends "
-                                                      (str/join ", " (map pr-str (:depends-on f)))))
+                     (seq (:depends_on f)) (conj (str "↳ depends "
+                                                      (str/join ", " (map pr-str (:depends_on f)))))
                      (seq (:contradicts f))
                        (conj (str "⚡ contradicts "
                                   (str/join ", " (map pr-str (sort (:contradicts f)))))))

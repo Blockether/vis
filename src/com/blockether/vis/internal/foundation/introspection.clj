@@ -268,7 +268,7 @@
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
 
     :patch-unbalanced-string
-    "The patch EDN payload likely lost the closing quote of a :search or :replace string. Re-emit as the canonical vector shape (patch [{:path :search :replace} ...]) and compose multi-line content with (str \"line1\\n\" \"line2\\n\") so each line stays on its own physical line and the closing quote stays visible."
+    "The patch payload likely lost the closing quote of a \"search\" or \"replace\" string. Re-emit as the canonical list shape patch([{\"path\": …, \"search\": …, \"replace\": …}]) and write multi-line content with a Python triple-quoted string (\"\"\"line1\\nline2\\n\"\"\") so each line stays on its own physical line and the closing quote stays visible."
 
     :patch-no-match
     "The SEARCH text did not match the file exactly. Use the near-match data when present, or re-read the smallest file slice and emit an exact-byte SEARCH block."
@@ -860,7 +860,7 @@
    session-report-symbol])
 
 (def introspection-prompt
-  "`v/` session strategy: use session-state for data you will combine/filter, session-report when a rendered forensic report is enough.")
+  "Session strategy: use session_state(...) for data you will combine/filter, session_report(...) when a rendered forensic report is enough.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.internal.foundation.core`,

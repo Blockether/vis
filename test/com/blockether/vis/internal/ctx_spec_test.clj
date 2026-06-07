@@ -54,7 +54,7 @@
       (expect (not (s/valid? ::cs/scope-turn "t3/i2"))))))
 
 (defdescribe fact-test
-  (describe "::fact — {:content :born :status? :done-born? :depends-on? :contradicts?}"
+  (describe "::fact — {:content :born :status? :done-born? :depends_on? :contradicts?}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/fact)))
 
@@ -66,10 +66,10 @@
                 {:content "x" :born "t1/i1/f1"
                  :status :superseded :done-born "t4/i2/f1"})))
 
-    (it "accepts :depends-on vec and :contradicts set"
+    (it "accepts :depends_on vec and :contradicts set"
       (expect (s/valid? ::cs/fact
                 {:content "x" :born "t1/i1/f1"
-                 :depends-on [:other-fact]
+                 :depends_on [:other-fact]
                  :contradicts #{:rival-fact}})))
 
     (it "rejects unknown :status value"
@@ -90,7 +90,7 @@
                 {:content "x" :born "t1/i1/f1" :random-field 42})))))
 
 (defdescribe task-test
-  (describe "::task — {:title :status :born + optional :depends-on/source/hook-id/importance}"
+  (describe "::task — {:title :status :born + optional :depends_on/source/hook-id/importance}"
     (it "round-trips for 25 samples"
       (expect (round-trip-valid? ::cs/task)))
 
@@ -98,9 +98,9 @@
       (expect (s/valid? ::cs/task
                 {:title "x" :status :todo :born "t1/i1/f1"})))
 
-    (it "allows :depends-on vec"
+    (it "allows :depends_on vec"
       (expect (s/valid? ::cs/task
-                {:title "x" :depends-on [:a]
+                {:title "x" :depends_on [:a]
                  :status :todo :born "t1/i1/f1"})))
 
     (it "rejects missing :title"
@@ -357,7 +357,7 @@
                                :born "t4/i1/f1"}}
                  :session/tasks
                  {:add-dep {:title "add bcrypt"
-                            :depends-on []
+                            :depends_on []
                             :status :done
                             :done-born "t5/i3/f1"
                             :born "t5/i1/f2"}}
