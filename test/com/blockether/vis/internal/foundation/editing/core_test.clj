@@ -848,6 +848,24 @@
       (expect (extension/render-value? (:display out)))
       (expect (string/includes? (pr-str (:summary out)) "LS"))))
 
+  (it "ls renderer groups files under their dir header, indented, with sizes"
+    (let [render (private-fn "channel-render-ls")
+          out (render {:path "."
+                       :groups [{:dir "bin" :files [{:name "dev" :size 2308}
+                                                    {:name "vis" :size 4626}]}
+                                {:dir "src" :files []}]
+                       :entry-count 3 :file-count 2 :dir-count 2})
+          body (pr-str (:display out))]
+      ;; dir header stated once, files indented beneath it (no repeated prefix)
+      (expect (string/includes? body "bin/"))
+      (expect (string/includes? body "  dev"))
+      (expect (string/includes? body "  vis"))
+      ;; a dir with only subdirs still shows as a bare header
+      (expect (string/includes? body "src/"))
+      ;; sizes rendered human-readable (2308 -> 2.3k), not raw bytes-with-B
+      (expect (string/includes? body "2.3k"))
+      (expect (not (string/includes? body "2308B")))))
+
   (it "ls renderer with no entries still returns a valid (empty-bodied) display"
     (let [render (private-fn "channel-render-ls")
           out (render {:path "." :groups [] :entry-count 0 :file-count 0 :dir-count 0})]
