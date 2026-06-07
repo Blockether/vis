@@ -316,11 +316,15 @@
     (when-let [turn (latest-turn db-info session-id)]
       (let [iterations (iteration-rows db-info (:id turn))
             attempts   (attempts-from-iterations db-info iterations)]
+        ;; No `:errors` key: it used to be `(filterv :error attempts)` — a
+        ;; verbatim DUPLICATE of every errored attempt (full code+result
+        ;; again) that nothing consumed. `:failures` already carries the
+        ;; curated failure diagnostics, and the model can derive raw errored
+        ;; attempts itself: [a for a in r["attempts"] if a.get("error")].
         (cond-> {:id           (:id turn)
                  :user-request (:user-request turn)
                  :status       (:status turn)
                  :attempts     attempts
-                 :errors       (filterv :error attempts)
                  :failures     (failures-from-iterations db-info iterations)
                  :iteration    (iteration-pointer env)
                  :cost         (turn-cost-summary turn)}
