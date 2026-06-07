@@ -63,9 +63,11 @@
 ;; git/status
 ;; ---------------------------------------------------------------------------
 
+(def ^:private status-code-order ["A" "M" "D" "??" "UU"])
+
 (defn render-status
-  [{:keys [branch head clean? entries]}]
-  (let [n     (count entries)
+  [{:keys [branch head clean? changes]}]
+  (let [n     (reduce + 0 (map count (vals changes)))
         label (if clean? "CLEAN" "DIRTY")]
     {:summary
      (cond-> {:left  (ir-strong label)
@@ -74,15 +76,19 @@
                      (ir-p (ir-code (or branch "?")) " @" (short-sha head)))
        (not clean?) (assoc :right (str n " entr" (if (= n 1) "y" "ies"))))
      ;; Body ONLY — label / branch / @head / count are already on the summary
-     ;; op-row; repeating them here renders the header twice.
+     ;; op-row; repeating them here renders the header twice. GROUPED BY status
+     ;; code: each code stated once as a header, its files listed beneath.
      :display
      (ir-root
-       (when (seq entries)
+       (when (seq changes)
          (ir-code-block "text"
            (cap (str/join "\n"
-                  (map (fn [{:keys [status file]}]
-                         (str status " " file))
-                    entries))))))}))
+                  (for [code  status-code-order
+                        :let  [files (get changes code)]
+                        :when (seq files)
+                        line  (cons (str code)
+                                (map #(str "  " %) files))]
+                    line))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/diff

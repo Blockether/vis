@@ -158,7 +158,7 @@
         (expect (clojure.string/includes? (ex-message e) "git_diff :from must be a string"))))))
 
 (defdescribe git-status-test
-  (it "returns branch, head, cleanliness, and entries from JGit"
+  (it "returns branch, head, cleanliness, and changes grouped by status code"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root)
@@ -168,8 +168,9 @@
           (expect (string? (get-in result [:result :branch])))
           (expect (string? (get-in result [:result :head])))
           (expect (false? (get-in result [:result :clean?])))
-          (expect (some #(= {:status "??" :file "new.txt"} %)
-                    (get-in result [:result :entries]))))
+          ;; grouped: the status code is a key, its files a vec stated once
+          (expect (nil? (get-in result [:result :entries])))
+          (expect (= ["new.txt"] (get-in result [:result :changes "??"]))))
         (finally (cleanup root))))))
 
 (defdescribe git-log-test

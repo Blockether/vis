@@ -135,18 +135,41 @@
                   (assoc :branch (:branch ws))
                   path (assoc :path path))}))))
 
+(def ^:private status-code-order
+  "Canonical porcelain status codes, in display order.
+   A=staged-add  M=modified  D=deleted  ??=untracked  UU=conflicted."
+  ["A" "M" "D" "??" "UU"])
+
+(defn- group-status-by-code
+  "Fold flat porcelain `[{:status CODE :file PATH} ...]` into a map keyed by
+   status code → vec of file paths — the status code is stated ONCE per group
+   instead of on every file. Same 'group by the shared key' shape as ls."
+  [entries]
+  (let [g (group-by :status entries)]
+    (reduce (fn [m code]
+              (if-let [fs (seq (get g code))]
+                (assoc m code (mapv :file fs))
+                m))
+      {} status-code-order)))
+
 (defn git-status-fn
-  "Working-tree status of the active workspace as parsed porcelain.
+  "Working-tree status of the active workspace, GROUPED BY STATUS CODE.
 
    Returns:
      {:branch \"main\"
       :head   \"sha\"
       :clean? bool
-      :entries [{:status :file} ...]}"
+      :changes {\"M\": [\"a.clj\", \"b.clj\"], \"??\": [\"new.txt\"], ...}}
+   where code keys are A=staged-add, M=modified, D=deleted, ??=untracked,
+   UU=conflicted. Each code is listed ONCE with its file paths instead of
+   repeating on every file. `:changes` is empty when clean."
   [env]
   (let [snapshot (or (git-core/status-snapshot (io/file (env-root env)))
                    {:branch nil :head nil :clean? true :entries []})]
-    (extension/success {:result snapshot})))
+    (extension/success
+      {:result (-> snapshot
+                 (dissoc :entries)
+                 (assoc :changes (group-status-by-code (:entries snapshot))))})))
 
 (defn- coerce-log-limit
   "Normalize the git_log() argument into a 1..200 integer.
@@ -372,7 +395,7 @@
 (def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts dict: {\"from\": ref, \"to\": ref, \"path\": P, \"is_patch\": bool} for arbitrary range + path filter; is_patch true includes per-file unified-diff text (truncated at ~64KB/file). to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [{:file :+ :- [:patch]}] :porcelain [...]}. JGit-backed; no host git binary needed."
        :arglists '([] [opts])} diff git-diff-fn)
 
-(def ^{:doc "Working-tree status of the currently bound workspace. Returns {:branch :head :clean? :entries [{:status :file} ...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Working-tree status of the currently bound workspace, grouped by status code. Returns {\"branch\":.., \"head\":.., \"clean\":bool, \"changes\": {\"M\": [\"a.clj\", ..], \"??\": [\"new.txt\"], ..}} where codes are A=staged-add, M=modified, D=deleted, ??=untracked, UU=conflicted (each code listed once with its files). JGit-backed; no host git binary needed."
        :arglists '([])} status git-status-fn)
 
 (def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a dict {\"limit\": N, \"path\": P, \"ref\": R, \"since\": D, \"until\": D, \"author\": S}. since/until accept ISO date strings, epoch ms/s, or java.util.Date. author is a case-insensitive substring match on name OR email. Returns {:branch :commits [...]}. Each commit dict ALWAYS has sha, short_sha, author, email, at, subject; the rest appear only when they add info: body only when non-blank; committer/committer_email/committed_at only when they DIFFER from author/email/at; parents only for a merge (>1 parent). So a normal commit is just {sha, short_sha, author, email, at, subject}. JGit-backed; no host git binary needed."
