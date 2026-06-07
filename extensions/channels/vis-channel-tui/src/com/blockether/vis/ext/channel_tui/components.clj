@@ -126,33 +126,33 @@
     (let [n     (long (count hits))
           q     (str query)
           qshow (if (str/blank? q) "type to search…" q)
-          qpad  (let [s (truncate-with-ellipsis qshow find-input-width)]
-                  (str s (apply str (repeat (max 0 (- find-input-width (long (p/display-width s)))) \space))))
+          ;; The white input field carries its OWN inner padding — a space each
+          ;; side on input-field-bg — so the query text isn't jammed against the
+          ;; field edge. That's padding the box border can't give.
+          qfield (let [s (truncate-with-ellipsis qshow find-input-width)]
+                   (str " " s
+                     (apply str (repeat (max 0 (- find-input-width (long (p/display-width s)))) \space))
+                     " "))
           cnt   (format " %-5s" (cond (str/blank? q) ""
                                       (zero? n)      "0/0"
                                       :else          (str (inc (long (or index 0))) "/" n)))
-          ;; Inner padding so content breathes inside the border: `hpad` cols
-          ;; each side, `vpad` blank rows above/below the content row — a padded
-          ;; card, not a cramped strip.
-          hpad  2
-          vpad  1
-          ;; content ops. :input is the white field; :chrome/:gap ride the box
-          ;; bg; :btn delegates to the reusable button! widget.
+          ;; content ops. :input is the white field; :chrome/:gap ride the box bg;
+          ;; :btn delegates to the reusable button! widget.
           ops   (concat
-                  [[:input qpad] [:chrome "  "] [:chrome cnt] [:chrome "  "]]
-                  (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) find-bar-buttons)))
+                  [[:chrome " "] [:input qfield] [:chrome "  "] [:chrome cnt] [:chrome " "]]
+                  (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) find-bar-buttons))
+                  [[:chrome " "]])
           content-w (long (reduce + (map (fn [op] (long (p/display-width (last op)))) ops)))
-          box-w (+ content-w (* 2 hpad) 2)
-          box-h (+ 3 (* 2 vpad))
+          box-w (+ content-w 2)
           box-l (max 0 (- (long cols) box-w 1))
           box-t (long text-top)
-          row   (+ box-t 1 vpad)
-          x0    (+ box-l 1 hpad)]
-      ;; box: fill bg, then the border
+          row   (inc box-t)
+          x0    (inc box-l)]
+      ;; box: fill bg, then single-line border
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/fill-rect! g box-l box-t box-w box-h)
-      (p/draw-box! g box-l box-t box-w box-h)
+      (p/fill-rect! g box-l box-t box-w 3)
+      (p/draw-box! g box-l box-t box-w 3)
       ;; content row (vertically centred between the borders)
       (reduce
         (fn [x op]

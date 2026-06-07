@@ -398,7 +398,16 @@ def __vis_render_ctx__(jsons):
    `__vis_docs__` text."
   [^Context ctx]
   (let [g (.getBindings ctx "python")
-        names (fn [] (sort (filter #(not (str/starts-with? % "__vis"))
+        ;; Python's own builtins (`len`, `print`, every `*Error`/`*Warning`
+        ;; class, …) are NOT vis tools, so `apropos` must NOT list them — it is
+        ;; a TOOL-discovery surface, not a dump of the Python stdlib. Captured
+        ;; once (builtins don't change over the context's life). Names starting
+        ;; with `_` (REPL slots `_1`/`_e`, `__vis*`, dunders) are engine
+        ;; bookkeeping and are filtered too.
+        builtin-names (set (try (->clj (.eval ctx "python" "dir(__builtins__)"))
+                             (catch Throwable _ nil)))
+        names (fn [] (sort (filter (fn [n] (and (not (str/starts-with? n "_"))
+                                             (not (contains? builtin-names n))))
                              (map str (seq (.getMemberKeys g))))))]
     (.putMember g "apropos"
       (reify ProxyExecutable
