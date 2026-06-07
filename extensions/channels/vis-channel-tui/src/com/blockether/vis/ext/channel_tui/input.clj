@@ -1047,8 +1047,12 @@
       ;; acceptance, and verification.
       KeyType/F2 {:action :toggle-tasks :state state}
 
+      ;; F3: open in-session search. While search is ACTIVE the screen key-loop
+      ;; intercepts keys (typing → query, F3/Shift+F3 → next/prev) BEFORE this
+      ;; handler, so this branch only fires to OPEN search from cold.
+      KeyType/F3 {:action :search-open :state state}
+
       ;; F4: managed-resources dialog (nREPLs, daemons…) — stop/restart by id.
-      ;; (F3/Shift+F3 are in-session search.)
       KeyType/F4 {:action :open-resources :state state}
 
       ;; F5/F6: F-key aliases for the command palette (also Ctrl+K) and the

@@ -801,6 +801,57 @@
     {:entries (persistent! @acc)
      :truncated? @truncated?}))
 
+(defn- entry-parent-dir
+  "Workspace-relative parent directory of a flat entry path, or `root-rel`
+   when the path has no slash (a direct child of the listed root)."
+  [^String path root-rel]
+  (let [i (str/last-index-of path "/")]
+    (if i (subs path 0 i) root-rel)))
+
+(defn- entry-base-name
+  [^String path]
+  (let [i (str/last-index-of path "/")]
+    (if i (subs path (inc i)) path)))
+
+(defn- group-entries-by-dir
+  "Fold the pre-order flat `entries` into ONE group per directory, in
+   first-seen (pre-order) order:
+     [{:dir \"bin\" :files [{:name \"dev\" :size 2308} ...]} ...]
+
+   The dir path is stated ONCE per group instead of repeating its full
+   prefix on every file — that prefix duplication is the whole reason a
+   flat ls bloats context. Every directory the walk covered appears as a
+   group header (so the tree stays visible even for dirs that hold only
+   subdirs); `root-rel` is the listed root and always leads. Files carry
+   the raw `:size` int (nil for the implicit dir rows); display formats it."
+  [entries root-rel]
+  (let [order   (volatile! [])
+        seen    (volatile! #{})
+        files   (volatile! {})
+        ensure! (fn [d]
+                  (when-not (contains? @seen d)
+                    (vswap! seen conj d)
+                    (vswap! order conj d)
+                    (vswap! files assoc d (transient []))))]
+    (ensure! root-rel)
+    (doseq [{:keys [path type size]} entries]
+      (if (= type :dir)
+        (ensure! path)
+        (let [d (entry-parent-dir path root-rel)]
+          (ensure! d)
+          (vswap! files update d conj! {:name (entry-base-name path) :size size}))))
+    (mapv (fn [d] {:dir d :files (persistent! (get @files d))}) @order)))
+
+(defn- human-size
+  "Compact human-readable byte count for DISPLAY only (the structured
+   `:size` stays a raw int). nil → nil."
+  [n]
+  (cond
+    (nil? n)               nil
+    (< (long n) 1024)      (str n)
+    (< (long n) 1048576)   (format "%.1fk" (/ (double n) 1024.0))
+    :else                  (format "%.1fM" (/ (double n) 1048576.0))))
+
 (defn- list-files
   ;; Internal helper — always called with a real map (or nil).
   ;; The dual kwargs/map calling convention lives on the public
@@ -842,7 +893,7 @@
      {:path          (rel-path f)
       :absolute-path (.getAbsolutePath f)
       :root-type     (if (.isDirectory f) :dir :file)
-      :entries       entries
+      :groups        (group-entries-by-dir entries (rel-path f))
       :entry-count   (count entries)
       :file-count    file-count
       :dir-count     dir-count
@@ -2333,24 +2384,28 @@
                :got mode})))))
 
 (defn- ls-tool
-  "List a directory as a FLAT recursive entry list. Returns a dict:
+  "List a directory recursively, GROUPED BY DIRECTORY. Returns a dict:
      {\"path\": P,             # workspace-relative root path
       \"absolute_path\": AP,
       \"root_type\": \"dir\"|\"file\",
-      \"entries\": [{\"path\":.., \"type\":.., \"size\":..}, ...],
+      \"groups\": [{\"dir\": \"bin\",
+                  \"files\": [{\"name\": \"dev\", \"size\": 2308}, ...]}, ...],
       \"entry_count\": N, \"file_count\": F, \"dir_count\": D,
       \"truncated\": bool,     # True when limit clamped the walk
       \"depth\": N, \"limit\": N}
 
-   Default behaviour: recursive walk up to depth 10 and 3000 entries.
-   Paths are workspace-relative (same shape as cat / patch path); a
-   \"dir\" entry carries no trailing slash on the path — the discriminator
-   IS the \"type\" field. Sort order: depth-first pre-order; within each
-   directory, sub-directories first, then files, both alphabetical.
+   Each directory is listed ONCE (its `dir` is workspace-relative) with its
+   direct `files` (name + raw byte size). The dir TREE is the set of group
+   `dir` headers — a dir that holds only sub-dirs still appears, with empty
+   `files`. This grouping is why ls stays compact: the dir prefix is stated
+   once per group, not repeated on every file. Default: recursive walk up to
+   depth 10 and 3000 entries, pre-order (sub-dirs first, then files, both
+   alphabetical).
 
-   Filter directly on entries with a comprehension:
-     [e for e in r[\"entries\"] if e[\"path\"].endswith(\".py\")]
-     [e for e in r[\"entries\"] if e[\"type\"] == \"file\"]
+   Reconstruct a full path as g[\"dir\"] + \"/\" + f[\"name\"]. Filter across
+   groups with a comprehension:
+     [g[\"dir\"]+\"/\"+f[\"name\"] for g in r[\"groups\"] for f in g[\"files\"] if f[\"name\"].endswith(\".py\")]
+     [g[\"dir\"] for g in r[\"groups\"]]   # just the directory tree
 
    ls() (no args) and ls(\".\") both list the current directory
    (Pythonic, like os.listdir()). Options are a trailing dict with
@@ -2971,12 +3026,30 @@
      :display (ir-root
                 (ir-code-block "text" (bounded-render-text body)))}))
 
+(defn- ls-group-block
+  "Render one ls dir-group as a header line + indented file rows:
+     bin/
+       dev  2.3k
+       vis  4.5k
+   Empty groups (a dir with only subdirs) render as the bare header."
+  [{:keys [dir files]}]
+  (let [header (str dir "/")]
+    (if (seq files)
+      (str header "\n"
+        (str/join "\n"
+          (map (fn [{:keys [name size]}]
+                 (str "  " name (when (some? size) (str "  " (human-size size)))))
+            files)))
+      header)))
+
 (defn- channel-render-ls
   "Channel preview. Summary is a zone badge: `LS` label, the path
-   centered, file/dir counts anchored right. Display is the flat path
-   list — directory rows get a trailing `/`, file rows a `(NB)` size
-   suffix. Pure projection of `(:entries r)`."
-  [{:keys [path entries entry-count file-count dir-count truncated?
+   centered, file/dir counts anchored right. Display is GROUPED BY
+   DIRECTORY — each dir is stated once as a header, its files indented
+   beneath with a human-readable size. Same grouping the model sees in
+   `:groups`, so the prefix-duplication that bloated the flat list is
+   gone in both surfaces."
+  [{:keys [path groups entry-count file-count dir-count truncated?
            depth limit]}]
   {:summary {:left   (ir-strong "LS")
              :center (ir-code (or path "?"))
@@ -2987,10 +3060,10 @@
                        (when truncated?
                          (str "  truncated" (when limit (str "=" limit)))))}
    :display (ir-root
-              (when (seq entries)
+              (when (seq groups)
                 (ir-code-block "text"
                   (bounded-render-text
-                    (str/join "\n" (map flat-entry-line entries))))))})
+                    (str/join "\n" (map ls-group-block groups))))))})
 
 (defn- render-rg-hit-block
   "Render one content-mode hit with optional :before / :after context.

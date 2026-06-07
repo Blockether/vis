@@ -766,6 +766,20 @@
   (try (state/dispatch [:set-dialog-open true])
     (try (f) (finally (state/dispatch [:set-dialog-open false])))
     (finally (.unlock draw-lock))))
+(defn- search-feedback!
+  "Surface the live find state (query + match position) as a host notification.
+   In-session search has no dedicated input bar, so this banner IS the query
+   echo. Reads app-db AFTER the search event has applied."
+  []
+  (when-let [s (:search @state/app-db)]
+    (let [q (str (:query s)) n (count (:hits s))]
+      (vis/notify!
+        (cond
+          (str/blank? q) "Find: type to search  ·  F3 next · Shift+F3 prev · Esc close"
+          (zero? n)      (str "Find \"" q "\" — no matches  ·  Esc close")
+          :else          (str "Find \"" q "\" — " (inc (long (:index s))) "/" n
+                            "  ·  F3 next · Shift+F3 prev · Esc close"))
+        :level :info :ttl-ms 6000))))
 (defn- open-click-target!
   ([{:keys [kind url]}]
    (vis/worker-future "vis-tui-open-click-target"
@@ -2822,6 +2836,31 @@
                    ;; would have to mash Backspace 27+ times to remove
                    ;; one placeholder - the visual unit-of-edit is the
                    ;; whole token, not its individual characters.
+                   ;; In-session search owns the keyboard while active: typing
+                   ;; edits the query (incremental), F3/Shift+F3 walk matches,
+                   ;; Enter = next, Esc closes. Sits above the placeholder/slash
+                   ;; branches so Backspace + chars reach the query, not the draft.
+                   (and (instance? KeyStroke key) (get-in db [:search :active?]))
+                   (let [ks    ^KeyStroke key
+                         ktype (.getKeyType ks)]
+                     (cond
+                       (= ktype KeyType/Escape)    (state/dispatch [:search-clear])
+                       (= ktype KeyType/F3)        (do (state/dispatch
+                                                         [(if (.isShiftDown ks) :search-prev :search-next)])
+                                                     (search-feedback!))
+                       (= ktype KeyType/Enter)     (do (state/dispatch [:search-next]) (search-feedback!))
+                       (= ktype KeyType/Backspace) (do (state/dispatch
+                                                         [:search-set-query
+                                                          (apply str (butlast (get-in @state/app-db [:search :query])))])
+                                                     (search-feedback!))
+                       (and (= ktype KeyType/Character)
+                         (not (.isCtrlDown ks)) (not (.isAltDown ks)))
+                       (do (state/dispatch
+                             [:search-set-query
+                              (str (get-in @state/app-db [:search :query]) (.getCharacter ks))])
+                         (search-feedback!))
+                       :else nil)
+                     (recur))
                    (and (instance? KeyStroke key)
                      (= KeyType/Backspace (.getKeyType ^KeyStroke key))
                      (input/placeholder-id-before-cursor (:input db)))
@@ -3037,6 +3076,8 @@
                                                 :level :info
                                                 :ttl-ms copy-success-ttl-ms))))
                                         (recur))
+                         :search-open
+                         (do (state/dispatch [:search-open]) (search-feedback!) (recur))
                          :open-resources
                          (do (when-not (:dialog-open? @state/app-db)
                                ;; One dialog at a time: shut the F2/help render-flag
