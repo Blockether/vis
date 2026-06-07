@@ -385,26 +385,36 @@
       (expect (= hint (-> failure :error :hint)))
       (expect (= :none (-> failure :error :failures first :access))))))
 
-(defdescribe vis-ls-flat-shape-test
-  ;; ls now returns a FLAT entry list (no nested :children). The shape
-  ;; mirrors what other harnesses surface so the model can `(filter ...)`
-  ;; directly on (:entries r) instead of a tree-seq walk.
-  (it "returns a flat entry list with workspace-relative paths"
+(defdescribe vis-ls-grouped-shape-test
+  ;; ls returns entries GROUPED BY DIRECTORY: [{:dir D :files [{:name :size}]}]
+  ;; — the dir prefix is stated once per group instead of repeating on every
+  ;; file, so the result stays compact. The dir tree is the set of group :dir
+  ;; headers; full path = (str dir "/" name).
+  (it "returns dir-grouped entries with workspace-relative dir headers"
     (let [list-files (private-fn "list-files")
           ls-tool    (private-fn "ls-tool")
           out        (list-files "." {:depth 1})
-          result     (:result (ls-tool "." {:depth 1}))]
+          result     (:result (ls-tool "." {:depth 1}))
+          groups     (:groups out)]
       (expect (= "." (:path out)))
       (expect (= (str (.toAbsolutePath (fs/path (fs/cwd))))
                 (:absolute-path out)))
       (expect (= :ls (:op result)))
-      (expect (= (:absolute-path out) (:absolute-path result)))
-      (expect (vector? (:entries out)))
-      (expect (every? #(= #{:path :type :size} (set (keys %))) (:entries out)))
-      (expect (every? #{:dir :file} (map :type (:entries out))))
-      ;; Counts add up.
-      (expect (= (count (:entries out))
-                (+ (:file-count out) (:dir-count out))))))
+      (expect (= (:groups out) (:groups result)))
+      (expect (vector? groups))
+      ;; every group is {:dir <str> :files [{:name <str> :size <int|nil>}]}
+      (expect (every? #(= #{:dir :files} (set (keys %))) groups))
+      (expect (every? (fn [g] (string? (:dir g))) groups))
+      (expect (every? (fn [g]
+                        (every? #(= #{:name :size} (set (keys %))) (:files g)))
+                groups))
+      ;; root group leads and dir headers are unique (one group per dir)
+      (expect (= "." (:dir (first groups))))
+      (expect (= (count groups) (count (distinct (map :dir groups)))))
+      ;; total files across groups == file-count; dir headers == dir-count + root
+      (expect (= (:file-count out)
+                (reduce + 0 (map (comp count :files) groups))))
+      (expect (= (inc (:dir-count out)) (count groups)))))
 
   (it "ls() with no args lists the current directory — same as ls(\".\")"
     ;; The model naturally calls `ls()` (Pythonic, like os.listdir()). The
@@ -435,16 +445,19 @@
           path "target/probe/rg-corpus"
           files-only (list-files path {:is_files_only true})
           dirs-only  (list-files path {:is_dirs_only  true})]
-      (expect (every? #(= :file (:type %)) (:entries files-only)))
-      (expect (every? #(= :dir  (:type %)) (:entries dirs-only)))
+      ;; files-only: dir-count 0; every listed file lives under a group
       (expect (zero? (:dir-count files-only)))
-      (expect (zero? (:file-count dirs-only)))))
+      (expect (= (:file-count files-only)
+                (reduce + 0 (map (comp count :files) (:groups files-only)))))
+      ;; dirs-only: every group is a bare dir header (no files), file-count 0
+      (expect (zero? (:file-count dirs-only)))
+      (expect (every? (comp empty? :files) (:groups dirs-only)))))
 
   (it ":limit caps entries and surfaces :truncated? true"
     (let [list-files (private-fn "list-files")
           path "target/probe/rg-corpus"
           out (list-files path {:limit 2})]
-      (expect (= 2 (count (:entries out))))
+      (expect (= 2 (:entry-count out)))
       (expect (true? (:truncated? out)))))
 
   (it ":is_files_only and :is_dirs_only are mutually exclusive"
@@ -455,8 +468,10 @@
   (it ":depth 0 emits no entries (root not included)"
     (let [list-files (private-fn "list-files")
           out (list-files "target/probe/rg-corpus" {:depth 0})]
-      (expect (= 0 (count (:entries out))))
-      (expect (= 0 (:entry-count out))))))
+      (expect (= 0 (:entry-count out)))
+      ;; only the root group remains, with no files (nothing walked)
+      (expect (= 1 (count (:groups out))))
+      (expect (empty? (:files (first (:groups out))))))))
 
 (defn- numbered-tuples
   "[[start str0] [start+1 str1] …] helper for assembling expected
@@ -826,7 +841,7 @@
 
   (it "ls renderer conforms to ::render-fn-result with a zone summary"
     (let [render (private-fn "channel-render-ls")
-          out (render {:path "." :entries [{:path "a" :type :file :size 3}]
+          out (render {:path "." :groups [{:dir "." :files [{:name "a" :size 3}]}]
                        :entry-count 1 :file-count 1 :dir-count 0})]
       (expect (extension/render-fn-result? out))
       (expect (extension/render-zones? (:summary out)))
@@ -835,7 +850,7 @@
 
   (it "ls renderer with no entries still returns a valid (empty-bodied) display"
     (let [render (private-fn "channel-render-ls")
-          out (render {:path "." :entries [] :entry-count 0 :file-count 0 :dir-count 0})]
+          out (render {:path "." :groups [] :entry-count 0 :file-count 0 :dir-count 0})]
       (expect (extension/render-fn-result? out))
       (expect (= :ir (first (:display out)))))))
 

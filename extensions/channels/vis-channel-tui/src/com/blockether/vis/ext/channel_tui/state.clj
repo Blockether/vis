@@ -1243,6 +1243,76 @@
               (fn [db [_ total-h inner-h]]
                 (let [max-s (max 0 (- (long total-h) (long inner-h)))]
                   (assoc db :scroll (scroll/ease (:scroll db) max-s)))))
+
+;; ── In-session search ──────────────────────────────────────────────────────
+;; The render side already exists (paint-search-hits! highlights bubbles whose
+;; index is in `:search :hits`, and reads `:active?`/`:query`). These events are
+;; the missing CONTROLLER: compute hits over the message buffer and park scroll
+;; on the current match. `:hits` is a vec of MESSAGE INDICES (the shape the
+;; painter consumes); navigation cycles `:index` over it and snaps the view to
+;; that message's row via the same `scroll/parked` jump as `:set-scroll`.
+(defn- search-hits
+  "Indices of messages whose text contains `query` (case-insensitive). Blank
+   query → no hits."
+  [messages query]
+  (let [needle (clojure.string/lower-case (str query))]
+    (if (clojure.string/blank? needle)
+      []
+      (vec (keep-indexed
+             (fn [i m]
+               (when (clojure.string/includes?
+                       (clojure.string/lower-case (str (:text m))) needle)
+                 i))
+             messages)))))
+
+(defn- scroll-to-hit
+  "Park scroll at the row of hit `index` (mod into `hits`). Painter clamps the
+   row, so no max-scroll math is needed here. No-op when there are no hits."
+  [db hits index]
+  (if (seq hits)
+    (let [msg-idx (nth hits (mod (long index) (count hits)))
+          offsets (vec (:offsets (:layout db)))
+          row     (long (or (get offsets msg-idx) 0))]
+      (assoc db :scroll (scroll/parked row)))
+    db))
+
+(reg-event-db :search-open
+              ;; Activate the in-session find bar (empty query). One overlay at a
+              ;; time — shut the F2/help panels.
+              (fn [db _]
+                (assoc db
+                  :search {:active? true :query "" :hits [] :index 0}
+                  :help-open? false
+                  :tasks-open? false)))
+
+(reg-event-db :search-set-query
+              ;; Incremental: recompute hits for the full new query, reset to the
+              ;; first match, and snap to it.
+              (fn [db [_ query]]
+                (let [hits (search-hits (:messages db) query)]
+                  (-> db
+                    (assoc :search {:active? true :query (str query) :hits hits :index 0})
+                    (scroll-to-hit hits 0)))))
+
+(reg-event-db :search-next
+              (fn [db _]
+                (let [{:keys [hits index]} (:search db)]
+                  (if (seq hits)
+                    (let [i (mod (inc (long (or index 0))) (count hits))]
+                      (-> db (assoc-in [:search :index] i) (scroll-to-hit hits i)))
+                    db))))
+
+(reg-event-db :search-prev
+              (fn [db _]
+                (let [{:keys [hits index]} (:search db)]
+                  (if (seq hits)
+                    (let [i (mod (dec (long (or index 0))) (count hits))]
+                      (-> db (assoc-in [:search :index] i) (scroll-to-hit hits i)))
+                    db))))
+
+(reg-event-db :search-clear
+              (fn [db _]
+                (assoc db :search {:active? false :query "" :hits [] :index 0})))
 (reg-event-db :scroll-to-message
               ;; In-session search lands here after the user picks a hit. The painter doesn't
               ;; get told an exact :messages-scroll Y value
