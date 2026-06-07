@@ -103,7 +103,7 @@
     [[:task-set! :swap-to-cas
       {:title "replace swap! with CAS retry" :status :todo}]
      [:task-set! :concurrency-test
-      {:title "jstress-style test" :depends-on [:swap-to-cas] :status :todo}]]}
+      {:title "jstress-style test" :depends_on [:swap-to-cas] :status :todo}]]}
 
    ;; Turn 3 — progress: CAS rewrite to :doing then :done
    {:turn 3
@@ -127,14 +127,14 @@
       {:title "rewrite allow? as token-bucket with CAS" :status :todo}]
      [:task-set! :bucket-property-test
       {:title "property test bucket invariants"
-       :depends-on [:rewrite-bucket] :status :todo}]]}
+       :depends_on [:rewrite-bucket] :status :todo}]]}
 
    ;; Turn 5 — add audit-log task depending on the rewrite
    {:turn 5
     :ops
     [[:task-set! :audit-log-hook
       {:title "emit-event in allow? false branch"
-       :depends-on [:rewrite-bucket] :status :todo}]]}
+       :depends_on [:rewrite-bucket] :status :todo}]]}
 
    ;; Turn 6 — close everything out
    {:turn 6
@@ -178,7 +178,7 @@
 
         (it "T2: :concurrency-test depends on :swap-to-cas"
           (expect (= [:swap-to-cas]
-                    (get-in t2 [:ctx :session/tasks :concurrency-test :depends-on]))))
+                    (get-in t2 [:ctx :session/tasks :concurrency-test :depends_on]))))
 
         (it "T2: no dangling-dep or cycle warnings"
           (expect (not (derived-has? (:derived-warnings t2) "nonexistent")))
@@ -209,13 +209,13 @@
           (expect (some? (get-in t4 [:ctx :session/facts :rl-token-bucket-rationale])))
           (expect (= :todo (get-in t4 [:ctx :session/tasks :rewrite-bucket :status])))
           (expect (= [:rewrite-bucket]
-                    (get-in t4 [:ctx :session/tasks :bucket-property-test :depends-on])))))
+                    (get-in t4 [:ctx :session/tasks :bucket-property-test :depends_on])))))
 
       ;; ─── Turn 5: audit task added, depends on the rewrite
       (let [t5 (turn-at result 5)]
         (it "T5: :audit-log-hook depends on :rewrite-bucket"
           (expect (= [:rewrite-bucket]
-                    (get-in t5 [:ctx :session/tasks :audit-log-hook :depends-on]))))
+                    (get-in t5 [:ctx :session/tasks :audit-log-hook :depends_on]))))
 
         (it "T5: a :done task with non-terminal dep surfaces no done-dep warning yet"
           ;; :rewrite-bucket is still :todo here but nothing :done depends on it
@@ -248,7 +248,7 @@
   [{:turn 1
     :ops
     [[:task-set! :prereq {:title "do first" :status :todo}]
-     [:task-set! :follow {:title "do second" :depends-on [:prereq] :status :todo}]
+     [:task-set! :follow {:title "do second" :depends_on [:prereq] :status :todo}]
      ;; close the follow-up while prereq is still open
      [:task-set! :follow {:status :done}]]}])
 
@@ -300,35 +300,35 @@
   [{:turn 1
     :ops
     [[:task-set! :a {:title "a" :status :todo}]
-     [:task-set! :b {:title "b" :status :todo :depends-on [:a]}]
-     [:task-set! :a {:depends-on [:b]}]]}])
+     [:task-set! :b {:title "b" :status :todo :depends_on [:a]}]
+     [:task-set! :a {:depends_on [:b]}]]}])
 
 (defdescribe cycle-test
-  (describe "task-set! :depends-on with cycle is hard-rejected"
+  (describe "task-set! :depends_on with cycle is hard-rejected"
     (let [result (run-scenario cycle-scenario)
           t1 (turn-at result 1)]
-      (it ":a still has no :depends-on (write refused)"
-        (expect (not (contains? (get-in t1 [:ctx :session/tasks :a]) :depends-on))))
+      (it ":a still has no :depends_on (write refused)"
+        (expect (not (contains? (get-in t1 [:ctx :session/tasks :a]) :depends_on))))
 
-      (it "mutation produced a :depends-on-cycle warning"
+      (it "mutation produced a :depends_on_cycle warning"
         (expect (contains? (mutation-codes (:mutation-warnings t1))
-                  :depends-on-cycle))))))
+                  :depends_on_cycle))))))
 
 ;; =============================================================================
-;; Dangling dep: a :depends-on ref to a nonexistent entity surfaces structurally
+;; Dangling dep: a :depends_on ref to a nonexistent entity surfaces structurally
 ;; =============================================================================
 
 (def ^:private dangling-dep-scenario
   [{:turn 1
     :ops
-    [[:task-set! :solo {:title "depends on a ghost" :depends-on [:ghost] :status :todo}]]}])
+    [[:task-set! :solo {:title "depends on a ghost" :depends_on [:ghost] :status :todo}]]}])
 
 (defdescribe dangling-dep-test
-  (describe "task :depends-on a nonexistent entity → structural dangling warning"
+  (describe "task :depends_on a nonexistent entity → structural dangling warning"
     (let [result (run-scenario dangling-dep-scenario)
           t1 (turn-at result 1)]
       (it "the dep was written (cycle check passed; target just doesn't exist)"
-        (expect (= [:ghost] (get-in t1 [:ctx :session/tasks :solo :depends-on]))))
+        (expect (= [:ghost] (get-in t1 [:ctx :session/tasks :solo :depends_on]))))
 
       (it "derive-warnings flags the nonexistent target"
         (expect (derived-has? (:derived-warnings t1) "nonexistent"))))))

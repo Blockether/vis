@@ -133,10 +133,22 @@
    (let [present? (fn [n] (.isFile (io/file dir n)))]
      (cond
        (present? "deps.edn")
+       ;; Inject nREPL + the `nrepl.cmdline` main via a synthetic alias we
+       ;; append LAST. tools.deps resolves `:main-opts` last-alias-wins (while
+       ;; `:extra-deps`/`:extra-paths` accumulate), so a user alias that carries
+       ;; its OWN `:main-opts` — e.g. a `:test` alias whose main is the lazytest
+       ;; runner — still contributes its deps + source paths to the classpath,
+       ;; but our `-m nrepl.cmdline` is what actually runs. The old form passed
+       ;; the user aliases straight to `-M… -m nrepl.cmdline`; their `:main-opts`
+       ;; hijacked the launch and swallowed our `-m`, so the nREPL never booted
+       ;; (lazytest just errored on the stray `-m`). We want their deps/paths,
+       ;; never their main.
        {:tool :clj
         :cmd  ["clojure"
-               "-Sdeps" (str "{:deps {nrepl/nrepl {:mvn/version \"" nrepl-version "\"}}}")
-               (str "-M" (alias-suffix aliases)) "-m" "nrepl.cmdline"]}
+               "-Sdeps" (str "{:aliases {:vis/nrepl-launch "
+                          "{:extra-deps {nrepl/nrepl {:mvn/version \"" nrepl-version "\"}} "
+                          ":main-opts [\"-m\" \"nrepl.cmdline\"]}}}")
+               (str "-M" (alias-suffix aliases) ":vis/nrepl-launch")]}
 
        (present? "project.clj")
        {:tool :lein

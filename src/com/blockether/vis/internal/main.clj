@@ -2641,6 +2641,21 @@
   (shutdown-agents)
   (System/exit 1))
 
+(defn- exit-no-provider!
+  "Calm, guided message when no AI provider is configured — never a stacktrace.
+   Points at the interactive welcome (the curated, zero-friction path)."
+  []
+  (stdout! "")
+  (stdout! "  vis needs an AI provider to get started.")
+  (stdout! "")
+  (stdout! "  ▸ Run  vis  with no arguments to open the welcome screen and")
+  (stdout! "    connect one (Sign in with GitHub / OpenAI / Anthropic, paste an")
+  (stdout! "    API key, or run a local model).")
+  (stdout! "  ▸ Or hand-write ~/.vis/config.edn.")
+  (stdout! "")
+  (shutdown-agents)
+  (System/exit 2))
+
 (defn- truthy-value? [v]
   (contains? #{"1" "true" "yes" "on"} (str/lower-case (str v))))
 
@@ -2790,9 +2805,10 @@
                   :error (System/exit 2)
                   nil))))))
       (catch Throwable t
-        (if (:vis/user-error (ex-data t))
-          (exit-with-user-error! t)
-          (exit-with-fatal-error! t)))
+        (cond
+          (= :vis/no-provider (:type (ex-data t))) (exit-no-provider!)
+          (:vis/user-error (ex-data t))            (exit-with-user-error! t)
+          :else                                    (exit-with-fatal-error! t)))
       (finally
         (when measure?
           (startup-measure-line! "main total" (format-ms (elapsed-ms main-started))))))))

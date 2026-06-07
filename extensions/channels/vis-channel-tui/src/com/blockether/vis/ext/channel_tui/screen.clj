@@ -1897,11 +1897,16 @@
          (try
            (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))
            (vreset! ssh-passphrase-cleanup (install-ssh-passphrase-prompt! screen))
-           ;; Show provider dialog on first launch if no config
+           ;; No provider yet → onboard BEFORE any session is created. A genuine
+           ;; first run (no config file ever) gets the branded welcome; a
+           ;; returning user who simply has no provider right now goes straight
+           ;; to the provider manager. Either returns {:providers [...]} or nil.
            (when-not (:config @state/app-db)
              (when (not (:dialog-open? @state/app-db))
                (when-let [c (with-dialog-lock
-                              #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                              #(if (vis/first-run?)
+                                 (provider/show-welcome! screen)
+                                 (provider/show-provider-dialog! screen (:config @state/app-db))))]
                  (state/dispatch [:set-config c]))))
            ;; Init session: resume if --session-id given, else fresh. The --session-id case was
            ;; already validated above (before Lanterna started), so here we only need the

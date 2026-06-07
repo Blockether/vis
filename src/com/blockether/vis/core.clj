@@ -25,12 +25,12 @@
      - Persistence facade: db-* functions and connection helpers. The
        implementation namespace / extension slot are spelled
        `persistance`; human-facing language is Persistence.
-     - Prompt / SCI / formatting / cancellation / notifications /
-       doctor helpers shared by channels and extensions.
+     - Prompt / Python-sandbox / formatting / cancellation /
+       notifications / doctor helpers shared by channels and extensions.
 
    Not every export is equally high-level. `send!`, extension maps,
    registry builders, read-side persistence helpers, and Markdown export
-   are the preferred integration surface. Low-level SCI, parse-repair,
+   are the preferred integration surface. Low-level sandbox, parse-repair,
    dispatcher, and write-side db helpers are exported because this is a
    host facade, but ordinary extensions should avoid depending on them
    unless they are implementing host-level behavior.
@@ -42,7 +42,7 @@
    [com.blockether.vis.internal.commandline  :as commandline]
    [com.blockether.vis.internal.config       :as config]
    [com.blockether.vis.internal.doctor       :as doctor]
-   [com.blockether.vis.internal.env          :as env]
+   [com.blockether.vis.internal.env-python   :as env]
    [com.blockether.vis.internal.error        :as error]
    [com.blockether.vis.internal.extension    :as extension]
    [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
@@ -421,6 +421,8 @@
 (def save-extension-env-var!             config/save-extension-env-var!)
 (def reload-config!                      config/reload-config!)
 (def resolve-config                      config/resolve-config)
+(def provider-configured?                config/provider-configured?)
+(def first-run?                          config/first-run?)
 (def resolve-db-spec                     config/resolve-db-spec)
 (def current-config                      config/current-config)
 (def router-opts                         config/router-opts)
@@ -442,8 +444,8 @@
 ;; =============================================================================
 (def SYSTEM_VAR_NAMES   env/SYSTEM_VAR_NAMES)
 (def system-var-sym?    env/system-var-sym?)
-(def create-sci-context env/create-sci-context)
-(def sci-update-binding! env/sci-update-binding!)
+(def create-python-context env/create-python-context)
+(def set-python-binding! env/set-python-binding!)
 (def bind-and-bump!     env/bind-and-bump!)
 
 ;; =============================================================================

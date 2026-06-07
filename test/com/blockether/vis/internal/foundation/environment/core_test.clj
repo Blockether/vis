@@ -58,10 +58,10 @@
       (expect (not (contains? syms 'reload-instructions!)))
       (expect (not (contains? syms 'reload-extensions!)))))
 
-  (it "renders a prompt fragment for the unified v/ alias"
+  (it "renders a prompt fragment pointing at the snake_case ctx workspace key"
     (let [prompt (env-core/environment-prompt {})]
       (expect (string? prompt))
-      (expect (str/includes? prompt ":session/workspace"))
+      (expect (str/includes? prompt "session_workspace"))
       (expect (not (str/includes? prompt (str "v/" "snapshot"))))
       (expect (not (str/includes? prompt (str "v/" "git"))))
       (expect (not (str/includes? prompt "v/load-skill")))

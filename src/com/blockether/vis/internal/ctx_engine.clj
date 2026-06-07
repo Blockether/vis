@@ -3,7 +3,7 @@
    tasks + facts. Entirely pure. Persistence, IO, and the provider live
    elsewhere and call into these fns.
 
-   The engine keeps the graph consistent (cycle-free `:depends-on`, status
+   The engine keeps the graph consistent (cycle-free `:depends_on`, status
    FSM, fact contradictions, GC/TTL) and surfaces STRUCTURAL warnings — but
    it does NOT verify the model's claims. Done is self-asserted:
    `(task-set! :K {:status :done})` is accepted as-is, the engine stamps
@@ -138,9 +138,9 @@
   [ctx]
   (let [tasks (or (:session/tasks ctx) {})
         facts (or (:session/facts ctx) {})
-        ;; ---------- Universal :depends-on ---------- dep-graph nodes are typed refs `[:kind
+        ;; ---------- Universal :depends_on ---------- dep-graph nodes are typed refs `[:kind
         ;; :K]` where :kind is one of #{:task :fact}. Edges are sets of typed refs. Bare-key
-        ;; entries on a task / fact `:depends-on` are treated as same-kind shorthand (`:K` on a
+        ;; entries on a task / fact `:depends_on` are treated as same-kind shorthand (`:K` on a
         ;; task → `[:task :K]`). Engine internals + introspection always work in typed shape.
         normalize-ref (fn [default-kind ref]
                         (cond (vector? ref) (let [[kind k] ref]
@@ -151,11 +151,11 @@
                      (into #{} (keep (partial normalize-ref kind)) (or partial-deps [])))
         dep-graph (as-> {} g
                     (reduce-kv (fn [acc task-id task]
-                                 (assoc acc [:task task-id] (edges-from :task (:depends-on task))))
+                                 (assoc acc [:task task-id] (edges-from :task (:depends_on task))))
                       g
                       tasks)
                     (reduce-kv (fn [acc fact-id fact]
-                                 (assoc acc [:fact fact-id] (edges-from :fact (:depends-on fact))))
+                                 (assoc acc [:fact fact-id] (edges-from :fact (:depends_on fact))))
                       g
                       facts))
         rev-deps (reduce-kv (fn [acc node deps]
@@ -205,16 +205,16 @@
   [code anchor message]
   {:code code, :anchor anchor, :message message})
 (defn- normalize-dep-ref
-  "Accept a `:depends-on` element and return a typed `[:kind :K]` ref or
+  "Accept a `:depends_on` element and return a typed `[:kind :K]` ref or
    nil when the input is malformed. Bare keys are resolved to
    `default-kind`, matching the same-kind shorthand for
-   `(task-set! :T {:depends-on [:other-task]})`."
+   `(task-set! :T {:depends_on [:other-task]})`."
   [default-kind ref]
   (cond (vector? ref) (let [[kind k] ref] (when (and (#{:task :fact} kind) (some? k)) [kind k]))
     (keyword? ref) [default-kind ref]
     :else nil))
 (defn- new-cycle-on-node?
-  "Would assigning `:depends-on` `new-deps` to the typed node `[kind k]`
+  "Would assigning `:depends_on` `new-deps` to the typed node `[kind k]`
    introduce a cycle in the unified dep-graph?"
   [ctx kind k new-deps]
   (let [normalized (into #{} (keep (partial normalize-dep-ref kind)) (or new-deps []))
@@ -224,7 +224,7 @@
     (some? (depends-on-cycle? dg))))
 (defn- new-cycle?
   "Task cycle check. Delegates to the universal `new-cycle-on-node?` so a
-   task `:depends-on [:other-task]` normalizes via `[:task :other-task]`."
+   task `:depends_on [:other-task]` normalizes via `[:task :other-task]`."
   [ctx task-k deps]
   (new-cycle-on-node? ctx :task task-k deps))
 (defn entity-id
@@ -255,15 +255,15 @@
                        (or (= (:hook-id partial-map) (:hook-id existing))
                          (and (nil? (:hook-id partial-map)) (= task-k (:hook-id existing)))))]
     (cond
-      ;; Hard reject cycle BEFORE writing :depends-on
-      (and (contains? partial-map :depends-on) (new-cycle? ctx task-k (:depends-on partial-map)))
+      ;; Hard reject cycle BEFORE writing :depends_on
+      (and (contains? partial-map :depends_on) (new-cycle? ctx task-k (:depends_on partial-map)))
       {:ctx ctx,
-       :warnings [(warn :depends-on-cycle
+       :warnings [(warn :depends_on_cycle
                     [task-k]
                     (str "task "
                       task-k
-                      " :depends-on "
-                      (:depends-on partial-map)
+                      " :depends_on "
+                      (:depends_on partial-map)
                       " would introduce a cycle; write refused"))],
        :stamped? false}
       hook-repeat? {:ctx ctx, :warnings [], :stamped? false}
@@ -280,18 +280,18 @@
    to keep a 20-fact session under ~10k tokens total."
   2048)
 (defn- apply-fact-set!
-  "Canonical fact upsert. Relations are DECLARATIVE keys on the map — the\n   map IS the desired state. `:depends-on` and `:contradicts`, when present,\n   REPLACE the entity's full edge set (absent key = leave untouched). For\n   `:contradicts` the symmetric back-links are reconciled: links the new\n   vector drops are removed from BOTH facts; links it adds are written to\n   both. This makes `(fact-set! :K {:contradicts [...]})` the single verb\n   for declaring AND retracting contradictions — no standalone mutator."
+  "Canonical fact upsert. Relations are DECLARATIVE keys on the map — the\n   map IS the desired state. `:depends_on` and `:contradicts`, when present,\n   REPLACE the entity's full edge set (absent key = leave untouched). For\n   `:contradicts` the symmetric back-links are reconciled: links the new\n   vector drops are removed from BOTH facts; links it adds are written to\n   both. This makes `(fact-set! :K {:contradicts [...]})` the single verb\n   for declaring AND retracting contradictions — no standalone mutator."
   [ctx form-scope [fact-k partial-map]]
   (cond
-    (and (contains? partial-map :depends-on)
-      (new-cycle-on-node? ctx :fact fact-k (:depends-on partial-map)))
+    (and (contains? partial-map :depends_on)
+      (new-cycle-on-node? ctx :fact fact-k (:depends_on partial-map)))
     {:ctx ctx,
-     :warnings [(warn :depends-on-cycle
+     :warnings [(warn :depends_on_cycle
                   [:fact fact-k]
                   (str "fact "
                     fact-k
-                    " :depends-on "
-                    (:depends-on partial-map)
+                    " :depends_on "
+                    (:depends_on partial-map)
                     " would introduce a cycle; write refused"))],
      :stamped? false}
     :else
@@ -412,7 +412,7 @@
   "Convenience mutator. `kind` is one of #{:task :fact}, `k` is the
    entity id, `deps` is the new vec of dep refs (bare keys shorthand for
    `kind`, or `[:kind :K]` cross-kind). Engine REPLACES the existing
-   `:depends-on` rather than merging — the model owns the full vec each
+   `:depends_on` rather than merging — the model owns the full vec each
    call.
 
    Cycle check fires before write. Missing entity emits a soft warning
@@ -426,22 +426,22 @@
     (cond (not exists?)
       {:ctx ctx,
        :warnings
-       [(warn :depends-on-missing-entity
+       [(warn :depends_on-missing-entity
           [kind k]
           (str (name kind) " " k " does not exist; " (name kind) "-depends! ignored"))],
        :stamped? false}
       (new-cycle-on-node? ctx kind k deps)
       {:ctx ctx,
-       :warnings [(warn :depends-on-cycle
+       :warnings [(warn :depends_on_cycle
                     [kind k]
                     (str (name kind)
                       " "
                       k
-                      " :depends-on "
+                      " :depends_on "
                       deps
                       " would introduce a cycle; write refused"))],
        :stamped? false}
-      :else {:ctx (assoc-in ctx (conj path :depends-on) (vec deps)),
+      :else {:ctx (assoc-in ctx (conj path :depends_on) (vec deps)),
              :warnings [],
              :stamped? true})))
 (defn apply-mutator
@@ -474,7 +474,7 @@
 ;; derive-warnings — render-time STRUCTURAL passes over indexes
 ;; =============================================================================
 (defn- pass-task-depends-on-refs
-  "Structural pass: task/fact `:depends-on` refs must point to a live
+  "Structural pass: task/fact `:depends_on` refs must point to a live
    task or fact. Bare-key refs resolve same-kind; typed `[:kind :K]`
    refs are checked against their target subtree. Each dangling ref is
    anchored under its owning entity so the renderer can surface it."
@@ -485,23 +485,23 @@
         ref-exists? (fn [[k kw]] (some? (get (get subtree k) kw)))]
     (vec (for [[default-kind subtree-map] [[:task tasks] [:fact facts]]
                [entity-id entity] subtree-map
-               raw-dep (or (:depends-on entity) [])
+               raw-dep (or (:depends_on entity) [])
                :let [ref (normalize-dep-ref default-kind raw-dep)]
                :when (and ref (not (ref-exists? ref)))]
-           (warn :depends-on-dangling
+           (warn :depends_on-dangling
              [default-kind entity-id ref]
              (str (name default-kind)
                " " entity-id
-               " :depends-on refs nonexistent " (name (first ref))
+               " :depends_on refs nonexistent " (name (first ref))
                " " (second ref)))))))
 (defn- pass-task-done-deps
-  "Structural pass: task :status :done while a :depends-on target is
+  "Structural pass: task :status :done while a :depends_on target is
    non-terminal. Soft only — done is self-asserted and never reverted."
   [ctx _indexes]
   (let [tasks (or (:session/tasks ctx) {})]
     (vec (for [[task-id task] tasks
                :when (= :done (:status task))
-               d (or (:depends-on task) [])
+               d (or (:depends_on task) [])
                :let [dep (get tasks d)]
                :when (and (some? dep) (not (task-terminal? (:status dep))))]
            (warn :task-done-pending-dep
@@ -1556,7 +1556,7 @@
          {:source <:engine | hook-id>  ; WHO raised it
           :content <string>            ; the advisory text
           :importance <:info|:warn|:critical>
-          :depends-on [refs]}          ; optional — related entities
+          :depends_on [refs]}          ; optional — related entities
        Engine structural advisories (`warnings`) become `:source :engine`
        hints; extension hook hints (active `:source :hook` tasks) become
        `:source <hook-id>` hints and are MOVED OUT of `:session/tasks` so
@@ -1581,7 +1581,7 @@
                                     (cond-> {:source     (or (:hook-id v) k)
                                              :content    t
                                              :importance (normalize-importance (:importance v))}
-                                      (seq (:depends-on v)) (assoc :depends-on (vec (:depends-on v)))))))))
+                                      (seq (:depends_on v)) (assoc :depends_on (vec (:depends_on v)))))))))
          rank         {:critical 0 :warn 1 :info 2}
          hints        (->> (concat engine-hints hook-hints)
                         (sort-by (fn [h] (rank (:importance h) 3)))

@@ -19,7 +19,7 @@
   (it "keeps the unified prompt compact with environment owned by ctx"
     (with-redefs [agents/instructions (fn [] {:found? false})]
       (let [prompt ((:ext/prompt foundation/vis-extension) {})]
-        (expect (str/includes? prompt "`v/` env strategy"))
+        (expect (str/includes? prompt "Env strategy"))
         ;; Runtime/project facts belong in ctx, not prompt labels.
         (expect (not (str/includes? prompt "RUNTIME")))
         (expect (not (str/includes? prompt "PROJECT-GUIDANCE")))

@@ -4,9 +4,9 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.persistance :as persistance]
-   [lazytest.core :refer [defdescribe describe it expect]]
-   [sci.core :as sci]))
+   [lazytest.core :refer [defdescribe describe it expect]]))
 
 (defn- captured-ask-code-opts
   [opts]
@@ -81,9 +81,9 @@
                                         :partial-content "```clojure\n(dead)"})))
                           2 (do
                               ((:on-chunk opts) {:reasoning "fresh thinking"})
-                              {:blocks [{:lang "clojure"
-                                         :source "(done {:answer \"ok\"})"}]
-                               :raw "```clojure\n(done {:answer \"ok\"})\n```"
+                              {:blocks [{:lang "python"
+                                         :source "done(\"\"\"ok\"\"\")"}]
+                               :raw "```python\ndone(\"\"\"ok\"\"\")\n```"
                                :reasoning "fresh thinking"
                                :tokens {}})))]
           (let [result (lp/run-iteration env []
@@ -378,11 +378,6 @@
       (expect (zero? (count compat)))
       (expect (zero? (count replays))))))
 
-(def ^:private parse-top-level-forms
-  (deref #'lp/parse-top-level-forms))
-
-(def ^:private code-entries-preflight
-  (deref #'lp/code-entries-preflight))
 
 (def ^:private empty-code-error-with-observation
   (deref #'lp/empty-code-error-with-observation))
@@ -596,21 +591,14 @@
         (finally
           (lp/dispose-environment! env)))))
 
-  (it "set-session-title! remains a manual bare override, not a v/ tool"
+  (it "set_session_title is NOT a tool — the title is host-generated"
     (let [env (lp/create-environment ::router {:db :memory})]
       (try
-        (expect (= :vis/silent
-                  (:val (sci/eval-string+ (:sci-ctx env)
-                          "(set-session-title! \"Liveness check\")"
-                          {:ns (:sandbox-ns env)}))))
-        (try
-          (sci/eval-string+ (:sci-ctx env)
-            "(v/set-session-title! \"Liveness check\")"
-            {:ns (:sandbox-ns env)})
-          (expect false)
-          (catch Throwable e
-            (expect (str/includes? (ex-message e)
-                      "Unable to resolve symbol: v/set-session-title!"))))
+        ;; The model has no `set_session_title` binding; calling it raises
+        ;; (NameError) and surfaces as a structured eval error.
+        (let [bad (env/run-python-block (:python-context env)
+                    "set_session_title(\"Liveness check\")")]
+          (expect (some? (:error bad))))
         (finally
           (lp/dispose-environment! env))))))
 
@@ -661,305 +649,18 @@
       (expect (contains? opts :semantic-timeout-ms))
       (expect (nil? (:semantic-timeout-ms opts))))))
 
-(defdescribe parse-top-level-forms-test
-  (it "keeps quote reader macro attached when streaming top-level forms"
-    (let [{:keys [forms parse-error]} (parse-top-level-forms
-                                        "(require '[clojure.string :as str])")
-          form (:form (first forms))]
-      (expect (nil? parse-error))
-      (expect (= 1 (count forms)))
-      (expect (= '(require (quote [clojure.string :as str])) form))
-      (expect (= "(require (quote [clojure.string :as str]))"
-                (:source (first forms))))))
-
-  (it "keeps a blank line between merged clojure fences"
-    (let [{:keys [code-entries normalized-code]}
-          (code-entries-preflight
-            1
-            [{:lang "clojure" :source "(def a 1)"}
-             {:lang "clojure" :source "(def b 2)"}])
-          entry (first code-entries)]
-      (expect (= "(def a 1)\n\n(def b 2)" normalized-code))
-      (expect (= normalized-code (:expr entry)))
-      (expect (true? (:multi-fence-merged? entry)))
-      (expect (= 2 (:multi-fence-count entry))))))
-
-(defdescribe malformed-direct-answer-repair-test
-  (it "auto-repairs delimiter slips in direct answer blocks"
-    (let [preflight (var-get #'lp/code-entries-preflight)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          src "(done [:ir [:p \"Hotword biasing - add \" [:c \"setHotwordsFile\") \"/\" [:c \"setHotwordsScore\"]]])"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))
-          parsed (parse-forms (:expr entry))]
-      (expect (nil? (:repaired? entry)))
-      (expect (string? (:repaired-source parsed)))
-      (expect (nil? (:parse-error parsed)))
-      (expect (false? (:vis/structurally-silent? entry)))
-      (expect (= src (:expr entry)))
-      (expect (str/includes? (:repaired-source parsed) "\"setHotwordsFile\" \"/\""))))
-
-  (it "recovers direct answers torn by nested Markdown code fences"
-    (let [env    (lp/create-environment ::router {:db :memory})
-          answer "# Result\n\n```\nSUBCOMMANDS\n  export\n```\n\nDone."
-          raw    (str "```clojure\n(done {:answer \"" answer "\"})\n```")
-          torn   "(done {:answer \"# Result\n\n"]
-      (try
-        (with-redefs [svar/ask-code! (fn [_ _]
-                                       {:blocks [{:lang "clojure" :source torn}]
-                                        :raw raw
-                                        :tokens {}})]
-          (let [result (lp/run-iteration env []
-                         {:iteration 0
-                          :resolved-model {:provider :test :name "test"}})]
-            (expect (= answer (get-in result [:final-result :answer :answer])))
-            (expect (nil? (get-in result [:blocks 0 :error])))
-            (expect (str/includes? (get-in result [:llm-executable-blocks 0 :source])
-                      "```\\nSUBCOMMANDS"))))
-        (finally
-          (lp/dispose-environment! env)))))
-
-  (it "recovers torn direct answers before executing nested example fences"
-    (let [env    (lp/create-environment ::router {:db :memory})
-          answer (str "# What went wrong\n\n"
-                   "```clojure\n"
-                   "(rg {:any [\":ext/slash-commands\"] :paths [\"extensions\" \"src\"]})\n"
-                   "```\n"
-                   "Done.")
-          raw    (str "```clojure\n(done {:answer " (pr-str answer) "})\n```")
-          torn   "(done {:answer \"# What went wrong\n\n```clojure\n(rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"
-          example "(rg {:any [\\\":ext/slash-commands\\\"] :paths [\\\"extensions\\\" \\\"src\\\"]})"]
-      (try
-        (with-redefs [svar/ask-code! (fn [_ _]
-                                       {:blocks [{:lang "clojure" :source torn}
-                                                 {:lang "clojure" :source example}]
-                                        :raw raw
-                                        :tokens {}})]
-          (let [result (lp/run-iteration env []
-                         {:iteration 0
-                          :resolved-model {:provider :test :name "test"}})]
-            (expect (= answer (get-in result [:final-result :answer :answer])))
-            (expect (= 1 (count (:llm-executable-blocks result))))
-            (expect (nil? (get-in result [:blocks 0 :error])))))
-        (finally
-          (lp/dispose-environment! env)))))
-
-  (it "recovers direct answers when nested answer fences make extraction return no blocks"
-    (let [env    (lp/create-environment ::router {:db :memory})
-          answer (str "TTL lookup needed.\n\n"
-                   "```clojure\n"
-                   "(entry-due-for-archive? entry turn)\n"
-                   "```\n"
-                   "Use archived introspection later.")
-          raw    (str "```clojure\n"
-                   "(rg {:any [\"ttl-for\"] :paths [\"src\"]})\n"
-                   "(done {:answer " (pr-str answer) "})\n"
-                   "```")]
-      (try
-        (with-redefs [svar/ask-code! (fn [_ _]
-                                       {:blocks []
-                                        :all-blocks []
-                                        :saw-fence? true
-                                        :malformed? true
-                                        :raw raw
-                                        :tokens {}})]
-          (let [result (lp/run-iteration env []
-                         {:iteration 0
-                          :resolved-model {:provider :test :name "test"}})]
-            (expect (= answer (get-in result [:final-result :answer :answer])))
-            (expect (= 1 (count (:llm-executable-blocks result))))
-            (expect (nil? (get-in result [:blocks 0 :error])))))
-        (finally
-          (lp/dispose-environment! env)))))
-
-  (it "salvages the answer from a torn done that carried a stale :summarize tail"
-    (let [recover (var-get #'lp/raw-response->direct-answer-source)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          answer (str "## Spowiedź + blocker\n\n"
-                   "Reguła: przy „znajdź gdzie X siedzi w kodzie\" — LS first.\n\n"
-                   "Które?")
-          bad-src (str "(done {:answer \"## Spowiedź + blocker\\n\\n"
-                    "Reguła: przy „znajdź gdzie X siedzi w kodzie\" — LS first.\\n\\n"
-                    "Które?\"\n"
-                    "       :summarize {:trailer [{:scope-start \"t7/i4\"\n"
-                    "                              :scope-end \"t7/i15\"\n"
-                    "                              :summary \"Investigation: no tui code here.\"}]}})")
-          recovered (recover (str "```clojure\n" bad-src "\n```"))
-          parsed (parse-forms recovered)
-          form (:form (first (:forms parsed)))
-          payload (second form)]
-      (expect (some? (:parse-error (parse-forms bad-src))))
-      (expect (nil? (:parse-error parsed)))
-      (expect (= answer (:answer payload)))
-      ;; done no longer carries :summarize — recovery salvages the answer
-      ;; and drops the stale tail.
-      (expect (nil? (:summarize payload)))))
-
-  (it "salvages the answer when a stale :summarize tail precedes :answer"
-    (let [recover (var-get #'lp/raw-response->direct-answer-source)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
-          raw (str "```clojure\n"
-                "(done\n {:summarize {:trailer [{:scope-start \"t39/i1\" :scope-end \"t39/i1\" :summary \"x\"}]}\n  :answer \"" answer "\"})\n"
-                "```")
-          recovered (recover raw)
-          parsed (parse-forms recovered)
-          payload (second (:form (first (:forms parsed))))]
-      (expect (nil? (:parse-error parsed)))
-      (expect (= answer (:answer payload)))
-      (expect (nil? (:summarize payload)))))
-
-  (it "salvages the answer when a stale :summarize tail follows :answer"
-    (let [recover (var-get #'lp/raw-response->direct-answer-source)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
-          raw (str "```clojure\n"
-                "(done {:answer \"" answer "\"\n"
-                "       :summarize {:facts [{:keys [:a :b] :into :ab :summary \"x\"}]}})\n"
-                "```")
-          recovered (recover raw)
-          parsed (parse-forms recovered)
-          payload (second (:form (first (:forms parsed))))]
-      (expect (nil? (:parse-error parsed)))
-      (expect (= answer (:answer payload)))
-      (expect (nil? (:summarize payload)))))
-
-  (it "drops nonsensical :summarize? booleans during direct-answer recovery"
-    (let [recover (var-get #'lp/raw-response->direct-answer-source)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          answer "Before\n\n```clojure\n(+ 1 2)\n```\nAfter."
-          raw (str "```clojure\n"
-                "(done {:answer \"" answer "\"\n"
-                "       :summarize? true})\n"
-                "```")
-          recovered (recover raw)
-          parsed (parse-forms recovered)
-          payload (second (:form (first (:forms parsed))))]
-      (expect (nil? (:parse-error parsed)))
-      (expect (= answer (:answer payload)))
-      (expect (nil? (:summarize? payload)))
-      (expect (nil? (:summarize payload)))))
-
-  (it "recovers table-heavy answers and drops nonsensical :summarize? booleans"
-    (let [recover (var-get #'lp/raw-response->direct-answer-source)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          answer (str "## APROPOS fixed\n\n"
-                   "Table render:\n\n"
-                   "```\n"
-                   "┌─────────────┬───────────┬──────────────┐\n"
-                   "│ symbol      │ args      │ doc          │\n"
-                   "├─────────────┼───────────┼──────────────┤\n"
-                   "│ git/add     │ [arg]     │ Stage paths. │\n"
-                   "│ git/diff    │ [] [opts] │ Diff stat.   │\n"
-                   "└─────────────┴───────────┴──────────────┘\n"
-                   "```\n\n"
-                   "Pushed `28652b8`.")
-          raw (str "```clojure\n"
-                "(done {:answer \"" answer "\"\n"
-                "       :summarize? true})\n"
-                "```")
-          recovered (recover raw)
-          parsed (parse-forms recovered)
-          payload (second (:form (first (:forms parsed))))]
-      (expect (nil? (:parse-error parsed)))
-      (expect (= answer (:answer payload)))
-      (expect (nil? (:summarize? payload)))
-      (expect (nil? (:summarize payload)))))
-
-  (it "auto-repairs stray close delimiters before eval"
-    (let [parsed ((var-get #'lp/parse-top-level-forms) "(def x 1))")]
-      (expect (nil? (:parse-error parsed)))
-      (expect (= "(def x 1)" (:repaired-source parsed)))
-      (expect (= '(def x 1) (:form (first (:forms parsed)))))))
-
-  (it "executes repaired source instead of failing pre-eval validators"
+(defdescribe python-eval-test
+  (it "executes a Python assignment and the binding persists in the sandbox"
     (let [env (lp/create-environment ::router {:db :memory})]
       (try
-        (let [result ((var-get #'lp/execute-code) env "(def x 1))")]
-          (expect (nil? (:error result)))
-          (expect (true? (:repaired? result)))
-          (expect (= "(def x 1)" (:repaired-source result)))
-          (expect (= 1 (:val (sci/eval-string+ (:sci-ctx env) "x" {:ns (:sandbox-ns env)})))))
+        (let [result ((var-get #'lp/execute-code) env "x = 1")]
+          (expect (nil? (:error result))))
+        ;; Sandbox globals persist REPL-style across evals on the same context.
+        (let [read-back (env/run-python-block (:python-context env) "x")]
+          (expect (nil? (:error read-back)))
+          (expect (= 1 (:result read-back))))
         (finally
-          (lp/dispose-environment! env)))))
-
-  (it "per-form segments: `(done…) + (def…)` block surfaces answer-ref + :code (channel hides code via toggle)"
-    (let [preflight (var-get #'lp/code-entries-preflight)
-          src "(done {:answer \"ok\"})\n(def x \"doc\" 1)"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
-      ;; The engine-side `structurally-silent?` is narrow: only
-      ;; true when ZERO `:code` segments survive parsing (a block
-      ;; of pure recap / answer-ref forms). Anything with a `:code`
-      ;; segment flows through; the CHANNEL hides those at paint
-      ;; time when `:vis/show-raw-code` is OFF, so the user sees
-      ;; only the answer / recap rails. This way flipping the toggle
-      ;; ON reveals historical iterations without re-parsing.
-      (expect (false? (:vis/structurally-silent? entry)))
-      (expect (= [{:kind :answer-ref}
-                  {:kind :code :source "(def x \"doc\" 1)"}]
-                (:render-segments entry)))))
-
-  (it "still hides standalone direct-answer blocks"
-    (let [preflight (var-get #'lp/code-entries-preflight)
-          src "(done {:answer \"ok\"})"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
-      (expect (true? (:vis/structurally-silent? entry)))
-      (expect (= [{:kind :answer-ref}] (:render-segments entry)))))
-
-  (it "mixed answer/def blocks: form-start chunk fires; CHANNEL decides per-paint whether to hide the code"
-    ;; The engine no longer stamps `structurally-silent?` on a block
-    ;; just because every `:code` form is a def — \":vis/show-raw-code\"
-    ;; toggle ON should still reveal the def source. The CHANNEL
-    ;; reads the toggle per paint instead. Loop emits the chunk
-    ;; either way.
-    (let [env    (lp/create-environment ::router {:db :memory})
-          chunks (atom [])
-          src    "(done {:answer \"ok\"})\n(def x \"doc\" 1)"]
-      (try
-        (ctx-loop/set-turn-state! env :turn-position 4)
-        (with-redefs [svar/ask-code! (fn [_ _]
-                                       {:blocks [{:source src :lang "clojure"}]
-                                        :raw ""
-                                        :tokens {}})]
-          (lp/run-iteration env []
-            {:iteration 0
-             :resolved-model {:provider :test :name "test"}
-             :on-chunk #(swap! chunks conj %)})
-          (let [starts (filter #(= :form-start (:phase %)) @chunks)]
-            (expect (= 1 (count starts)))
-            (expect (re-matches #"t4/i1/f\d+" (:scope (first starts))))
-            (expect (not (str/includes? (:scope (first starts)) "turn/")))
-            (expect (false? (:vis/structurally-silent? (first starts))))))
-        (finally
-          (lp/dispose-environment! env)))))
-
-  (it "does not rewrite malformed non-answer code when quotes are unsafe"
-    (let [preflight (var-get #'lp/code-entries-preflight)
-          parse-forms (var-get #'lp/parse-top-level-forms)
-          src "(println \"a\" broken \"b)"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))
-          parsed (parse-forms (:expr entry))]
-      (expect (nil? (:repaired? entry)))
-      (expect (nil? (:repaired-source parsed)))
-      (expect (some? (:parse-error parsed)))
-      (expect (= src (:expr entry)))))
-
-  (it "streams fn shorthand and regex literals through parser instead of rejecting them"
-    (let [parse-forms (var-get #'lp/parse-top-level-forms)
-          regex-src (str "(re-find #" "\"v\" \"voice\")")]
-      (expect (nil? (:parse-error (parse-forms "(filter #(= % 1) [1 2])"))))
-      (expect (nil? (:parse-error (parse-forms regex-src)))))))
-
-(defdescribe top-level-do-unwrapping-test
-  (it "unwraps legacy top-level do before display and eval; the def inside hides per the def-sink contract"
-    (let [preflight (var-get #'lp/code-entries-preflight)
-          src "(do (set-session-title! \"Triage render noise\") (def x \"doc\" 1))"
-          entry (first (:code-entries (preflight 1 [{:source src :lang "clojure"}])))]
-      (expect (= "(set-session-title! \"Triage render noise\")\n(def x \"doc\" 1)"
-                (:expr entry)))
-      (expect (true? (:vis/unwrapped-do? entry)))
-      (expect (= [{:kind :title :value "Triage render noise"}
-                  {:kind :code :source "(def x \"doc\" 1)"}]
-                (:render-segments entry))))))
+          (lp/dispose-environment! env))))))
 
 (defdescribe final-answer-gate-test
   ;; The structural "called a tool this iteration" floor was REMOVED from the

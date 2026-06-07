@@ -24,13 +24,11 @@
    ;; `registrar.clj` for the lazy-load split rationale).
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
-   [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [honey.sql :as sql]
    [lazytest.core :refer [defdescribe it expect]]
-   [next.jdbc :as jdbc]
-   [sci.core :as sci])
+   [next.jdbc :as jdbc])
   (:import
    (java.io File)
    (java.util.concurrent CountDownLatch TimeUnit)))
@@ -1099,37 +1097,4 @@
         (expect (= "info" (:level row)))
         (expect (= "test.event" (:event row)))
         (expect (= (str cid) (:session_soul_id row)))))))
-
-;; ─── from auto_archive_sqlite_test.clj ───
-
-(h/use-mem-store!)
-
-(defn- sci-var
-  "Create a SCI var with optional :doc metadata."
-  ([sym value]
-   (sci/new-var sym value))
-  ([sym value doc]
-   (sci/new-var sym value {:doc doc})))
-
-(defn- make-sandbox
-  "Build a sandbox-map {symbol -> sci-var} from a seq of
-   [sym value] or [sym value doc] triples."
-  [entries]
-  (into {}
-    (map (fn [[sym value & [doc]]]
-           [sym (if doc (sci-var sym value doc) (sci-var sym value))]))
-    entries))
-
-(defn- make-sci-ctx
-  "Create a minimal SCI context with a sandbox namespace containing `entries`.
-   Returns the sci-ctx map (with :env atom)."
-  [entries]
-  (let [sandbox-map (make-sandbox entries)
-        env-atom    (atom {:namespaces {'sandbox sandbox-map}})]
-    {:env env-atom}))
-
-(defn- sandbox-syms
-  "Return the set of symbols currently in the SCI sandbox."
-  [sci-ctx]
-  (set (keys (get-in @(:env sci-ctx) [:namespaces 'sandbox]))))
 

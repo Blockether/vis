@@ -461,8 +461,24 @@
   ([explicit-config]
    (or explicit-config
      (load-config)
-     (throw (ex-info "No provider config. Create ~/.vis/config.edn or add one through the provider dialog."
-              {})))))
+     (throw (ex-info "No AI provider is configured yet."
+              {:type :vis/no-provider})))))
+
+(defn provider-configured?
+  "True when at least one provider is configured (global or project config).
+   The single predicate entry points use to branch onboarding vs normal start —
+   never trips the `resolve-config` throw."
+  []
+  (boolean (some-> (load-config) :providers seq)))
+
+(defn first-run?
+  "True on a genuine FIRST run: no provider configured AND no global
+   `~/.vis/config.edn` has ever been written. Distinguishes the full welcome
+   (brand-new user) from a returning user who merely has no provider right now
+   (e.g. removed their only one)."
+  []
+  (and (not (provider-configured?))
+    (not (.exists (io/file config-path)))))
 
 (def ^:private router-opts-keys
   "Keys forwarded from Vis config `:router` block into `svar/make-router`'s
