@@ -24,7 +24,7 @@ jobs:
           git fetch --tags --no-recurse-submodules origin
           git fetch --deepen=200 origin main
 
-      - uses: DeLaGuardo/setup-clojure@13.6.0
+      - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
 
