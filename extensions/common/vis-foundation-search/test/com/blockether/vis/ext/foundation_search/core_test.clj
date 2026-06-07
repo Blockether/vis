@@ -4,7 +4,7 @@
      - every search/* fn returns the canonical tool envelope
        (`extension/success` / `extension/failure`)
      - `:result` carries the structured shape
-       `{:vis.op :query :citations [...] :citation-count :truncated?
+       `{:op :query :citations [...] :citation-count :truncated?
          :source :endpoint?}`
      - parse-arxiv-atom maps arxiv entries into the canonical citation
        shape
@@ -63,7 +63,7 @@
 
         (it "envelope is a successful tool result"
           (expect (extension/envelope-success? env))
-          (expect (= :search/papers (:vis.op r)))
+          (expect (= :search/papers (:op r)))
           (expect (= :search/papers (:symbol env))))
 
         (it "two citations"
@@ -145,7 +145,7 @@ The spec library specifies the structure of data.")
 
         (it "envelope is a successful tool result keyed :search/web"
           (expect (extension/envelope-success? env))
-          (expect (= :search/web (:vis.op r)))
+          (expect (= :search/web (:op r)))
           (expect (= :search/web (:symbol env))))
 
         (it ":query carried on the envelope payload"
@@ -187,8 +187,8 @@ The spec library specifies the structure of data.")
       (let [env (search/code "clojure spec" {:tokens-num 200})
             r   (envelope-result env)
             cs  (:citations r)]
-        (it "envelope :vis.op = :search/code"
-          (expect (= :search/code (:vis.op r))))
+        (it "envelope :op = :search/code"
+          (expect (= :search/code (:op r))))
         (it ":type :code on every entry"
           (doseq [e cs]
             (expect (= :code (:type e)))))
@@ -355,15 +355,15 @@ const total = add(1, 2);")
       (let [w (envelope-result (search/web "x" {}))
             c (envelope-result (search/code "x" {}))
             p (envelope-result (search/papers "x" {}))
-            base-result-keys #{:vis.op :query :citations :citation-count :truncated? :source}
+            base-result-keys #{:op :query :citations :citation-count :truncated? :source}
             base-citation-keys #{:type :title :url :excerpt :source}]
         (it "every envelope payload has the canonical envelope keys"
           (doseq [r [w c p]]
             (expect (every? #(contains? r %) base-result-keys))))
-        (it ":vis.op is set per fn"
-          (expect (= :search/web    (:vis.op w)))
-          (expect (= :search/code   (:vis.op c)))
-          (expect (= :search/papers (:vis.op p))))
+        (it ":op is set per fn"
+          (expect (= :search/web    (:op w)))
+          (expect (= :search/code   (:op c)))
+          (expect (= :search/papers (:op p))))
         (it "every citation has the canonical citation key set"
           (doseq [e [(first (:citations w))
                      (first (:citations c))

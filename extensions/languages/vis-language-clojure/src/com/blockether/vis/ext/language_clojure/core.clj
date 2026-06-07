@@ -100,6 +100,39 @@
     (sequential? a)  (mapv keyword a)
     :else            [(keyword a)]))
 
+(defn- repl-resource-id [dir] (str "nrepl:" dir))
+
+(defn register-repl-resource!
+  "Mirror a managed nREPL into the session-scoped resource registry so it shows
+   in ctx (`session_resources`) + the footer, and can be stopped/restarted by id
+   from the agent or the UI. No-op without a session or a live spawn. The
+   `:stop-fn`/`:restart-fn` thunks ARE the canonical lifecycle — the footer and
+   `resource_stop` both drive `repl-manager` through them."
+  [session dir aliases result]
+  (when (and session (or (:pid result) (:port result)))
+    (vis/register-resource! session
+      {:id     (repl-resource-id dir)
+       :kind   :nrepl
+       :label  (str "nREPL " (.getName (io/file dir))
+                 (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
+       :status (or (:status result) :up)
+       :detail (cond-> {:dir dir}
+                 (:port result) (assoc :port (:port result))
+                 (seq aliases)  (assoc :aliases (vec aliases)))
+       :pid    (:pid result)
+       :owner  :ext/language-clojure}
+      {:stop-fn    (fn [] (repl-manager/stop! dir))
+       :restart-fn (fn []
+                     (repl-manager/stop! dir)
+                     (let [r (repl-manager/start! dir {:aliases aliases})]
+                       (register-repl-resource! session dir aliases r)
+                       r))})
+    ;; Surface the registration in the TUI (header toast) so a spawned REPL is
+    ;; visible the moment it lands, not just as a silent ● bump in the footer.
+    (vis/notify! (str "● nREPL up — " (.getName (io/file dir))
+                   (when-let [p (:port result)] (str " :" p)))
+      :level :success :ttl-ms 4000)))
+
 (defn clj-repl-fn
   "Manage a workspace nREPL. Positional op (default `:status`) + optional opts
    map `{:dir <path> :aliases [:dev :test]}`:
@@ -125,7 +158,11 @@
          aliases (coerce-aliases (:aliases opts))]
      (case op
        :status  (extension/success {:result (repl-manager/status dir)})
-       :stop    (extension/success {:result (repl-manager/stop! dir)})
+       :stop    (let [r (repl-manager/stop! dir)]
+                  ;; Drop the session's resource mirror (best-effort; the thunk
+                  ;; already ran the real teardown above).
+                  (vis/unregister-resource! (:session-id env) (repl-resource-id dir))
+                  (extension/success {:result r}))
        (:start :restart)
        (do
          (when-not (repl-manager/flag-enabled?)
@@ -135,10 +172,14 @@
          (when-not (.isDirectory (io/file dir))
            (throw (ex-info (str "clj/repl :" (name op) " target dir does not exist: " dir)
                     {:type :clj/bad-args :dir dir})))
-         (extension/success
-           {:result (if (= op :restart)
-                      (do (repl-manager/stop! dir) (repl-manager/start! dir {:aliases aliases}))
-                      (repl-manager/start! dir {:aliases aliases}))}))
+         (let [result (if (= op :restart)
+                        (do (repl-manager/stop! dir) (repl-manager/start! dir {:aliases aliases}))
+                        (repl-manager/start! dir {:aliases aliases}))]
+           ;; Mirror the live REPL into the session resource registry → ctx +
+           ;; footer + stoppable by id. External (not-ours) REPLs carry no pid,
+           ;; so register-repl-resource! no-ops on them.
+           (register-repl-resource! (:session-id env) dir aliases result)
+           (extension/success {:result result})))
        (throw (ex-info (str "clj/repl unknown op: " (pr-str op))
                 {:type :clj/bad-args :got op
                  :examples ["(clj/repl)" "(clj/repl :status)" "(clj/repl :start)"

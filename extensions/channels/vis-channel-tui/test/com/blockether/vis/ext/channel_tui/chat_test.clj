@@ -206,7 +206,7 @@
                       :forms [{:scope "t1/i1/f1"
                                :tag :observation
                                :src "(cat \"src/foo.clj\")"
-                               :result {:vis.op :cat :path "src/foo.clj"}
+                               :result {:op :cat :path "src/foo.clj"}
                                :channel [{:position 0
                                           :form "(cat \"src/foo.clj\")"
                                           :success? true

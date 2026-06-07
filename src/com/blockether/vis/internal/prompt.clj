@@ -4,7 +4,7 @@
    Provider messages are explicit blocks in send order: core system rules,
    project instructions (AGENTS.md / CLAUDE.md when present), extension
    fragments, current user message. Per-iteration user-role context is the
-   engine `ctx` snapshot rendered as Clojure data by the loop."
+   engine snapshot rendered as a Python dict (`context`) by the loop."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
@@ -340,7 +340,7 @@
     "3. One step at a time. Do a SINGLE edit or action, look at its result on "
     "the next turn, then do the next. Do not try to finish a multi-step task "
     "(e.g. add → commit → push) in one reply.\n"
-    "4. Check `ctx` and the live runtime before acting; read an error fully "
+    "4. Check `context` and the live runtime before acting; read an error fully "
     "before retrying — and change approach if it fails twice.\n"
     "5. If the available tools can't do what was asked, say so plainly in "
     "done(\"\"\"…\"\"\"). Do not improvise a fake solution."))
