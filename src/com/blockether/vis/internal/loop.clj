@@ -1445,7 +1445,10 @@
     (= :nudge     (:role result)) :nudge
     (= :thinking  (:role result)) :thinking
     (keyword? (:role result))     (:role result)
-    (= :vis/answer (:result result))    :answer
+    ;; `done` returns the answer sentinel; a tool's keyword crosses `->py` into
+    ;; Python and back as its snake STRING, so the canonical form-result sentinel
+    ;; is "vis_answer" (NOT the keyword `:vis/answer`). See env-python/->py.
+    (= "vis_answer" (:result result))   :answer
     :else :tool))
 
 (defn- eval-envelope
@@ -5197,7 +5200,11 @@
                                        (reset! best-answer-atom
                                          {:value           value
                                           :answer-markdown answer-text}))
-                                     :vis/answer))
+                                     ;; Canonical answer sentinel is the Python-native
+                                     ;; string: `done` is reached only as a Python
+                                     ;; callable, and a keyword return would snake to
+                                     ;; this same string crossing `->py` anyway.
+                                     "vis_answer"))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing

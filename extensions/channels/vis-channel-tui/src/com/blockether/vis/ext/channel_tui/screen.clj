@@ -420,15 +420,20 @@
    the row's characters are the visible glyphs only — and applies
    `SGR/REVERSE` on the matched columns."
   [^TerminalScreen screen layout text-top inner-h cols db]
-  (when-let [{:keys [active? query hits]} (:search db)]
+  (when-let [{:keys [active? query hits index]} (:search db)]
     (when (and active? (seq hits) (not (str/blank? (str query))))
-      (let [needle (str/lower-case (str query))
-            n-len (count needle)
-            hit-set (set hits)]
+      (let [needle     (str/lower-case (str query))
+            n-len      (count needle)
+            hit-set    (set hits)
+            ;; The CURRENT match (the one Ctrl+N/P/scroll is parked on) gets a
+            ;; solid accent block; every OTHER match is plain reverse-video — so
+            ;; "where am I now" reads at a glance vs "what else matched".
+            active-msg (nth hits (mod (long (or index 0)) (count hits)))]
         (doseq [{:keys [idx top height]} (:visible layout)
                 :when (contains? hit-set idx)]
-          (let [start-row (max text-top (+ text-top (long top)))
-                end-row (min (+ text-top inner-h) (+ text-top (long top) (long height)))]
+          (let [current?  (= idx active-msg)
+                start-row (max text-top (+ text-top (long top)))
+                end-row   (min (+ text-top inner-h) (+ text-top (long top) (long height)))]
             (doseq [row (range start-row end-row)]
               (let [sb (StringBuilder.)
                     _ (dotimes [c cols]
@@ -444,7 +449,12 @@
                     (when (>= pos 0)
                       (doseq [x (range pos (+ pos n-len))]
                         (when-let [tc (.getBackCharacter screen (int x) (int row))]
-                          (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))
+                          (.setCharacter screen (int x) (int row)
+                            (if current?
+                              (-> tc
+                                (.withBackgroundColor t/header-active-tab-accent)
+                                (.withForegroundColor t/dialog-bg))
+                              (.withModifier tc SGR/REVERSE)))))
                       (recur (+ pos n-len)))))))))))))
 (def ^:private bubble-content-h-pad
   "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
@@ -766,20 +776,12 @@
   (try (state/dispatch [:set-dialog-open true])
     (try (f) (finally (state/dispatch [:set-dialog-open false])))
     (finally (.unlock draw-lock))))
-(defn- search-feedback!
-  "Surface the live find state (query + match position) as a host notification.
-   In-session search has no dedicated input bar, so this banner IS the query
-   echo. Reads app-db AFTER the search event has applied."
-  []
-  (when-let [s (:search @state/app-db)]
-    (let [q (str (:query s)) n (count (:hits s))]
-      (vis/notify!
-        (cond
-          (str/blank? q) "Find: type to search  ·  F3 next · Shift+F3 prev · Esc close"
-          (zero? n)      (str "Find \"" q "\" — no matches  ·  Esc close")
-          :else          (str "Find \"" q "\" — " (inc (long (:index s))) "/" n
-                            "  ·  F3 next · Shift+F3 prev · Esc close"))
-        :level :info :ttl-ms 6000))))
+(defn- paint-search-bar!
+  "Call-site adapter for `components/find-bar!` — the reusable find bar and its
+   `button!` widgets (paint + hover + click region, together) live in
+   components.clj now, so this can't drift from the highlight/key controller."
+  [g cols text-top db]
+  (components/find-bar! g cols text-top (:search db)))
 (defn- open-click-target!
   ([{:keys [kind url]}]
    (vis/worker-future "vis-tui-open-click-target"
@@ -1002,6 +1004,8 @@
       ;; hit inside an actively-selected range still shows reverse
       ;; (the modifier is idempotent — stacking it doesn't double-flip).
       (paint-search-hits! screen layout text-top inner-h cols db)
+      ;; Find bar (top-right overlay) + its prev/next/close click regions.
+      (paint-search-bar! g cols text-top db)
       ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
       ;; registers its dedicated close-button click region, which commit-frame!
       ;; below publishes so the locked-overlay mouse branch can dismiss on click.
@@ -2505,6 +2509,9 @@
                                    (case (:kind hit)
                                      :toggle-help (state/dispatch [:toggle-help])
                                      :toggle-tasks (state/dispatch [:toggle-tasks])
+                                     :search-prev  (state/dispatch [:search-prev])
+                                     :search-next  (state/dispatch [:search-next])
+                                     :search-close (state/dispatch [:search-clear])
                                      nil))))
                              (recur))
                            (= atype MouseActionType/MOVE)
@@ -2683,6 +2690,9 @@
                              (if-let [hit (cr/lookup mx my)]
                                (case (:kind hit)
                                  :copy-id (copy-session-id! (:text hit))
+                                 :search-prev  (state/dispatch [:search-prev])
+                                 :search-next  (state/dispatch [:search-next])
+                                 :search-close (state/dispatch [:search-clear])
                                  :toggle-tasks (state/dispatch [:toggle-tasks])
                                  :toggle-help (state/dispatch [:toggle-help])
                                  :switch-session (switch-session! {:action :switch,
@@ -2842,23 +2852,23 @@
                    ;; branches so Backspace + chars reach the query, not the draft.
                    (and (instance? KeyStroke key) (get-in db [:search :active?]))
                    (let [ks    ^KeyStroke key
-                         ktype (.getKeyType ks)]
+                         ktype (.getKeyType ks)
+                         chr   (when (= ktype KeyType/Character) (Character/toLowerCase (.getCharacter ks)))]
                      (cond
-                       (= ktype KeyType/Escape)    (state/dispatch [:search-clear])
-                       (= ktype KeyType/F3)        (do (state/dispatch
-                                                         [(if (.isShiftDown ks) :search-prev :search-next)])
-                                                     (search-feedback!))
-                       (= ktype KeyType/Enter)     (do (state/dispatch [:search-next]) (search-feedback!))
-                       (= ktype KeyType/Backspace) (do (state/dispatch
-                                                         [:search-set-query
-                                                          (apply str (butlast (get-in @state/app-db [:search :query])))])
-                                                     (search-feedback!))
-                       (and (= ktype KeyType/Character)
-                         (not (.isCtrlDown ks)) (not (.isAltDown ks)))
-                       (do (state/dispatch
-                             [:search-set-query
-                              (str (get-in @state/app-db [:search :query]) (.getCharacter ks))])
-                         (search-feedback!))
+                       ;; F3 / Esc toggle the find mode OFF (drops query + highlight).
+                       (or (= ktype KeyType/Escape) (= ktype KeyType/F3))
+                       (state/dispatch [:search-clear])
+                       ;; Ctrl+N / Ctrl+P walk matches (next / prev).
+                       (and chr (.isCtrlDown ks) (= chr \n)) (state/dispatch [:search-next])
+                       (and chr (.isCtrlDown ks) (= chr \p)) (state/dispatch [:search-prev])
+                       (= ktype KeyType/Enter)               (state/dispatch [:search-next])
+                       (= ktype KeyType/Backspace)
+                       (state/dispatch [:search-set-query
+                                        (apply str (butlast (get-in @state/app-db [:search :query])))])
+                       ;; Plain (no ctrl/alt) printable → edit the query incrementally.
+                       (and chr (not (.isCtrlDown ks)) (not (.isAltDown ks)))
+                       (state/dispatch [:search-set-query
+                                        (str (get-in @state/app-db [:search :query]) (.getCharacter ks))])
                        :else nil)
                      (recur))
                    (and (instance? KeyStroke key)
@@ -3077,7 +3087,7 @@
                                                 :ttl-ms copy-success-ttl-ms))))
                                         (recur))
                          :search-open
-                         (do (state/dispatch [:search-open]) (search-feedback!) (recur))
+                         (do (state/dispatch [:search-open]) (recur))
                          :open-resources
                          (do (when-not (:dialog-open? @state/app-db)
                                ;; One dialog at a time: shut the F2/help render-flag
