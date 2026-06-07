@@ -5553,23 +5553,36 @@
    (when-let [active-atom (:active-extensions environment)]
      (reset! active-atom (vec (or active-extensions []))))
    (when-let [sci-ctx (:sci-ctx environment)]
-     (let [installed (vec (or (some-> (:extensions environment) deref) []))
-           active-set (set (map :ext/name active-extensions))]
-       (doseq [{ns-sym :ns alias-sym :alias :as alias} (extension-aliases installed)]
-         (let [active-for-alias (filterv (fn [ext]
-                                           (and (contains? active-set (:ext/name ext))
-                                             (= alias (extension/ext-alias ext))))
-                                  installed)]
-           (if (seq active-for-alias)
-             (let [bindings (extension-namespace-bindings environment ns-sym alias-sym active-for-alias)]
-               (swap! (:env sci-ctx) assoc-in [:namespaces ns-sym] bindings)
-               (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym)
-               (require-extension-alias! sci-ctx (last active-for-alias) ns-sym alias-sym))
-             (swap! (:env sci-ctx)
-               (fn [sci-env]
-                 (-> sci-env
-                   (update :namespaces dissoc ns-sym)
-                   (update :ns-aliases dissoc alias-sym)))))))))
+     (if (= :python (:engine environment))
+       ;; Python sandbox = FLAT globals (no namespaces/aliases/macros). Active
+       ;; extensions putMember their symbols straight into the Python top scope;
+       ;; deactivated extensions have theirs removed (putMember nil). Symbol
+       ;; names are snake-ified by env_python/sci-update-binding!.
+       (let [upd (requiring-resolve 'com.blockether.vis.internal.env-python/sci-update-binding!)
+             installed (vec (or (some-> (:extensions environment) deref) []))
+             active-set (set (map :ext/name active-extensions))]
+         (doseq [ext installed
+                 [sym f] (try (extension/wrap-extension ext environment)
+                           (catch Throwable _ nil))]
+           (upd sci-ctx sym (when (contains? active-set (:ext/name ext)) f))))
+       ;; SCI path (legacy): namespace + alias + macro machinery.
+       (let [installed (vec (or (some-> (:extensions environment) deref) []))
+             active-set (set (map :ext/name active-extensions))]
+         (doseq [{ns-sym :ns alias-sym :alias :as alias} (extension-aliases installed)]
+           (let [active-for-alias (filterv (fn [ext]
+                                             (and (contains? active-set (:ext/name ext))
+                                               (= alias (extension/ext-alias ext))))
+                                    installed)]
+             (if (seq active-for-alias)
+               (let [bindings (extension-namespace-bindings environment ns-sym alias-sym active-for-alias)]
+                 (swap! (:env sci-ctx) assoc-in [:namespaces ns-sym] bindings)
+                 (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym)
+                 (require-extension-alias! sci-ctx (last active-for-alias) ns-sym alias-sym))
+               (swap! (:env sci-ctx)
+                 (fn [sci-env]
+                   (-> sci-env
+                     (update :namespaces dissoc ns-sym)
+                     (update :ns-aliases dissoc alias-sym))))))))))
    environment))
 
 (defn install-extension!
@@ -5612,11 +5625,15 @@
   ;; bindings are activation-aware. Java classes/imports remain available once
   ;; an extension is installed because they are passive SCI configuration, not
   ;; model-visible tool affordances.
-  (let [sci-ctx (:sci-ctx environment)]
-    (when-let [classes (seq (extension/ext-classes ext))]
-      (swap! (:env sci-ctx) update :classes merge (into {} classes)))
-    (when-let [imports (seq (extension/ext-imports ext))]
-      (swap! (:env sci-ctx) update :imports merge (into {} imports))))
+  ;; SCI-only: passive Java class/import config in the sandbox. The Python
+  ;; engine has no equivalent (the agent writes Python + uses its own stdlib;
+  ;; the Clojure tools do any Java work), so skip it there.
+  (when-not (= :python (:engine environment))
+    (let [sci-ctx (:sci-ctx environment)]
+      (when-let [classes (seq (extension/ext-classes ext))]
+        (swap! (:env sci-ctx) update :classes merge (into {} classes)))
+      (when-let [imports (seq (extension/ext-imports ext))]
+        (swap! (:env sci-ctx) update :imports merge (into {} imports)))))
   (sync-active-extension-symbols! environment)
   environment)
 
