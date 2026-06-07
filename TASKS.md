@@ -622,109 +622,6 @@ fails, every session) is the worst case.
 
 ---
 
-## VIS-9 — Tool result shapes: state-the-shared-thing-once
-
-**Status:** resolved 2026-06-07 (all acceptance criteria met; savings measured
-at ~42%, per-tool decision recorded — remaining "Open / next" are nice-to-haves)
-· **Relates to:** VIS-EVAL (measure token savings), VIS-7 (TUI render)
-
-> "the fucking STRUCTURED stuff IS VERY BIG AND NOT OPTIMIZED RIGHT?! … We
-> could show it better optimized for the context." · "GROUPPED BY THE DIR BOTH
-> IN THE STRUCTURE AND ALSO HOW WE ARE SHOWING IT IN THE TUI!" · "I'M NOT ONLY
-> ABOUT TUI BUT ALSO ABOUT THE FUCKING STRUCTURED OUTPUT FROM THE TOOLS BRO!"
-
-### Context
-Several observation tools returned **flat, prefix-duplicated** structured
-results. The trigger was an `ls()` whose result repeated every file's full
-directory prefix (`dev/benches/4clojure/results/ar-…/traces/001.json`) and
-carried `size: None` on every dir — hundreds of lines for one listing. The
-result the **model** receives (the marshalled Python dict), not just the TUI
-render, was the concern.
-
-### Rationale
-Two costs: (1) tokens — a flat dump burns context every iteration it stays in
-the trailer; (2) readability — both for the model parsing it and the user in
-the TUI. The unifying fix is one principle: **state the shared thing once, list
-only what varies** — via grouping, a legend+reference, or dropping
-derivable/duplicate fields.
-
-### Where in the code
-- `internal/foundation/editing/core.clj` — `ls-tool` / `list-files` (result),
-  `channel-render-ls` (TUI), `group-entries-by-dir`, `human-size`.
-- `extensions/common/vis-foundation-git/src/.../core.clj` + `render.clj` —
-  `git_status` (`group-status-by-code`), `git_blame` (`legendize-blame`),
-  `git_log` (conditional per-commit fields).
-- `internal/foundation/introspection.clj` — `session_state` (`turn-snapshot`).
-
-### Done (first pass — shipped, full suite green, structured layer verified
-via live marshalled dumps)
-- [x] **`ls`** → grouped by dir: result `:groups [{:dir D :files [{:name :size}]}]`
-      (no `:entries`); TUI header-once + indented files; sizes human-readable,
-      locale-ROOT. (`826ca564`)
-- [x] **`git_blame`** → commit **legend** `:commits {short_sha {…}}` + per-line
-      `{:line :sha <short> :content}` reference. (`c366541b`)
-- [x] **`git_log`** → always `sha/short_sha/author/email/at/subject`; `body`
-      only when non-blank; `committer*`/`committed_at` only when ≠ author;
-      `parents` only on merges. (`c366541b`)
-- [x] **`git_status`** → `:changes {CODE → [files]}` grouped by porcelain code
-      (A/M/D/??/UU), code stated once; `git_diff` porcelain left flat. (`26845874`)
-- [x] **`session_state`** → dropped `:errors` (verbatim duplicate of errored
-      `:attempts`; `:failures` already curated). (`7f82dfad`)
-- [x] Left as-is (already well-shaped): `rg` (path-once-per-file),
-      `git_diff`/`git_show` (patch already size-capped behind `is_patch`),
-      `repositories`/`languages`/`monorepo` (each row a distinct entity — no
-      shared prefix to factor out).
-
-### Decision (2026-06-07) — generic helper vs per-tool: **per-tool, defer**
-Measured (`dev/benches/shape_metrics.clj`, engine's own `count-pr-tokens`, live
-repo data) the model-facing structured value old-vs-new:
-
-| tool (real data)                         |   old |  new | saved |     % |
-|------------------------------------------|------:|-----:|------:|------:|
-| `ls dev/benches/4clojure` (600 entries)  | 24671 | 9687 | 14984 | −60.7 |
-| `git_blame loop.clj` (5594 ln/73 commits)| 54948 |31859 | 23089 | −42.0 |
-| `git_log 50`                             | 17993 |15075 |  2918 | −16.2 |
-| `git_status` (120-file rebase, synthetic)|  2901 | 2074 |   827 | −28.5 |
-| **representative total**                 | ~97k  | ~57k | ~41k  | **~42** |
-
-The wins come from **three structurally distinct transforms**, not one:
-1. **group-by-shared-key** — `ls` (vec-of-`{dir,files}`, first-seen pre-order,
-   keeps empty dir groups) + `git_status` (map `code→[files]`, fixed code order,
-   drops empty). 2 sites, divergent shape/order/empty policy.
-2. **legend/reference** — `git_blame` (`legendize-blame`). 1 site, biggest win.
-3. **drop-derivable** — `git_log` (`slim-commit`, per-field omit-when-==). 1 site.
-
-No sub-pattern hit rule-of-three; a generic group-by would need ~5 knobs for 2
-callers (key-fn / item-projection / order / output-shape / retain-empty),
-exceeding the duplication. **Resolution: keep per-tool, document the
-"state-the-shared-thing-once" convention, extract the `legendize` primitive only
-when a 3rd repeated-record consumer lands. `shape_metrics` is the drift guard.**
-
-### Open / next
-- `cat` returns `:lines [[ln text] …]` — fine, but should large reads default
-  to a tighter window / summary?
-- `git_blame` legend: keep `:source-line` dropped, or restore behind a flag?
-- A general **trailer-budget** policy per tool (how aggressively
-  `bound-form-result` clips each shape) — ties into VIS-EVAL.
-- Should the TUI grouped renders collapse single-child dir chains (the
-  "indented tree" option we previewed but did not pick)?
-
-### Acceptance criteria
-- [x] Reshaped tools verified at the **structured (model-facing)** layer, not
-      only the TUI (live `->json-ready` dumps confirm `groups` / `commits`
-      legend / trimmed `git_log` / `changes`).
-- [x] TUI render-fns updated to the same grouped shapes; `{:summary :display}`
-      contract preserved.
-- [x] Full suite green (no new regressions beyond the 4 known baselines).
-- [x] Token delta **measured**, not asserted: `dev/benches/shape_metrics.clj`
-      weighs each tool's model-facing value old-vs-new with the engine's own
-      `tokens/count-pr-tokens` (cl100k), reconstructing the old shape by losslessly
-      inverting each reshape. ~42% on representative live data (table above).
-      Repeatable → doubles as a drift guard for future tools/shape changes.
-- [x] Decision recorded: **per-tool, defer extraction** (see Decision above).
-
----
-
 ## Session log — 2026-06-07
 
 Record of what shipped this session (for continuity; details in commits):
@@ -742,7 +639,10 @@ Record of what shipped this session (for continuity; details in commits):
   spurious "unterminated string" SyntaxError → the answer never finalized → the
   model looped re-emitting `done()`. Replaced with a pure-Python codepoint slice;
   regression-tested. (`92cc9eb6`) — root-caused from session `f41ca531`.
-- **Tool result shapes** — see VIS-9 above.
+- **Tool result shapes** — observation tools reshaped to state-the-shared-thing-once
+  (`ls` dir-groups, `git_status` code-groups, `git_blame` commit-legend, `git_log`
+  slim-commit); ~42% token savings measured on representative live data via
+  `dev/benches/shape_metrics.clj`. (`826ca564`, `c366541b`, `26845874`, `7f82dfad`)
 
 ---
 
@@ -758,6 +658,3 @@ Record of what shipped this session (for continuity; details in commits):
 6. **VIS-2** — Opus vs Codex A/B once the above stabilize the engine.
 7. **VIS-6 + VIS-5** — folder scope and subagents; design docs first,
    they share the workspace-scoping model and are the heaviest changes.
-8. **VIS-9** — tool-shape first pass already shipped; remaining work is the
-   VIS-EVAL token-delta measurement + the "generic helper vs per-tool"
-   decision, so it rides on VIS-EVAL alongside the locate-waste wins.

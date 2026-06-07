@@ -81,16 +81,22 @@
    against `cr/hovered`, so two buttons of the same kind but different ids stay
    independent."
   ([g col row label kind] (button! g col row label kind nil))
-  ([g col row label kind extra]
+  ([g col row label kind {:keys [extra danger?]}]
    (let [w        (long (p/display-width label))
          hov      (cr/hovered)
          hovered? (and (= kind (:kind hov))
                     (every? (fn [[k v]] (= v (get hov k))) extra))]
      (p/clear-styles! g)
-     (if hovered?
-       (p/set-colors! g t/link-chrome-hover-fg t/link-chrome-hover-bg)
-       (p/set-colors! g t/dialog-bg t/header-active-tab-accent))
-     (p/enable! g p/BOLD)
+     ;; ONE button language across the whole TUI — the SAME chip every modal's
+     ;; ✕ uses (`dialog-close-button!`): an inverted title-strip cap at rest, and
+     ;; on hover it lifts to the accent (or the destructive red for `:danger?`
+     ;; actions like close), always bold. So find-bar and dialog buttons read as
+     ;; the same control instead of two palettes.
+     (cond
+       (and hovered? danger?) (p/set-colors! g t/header-active-tab-fg t/close-button-hover-fg)
+       hovered?               (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
+       :else                  (p/set-colors! g t/dialog-title-bg t/dialog-title-fg))
+     (when hovered? (p/enable! g p/BOLD))
      (p/put-str! g col row label)
      (p/clear-styles! g)
      (cr/register! (merge {:bounds {:row row, :col col, :width w}, :kind kind, :enabled? true}
@@ -144,13 +150,18 @@
       (reduce
         (fn [x op]
           (case (first op)
-            :btn   (+ x (button! g x row (nth op 2) (nth op 1)))
+            :btn   (let [kind (nth op 1)]
+                     (+ x (button! g x row (nth op 2) kind
+                            (when (= kind :search-close) {:danger? true}))))
+            ;; input field — the canonical `box-fg` on `input-field-bg`, the same
+            ;; interior `draw-text-input-field!` paints, so every input matches.
             :input (do (p/clear-styles! g)
-                     (p/set-colors! g t/text-fg t/input-field-bg)
+                     (p/set-colors! g t/box-fg t/input-field-bg)
                      (p/put-str! g x row (last op))
                      (+ x (long (p/display-width (last op)))))
+            ;; chrome / gaps ride the dialog body palette.
             (do (p/clear-styles! g)
-              (p/set-colors! g t/text-fg t/dialog-bg)
+              (p/set-colors! g t/dialog-fg t/dialog-bg)
               (p/put-str! g x row (last op))
               (+ x (long (p/display-width (last op)))))))
         (inc box-l)

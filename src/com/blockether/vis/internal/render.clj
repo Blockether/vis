@@ -1334,112 +1334,21 @@
     (second form)))
 
 (defn parse-block-display
-  "Parse `form-source` into ordered render segments — each top-level form
-   classified as `{:kind :code|:title|:answer-ref ...}`. Consecutive `:code`
-   forms collapse into a single `:code` segment so a prelude of `(def …)`
-   lines renders as one code block instead of N.
+  "Return the model's authored source as ONE verbatim `:code` segment.
 
-   Segment shapes:
-     `{:kind :code        :source \"...\"}`   visible code, with leading prose
-     `{:kind :title       :value  \"X\"}`   `(set-session-title! \"X\")` form
-     `{:kind :answer-ref}`                  `(done …)` form (hide; answer below)
+   The engine is full-Python: the source is Python and we show it VERBATIM —
+   exactly what the model wrote, no splitting, no reformatting, no pretty-print,
+   no per-form classification. The Clojure reader path that used to live here
+   mangled `ls(\".\")` into `ls` / `(\".\")` and turned `\"\"\"…\"\"\"` into a
+   string list; there is nothing to classify because we paint everything
+   (the `done(...)` call included) raw.
 
-   Top-level forms drive classification. Legacy top-level `(do ...)`
-   wrappers are normalized before this helper by the loop preflight. Nested
-   host-bookkeeping calls are not a supported display contract; runtime
-   result sentinels (`:vis/silent`, `:vis/answer`) hide standalone host forms.
-
-   Pure helper. Never throws — parser failure degrades to one `:code`
-   segment with the full source. Empty / blank / nil input returns `[]`."
+   Pure helper. Never throws. Blank / nil input returns `[]`."
   [form-source]
-  (let [src (str (or form-source ""))]
-    (cond
-      (str/blank? src) []
-
-      :else
-      (let [parsed (try {:forms (edamame/parse-string-all src code-block-edamame-opts)}
-                     (catch Throwable _ {:error true}))]
-        (cond
-          (:error parsed)
-          [{:kind :code :source src}]
-
-          (empty? (:forms parsed))
-          []
-
-          :else
-          (let [forms  (:forms parsed)
-                bounds (form-bounds-by-meta src forms)
-                ;; Per-form classified entries. Code forms preserve the
-                ;; model-authored slice; source-level host-call pruning is
-                ;; intentionally gone.
-                raw    (vec
-                         (mapcat
-                           (fn [[idx form]]
-                             (let [kind  (top-level-form-kind form)
-                                   slice (or (slice-with-leading-prose src bounds idx)
-                                           (binding [*print-meta* false] (pr-str form)))]
-                               (case kind
-                                 :answer-ref [{:kind :answer-ref}]
-                                 :title      [{:kind :title
-                                               :value (title-value-from-form form)}]
-                                 (:task-update :fact-update)
-                                 (let [payload (ctx-mutation-payload form)
-                                       k       (some-> payload :k)]
-                                   (cond
-                                     ;; Engine auto-pin: every successful
-                                     ;; `(set-session-title! …)` is
-                                     ;; followed by `(task-set!
-                                     ;; :vis.foundation/session-title
-                                     ;; {:status :done})` from the
-                                     ;; foundation hook. The matching
-                                     ;; `:title` recap row already tells
-                                     ;; the user what happened; the
-                                     ;; auto-ack row right below it is
-                                     ;; bookkeeping noise. Drop the
-                                     ;; segment so it never reaches the
-                                     ;; renderer.
-                                     (= :vis.foundation/session-title k)
-                                     []
-
-                                     ;; `task-set!` / `fact-set!` render as VISIBLE
-                                     ;; CODE — same as `summarize` and every other
-                                     ;; model-authored form. The user wants to see
-                                     ;; the model open/close tasks and record facts;
-                                     ;; the EFFECT already shows in the F2 context
-                                     ;; dialog, so we surface the CALL (not a recap
-                                     ;; chip, not a hidden `:vis/silent` tag). A
-                                     ;; `:code` segment also makes the block
-                                     ;; non-`structurally-silent?` so a fence
-                                     ;; containing only a mutator still paints.
-                                     :else
-                                     [{:kind :code :source (str/trim slice)}]))
-                                 :code
-                                 [{:kind :code :source (str/trim slice)}])))
-                           (map-indexed vector forms)))
-                ;; Coalesce consecutive :code segments. The bounds-based slice
-                ;; for the LATER code form already includes the gap from the
-                ;; previous code form (because slice-with-leading-prose extends
-                ;; back to prev-end), but only when the previous form was ALSO
-                ;; a :code segment surviving into the same group. Rebuild the
-                ;; merged source by reading from the FIRST form's prev-end
-                ;; through the LAST form's end.
-                ;; Consecutive `:code` segments merge into one entry
-                ;; — keeps a prelude of `(def …)` lines rendered as a
-                ;; single source block when the user flips
-                ;; `:vis/show-raw-code` on.
-                coalesce (fn [groups]
-                           (reduce
-                             (fn [acc seg]
-                               (let [prev (peek acc)]
-                                 (if (and prev
-                                       (= :code (:kind prev))
-                                       (= :code (:kind seg)))
-                                   (let [merged-source (str (:source prev) "\n" (:source seg))]
-                                     (conj (pop acc) (assoc prev :source merged-source)))
-                                   (conj acc seg))))
-                             []
-                             groups))]
-            (coalesce raw)))))))
+  (let [src (str/trimr (str (or form-source "")))]
+    (if (str/blank? src)
+      []
+      [{:kind :code :source src}])))
 
 (defn block-structurally-silent?
   "True when the block source carries only structural recap segments
