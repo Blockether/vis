@@ -70,6 +70,66 @@
                      :text workspace-id,
                      :enabled? true}))
     close-button-width))
+(defn button!
+  "Generic clickable button: paint `label` (already space-padded, e.g. \" < \") as
+   a filled accent cap at (col,row) — brighter on hover — AND register its click
+   region under `:kind`, plus any identity keys in `extra` (merged into both the
+   region and the hover match). One widget owns its look, its hover, and its
+   click, so they can't drift apart. Returns the consumed width.
+
+   Hover is detected by matching the registered `:kind` and every `extra` key
+   against `cr/hovered`, so two buttons of the same kind but different ids stay
+   independent."
+  ([g col row label kind] (button! g col row label kind nil))
+  ([g col row label kind extra]
+   (let [w        (count label)
+         hov      (cr/hovered)
+         hovered? (and (= kind (:kind hov))
+                    (every? (fn [[k v]] (= v (get hov k))) extra))]
+     (p/clear-styles! g)
+     (if hovered?
+       (p/set-colors! g t/link-chrome-hover-fg t/link-chrome-hover-bg)
+       (p/set-colors! g t/dialog-bg t/header-active-tab-accent))
+     (p/enable! g p/BOLD)
+     (p/put-str! g col row label)
+     (p/clear-styles! g)
+     (cr/register! (merge {:bounds {:row row, :col col, :width w}, :kind kind, :enabled? true}
+                     extra))
+     w)))
+
+(def ^:private find-bar-buttons
+  "Trailing buttons of the find bar: [click-kind label]. ASCII 1-cell glyphs so
+   painted columns and click bounds line up exactly."
+  [[:search-prev " < "] [:search-next " > "] [:search-close " x "]])
+
+(defn find-bar!
+  "Browser-style in-session find bar, right-aligned at the top of the messages
+   area: ` Find: <query>  i/N  < > x `. `search` is app-db's `:search` map
+   ({:active? :query :hits :index}); no-op when inactive. Paints the query + i/N
+   label, then the prev/next/close `button!`s (each owning its own click region),
+   so the mouse drives the same `:search-*` events as Ctrl+P / Ctrl+N / F3."
+  [g cols text-top {:keys [active? query hits index]}]
+  (when active?
+    (let [n     (count hits)
+          q     (str query)
+          qshow (if (str/blank? q) "type to search" q)
+          cnt   (cond (str/blank? q) ""
+                      (zero? (long n)) "no matches"
+                      :else            (str (inc (long (or index 0))) "/" n))
+          head  (str " Find: " qshow (when (seq cnt) (str "  " cnt)) "  ")
+          total (+ (count head) (reduce + (map (comp count second) find-bar-buttons)) 1)
+          row   (long text-top)
+          col0  (max 0 (- (long cols) total))]
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+      (p/put-str! g col0 row head)
+      (reduce (fn [x [kind label]] (+ x (button! g x row label kind)))
+        (+ col0 (count head))
+        find-bar-buttons)
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+      (p/put-str! g (+ col0 (dec total)) row " "))))
+
 (def ^{:private true} tab-divider-glyph
   ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
   ;; reads gentler than a solid │ between tabs / cluster chips. Box-drawing
