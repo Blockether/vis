@@ -694,8 +694,8 @@
    linearisation and — critically — for the \"reword last 40 commits\"
    workflow via edit-todos-fn.
 
-   Opts: {\"operation\": ..., \"upstream\": ..., \"onto\": ..., \"is_preserve_merges\": bool,
-          \"edit_todos_fn\": ..., \"is_autostash\": bool}.
+   Opts (Python tool surface): {\"operation\": ..., \"upstream\": ..., \"onto\": ...,
+          \"is_preserve_merges\": bool, \"is_autostash\": bool}.
 
      operation          one of \"begin\" \"continue\" \"skip\" \"abort\". Defaults to
                         \"begin\" when upstream is given.
@@ -703,15 +703,14 @@
                         strictly AFTER this rev are replayed.
      onto               replay target (defaults to upstream).
      is_preserve_merges recreate merge commits (JGit's setPreserveMerges).
-     edit_todos_fn      (fn [todos] -> todos') over the rebase plan.
-                        Each todo is {:action :pick|:reword|:edit|:squash|:fixup|:drop
-                                      :sha :short-sha :message}. The fn
-                        MUST return the same shape; missing entries drop
-                        that commit from the plan.
-     reword_message_fn  (fn [sha previous-msg] -> new-msg). Optional;
-                        drives the message-rewrite slot of the
-                        InteractiveHandler when an entry is :reword /
-                        :squash. Default returns previous message unchanged.
+
+   Internal Clojure callbacks — NOT passable from the Python tool surface
+   (the model cannot supply a function); used by programmatic callers/tests:
+     edit-todos-fn      (fn [todos] -> todos') over the rebase plan. Each
+                        todo is {:action :pick|:reword|:edit|:squash|:fixup|:drop
+                        :sha :short-sha :message}; missing entries drop the commit.
+     reword-message-fn  (fn [sha previous-msg] -> new-msg). Drives the
+                        message-rewrite slot when an entry is :reword/:squash.
 
    Returns: {:op :git/rebase :status :successful? :conflicts :failing-paths
              :current-commit :short-current}"
@@ -917,8 +916,7 @@
 (defn rebase!-tool
   "Rewind onto an upstream and re-apply commits; optionally interactive.
 
-   Opts: {\"upstream\": ..., \"onto\": ..., \"operation\": ..., \"is_autostash\": bool, \"is_preserve_merges\": bool,
-          \"edit_todos_fn\": ..., \"reword_message_fn\": ...}.
+   Opts: {\"upstream\": ..., \"onto\": ..., \"operation\": ..., \"is_autostash\": bool, \"is_preserve_merges\": bool}.
      upstream         rev to replay onto (commits strictly after it move).
                       Implies operation \"begin\".
      operation        one of \"begin\" \"continue\" \"skip\" \"abort\" — drive a paused rebase.
