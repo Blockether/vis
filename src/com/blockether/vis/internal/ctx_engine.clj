@@ -1536,7 +1536,7 @@
    `:session/hints` is render-derived, so neither is listed here —
    both are folded in by `session-view`."
   [:session/id :session/turn :session/scope :session/workspace
-   :session/env :session/symbols :session/tasks :session/facts
+   :session/env :session/resources :session/symbols :session/tasks :session/facts
    :session/trailer :session/archive-digest])
 
 (defn session-view

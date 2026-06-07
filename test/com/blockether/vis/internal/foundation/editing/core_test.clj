@@ -397,7 +397,7 @@
       (expect (= "." (:path out)))
       (expect (= (str (.toAbsolutePath (fs/path (fs/cwd))))
                 (:absolute-path out)))
-      (expect (= :ls (:vis.op result)))
+      (expect (= :ls (:op result)))
       (expect (= (:absolute-path out) (:absolute-path result)))
       (expect (vector? (:entries out)))
       (expect (every? #(= #{:path :type :size} (set (keys %))) (:entries out)))
@@ -405,6 +405,19 @@
       ;; Counts add up.
       (expect (= (count (:entries out))
                 (+ (:file-count out) (:dir-count out))))))
+
+  (it "ls() with no args lists the current directory — same as ls(\".\")"
+    ;; The model naturally calls `ls()` (Pythonic, like os.listdir()). The
+    ;; zero-arg arity must default the path to \".\" instead of throwing an
+    ;; ArityException (regression: session 1cc54cb8 — `ls()` failed with
+    ;; \"Wrong number of args (0)\" and the model had to grope to `ls(\".\")`).
+    (let [ls-tool (private-fn "ls-tool")
+          r0      (:result (ls-tool))
+          r1      (:result (ls-tool "."))]
+      (expect (= :ls (:op r0)))
+      (expect (= "." (:path r0)))
+      (expect (= (:absolute-path r0) (:absolute-path r1)))
+      (expect (= (:entry-count r0) (:entry-count r1)))))
 
   (it "recurses up to :depth (default 10) and reports entry counts"
     (let [list-files (private-fn "list-files")
@@ -726,7 +739,7 @@
   "Construct the plain-map shape `cat-tool` produces, for renderer-contract
    tests. Tuples for `:lines`, no `:offset` / `:eof?` / `:truncated-by`."
   [path lines next-offset truncated?]
-  {:vis.op :cat
+  {:op :cat
    :path path
    :lines (vec lines)
    :next-offset next-offset
@@ -793,7 +806,7 @@
 
   (it "cat multi-range summary and display stay one CAT result"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          r {:vis.op :cat
+          r {:op :cat
              :path "src/demo.clj"
              :lines [[2 "b"] [3 "c"] [10 "j"]]
              :ranges [{:range [2 3] :lines [[2 "b"] [3 "c"]]}
@@ -923,7 +936,7 @@
           ;; the model-facing :result — there is no flat :hits vec anymore.
           rg-result (:result (rg spec))
           grep-hits (:hits (grep spec))]
-      (expect (= :rg (:vis.op rg-result)))
+      (expect (= :rg (:op rg-result)))
       (expect (vector? (:matches rg-result)))
       (expect (= (count grep-hits) (:hit-count rg-result)))
       (expect (= (count (distinct (map :path grep-hits)))
@@ -1428,7 +1441,7 @@
       (expect (true? (delete-if-exists path)))
       (expect (false? (exists? path)))))
 
-  (it "exists? tool returns the canonical {:vis.op :exists? :path :exists?} map (envelope-shape consistency)"
+  (it "exists? tool returns the canonical {:op :exists? :path :exists?} map (envelope-shape consistency)"
     ;; Regression for conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
     ;; turn 4 iter 1→2:
     ;;   model wrote `(def ports (exists? \".nrepl-port\"))` then
@@ -1437,7 +1450,7 @@
     ;;   so `(:exists? true)` evaluated to `nil` and the model burned
     ;;   an iter realizing \"exists? is returning true directly rather
     ;;   than a map containing an :exists? key\".
-    ;; Fix: every v/* tool returns a map keyed on :vis.op for shape
+    ;; Fix: every v/* tool returns a map keyed on :op for shape
     ;; consistency; bare booleans are no longer a supported result.
     (let [present-path (write-temp! "exists-shape/yes.txt" "x")
           missing-path "exists-shape/no.txt"
@@ -1445,19 +1458,19 @@
           present (:result (exists-tool present-path))
           missing (:result (exists-tool missing-path))]
       (expect (map? present))
-      (expect (= :exists? (:vis.op present)))
+      (expect (= :exists? (:op present)))
       (expect (true? (:exists? present)))
       (expect (= present-path (:path present)))
       (expect (map? missing))
-      (expect (= :exists? (:vis.op missing)))
+      (expect (= :exists? (:op missing)))
       (expect (false? (:exists? missing)))
       (expect (= missing-path (:path missing)))))
 
   (it "keeps exists? shape details out of the compact prompt and in symbol docs"
     (let [exists-symbol (some #(when (= 'exists? (:ext.symbol/symbol %)) %)
                           editing/editing-symbols)]
-      (expect (not (string/includes? editing/editing-prompt ":vis.op :exists?")))
-      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":vis.op :exists?"))
+      (expect (not (string/includes? editing/editing-prompt ":op :exists?")))
+      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":op :exists?"))
       (expect (string/includes? (:ext.symbol/doc exists-symbol) ":exists?"))))
 
   (it "bash helpers fully removed from the editing core"
@@ -1474,7 +1487,7 @@
   ;; preview then painted `DELETE nil` and `(def r (delete p))`
   ;; consumers couldn't read `(:path r)` (same parity bug `exists?`
   ;; already fixed). All `v/*` tools now return a map shape.
-  (it "delete returns {:vis.op :delete :path P :deleted? true} (no bare nil)"
+  (it "delete returns {:op :delete :path P :deleted? true} (no bare nil)"
     (let [delete-tool (private-fn "delete-tool")
           p           (write-temp! "delete-shape/x.txt" "goodbye\n")
           envelope    (delete-tool p)]
@@ -1482,7 +1495,7 @@
       (expect (= :delete (:symbol envelope)))
       (let [r (:result envelope)]
         (expect (map? r))
-        (expect (= :delete (:vis.op r)))
+        (expect (= :delete (:op r)))
         (expect (= p (:path r)))
         (expect (true? (:deleted? r))))))
 
@@ -1507,14 +1520,14 @@
   ;; surfaces here, not at paint time.
   (it "MKDIR renderer reads :path off the result map (contract-conformant)"
     (let [out ((private-fn "channel-render-create-dirs")
-               {:vis.op :create-dirs :path "target/x" :created? true})]
+               {:op :create-dirs :path "target/x" :created? true})]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? (pr-str out) "target/x"))
       (expect (string/includes? (pr-str out) "MKDIR"))))
 
   (it "COPY renderer reads :src/:dest off the result map (contract-conformant)"
     (let [out ((private-fn "channel-render-copy")
-               {:vis.op :copy :src "a.txt" :dest "b.txt" :path "b.txt"})
+               {:op :copy :src "a.txt" :dest "b.txt" :path "b.txt"})
           s  (pr-str out)]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? s "COPY"))
@@ -1523,7 +1536,7 @@
 
   (it "MOVE renderer reads :src/:dest off the result map (contract-conformant)"
     (let [out ((private-fn "channel-render-move")
-               {:vis.op :move :src "a.txt" :dest "b.txt" :path "b.txt"})
+               {:op :move :src "a.txt" :dest "b.txt" :path "b.txt"})
           s  (pr-str out)]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? s "MOVE"))
@@ -1532,7 +1545,7 @@
 
   (it "DELETE renderer reads :path off the result map (NO nil token in output)"
     (let [out ((private-fn "channel-render-delete")
-               {:vis.op :delete :path "src/foo.txt" :deleted? true})
+               {:op :delete :path "src/foo.txt" :deleted? true})
           s  (pr-str out)]
       (expect (extension/render-fn-result? out))
       (expect (string/includes? s "src/foo.txt"))
@@ -1541,8 +1554,8 @@
 
   (it "DELETE-IF-EXISTS renderer flips badge between DELETE / ABSENT on :deleted?"
     (let [render (private-fn "channel-render-delete-if-exists")
-          gone   (render {:vis.op :delete-if-exists :path "a.txt" :deleted? true})
-          absent (render {:vis.op :delete-if-exists :path "a.txt" :deleted? false})]
+          gone   (render {:op :delete-if-exists :path "a.txt" :deleted? true})
+          absent (render {:op :delete-if-exists :path "a.txt" :deleted? false})]
       (expect (extension/render-fn-result? gone))
       (expect (extension/render-fn-result? absent))
       (expect (string/includes? (pr-str gone)   "DELETE"))
@@ -1550,8 +1563,8 @@
 
   (it "EXISTS? renderer flips badge between EXISTS / MISSING on :exists?"
     (let [render  (private-fn "channel-render-exists?")
-          present (render {:vis.op :exists? :path "a.txt" :exists? true})
-          absent  (render {:vis.op :exists? :path "a.txt" :exists? false})]
+          present (render {:op :exists? :path "a.txt" :exists? true})
+          absent  (render {:op :exists? :path "a.txt" :exists? false})]
       (expect (extension/render-fn-result? present))
       (expect (extension/render-fn-result? absent))
       (expect (string/includes? (pr-str present) "EXISTS"))
@@ -1702,7 +1715,7 @@
       (expect (string/includes? changed "diff truncated"))))
   (it "search-grouped renderer formats grouped matches (path once) without raw EDN fallback"
     (let [render-hits (private-fn "channel-render-rg")
-          rg-result {:vis.op :rg
+          rg-result {:op :rg
                      :hit-count 2
                      :file-count 1
                      :truncated-by :end-of-results
@@ -1724,7 +1737,7 @@
       (expect (string/includes? joined "workspace-tabs-or-base"))))
   (it "search-grouped renderer states the path once as a header row"
     (let [render-hits (private-fn "channel-render-rg")
-          rg-result {:vis.op :rg
+          rg-result {:op :rg
                      :hit-count 1
                      :file-count 1
                      :truncated-by :end-of-results
@@ -1750,7 +1763,7 @@
       ;; cat returns a plain map as :result. :lines is a vec of
       ;; `[line-number text]` tuples; no deref, no handle, no offset key.
       (let [r (:result out)]
-        (expect (= :cat (:vis.op r)))
+        (expect (= :cat (:op r)))
         (expect (= [[1 "alpha"] [2 "beta"]] (:lines r)))
         (expect (nil? (:next-offset r)))
         (expect (false? (:truncated? r))))

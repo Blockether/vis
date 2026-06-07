@@ -123,7 +123,7 @@
                              :form '(ls "." :depth 1)
                              :channel [{:fake :stripped}]
                              :form-idx 0 :position 0 :success? true :symbol 'ls
-                             :result {:vis.op :ls :path "." :entry-count 3}}]}]
+                             :result {:op :ls :path "." :entry-count 3}}]}]
           ctx     (assoc base-ctx :session/trailer trailer)
           out     (render ctx)]
 

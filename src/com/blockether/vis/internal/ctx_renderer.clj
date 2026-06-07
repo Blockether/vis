@@ -226,6 +226,7 @@
       (:session/utilization view)         (assoc :session/utilization (:session/utilization view))
       true                                (assoc :session/workspace (or (:session/workspace view) {}))
       (:session/env view)                 (assoc :session/env (:session/env view))
+      (not-empty (:session/resources view)) (assoc :session/resources (:session/resources view))
       (not-empty (:session/symbols view)) (assoc :session/symbols (:session/symbols view))
       (not-empty (:session/tasks view))   (assoc :session/tasks (:session/tasks view))
       (not-empty (:session/facts view))   (assoc :session/facts (:session/facts view))
