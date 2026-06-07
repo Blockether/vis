@@ -408,7 +408,7 @@
                                            {:scope "t1/i1/f2" :tag :mutation
                                             :src "(set-session-title! \"Mixed\")" :result :ok}
                                            {:scope "t1/i1/f3" :tag :mutation
-                                            :src "(done [:ir [:p \"Done\"]])" :result :vis/answer}]
+                                            :src "(done [:ir [:p \"Done\"]])" :result "vis_answer"}]
                                    :answer "Done"}))
           (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
           (let [out (transcript/transcript-md s cid)]

@@ -23,22 +23,21 @@
               (render/->ast [:ir [:h 9 "High"]])))))
 
 (defdescribe host-bookkeeping-render-test
-  (it "classifies only top-level structural host forms (def shapes hide because the DEF SINK already surfaces the bound var)"
-    (expect (= [{:kind :title :value "Render cleanup"}
-                {:kind :code :source "(def x 1)"}
-                {:kind :answer-ref}]
-              (render/parse-block-display
-                "(set-session-title! \"Render cleanup\")\n(def x 1)\n(done [:ir [:p \"ok\"]])"))))
-
-  (it "does not source-prune nested host calls"
+  (it "returns the model's authored source VERBATIM as one :code segment (full-Python: no splitting, no classification, no pretty-print)"
     (expect (= [{:kind :code
-                 :source "(do (satisfy-hint! :vis.foundation/session-title) (def x 1))"}]
+                 :source "ls(\".\")\ndone(\"\"\"ok\"\"\")"}]
               (render/parse-block-display
-                "(do (satisfy-hint! :vis.foundation/session-title) (def x 1))"))))
+                "ls(\".\")\ndone(\"\"\"ok\"\"\")"))))
 
-  (it "does not treat satisfy-hint! source as structurally silent"
+  (it "keeps multi-line Python verbatim (triple-quoted strings are never tokenized)"
+    (expect (= [{:kind :code
+                 :source "done(\"\"\"\nmulti\nline\n\"\"\")"}]
+              (render/parse-block-display
+                "done(\"\"\"\nmulti\nline\n\"\"\")"))))
+
+  (it "any non-blank source is code-bearing, so the block is never structurally silent"
     (expect (false? (render/block-structurally-silent?
-                      "(satisfy-hint! :vis.foundation/session-title)"))))
+                      "task_set(\"K\", {\"status\": \"done\"})"))))
 
   (it "flags (def NAME (qualified/call …)) wrappers as hidden code"
     ;; The model wraps tool calls in `(def …)` for downstream reuse.

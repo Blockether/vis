@@ -63,8 +63,8 @@
     (let [env (mk-env)
           {task-set 'task-set!} (cl/build-sci-bindings env)
           ret (task-set :auth {:title "switch to bcrypt" :status :todo})]
-      (it "returns :vis/silent (no echo)"
-        (expect (= :vis/silent ret)))
+      (it "returns the vis_silent sentinel (no echo)"
+        (expect (= "vis_silent" ret)))
 
       (it "ctx atom carries the new task"
         (expect (= "switch to bcrypt"

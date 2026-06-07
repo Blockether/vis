@@ -81,7 +81,7 @@
    against `cr/hovered`, so two buttons of the same kind but different ids stay
    independent."
   ([g col row label kind] (button! g col row label kind nil))
-  ([g col row label kind {:keys [extra danger?]}]
+  ([g col row label kind {:keys [extra danger? register?] :or {register? true}}]
    (let [w        (long (p/display-width label))
          hov      (cr/hovered)
          hovered? (and (= kind (:kind hov))
@@ -99,8 +99,9 @@
      (when hovered? (p/enable! g p/BOLD))
      (p/put-str! g col row label)
      (p/clear-styles! g)
-     (cr/register! (merge {:bounds {:row row, :col col, :width w}, :kind kind, :enabled? true}
-                     extra))
+     (when register?
+       (cr/register! (merge {:bounds {:row row, :col col, :width w}, :kind kind, :enabled? true}
+                       extra)))
      w)))
 
 (def ^:private find-bar-buttons
@@ -166,6 +167,26 @@
               (+ x (long (p/display-width (last op)))))))
         (inc box-l)
         ops))))
+
+(def ^:private header-fkeys
+  "Always-on clickable header chips: ONLY the two panel toggles (F1 help, F2
+   context). Every other shortcut lives in the F1 help overlay, so the header
+   stays uncluttered. `[click-kind label]`."
+  [[:header-help " F1 "] [:header-tasks " F2 "]])
+
+(def header-fkeys-width
+  "Cells the header F-key chips occupy: two 4-col chips, each followed by a
+   1-col gap. The header reserves this much before the notification slot."
+  10)
+
+(defn header-fkeys!
+  "Paint the F1/F2 clickable chips at (x,row) — via the shared `button!` so they
+   match every other button — registering their `:header-help` / `:header-tasks`
+   click regions. Returns the x after the chips (+ trailing gap)."
+  [g x row]
+  (reduce (fn [x [kind label]] (+ 1 x (button! g x row label kind)))
+    x
+    header-fkeys))
 
 (def ^{:private true} tab-divider-glyph
   ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
@@ -295,11 +316,15 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [["F1" "Toggle this help"] ["F2" "Toggle the task panel"] ["Enter · Ctrl+X" "Send message"]
+  [["F1" "Toggle this help"] ["F2" "Toggle the context panel"] ["F3" "Find in session"]
+   ["F4" "Managed resources"] ["F5 · Ctrl+K" "Command palette"]
+   ["F6 · Ctrl+G" "Sessions · workspaces"]
+   ["Find: F3" "Type to filter · Ctrl+N/P next/prev · Esc close"]
+   ["Enter · Ctrl+X" "Send message"]
    ["Alt+Enter" "Insert a newline"] ["Esc" "Clear draft · cancel turn"]
    ["Ctrl+C" "Cancel turn · quit"] ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
-   ["Ctrl+W" "Close tab  (or click the ✕)"] ["Ctrl+K" "Command palette"]
-   ["Ctrl+G" "Sessions · workspaces"] ["Ctrl+T" "Cycle model"] ["Ctrl+R" "Cycle reasoning effort"]
+   ["Ctrl+W" "Close tab  (or click the ✕)"] ["Ctrl+T" "Cycle model"]
+   ["Ctrl+R" "Cycle reasoning effort"]
    ["Ctrl+L" "Cycle Codex verbosity"] ["Ctrl+A · Ctrl+E" "Jump to line start · end"]
    ["Ctrl+U" "Delete to line start"] ["Alt+B · Alt+F" "Move word left · right"] ["Ctrl+V" "Paste"]
    ["@" "Pick a file"] ["Mouse" "Click a tab to switch · ✕ to close"]])
