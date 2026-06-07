@@ -33,9 +33,9 @@
 
 (defdescribe render-status-test
   (it "labels a clean tree CLEAN and a dirty tree DIRTY"
-    (let [clean (gr/render-status {:branch "main" :head "abcdef1234" :clean? true :entries []})
+    (let [clean (gr/render-status {:branch "main" :head "abcdef1234" :clean? true :changes {}})
           dirty (gr/render-status {:branch "main" :head "abcdef1234" :clean? false
-                                   :entries [{:status "M" :file "x.clj"}]})]
+                                   :changes {"M" ["x.clj"]}})]
       (expect (contract? clean))
       (expect (contract? dirty))
       (expect (ir? (:display clean)))
@@ -203,7 +203,7 @@
 (defdescribe display-never-repeats-summary-label-test
   (it "no observation render echoes its badge label into the display body"
     (let [cases [["DIRTY" (gr/render-status {:branch "main" :head "abc1234" :clean? false
-                                             :entries [{:status "M" :file "a.clj"}]})]
+                                             :changes {"M" ["a.clj"]}})]
                  ["DIFF"  (gr/render-diff {:branch "main" :head "abc1234" :kind :workspace
                                            :from "HEAD" :to nil :stat {:files 1 :+ 1 :- 0}
                                            :files [{:file "a.clj" :+ 1 :- 0}] :porcelain []})]
