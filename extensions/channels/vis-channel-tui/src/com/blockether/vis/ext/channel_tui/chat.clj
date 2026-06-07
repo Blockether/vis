@@ -61,7 +61,7 @@
       (or (:vis/structurally-silent? b)
         (and (not (visible-code-segments? b))
           (ctx-engine/engine-form-src? code))
-        (and (= :vis/silent (:result b))
+        (and (= "vis_silent" (:result b))
           (not (seq (:render-segments b)))
           (ctx-engine/engine-form-src? code))))))
 
@@ -134,10 +134,11 @@
                  (extension/default-error-result
                    {:success? false :result nil :info {} :error error}))))
         (sort-by :position channel)))
-    (= :vis/answer result)           nil
+    (= "vis_answer" result)          nil
     ;; Engine mutator sentinel — render the call as code, suppress the
     ;; result echo (parity with the live `format-form-result` path).
-    (= :vis/silent result)           nil
+    ;; Python-native string sentinels (a keyword snakes to these via `->py`).
+    (= "vis_silent" result)          nil
     (runtime-ref? result)            "<legacy runtime value; not restorable>"
     (extension/tool-result? result)  (extension/render-fn-result->ir
                                        (extension/render-tool-result result))
@@ -245,8 +246,8 @@
                                     (get all-blocks idx))]
                         (when (and block
                                 (not (visible-code-segments? block))
-                                (or (= :vis/answer (:result block))
-                                  (str/includes? (str (:code block)) "(done")))
+                                (or (= "vis_answer" (:result block))
+                                  (str/includes? (str (:code block)) "done(")))
                           idx)))
         elide-idxs  (cond-> preflight-idxs
                       (some? answer-idx) (conj answer-idx))
@@ -264,8 +265,8 @@
               (fn [idx b]
                 (let [src (some-> (:code b) str str/triml)]
                   (when (and (nil? (:duration-ms b))
-                          (not= :vis/answer (:result b))
-                          (not (str/starts-with? (or src "") "(done")))
+                          (not= "vis_answer" (:result b))
+                          (not (str/starts-with? (or src "") "done(")))
                     idx))))
             visible))
         visible     (if (= 1 (count duration-fallback-idxs))

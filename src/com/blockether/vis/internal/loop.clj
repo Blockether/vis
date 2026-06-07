@@ -2337,7 +2337,7 @@
                                :envelope          (:envelope b)
                                :role              (:role b)
                                :silent?     (boolean (or (:vis/silent b)
-                                                       (= :vis/silent (:result b))
+                                                       (= "vis_silent" (:result b))
                                                        (:vis/structurally-silent? b)))
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))

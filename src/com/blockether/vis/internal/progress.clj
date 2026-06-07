@@ -195,11 +195,13 @@
         (extension/render-fn-result->ir
           (extension/render-tool-result (:result chunk)))
 
-        ;; `:vis/silent` is the engine mutator sentinel (task-set! / fact-set!
-        ;; / done / …). The CALL is rendered as code; its result is a quiet
-        ;; effect (visible in the context dialog), so emit NO result echo —
-        ;; never the literal `:vis/silent` keyword tag.
-        (= :vis/silent (:result chunk)) nil
+        ;; "vis_silent" is the engine mutator sentinel (task-set! / fact-set!
+        ;; / …). The CALL is rendered as code; its result is a quiet effect
+        ;; (visible in the context dialog), so emit NO result echo. The
+        ;; sentinel is the Python-native STRING — a Clojure keyword return
+        ;; snakes to it crossing `->py` (see env-python/->py), so the engine
+        ;; compares the string, NOT `:vis/silent`.
+        (= "vis_silent" (:result chunk)) nil
 
         :else
         (fmt/bounded-value-str (:result chunk))))))
@@ -261,7 +263,7 @@
       (or (:vis/structurally-silent? chunk)
         (and (not (visible-code-segments? chunk))
           (ctx-engine/engine-form-src? code))
-        (and (= :vis/silent (:result chunk))
+        (and (= "vis_silent" (:result chunk))
           (not (seq (:render-segments chunk)))
           (ctx-engine/engine-form-src? code))))))
 
@@ -343,7 +345,7 @@
   [prev-form chunk]
   (let [errored?     (some? (:error chunk))
         answer-slot? (and (not errored?)
-                       (= :vis/answer (:result chunk))
+                       (= "vis_answer" (:result chunk))
                        (visible-code-segments? chunk))]
     {:code            (:code chunk)
      :comment         (:comment chunk)
@@ -474,7 +476,7 @@
     :form-result
     (let [silent? (or (structurally-silent-chunk? chunk)
                     (and (not (:error chunk))
-                      (= :vis/answer (:result chunk))
+                      (= "vis_answer" (:result chunk))
                       (not (visible-code-segments? chunk))))]
       (if silent?
         (assoc (hide-form-slot entry (:position chunk)

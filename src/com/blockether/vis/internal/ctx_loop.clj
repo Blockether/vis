@@ -148,7 +148,10 @@
               base (if stamped? ctx c)]
           (cond-> base
             (seq warnings) (update :engine/warnings (fnil into []) warnings)))))
-    :vis/silent))
+    ;; Canonical silent sentinel = the Python-native string. Mutators are
+    ;; reached as Python callables; a keyword return would snake to this same
+    ;; string crossing `->py`, and the engine compares "vis_silent".
+    "vis_silent"))
 
 (defn build-sci-bindings
   "Return `{'symbol bare-fn}` for every engine mutator. The model writes

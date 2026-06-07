@@ -82,7 +82,7 @@
    independent."
   ([g col row label kind] (button! g col row label kind nil))
   ([g col row label kind extra]
-   (let [w        (count label)
+   (let [w        (long (p/display-width label))
          hov      (cr/hovered)
          hovered? (and (= kind (:kind hov))
                     (every? (fn [[k v]] (= v (get hov k))) extra))]
@@ -98,37 +98,63 @@
      w)))
 
 (def ^:private find-bar-buttons
-  "Trailing buttons of the find bar: [click-kind label]. ASCII 1-cell glyphs so
-   painted columns and click bounds line up exactly."
-  [[:search-prev " < "] [:search-next " > "] [:search-close " x "]])
+  "Trailing buttons of the find bar: [click-kind glyph-label]. Padded GLYPHS —
+   ◀ ▶ (narrow geometric) and ✕ (1-cell, as `close-button!` uses it). Spaced
+   apart by `:gap` ops in `find-bar!`."
+  [[:search-prev " ◀ "] [:search-next " ▶ "] [:search-close " ✕ "]])
+
+(def ^:private find-input-width
+  "Cells reserved for the white query field, so the box doesn't jitter as you
+   type."
+  22)
 
 (defn find-bar!
-  "Browser-style in-session find bar, right-aligned at the top of the messages
-   area: ` Find: <query>  i/N  < > x `. `search` is app-db's `:search` map
-   ({:active? :query :hits :index}); no-op when inactive. Paints the query + i/N
-   label, then the prev/next/close `button!`s (each owning its own click region),
-   so the mouse drives the same `:search-*` events as Ctrl+P / Ctrl+N / F3."
+  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned
+   at the top of the messages area, holding a WHITE input field (the live query),
+   the i/N match count, and spaced ◀ ▶ ✕ glyph buttons (each its own click region
+   via `button!`, so the mouse drives the same `:search-*` events as
+   Ctrl+P / Ctrl+N / F3). `search` is app-db's `:search` map; no-op when inactive."
   [g cols text-top {:keys [active? query hits index]}]
   (when active?
-    (let [n     (count hits)
+    (let [n     (long (count hits))
           q     (str query)
-          qshow (if (str/blank? q) "type to search" q)
-          cnt   (cond (str/blank? q) ""
-                      (zero? (long n)) "no matches"
-                      :else            (str (inc (long (or index 0))) "/" n))
-          head  (str " Find: " qshow (when (seq cnt) (str "  " cnt)) "  ")
-          total (+ (count head) (reduce + (map (comp count second) find-bar-buttons)) 1)
-          row   (long text-top)
-          col0  (max 0 (- (long cols) total))]
+          qshow (if (str/blank? q) "type to search…" q)
+          qpad  (let [s (truncate-with-ellipsis qshow find-input-width)]
+                  (str s (apply str (repeat (max 0 (- find-input-width (long (p/display-width s)))) \space))))
+          cnt   (format " %-5s" (cond (str/blank? q) ""
+                                      (zero? n)      "0/0"
+                                      :else          (str (inc (long (or index 0))) "/" n)))
+          ;; content ops between the borders. :input is the white field; :chrome /
+          ;; :gap ride the box bg; :btn delegates to the reusable button! widget.
+          ops   (concat
+                  [[:chrome " "] [:input qpad] [:chrome "  "] [:chrome cnt] [:chrome " "]]
+                  (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) find-bar-buttons))
+                  [[:chrome " "]])
+          content-w (long (reduce + (map (fn [op] (long (p/display-width (last op)))) ops)))
+          box-w (+ content-w 2)
+          box-l (max 0 (- (long cols) box-w 1))
+          box-t (long text-top)
+          row   (inc box-t)]
+      ;; box: fill bg, then single-line border (3 rows tall)
       (p/clear-styles! g)
-      (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-      (p/put-str! g col0 row head)
-      (reduce (fn [x [kind label]] (+ x (button! g x row label kind)))
-        (+ col0 (count head))
-        find-bar-buttons)
-      (p/clear-styles! g)
-      (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-      (p/put-str! g (+ col0 (dec total)) row " "))))
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/fill-rect! g box-l box-t box-w 3)
+      (p/draw-box! g box-l box-t box-w 3)
+      ;; content row (the middle one, between the borders)
+      (reduce
+        (fn [x op]
+          (case (first op)
+            :btn   (+ x (button! g x row (nth op 2) (nth op 1)))
+            :input (do (p/clear-styles! g)
+                     (p/set-colors! g t/text-fg t/input-field-bg)
+                     (p/put-str! g x row (last op))
+                     (+ x (long (p/display-width (last op)))))
+            (do (p/clear-styles! g)
+              (p/set-colors! g t/text-fg t/dialog-bg)
+              (p/put-str! g x row (last op))
+              (+ x (long (p/display-width (last op)))))))
+        (inc box-l)
+        ops))))
 
 (def ^{:private true} tab-divider-glyph
   ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
