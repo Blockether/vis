@@ -501,34 +501,20 @@
     (components/id-badge! g action-col content-row id-copy-text full-uuid
       *register-click-regions?*)
 
-    ;; RIGHT slot: labeled, clickable chips — terminal-safe stand-ins for the
-    ;; F1/F2 accelerators, so they read as what they do. Right-aligned as a
-    ;; cluster immediately left of the id badge: F1 help | F2 context | #id.
-    ;; Separators are plain ASCII `|`. GLYPHS: ASCII-only — earlier ☰ (U+2630)
-    ;; is East-Asian AMBIGUOUS-width and drifted on hover.
-    (let [tasks-chip "F2 context"
-          help-chip  "F1 help"
-          tasks-w    (p/display-width tasks-chip)
-          help-w     (p/display-width help-chip)
-          ;; Floor the cluster at a STATIC column (edge-pad), never a width %.
-          floor      edge-pad
-          pipe!      (fn [col]
-                       (p/clear-styles! g)
-                       (p/set-colors! g t/header-active-tab-accent t/terminal-bg)
-                       (p/put-str! g col content-row "|")
-                       (p/clear-styles! g))
-          ;; left→right: help | tasks | #id (id badge already painted at
-          ;; action-col). One space of breathing room on each side of every |.
-          tasks-div-col (max floor (- action-col 2))
-          tasks-col     (max floor (- tasks-div-col 1 tasks-w))
-          help-div-col  (max floor (- tasks-col 2))
-          help-col      (max floor (- help-div-col 1 help-w))]
-      (components/header-badge! g help-col content-row help-chip :toggle-help
-        *register-click-regions?*)
-      (pipe! help-div-col)
-      (components/header-badge! g tasks-col content-row tasks-chip :toggle-tasks
-        *register-click-regions?*)
-      (pipe! tasks-div-col))
+    ;; RIGHT slot: F1/F2 as real BUTTONS — filled chips via the shared `button!`
+    ;; (visible inverted-chip bg, accent on hover), right-aligned as a cluster
+    ;; just left of the id badge. No `|` separators; the bg IS the affordance.
+    ;; Only these two ride the header — the full shortcut list lives in F1 help.
+    (let [chips     [[:header-help " F1 help "] [:header-tasks " F2 context "]]
+          gap       1
+          cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
+                      (* gap (count chips)))
+          start     (max edge-pad (- action-col cluster-w))]
+      (reduce (fn [x [kind label]]
+                (+ x gap (components/button! g x content-row label kind
+                           {:register? *register-click-regions?*})))
+        start
+        chips))
 
     ;; Extension-contributed rows.
     (loop [row (inc content-row)

@@ -80,7 +80,7 @@
                   (fn [_db _turn-id]
                     [{:id :iter-1
                       :code "(set-session-title! \"Greeting\")"
-                      :result :vis/silent}])]
+                      :result "vis_silent"}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)
             form    (-> trace :forms first)]
@@ -121,8 +121,8 @@
                               "(set-session-title! \"Mixed\")\n"
                               "(done [:ir [:p \"Done\"]])")
                       :forms [{:scope "t1/i1/f1" :tag :host :src "(def x 1)" :result nil}
-                              {:scope "t1/i1/f2" :tag :host :src "(set-session-title! \"Mixed\")" :result :vis/silent}
-                              {:scope "t1/i1/f3" :tag :host :src "(done [:ir [:p \"Done\"]])" :result :vis/answer}]}])]
+                              {:scope "t1/i1/f2" :tag :host :src "(set-session-title! \"Mixed\")" :result "vis_silent"}
+                              {:scope "t1/i1/f3" :tag :host :src "(done [:ir [:p \"Done\"]])" :result "vis_answer"}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)
             form    (-> trace :forms first)]

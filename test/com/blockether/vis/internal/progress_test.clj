@@ -33,7 +33,7 @@
                             :code "(set-session-title! \"New title\")"
                             :render-segments [{:kind :title :value "New title"}]
                             :vis/structurally-silent? true
-                            :result :vis/silent
+                            :result "vis_silent"
                             :silent? true})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (= [] (:forms entry)))
@@ -47,7 +47,7 @@
                             :code "(done {:answer \"ok\"})\n(def x \"doc\" 1)"
                             :render-segments [{:kind :answer-ref}
                                               {:kind :code :source "(def x \"doc\" 1)"}]
-                            :result :vis/answer
+                            :result "vis_answer"
                             :error nil})
       (let [entry (first ((:get-timeline tracker)))
             form  (first (:forms entry))]
