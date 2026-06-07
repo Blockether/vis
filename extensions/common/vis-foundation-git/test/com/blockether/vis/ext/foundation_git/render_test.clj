@@ -126,16 +126,26 @@
       (expect (re-find #"a\.clj" s)))))
 
 (defdescribe render-blame-test
-  (it "renders one row per blame line"
+  (it "renders the commit legend once, then one row per blame line"
     (let [v (gr/render-blame
               {:path "x.clj" :head "abcdef0" :total 2 :ignored-revs []
-               :lines [{:line 1 :short-sha "aaa1111" :author "A" :at "2025-01-01" :content "(ns x)"}
-                       {:line 2 :short-sha "bbb2222" :author "B" :at "2025-01-02" :content "(def y 1)"}]})
+               :commits {"aaa1111" {:sha "aaa1111deadbeef" :author "A"
+                                    :email "a@x" :at "2025-01-01"}
+                         "bbb2222" {:sha "bbb2222deadbeef" :author "B"
+                                    :email "b@x" :at "2025-01-02"}}
+               :lines [{:line 1 :sha "aaa1111" :content "(ns x)"}
+                       {:line 2 :sha "bbb2222" :content "(def y 1)"}]})
           s (text-of v)]
       (expect (contract? v))
       (expect (strong-in? v "BLAME"))
       (expect (re-find #"x\.clj" s))
-      (expect (re-find #"\(def y 1\)" s)))))
+      (expect (re-find #"\(def y 1\)" s))
+      ;; legend states each author ONCE
+      (expect (re-find #"\bA\b" s))
+      (expect (re-find #"\bB\b" s))
+      ;; lines reference the short-sha (legend key)
+      (expect (re-find #"aaa1111" s))
+      (expect (re-find #"bbb2222" s)))))
 
 (defdescribe render-merge-status-test
   (it "says NO MERGE outside of a merge"
@@ -203,7 +213,8 @@
                                            :subject "subj" :body "body"
                                            :files [{:file "a.clj" :+ 1 :- 0}] :stat {:files 1 :+ 1 :- 0}})]
                  ["BLAME" (gr/render-blame {:path "x.clj" :head "abc1234" :total 1 :ignored-revs []
-                                            :lines [{:line 1 :short-sha "aaa1111" :author "A" :content "(ns x)"}]})]
+                                            :commits {"aaa1111" {:sha "aaa1111deadbeef" :author "A" :email "a@x" :at "d"}}
+                                            :lines [{:line 1 :sha "aaa1111" :content "(ns x)"}]})]
                  ["MERGING" (gr/render-merge-status {:in-progress? true :branch "main" :head "abc1234"
                                                      :merge-head "def5678" :conflicts [{:path "a" :state "UU"}]})]]]
       (doseq [[label v] cases]
