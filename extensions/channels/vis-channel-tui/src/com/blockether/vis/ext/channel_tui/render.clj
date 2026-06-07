@@ -3406,8 +3406,11 @@
                ;; Errors and plain Clojure forms keep their source.
                code-text (str/trim (or (code-source-from-render-segments render-segments code) ""))
                inline-error-code-lines (when error (inline-error-context-lines code-text error))
-               formatted (format-clojure-ansi code-text fill-w)
-               code-lines (or inline-error-code-lines (str/split-lines formatted))
+               ;; Python source is shown VERBATIM — no zprint / pretty-print
+               ;; (that Clojure formatter mangled `ls(".")` into `ls` / `(".")`
+               ;; and `"""…"""` into a string list). What the model wrote is
+               ;; what the user sees.
+               code-lines (or inline-error-code-lines (str/split-lines code-text))
                code-node-id (when session-id
                               (detail-node-id {:session-turn-id session-turn-id,
                                                :iteration-number iteration-number,
