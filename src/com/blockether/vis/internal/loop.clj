@@ -6101,7 +6101,11 @@
     new-cfg))
 
 (defn- open-env!
-  [id {:keys [channel external-id title workspace-id engine]}]
+  ;; App session entry (create! + resume). DEFAULT :python — the interactive
+  ;; app runs on the embedded GraalPy engine. (create-environment's own default
+  ;; stays :clojure so direct lib/test callers are unaffected.)
+  [id {:keys [channel external-id title workspace-id engine]
+       :or {engine :python}}]
   (let [router (get-router)
         env    (create-environment router
                  (cond-> {:db (config/resolve-db-spec)}
