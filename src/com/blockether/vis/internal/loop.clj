@@ -1055,33 +1055,33 @@
         raw-entries                  (mapv (fn [b]
                                              (let [source-src (:source b)
                                                    src (unwrap-top-level-do-source source-src)
-                                                   unwrapped-do? (not= src source-src)]
-                                               (if-let [err (raw-markdown-fence-leak-error src)]
-                                                 {:expr "(vis/preflight-error :raw-markdown-fence-leak)"
-                                                  :vis/preflight-error err
-                                                  :block-lang (:lang b)}
-                                                 (let [segments        (render/parse-block-display src)
-                                                       ;; The block is structurally silent when its
-                                                       ;; parsed segments carry only recap kinds
-                                                       ;; (`:title` / `:answer-ref` /
-                                                       ;; `:task-update` /
-                                                       ;; `:fact-update`) — no `:code` segments at
-                                                       ;; all. The channel hides `:code` rows by
-                                                       ;; default (`:vis/show-raw-code` toggle
-                                                       ;; flips it), but the engine-side
-                                                       ;; classification only cares whether the
-                                                       ;; block has any code at all so the
-                                                       ;; persistence + downstream code path
-                                                       ;; agrees with what the renderer would
-                                                       ;; paint when the toggle is ON.
-                                                       structurally-silent?
-                                                       (and (seq segments)
-                                                         (not-any? #(= :code (:kind %)) segments))]
-                                                   (cond-> {:expr       src
-                                                            :block-lang (:lang b)
-                                                            :render-segments segments
-                                                            :vis/structurally-silent? structurally-silent?}
-                                                     unwrapped-do? (assoc :vis/unwrapped-do? true))))))
+                                                   unwrapped-do? (not= src source-src)
+                                                   ;; NO raw-markdown-fence-leak gate: the engine is
+                                                   ;; full-Python and the model LEGITIMATELY writes
+                                                   ;; ``` fences inside `done("""…""")` strings
+                                                   ;; (markdown answers). The old guard used the
+                                                   ;; Clojure reader (`code-string-reads-clean?`) to
+                                                   ;; tell a stray fence from one inside a string —
+                                                   ;; but it can't parse Python `f"""…"""`, so it
+                                                   ;; FALSE-rejected valid code → empty `:code` →
+                                                   ;; wasted "no executable code" retries (the model
+                                                   ;; then fell back to dumping `str(tree)`). A truly
+                                                   ;; stray fence now surfaces as a Python
+                                                   ;; SyntaxError the model sees and self-corrects.
+                                                   segments        (render/parse-block-display src)
+                                                   ;; Structurally silent = parsed segments carry no
+                                                   ;; `:code` at all (answer-only recap). The channel
+                                                   ;; hides `:code` rows unless `:vis/show-raw-code`
+                                                   ;; is ON; the engine only cares whether the block
+                                                   ;; has any code so persistence agrees with paint.
+                                                   structurally-silent?
+                                                   (and (seq segments)
+                                                     (not-any? #(= :code (:kind %)) segments))]
+                                               (cond-> {:expr       src
+                                                        :block-lang (:lang b)
+                                                        :render-segments segments
+                                                        :vis/structurally-silent? structurally-silent?}
+                                                 unwrapped-do? (assoc :vis/unwrapped-do? true))))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
