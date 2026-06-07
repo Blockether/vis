@@ -622,6 +622,103 @@ fails, every session) is the worst case.
 
 ---
 
+## VIS-9 — Tool result shapes: state-the-shared-thing-once
+
+**Status:** in progress (first pass shipped) · **Relates to:** VIS-EVAL (measure
+token savings), VIS-7 (TUI render)
+
+> "the fucking STRUCTURED stuff IS VERY BIG AND NOT OPTIMIZED RIGHT?! … We
+> could show it better optimized for the context." · "GROUPPED BY THE DIR BOTH
+> IN THE STRUCTURE AND ALSO HOW WE ARE SHOWING IT IN THE TUI!" · "I'M NOT ONLY
+> ABOUT TUI BUT ALSO ABOUT THE FUCKING STRUCTURED OUTPUT FROM THE TOOLS BRO!"
+
+### Context
+Several observation tools returned **flat, prefix-duplicated** structured
+results. The trigger was an `ls()` whose result repeated every file's full
+directory prefix (`dev/benches/4clojure/results/ar-…/traces/001.json`) and
+carried `size: None` on every dir — hundreds of lines for one listing. The
+result the **model** receives (the marshalled Python dict), not just the TUI
+render, was the concern.
+
+### Rationale
+Two costs: (1) tokens — a flat dump burns context every iteration it stays in
+the trailer; (2) readability — both for the model parsing it and the user in
+the TUI. The unifying fix is one principle: **state the shared thing once, list
+only what varies** — via grouping, a legend+reference, or dropping
+derivable/duplicate fields.
+
+### Where in the code
+- `internal/foundation/editing/core.clj` — `ls-tool` / `list-files` (result),
+  `channel-render-ls` (TUI), `group-entries-by-dir`, `human-size`.
+- `extensions/common/vis-foundation-git/src/.../core.clj` + `render.clj` —
+  `git_status` (`group-status-by-code`), `git_blame` (`legendize-blame`),
+  `git_log` (conditional per-commit fields).
+- `internal/foundation/introspection.clj` — `session_state` (`turn-snapshot`).
+
+### Done (first pass — shipped, full suite green, structured layer verified
+via live marshalled dumps)
+- [x] **`ls`** → grouped by dir: result `:groups [{:dir D :files [{:name :size}]}]`
+      (no `:entries`); TUI header-once + indented files; sizes human-readable,
+      locale-ROOT. (`826ca564`)
+- [x] **`git_blame`** → commit **legend** `:commits {short_sha {…}}` + per-line
+      `{:line :sha <short> :content}` reference. (`c366541b`)
+- [x] **`git_log`** → always `sha/short_sha/author/email/at/subject`; `body`
+      only when non-blank; `committer*`/`committed_at` only when ≠ author;
+      `parents` only on merges. (`c366541b`)
+- [x] **`git_status`** → `:changes {CODE → [files]}` grouped by porcelain code
+      (A/M/D/??/UU), code stated once; `git_diff` porcelain left flat. (`26845874`)
+- [x] **`session_state`** → dropped `:errors` (verbatim duplicate of errored
+      `:attempts`; `:failures` already curated). (`7f82dfad`)
+- [x] Left as-is (already well-shaped): `rg` (path-once-per-file),
+      `git_diff`/`git_show` (patch already size-capped behind `is_patch`),
+      `repositories`/`languages`/`monorepo` (each row a distinct entity — no
+      shared prefix to factor out).
+
+### Open / next (to analyze together)
+- Is there a **generic helper** worth extracting (group-by-key / legend) so new
+  tools get compact shapes by default, or keep it per-tool?
+- `cat` returns `:lines [[ln text] …]` — fine, but should large reads default
+  to a tighter window / summary?
+- `git_blame` legend: keep `:source-line` dropped, or restore behind a flag?
+- A general **trailer-budget** policy per tool (how aggressively
+  `bound-form-result` clips each shape) — ties into VIS-EVAL.
+- Should the TUI grouped renders collapse single-child dir chains (the
+  "indented tree" option we previewed but did not pick)?
+
+### Acceptance criteria
+- [x] Reshaped tools verified at the **structured (model-facing)** layer, not
+      only the TUI (live `->json-ready` dumps confirm `groups` / `commits`
+      legend / trimmed `git_log` / `changes`).
+- [x] TUI render-fns updated to the same grouped shapes; `{:summary :display}`
+      contract preserved.
+- [x] Full suite green (no new regressions beyond the 4 known baselines).
+- [ ] VIS-EVAL measures the actual token delta on a representative session
+      (before/after) — currently asserted by inspection, not measured.
+- [ ] Decision recorded on the "generic helper vs per-tool" question.
+
+---
+
+## Session log — 2026-06-07
+
+Record of what shipped this session (for continuity; details in commits):
+
+- **SCI→Python migration finished** — dual path removed, GraalPy canonical,
+  native-Python tools, `:op` result keys (dropped `:vis.op`), two-context hang
+  fix. (`0d6d2ad7`, `8b98ca0f`)
+- **All agent-facing prompts wired to native Python** — aliased tools fold to
+  flat snake (`git/status`→`git_status`, `exists?`→`is_exists`); option keys
+  snake/`is_` so Python dicts reach the tools; git/search/bridge/clj + foundation
+  prompts/errors/docstrings converted. (`eeff02ef`, `28cfcf92`, `b88a5271`)
+- **`ls()` 0-arg** lists cwd (was ArityException → groped). (`8b98ca0f`)
+- **Emoji/astral done-loop fixed** — GraalPy `ast.get_source_segment` truncated
+  per-form source on non-BMP chars (emoji in `done("""…""")`), causing a
+  spurious "unterminated string" SyntaxError → the answer never finalized → the
+  model looped re-emitting `done()`. Replaced with a pure-Python codepoint slice;
+  regression-tested. (`92cc9eb6`) — root-caused from session `f41ca531`.
+- **Tool result shapes** — see VIS-9 above.
+
+---
+
 ## Suggested sequencing
 
 1. **VIS-EVAL** — harness consolidation; unblocks measuring everything else.
@@ -634,3 +731,6 @@ fails, every session) is the worst case.
 6. **VIS-2** — Opus vs Codex A/B once the above stabilize the engine.
 7. **VIS-6 + VIS-5** — folder scope and subagents; design docs first,
    they share the workspace-scoping model and are the heaviest changes.
+8. **VIS-9** — tool-shape first pass already shipped; remaining work is the
+   VIS-EVAL token-delta measurement + the "generic helper vs per-tool"
+   decision, so it rides on VIS-EVAL alongside the locate-waste wins.
