@@ -958,8 +958,7 @@
 (defn- settings-content-width [cols] (default-content-width cols))
 (defn- settings-content-height [rows] (default-content-height rows))
 (def ^:private settings-tabs
-  [{:id :channels, :label "Channels"}
-   {:id :providers, :label "Providers & Models"}
+  [{:id :general, :label "General"}
    {:id :extensions, :label "Extensions"}])
 (defn- settings-tab-index
   [tab-id]
@@ -1162,7 +1161,7 @@
     :label "Reasoning effort",
     :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}])
 (defn- settings-rows
-  ([] (settings-rows :channels (extension-option-rows)))
+  ([] (settings-rows :general (extension-option-rows)))
   ([tab-id] (settings-rows tab-id (extension-option-rows)))
   ([tab-id extension-rows]
    (let [active-provider (current-provider-id)
@@ -1182,15 +1181,23 @@
          extension-toggle-rows (registry-toggle-rows (complement general-toggle-spec?))]
      (vec
        (case tab-id
-         :channels
+         ;; Only two tabs: General (everything host-owned — Terminal UI,
+         ;; transcript-display toggles, models, channel + provider settings)
+         ;; and Extensions.
+         :general
          (concat [{:type :section, :label "Terminal UI"}]
            (settings-ui-options)
+           ;; Transcript-display toggles (show-raw-code, show-tool-results,
+           ;; show-thinking, …). Exclude mouse-selection-copy: settings-ui-options
+           ;; already renders it in the Terminal UI section above.
+           (or (registry-toggle-rows
+                 #(and (general-toggle-spec? %)
+                    (not= :vis/mouse-selection-copy (:id %)))) [])
+           [{:type :section, :label "Models"}]
+           provider-model-rows
            (when (seq channel-rows)
              (concat [{:type :section, :label "Channel Settings"}]
-               (settings-extension-groups channel-rows))))
-         :providers
-         (concat [{:type :section, :label "Models"}]
-           provider-model-rows
+               (settings-extension-groups channel-rows)))
            (when (seq provider-rows)
              (concat [{:type :section, :label "Provider Settings"}]
                (settings-extension-groups provider-rows))))
@@ -1205,11 +1212,7 @@
              (settings-empty-rows
                "Extensions"
                "Installed extensions have not declared configurable settings, env vars, toggles, or TUI contributors")))
-         :general (concat [{:type :section, :label "Terminal UI"}]
-                    (settings-ui-options)
-                    general-model-rows
-                    (or (registry-toggle-rows general-toggle-spec?) []))
-         (settings-rows :channels extension-rows))))))
+         (settings-rows :general extension-rows))))))
 (defn- extension-env-status-label
   [source]
   (case source
@@ -1461,8 +1464,8 @@
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
    (let [extension-rows (extension-option-rows)
-         active-tab (atom :channels)
-         selected (atom (first-selectable-index (settings-rows :channels extension-rows)))
+         active-tab (atom :general)
+         selected (atom (first-selectable-index (settings-rows :general extension-rows)))
          scroll (atom 0)
          values (atom (or settings {}))
          scrollbar-drag-offset (volatile! nil)
