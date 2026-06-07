@@ -34,13 +34,16 @@
 (declare ->py ->clj)
 
 (defn- key->py
-  "Map/keyword key -> a Python-side string key. FULL SNAKE: any kebab is
-   snake-cased so Clojure data reads as idiomatic Python (`:files-only` ->
-   \"files_only\"); already-snake keys pass through unchanged. No `?`/`!`
-   munging — snake all the way down."
+  "Map/keyword key -> a Python-side string key. FULL SNAKE: the namespace is
+   folded in with `_` and kebab is snake-cased, so Clojure data reads as
+   idiomatic Python — `:session/utilization` -> \"session_utilization\",
+   `:engine/warnings` -> \"engine_warnings\", `:files-only?` -> \"files_only\".
+   No namespaced keywords, no `?`/`!` survive into the Python side."
   ^String [k]
   (cond
-    (keyword? k) (str/replace (name k) "-" "_")
+    (keyword? k) (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
+                   (str/replace "-" "_")
+                   (str/replace #"[?!]$" ""))
     (symbol? k)  (str/replace (str k) "-" "_")
     :else        (str k)))
 
