@@ -123,6 +123,10 @@
    :dialog-fg [30 30 30]
    :dialog-title-fg [255 255 255]
    :dialog-title-bg [60 60 60]
+   ;; Button chip — a SUBTLE non-white fill so a button reads as a raised
+   ;; control on white surfaces (header, find bar), not blank text.
+   :button-bg [226 232 240]
+   :button-fg [30 41 59]
    :dialog-border [120 120 120]
    :dialog-shadow [200 200 200]
    :dialog-hint [120 120 120]
@@ -218,6 +222,9 @@
    :dialog-fg [226 232 240]
    :dialog-title-fg [255 255 255]
    :dialog-title-bg [51 65 85]
+   ;; Button chip — lighter than the dark dialog bg so it reads as raised.
+   :button-bg [51 65 85]
+   :button-fg [226 232 240]
    :dialog-border [100 116 139]
    :dialog-shadow [6 8 12]
    :dialog-hint [148 148 148]
