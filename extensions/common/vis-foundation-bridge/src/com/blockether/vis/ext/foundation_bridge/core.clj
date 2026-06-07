@@ -609,8 +609,8 @@
      "and use `br_run_evidence(id, opts?)` only when the configured command should actually run."
      "`br_run_evidence(id, {\"is_dry_run\": True})` previews the execution plan without writing a receipt."
      "When answering status questions, summarize the returned map instead of pasting it raw."
-     "Prefer `:status-summary`, `:required-obligations`, `:evidence-receipts`, and `:next-action` when they are present."
-     "Call out `:status`, `:issue-count`, open or failed obligations, and any evidence receipts that are already present."
+     "Prefer `status_summary`, `required_obligations`, `evidence_receipts`, and `next_action` when they are present."
+     "Call out `status`, `issue_count`, open or failed obligations, and any evidence receipts that are already present."
      "Keep policy obligations and runnable evidence ids distinct: for example `unit-tests` is not the same thing as the runnable `unit` command."
      "Prefer the `br_next` suggestions over shell commands because they stay inside the Vis tool surface."]))
 

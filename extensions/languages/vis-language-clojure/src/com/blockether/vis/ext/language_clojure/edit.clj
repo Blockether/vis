@@ -237,9 +237,14 @@
   [workspace-root {:keys [path op target code is_format]
                    :or   {is_format true}
                    :as   opts}]
-  (let [f (if (.isAbsolute (io/file path))
-            (io/file path)
-            (io/file workspace-root path))]
+  ;; `op` arrives from the Python caller as a snake_case STRING
+  ;; (e.g. "replace_sexp"); normalize to the kebab keyword the enum +
+  ;; case dispatch below expect (:replace-sexp). Also accepts a bare
+  ;; keyword for direct Clojure/test callers.
+  (let [op (some-> op name (str/replace "_" "-") keyword)
+        f  (if (.isAbsolute (io/file path))
+             (io/file path)
+             (io/file workspace-root path))]
     (cond
       (not (and (.exists f) (.isFile f)))
       (err (str "file not found: " (.getPath f)) {:opts opts})
