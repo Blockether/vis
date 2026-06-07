@@ -647,13 +647,14 @@
   [ctx form-results-vec]
   (let [cursor (:session/scope ctx)
         iter-scope (str "t" (:turn cursor) "/i" (:iter cursor))
-        ;; drop both `(done …)` AND forms whose result is
-        ;; `:vis/silent`. Engine mutators (task-set!, fact-set!, etc.)
-        ;; return `:vis/silent`; their effect lives in ctx subtree
-        ;; mutations, not in the trailer pin log.
+        ;; drop both `done(…)` AND forms whose result is the silent
+        ;; sentinel. Engine mutators (task-set!, fact-set!, etc.) return
+        ;; "vis_silent" (Python-native; a keyword snakes to it via `->py`);
+        ;; their effect lives in ctx subtree mutations, not the trailer pin
+        ;; log. `:src` is Python source, so the answer form reads `done(`.
         keepable (vec (remove (fn [r]
-                                (or (str/starts-with? (str (:src r)) "(done")
-                                  (= :vis/silent (:result r))
+                                (or (str/starts-with? (str/triml (str (:src r))) "done(")
+                                  (= "vis_silent" (:result r))
                                   (:vis/silent r)))
                         form-results-vec))
         ;; Observation pins are NO LONGER auto-pruned on mutation

@@ -624,8 +624,9 @@ fails, every session) is the worst case.
 
 ## VIS-9 — Tool result shapes: state-the-shared-thing-once
 
-**Status:** in progress (first pass shipped) · **Relates to:** VIS-EVAL (measure
-token savings), VIS-7 (TUI render)
+**Status:** resolved 2026-06-07 (all acceptance criteria met; savings measured
+at ~42%, per-tool decision recorded — remaining "Open / next" are nice-to-haves)
+· **Relates to:** VIS-EVAL (measure token savings), VIS-7 (TUI render)
 
 > "the fucking STRUCTURED stuff IS VERY BIG AND NOT OPTIMIZED RIGHT?! … We
 > could show it better optimized for the context." · "GROUPPED BY THE DIR BOTH
@@ -674,9 +675,32 @@ via live marshalled dumps)
       `repositories`/`languages`/`monorepo` (each row a distinct entity — no
       shared prefix to factor out).
 
-### Open / next (to analyze together)
-- Is there a **generic helper** worth extracting (group-by-key / legend) so new
-  tools get compact shapes by default, or keep it per-tool?
+### Decision (2026-06-07) — generic helper vs per-tool: **per-tool, defer**
+Measured (`dev/benches/shape_metrics.clj`, engine's own `count-pr-tokens`, live
+repo data) the model-facing structured value old-vs-new:
+
+| tool (real data)                         |   old |  new | saved |     % |
+|------------------------------------------|------:|-----:|------:|------:|
+| `ls dev/benches/4clojure` (600 entries)  | 24671 | 9687 | 14984 | −60.7 |
+| `git_blame loop.clj` (5594 ln/73 commits)| 54948 |31859 | 23089 | −42.0 |
+| `git_log 50`                             | 17993 |15075 |  2918 | −16.2 |
+| `git_status` (120-file rebase, synthetic)|  2901 | 2074 |   827 | −28.5 |
+| **representative total**                 | ~97k  | ~57k | ~41k  | **~42** |
+
+The wins come from **three structurally distinct transforms**, not one:
+1. **group-by-shared-key** — `ls` (vec-of-`{dir,files}`, first-seen pre-order,
+   keeps empty dir groups) + `git_status` (map `code→[files]`, fixed code order,
+   drops empty). 2 sites, divergent shape/order/empty policy.
+2. **legend/reference** — `git_blame` (`legendize-blame`). 1 site, biggest win.
+3. **drop-derivable** — `git_log` (`slim-commit`, per-field omit-when-==). 1 site.
+
+No sub-pattern hit rule-of-three; a generic group-by would need ~5 knobs for 2
+callers (key-fn / item-projection / order / output-shape / retain-empty),
+exceeding the duplication. **Resolution: keep per-tool, document the
+"state-the-shared-thing-once" convention, extract the `legendize` primitive only
+when a 3rd repeated-record consumer lands. `shape_metrics` is the drift guard.**
+
+### Open / next
 - `cat` returns `:lines [[ln text] …]` — fine, but should large reads default
   to a tighter window / summary?
 - `git_blame` legend: keep `:source-line` dropped, or restore behind a flag?
@@ -692,9 +716,12 @@ via live marshalled dumps)
 - [x] TUI render-fns updated to the same grouped shapes; `{:summary :display}`
       contract preserved.
 - [x] Full suite green (no new regressions beyond the 4 known baselines).
-- [ ] VIS-EVAL measures the actual token delta on a representative session
-      (before/after) — currently asserted by inspection, not measured.
-- [ ] Decision recorded on the "generic helper vs per-tool" question.
+- [x] Token delta **measured**, not asserted: `dev/benches/shape_metrics.clj`
+      weighs each tool's model-facing value old-vs-new with the engine's own
+      `tokens/count-pr-tokens` (cl100k), reconstructing the old shape by losslessly
+      inverting each reshape. ~42% on representative live data (table above).
+      Repeatable → doubles as a drift guard for future tools/shape changes.
+- [x] Decision recorded: **per-tool, defer extraction** (see Decision above).
 
 ---
 
