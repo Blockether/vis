@@ -332,13 +332,13 @@
                 :session/trailer []}
           mixed [{:scope "t1/i1/f1" :tag :mutation
                   :src "(task-set! :K {:title \"x\"})"
-                  :result :vis/silent}
+                  :result "vis_silent"}
                  {:scope "t1/i1/f2" :tag :observation
                   :src "(cat \"a\")"
                   :result "old"}
                  {:scope "t1/i1/f3" :tag :mutation
                   :src "(fact-set! :baseline {:content \"x\"})"
-                  :result :vis/silent}]
+                  :result "vis_silent"}]
           ctx (eng/advance-iter base mixed)
           pin (first (:session/trailer ctx))]
 
@@ -354,10 +354,10 @@
                 :session/trailer []}
           all-silent [{:scope "t1/i1/f1" :tag :mutation
                        :src "(task-set! :K {:title \"x\"})"
-                       :result :vis/silent}
+                       :result "vis_silent"}
                       {:scope "t1/i1/f2" :tag :mutation
                        :src "(task-set! :T {:title \"x\"})"
-                       :result :vis/silent}]
+                       :result "vis_silent"}]
           ctx (eng/advance-iter base all-silent)]
 
       (it ":session/trailer stays empty"
@@ -369,7 +369,7 @@
           forms [{:scope "t1/i1/f1" :tag :mutation
                   :src "(fact-set! :K {})"
                   :vis/silent true
-                  :result :vis/silent}
+                  :result "vis_silent"}
                  {:scope "t1/i1/f2" :tag :observation
                   :src "(cat \"a\")"
                   :result "..."}]
@@ -386,8 +386,8 @@
                   :src "(cat \"a\")"
                   :result "..."}
                  {:scope "t1/i1/f2" :tag :mutation
-                  :src "(done {:answer \"x\"})"
-                  :result :vis/answer}]
+                  :src "done(\"x\")"
+                  :result "vis_answer"}]
           ctx (eng/advance-iter base forms)
           pin (first (:session/trailer ctx))]
 

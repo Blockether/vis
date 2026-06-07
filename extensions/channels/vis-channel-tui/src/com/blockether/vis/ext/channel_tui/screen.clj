@@ -2512,6 +2512,8 @@
                                      :search-prev  (state/dispatch [:search-prev])
                                      :search-next  (state/dispatch [:search-next])
                                      :search-close (state/dispatch [:search-clear])
+                                     :header-help  (state/dispatch [:toggle-help])
+                                     :header-tasks (state/dispatch [:toggle-tasks])
                                      nil))))
                              (recur))
                            (= atype MouseActionType/MOVE)
@@ -2695,6 +2697,8 @@
                                  :search-close (state/dispatch [:search-clear])
                                  :toggle-tasks (state/dispatch [:toggle-tasks])
                                  :toggle-help (state/dispatch [:toggle-help])
+                                 :header-help  (state/dispatch [:toggle-help])
+                                 :header-tasks (state/dispatch [:toggle-tasks])
                                  :switch-session (switch-session! {:action :switch,
                                                                    :id (:text hit)})
                                  :workspace-entry
