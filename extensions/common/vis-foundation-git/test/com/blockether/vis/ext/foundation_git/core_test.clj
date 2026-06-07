@@ -223,28 +223,31 @@
         (expect (clojure.string/includes? (ex-message e) "git_log expected"))
         (expect (clojure.string/includes? (ex-message e) "git_log({\"limit\": 50})")))))
 
-  (it "enriches each commit map with body, email, committer, parents, short-sha"
+  (it "keeps always-present fields and OMITS derivable ones on a normal commit"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root)
         (let [result (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 1)
               commit (first (get-in result [:result :commits]))]
+          ;; ALWAYS present: sha, short-sha, author, email, at, subject
           (expect (string? (:sha commit)))
           (expect (= 7 (count (:short-sha commit))))
+          (expect (= "Vis Test" (:author commit)))
           (expect (= "vis-test@example.invalid" (:email commit)))
-          (expect (= "Vis Test" (:committer commit)))
-          (expect (= "vis-test@example.invalid" (:committer-email commit)))
-          ;; :at and :committed-at are both millis (Java units), not
-          ;; POSIX seconds. A commit-time of 2026-05-01 lands somewhere
-          ;; in the 1.7e12 range; seconds would have been ~1.7e9. We
-          ;; lock the unit here so a future regression to seconds is
-          ;; caught immediately.
-          (expect (integer? (:committed-at commit)))
-          (expect (> (:committed-at commit) 1000000000000))
+          (expect (= "base" (:subject commit)))
+          ;; :at is millis (Java units), not POSIX seconds. A commit-time of
+          ;; 2026-05-01 lands ~1.7e12; seconds would have been ~1.7e9. Lock
+          ;; the unit so a future regression to seconds is caught.
           (expect (> (:at commit) 1000000000000))
+          ;; body kept ONLY when non-blank — "base" is non-blank, so present
           (expect (= "base" (:body commit)))
-          (expect (vector? (:parents commit)))
-          (expect (= 0 (count (:parents commit)))))
+          ;; committer == author / committed-at == at on a normal commit ->
+          ;; those keys are OMITTED entirely (not repeated per row)
+          (expect (not (contains? commit :committer)))
+          (expect (not (contains? commit :committer-email)))
+          (expect (not (contains? commit :committed-at)))
+          ;; single-parent (here: root, 0 parents) -> :parents omitted
+          (expect (not (contains? commit :parents))))
         (finally (cleanup root)))))
 
   (it "filters commits by :author substring (case-insensitive name OR email)"
@@ -460,10 +463,16 @@
           (expect (= 1 (count (:lines data))))
           (let [line (first (:lines data))]
             (expect (= 1 (:line line)))
-            (expect (= "Vis Test" (:author line)))
             (expect (= "(ns a)" (:content line)))
+            ;; :sha is now the SHORT sha (the commit-legend key)
             (expect (string? (:sha line)))
-            (expect (= 7 (count (:short-sha line))))))
+            (expect (= 7 (count (:sha line))))
+            ;; per-line author/email/at moved into the legend, stated once
+            (expect (nil? (:author line)))
+            (let [commit (get (:commits data) (:sha line))]
+              (expect (= "Vis Test" (:author commit)))
+              (expect (string? (:sha commit)))
+              (expect (= 40 (count (:sha commit)))))))
         (finally (cleanup root)))))
 
   (it "caps default blame at 1000 lines and flags :truncated? when more exist"
@@ -532,10 +541,12 @@
               after  (:result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
                                 {:path "src/a.clj" :ignore_revs [noisy-sha]}))
               before-line (first (:lines before))
-              after-line  (first (:lines after))]
-          (expect (= "Noisy Bot" (:author before-line)))
+              after-line  (first (:lines after))
+              before-author (get-in before [:commits (:sha before-line) :author])
+              after-author  (get-in after  [:commits (:sha after-line)  :author])]
+          (expect (= "Noisy Bot" before-author))
           (expect (= [noisy-sha] (:ignored-revs after)))
-          (expect (= "Vis Test" (:author after-line)))
+          (expect (= "Vis Test" after-author))
           (expect (not= (:sha before-line) (:sha after-line))))
         (finally (cleanup root)))))
 

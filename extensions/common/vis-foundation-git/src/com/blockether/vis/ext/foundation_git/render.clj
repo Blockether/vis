@@ -216,14 +216,26 @@
 ;; git/blame
 ;; ---------------------------------------------------------------------------
 
-(defn- blame-row [{:keys [line short-sha author content]}]
+(defn- blame-row
+  "One blame line in the `N│ <short-sha> <content>` style. The new result
+   shape keeps only {:line :sha :content} per line — :sha is the SHORT sha
+   that keys the commit legend, so the row references the legend instead of
+   repeating author/email/at on every line."
+  [{:keys [line sha content]}]
   (str (format "%5d" (or line 0))
-    "  " (pad-right (or short-sha "????????") 9)
-    (pad-right (or author "?") 18)
-    "  " (or content "")))
+    "│ " (pad-right (or sha "????????") 9)
+    " " (or content "")))
+
+(defn- legend-row
+  "One commit-legend entry: `<short-sha>  <author>  <date>`. Stated ONCE per
+   distinct commit; the per-line rows reference it by short-sha."
+  [[sha {:keys [author at]}]]
+  (str (pad-right (or sha "????????") 9)
+    "  " (pad-right (or author "?") 20)
+    (or (fmt-at at) "")))
 
 (defn render-blame
-  [{:keys [path head total ignored-revs lines]}]
+  [{:keys [path head total ignored-revs commits lines]}]
   {:summary
    {:left   (ir-strong "BLAME")
     :center (if head
@@ -233,11 +245,18 @@
               (when (seq ignored-revs)
                 (str "  ignored=" (count ignored-revs))))}
    ;; Body ONLY — BLAME / path / @head / line count are on the summary op-row.
+   ;; The commit legend is rendered ONCE (short-sha -> author/date); the
+   ;; per-line rows below reference it by short-sha (the `N│ <sha> <content>`
+   ;; style) instead of repeating commit identity on every line.
    :display
-   (ir-root
-     (when (seq lines)
-       (ir-code-block "text"
-         (cap (str/join "\n" (map blame-row lines))))))})
+   (apply ir-root
+     (concat
+       (when (seq commits)
+         [(ir-code-block "text"
+            (cap (str/join "\n" (map legend-row (sort-by key commits)))))])
+       (when (seq lines)
+         [(ir-code-block "text"
+            (cap (str/join "\n" (map blame-row lines))))])))})
 
 ;; ---------------------------------------------------------------------------
 ;; git/merge-* ops
