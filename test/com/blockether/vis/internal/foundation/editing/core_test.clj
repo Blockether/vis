@@ -958,7 +958,7 @@
                   (catch clojure.lang.ExceptionInfo e e))]
         (expect (some? err))
         (expect (= :ext.foundation.editing/invalid-rg-arity (:type (ex-data err))))
-        (expect (clojure.string/includes? (ex-message err) "single spec map or inline kwargs")))
+        (expect (clojure.string/includes? (ex-message err) "single options dict")))
       ;; :limit, :is_regex, :is_files_only, :is_counts are NOW valid keys.
       (doseq [[k v] [[(keyword "type") :clj]
                      [(keyword "mode") :any]]]

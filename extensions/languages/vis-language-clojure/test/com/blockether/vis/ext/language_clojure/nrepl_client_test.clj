@@ -30,7 +30,7 @@
         (let [r (nc/eval! {:port port :code "(+ 1 2)"})]
           (expect (= "3" (:value r)))
           (expect (contains? (:status r) "done"))
-          (expect (false? (:timed-out? r)))
+          (expect (false? (:timed_out r)))
           (expect (number? (:ms r)))))))
 
   (it "captures stdout"

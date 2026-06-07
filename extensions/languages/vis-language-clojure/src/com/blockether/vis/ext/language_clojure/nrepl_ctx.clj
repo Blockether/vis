@@ -2,7 +2,7 @@
   "Per-turn `:ext/ctx` contribution for the Clojure pack.
 
    Mirrors foundation-core's `workspace-ctx`: instead of forcing the model
-   to call `(clj/ports)` over and over, the engine injects live nREPL state
+   to call `clj_repl()` over and over, the engine injects live nREPL state
    into context as standing knowledge, nested UNDER the active language so a
    polyglot repo accumulates `:languages {:clojure {...} :typescript {...}}`:
 

@@ -262,7 +262,7 @@
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "Clojure strings reject \\| as an escape. rg is literal and takes one spec map: use {:any [\"foo\" \"bar\"]} for OR, or {:all [\"foo|bar\"]} only when you need the literal pipe text."
+    "rg matches literal substrings by default — no regex escaping needed. Pass one options dict: rg({\"any\": [\"foo\", \"bar\"]}) for OR, or rg({\"all\": [\"foo|bar\"]}) when you need the literal pipe text. Set \"is_regex\": True only for a real regex."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
@@ -555,12 +555,12 @@
             clusters))
 
         (contains? classes :provider-schema-rejected)
-        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (session-state)) and retry/switch model only if it repeats.")
+        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use raw_preview from session_state()[\"failures\"] and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
-        (conj (str "rg takes one spec map with literal vectors, not regex strings or positional args. "
-                "Use {:all [\"foo|bar\"]} for literal pipe text, or {:any [\"foo\" \"bar\"]} for OR. "
-                "Add :paths and :include in the same map."))
+        (conj (str "rg takes one options dict with list values, not regex strings or positional args. "
+                "Use rg({\"all\": [\"foo|bar\"]}) for literal pipe text, or rg({\"any\": [\"foo\", \"bar\"]}) for OR. "
+                "Add \"paths\" and \"include\" in the same dict."))
 
         (contains? classes :regex-unescaped-quote)
         (conj "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")

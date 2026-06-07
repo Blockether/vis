@@ -229,7 +229,7 @@
                    (:pid reg-info))]
     {:result        :status
      :dir           dir
-     :flag-enabled? (flag-enabled?)
+     :flag_enabled (flag-enabled?)
      :managed       (cond-> {:running running?}
                       tool          (assoc :tool tool)
                       (seq aliases) (assoc :aliases (vec aliases))
@@ -242,7 +242,7 @@
 
    - If we already manage a live process for `dir` → :already-running.
    - If `dir` already has a LIVE external nREPL (its own `.nrepl-port` probes
-     :up) → :already-running with `:external? true` (we don't double-start).
+     :up) → :already-running with `:is_external true` (we don't double-start).
    - A stale `.nrepl-port` is cleared so we wait for the fresh one.
 
    Waits briefly for the fresh port; returns :started (with port + liveness)
@@ -263,7 +263,7 @@
          (cond
            ;; a live REPL we don't own (no registry entry) — don't double-start
            live?
-           {:result :already-running :external? true :dir dir :port existing
+           {:result :already-running :is_external true :dir dir :port existing
             :message "An nREPL is already running in this directory."}
 
            :else

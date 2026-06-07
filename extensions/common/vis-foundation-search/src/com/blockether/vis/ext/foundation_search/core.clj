@@ -2,15 +2,15 @@
   "`search/` research extension.
 
    Three model-facing bindings under alias `search`:
-     (search/web    query opts?)  — web search via Exa MCP
-     (search/code   query opts?)  — code/doc context via Exa MCP
-     (search/papers query opts?)  — arxiv papers (Atom feed)
+     search_web(query, opts?)    — web search via Exa MCP
+     search_code(query, opts?)   — code/doc context via Exa MCP
+     search_papers(query, opts?) — arxiv papers (Atom feed)
 
    All three bind directly in the primary agent sandbox.
 
    Output shape — parity with the rest of the `:tag :observation`
    tool surface (cat, ls, rg). Every search fn returns the
-   canonical tool envelope; SCI sees the unwrapped `:result` map:
+   canonical tool envelope; the agent sees the unwrapped `:result` map:
 
      {:op       :search/web|:search/code|:search/papers
       :query        \"…\"
@@ -663,16 +663,16 @@
 (defn- web-args
   [query opts]
   (cond-> {:query query}
-    (kw-get opts :num-results :numResults) (assoc :numResults (kw-get opts :num-results :numResults))
+    (kw-get opts :num_results :numResults) (assoc :numResults (kw-get opts :num_results :numResults))
     (kw-get opts :type) (assoc :type (name (kw-get opts :type)))
-    (kw-get opts :livecrawl :live-crawl) (assoc :livecrawl (name (kw-get opts :livecrawl :live-crawl)))
-    (kw-get opts :context-max-characters :contextMaxCharacters)
-    (assoc :contextMaxCharacters (kw-get opts :context-max-characters :contextMaxCharacters))))
+    (kw-get opts :livecrawl :live_crawl) (assoc :livecrawl (name (kw-get opts :livecrawl :live_crawl)))
+    (kw-get opts :context_max_characters :contextMaxCharacters)
+    (assoc :contextMaxCharacters (kw-get opts :context_max_characters :contextMaxCharacters))))
 
 (defn- code-args
   [query opts]
   (cond-> {:query query}
-    (kw-get opts :tokens-num :tokensNum) (assoc :tokensNum (kw-get opts :tokens-num :tokensNum))))
+    (kw-get opts :tokens_num :tokensNum) (assoc :tokensNum (kw-get opts :tokens_num :tokensNum))))
 
 ;; ----------------------------------------------------------------------------
 ;; Envelope helpers
@@ -769,9 +769,9 @@
 
 (defn web
   "Live web search via Exa MCP. Returns the canonical tool envelope;
-   SCI sees the unwrapped `:result` map:
+   the agent sees the unwrapped `:result` map:
      {:op :search/web :query :citations [{:type :web :title :url
-      :excerpt :published? :authors? :source :exa} …]
+      :excerpt :published :authors :source :exa} …]
       :citation-count :truncated? :endpoint :source}
 
    `:excerpt` is markdown; the channel renderer parses it through
@@ -779,11 +779,8 @@
    fences) render natively in the TUI / Telegram / web channels.
    Set `EXA_API_KEY` for higher rate limits.
 
-   Opts (kwargs OR map; both accepted by SCI 1.11+ kwargs coercion):
-     :num-results            — number of results to fetch
-     :type                   — :auto | :fast | :deep
-     :livecrawl              — :fallback | :preferred
-     :context-max-characters — cap per-result content size"
+   Python call: search_web(query, {\"num_results\": N, \"type\": \"auto\",
+     \"livecrawl\": \"preferred\", \"context_max_characters\": N})"
   ([query] (web query {}))
   ([query opts]
    (call-exa! :search/web "web_search_exa" (web-args (str query) (or opts {}))
@@ -797,13 +794,13 @@
    For github-only queries, narrow the query string (e.g.
    `site:github.com X` or `<repo> X`).
 
-   Returns the canonical tool envelope; SCI sees:
+   Returns the canonical tool envelope; the agent sees:
      {:op :search/code :query :citations [{:type :code :title :url
       :excerpt :source :exa} …] :citation-count :truncated? :endpoint
       :source}
    `:excerpt` is markdown (commonmark-rendered by the channel layer).
 
-   Opts: :tokens-num."
+   Python call: search_code(query, {\"tokens_num\": N})"
   ([query] (code query {}))
   ([query opts]
    (call-exa! :search/code "get_code_context_exa" (code-args (str query) (or opts {}))
@@ -856,7 +853,7 @@
         :error true}])))
 
 (defn papers
-  "arxiv paper search. Returns the canonical tool envelope; SCI sees:
+  "arxiv paper search. Returns the canonical tool envelope; the agent sees:
      {:op :search/papers :query :citations [{:type :paper :title
       :url :excerpt :authors :published :source :arxiv} …]
       :citation-count :truncated? :source}
@@ -865,20 +862,23 @@
    through commonmark by the channel layer, which is a no-op for
    non-markdown content).
 
+   Python call: search_papers(query, {\"max_results\": N,
+     \"sort\": \"relevance\", \"timeout_ms\": ms})
+
    Opts:
-     :max-results  N    default 10
-     :sort         :relevance|:lastUpdatedDate|:submittedDate (default :relevance)
-     :timeout-ms   ms   default 20 000"
+     max_results  N    default 10
+     sort         relevance|lastUpdatedDate|submittedDate (default relevance)
+     timeout_ms   ms   default 20 000"
   ([query] (papers query {}))
   ([query opts]
-   (let [{:keys [max-results sort timeout-ms]
-          :or {max-results ARXIV_DEFAULT_MAX_RESULTS
+   (let [{:keys [max_results sort timeout_ms]
+          :or {max_results ARXIV_DEFAULT_MAX_RESULTS
                sort        :relevance
-               timeout-ms  ARXIV_DEFAULT_TIMEOUT_MS}} opts
+               timeout_ms  ARXIV_DEFAULT_TIMEOUT_MS}} opts
          url (str ARXIV_API_BASE
                "?search_query=" (URLEncoder/encode (str "all:" query) "UTF-8")
                "&start=0"
-               "&max_results=" max-results
+               "&max_results=" max_results
                "&sortBy=" (case sort
                             :lastUpdatedDate "lastUpdatedDate"
                             :submittedDate   "submittedDate"
@@ -886,7 +886,7 @@
                             "relevance")
                "&sortOrder=descending")]
      (try
-       (let [resp (http/get url {:timeout timeout-ms
+       (let [resp (http/get url {:timeout timeout_ms
                                  :headers {"User-Agent" "vis-foundation-search/0.1"}})
              body (:body resp)
              body-bytes (cond
@@ -1062,7 +1062,7 @@
    papers-symbol])
 
 (def search-prompt
-  "Live research tools bind directly in your sandbox: `search/web` (Exa MCP web search), `search/code` (Exa MCP code/doc context), and `search/papers` (arxiv). Call them inline like any other observation tool; each returns `{:citations [...] :citation-count N ...}`. Promote durable findings into a fact with `(fact-set! :K {...})`.")
+  "Live research tools bind directly in your sandbox: `search_web` (Exa MCP web search), `search_code` (Exa MCP code/doc context), and `search_papers` (arxiv). Call them inline like any other observation tool; each returns a result map with `citations`, `citation_count`, etc. Promote durable findings into a fact with `fact_set(\"K\", {...})`.")
 
 (def search-env
   [{:name "EXA_API_KEY"

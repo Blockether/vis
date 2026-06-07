@@ -2,22 +2,22 @@
   "vis-language-clojure — Clojure-specific tooling for Vis.
 
    Activates ONLY when the workspace language scan (foundation-core)
-   detects Clojure files. Surfaces a small `clj/` alias inside the
-   SCI sandbox:
+   detects Clojure files. Surfaces a small `clj` alias inside the
+   Python sandbox:
 
-     (clj/ports)    -> discover nREPL ports (workspace + home)
-     (clj/eval ...) -> eval in a running nREPL (per-port conn pool)
-     (clj/edit {:path :op :target :code}) -> rewrite-clj edit
+     clj_repl()     -> manage workspace nREPL (status/start/stop/restart)
+     clj_eval(...)  -> eval in a running nREPL (per-port conn pool)
+     clj_edit(...)  -> rewrite-clj edit
 
    No surface duplicates foundation-core's bare tools. `cat`/`rg`/
    `patch` stay the right answer for everything Clojure-agnostic —
-   including structure exploration: `rg` (with `:context`) plus the
+   including structure exploration: `rg` (with `context`) plus the
    engine `doc` / `apropos` system calls cover def lookup. (The old `clj/outline` / `clj/find` rode a hardcoded
    def-head allowlist that silently dropped `deftest` and any
    macro-defined form; removed pending a cross-platform tree-sitter
    outline.)
 
-   The SCI surface registered here exposes `clj/eval`. Inside this
+   The Python surface registered here exposes `clj_eval`. Inside this
    namespace the matching var (`eval`) shadows `clojure.core/eval`;
    that is intentional — we never use the core fn here, and
    `:refer-clojure :exclude` silences the load-time warning so the
@@ -104,10 +104,10 @@
 
 (defn register-repl-resource!
   "Mirror a managed nREPL into the session-scoped resource registry so it shows
-   in ctx (`session_resources`) + the footer, and can be stopped/restarted by id
+   in ctx (session_resources) + the footer, and can be stopped/restarted by id
    from the agent or the UI. No-op without a session or a live spawn. The
-   `:stop-fn`/`:restart-fn` thunks ARE the canonical lifecycle — the footer and
-   `resource_stop` both drive `repl-manager` through them."
+   stop-fn/restart-fn thunks ARE the canonical lifecycle — the footer and
+   resource_stop both drive repl-manager through them."
   [session dir aliases result]
   (when (and session (or (:pid result) (:port result)))
     (vis/register-resource! session
@@ -134,16 +134,16 @@
       :level :success :ttl-ms 4000)))
 
 (defn clj-repl-fn
-  "Manage a workspace nREPL. Positional op (default `:status`) + optional opts
-   map `{:dir <path> :aliases [:dev :test]}`:
+  "Manage a workspace nREPL. Positional op (default \"status\") + optional opts
+   dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
 
-     :status   — managed-process + discovered-port view (always allowed)
-     :start    — self-start a project nREPL subprocess (flag-gated)
-     :restart  — stop then start (flag-gated)
-     :stop     — stop the Vis-managed nREPL (always allowed)
+     \"status\"  — managed-process + discovered-port view (always allowed)
+     \"start\"   — self-start a project nREPL subprocess (flag-gated)
+     \"restart\" — stop then start (flag-gated)
+     \"stop\"    — stop the Vis-managed nREPL (always allowed)
 
-   `:dir` runs the REPL in a subdir (e.g. an extension) instead of the
-   workspace root; `:aliases` become deps.edn aliases / lein profiles. Live
+   \"dir\" runs the REPL in a subdir (e.g. an extension) instead of the
+   workspace root; \"aliases\" become deps.edn aliases / lein profiles. Live
    nREPL state already rides in ctx under
    `:session/env :languages :clojure :nrepl`; this tool acts on it."
   ([env] (clj-repl-fn env :status nil))
@@ -166,11 +166,11 @@
        (:start :restart)
        (do
          (when-not (repl-manager/flag-enabled?)
-           (throw (ex-info (str "clj/repl :" (name op) " is disabled — self-start is on by default but "
+           (throw (ex-info (str "clj_repl \"" (name op) "\" is disabled — self-start is on by default but "
                              repl-manager/flag-env " is set to a falsy value. Unset it (or set it truthy) to allow self-start.")
                     {:type :clj/repl-disabled :flag repl-manager/flag-env :op op})))
          (when-not (.isDirectory (io/file dir))
-           (throw (ex-info (str "clj/repl :" (name op) " target dir does not exist: " dir)
+           (throw (ex-info (str "clj_repl \"" (name op) "\" target dir does not exist: " dir)
                     {:type :clj/bad-args :dir dir})))
          (let [result (if (= op :restart)
                         (do (repl-manager/stop! dir) (repl-manager/start! dir {:aliases aliases}))
@@ -180,33 +180,33 @@
            ;; so register-repl-resource! no-ops on them.
            (register-repl-resource! (:session-id env) dir aliases result)
            (extension/success {:result result})))
-       (throw (ex-info (str "clj/repl unknown op: " (pr-str op))
+       (throw (ex-info (str "clj_repl unknown op: " (pr-str op))
                 {:type :clj/bad-args :got op
-                 :examples ["(clj/repl)" "(clj/repl :status)" "(clj/repl :start)"
-                            "(clj/repl :start {:dir \"extensions/languages/vis-language-clojure\" :aliases [:dev :test]})"
-                            "(clj/repl :stop)" "(clj/repl :restart)"]}))))))
+                 :examples ["clj_repl()" "clj_repl(\"status\")" "clj_repl(\"start\")"
+                            "clj_repl(\"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
+                            "clj_repl(\"stop\")" "clj_repl(\"restart\")"]}))))))
 
 (defn- coerce-eval-arg
   "Accept the call shapes the model is most likely to type:
-     (clj/eval \"(+ 1 1)\")
-     (clj/eval {:code \"(+ 1 1)\"})
-     (clj/eval {:code \"...\" :port 7888 :ns \"user\" :timeout-ms 5000})"
+     clj_eval(\"(+ 1 1)\")
+     clj_eval({\"code\": \"(+ 1 1)\"})
+     clj_eval({\"code\": \"...\", \"port\": 7888, \"ns\": \"user\", \"timeout_ms\": 5000})"
   [arg]
   (cond
     (string? arg) {:code arg}
     (map? arg)    arg
-    :else (throw (ex-info "clj/eval expects a code string or opts map"
+    :else (throw (ex-info "clj_eval expects a code string or opts map"
                    {:type :clj/bad-args :got arg
-                    :examples ["(clj/eval \"(+ 1 1)\")"
-                               "(clj/eval {:code \"...\" :port 7888})"]}))))
+                    :examples ["clj_eval(\"(+ 1 1)\")"
+                               "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
 
 (defn clj-eval-fn
   ([env arg]
-   (let [{:keys [code port host ns timeout-ms]} (coerce-eval-arg arg)
+   (let [{:keys [code port host ns timeout_ms]} (coerce-eval-arg arg)
          root (env-root env)
          port (or port (ports/find-default root))]
      (when-not port
-       (throw (ex-info "no nREPL port found — start one (e.g. `bin/dev`) or call (clj/ports) to inspect candidates"
+       (throw (ex-info "no nREPL port found — start one (e.g. `bin/dev`) or call clj_repl() to inspect candidates"
                 {:type :clj/no-port
                  :workspace-root root})))
      (extension/success
@@ -215,19 +215,19 @@
                    :port       port
                    :code       code
                    :ns         ns
-                   :timeout-ms (or timeout-ms 30000)})}))))
+                   :timeout-ms (or timeout_ms 30000)})}))))
 
 (defn clj-edit-fn
   ([env arg]
    (when-not (map? arg)
-     (throw (ex-info "clj/edit requires an opts map"
+     (throw (ex-info "clj_edit requires an opts map"
               {:type :clj/bad-args :got arg
-               :examples ["(clj/edit {:path \"src/a.clj\" :op :replace :target \"foo\" :code \"(defn foo [] :ok)\"})"
-                          "(clj/edit {:path \"src/a.clj\" :op :replace :target [\"area\" :rectangle] :code \"...\"})"
-                          "(clj/edit {:path \"src/a.clj\" :op :insert-after :target \"foo\" :code \"(defn bar [] 1)\"})"
-                          "(clj/edit {:path \"src/a.clj\" :op :add :code \"(defn baz [] 2)\"})"
-                          "(clj/edit {:path \"src/a.clj\" :op :replace-doc :target \"foo\" :code \"Doubles x.\"})"
-                          "(clj/edit {:path \"src/a.clj\" :op :replace-sexp :target \"foo\" :match \"(+ 1 1)\" :code \"(+ 2 2)\"})"]})))
+               :examples ["clj_edit({\"path\": \"src/a.clj\", \"op\": \"replace\", \"target\": \"foo\", \"code\": \"(defn foo [] :ok)\"})"
+                          "clj_edit({\"path\": \"src/a.clj\", \"op\": \"replace\", \"target\": [\"area\", \":rectangle\"], \"code\": \"...\"})"
+                          "clj_edit({\"path\": \"src/a.clj\", \"op\": \"insert_after\", \"target\": \"foo\", \"code\": \"(defn bar [] 1)\"})"
+                          "clj_edit({\"path\": \"src/a.clj\", \"op\": \"add\", \"code\": \"(defn baz [] 2)\"})"
+                          "clj_edit({\"path\": \"src/a.clj\", \"op\": \"replace_doc\", \"target\": \"foo\", \"code\": \"Doubles x.\"})"
+                          "clj_edit({\"path\": \"src/a.clj\", \"op\": \"replace_sexp\", \"target\": \"foo\", \"match\": \"(+ 1 1)\", \"code\": \"(+ 2 2)\"})"]})))
    (extension/success {:result (edit/apply-edit! (env-root env) arg)})))
 
 ;; =============================================================================
@@ -236,13 +236,13 @@
 
 (defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
 
-(def ^{:doc "Manage a workspace nREPL. Positional op: `:status` (default), `:start`, `:stop`, `:restart`, plus an optional opts map `{:dir <path> :aliases [:dev :test]}`. Live nREPL state (ports/liveness/dialect/cwd) already rides in ctx under `:session/env :languages :clojure :nrepl`, refreshed per turn — read it there. `:start`/`:restart` self-start a project nREPL subprocess (deps.edn→clojure -M:aliases, project.clj→lein with-profile, bb.edn→bb) in `:dir` (default workspace root; use a subdir to run a REPL inside e.g. an extension). Self-start is ON by default; set VIS_CLJ_REPL_AUTOSTART falsy to disable. Returns a status map."
+(def ^{:doc "Manage a workspace nREPL. Positional op: \"status\" (default), \"start\", \"stop\", \"restart\", plus an optional opts dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`. Live nREPL state (ports/liveness/dialect/cwd) already rides in ctx under `:session/env :languages :clojure :nrepl`, refreshed per turn — read it there. \"start\"/\"restart\" self-start a project nREPL subprocess (deps.edn→clojure -M:aliases, project.clj→lein with-profile, bb.edn→bb) in \"dir\" (default workspace root; use a subdir to run a REPL inside e.g. an extension). Self-start is ON by default; set VIS_CLJ_REPL_AUTOSTART falsy to disable. Returns a status map."
        :arglists '([] [op] [op opts])} repl clj-repl-fn)
 
-(def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{:code :port? :host? :ns? :timeout-ms?}`. Returns `{:value :values :out :err :ns :status :ex :root-ex :ms :port :host :timed-out?}`. Default port is the first `(clj/ports)` hit; throws `:clj/no-port` when nothing is running."
+(def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{\"code\": ..., \"port\": ..., \"host\": ..., \"ns\": ..., \"timeout_ms\": ...}`. Returns `{:value :values :out :err :ns :status :ex :root_ex :ms :port :host :timed_out}`. Default port is auto-discovered from workspace `.nrepl-port`; throws `:clj/no-port` when nothing is running."
        :arglists '([arg])} eval clj-eval-fn)
 
-(def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{:path :op :target :code [:match] [:format?]}`. `:op` ∈ #{:replace :insert-before :insert-after :add :replace-doc :replace-sexp}. `:add` inserts after `:target`, or appends a new top-level form at EOF when no `:target` is given. `:replace-doc` swaps `:target`'s docstring (inserting one if absent) — here `:code` is the docstring TEXT, a plain string, not a quoted form. `:target` is a defn/def name string, `[name dispatch]` for defmethod, or the wrapping form name for `:replace-sexp` (use `:match` for the sexp text to swap). Writes only when the result round-trips parse-clean. `:format? true` (default) runs zprint before writing."
+(def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...}`. `op` ∈ #{\"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\"}. \"add\" inserts after \"target\", or appends a new top-level form at EOF when no \"target\" is given. \"replace_doc\" swaps \"target\"'s docstring (inserting one if absent) — here \"code\" is the docstring TEXT, a plain string, not a quoted form. \"target\" is a defn/def name string, `[name, dispatch]` for defmethod, or the wrapping form name for \"replace_sexp\" (use \"match\" for the sexp text to swap). Writes only when the result round-trips parse-clean. `\"is_format\": true` (default) runs zprint before writing."
        :arglists '([opts])} edit clj-edit-fn)
 
 ;; Each `:render-fn` is a structured IR builder over the raw
@@ -272,34 +272,34 @@
 (def ^:private prompt-text
   (str "Clojure language pack active.\n"
     "Live nREPL state — ports, liveness, dialect (clj/cljs), working dir, and\n"
-    "whether vis manages each one (:managed, with :tool/:pid/:aliases) — already\n"
+    "whether vis manages each one (managed, with tool/pid/aliases) — already\n"
     "rides in ctx under `:session/env :languages :clojure :nrepl`, refreshed every\n"
     "turn. Read it there; there is no ports tool to call.\n\n"
-    "Symbols under `clj/`:\n"
-    "  (clj/repl) | (clj/repl :status|:start|:stop|:restart [opts])\n"
-    "                                      Manage a workspace nREPL. :status (default) +\n"
-    "                                      :stop are always allowed. :start/:restart self-start\n"
+    "Tools under the `clj` alias:\n"
+    "  clj_repl() | clj_repl(\"status\"|\"start\"|\"stop\"|\"restart\", opts)\n"
+    "                                      Manage a workspace nREPL. \"status\" (default) +\n"
+    "                                      \"stop\" are always allowed. \"start\"/\"restart\" self-start\n"
     "                                      a project nREPL subprocess (ON by default; set\n"
     "                                      " repl-manager/flag-env " falsy to disable).\n"
-    "                                      opts: {:dir <subdir> :aliases [:dev :test]} — run the\n"
+    "                                      opts: {\"dir\": <subdir>, \"aliases\": [\"dev\", \"test\"]} — run the\n"
     "                                      REPL in a subdir (e.g. an extension) with deps.edn\n"
     "                                      aliases / lein profiles. e.g.\n"
-    "                                      (clj/repl :start {:dir \"extensions/...\" :aliases [:dev]})\n"
-    "  (clj/eval \"...\" | {:code :port? :ns? :timeout-ms?})\n"
-    "                                      :port is optional — auto-discovered from the\n"
+    "                                      clj_repl(\"start\", {\"dir\": \"extensions/...\", \"aliases\": [\"dev\"]})\n"
+    "  clj_eval(\"...\") | clj_eval({\"code\": ..., \"port\": ..., \"ns\": ..., \"timeout_ms\": ...})\n"
+    "                                      port is optional — auto-discovered from the\n"
     "                                      workspace `.nrepl-port` when omitted.\n"
-    "  (clj/edit {:path :op :target :code [:match] [:format?]})\n"
-    "      :op ∈ :replace :insert-before :insert-after :add :replace-doc :replace-sexp.\n"
-    "      :add = insert-after :target, or append at EOF when no :target. :replace-doc\n"
-    "      swaps :target's docstring (:code = doc text, plain string). :replace-sexp\n"
-    "      swaps the :match sexp inside :target.\n"
-    "For structure exploration use `rg` (with `:context`) + the engine `doc` / `apropos` system calls — there is no clj outline/find tool.\n"
-    "Use `clj/edit` for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`. Use `clj/eval` to verify behaviour against the running REPL before claiming a fix."))
+    "  clj_edit({\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...})\n"
+    "      op ∈ \"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\".\n"
+    "      \"add\" = insert_after target, or append at EOF when no target. \"replace_doc\"\n"
+    "      swaps target's docstring (code = doc text, plain string). \"replace_sexp\"\n"
+    "      swaps the match sexp inside target.\n"
+    "For structure exploration use `rg` (with `context`) + the engine `doc` / `apropos` system calls — there is no clj outline/find tool.\n"
+    "Use clj_edit for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`. Use clj_eval to verify behaviour against the running REPL before claiming a fix."))
 
 (def vis-extension
   (vis/extension
     {:ext/name           "language-clojure"
-     :ext/description    "Clojure language pack: live nREPL state in ctx, nREPL eval (clj/eval), flag-gated REPL lifecycle (clj/repl self-start), structure-aware edits (clj/edit via rewrite-clj). Activates only when the workspace has Clojure sources."
+     :ext/description    "Clojure language pack: live nREPL state in ctx, nREPL eval (clj_eval), flag-gated REPL lifecycle (clj_repl self-start), structure-aware edits (clj_edit via rewrite-clj). Activates only when the workspace has Clojure sources."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -309,7 +309,7 @@
                           :ext.sci/symbols clj-symbols}
      :ext/env            [{:name        repl-manager/flag-env
                            :label       "Self-start nREPL"
-                           :description "Controls whether (clj/repl :start) may launch a project nREPL subprocess (deps.edn→clojure, project.clj→lein, bb.edn→bb). ON by default; set to a falsy value (0/false/no/off) to disable self-start."
+                           :description "Controls whether clj_repl(\"start\") may launch a project nREPL subprocess (deps.edn→clojure, project.clj→lein, bb.edn→bb). ON by default; set to a falsy value (0/false/no/off) to disable self-start."
                            :secret?     false
                            :required?   false}]
      :ext/prompt         (fn [_env] prompt-text)

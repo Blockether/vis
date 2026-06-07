@@ -6,7 +6,7 @@
 
      (fn [result] {:summary <summary> :display <ir>})
 
-   `summary` is EITHER a zone map `{:left <ir-or-string> :center? … :right? …}`
+   `summary` is EITHER a zone map `{:left <ir-or-string> :center … :right …}`
    (used when the result has a natural label + right-anchored metric — counts,
    durations, byte deltas, ports) OR a single `[:p ...]`-bearing IR root whose
    first `[:strong ...]` is the badge label. `display` is the full canonical
@@ -50,7 +50,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn render-ports
-  "Preview for `(clj/ports)`.
+  "Preview for `clj_ports()`.
 
    Summary is a zone badge: `PORTS` label on the left, the visible count
    right-anchored, default port in the center when known. With ZERO or ONE
@@ -79,7 +79,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn render-repl
-  "Preview for `(clj/repl …)`.
+  "Preview for `clj_repl(…)`.
 
    Summary is a zone badge: `REPL` (+ a glyph for the action outcome) on the
    left, the result keyword (+ build tool) in the center, the visible port
@@ -113,14 +113,14 @@
 ;; ---------------------------------------------------------------------------
 
 (defn render-eval
-  "Preview for `(clj/eval …)`.
+  "Preview for `clj_eval(…)`.
 
    Summary is a zone badge: `EVAL` / `TIMEOUT` / `ERROR` label, ns in the
    center, port + elapsed ms right-anchored. Display carries the value, any
    `:out` / `:err` capture and the exception class."
-  [{:keys [value out err ns status ex root-ex ms port timed-out?]}]
-  (let [bad?  (or timed-out? ex root-ex (contains? status "error"))
-        badge (cond timed-out? "TIMEOUT"
+  [{:keys [value out err ns status ex root-ex ms port timed_out]}]
+  (let [bad?  (or timed_out ex root-ex (contains? status "error"))
+        badge (cond timed_out "TIMEOUT"
                 bad?       "ERROR"
                 :else      "EVAL")
         right (str ":" port (when (number? ms) (str "  " ms "ms")))]
@@ -142,7 +142,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn render-edit
-  "Preview for `(clj/edit …)`.
+  "Preview for `clj_edit(…)`.
 
    On success the summary is a zone badge: `EDIT` label, the edit-op + target
    in the center, the byte delta (`+N` / `-N`) right-anchored. On failure the

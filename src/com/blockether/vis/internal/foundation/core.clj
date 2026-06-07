@@ -70,7 +70,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation kernel (bare symbols, no alias): session-state/session-report, file I/O (cat/ls/rg/patch/write/copy/move/delete/delete-if-exists/exists?), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. Sandbox symbol introspection is an engine system call (`doc` / `apropos`), not a tool. Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation kernel (bare Python functions, no alias): session_state/session_report, file I/O (cat/ls/rg/patch/write/copy/move/delete/delete_if_exists/is_exists), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main_agent_instructions. Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
