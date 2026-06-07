@@ -58,7 +58,7 @@
       (expect (= '#{init profile check next list-evidence run-evidence}
                 (set (map :ext.symbol/symbol
                        (get-in bridge/vis-extension [:ext/sci :ext.sci/symbols])))))
-      (expect (str/includes? prompt-text "use `(br/check)` first"))
+      (expect (str/includes? prompt-text "use `br_check()` first"))
       (expect (str/includes? prompt-text "summarize the returned map instead of pasting it raw"))
       (expect (str/includes? prompt-text ":status-summary"))
       (expect (str/includes? prompt-text ":required-obligations"))
@@ -169,7 +169,7 @@
           check-result (bridge/check env)
           next-result (bridge/next env)
           list-result (bridge/list-evidence env)
-          run-result (bridge/run-evidence env "unit" {:dry-run? true})]
+          run-result (bridge/run-evidence env "unit" {:is_dry_run true})]
       (expect (true? (:success? init-result)))
       (expect (= true (get-in init-result [:result :configured?])))
       (expect (= false (get-in init-result [:result :already-configured?])))
@@ -202,10 +202,10 @@
                       "bridge-ext-no-profile"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
           env {:workspace/root root}
-          run-result (bridge/run-evidence env "unit" {:dry-run? true})]
+          run-result (bridge/run-evidence env "unit" {:is_dry_run true})]
       (expect (false? (:success? run-result)))
       (expect (not (str/includes? (or (get-in run-result [:error :hint]) "") "bb bridge")))
-      (expect (str/includes? (or (get-in run-result [:error :hint]) "") "(br/init)")))))
+      (expect (str/includes? (or (get-in run-result [:error :hint]) "") "br_init()")))))
 
 (defdescribe bridge-init-idempotent-test
   (it "init is iempotent"
@@ -233,8 +233,8 @@
           _ (spit (str root "/src/core.clj") "(ns core)")
           env {:workspace/root root}
           _ (bridge/init env)
-          check-result (bridge/check env {:changed-files ["src/core.clj"]})
-          next-result (bridge/next env {:changed-files ["src/core.clj"]})
+          check-result (bridge/check env {:changed_files ["src/core.clj"]})
+          next-result (bridge/next env {:changed_files ["src/core.clj"]})
           open-obligation (first (get-in check-result [:result :open-obligations]))
           suggestion (get-in next-result [:result :next-step])]
       (expect (true? (:success? check-result)))
@@ -269,7 +269,7 @@
                :execution-status "execution-failed"
                :finished-at "2026-05-20T19:01:06.340575Z"
                :command "clojure -M:test"})
-          result (bridge/check env {:changed-files ["src/core.clj"]})]
+          result (bridge/check env {:changed_files ["src/core.clj"]})]
       (expect (true? (:success? result)))
       (expect (= "attention-required" (get-in result [:result :status])))
       (expect (= 1 (get-in result [:result :status-summary :required-obligation-count])))
@@ -298,11 +298,11 @@
           configured-hint (hint-fn {:environment {:workspace/root configured-root}})]
       (expect (= :warn (:importance unconfigured-hint)))
       (expect (nil? (:validator-fn unconfigured-hint)))
-      (expect (str/includes? (:title unconfigured-hint) "(br/init)"))
+      (expect (str/includes? (:title unconfigured-hint) "br_init()"))
       (expect (= :info (:importance configured-hint)))
       (expect (nil? (:validator-fn configured-hint)))
-      (expect (str/includes? (:title configured-hint) "(br/next)"))
-      (expect (not (str/includes? (:title configured-hint) "(br/run-evidence)")))
+      (expect (str/includes? (:title configured-hint) "br_next()"))
+      (expect (not (str/includes? (:title configured-hint) "br_run_evidence")))
       (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))
 
 ;; ---------------------------------------------------------------------------

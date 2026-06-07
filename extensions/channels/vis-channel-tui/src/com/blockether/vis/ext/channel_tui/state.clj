@@ -976,6 +976,13 @@
                     (update :tasks-open? not)
                     (assoc :help-open? false
                            :ctx-scroll 0))))
+(reg-event-db :close-overlays
+              ;; Force every render-flag overlay shut. Dispatched before opening a
+              ;; modal dialog (e.g. F4 resources) so only ONE dialog is ever on
+              ;; screen — the F2 context / F1 help panels can't bleed around the
+              ;; modal box.
+              (fn [db _]
+                (assoc db :help-open? false :tasks-open? false)))
 (reg-event-db :ctx-scroll-by
               ;; Scroll the F2 context panel by `delta` rows, clamped to [0, the last
               ;; paint's :ctx-scroll-max]. Callers bump :render-version separately so the

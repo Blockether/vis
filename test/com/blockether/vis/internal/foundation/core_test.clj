@@ -55,7 +55,7 @@
     ;; now lists the symbols that actually exist; do NOT let the old
     ;; DSL names creep back into the descriptor copy.
     (let [doc (:ext/description foundation/vis-extension)]
-      (expect (str/includes? doc "session-state"))
+      (expect (str/includes? doc "session_state"))
       (expect (str/includes? doc "file I/O"))
       (expect (str/includes? doc "system call"))
       (expect (not (str/includes? doc "vis ext repro")))

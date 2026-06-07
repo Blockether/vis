@@ -24,7 +24,7 @@
       :root-ex    nil              ; root exception class name
       :ms         12               ; wall-clock duration
       :port       7888
-      :timed-out? false}
+      :timed_out false}
 
    Failure paths throw `ex-info` with `:type :clj/nrepl-*` so the
    Vis tool wrapper can surface a clean error to the model."
@@ -58,7 +58,7 @@
       :timeout (long timeout-ms))
     (catch Throwable t
       (throw (ex-info (str "nREPL connect failed on " (or host "localhost") ":" port
-                        " — is the REPL running? Try (clj/ports).")
+                        " — is the REPL running? Check ctx for nREPL state or call clj_repl().")
                {:type :clj/nrepl-connect-failed
                 :host (or host "localhost")
                 :port port
@@ -105,7 +105,7 @@
          root-ex  nil]
     (cond
       (> (System/currentTimeMillis) deadline)
-      {:timed-out? true
+      {:timed_out true
        :value      (peek values)
        :values     values
        :out        (.toString out-acc)
@@ -116,7 +116,7 @@
        :root-ex    root-ex}
 
       (empty? rs)
-      {:timed-out? false
+      {:timed_out false
        :value      (peek values)
        :values     values
        :out        (.toString out-acc)
@@ -155,7 +155,7 @@
             ;; Drain remaining queued messages but don't block — once
             ;; "done" arrived the eval is complete; further reads would
             ;; just spin on the response queue's timeout.
-            {:timed-out? false
+            {:timed_out false
              :value      (peek values')
              :values     values'
              :out        (.toString out-acc)

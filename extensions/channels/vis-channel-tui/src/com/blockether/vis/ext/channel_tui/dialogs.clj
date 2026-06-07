@@ -429,6 +429,10 @@
             cols   (.getColumns size)
             rows   (.getRows size)
             g      (.newTextGraphics screen)
+            ;; Wipe the whole screen in THIS paint pass (single refresh, no
+            ;; flicker) so no other overlay (F2 panel, help) bleeds around the
+            ;; box, and a shrinking list (after a stop) leaves no stale border.
+            _      (do (p/set-bg! g t/terminal-bg) (p/fill-rect! g 0 0 cols rows))
             bounds (draw-dialog-chrome! g cols rows "Resources" (max 1 total))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]

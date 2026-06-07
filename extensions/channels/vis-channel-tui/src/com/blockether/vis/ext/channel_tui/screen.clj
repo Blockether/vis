@@ -3037,6 +3037,20 @@
                                                 :level :info
                                                 :ttl-ms copy-success-ttl-ms))))
                                         (recur))
+                         :open-resources
+                         (do (when-not (:dialog-open? @state/app-db)
+                               ;; One dialog at a time: shut the F2/help render-flag
+                               ;; overlays + any active search before the modal, so
+                               ;; nothing bleeds around it and it doesn't reappear
+                               ;; underneath when the modal closes.
+                               (state/dispatch [:close-overlays])
+                               (when (get-in @state/app-db [:search :active?])
+                                 (state/dispatch [:search-clear]))
+                               ;; Same canonical stop/restart path as the agent's
+                               ;; resource_stop/resource_restart — driven by id.
+                               (with-dialog-lock
+                                 #(dlg/resources-dialog! screen (get-in @state/app-db [:session :id]))))
+                           (recur))
                          :show-palette (do (when-not (:dialog-open? @state/app-db)
                                                ;; One invocation, one command. Reopening here
                                                ;; caused a modal loop: after choosing any

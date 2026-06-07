@@ -65,7 +65,7 @@
       (catch clojure.lang.ExceptionInfo e
         (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
         (expect (clojure.string/includes? (ex-message e)
-                  "git/diff expected optional opts map, got :bad")))))
+                  "git_diff expected optional opts dict, got :bad")))))
 
   (it "accepts {:from sha :to sha} for arbitrary range diff"
     (let [root (make-tmp-dir)]
@@ -101,7 +101,7 @@
           (-> g .add (.addFilepattern "src/a.clj") .call)
           (-> g .commit (.setMessage "v2") .call))
         (let [data (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
-                              {:from "HEAD~1" :to "HEAD" :patch? true}))
+                              {:from "HEAD~1" :to "HEAD" :is_patch true}))
               entry (first (:files data))]
           (expect (string? (:patch entry)))
           (expect (clojure.string/includes? (:patch entry) "-(def x 1)"))
@@ -155,7 +155,7 @@
       (expect false)
       (catch clojure.lang.ExceptionInfo e
         (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
-        (expect (clojure.string/includes? (ex-message e) "git/diff :from must be a string"))))))
+        (expect (clojure.string/includes? (ex-message e) "git_diff :from must be a string"))))))
 
 (defdescribe git-status-test
   (it "returns branch, head, cleanliness, and entries from JGit"
@@ -220,8 +220,8 @@
       (expect false)
       (catch clojure.lang.ExceptionInfo e
         (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
-        (expect (clojure.string/includes? (ex-message e) "git/log expected"))
-        (expect (clojure.string/includes? (ex-message e) "(git/log {:limit 50})")))))
+        (expect (clojure.string/includes? (ex-message e) "git_log expected"))
+        (expect (clojure.string/includes? (ex-message e) "git_log({\"limit\": 50})")))))
 
   (it "enriches each commit map with body, email, committer, parents, short-sha"
     (let [root (make-tmp-dir)]
@@ -344,7 +344,7 @@
         (let [no-patch (:result (git/git-show-fn {:workspace/root (.getCanonicalPath root)}
                                   {:rev "HEAD"}))
               with-patch (:result (git/git-show-fn {:workspace/root (.getCanonicalPath root)}
-                                    {:rev "HEAD" :patch? true}))
+                                    {:rev "HEAD" :is_patch true}))
               entry (first (:files with-patch))]
           (expect (not (contains? (first (:files no-patch)) :patch)))
           (expect (string? (:patch entry)))
@@ -395,7 +395,7 @@
           (-> g .add (.addFilepattern ".") .call)
           (-> g .commit (.setMessage "add bin") .call))
         (let [data (:result (git/git-show-fn {:workspace/root (.getCanonicalPath root)}
-                              {:rev "HEAD" :patch? true}))
+                              {:rev "HEAD" :is_patch true}))
               entry (first (filter #(= "data.bin" (:file %)) (:files data)))]
           ;; Root-commit path doesn't go through entry-patch (no parent
           ;; tree to diff against). The :patch key is only populated for
@@ -420,7 +420,7 @@
           (-> g .add (.addFilepattern ".") .call)
           (-> g .commit (.setMessage "v2") .call))
         (let [data (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
-                              {:from "HEAD~1" :to "HEAD" :patch? true}))
+                              {:from "HEAD~1" :to "HEAD" :is_patch true}))
               entry (first (:files data))]
           (expect (true? (:binary? entry)))
           (expect (= 0 (:+ entry)))
@@ -444,7 +444,7 @@
           (catch clojure.lang.ExceptionInfo e
             (expect (= :foundation-git/binary (:type (ex-data e))))
             (expect (clojure.string/includes? (ex-message e) "binary blob"))
-            (expect (clojure.string/includes? (ex-message e) "git/log"))))
+            (expect (clojure.string/includes? (ex-message e) "git_log"))))
         (finally (cleanup root))))))
 
 (defdescribe git-blame-test
@@ -530,7 +530,7 @@
                                 {:path "src/a.clj"}))
               ;; With ignore: peel past noisy commit, surface Vis Test.
               after  (:result (git/git-blame-fn {:workspace/root (.getCanonicalPath root)}
-                                {:path "src/a.clj" :ignore-revs [noisy-sha]}))
+                                {:path "src/a.clj" :ignore_revs [noisy-sha]}))
               before-line (first (:lines before))
               after-line  (first (:lines after))]
           (expect (= "Noisy Bot" (:author before-line)))
@@ -542,11 +542,11 @@
   (it "rejects :ignore-revs that is not a sequence"
     (try
       (git/git-blame-fn {:workspace/root "/repo"}
-        {:path "src/foo.clj" :ignore-revs "abc"})
+        {:path "src/foo.clj" :ignore_revs "abc"})
       (expect false)
       (catch clojure.lang.ExceptionInfo e
         (expect (= :foundation-git/invalid-opts (:type (ex-data e))))
-        (expect (clojure.string/includes? (ex-message e) ":ignore-revs")))))
+        (expect (clojure.string/includes? (ex-message e) "ignore_revs")))))
 
   (it "rejects bad arg shapes with foundation-git/invalid-opts"
     (try

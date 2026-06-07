@@ -139,7 +139,7 @@ The spec library specifies the structure of data.")
   (describe "search/web returns a tool envelope wrapping a structured citation map"
     (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
                   (mock-mcp SAMPLE_EXA_TEXT)]
-      (let [env (search/web "clojure malli" {:num-results 2})
+      (let [env (search/web "clojure malli" {:num_results 2})
             r   (envelope-result env)
             cs  (:citations r)]
 
@@ -184,7 +184,7 @@ The spec library specifies the structure of data.")
   (describe "search/code mirrors search/web with :type :code"
     (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
                   (mock-mcp SAMPLE_EXA_TEXT)]
-      (let [env (search/code "clojure spec" {:tokens-num 200})
+      (let [env (search/code "clojure spec" {:tokens_num 200})
             r   (envelope-result env)
             cs  (:citations r)]
         (it "envelope :op = :search/code"
@@ -378,7 +378,7 @@ const total = add(1, 2);")
   (describe "channel-render-search returns the {:summary :display} contract"
     (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
                   (mock-mcp SAMPLE_EXA_TEXT)]
-      (let [env    (search/web "clojure malli" {:num-results 2})
+      (let [env    (search/web "clojure malli" {:num_results 2})
             r      (envelope-result env)
             result (search/channel-render-search r)
             disp   (:display result)
@@ -468,6 +468,6 @@ const total = add(1, 2);")
     (it "does not route through consult"
       (expect (not (str/includes? search/search-prompt "consult"))))
     (it "mentions the three bindings"
-      (expect (str/includes? search/search-prompt "search/web"))
-      (expect (str/includes? search/search-prompt "search/code"))
-      (expect (str/includes? search/search-prompt "search/papers")))))
+      (expect (str/includes? search/search-prompt "search_web"))
+      (expect (str/includes? search/search-prompt "search_code"))
+      (expect (str/includes? search/search-prompt "search_papers")))))

@@ -142,7 +142,7 @@
         (init-repo! root 1)
         (with-workspace root
           (wo/branch! {:op :create :name "throwaway"})
-          (let [del (wo/branch! {:op :delete :name "throwaway" :force? true})]
+          (let [del (wo/branch! {:op :delete :name "throwaway" :is_force true})]
             (expect (= :git/branch-delete (:op del)))
             (expect (= ["throwaway"] (:deleted del)))
             (let [names (set (map :short (:branches (wo/branch! {:op :list}))))]
@@ -196,7 +196,7 @@
       (try
         (init-repo! root 1)
         (with-workspace root
-          (let [r (wo/checkout! {:branch "feature/z" :create? true})]
+          (let [r (wo/checkout! {:branch "feature/z" :is_create true})]
             (expect (= "feature/z" (:branch r)))
             (expect (true? (:created? r)))
             (let [names (set (map :short (:branches (wo/branch! {:op :list}))))]
@@ -366,7 +366,7 @@
             (expect (some #(str/includes? % "f0.clj") (:uncommitted-changes r)))
             ;; The hint points at the fix the model otherwise has to invent.
             (expect (string? (:hint r)))
-            (expect (str/includes? (:hint r) ":autostash?"))))
+            (expect (str/includes? (:hint r) "is_autostash"))))
         (finally (cleanup root)))))
 
   (it ":autostash? true stashes, rebases, and restores the dirty file"
@@ -376,7 +376,7 @@
         (with-workspace root
           (let [{:keys [rel content]} (diverge-and-dirty! root)
                 r (wo/rebase! {:operation :begin :upstream trunk-branch
-                               :autostash? true})]
+                               :is_autostash true})]
             (expect (true? (:successful? r)))
             (expect (true? (:autostash-applied? r)))
             ;; Rebase actually moved (feature.txt from trunk now present)…
@@ -393,7 +393,7 @@
           (wo/branch! {:op :create :name "feature/clean"})
           (wo/checkout! {:branch "feature/clean"})
           (let [r (wo/rebase! {:operation :begin :upstream trunk-branch
-                               :autostash? true})]
+                               :is_autostash true})]
             (expect (true? (:successful? r)))
             ;; Nothing was stashed, so no restore flag is set.
             (expect (nil? (:autostash-applied? r)))))
