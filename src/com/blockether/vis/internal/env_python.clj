@@ -506,12 +506,35 @@ def __vis_render_ctx__(jsons):
   "Python that splits the source into top-level statements, each as
    [source kind bound-name]. kind ∈ expr|assign|def|stmt; bound-name is the
    target of a simple `x = …` or the name of a def/class (else None). Drives
-   per-form evaluation (the SCI `eval-form` analogue)."
+   per-form evaluation (the SCI `eval-form` analogue).
+
+   `_vis_seg` extracts each statement's source via pure-Python line/col slicing
+   instead of `ast.get_source_segment`. GraalPy's native get_source_segment
+   TRUNCATES the segment when the source carries an astral-plane char (e.g. an
+   emoji 👆 in a `done(\"\"\"…\"\"\")` answer) — UTF-16-vs-codepoint offset skew
+   drops the closing quotes, so the lone re-eval raises a spurious
+   'unterminated triple-quoted string' SyntaxError, the answer form errors, the
+   turn never finalizes, and the model loops re-emitting `done(...)`. Python str
+   slicing by ast line/col is codepoint-correct, so it preserves the original
+   source exactly. (Session f41ca531.)"
   (str "import ast as _a\n"
+    "def _vis_seg(_s, n):\n"
+    "    el = getattr(n, 'end_lineno', None); ec = getattr(n, 'end_col_offset', None)\n"
+    "    if el is None or ec is None:\n"
+    "        return _a.get_source_segment(_s, n)\n"
+    "    lines = _s.splitlines(keepends=True)\n"
+    "    chunk = lines[n.lineno-1:el]\n"
+    "    if not chunk:\n"
+    "        return ''\n"
+    "    if len(chunk) == 1:\n"
+    "        return chunk[0][n.col_offset:ec]\n"
+    "    chunk[0] = chunk[0][n.col_offset:]\n"
+    "    chunk[-1] = chunk[-1][:ec]\n"
+    "    return ''.join(chunk)\n"
     "def _vis_split(_s):\n"
     "    out = []\n"
     "    for n in _a.parse(_s).body:\n"
-    "        src = _a.get_source_segment(_s, n)\n"
+    "        src = _vis_seg(_s, n)\n"
     "        if isinstance(n, _a.Expr):\n"
     "            out.append([src, 'expr', None])\n"
     "        elif isinstance(n, (_a.FunctionDef, _a.AsyncFunctionDef, _a.ClassDef)):\n"

@@ -660,7 +660,29 @@
           (expect (nil? (:error read-back)))
           (expect (= 1 (:result read-back))))
         (finally
-          (lp/dispose-environment! env))))))
+          (lp/dispose-environment! env)))))
+
+  (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
+    ;; Regression (session f41ca531): GraalPy's ast.get_source_segment truncates
+    ;; the per-form source when a statement carries a non-BMP char (emoji 👆),
+    ;; dropping the closing quotes -> the lone re-eval raised a spurious
+    ;; "unterminated triple-quoted string" SyntaxError, the (done ...) answer
+    ;; form errored, the turn never finalized, and the model looped re-emitting
+    ;; done(). Our pure-Python codepoint slice must keep every segment intact —
+    ;; including a MULTILINE triple-quoted string with emoji mid- and last-line.
+    (let [{:keys [python-context]} (env/create-python-context {})
+          ;; emoji on the first AND a later line; the second form re-reads the var.
+          code (str "msg = \"\"\"# Heading 👆\n\n- bin/ 🚀\n\nPełne ł ó ż 🌳\"\"\"\n"
+                 "msg")
+          {:keys [forms error result]} (env/run-python-block python-context code)]
+      (expect (nil? error))
+      (expect (= 2 (count forms)))
+      (expect (every? (comp nil? :error) forms))
+      ;; the final expression re-reads the multi-line emoji string unchanged
+      (expect (string? result))
+      (expect (clojure.string/includes? result "👆"))
+      (expect (clojure.string/includes? result "🌳"))
+      (expect (clojure.string/includes? result "Pełne ł ó ż")))))
 
 (defdescribe final-answer-gate-test
   ;; The structural "called a tool this iteration" floor was REMOVED from the
