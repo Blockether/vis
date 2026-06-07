@@ -410,24 +410,25 @@
                   {:theme-id :vis-light :label "Vis Light"}]
                 (theme-picker-items [:vis-dark :vis-light])))))
 
-  (it "settings rows separate channel, provider, and extension-owned settings"
+  (it "Settings has only General + Extensions: General carries Terminal UI + feature toggles + models"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/registered-extensions (constantly [])
                     vis/get-router (constantly nil)]
-        (expect (= ["Terminal UI"]
-                  (->> (settings-rows :channels) (filter #(= :section (:type %))) (mapv :label))))
-        (expect (= ["Models"]
-                  (->> (settings-rows :providers) (filter #(= :section (:type %))) (mapv :label))))
+        (let [general (settings-rows :general)]
+          (expect (= ["Terminal UI" "Feature Toggles" "Models"]
+                    (->> general (filter #(= :section (:type %))) (mapv :label))))
+          (expect (some #(= :theme-name (:key %)) general))
+          (expect (= [:vis-dark :vis-light]
+                    (:choices (first (filter #(= :theme-name (:key %)) general)))))
+          (expect (not-any? #(= :differentiate-turns (:key %)) general))
+          (expect (some #(= :mouse-selection-copy (:key %)) general))
+          ;; transcript-display toggles now live on General (were unreachable
+          ;; when the :general tab was dropped from the tab list)
+          (expect (some #(= :vis/show-raw-code (:toggle-id %)) general))
+          (expect (some #(= :vis/show-thinking (:toggle-id %)) general))
+          (expect (some #(= :vis/reasoning-level (:toggle-id %)) general)))
         (expect (= ["Extensions"]
                   (->> (settings-rows :extensions) (filter #(= :section (:type %))) (mapv :label))))
-        (expect (some #(= :theme-name (:key %)) (settings-rows :channels)))
-        (expect (= [:vis-dark :vis-light]
-                  (:choices (first (filter #(= :theme-name (:key %)) (settings-rows :channels))))))
-        (expect (not-any? #(= :differentiate-turns (:key %)) (settings-rows :channels)))
-        (expect (some #(= :mouse-selection-copy (:key %)) (settings-rows :channels)))
-        (expect (not-any? #(= :show-thinking (:key %)) (settings-rows :channels)))
-        (expect (some #(= :reasoning-level (:key %)) (settings-rows :providers)))
-        (expect (not-any? #(= :providers (:id %)) (settings-rows :providers)))
         (expect (some #(= :info (:type %)) (settings-rows :extensions))))))
 
   (it "registered extension themes appear in the channel Theme setting"
@@ -535,7 +536,7 @@
           (expect (some #(= "Reasoning effort unavailable" (:label %)) provider-rows))
           (expect (not-any? #(= :openai-codex-verbosity (:key %)) provider-rows))))))
 
-  (it "channel-declared settings render under Channels, not provider or extension tabs"
+  (it "channel-declared settings render on the General tab under Channel Settings, not Extensions"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/get-router (constantly nil)
                     vis/registered-extensions (fn [] [{:ext/name "channel-telegram"
@@ -545,17 +546,16 @@
                                                                        :type :toggle
                                                                        :label "Telegram notifications"
                                                                        :description "Send channel notifications."}]}])]
-        (let [channel-rows   (settings-rows :channels)
-              provider-rows  (settings-rows :providers)
+        (let [general-rows   (settings-rows :general)
               extension-rows (settings-rows :extensions)
               row-id [:extension-setting "channel-telegram" :telegram-notify]
-              row (first (filter #(= row-id (:id %)) channel-rows))]
-          (expect (= ["Terminal UI" "Channel Settings"]
-                    (->> channel-rows (filter #(= :section (:type %))) (mapv :label))))
+              row (first (filter #(= row-id (:id %)) general-rows))]
+          (expect (contains?
+                    (set (->> general-rows (filter #(= :section (:type %))) (mapv :label)))
+                    "Channel Settings"))
           (expect (= ["Telegram"]
-                    (->> channel-rows (filter #(= :subsection (:type %))) (mapv :label))))
+                    (->> general-rows (filter #(= :subsection (:type %))) (mapv :label))))
           (expect (= :toggle (:type row)))
-          (expect (nil? (first (filter #(= row-id (:id %)) provider-rows))))
           (expect (nil? (first (filter #(= row-id (:id %)) extension-rows))))))))
 
   (it "session picker keeps new/fork out of the table and renders justified cells"
