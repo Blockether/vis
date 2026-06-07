@@ -58,6 +58,8 @@
 (def dialog-hint     (rgb :dialog-hint))
 (def dialog-hint-key (rgb :dialog-hint-key))
 (def input-field-bg  (rgb :input-field-bg))
+(def button-bg       (rgb :button-bg))
+(def button-fg       (rgb :button-fg))
 
 ;; Chat messages - user
 (def user-bubble-bg    (rgb :user-bubble-bg))
@@ -176,6 +178,8 @@
    :dialog-hint #'dialog-hint
    :dialog-hint-key #'dialog-hint-key
    :input-field-bg #'input-field-bg
+   :button-bg #'button-bg
+   :button-fg #'button-fg
    :user-bubble-bg #'user-bubble-bg
    :user-bubble-fg #'user-bubble-fg
    :user-role-fg #'user-role-fg

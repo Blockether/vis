@@ -95,7 +95,7 @@
      (cond
        (and hovered? danger?) (p/set-colors! g t/header-active-tab-fg t/close-button-hover-fg)
        hovered?               (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
-       :else                  (p/set-colors! g t/dialog-title-bg t/dialog-title-fg))
+       :else                  (p/set-colors! g t/button-fg t/button-bg))
      (when hovered? (p/enable! g p/BOLD))
      (p/put-str! g col row label)
      (p/clear-styles! g)
@@ -131,23 +131,29 @@
           cnt   (format " %-5s" (cond (str/blank? q) ""
                                       (zero? n)      "0/0"
                                       :else          (str (inc (long (or index 0))) "/" n)))
-          ;; content ops between the borders. :input is the white field; :chrome /
-          ;; :gap ride the box bg; :btn delegates to the reusable button! widget.
+          ;; Inner padding so content breathes inside the border: `hpad` cols
+          ;; each side, `vpad` blank rows above/below the content row — a padded
+          ;; card, not a cramped strip.
+          hpad  2
+          vpad  1
+          ;; content ops. :input is the white field; :chrome/:gap ride the box
+          ;; bg; :btn delegates to the reusable button! widget.
           ops   (concat
-                  [[:chrome " "] [:input qpad] [:chrome "  "] [:chrome cnt] [:chrome " "]]
-                  (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) find-bar-buttons))
-                  [[:chrome " "]])
+                  [[:input qpad] [:chrome "  "] [:chrome cnt] [:chrome "  "]]
+                  (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) find-bar-buttons)))
           content-w (long (reduce + (map (fn [op] (long (p/display-width (last op)))) ops)))
-          box-w (+ content-w 2)
+          box-w (+ content-w (* 2 hpad) 2)
+          box-h (+ 3 (* 2 vpad))
           box-l (max 0 (- (long cols) box-w 1))
           box-t (long text-top)
-          row   (inc box-t)]
-      ;; box: fill bg, then single-line border (3 rows tall)
+          row   (+ box-t 1 vpad)
+          x0    (+ box-l 1 hpad)]
+      ;; box: fill bg, then the border
       (p/clear-styles! g)
       (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/fill-rect! g box-l box-t box-w 3)
-      (p/draw-box! g box-l box-t box-w 3)
-      ;; content row (the middle one, between the borders)
+      (p/fill-rect! g box-l box-t box-w box-h)
+      (p/draw-box! g box-l box-t box-w box-h)
+      ;; content row (vertically centred between the borders)
       (reduce
         (fn [x op]
           (case (first op)
@@ -165,7 +171,7 @@
               (p/set-colors! g t/dialog-fg t/dialog-bg)
               (p/put-str! g x row (last op))
               (+ x (long (p/display-width (last op)))))))
-        (inc box-l)
+        x0
         ops))))
 
 (def ^:private header-fkeys

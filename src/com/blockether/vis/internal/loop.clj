@@ -4938,9 +4938,18 @@
      (let [installed  (vec (or (some-> (:extensions environment) deref) []))
            active-set (set (map :ext/name active-extensions))]
        (doseq [ext installed
+               :let [alias (extension/ext-alias-symbol ext)]
                [sym f] (try (extension/wrap-extension ext environment)
                          (catch Throwable _ nil))]
-         (env/set-python-binding! python-context sym
+         ;; Aliased extensions (`:ext.sci/alias 'clj`) bind into the FLAT
+         ;; Python sandbox as `<alias>_<name>` — the snake form of the SCI
+         ;; `alias/name` (clj_eval, git_status, search_web, br_open). Without
+         ;; folding the alias in, the tool leaked as its BARE suffix (`eval`,
+         ;; `status`, `web`), so the model's prompt-promised `clj_eval(...)`
+         ;; call hit a NameError and `apropos`/`dir` showed the wrong names.
+         ;; Builtins carry no alias → bound bare, like the engine verbs.
+         (env/set-python-binding! python-context
+           (if alias (clojure.core/symbol (str alias "/" (name sym))) sym)
            (when (contains? active-set (:ext/name ext)) f)))))
    environment))
 
