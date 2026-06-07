@@ -276,14 +276,19 @@
         box-w (max 3 (- inner-w 2))
         input-left (inc box-left)
         input-w (max 1 (- box-w 2))
-        h-off (max 0 (- cursor (dec input-w)))
-        visible (subs text h-off (min (count text) (+ h-off input-w)))]
+        ;; 1-col inner padding each side, kept ON the white fill, so the text
+        ;; never touches the field edge — same feel as the find bar's input.
+        pad 1
+        text-left (+ input-left pad)
+        text-w (max 1 (- input-w (* 2 pad)))
+        h-off (max 0 (- cursor (dec text-w)))
+        visible (subs text h-off (min (count text) (+ h-off text-w)))]
     (p/set-colors! g t/dialog-border t/dialog-bg)
     (p/draw-box! g box-left row box-w 3)
     (p/set-colors! g t/box-fg (input-field-bg))
     (p/fill-rect! g input-left (inc row) input-w 1)
-    (p/put-str! g input-left (inc row) visible)
-    (p/cursor-pos (+ input-left (- cursor h-off)) (inc row))))
+    (p/put-str! g text-left (inc row) visible)
+    (p/cursor-pos (+ text-left (- cursor h-off)) (inc row))))
 (defn draw-dialog-close-button!
   "Paint a clickable ✕ close button at a dialog's top-right title row and
    record its click bounds (thread-local) so `read-modal-input!` can turn a

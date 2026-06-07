@@ -68,7 +68,10 @@
   ;; model retry burns an iteration).
   ;; 0.7.7: ask-code! `:lenient` mode — whole reply IS the code, no fence
   ;; required (Python engine emits raw source; svar drops nothing).
-  com.blockether/svar                             {:mvn/version "0.7.7"}
+  ;; 0.7.8: connect-phase failures (refused/host-down/DNS/connect-timeout)
+  ;; surface a human-readable, provider-aware message naming the host/URL
+  ;; instead of a bare nil-message java.net.ConnectException.
+  com.blockether/svar                             {:mvn/version "0.7.8"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
