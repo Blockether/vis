@@ -844,13 +844,14 @@
 
 (defn- human-size
   "Compact human-readable byte count for DISPLAY only (the structured
-   `:size` stays a raw int). nil → nil."
+   `:size` stays a raw int). nil → nil. Locale-ROOT formatting so the
+   decimal separator is always `.` (never a locale comma like `2,3k`)."
   [n]
   (cond
     (nil? n)               nil
     (< (long n) 1024)      (str n)
-    (< (long n) 1048576)   (format "%.1fk" (/ (double n) 1024.0))
-    :else                  (format "%.1fM" (/ (double n) 1048576.0))))
+    (< (long n) 1048576)   (String/format java.util.Locale/ROOT "%.1fk" (object-array [(/ (double n) 1024.0)]))
+    :else                  (String/format java.util.Locale/ROOT "%.1fM" (object-array [(/ (double n) 1048576.0)]))))
 
 (defn- list-files
   ;; Internal helper — always called with a real map (or nil).
