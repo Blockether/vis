@@ -104,16 +104,6 @@
       (expect (= 1 (count out)))
       (expect (= :code (-> out first :kind)))))
 
-  (it "drops the engine auto-ack `:vis.foundation/session-title` task-set! — paired with the :title recap, no duplicate row"
-    ;; Engine inserts this immediately after every successful
-    ;; `(set-session-title! …)` to mark the foundation hook done.
-    ;; The user already sees the TITLE recap; the auto-ack would
-    ;; show as a TASK recap right below it (`Task — ✓
-    ;; :vis.foundation/session-title :done`) which is pure noise.
-    (expect (= [{:kind :title :value "Greeting"}]
-              (render/parse-block-display
-                "(set-session-title! \"Greeting\")\n(task-set! :vis.foundation/session-title {:status :done})"))))
-
   (it "renders the model's own task-set! as visible code (effect shows in the context dialog)"
     ;; A model-emitted task-set! that ISN'T the session-title auto-ack
     ;; renders as the visible CALL — same as summarize and every other

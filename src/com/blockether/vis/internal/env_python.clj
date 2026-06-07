@@ -1,29 +1,30 @@
 (ns com.blockether.vis.internal.env-python
-  "Embedded-GraalPy sandbox machinery — a DROP-IN twin of
-   `com.blockether.vis.internal.env`, but the agent writes **Python** instead
-   of Clojure. Same public surface (same fn names + arg shapes) so the loop can
-   swap `[... env :as env]` → `[... env-python :as env]` and keep working:
+  "Embedded-GraalPy sandbox machinery — the agent's action substrate. The agent
+   writes **Python**; this ns embeds a GraalPy `org.graalvm.polyglot.Context`,
+   marshals values across the Clojure↔Python boundary, wires the Clojure tool
+   fns into the Python globals as `ProxyExecutable`s (so `cat(\"x\")` in Python
+   runs the Clojure `cat`), and evaluates the model's code per top-level form.
 
-     create-sci-context / sci-update-binding! / bind-and-bump! /
+   Public surface used by the loop:
+
+     create-python-context / set-python-binding! / bind-and-bump! /
      bind-and-bump-with-doc! / push-eval-result! / push-eval-error! /
      reset-eval-bindings! / count-top-level-forms / validate-non-empty-block! /
      validate-no-banned-defs! / restore-sandbox! / SYSTEM_VAR_NAMES /
-     system-var-sym? / *lru-atom* / *current-turn-position* / fresh-lru-atom
+     system-var-sym? / *lru-atom* / *current-turn-position* / fresh-lru-atom /
+     run-python-block / map-polyglot-error / bind-ctx! / ctx->python-str
 
-   The `:sci-ctx` slot now holds a GraalPy `org.graalvm.polyglot.Context`; the
-   `'sandbox` namespace is the Python top scope (`context.getBindings(\"python\")`).
-   Clojure tool fns are wired into the Python globals as `ProxyExecutable`s, so
-   `(cat \"x\")` in Clojure becomes `cat(\"x\")` in Python and runs the SAME
-   Clojure fn — zero behavioural change to the tools themselves.
-
-   Requires the `:graalpy` deps alias (kept off the default classpath)."
+   The `:python-context` slot holds the GraalPy `Context`; the Python top scope is
+   `context.getBindings(\"python\")`. GraalPy ships in the default deps (runs on
+   Oracle GraalVM 25 → Truffle gets the Graal JIT)."
   (:require
+   [charred.api :as json]
    [clojure.string :as str])
   (:import
    [org.graalvm.polyglot Context Value PolyglotAccess PolyglotException]
    [org.graalvm.polyglot.io IOAccess]
    [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
-   [java.util ArrayList HashMap]))
+   [java.util ArrayList LinkedHashMap]))
 
 (set! *warn-on-reflection* true)
 
@@ -33,24 +34,31 @@
 
 (declare ->py ->clj)
 
+(defn kw->snake
+  "Keyword -> FULL-SNAKE string: namespace folded in with `_`, kebab -> snake,
+   trailing `?`/`!` stripped. `:session/utilization` -> \"session_utilization\",
+   `:files-only?` -> \"files_only\", `:add-bcrypt` -> \"add_bcrypt\". The ONE
+   transform used for BOTH dict keys AND keyword values, so the same id reads
+   identically whether it is a key or appears inside a value (e.g. depends_on)."
+  ^String [k]
+  (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
+    (str/replace "-" "_")
+    (str/replace #"[?!]$" "")))
+
 (defn- key->py
-  "Map/keyword key -> a Python-side string key. FULL SNAKE: the namespace is
-   folded in with `_` and kebab is snake-cased, so Clojure data reads as
-   idiomatic Python — `:session/utilization` -> \"session_utilization\",
-   `:engine/warnings` -> \"engine_warnings\", `:files-only?` -> \"files_only\".
-   No namespaced keywords, no `?`/`!` survive into the Python side."
+  "Map key -> a Python-side string key. Keywords full-snake via `kw->snake`;
+   symbols kebab -> snake; everything else stringified."
   ^String [k]
   (cond
-    (keyword? k) (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
-                   (str/replace "-" "_")
-                   (str/replace #"[?!]$" ""))
+    (keyword? k) (kw->snake k)
     (symbol? k)  (str/replace (str k) "-" "_")
     :else        (str k)))
 
 (defn- py-key->clj
-  "Dict key coming back from Python -> keyword, VERBATIM snake_case
-   (`\"files_only\"` -> `:files_only`). The sandbox is full-snake, so tools key
-   on snake_case keywords too — no kebab translation."
+  "Python dict key string -> Clojure keyword, VERBATIM snake_case
+   (`\"files_only\"` -> `:files_only`, `\"from_hash\"` -> `:from_hash`). The
+   foundation tools natively destructure these snake_case option keys — the
+   sandbox is FULL SNAKE end to end, no kebab translation."
   [^String s]
   (keyword s))
 
@@ -63,9 +71,14 @@
     (nil? x)     nil
     (string? x)  x
     (boolean? x) x
-    (keyword? x) (name x)
-    (symbol? x)  (str x)
-    (map? x)     (let [^HashMap hm (HashMap.)]
+    (keyword? x) (kw->snake x)
+    ;; symbols (e.g. trailer form heads) snake to the SAME Python name the agent
+    ;; calls — `task-set!` -> "task_set" — so stored forms read consistently.
+    (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
+    (map? x)     (let [^LinkedHashMap hm (LinkedHashMap.)]
+                   ;; LinkedHashMap preserves Clojure map ITERATION ORDER (so an
+                   ;; array-map renders in its canonical key order), making the
+                   ;; live `ctx` dict and the rendered `# ctx` text agree.
                    (doseq [[k v] x] (.put hm (key->py k) (->py v)))
                    (ProxyHashMap/from hm))
     (or (vector? x) (seq? x) (set? x))
@@ -114,6 +127,111 @@
   (reify ProxyExecutable
     (execute [_ args]
       (->py (apply f (map ->clj args))))))
+
+;; =============================================================================
+;; Canonical CONTEXT serialization — the agent-facing `context` snapshot is a
+;; real PYTHON object, and its printed form is produced BY PYTHON (GraalPy), not
+;; by a Clojure reimplementation. So the `<context>` text and `repr(context)`
+;; cannot drift: the SAME JSON crosses the boundary, `json.loads` builds the
+;; native dict once, and `__vis_pp__` (Python) stringifies it.
+;; =============================================================================
+
+(defn ->json-ready
+  "Deep-convert a Clojure value to a JSON-encodable shape with FULL-SNAKE string
+   keys and snaked keyword/symbol scalar VALUES — the exact transform `->py`
+   applies — so the JSON round-trip reproduces the live `ctx` dict. Maps → maps
+   with string keys; keywords/symbols → snake strings; vectors/seqs/sets →
+   vectors; scalars pass through."
+  [x]
+  (cond
+    (map? x)     (persistent!
+                   (reduce-kv (fn [m k v] (assoc! m (key->py k) (->json-ready v)))
+                     (transient {}) x))
+    (keyword? x) (kw->snake x)
+    (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
+    (or (vector? x) (seq? x) (set? x)) (mapv ->json-ready x)
+    :else        x))
+
+(def ^:private vis-pp-python
+  "Deterministic Python pretty-printer for the `ctx` dict. Double-quoted strings,
+   True/False/None, insertion order preserved, inline when it fits `width` else
+   one entry per line (closing bracket aligned under the entry column)."
+  "
+import json as __vis_json__
+
+def __vis_pp_str__(s):
+    return '\"' + s.replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"').replace('\\n', '\\\\n').replace('\\r', '\\\\r').replace('\\t', '\\\\t') + '\"'
+
+def __vis_pp__(o, indent=0, width=100):
+    pad = ' ' * (indent + 1)
+    cpad = ' ' * indent
+    if isinstance(o, bool):
+        return 'True' if o else 'False'
+    if o is None:
+        return 'None'
+    if isinstance(o, str):
+        return __vis_pp_str__(o)
+    if isinstance(o, dict):
+        if not o:
+            return '{}'
+        items = [(__vis_pp_str__(str(k)), __vis_pp__(v, indent + 1, width)) for k, v in o.items()]
+        inline = '{' + ', '.join(k + ': ' + v for k, v in items) + '}'
+        if '\\n' not in inline and indent + len(inline) <= width:
+            return inline
+        return '{\\n' + ',\\n'.join(pad + k + ': ' + v for k, v in items) + '\\n' + cpad + '}'
+    if isinstance(o, (list, tuple)):
+        if not o:
+            return '[]'
+        items = [__vis_pp__(x, indent + 1, width) for x in o]
+        inline = '[' + ', '.join(items) + ']'
+        if '\\n' not in inline and indent + len(inline) <= width:
+            return inline
+        return '[\\n' + ',\\n'.join(pad + x for x in items) + '\\n' + cpad + ']'
+    return repr(o)
+
+def __vis_render_ctx__(jsons):
+    return __vis_pp__(__vis_json__.loads(jsons))
+")
+
+(defn- build-printer-context
+  "Trusted, process-wide GraalPy context whose ONLY job is to turn ctx JSON into
+   the canonical Python-pretty string. Permissive (`allowAllAccess`) because it
+   imports `json` and never runs agent code — only our `__vis_pp__` over our own
+   data."
+  ^Context []
+  (let [ctx (-> (Context/newBuilder (into-array String ["python"]))
+              (.allowAllAccess true)
+              (.build))]
+    (.eval ctx "python" vis-pp-python)
+    ctx))
+
+(defonce ^:private printer-context (delay (build-printer-context)))
+
+(defn ctx->python-str
+  "Render a Clojure CTX map as the canonical Python-literal string — produced by
+   Python (`__vis_pp__`) inside GraalPy, so it matches `repr`-style Python and the
+   live `ctx` dict the agent reads. `data` is JSON-bridged through `->json-ready`."
+  ^String [data]
+  (let [^Context ctx @printer-context
+        jsons (json/write-json-str (->json-ready data))]
+    (locking ctx
+      (let [^Value f (.getMember (.getBindings ctx "python") "__vis_render_ctx__")]
+        (.asString (.execute f (object-array [jsons])))))))
+
+(defn bind-ctx!
+  "Bind `context` in the sandbox as a NATIVE Python dict (not a foreign proxy),
+   built from the SAME JSON the renderer prints — so `context` has real dict
+   ergonomics (`.get`, comprehensions, `context[\"k\"]`) AND agrees byte-for-byte
+   with the rendered `<context>` block. Falls back to proxy marshalling if
+   json.loads is unavailable."
+  [python-context data]
+  (let [g (.getBindings ^Context python-context "python")
+        jsons (json/write-json-str (->json-ready data))]
+    (try
+      (.putMember g "__vis_ctx_json__" jsons)
+      (.eval ^Context python-context "python" "import json as __vis_j__\ncontext = __vis_j__.loads(__vis_ctx_json__)")
+      (catch Throwable _
+        (.putMember g "context" (->py data))))))
 
 ;; =============================================================================
 ;; Per-iteration LRU (kept for interface parity)
@@ -205,46 +323,44 @@
 ;; Sandbox bindings
 ;; =============================================================================
 
-(defn- ^Value py-globals [py-ctx]
-  (.getBindings ^Context py-ctx "python"))
+(defn- ^Value python-globals [python-context]
+  (.getBindings ^Context python-context "python"))
 
-(defn sci-update-binding!
+(defn set-python-binding!
   "Bind `sym` -> `val` in the Python sandbox globals. Clojure fns are wired as
    callables; everything else is marshalled. (Name kept from the SCI twin for
    drop-in compatibility.)"
-  [py-ctx sym val]
-  (.putMember (py-globals py-ctx) (sym->py-name sym)
+  [python-context sym val]
+  (.putMember (python-globals python-context) (sym->py-name sym)
     (if (fn? val) (wrap-ifn val) (->py val))))
 
 (defn bind-and-bump!
   "Set `sym` -> `val` in the env's Python sandbox."
   [env sym val]
-  (sci-update-binding! (:sci-ctx env) sym val))
+  (set-python-binding! (:python-context env) sym val))
 
 (defn bind-and-bump-with-doc!
   "Like `bind-and-bump!` but also records `doc` in the side `__vis_docs__` dict
    so a future live-vars view can surface name + doc (Python has no var
    metadata channel like SCI's :doc)."
   [env sym doc val]
-  (let [py-ctx (:sci-ctx env)]
-    (sci-update-binding! py-ctx sym val)
-    (let [g (py-globals py-ctx)
-          docs (let [d (.getMember g "__vis_docs__")]
-                 (if (or (nil? d) (.isNull d)) (HashMap.) (HashMap.)))]
-      ;; keep it simple: stash into a Python dict global
-      (.putMember g "__vis_doc_sym__" (str sym))
-      (.putMember g "__vis_doc_txt__" (str (or doc "vis-managed engine binding")))
-      (.eval ^Context py-ctx "python"
-        "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__")
-      docs)))
+  (let [python-context (:python-context env)
+        g (python-globals python-context)]
+    (set-python-binding! python-context sym val)
+    ;; Stash name -> doc text in a Python dict global that `doc(name)` reads.
+    (.putMember g "__vis_doc_sym__" (str sym))
+    (.putMember g "__vis_doc_txt__" (str (or doc "vis-managed engine binding")))
+    (.eval ^Context python-context "python"
+      "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__")
+    nil))
 
 (defn push-eval-result!
   "REPL-style stack push for the sandbox `_1 _2 _3` recovery slots, mirroring
    SCI's `*1 *2 *3`. Python convention is `_`, but we use `_1/_2/_3` to match
    the engine's three-deep history."
   [env value]
-  (let [py-ctx (:sci-ctx env)
-        g (py-globals py-ctx)]
+  (let [python-context (:python-context env)
+        g (python-globals python-context)]
     (let [v1 (.getMember g "_1")
           v2 (.getMember g "_2")]
       (.putMember g "_3" v2)
@@ -255,13 +371,13 @@
   "Park the most recent uncaught error in the sandbox `_e` slot (mirrors SCI
    `*e`). The `_1/_2/_3` value stack does NOT advance on error."
   [env throwable]
-  (let [g (py-globals (:sci-ctx env))]
+  (let [g (python-globals (:python-context env))]
     (.putMember g "_e" (str throwable))))
 
 (defn reset-eval-bindings!
   "Clear `_1 _2 _3 _e` at turn start so a follow-up turn doesn't see leftovers."
   [env]
-  (let [g (py-globals (:sci-ctx env))]
+  (let [g (python-globals (:python-context env))]
     (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))))
 
 ;; =============================================================================
@@ -298,18 +414,27 @@
                       (when (.canExecute m) " (callable)")
                       (when docs (str " — " docs))))))))))
 
-(defn create-sci-context
+(defn create-python-context
   "Create the embedded-GraalPy sandbox context with all available bindings.
-   Drop-in twin of the SCI `create-sci-context`.
+   Drop-in twin of the SCI `create-python-context`.
 
    `custom-bindings` — map of symbol->value (tool fns + engine values). Fns are
    wired as Python callables; values are marshalled. Returns the same shape the
    SCI twin returns:
 
-     {:sci-ctx          <org.graalvm.polyglot.Context>
+     {:python-context          <org.graalvm.polyglot.Context>
       :sandbox-ns       :python          ; placeholder (Python has one top scope)
       :initial-ns-keys  #{...baseline globals...}}"
   [custom-bindings]
+  ;; Warm the shared auxiliary GraalPy contexts (printer + parser) NOW — at
+  ;; session start, while NO eval is running. Creating a second polyglot Context
+  ;; lazily WHILE an eval is executing on another (virtual) thread DEADLOCKS
+  ;; Truffle (proven: sequential create+use is fine; lazy create during a live
+  ;; eval hangs). Forcing the `defonce` delays here (sequential, pre-eval)
+  ;; guarantees they exist before the first concurrent render/validation call;
+  ;; only the first session in the process pays the warmup.
+  (try @printer-context (catch Throwable _ nil))
+  (try @parser-ctx (catch Throwable _ nil))
   (let [ctx (-> (Context/newBuilder (into-array String ["python"]))
               ;; deny-by-default; no host/file/native/threads. Tools do real IO
               ;; on the Clojure side via ProxyExecutable, so Python itself needs
@@ -329,7 +454,7 @@
       (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
     ;; Sandbox self-discovery (apropos / doc) over the wired globals.
     (install-introspection! ctx)
-    {:sci-ctx ctx
+    {:python-context ctx
      :sandbox-ns :python
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
 
@@ -339,13 +464,13 @@
 ;; =============================================================================
 
 (defn eval-block
-  "Evaluate a whole Python `code` block in `py-ctx`. Returns
+  "Evaluate a whole Python `code` block in `python-context`. Returns
    `{:source code :result <clj>}` on success; throws the PolyglotException on
    failure (caller maps it to the engine error shape). Globals (defs/imports/
    state) persist across calls in the same context — same as SCI's sandbox ns."
-  [py-ctx code]
+  [python-context code]
   {:source code
-   :result (->clj (.eval ^Context py-ctx "python" (str code)))})
+   :result (->clj (.eval ^Context python-context "python" (str code)))})
 
 (defn map-polyglot-error
   "Map a GraalPy `PolyglotException` into the engine's op-error shape, mirroring
@@ -409,7 +534,7 @@
         (range (.getArraySize v))))))
 
 (defn run-python-block
-  "Evaluate one Python `code` block in `py-ctx` PER-FORM, returning the SAME
+  "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
    outcome contract `run-sci-code` produces in loop.clj:
 
      {:result <last-form-value-or-nil>
@@ -421,8 +546,8 @@
    value, `x = …` yields x's bound value, a `def`/`class` yields the defined
    object. Tools fire in order through their ProxyExecutable wrappers. Stops at
    the first form that errors (its entry carries `:error`)."
-  [py-ctx code]
-  (let [ctx ^Context py-ctx
+  [python-context code]
+  (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
         forms (try (split-top-level ctx code)
                 (catch PolyglotException e {::syntax e}))]
@@ -462,5 +587,5 @@
 (defn restore-sandbox!
   "Deprecated NOOP (parity with SCI twin). Python sandbox is fresh per turn;
    cross-turn memory rides on `:session/facts` + the per-form blob."
-  [_py-ctx _db-info _session-id]
+  [_python-context _db-info _session-id]
   [])

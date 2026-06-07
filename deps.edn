@@ -40,12 +40,10 @@
   ;;   anomaly      - `incorrect!` / `unsupported!` ex-info builders
   ;;                  used at every public-API guard.
   ;;   telemere     - logging used everywhere.
-  ;;   clojure-plus - cond+/walk patches used by env.clj sandbox.
-  ;;   sci          - sandbox engine (env.clj).
+  ;;   clojure-plus - cond+/walk patches used across internal modules.
+  ;;   graalpy      - embedded Python sandbox (THE agent action substrate).
   ;;   edamame      - Clojure parser used by parse-rescue (loop.clj).
   ;;   parinfer     - delimiter repair for LLM-emitted code blocks.
-  ;;   zprint       - sandbox pretty-printer + format-clojure (sdk.clj).
-  ;;   fast-edn     - sandbox-exposed EDN reader (env.clj).
   ;;   charred      - fast JSON for spec/router payloads + sandbox.
   ;;   java.net.http / JDK HttpServer - OpenAI Codex OAuth provider.
   ;;
@@ -68,7 +66,9 @@
   ;; letting the sample's bare ``` close the outer block early
   ;; (Vis conv 11d4f817 / t12/i1: torn (done …), dropped trailer keys,
   ;; model retry burns an iteration).
-  com.blockether/svar                             {:mvn/version "0.7.6"}
+  ;; 0.7.7: ask-code! `:lenient` mode — whole reply IS the code, no fence
+  ;; required (Python engine emits raw source; svar drops nothing).
+  com.blockether/svar                             {:mvn/version "0.7.7"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
@@ -87,18 +87,15 @@
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
   metosin/malli                                   {:mvn/version "0.20.1"}
-  org.babashka/sci                                {:mvn/version "0.12.51"}
-  ;; Embedded GraalPy — THE agent action substrate (replaces SCI). Default deps
-  ;; now (was the opt-in :graalpy alias). Version matches the runtime (Oracle
-  ;; GraalVM 25.0.1) so Truffle gets its Graal JIT. ~100MB (lang + stdlib vfs).
+  ;; Embedded GraalPy — THE agent action substrate. Version matches the runtime
+  ;; (Oracle GraalVM 25.0.1) so Truffle gets its Graal JIT. ~100MB (lang + stdlib
+  ;; vfs).
   org.graalvm.polyglot/polyglot                   {:mvn/version "25.0.1"}
   org.graalvm.python/python-language              {:mvn/version "25.0.1"}
   org.graalvm.python/python-resources             {:mvn/version "25.0.1"}
   org.graalvm.truffle/truffle-runtime             {:mvn/version "25.0.1"}
   borkdude/edamame                                {:mvn/version "1.5.39"}
   org.clojars.oakes/parinfer                      {:mvn/version "0.4.0"}
-  zprint/zprint                                   {:mvn/version "1.3.0"}
-  io.github.tonsky/fast-edn                       {:mvn/version "1.1.3"}
   com.cnuernber/charred                           {:mvn/version "1.038"}
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
   ;; on the classpath to read `ssh-ed25519` private keys.
@@ -109,7 +106,7 @@
   ;; workspaces: `rift/create` clones cwd instantly at near-zero disk; `.git`
   ;; rides along so in-clone `git diff` is a valid since-fork baseline.
   ;; Needs `--enable-native-access=ALL-UNNAMED` (already on :vis + :dev).
-  com.blockether/rift                             {:mvn/version "0.0.8"}}
+  com.blockether/rift                             {:mvn/version "0.0.10"}}
 
  :aliases
  {  ;; Primary alias - the `vis` CLI.
@@ -197,20 +194,4 @@
           :ns-default build}
 
   :antq  {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}
-          :main-opts ["-m" "antq.core"]}
-
-  ;; Opt-in embedded GraalPy (Python sandbox) — experimental alternative to
-  ;; the SCI substrate (see internal/env_python.clj). Kept OUT of the default
-  ;; classpath: the GraalPy language + stdlib vfs is ~100+ MB and we don't
-  ;; want it in the production/native build until the spike proves out.
-  ;; Version matches the runtime (Oracle GraalVM 25.0.1) so Truffle gets its
-  ;; Graal JIT (fast) instead of the interpreter fallback.
-  ;;   clojure -M:dev:graalpy ...
-  :graalpy
-  {:extra-deps {org.graalvm.polyglot/polyglot       {:mvn/version "25.0.1"}
-                org.graalvm.python/python-language  {:mvn/version "25.0.1"}
-                org.graalvm.python/python-resources {:mvn/version "25.0.1"}
-                org.graalvm.truffle/truffle-runtime {:mvn/version "25.0.1"}}
-   :jvm-opts   ["-XX:+IgnoreUnrecognizedVMOptions"
-                "--enable-native-access=ALL-UNNAMED"
-                "--sun-misc-unsafe-memory-access=allow"]}}}
+          :main-opts ["-m" "antq.core"]}}}

@@ -277,7 +277,7 @@
 
   (it "rg allows current directory even when descendants are protected (regression: .bridge/ blocks rg on `.`)"
     ;; Repro for transcript ccee2e1f-16ee-4acf-8d93-b4505034c0de iter 1:
-    ;;   (rg {:any ["scrollbar"] :paths ["."] :counts? true})
+    ;;   (rg {:any ["scrollbar"] :paths ["."] :is_counts true})
     ;;   -> ERROR ":rg blocked: . is protected; use the owning extension API instead."
     ;; The bridge extension registers `.bridge/` with :access :none. Because
     ;; "." is an ancestor of every protected descendant, the composite-dir
@@ -290,9 +290,9 @@
                                        :access :none
                                        :hint "Use (br/policy) instead."}])
                 (constantly :ok)
-                [{:any ["scrollbar"] :paths ["."] :counts? true}])]
+                [{:any ["scrollbar"] :paths ["."] :is_counts true}])]
       (expect (not (contains? out :result)))
-      (expect (= [{:any ["scrollbar"] :paths ["."] :counts? true}] (:args out)))))
+      (expect (= [{:any ["scrollbar"] :paths ["."] :is_counts true}] (:args out)))))
 
   (it "rg with no :paths (default `.`) is allowed when only descendants are protected"
     ;; rg-arg-paths returns ["."] when :paths is omitted; same bypass
@@ -417,11 +417,11 @@
       (expect (false? (:truncated? out)))
       (expect (= 10 (:depth out)))))
 
-  (it ":files-only? excludes directory entries; :dirs-only? excludes files"
+  (it ":is_files_only excludes directory entries; :is_dirs_only excludes files"
     (let [list-files (private-fn "list-files")
           path "target/probe/rg-corpus"
-          files-only (list-files path {:files-only? true})
-          dirs-only  (list-files path {:dirs-only?  true})]
+          files-only (list-files path {:is_files_only true})
+          dirs-only  (list-files path {:is_dirs_only  true})]
       (expect (every? #(= :file (:type %)) (:entries files-only)))
       (expect (every? #(= :dir  (:type %)) (:entries dirs-only)))
       (expect (zero? (:dir-count files-only)))
@@ -434,10 +434,10 @@
       (expect (= 2 (count (:entries out))))
       (expect (true? (:truncated? out)))))
 
-  (it ":files-only? and :dirs-only? are mutually exclusive"
+  (it ":is_files_only and :is_dirs_only are mutually exclusive"
     (let [list-files (private-fn "list-files")]
       (expect (throws? clojure.lang.ExceptionInfo
-                #(list-files "." {:files-only? true :dirs-only? true})))))
+                #(list-files "." {:is_files_only true :is_dirs_only true})))))
 
   (it ":depth 0 emits no entries (root not included)"
     (let [list-files (private-fn "list-files")
@@ -464,7 +464,7 @@
       (expect (false? (:truncated? out)))
       (expect (= (numbered-tuples 1 ["alpha" "beta" "gamma"]) (:lines out)))
       ;; staleness metadata mirrors File.lastModified / File.length and can
-      ;; be threaded into a later patch as :expected-mtime / :expected-size.
+      ;; be threaded into a later patch as :expected_mtime / :expected_size.
       (expect (pos-int? (:mtime out)))
       (expect (= (.length (fs/file path)) (:size out)))))
 
@@ -476,8 +476,8 @@
       (expect (false? (:eof? out)))
       (expect (= 4 (:next-offset out)))))
 
-  (it ":mtime / :size from cat round-trip into patch :expected-mtime guard"
-    ;; This is the canonical staleness recipe: cat -> patch :expected-mtime
+  (it ":mtime / :size from cat round-trip into patch :expected_mtime guard"
+    ;; This is the canonical staleness recipe: cat -> patch :expected_mtime
     ;; matches -> succeeds. If something rewrites the file in between, the
     ;; patch fails closed with :reason :stale.
     (let [path  (write-temp! "cat-stale.txt" "alpha\n")
@@ -486,13 +486,13 @@
           first-read (read-file path)
           mtime0 (:mtime first-read)]
       ;; Same mtime -> patch goes through cleanly.
-      (patch [{:path path :search "alpha" :replace "BETA" :expected-mtime mtime0}])
+      (patch [{:path path :search "alpha" :replace "BETA" :expected_mtime mtime0}])
       (expect (= "BETA\n" (slurp path)))
       ;; Force-clock the file backwards so the next read sees a fresh mtime
       ;; distinct from `mtime0` regardless of filesystem millis precision.
       (.setLastModified (fs/file path) (- (long mtime0) 60000))
       (let [r (patch [{:path path :search "BETA" :replace "GAMMA"
-                       :expected-mtime mtime0}])]
+                       :expected_mtime mtime0}])]
         (expect (false? (:success? r)))
         (expect (= :stale (-> r :failures first :reason)))
         (expect (= "BETA\n" (slurp path))))))
@@ -946,7 +946,7 @@
         (expect (some? err))
         (expect (= :ext.foundation.editing/invalid-rg-arity (:type (ex-data err))))
         (expect (clojure.string/includes? (ex-message err) "single spec map or inline kwargs")))
-      ;; :limit, :regex?, :files-only?, :counts? are NOW valid keys.
+      ;; :limit, :is_regex, :is_files_only, :is_counts are NOW valid keys.
       (doseq [[k v] [[(keyword "type") :clj]
                      [(keyword "mode") :any]]]
         (expect (throws? clojure.lang.ExceptionInfo
@@ -1006,19 +1006,19 @@
       (expect (= [[1 "L1"] [2 "L2"]] (:before h)))
       (expect (= [[4 "L4"] [5 "L5"]] (:after  h)))))
 
-  (it ":files-only? returns distinct paths and never line-level hits"
+  (it ":is_files_only returns distinct paths and never line-level hits"
     (let [_ (write-temp! "rgfo/src/a.py" "alpha\nalpha\nalpha\n")
           _ (write-temp! "rgfo/src/b.py" "alpha\n")
           _ (write-temp! "rgfo/src/c.py" "no match\n")
           grep (private-fn "rg-search")
           out  (grep {:all ["alpha"]
                       :paths [(temp-dir-path "rgfo")]
-                      :files-only? true})]
+                      :is_files_only true})]
       (expect (= #{:files :truncated-by} (set (keys out))))
       (expect (= 2 (count (:files out))))
       (expect (every? string? (:files out)))))
 
-  (it ":counts? returns per-file match counts (real, not hit-cap-truncated)"
+  (it ":is_counts returns per-file match counts (real, not hit-cap-truncated)"
     (let [_ (write-temp! "rgcnt/src/a.py"
               (string/join "\n" (repeat 300 "needle")))
           _ (write-temp! "rgcnt/src/b.py" "needle\nneedle\n")
@@ -1026,7 +1026,7 @@
           grep (private-fn "rg-search")
           out  (grep {:all ["needle"]
                       :paths [(temp-dir-path "rgcnt")]
-                      :counts? true})
+                      :is_counts true})
           a-count (some (fn [{:keys [path count]}]
                           (when (string/ends-with? path "a.py") count))
                     (:counts out))]
@@ -1034,38 +1034,38 @@
       ;; Real per-file count is reported, NOT capped at 250 default.
       (expect (= 300 a-count))))
 
-  (it ":regex? true treats needles as java.util.regex patterns"
+  (it ":is_regex true treats needles as java.util.regex patterns"
     (let [_ (write-temp! "rgrgx/src/a.py"
               "def login(user): pass\ndef test_login(): pass\ndef logout(): pass\n")
           grep (private-fn "rg-search")
           ;; Word-boundary regex: matches `login` but not `test_login`.
           out  (grep {:any ["\\bdef login\\b"]
                       :paths [(temp-dir-path "rgrgx")]
-                      :regex? true})
+                      :is_regex true})
           texts (mapv :text (:hits out))]
       (expect (= 1 (count texts)))
       (expect (= "def login(user): pass" (first texts)))))
 
-  (it ":regex? with malformed pattern raises an invalid-rg-spec error"
+  (it ":is_regex with malformed pattern raises an invalid-rg-spec error"
     (let [grep (private-fn "rg-search")
           err (try (grep {:any ["(unclosed"]
                           :paths ["."]
-                          :regex? true})
+                          :is_regex true})
                 nil (catch clojure.lang.ExceptionInfo e e))]
       (expect (some? err))
       (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))
 
-  (it ":files-only? and :counts? are mutually exclusive"
+  (it ":is_files_only and :is_counts are mutually exclusive"
     (let [grep (private-fn "rg-search")]
       (expect (throws? clojure.lang.ExceptionInfo
-                #(grep {:any ["x"] :files-only? true :counts? true})))))
+                #(grep {:any ["x"] :is_files_only true :is_counts true})))))
 
-  (it ":before / :after rejected in :files-only? or :counts? mode"
+  (it ":before / :after rejected in :is_files_only or :is_counts mode"
     (let [grep (private-fn "rg-search")]
       (expect (throws? clojure.lang.ExceptionInfo
-                #(grep {:any ["x"] :files-only? true :context 2})))
+                #(grep {:any ["x"] :is_files_only true :context 2})))
       (expect (throws? clojure.lang.ExceptionInfo
-                #(grep {:any ["x"] :counts? true :before 1})))))
+                #(grep {:any ["x"] :is_counts true :before 1})))))
 
   (it "long lines pass through verbatim in hit :text (no per-line cap, no `…<+N chars>` marker)"
     ;; Regression: an earlier `rg-line-preview-chars` (500 chars) cap
@@ -1190,12 +1190,12 @@
       (expect (= "    def foo():\n        return 10\n        return 20\n"
                 (slurp p)))))
 
-  (it ":expected-mtime guards against editing a file that changed since it was read"
+  (it ":expected_mtime guards against editing a file that changed since it was read"
     (let [patch (private-fn "patch-safe")
           p (write-temp! "bbfs/patch-stale.txt" "alpha\n")
           stale-mtime (- (.lastModified (fs/file p)) 100000)
           r (patch [{:path p :search "alpha" :replace "BETA"
-                     :expected-mtime stale-mtime}])]
+                     :expected_mtime stale-mtime}])]
       (expect (false? (:success? r)))
       (expect (= :stale (-> r :failures first :reason)))
       (expect (= "alpha\n" (slurp p)))))
@@ -1327,11 +1327,11 @@
       (expect (false? (:success? r)))
       (expect (= :file-not-found (-> r :failures first :reason)))))
 
-  (it ":expected-size guards independent of :expected-mtime"
+  (it ":expected_size guards independent of :expected_mtime"
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "bbfs/patch-size.txt" "hello\n")
           r     (patch [{:path p :search "hello" :replace "x"
-                         :expected-size 1}])]
+                         :expected_size 1}])]
       (expect (false? (:success? r)))
       (expect (= :stale (-> r :failures first :reason)))
       (expect (= :stale-size (-> r :failures first :stale :reason)))
@@ -1771,33 +1771,33 @@
 
 (defdescribe vis-patch-hashline-test
   ;; End-to-end content-addressed editing: read hashes from cat, then
-  ;; patch by :from-hash / :to-hash. The hash anchors come straight from
+  ;; patch by :from_hash / :to_hash. The hash anchors come straight from
   ;; the read's `:hashes` map (same value rendered in the cat gutter),
   ;; and self-locate against live disk content on apply.
-  (it "patch :from-hash replaces a single content-anchored line"
+  (it "patch :from_hash replaces a single content-anchored line"
     (let [path (write-temp! "hashline/single.txt"
                  "alpha first\nbeta second\ngamma third\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
           hashes (:hashes (read-file path))
           h2 (get hashes 2)
-          r (patch [{:path path :from-hash h2 :replace "BETA REPLACED"}])]
+          r (patch [{:path path :from_hash h2 :replace "BETA REPLACED"}])]
       (expect (true? (:success? r)))
       (expect (= "alpha first\nBETA REPLACED\ngamma third\n" (slurp path)))))
 
-  (it "patch :from-hash + :to-hash replaces an inclusive range"
+  (it "patch :from_hash + :to_hash replaces an inclusive range"
     (let [path (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
           hashes (:hashes (read-file path))
           r (patch [{:path path
-                     :from-hash (get hashes 1)
-                     :to-hash (get hashes 3)
+                     :from_hash (get hashes 1)
+                     :to_hash (get hashes 3)
                      :replace "X"}])]
       (expect (true? (:success? r)))
       (expect (= "X\nd\n" (slurp path)))))
 
-  (it "patch refuses a BARE :from-hash that hits >1 identical line"
+  (it "patch refuses a BARE :from_hash that hits >1 identical line"
     (let [path (write-temp! "hashline/dup.txt" "x\ny\nx\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
@@ -1805,7 +1805,7 @@
           ;; anchors (each addressable), but the BARE content hash still
           ;; hits BOTH lines — feed it raw to exercise the ambiguity refusal.
           hashes (:hashes (read-file path))
-          r (patch [{:path path :from-hash (patch/line-hash "x") :replace "NEW"}])]
+          r (patch [{:path path :from_hash (patch/line-hash "x") :replace "NEW"}])]
       (expect (= (str (patch/line-hash "x") "#1") (get hashes 1)))  ;; 1st dup → #1
       (expect (= (str (patch/line-hash "x") "#2") (get hashes 3)))  ;; 2nd dup → #2
       (expect (= (patch/line-hash "y") (get hashes 2)))             ;; unique line kept bare
@@ -1814,14 +1814,14 @@
       ;; file untouched
       (expect (= "x\ny\nx\n" (slurp path)))))
 
-  (it "patch needs EXACTLY ONE of :search or :from-hash"
+  (it "patch needs EXACTLY ONE of :search or :from_hash"
     (let [path (write-temp! "hashline/both.txt" "a\n")
           patch (private-fn "patch-safe")]
       (expect (throws? clojure.lang.ExceptionInfo
-                #(patch [{:path path :search "a" :from-hash "abc123" :replace "Z"}]))))))
+                #(patch [{:path path :search "a" :from_hash "abc123" :replace "Z"}]))))))
 
 (defdescribe vis-cat-hash-read-test
-  ;; cat :hash — the READ twin of patch :from-hash. Re-read a kept region
+  ;; cat :hash — the READ twin of patch :from_hash. Re-read a kept region
   ;; by its content hash, addressed by content not drifting line numbers.
   (let [cat-tool (private-fn "cat-tool")
         path     (write-temp! "hashread/probe.clj"

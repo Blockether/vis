@@ -364,8 +364,8 @@
    main-agent-instructions-symbol])
 
 (def ^:private FN_INDEX
-  "One-line strategy for environment fns under the `v/` alias."
-  "`v/` env strategy: read workspace/VCS facts from `:session/workspace` CTX; use focused env helpers only for coarse project shape. Project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change.")
+  "One-line strategy for the environment fns."
+  "Env strategy: read workspace/VCS facts from the `session_workspace` key of `<context>`; use the focused env helpers only for coarse project shape. Project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change.")
 
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project

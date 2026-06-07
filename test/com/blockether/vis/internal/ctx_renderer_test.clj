@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.ctx-renderer-test
-  "Phase G renderer tests. Asserts the prompt-side derived view: pure EDN
-   body, a single `:session/hints` section (vec of short strings,
-   rendered only when non-empty), NO trailing `;; …` line-comment
-   annotations, trailer pins keep `:form` as native Clojure list (no
-   `;; src` verbatim block)."
+  "Renderer tests. The CTX block is a real PYTHON DICT wrapped in a `<context>` tag —
+   string keys, snake_case keyword values, Python literals (True/False/None) —
+   so it reads exactly like the `context` dict the agent holds in the sandbox. A
+   single `session_hints` list (rendered only when non-empty); trailer pins keep
+   `form` and drop channel/engine noise keys."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -23,7 +23,7 @@
        :born "t1/i2/f2"})
     (assoc-in [:session/tasks :replace-check]
       {:title "replace literal compare"
-       :depends-on [:add-bcrypt]
+       :depends_on [:add-bcrypt]
        :status :doing
        :born "t1/i2/f3"})))
 
@@ -36,77 +36,86 @@
     (r/render-ctx {:ctx ctx :warnings warnings})))
 
 (defdescribe render-ctx-structural-test
-  (describe "render-ctx structural output"
+  (describe "render-ctx Python-dict output"
     (let [out (render base-ctx)]
 
-      (it "starts with `;; ctx` marker followed directly by `{`"
-        (expect (str/starts-with? out ";; ctx\n{")))
+      (it "is wrapped in a `<context>` … `</context>` tag with a lead-in"
+        (expect (str/starts-with? out "<context>\n"))
+        (expect (str/ends-with? out "</context>"))
+        (expect (str/includes? out "your `context` dict")))
 
-      (it "body is pure EDN — no `;; ⚠` / `;; ⛔` / `;; ctx-summary` annotations"
-        (let [body (str/replace-first out #"^;; ctx\n" "")]
-          (expect (not (str/includes? body ";; ⚠")))
-          (expect (not (str/includes? body ";; ⛔")))
-          (expect (not (str/includes? body "ctx-summary")))))
+      (it "is a Python dict — string keys, no `:keyword` keys anywhere"
+        ;; no namespaced or bare EDN keyword keys: keys are quoted strings
+        (expect (nil? (re-find #":session/" out)))
+        (expect (str/includes? out "\"session_id\":"))
+        (expect (str/includes? out "\"session_turn\":"))
+        (expect (nil? (re-find #"\{:" out))))
+
+      (it "renders keyword values as snake_case Python strings"
+        ;; status :done -> "done"; :doing -> "doing"
+        (expect (str/includes? out "\"status\": \"done\""))
+        (expect (str/includes? out "\"status\": \"doing\""))
+        ;; a keyword id used as a value snakes the SAME as its key form
+        (expect (str/includes? out "\"depends_on\": [\"add_bcrypt\"]")))
+
+      (it "body carries no Clojure `;;` line-comments"
+        (expect (not (str/includes? out ";;"))))
 
       (it "top-level keys appear in deterministic order"
         (let [idx-of (fn [s] (str/index-of out s))]
-          (expect (< (idx-of ":session/id")
-                    (idx-of ":session/turn")
-                    (idx-of ":session/scope")
-                    (idx-of ":session/workspace")
-                    (idx-of ":session/trailer")))))
+          (expect (< (idx-of "\"session_id\"")
+                    (idx-of "\"session_turn\"")
+                    (idx-of "\"session_scope\"")
+                    (idx-of "\"session_workspace\"")
+                    (idx-of "\"session_trailer\"")))))
 
       (it "DROPS legacy derived sections"
-        (expect (nil? (str/index-of out ":session/specs")))
-        (expect (nil? (str/index-of out ":session/stages")))
-        (expect (nil? (str/index-of out ":session/timeline")))
-        (expect (nil? (str/index-of out ":session/orphans")))
-        (expect (nil? (str/index-of out ":session/next-actions"))))
+        (expect (nil? (str/index-of out "\"session_specs\"")))
+        (expect (nil? (str/index-of out "\"session_stages\"")))
+        (expect (nil? (str/index-of out "\"session_timeline\"")))
+        (expect (nil? (str/index-of out "\"session_next_actions\""))))
 
       (it "renders raw entity subtrees that contain data"
-        (expect (str/includes? out ":session/tasks"))
-        (expect (str/includes? out ":session/facts")))
+        (expect (str/includes? out "\"session_tasks\""))
+        (expect (str/includes? out "\"session_facts\"")))
 
-      (it "renders the scope cursor as sorted bare-EDN map (no commas)"
-        (expect (str/includes? out ":turn 2"))
-        (expect (str/includes? out ":iter 1"))
-        (expect (str/includes? out ":next-form 5"))
-        (expect (not (re-find #"\{:iter 1, " out))))
+      (it "renders the scope cursor as a Python dict with snake_case keys"
+        (expect (str/includes? out "\"turn\": 2"))
+        (expect (str/includes? out "\"iter\": 1"))
+        (expect (str/includes? out "\"next_form\": 5")))
 
-      (it "balanced braces"
-        (let [opens (count (re-seq #"\{" out))
-              closes (count (re-seq #"\}" out))]
-          (expect (= opens closes)))))))
+      (it "balanced braces and brackets"
+        (let [opens  (count (re-seq #"\{" out))
+              closes (count (re-seq #"\}" out))
+              bopen  (count (re-seq #"\[" out))
+              bclose (count (re-seq #"\]" out))]
+          (expect (= opens closes))
+          (expect (= bopen bclose)))))))
 
 (defdescribe render-warnings-test
-  (describe ":session/hints vec-of-hint-maps section"
+  (describe "session_hints list-of-dicts section"
 
-    (it "renders a :session/hints section (as {:source :content :importance} maps) when advisories are present"
+    (it "renders a session_hints list (as {source, content, importance} dicts) when advisories are present"
       (let [out (r/render-ctx {:ctx base-ctx
-                               :warnings ["task :t1 :done but dep :t2 is :doing"
-                                          "fact :a contradicts :b"]})]
-        (expect (str/includes? out ":session/hints"))
-        ;; engine advisories are wrapped into hint maps; their :content text survives verbatim
-        (expect (str/includes? out "\"task :t1 :done but dep :t2 is :doing\""))
-        (expect (str/includes? out "\"fact :a contradicts :b\""))
-        (expect (str/includes? out ":source"))
-        (expect (str/includes? out ":importance"))))
+                               :warnings ["task t1 done but dep t2 is doing"
+                                          "fact a contradicts b"]})]
+        (expect (str/includes? out "\"session_hints\""))
+        ;; engine advisories are wrapped into hint dicts; their content text survives verbatim
+        (expect (str/includes? out "\"task t1 done but dep t2 is doing\""))
+        (expect (str/includes? out "\"fact a contradicts b\""))
+        (expect (str/includes? out "\"source\":"))
+        (expect (str/includes? out "\"importance\":"))))
 
-    (it "omits the :session/hints section entirely when empty"
+    (it "omits the session_hints section entirely when empty"
       (let [out (r/render-ctx {:ctx base-ctx :warnings []})]
-        (expect (not (str/includes? out ":session/hints")))))
+        (expect (not (str/includes? out "\"session_hints\"")))))
 
-    (it "omits the :session/hints section when warnings key absent"
+    (it "omits the session_hints section when warnings key absent"
       (let [out (r/render-ctx {:ctx base-ctx})]
-        (expect (not (str/includes? out ":session/hints")))))
-
-    (it "warnings render as pure EDN strings (no `;;` annotations)"
-      (let [out  (r/render-ctx {:ctx base-ctx :warnings ["a missing dep"]})
-            body (str/replace-first out #"^;; ctx\n" "")]
-        (expect (not (str/includes? body ";; ⚠")))))))
+        (expect (not (str/includes? out "\"session_hints\"")))))))
 
 (defdescribe render-trailer-form-pin-test
-  (describe "trailer form pin is one Clojure map, :form is a native list"
+  (describe "trailer form pin is a Python dict; form is a list"
     (let [trailer [{:scope "t2/i1"
                     :forms [{:scope "t2/i1/f1"
                              :tag :observation
@@ -118,31 +127,19 @@
           ctx     (assoc base-ctx :session/trailer trailer)
           out     (render ctx)]
 
-      (it "drops `;; src <scope>:` verbatim comment block"
+      (it "drops the `;; src` verbatim comment block"
         (expect (not (str/includes? out ";; src "))))
 
-      (it "keeps `:form (ls \".\" :depth 1)` as native list inside the map"
-        (expect (str/includes? out ":form (ls \".\" :depth 1)")))
+      (it "renders `form` as a Python list of tokens"
+        (expect (str/includes? out "\"form\": [\"ls\", \".\", \"depth\", 1]")))
 
-      (it "keeps short tool/trailer forms on one line across arbitrary aliases"
-        (let [forms   ['(cat "src/com/blockether/vis/internal/loop.clj" :range 4380 4525)
+      (it "renders tool/trailer forms across arbitrary aliases (head symbols survive)"
+        (let [forms   ['(cat "src/loop.clj" :range 4380 4525)
                        '(rg {:any ["title"] :paths ["src"] :limit 20})
                        '(patch [{:path "x" :search "a" :replace "b"}])
-                       '(clj/eval {:code "(+ 1 2)" :timeout-ms 1000})
                        '(git/status)
-                       '(br/check)
-                       '(search/web "zprint fn-map")
-                       '(made-up.alias/do-thing "x" :range 1 2)
                        '(task-set! :ship {:status :done})]
-              needles [":form (cat \"src/com/blockether/vis/internal/loop.clj\" :range 4380 4525)"
-                       ":form (rg {:any [\"title\"] :paths [\"src\"] :limit 20})"
-                       ":form (patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
-                       ":form (clj/eval {:code \"(+ 1 2)\" :timeout-ms 1000})"
-                       ":form (git/status)"
-                       ":form (br/check)"
-                       ":form (search/web \"zprint fn-map\")"
-                       ":form (made-up.alias/do-thing \"x\" :range 1 2)"
-                       ":form (task-set! :ship {:status :done})"]
+              heads   ["\"cat\"" "\"rg\"" "\"patch\"" "\"git/status\"" "\"task_set\""]
               ctx     (assoc base-ctx
                         :session/trailer
                         [{:scope "t2/i1"
@@ -154,27 +151,26 @@
                                    (range 1 (inc (count forms)))
                                    forms)}])
               out     (render ctx)]
-          (doseq [needle needles]
-            (expect (str/includes? out needle)))))
+          (doseq [head heads]
+            (expect (str/includes? out head)))))
 
-      (it "strips all noise keys (:channel :src :form-idx :position :success? :symbol)"
-        (let [pin-region (subs out (str/index-of out ":session/trailer"))]
-          (expect (not (str/includes? pin-region ":channel")))
-          (expect (not (str/includes? pin-region ":form-idx")))
-          (expect (not (str/includes? pin-region ":position 0")))
-          (expect (not (str/includes? pin-region ":success?")))
-          (expect (not (str/includes? pin-region ":symbol ")))
-          ;; :src is the STRING copy; the native :form list survives instead
-          (expect (not (str/includes? pin-region ":src \"")))))
+      (it "strips all noise keys (channel, src, form_idx, position, success, symbol)"
+        (let [pin-region (subs out (str/index-of out "\"session_trailer\""))]
+          (expect (not (str/includes? pin-region "\"channel\"")))
+          (expect (not (str/includes? pin-region "\"form_idx\"")))
+          (expect (not (str/includes? pin-region "\"position\":")))
+          (expect (not (str/includes? pin-region "\"success\"")))
+          (expect (not (str/includes? pin-region "\"symbol\"")))
+          (expect (not (str/includes? pin-region "\"src\":")))))
 
-      (it "keeps :scope :tag :result on the pin"
-        (let [pin-region (subs out (str/index-of out ":session/trailer"))]
-          (expect (str/includes? pin-region ":scope \"t2/i1/f1\""))
-          (expect (str/includes? pin-region ":tag :observation"))
-          (expect (str/includes? pin-region ":result")))))))
+      (it "keeps scope, tag, result on the pin"
+        (let [pin-region (subs out (str/index-of out "\"session_trailer\""))]
+          (expect (str/includes? pin-region "\"scope\": \"t2/i1/f1\""))
+          (expect (str/includes? pin-region "\"tag\": \"observation\""))
+          (expect (str/includes? pin-region "\"result\":")))))))
 
 (defdescribe render-trailer-summary-pin-test
-  (describe "summary trailer pins (from (summarize {:trailer …})) render unchanged"
+  (describe "summary trailer pins (from summarize) render as dicts"
     (let [trailer [{:scope-start "t3/i1" :scope-end "t3/i5"
                     :summary "explored auth flow"
                     :born "t4/i1/f1"}]
@@ -184,9 +180,9 @@
       (it "renders the summary text inline"
         (expect (str/includes? out "explored auth flow")))
 
-      (it "carries the :scope-start / :scope-end keys"
-        (expect (str/includes? out ":scope-start \"t3/i1\""))
-        (expect (str/includes? out ":scope-end \"t3/i5\""))))))
+      (it "carries the snake_case scope_start / scope_end keys"
+        (expect (str/includes? out "\"scope_start\": \"t3/i1\""))
+        (expect (str/includes? out "\"scope_end\": \"t3/i5\""))))))
 
 (defdescribe render-empty-ctx-test
   (describe "empty ctx renders cleanly"
@@ -195,16 +191,17 @@
                       (assoc :session/turn 1))
           out       (render clean-ctx)]
 
-      (it "starts with `;; ctx\\n{` (no preamble banner)"
-        (expect (str/starts-with? out ";; ctx\n{")))
+      (it "is wrapped in `<context>` … `</context>` (no preamble banner)"
+        (expect (str/starts-with? out "<context>\n"))
+        (expect (str/ends-with? out "</context>")))
 
-      (it "omits empty :session/tasks / :facts entirely"
-        (expect (not (str/includes? out ":session/tasks")))
-        (expect (not (str/includes? out ":session/facts"))))
+      (it "omits empty session_tasks / session_facts entirely"
+        (expect (not (str/includes? out "\"session_tasks\"")))
+        (expect (not (str/includes? out "\"session_facts\""))))
 
-      (it "omits :session/hints when there are none"
-        (expect (not (str/includes? out ":session/hints"))))
+      (it "omits session_hints when there are none"
+        (expect (not (str/includes? out "\"session_hints\""))))
 
-      (it "carries no comment annotations anywhere"
-        (let [body (str/replace-first out #"^;; ctx\n" "")]
+      (it "carries no Clojure comment annotations"
+        (let [body (str/replace-first out #"^<context>\n" "")]
           (expect (not (str/includes? body ";;"))))))))

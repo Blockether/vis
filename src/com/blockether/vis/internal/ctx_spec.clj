@@ -29,12 +29,12 @@
      `::scope-iter`  e.g. \"t3/i2\"
      `::scope-turn`  e.g. \"t3\"
 
-   Universal `:depends-on` edge inventory across subtrees:
+   Universal `:depends_on` edge inventory across subtrees:
      task → task | fact via `:session.task/depends-on`
      fact → task | fact via `:session.fact/depends-on`
    Refs are bare keys (same-kind shorthand) or typed `[:task :K]` /
    `[:fact :K]` vectors. The engine HARD-rejects writes that would
-   introduce a `:depends-on` cycle across kinds; dangling refs are a
+   introduce a `:depends_on` cycle across kinds; dangling refs are a
    soft `:session/hints` entry.
 
    Scope cursor (`:session/scope`) is engine-stamped before render so
@@ -113,7 +113,7 @@
 ;; model flips :status to :superseded; engine stamps :done-born and GCs from
 ;; live CTX after the superseded-TTL. :active facts live indefinitely.
 ;;
-;; Facts carry the universal `:depends-on` graph and symmetric
+;; Facts carry the universal `:depends_on` graph and symmetric
 ;; `:contradicts` links (declared via `fact-contradicts!`).
 
 (s/def :session.fact/status     #{:active :superseded})
@@ -140,7 +140,7 @@
 ;; Soft rules:
 ;;   - :status defaults to :active when omitted (engine assumes :active for legacy facts)
 ;;   - :status :superseded MUST have :done-born (engine auto-stamps)
-;;   - :depends-on entries must point to existing tasks/facts (engine warns)
+;;   - :depends_on entries must point to existing tasks/facts (engine warns)
 ;;   - two :active facts that declared symmetric :contradicts emit a warning
 
 ;; =============================================================================
@@ -198,9 +198,9 @@
              :session.task/verified?]))
 
 ;; Soft rules (engine-side; not enforced by spec):
-;;   - :depends-on entries must point to existing tasks/facts
+;;   - :depends_on entries must point to existing tasks/facts
 ;;   - :status :done | :cancelled MUST have :done-born (engine auto-stamps)
-;;   - :status :done while a :depends-on target is non-terminal emits a soft
+;;   - :status :done while a :depends_on target is non-terminal emits a soft
 ;;     warning (does not block or revert — done is self-asserted)
 ;;   - status transitions are reconstructable from :session/trailer mutation pins;
 ;;     no per-task journal is stored

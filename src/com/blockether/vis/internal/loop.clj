@@ -15,20 +15,16 @@
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
-   [com.blockether.vis.internal.env :as env]
+   [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.parse-diagnose :as pd]
-   [com.blockether.vis.internal.paren-repair :as paren-repair]
    [com.blockether.vis.internal.render :as render]
-   [com.blockether.vis.internal.sci-symbols :as sci-symbols]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.workspace :as workspace]
    [edamame.core :as edamame]
-   [sci.core :as sci]
    [taoensso.telemere :as tel])
   (:import
    [java.security MessageDigest]
@@ -471,11 +467,6 @@
    :regex true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
-(def ^:private edamame-streaming-opts
-  ;; `parse-next` requires normalized opts. Raw opts make reader macros
-  ;; like `'x` surface as a bare `'` symbol, which then explodes in SCI.
-  (edamame/normalize-opts edamame-opts))
-
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
@@ -578,375 +569,27 @@
     (catch Throwable _
       code)))
 
-(defn- parse-forms-streaming
-  [code]
-  (let [code (or code "")
-        rdr  (edamame/reader code)
-        opts edamame-streaming-opts
-        out  (volatile! [])]
-    (loop []
-      (let [next-form (try
-                        (edamame/parse-next rdr opts)
-                        (catch Throwable t
-                          {:vis/parse-error
-                           (let [d (ex-data t)]
-                             (cond-> {:message (or (ex-message t) (.getName (class t)))}
-                               (:row d) (assoc :row (:row d))
-                               (:col d) (assoc :col (:col d))))}))]
-        (cond
-          (and (map? next-form) (:vis/parse-error next-form))
-          {:forms @out :parse-error (:vis/parse-error next-form)}
 
-          (= next-form ::edamame/eof)
-          {:forms @out :parse-error nil}
-
-          :else
-          (do
-            (vswap! out into
-              (mapv (fn [form]
-                      {:source (form-source form) :form form})
-                (expand-top-level-do-form next-form)))
-            (recur)))))))
-
-(defn- bare-list-literal-hint
-  "Detect `(v1 v2 v3)` where the head is not a callable (not a symbol,
-   keyword, or another collection that can act as a fn). Returns a hint
-   string when the form would crash with ClassCastException at the call site,
-   nil otherwise. Targets the classic LLM mistake of writing
-     (1 4 7 10 13)
-   instead of
-     '(1 4 7 10 13)
-   which the 4Clojure / swe-bench Lite traces show repeatedly."
-  [form]
-  (when (and (seq? form) (seq form))
-    (let [head (first form)]
-      (when-not (or (symbol? head) (keyword? head)
-                  (seq? head) (set? head) (map? head) (vector? head))
-        (str "Top-level list whose head is not callable: "
-          (let [s (pr-str form)] (if (<= (count s) 200) s (str (subs s 0 200) "…")))
-          ". Did you mean to quote it as data? Use `'" (pr-str form) "`.")))))
-
-(defn- string-as-fn-hint
-  "Detect `(\"text\" ...)` calls (JS/Python paren leakage into Clojure).
-   Returns a hint when found, nil otherwise. Scans the form tree."
-  [form]
-  (let [bad (some (fn [node]
-                    (when (and (seq? node) (string? (first node))) node))
-              (when (coll? form) (tree-seq coll? seq form)))]
-    (when bad
-      (str "List with a String literal as head: " (pr-str bad)
-        ". Strings are not callable in Clojure; this would throw "
-        "ClassCastException. Most often this is JS/Python call-paren leakage: "
-        "write `(cat \"path\")`, not `(cat(\"path\"))`."))))
-
-(def ^:private banned-io-print-names
-  "Head-symbol names of stdout/stderr side-effect fns. Matched by NAME so
-   namespaced calls (`clojure.core/println`, `clojure.pprint/pprint`) and
-   bare ones are both caught. `pprint-str` is deliberately ABSENT — it
-   RETURNS a string and is the sanctioned way to format a value."
-  #{"println" "print" "prn" "pr" "printf" "pprint" "tap>" "flush" "newline"})
-
-(defn- io-print-hint
-  "Detect stdout/stderr printing idioms (`println`, `pprint`, a bare
-   `*out*`/`*err*` reference, including inside `with-out-str`). The sandbox
-   has NO terminal channel, so printing is meaningless — redirect the model
-   to return data or build a string with `(pp/pprint-str x)` before it burns
-   an iteration on `clojure.core/*out* is not allowed!`. Scans the form tree."
-  [form]
-  (let [hit (some (fn [node]
-                    (cond
-                      (and (seq? node) (symbol? (first node))
-                        (contains? banned-io-print-names (name (first node))))
-                      (first node)
-
-                      (and (symbol? node) (#{"*out*" "*err*"} (name node)))
-                      node))
-              (when (coll? form) (tree-seq coll? seq form)))]
-    (when hit
-      (str "`" (pr-str hit) "` prints to stdout/stderr, but the sandbox has no "
-        "terminal channel — printing makes no sense here (that is why "
-        "`*out*`/`println`/`with-out-str` are unavailable). Return the value "
-        "directly (the transcript renders it), or build a formatted string with "
-        "`(pp/pprint-str x)` (it RETURNS a string) and pass that to "
-        "`(done \"…\")`."))))
-
-(defn- pre-eval-lint-hint
-  "Return a hint string when a parsed form would clearly fail at eval time
-   (bare list literal, string-as-fn call, stdout printing). Returns nil for
-   clean forms."
-  [form]
-  (or (bare-list-literal-hint form)
-    (io-print-hint form)
-    (string-as-fn-hint form)))
-
-(defn- enrich-parse-error
-  "Add a `:hint` to a parse-error map when the catalogue (parse-diagnose)
-   has a precise diagnostic for the underlying source. Returns the original
-   error map unchanged when nothing matches."
-  [parse-error code]
-  (if (or (nil? parse-error) (:hint parse-error))
-    parse-error
-    (if-let [quote-hint (some-> (pd/diagnose-quote-balance (or code "")) :hint)]
-      (assoc parse-error :hint quote-hint)
-      parse-error)))
-
-(defn- parse-top-level-forms
-  "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
-   for per-form eval + capture.
-
-   Parse errors are surfaced unchanged (plus quote-balance hints when precise)
-   unless the error is delimiter-shaped and Parinfer can repair it into code
-   that Edamame accepts. Repair is disclosed as `:repaired-source` so the
-   trailer can show what changed.
-
-   Uses edamame's incremental reader so a parse failure on form N still
-   yields the parsed prefix [form-1 … form-(N-1)]. The caller evaluates the
-   prefix in order and reports the parse error as form N's outcome — model
-   loses only the broken form, not the entire iteration.
-
-   Returns {:forms <vec> :parse-error <map|nil> :repaired-source <string|nil>}."
-  [code]
-  (let [first-pass (parse-forms-streaming code)]
-    (if-not (:parse-error first-pass)
-      first-pass
-      (if-let [repaired (paren-repair/maybe-repair-delimiters code)]
-        (let [repaired-pass (parse-forms-streaming repaired)]
-          (if-not (:parse-error repaired-pass)
-            (assoc repaired-pass :repaired-source repaired)
-            (update first-pass :parse-error enrich-parse-error code)))
-        (update first-pass :parse-error enrich-parse-error code)))))
-
-(defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
-  (let [thrown       (atom nil)
-        tool-counts  (atom {})
-        ;; UI cancellation hard-cancels the SCI worker.
-        ;;
-        ;; When the user fires `vis/cancel!` (Esc / Ctrl+C) the outer
-        ;; turn future is interrupted, but the inner SCI worker would
-        ;; otherwise keep spinning in user code (tight CPU loop,
-        ;; blocking tool call, …) until the eval timeout. While it
-        ;; runs the JVM has a thread pinned to it and the TUI input
-        ;; loop starves — the user CANNOT cancel because the keystroke
-        ;; handler never gets CPU back.
-        ;;
-        ;; The cancellation TOKEN carries a callback registry
-        ;; (`cancellation/on-cancel!`). Below, right after the
-        ;; `exec-future` is built, we register a thunk that calls
-        ;; `.cancel(true)` on it. `cancel!` then fans out to every
-        ;; registered worker without per-consumer atom-watch plumbing.
-        cancel-token (:cancel-token env)
-        ;; Per-top-level-form cursor pointer. Multi-form fences need the
-        ;; turn-state-atom's :form-idx (used by `(done …)` to
-        ;; stamp answer-atom :position, by cursor-snapshot to compute
-        ;; :next-form for scope classification, etc.) to ADVANCE as
-        ;; each top-level form runs. Without this update the atom
-        ;; stayed at whatever the outer executed-mapv set (0 for a
-        ;; single-fence iter), so cursor :next-form was always 1 and
-        ;; the engine classified every past form-scope as :future-form.
-        turn-state-atom (:turn-state-atom env)
-        ;; Per-top-level-form channel sink. `invoke-symbol-wrapper` writes
-        ;; ONE entry per tool-symbol call; `*sink-position*` stamps each
-        ;; entry with a stable position. Both rebind cleanly when the form
-        ;; returns — late-arriving thread writes silently drop (the dynamic
-        ;; var binding has unwound).
-        channel-sink (atom [])
-        sink-pos     (atom -1)
-        ;; Per-iteration LRU. `*lru-atom*` stamps every successful
-        ;; symbol resolution with the current turn position so the
-        ;; live-vars renderer knows which sandbox names are hot in
-        ;; this iteration. SCI defs are intra-turn scratch only —
-        ;; cross-turn def survival was retired with the definition_*
-        ;; sidecar tables; there is no def-sink anymore.
-        lru          (env/fresh-lru-atom)
-        turn-position (when env
-                        (:turn-position (ctx-loop/read-turn-state env)))
-        ;; Live tool-event callback only - no longer accumulated into a vec.
-        ;; Storage role retired (was dead persistence). The TUI/progress UI
-        ;; consumes via `tool-event-fn` synchronously during eval.
-        record-tool-event (fn [event]
-                            (let [op (:op event)
-                                  n  (get (swap! tool-counts update op (fnil inc 0)) op)
-                                  event* (cond-> event
-                                           (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
-                              (when tool-event-fn (tool-event-fn event*))))
-        {parsed-forms :forms parse-error :parse-error repaired-source :repaired-source}
-        (parse-top-level-forms code)
-        eval-one-form
-        (fn [idx form source]
-          (if-let [hint (pre-eval-lint-hint form)]
-            ;; Pre-eval lint short-circuit: forms guaranteed to crash
-            ;; (bare list literal head is a number/string, JS/Python paren
-            ;; leakage) get a precise hint instead of SCI's generic
-            ;; ClassCastException.
-            {:source source
-             :error {:message hint :data {:phase :vis/lint}}}
-            (try
-              (when turn-state-atom (swap! turn-state-atom assoc :form-idx idx))
-              ;; Per-form binding of `*current-form-idx*` so every
-              ;; `record-render-entry!` write during this form's eval
-              ;; stamps `:form-idx`. The rebuild path partitions the
-              ;; fence's channel slice back onto per-form envelopes
-              ;; via this key — without it every tool IR ride-shares
-              ;; on form 0.
-              (binding [extension/*current-form-idx* idx]
-                {:source source :result (sci/eval-form sci-ctx form)})
-              (catch Throwable e
-                (let [err-map (try (extension/ex->op-error e {:form-source source})
-                                (catch Throwable _
-                                  {:message (or (ex-message e)
-                                              (.getName (class e)))}))
-                      sandbox-syms (try
-                                     (keys (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
-                                     (catch Throwable _ nil))
-                      sym-hint (when (and (:message err-map) (seq sandbox-syms))
-                                 (pd/unresolved-symbol-hint (:message err-map) sandbox-syms))
-                      err-map+hint (cond-> err-map
-                                     (and sym-hint (not (:hint err-map)))
-                                     (assoc :hint sym-hint))]
-                  (reset! thrown e)
-                  {:source source :error err-map+hint})))))
-        eval-per-form
-        (fn []
-          ;; Walk parsed forms in order, capture per-form outcome; stop at
-          ;; first eval error. Two failure shapes propagate to the trailer:
-          ;;   1) eval error mid-iteration → per-form :error on that form.
-          ;;   2) STREAMING PARSE ERROR (model wrote N good forms then a
-          ;;      paren mistake on form N+1) → synthetic trailing entry
-          ;;      showing exactly which form failed and where.
-          ;; If parinferish was able to repair the source, parsed-forms
-          ;; reflect the repaired version and we still mark :repaired-source
-          ;; on the outcome so the trailer can disclose the auto-fix.
-          (loop [todo parsed-forms
-                 idx  0
-                 acc  []
-                 last-result nil]
-            (if (empty? todo)
-              (if parse-error
-                {:result nil
-                 :forms  (conj acc {:source "<unparseable trailing form>"
-                                    :error parse-error})
-                 :error  parse-error
-                 :repaired-source repaired-source}
-                {:result last-result :forms acc :error nil
-                 :repaired-source repaired-source
-                 :repaired? (boolean repaired-source)})
-              (let [{:keys [source form]} (first todo)
-                    entry (eval-one-form idx form source)]
-                (if-let [err (:error entry)]
-                  {:result nil :forms (conj acc entry) :error err
-                   :repaired-source repaired-source}
-                  (recur (rest todo) (inc idx) (conj acc entry) (:result entry)))))))
-        exec-future (cancellation/worker-future "vis-sci-eval"
-                      (fn []
-                        (try
-                          (let [outcome
-                                (binding [extension/*tool-event-sink* record-tool-event
-                                          extension/*render-sink*         channel-sink
-                                          extension/*sink-position*       sink-pos
-                                          env/*lru-atom*          lru
-                                          env/*current-turn-position* turn-position]
-                                  (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
-                                    (if (or (seq parsed-forms) parse-error)
-                                      (sci/with-bindings
-                                        {sci/ns ns}
-                                        (eval-per-form))
-                                      (let [v (:val (sci/eval-string+ sci-ctx code (when ns {:ns ns})))]
-                                        {:result v :forms [] :error nil}))))]
-                            (assoc outcome
-                              :channel @channel-sink
-                              :lru     @lru))
-                          (catch Throwable e
-                            (reset! thrown e)
-                            ;; Whole-block parse path failure (parse-forms returned nil OR
-                            ;; eval-string+ threw outside per-form path).
-                            {:result nil
-                             :channel @channel-sink
-                             :lru     @lru
-                             :forms   []
-                             :error   (try (extension/ex->op-error e {:form-source code})
-                                        (catch Throwable _
-                                          {:message (or (ex-message e)
-                                                      (.getName (class e)))}))}))))
-        ;; Register the SCI worker on the cancellation token. `cancel!`
-        ;; will call this thunk and hard-cancel the future even if SCI
-        ;; is mid-form with no iteration boundary to check. `on-cancel!`
-        ;; also handles the race where the token was ALREADY cancelled
-        ;; before we registered — the thunk fires synchronously and
-        ;; returns a no-op disposer.
-        dispose-cancel-hook (when cancel-token
-                              (cancellation/on-cancel! cancel-token
-                                (fn []
-                                  (try (.cancel ^java.util.concurrent.Future exec-future true)
-                                    (catch Throwable _ nil)))))
-        timeout-ms (long *eval-timeout-ms*)
-        execution-result (try
-                           (deref exec-future timeout-ms nil)
-                           (catch Throwable e
-                             (reset! thrown e)
-                             ;; Interrupt path: outer was cancelled while we
-                             ;; were blocked on `deref`. Hard-cancel the
-                             ;; inner worker too so it cannot keep running
-                             ;; orphaned in the background pinning a thread.
-                             (try (.cancel ^java.util.concurrent.Future exec-future true)
-                               (catch Throwable _ nil))
-                             {:result nil
-                              :channel @channel-sink
-                              :lru     @lru
-                              :error   (try (extension/ex->op-error e {:form-source code})
-                                         (catch Throwable _
-                                           {:message (or (ex-message e)
-                                                       (.getName (class e)))}))})
-                           (finally
-                             (when dispose-cancel-hook
-                               (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
-    ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
-    ;; the eval succeeded; on exception/timeout, set `*e` without
-    ;; advancing the value stack (the form produced no value).
-    (when env
-      (cond
-        (nil? execution-result)
-        (env/push-eval-error! env (or @thrown (ex-info "Eval timeout" {})))
-
-        (nil? (:error execution-result))
-        (env/push-eval-result! env (:result execution-result))
-
-        :else
-        ;; :error is now structured ({:message ...}); fall back to
-        ;; :message string when constructing the synthetic ex-info.
-        (env/push-eval-error! env (or @thrown
-                                    (ex-info (or (:message (:error execution-result))
-                                               "eval error") {})))))
-    (if (nil? execution-result)
-      (do (.cancel ^java.util.concurrent.Future exec-future true)
-        {:result nil
-         :channel @channel-sink
-         :lru     @lru
-         :error   {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
-         :timeout? true})
-      execution-result)))
-
-(defn- py-op-error
+(defn- python-op-error
   "Map a throwable from the Python eval path to the op-error shape: a GraalPy
-   PolyglotException goes through env_python/map-polyglot-error (proper
+   PolyglotException goes through env/map-polyglot-error (proper
    :python/syntax|runtime|host phase + line/column); anything else falls back to
    extension/ex->op-error. Class checked by NAME so this ns never imports the
-   GraalPy classes (they stay off the default classpath)."
+   GraalPy classes directly."
   [e code]
   (try
     (if (= "org.graalvm.polyglot.PolyglotException" (.getName (class e)))
-      ((requiring-resolve 'com.blockether.vis.internal.env-python/map-polyglot-error) e code)
+      (env/map-polyglot-error e code)
       (extension/ex->op-error e {:form-source code}))
     (catch Throwable _
       {:message (or (ex-message e) (.getName (class e)))})))
 
 (defn- run-python-code
-  "Embedded-GraalPy twin of `run-sci-code`. Reuses the worker-future +
-   cancellation + tool-event/render sinks + `*1`/`*e` recovery stack, but the
-   eval core is `env-python/run-python-block` (whole-block; tools fire in order
-   through their ProxyExecutable wrappers, which read the SAME dynamic sinks the
-   Clojure tools already use). env-python is resolved lazily so GraalPy stays
-   off the default classpath."
-  [py-ctx code & {:keys [tool-event-fn env]}]
+  "Run an agent code block through the embedded GraalPy sandbox. Wraps the
+   worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
+   stack around `env/run-python-block` (whole-block; tools fire in order through
+   their ProxyExecutable wrappers, which read the SAME dynamic sinks)."
+  [python-context code & {:keys [tool-event-fn env]}]
   (let [thrown        (atom nil)
         tool-counts   (atom {})
         cancel-token  (:cancel-token env)
@@ -958,18 +601,17 @@
                                   event* (cond-> event
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
                               (when tool-event-fn (tool-event-fn event*))))
-        run-block   (requiring-resolve 'com.blockether.vis.internal.env-python/run-python-block)
         exec-future (cancellation/worker-future "vis-python-eval"
                       (fn []
                         (try
                           (binding [extension/*tool-event-sink* record-tool-event
                                     extension/*render-sink*      channel-sink
                                     extension/*sink-position*    sink-pos]
-                            (assoc (run-block py-ctx code) :channel @channel-sink :lru {}))
+                            (assoc (env/run-python-block python-context code) :channel @channel-sink :lru {}))
                           (catch Throwable e
                             (reset! thrown e)
                             {:result nil :channel @channel-sink :lru {} :forms []
-                             :error (py-op-error e code)}))))
+                             :error (python-op-error e code)}))))
         dispose-cancel-hook (when cancel-token
                               (cancellation/on-cancel! cancel-token
                                 (fn [] (try (.cancel ^java.util.concurrent.Future exec-future true)
@@ -982,29 +624,24 @@
                              (try (.cancel ^java.util.concurrent.Future exec-future true)
                                (catch Throwable _ nil))
                              {:result nil :channel @channel-sink :lru {}
-                              :error (py-op-error e code)})
+                              :error (python-op-error e code)})
                            (finally
                              (when dispose-cancel-hook
                                (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
     (when env
-      (let [push-result (requiring-resolve 'com.blockether.vis.internal.env-python/push-eval-result!)
-            push-error  (requiring-resolve 'com.blockether.vis.internal.env-python/push-eval-error!)]
-        (cond
-          (nil? execution-result)          (push-error env (or @thrown (ex-info "Eval timeout" {})))
-          (nil? (:error execution-result)) (push-result env (:result execution-result))
-          :else (push-error env (or @thrown (ex-info (or (:message (:error execution-result))
-                                                       "eval error") {}))))))
+      (cond
+        (nil? execution-result)          (env/push-eval-error! env (or @thrown (ex-info "Eval timeout" {})))
+        (nil? (:error execution-result)) (env/push-eval-result! env (:result execution-result))
+        :else (env/push-eval-error! env (or @thrown (ex-info (or (:message (:error execution-result))
+                                                              "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil :channel @channel-sink :lru {}
          :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")} :timeout? true})
       execution-result)))
 
-(defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn env]
-  (let [run! (fn []
-               (if (= :python (:engine env))
-                 (run-python-code sci-ctx code :tool-event-fn tool-event-fn :env env)
-                 (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn :env env)))
+(defn- run-with-timing [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]
+  (let [run! (fn [] (run-python-code python-context code :tool-event-fn tool-event-fn :env env))
         execution-result (if timeout-ms
                            (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)] (run!))
                            (run!))
@@ -1029,7 +666,7 @@
    `(set-session-title! ...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
-  [{:keys [sci-ctx sandbox-ns] :as environment} code
+  [{:keys [python-context sandbox-ns] :as environment} code
    & {:keys [timeout-ms tool-event-fn]}]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
     ;; Per-block-eval contract: feed original block source to `run-sci-code`;
@@ -1043,31 +680,23 @@
     ;; The snapshot is an immutable read-only map — see
     ;; ctx-loop/session-snapshot for the read-only guarantee. Re-interning
     ;; also erases any `(def ctx …)` the model wrote in a prior block.
-    (when sci-ctx
+    (when python-context
       (try
         (when-let [snap (ctx-loop/session-snapshot environment)]
-          (if (= :python (:engine environment))
-            ((requiring-resolve 'com.blockether.vis.internal.env-python/sci-update-binding!) sci-ctx 'ctx snap)
-            (env/sci-update-binding! sci-ctx 'ctx snap)))
+          ;; Bind `ctx` as a NATIVE Python dict built from the SAME canonical
+          ;; projection (`ctx-renderer/project-ctx`) the `# ctx` text is printed
+          ;; from — so the live `ctx` value and the rendered snapshot agree, and
+          ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
+          (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
         (catch Throwable _ nil)))
     (let [start-time (System/currentTimeMillis)
-          python?    (= :python (:engine environment))
           exec       (try
-                       ;; Clojure block validation (edamame parse + banned def
-                       ;; heads) is SCI-only. The Python path surfaces its own
-                       ;; syntax/empty-block errors via run-python-block.
-                       (when-not python?
-                         (let [{:keys [parse-error repaired-source]} (parse-top-level-forms code)
-                               validation-code (or repaired-source code)]
-                           (when-not parse-error
-                             (env/validate-non-empty-block! validation-code)
-                             (env/validate-no-banned-defs! validation-code))))
-                       (run-with-timing sci-ctx code sandbox-ns timeout-ms
+                       ;; The Python sandbox surfaces its own syntax/empty-block
+                       ;; errors via env/run-python-block.
+                       (run-with-timing python-context code sandbox-ns timeout-ms
                          start-time tool-event-fn environment)
                        (catch Throwable e
-                         (if python?
-                           ((requiring-resolve 'com.blockether.vis.internal.env-python/push-eval-error!) environment e)
-                           (env/push-eval-error! environment e))
+                         (env/push-eval-error! environment e)
                          {:result nil
                           :channel []
                           :lru {}
@@ -1178,23 +807,11 @@
 ;; ---------------------------------------------------------------------------
 
 (defn get-locals
-  "Returns {sym -> val} of user-defined vars in the SCI sandbox
-   (excludes built-ins / kw-keyed entries). Direct atom read - zero
-   eval overhead."
-  [{:keys [sci-ctx initial-ns-keys]}]
-  (try
-    (let [sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
-      (persistent!
-        (reduce-kv (fn [acc k v]
-                     (if (or (contains? initial-ns-keys k) (keyword? k))
-                       acc
-                       (assoc! acc k (if (instance? clojure.lang.IDeref v) @v v))))
-          (transient {}) sandbox)))
-    (catch Exception e
-      (tel/log! {:level :warn :id ::get-locals-fallback
-                 :data {:error (ex-message e)}
-                 :msg "Failed to read sandbox locals, returning empty map"})
-      {})))
+  "User-defined sandbox vars surface. Live-vars introspection is cosmetic-off
+   for the Python engine (the agent uses its own Python scope + stdlib), so this
+   returns an empty map. Kept as a stable seam for the trailer/renderer callers."
+  [_environment]
+  {})
 
 (defn- def-display-result
   "Pass-through seam for future display tweaks. Silent system-call
@@ -1355,178 +972,6 @@
       :else
       default-error)))
 
-(defn- escaped-char?
-  [^String s idx]
-  (loop [i (dec idx)
-         n 0]
-    (if (and (not (neg? i)) (= \\ (nth s i)))
-      (recur (dec i) (inc n))
-      (odd? n))))
-
-(defn- skip-ws
-  [^String s idx]
-  (let [n (count s)]
-    (loop [i idx]
-      (if (and (< i n) (Character/isWhitespace ^char (nth s i)))
-        (recur (inc i))
-        i))))
-
-(defn- balanced-done-tail-end
-  "Return exclusive end index for the tail after a candidate `:answer` close.
-   Tail must close the surrounding `(done { ... })` form. Scans strings so
-   trailer summaries may contain delimiters."
-  [^String s start]
-  (let [n (count s)]
-    (loop [i start
-           stack [\) \}]
-           in-str? false]
-      (cond
-        (>= i n) nil
-
-        in-str?
-        (if (and (= \" (nth s i)) (not (escaped-char? s i)))
-          (recur (inc i) stack false)
-          (recur (inc i) stack true))
-
-        :else
-        (let [ch (nth s i)]
-          (cond
-            (= \" ch)
-            (recur (inc i) stack true)
-
-            (= \; ch)
-            (let [j (or (some #(when (= \newline (nth s %)) %) (range (inc i) n)) n)]
-              (recur j stack false))
-
-            (#{\( \[ \{} ch)
-            (recur (inc i)
-              (conj stack ({\( \) \[ \] \{ \}} ch))
-              false)
-
-            (#{\) \] \}} ch)
-            (when (= ch (peek stack))
-              (let [stack' (pop stack)]
-                (if (empty? stack')
-                  (inc i)
-                  (recur (inc i) stack' false))))
-
-            :else
-            (recur (inc i) stack false)))))))
-
-(defn- direct-answer-close-tail
-  [^String s quote-idx]
-  (let [n (count s)
-        i (skip-ws s (inc quote-idx))]
-    (when (and (< i n)
-            ;; Accept either the map close or another keyword entry after
-            ;; :answer. Semantic validation happens after we rebuild a
-            ;; parseable payload; this scanner only finds the candidate
-            ;; boundary in malformed raw provider text.
-            (#{\} \:} (nth s i)))
-      (when-let [end (balanced-done-tail-end s i)]
-        (str " " (str/trim (subs s i end)))))))
-
-(defn- direct-answer-close
-  [^String s body-start]
-  (let [n (count s)]
-    (loop [i body-start
-           close nil]
-      (if (>= i n)
-        close
-        (if (= \" (nth s i))
-          (recur (inc i)
-            (if (not (escaped-char? s i))
-              (if-let [tail (direct-answer-close-tail s i)]
-                {:idx i :tail tail}
-                close)
-              close))
-          (recur (inc i) close))))))
-
-(defn- escape-unescaped-quotes
-  [^String body]
-  (let [n (count body)]
-    (loop [i 0
-           out (StringBuilder.)]
-      (if (>= i n)
-        (str out)
-        (let [ch (nth body i)]
-          (when (and (= \" ch) (not (escaped-char? body i)))
-            (.append out \\))
-          (.append out ch)
-          (recur (inc i) out))))))
-
-(defn- decode-direct-answer-body
-  [body]
-  (let [decode (fn [s]
-                 (let [forms (edamame/parse-string-all (str "\"" s "\"") edamame-opts)
-                       v     (first forms)]
-                   (when (and (= 1 (count forms)) (string? v)) v)))]
-    (or (try (decode body) (catch Throwable _ nil))
-      (try (decode (escape-unescaped-quotes body)) (catch Throwable _ nil))
-      body)))
-
-(defn- raw-response->direct-answer-source
-  "Salvage a torn `(done {… :answer \"…\"})` down to a clean
-   `(done {:answer \"…\"})`. done carries no other meaningful metadata
-   (compaction is the standalone `summarize` verb), so only the answer
-   text is recovered."
-  [raw]
-  (when-not (str/blank? raw)
-    (let [m (re-matcher #"(?s)\(done\s*\{(.*?):answer\s*\"" raw)]
-      (when (.find m)
-        (let [body-start (.end m)]
-          (when-let [{:keys [idx]} (direct-answer-close raw body-start)]
-            (let [body   (subs raw body-start idx)
-                  answer (decode-direct-answer-body body)]
-              (str "(done " (pr-str {:answer answer}) ")"))))))))
-
-(defn- direct-answer-block-recoverable?
-  [{:keys [source]}]
-  (and (str/includes? (or source "") "(done")
-    (str/includes? (or source "") ":answer")
-    (:parse-error (parse-top-level-forms source))))
-
-(defn- recover-direct-answer-blocks
-  "Recover a torn `(done {:answer ...})` block when Markdown fence extraction
-   closed early on a nested answer code fence. Uses raw provider text as
-   source of truth, rebuilds balanced Clojure with `pr-str`, and only swaps
-   blocks when the rebuilt form parses.
-
-   Nested answer fences often yield MULTIPLE extracted Clojure blocks: the
-   torn leading `(done ...)` plus example snippets from the answer body. In
-   that shape the leading answer is authoritative; executing sibling snippets
-   is exactly the failure loop this recovery prevents.
-
-   Some extractors reject the whole response as malformed before surfacing
-   the torn leading block. Raw recovery still applies in that empty-block
-   shape."
-  [ask-result]
-  (let [blocks (vec (:blocks ask-result))
-        first-block (first blocks)]
-    (cond
-      (and first-block
-        (direct-answer-block-recoverable? first-block))
-      (if-let [source (raw-response->direct-answer-source (:raw ask-result))]
-        (if-not (:parse-error (parse-top-level-forms source))
-          (assoc ask-result
-            :blocks [(assoc first-block :source source)]
-            :vis/recovered-direct-answer? true
-            :all-blocks (or (:all-blocks ask-result) blocks))
-          ask-result)
-        ask-result)
-
-      (empty? blocks)
-      (if-let [source (raw-response->direct-answer-source (:raw ask-result))]
-        (if-not (:parse-error (parse-top-level-forms source))
-          (assoc ask-result
-            :blocks [{:lang "clojure" :source source}]
-            :vis/recovered-direct-answer? true
-            :all-blocks (or (:all-blocks ask-result) blocks))
-          ask-result)
-        ask-result)
-
-      :else
-      ask-result)))
 
 ;; `normalized-code-source` removed: `code-entries-preflight` now computes
 ;; the same join inline on the surviving block sources (was only ever called
@@ -2019,7 +1464,7 @@
                        (case rendering-kind
                          :nudge  :vis/system
                          :answer :vis/answer
-                         :sci/eval))
+                         :python/eval))
      :started-at-ms  started
      :finished-at-ms finished
      :status         (cond
@@ -2074,7 +1519,7 @@
 (s/def ::timeout? (s/nilable boolean?))
 (s/def ::repaired? (s/nilable boolean?))
 (s/def ::comment string?)
-(s/def ::op #{:sci/eval :edamame/parse :vis/guard :vis/system :vis/answer})
+(s/def ::op #{:python/eval :edamame/parse :vis/guard :vis/system :vis/answer})
 (s/def ::status #{:done :error :timeout})
 (s/def ::iteration pos-int?)
 (s/def ::form-position pos-int?)
@@ -2494,7 +1939,15 @@
                            (not (contains? base-routing :on-transient-error))
                            (assoc :on-transient-error :fallback-model-in-the-same-provider))
           ask-opts (with-default-ask-code-idle-timeout
-                     (cond-> {:lang     "clojure"
+                     (cond-> {:lang     "python"
+                              ;; Lenient: the model's ENTIRE reply is the
+                              ;; Python program for this turn. svar does no
+                              ;; fence scan / lang filtering and drops
+                              ;; nothing — it strips at most one outer
+                              ;; wrapper fence. No `:code-tail-pointer?`
+                              ;; fence reminder either; there is no fence.
+                              :lenient  true
+                              :code-tail-pointer? false
                               :messages messages
                               :routing  sticky-routing
                               :check-context? true
@@ -2517,7 +1970,7 @@
                              #(call-provider-with-interrupt-retry! environment iteration-position
                                 (fn []
                                   (svar/ask-code! (:router environment) ask-opts)))))
-          ask-result (recover-direct-answer-blocks ask-result-raw)
+          ask-result ask-result-raw
           code-observation (ask-code-block-observation ask-result)
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop iteration
@@ -3770,9 +3223,7 @@
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
-    (if (= :python (:engine environment))
-      ((requiring-resolve 'com.blockether.vis.internal.env-python/reset-eval-bindings!) environment)
-      (env/reset-eval-bindings! environment))
+    (env/reset-eval-bindings! environment)
     ;; Hot symbol archival runs only after a final successful answer.
     ;; Failed/cancelled turns keep their live scratch symbols for
     ;; recovery. This is SCI namespace pruning — unrelated to CTX
@@ -5190,12 +4641,9 @@
           root-provider          (:provider root-resolved-model)
           db-info                (:db-info env)
           custom-bindings        (custom-bindings env)
-          sci-ctx                (:sci-ctx env)
-          _                      (let [upd (if (= :python (:engine env))
-                                             (requiring-resolve 'com.blockether.vis.internal.env-python/sci-update-binding!)
-                                             env/sci-update-binding!)]
-                                   (doseq [[sym val] (or custom-bindings {})]
-                                     (when val (upd sci-ctx sym val))))
+          python-context                (:python-context env)
+          _                      (doseq [[sym val] (or custom-bindings {})]
+                                   (when val (env/set-python-binding! python-context sym val)))
           ;; Workspace pin lives on the env itself (set in create-environment).
           ;; Opts may carry namespaced `:workspace/*` overrides for unusual
           ;; per-turn cases; the bare `:workspace` key is not accepted
@@ -5465,124 +4913,31 @@
 ;; down (which returns the process-wide shared connection). The defn was
 ;; deleted to keep ONE canonical `db-info` symbol on this namespace.
 
-(defn- extension-aliases
-  [exts]
-  (->> (or exts [])
-    (keep extension/ext-alias)
-    (distinct)
-    vec))
-
-(defn- require-extension-alias!
-  [sci-ctx ext ns-sym alias-sym]
-  (try
-    (sci/eval-string+ sci-ctx
-      (str "(require '[" ns-sym " :as " alias-sym "])")
-      {:ns (sci/find-ns sci-ctx 'sandbox)})
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::ext-alias-require-failed
-                 :data (assoc (format-exception-short t)
-                         :ext (:ext/name ext)
-                         :alias alias-sym)}
-        (str "Auto-require of alias '" alias-sym "' failed")))))
-
-(defn- sci-binding-var
-  "Build the SCI var the model interacts with for an extension symbol.
-
-   Forwards `:doc` and `:arglists` from the symbol entry into the SCI var
-   metadata so `(clojure.repl/doc cat)`, `(:doc (meta #'cat))`, and
-   `(:arglists (meta #'cat))` all work inside the sandbox. Without this,
-   docstrings stayed app-side only and the model could not introspect its
-   own callable surface."
-  [ext-ns sym val sym-entry]
-  (let [doc      (:ext.symbol/doc sym-entry)
-        arglists (:ext.symbol/arglists sym-entry)
-        source   (:ext.symbol/source sym-entry)
-        meta-map (cond-> {:ns ext-ns}
-                   doc      (assoc :doc doc)
-                   arglists (assoc :arglists arglists)
-                   source   (assoc :vis/source source))]
-    (if (and (map? val) (contains? val :vis.sci/macro-fn))
-      (sci/new-var sym (:vis.sci/macro-fn val) (assoc meta-map :macro true))
-      (sci/new-var sym val meta-map))))
-
-(defn- extension-namespace-bindings
-  ;; Primary SCI namespace gets every extension symbol.
-  [environment ns-sym alias-sym active-exts]
-  (let [ext-ns (sci/create-ns ns-sym)]
-    (loop [remaining active-exts
-           bindings  {}
-           owners    {}]
-      (if-let [ext (first remaining)]
-        (let [wrapped (extension/wrap-extension ext environment)
-              entry-by-sym (into {}
-                             (map (juxt :ext.symbol/symbol identity))
-                             (extension/ext-symbols ext))
-              ns-bindings (into {}
-                            (map (fn [[sym val]]
-                                   [sym (sci-binding-var ext-ns sym val
-                                          (get entry-by-sym sym))]))
-                            wrapped)
-              collisions (vec (filter #(contains? bindings %) (keys ns-bindings)))]
-          (when (seq collisions)
-            (tel/log! {:level :warn :id ::ext-symbol-collision
-                       :data  {:ext       (:ext/name ext)
-                               :ns        ns-sym
-                               :alias     alias-sym
-                               :symbols   collisions
-                               :previous  (select-keys owners collisions)}
-                       :msg   (str "Extension '" (:ext/name ext)
-                                "' shadowed " (count collisions)
-                                " active symbol(s) under alias '" alias-sym
-                                "': " (str/join ", " collisions))}))
-          (recur (next remaining)
-            (merge bindings ns-bindings)
-            (merge owners (zipmap (keys ns-bindings)
-                            (repeat (:ext/name ext))))))
-        bindings))))
-
 (defn sync-active-extension-symbols!
-  "Make SCI alias namespaces match active extension state.
+  "Make the Python sandbox's callable globals match active extension state.
 
    `install-extension!` keeps every extension row in `:extensions`, but only
-   active extensions contribute callable alias symbols. Called after per-env
+   active extensions contribute callable symbols. Called after per-env
    installation and again at turn start so `:ext/activation-fn` changes become
-   real tool availability, not just prompt visibility."
+   real tool availability, not just prompt visibility.
+
+   The Python sandbox is FLAT globals (no namespaces/aliases/macros): active
+   extensions putMember their symbols straight into the top scope; deactivated
+   extensions have theirs removed (putMember nil). Symbol names are snake-ified
+   by env/set-python-binding!."
   ([environment]
    (sync-active-extension-symbols! environment (prompt/active-extensions environment)))
   ([environment active-extensions]
    (when-let [active-atom (:active-extensions environment)]
      (reset! active-atom (vec (or active-extensions []))))
-   (when-let [sci-ctx (:sci-ctx environment)]
-     (if (= :python (:engine environment))
-       ;; Python sandbox = FLAT globals (no namespaces/aliases/macros). Active
-       ;; extensions putMember their symbols straight into the Python top scope;
-       ;; deactivated extensions have theirs removed (putMember nil). Symbol
-       ;; names are snake-ified by env_python/sci-update-binding!.
-       (let [upd (requiring-resolve 'com.blockether.vis.internal.env-python/sci-update-binding!)
-             installed (vec (or (some-> (:extensions environment) deref) []))
-             active-set (set (map :ext/name active-extensions))]
-         (doseq [ext installed
-                 [sym f] (try (extension/wrap-extension ext environment)
-                           (catch Throwable _ nil))]
-           (upd sci-ctx sym (when (contains? active-set (:ext/name ext)) f))))
-       ;; SCI path (legacy): namespace + alias + macro machinery.
-       (let [installed (vec (or (some-> (:extensions environment) deref) []))
-             active-set (set (map :ext/name active-extensions))]
-         (doseq [{ns-sym :ns alias-sym :alias :as alias} (extension-aliases installed)]
-           (let [active-for-alias (filterv (fn [ext]
-                                             (and (contains? active-set (:ext/name ext))
-                                               (= alias (extension/ext-alias ext))))
-                                    installed)]
-             (if (seq active-for-alias)
-               (let [bindings (extension-namespace-bindings environment ns-sym alias-sym active-for-alias)]
-                 (swap! (:env sci-ctx) assoc-in [:namespaces ns-sym] bindings)
-                 (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym)
-                 (require-extension-alias! sci-ctx (last active-for-alias) ns-sym alias-sym))
-               (swap! (:env sci-ctx)
-                 (fn [sci-env]
-                   (-> sci-env
-                     (update :namespaces dissoc ns-sym)
-                     (update :ns-aliases dissoc alias-sym))))))))))
+   (when-let [python-context (:python-context environment)]
+     (let [installed  (vec (or (some-> (:extensions environment) deref) []))
+           active-set (set (map :ext/name active-extensions))]
+       (doseq [ext installed
+               [sym f] (try (extension/wrap-extension ext environment)
+                         (catch Throwable _ nil))]
+         (env/set-python-binding! python-context sym
+           (when (contains? active-set (:ext/name ext)) f)))))
    environment))
 
 (defn install-extension!
@@ -5622,18 +4977,9 @@
             without (vec (remove #(= (:ext/name %) ns-sym) exts))]
         (conj without ext))))
   ;; Extension rows stay installed even when inactive, but callable symbol
-  ;; bindings are activation-aware. Java classes/imports remain available once
-  ;; an extension is installed because they are passive SCI configuration, not
-  ;; model-visible tool affordances.
-  ;; SCI-only: passive Java class/import config in the sandbox. The Python
-  ;; engine has no equivalent (the agent writes Python + uses its own stdlib;
-  ;; the Clojure tools do any Java work), so skip it there.
-  (when-not (= :python (:engine environment))
-    (let [sci-ctx (:sci-ctx environment)]
-      (when-let [classes (seq (extension/ext-classes ext))]
-        (swap! (:env sci-ctx) update :classes merge (into {} classes)))
-      (when-let [imports (seq (extension/ext-imports ext))]
-        (swap! (:env sci-ctx) update :imports merge (into {} imports)))))
+  ;; bindings are activation-aware (sync-active-extension-symbols!). The Python
+  ;; sandbox has no passive Java class/import config — the agent writes Python +
+  ;; uses its own stdlib; the Clojure tools do any Java work.
   (sync-active-extension-symbols! environment)
   environment)
 
@@ -5664,8 +5010,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id engine]
-           :or {engine :clojure}}]
+  [router {:keys [db session channel external-id title workspace-id]}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
@@ -5852,31 +5197,12 @@
                                          {:value           value
                                           :answer-markdown answer-text}))
                                      :vis/answer))
-        ;; SCI binding for the session title:
-        ;;   `(set-session-title! \"...\")` - writes the title through
-        ;;                              to DB, syncs the in-memory
-        ;;                              atom, and broadcasts
-        ;;                              `:title-changed` to every
-        ;;                              registered listener so
-        ;;                              channels (e.g. the TUI
-        ;;                              header) can refresh without
-        ;;                              polling.
-        ;; ONE-ARITY ONLY. There is no zero-arg reader by design: the
-        ;; model has no in-sandbox read path for the title (the
-        ;; `SESSION_TITLE` SYSTEM var was retired as redundant).
-        ;; The foundation `title-hint` surfaces the current value
-        ;; when relevant. Calling with the wrong arity raises an
-        ;; `ArityException` from SCI like any other Clojure fn.
-        ;; Returns `:vis/silent`: the title is visible in channel chrome
-        ;; and the model trailer, but the host call itself is noise in
-        ;; live progress / iteration rendering.
-        session-title-fn    (fn set-session-title! [s]
-                              (let [s (str s)]
-                                (set-title-with-broadcast!
-                                  db-info session-id
-                                  session-title-atom s)
-                                :vis/silent))
-        ;; Build the ctx-loop env subset used by SCI bindings + helpers.
+        ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
+        ;; generates it in the background and writes it via
+        ;; `set-title-with-broadcast!`). There is NO model-facing
+        ;; `set_session_title` tool — the agent neither sets nor reads the
+        ;; title; it just appears in channel chrome.
+        ;; Build the ctx-loop env subset used by the engine bindings + helpers.
         ;; Just the cursor counters + the single ctx-atom. Warnings
         ;; live as `:engine/warnings` on the ctx itself, no side atoms.
         ;; (D12 retired `:engine/pending-satisfies` along with
@@ -5910,28 +5236,17 @@
                                    ;; below win any accidental name collision.
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
-                                   {'done            answer-fn
-                                    'set-session-title! session-title-fn}
+                                   {'done            answer-fn}
                                    ;; build-sci-bindings contributes every
                                    ;; engine mutator (task/fact + contradicts).
                                    (ctx-loop/build-sci-bindings ctx-loop-env)
                                    (ctx-loop/build-introspect-bindings
-                                     ctx-loop-env nil)
-                                   ;; Bare `doc` / `apropos` SCI system
-                                   ;; calls. They need `:sci-ctx`, which is
-                                   ;; built AFTER this map, so they read it
-                                   ;; from `environment-atom` at call time.
-                                   (sci-symbols/build-symbol-bindings
-                                     (fn [] @environment-atom)))
-        ;; Engine substrate: :clojure → SCI (default, unchanged); :python →
-        ;; embedded GraalPy (env_python, drop-in twin). env-python is resolved
-        ;; LAZILY so the GraalPy deps (under the :graalpy alias, ~100MB) stay
-        ;; off the default/native classpath unless a Python session is created.
-        {:keys [sci-ctx sandbox-ns initial-ns-keys]}
-        (let [merged (merge env-bindings (:custom-bindings @state-atom))]
-          (if (= :python engine)
-            ((requiring-resolve 'com.blockether.vis.internal.env-python/create-sci-context) merged)
-            (env/create-sci-context merged)))
+                                     ctx-loop-env nil))
+        ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
+        ;; deny-by-default polyglot Context, wires the Clojure tools as Python
+        ;; callables, and installs doc/apropos introspection).
+        {:keys [python-context sandbox-ns initial-ns-keys]}
+        (env/create-python-context (merge env-bindings (:custom-bindings @state-atom)))
         env (cond-> {:environment-id                    environment-id
                      :session-id                   session-id
                      :session/state-id                  session-state-id
@@ -5958,12 +5273,9 @@
               :ctx-atom                          ctx-atom
               :turn-state-atom                   turn-state-atom
               :state-atom                        state-atom
-              :sci-ctx                           sci-ctx
+              :python-context                           python-context
               :sandbox-ns                        sandbox-ns
               :initial-ns-keys                   initial-ns-keys
-              ;; :clojure (SCI) | :python (embedded GraalPy). Read by the eval
-              ;; dispatch (run-with-timing) to pick the substrate.
-              :engine                            engine
              ;; Long-lived per-env LRU map: `{var-name-string →
              ;; last-used-turn-pos}`. Merged from each iteration's
              ;; `:lru` after eval. Drives the trailer's live-vars
@@ -6101,11 +5413,9 @@
     new-cfg))
 
 (defn- open-env!
-  ;; App session entry (create! + resume). DEFAULT :python — the interactive
-  ;; app runs on the embedded GraalPy engine. (create-environment's own default
-  ;; stays :clojure so direct lib/test callers are unaffected.)
-  [id {:keys [channel external-id title workspace-id engine]
-       :or {engine :python}}]
+  ;; App session entry (create! + resume). The vis engine is the embedded
+  ;; GraalPy Python sandbox — there is no other substrate.
+  [id {:keys [channel external-id title workspace-id]}]
   (let [router (get-router)
         env    (create-environment router
                  (cond-> {:db (config/resolve-db-spec)}
@@ -6113,9 +5423,7 @@
                    channel     (assoc :channel channel)
                    external-id (assoc :external-id external-id)
                    title       (assoc :title title)
-                   workspace-id (assoc :workspace-id workspace-id)
-                   ;; Engine substrate (:clojure default | :python GraalPy).
-                   engine      (assoc :engine engine)))]
+                   workspace-id (assoc :workspace-id workspace-id)))]
     env))
 
 (defn- ensure-env!
@@ -6150,13 +5458,11 @@
                     When omitted, a trunk workspace is auto-minted in
                     create-environment."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id engine]}]
+  ([channel {:keys [title external-id workspace-id]}]
    (let [env  (open-env! nil (cond-> {:channel     channel
                                       :external-id (some-> external-id str)
                                       :title       title}
-                               workspace-id (assoc :workspace-id workspace-id)
-                               ;; :engine :python -> embedded GraalPy substrate.
-                               engine       (assoc :engine engine)))
+                               workspace-id (assoc :workspace-id workspace-id)))
          id   (:session-id env)
          _    (cache-env! id env)]
      {:id           id                ; UUID

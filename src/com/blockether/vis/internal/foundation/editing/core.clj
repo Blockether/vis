@@ -11,7 +11,7 @@
         (cat path :tail)      ; last 400 lines (tail)
         (cat path :tail n)    ; last n lines
         (ls path)             ; -> nested {:name :path :type :size :children} tree
-        (ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
+        (ls path opts)        ; opts is {:depth :is_hidden :is_respect_gitignore}
         (rg spec)            ; -> {:hits :truncated-by}; spec = {:any [literal] :paths [src]}
                                ; OR {:all [lit1 lit2]}; no regex/query+opts shorthand
 
@@ -540,7 +540,7 @@
    from `:truncated?` which only fires when the window byte cap chopped
    the window short mid-file).
    `:mtime` and `:size` mirror `File.lastModified` / `File.length`; pass
-   them as `:expected-mtime` / `:expected-size` on a subsequent
+   them as `:expected_mtime` / `:expected_size` on a subsequent
    `patch` / `write` to fail closed if the file changed since the read.
    Each call's `:lines` payload is bounded by `max-cat-window-bytes`; that
    is also the persistence-blob ceiling (one Nippy row per call).
@@ -613,8 +613,8 @@
       " matches " (count lines) " lines " (pr-str lines)
       " — a dup-line collision. Use (cat path :range start end) instead.")
     :hash-range-inverted
-    (str "cat :hash failed: :to-hash line " to-line
-      " precedes :from-hash line " from-line ".")
+    (str "cat :hash failed: :to_hash line " to-line
+      " precedes :from_hash line " from-line ".")
     (str "cat :hash failed: " (pr-str reason))))
 
 (defn- read-all-line-tuples
@@ -632,18 +632,18 @@
         (persistent! acc)))))
 
 (defn- read-file-by-hash
-  "Read the inclusive window between the lines hashed `from-hash`..`to-hash`
-   (`to-hash` defaults to `from-hash` — a single line). Resolves the hashes
+  "Read the inclusive window between the lines hashed `from_hash`..`to_hash`
+   (`to_hash` defaults to `from_hash` — a single line). Resolves the hashes
    against LIVE file content via `patch/resolve-hash-range`, so the read
    addresses lines BY CONTENT, not by drifting line numbers — the symmetric
-   counterpart of `patch :from-hash`. Returns the same shape as `read-file`
+   counterpart of `patch :from_hash`. Returns the same shape as `read-file`
    plus `:range [from-line to-line]`. Throws ex-info on a missing / ambiguous /
    inverted hash; the message points back to a fresh read."
-  [path from-hash to-hash]
+  [path from_hash to_hash]
   (let [f       (ensure-existing-file! (safe-path path))
         content (slurp f)
-        res     (patch/resolve-hash-range content (str from-hash)
-                  (when to-hash (str to-hash)))]
+        res     (patch/resolve-hash-range content (str from_hash)
+                  (when to_hash (str to_hash)))]
     (if-let [err (:error res)]
       (throw (ex-info (hash-read-error-message err)
                (merge {:type :ext.foundation.editing/invalid-cat-args} err)))
@@ -745,13 +745,13 @@
 ;; ls
 ;; =============================================================================
 
-(defn- visible-children [^File f {:keys [hidden? respect-gitignore? ignore-node root]}]
+(defn- visible-children [^File f {:keys [is_hidden is_respect_gitignore ignore-node root]}]
   (when (.isDirectory f)
     (let [kids (->> (.listFiles f)
                  (remove (fn [^File c]
-                           (and (not hidden?) (.isHidden c))))
+                           (and (not is_hidden) (.isHidden c))))
                  (remove (fn [^File c]
-                           (and respect-gitignore?
+                           (and is_respect_gitignore
                              (ignored? ignore-node c root)))))]
       (sort-by (juxt #(if (.isDirectory %) 0 1) #(.getName %)) kids))))
 
@@ -771,16 +771,16 @@
 
 (defn- collect-flat-entries
   "BFS-like (actually pre-order DFS) walk under `root` up to `max-depth`.
-   Returns `{:entries [...] :truncated? B}`. Respects `:hidden?` /
-   `:respect-gitignore?` like before. `:files-only?` and `:dirs-only?`
+   Returns `{:entries [...] :truncated? B}`. Respects `:is_hidden` /
+   `:is_respect_gitignore` like before. `:is_files_only` and `:is_dirs_only`
    are post-filters applied per entry (root is never emitted). Stops at
    `max-limit` entries and marks `:truncated? true`."
-  [^File root opts* max-depth max-limit files-only? dirs-only?]
+  [^File root opts* max-depth max-limit is_files_only is_dirs_only]
   (let [acc        (volatile! (transient []))
         truncated? (volatile! false)
         keep?      (fn [^File f]
-                     (cond files-only? (.isFile f)
-                       dirs-only?  (.isDirectory f)
+                     (cond is_files_only (.isFile f)
+                       is_dirs_only  (.isDirectory f)
                        :else       true))
         walk (fn walk [^File f cur-depth]
                (when-not @truncated?
@@ -808,15 +808,15 @@
   ;; trivial.
   ([path] (list-files path nil))
   ([path opts]
-   (let [{:keys [depth limit hidden? respect-gitignore? files-only? dirs-only?]
+   (let [{:keys [depth limit is_hidden is_respect_gitignore is_files_only is_dirs_only]
           :or {depth default-list-depth
                limit default-list-limit
-               hidden? false
-               respect-gitignore? true
-               files-only? false
-               dirs-only?  false}} (or opts {})
-         _ (when (and files-only? dirs-only?)
-             (throw (ex-info "ls :files-only? and :dirs-only? are mutually exclusive"
+               is_hidden false
+               is_respect_gitignore true
+               is_files_only false
+               is_dirs_only  false}} (or opts {})
+         _ (when (and is_files_only is_dirs_only)
+             (throw (ex-info "ls :is_files_only and :is_dirs_only are mutually exclusive"
                       {:type :ext.foundation.editing/invalid-ls-opts
                        :opts opts})))
          _ (when-not (and (integer? depth) (not (neg? depth)))
@@ -831,12 +831,12 @@
          _ (when-not (.exists f)
              (throw (ex-info (str "Path not found: " (.getPath f))
                       {:type :ext.foundation.editing/path-not-found})))
-         opts* {:hidden? hidden?
-                :respect-gitignore? respect-gitignore?
-                :ignore-node (when respect-gitignore? (load-ignore-node f))
+         opts* {:is_hidden is_hidden
+                :is_respect_gitignore is_respect_gitignore
+                :ignore-node (when is_respect_gitignore (load-ignore-node f))
                 :root f}
          {:keys [entries truncated?]}
-         (collect-flat-entries f opts* depth limit files-only? dirs-only?)
+         (collect-flat-entries f opts* depth limit is_files_only is_dirs_only)
          file-count (count (filter #(= :file (:type %)) entries))
          dir-count  (count (filter #(= :dir  (:type %)) entries))]
      {:path          (rel-path f)
@@ -855,14 +855,14 @@
 ;; =============================================================================
 
 (defn- compile-needles
-  "Pre-compile needles when `:regex? true`; nil otherwise (literal mode).
+  "Pre-compile needles when `:is_regex true`; nil otherwise (literal mode).
    Bad patterns surface as a structured invalid-rg-spec error."
-  [needles regex?]
-  (when regex?
+  [needles is_regex]
+  (when is_regex
     (mapv (fn [n]
             (try (java.util.regex.Pattern/compile n)
               (catch java.util.regex.PatternSyntaxException e
-                (throw (ex-info (str "rg :regex? true — invalid regex pattern: "
+                (throw (ex-info (str "rg :is_regex true — invalid regex pattern: "
                                   (pr-str n))
                          {:type :ext.foundation.editing/invalid-rg-spec
                           :pattern n
@@ -881,17 +881,17 @@
      :context N   shorthand for :before N + :after N
      :before N    lines of context BEFORE each hit (content mode only)
      :after  N    lines of context AFTER  each hit (content mode only)
-     :files-only? true → return only distinct paths (no per-line hits)
-     :counts?     true → return per-file match counts (no per-line hits)
-     :regex?      true → interpret needles as java.util.regex patterns;
+     :is_files_only true → return only distinct paths (no per-line hits)
+     :is_counts     true → return per-file match counts (no per-line hits)
+     :is_regex      true → interpret needles as java.util.regex patterns;
                   literal substring otherwise (default)."
   [spec]
   (when-not (map? spec)
     (throw (ex-info "rg takes one spec map: {:all [...] :paths [...]}."
              {:type :ext.foundation.editing/invalid-rg-spec
               :got  (type spec)})))
-  (let [allowed-keys #{:all :any :paths :path :files :include :glob :exclude :hidden? :respect-gitignore?
-                       :limit :context :before :after :files-only? :counts? :regex?}
+  (let [allowed-keys #{:all :any :paths :path :files :include :glob :exclude :is_hidden :is_respect_gitignore
+                       :limit :context :before :after :is_files_only :is_counts :is_regex}
         unknown-keys (seq (remove allowed-keys (keys spec)))
         _ (when unknown-keys
             (throw (ex-info "rg spec has unknown keys."
@@ -973,45 +973,45 @@
         context-shared (or (:context spec) 0)
         before-ctx (or (:before spec) context-shared)
         after-ctx  (or (:after  spec) context-shared)
-        files-only? (boolean (:files-only? spec))
-        counts?     (boolean (:counts? spec))
-        _ (when (and files-only? counts?)
-            (throw (ex-info "rg :files-only? and :counts? are mutually exclusive"
+        is_files_only (boolean (:is_files_only spec))
+        is_counts     (boolean (:is_counts spec))
+        _ (when (and is_files_only is_counts)
+            (throw (ex-info "rg :is_files_only and :is_counts are mutually exclusive"
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
-        _ (when (and (or files-only? counts?)
+        _ (when (and (or is_files_only is_counts)
                   (or (pos? before-ctx) (pos? after-ctx)))
-            (throw (ex-info "rg :before / :after / :context only apply to content mode (not :files-only? / :counts?)"
+            (throw (ex-info "rg :before / :after / :context only apply to content mode (not :is_files_only / :is_counts)"
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
-        regex? (boolean (:regex? spec))
-        patterns (compile-needles needles regex?)]
+        is_regex (boolean (:is_regex spec))
+        patterns (compile-needles needles is_regex)]
     {:op op
      :needles needles
      :paths paths
      :include (or include [])
      :exclude (or exclude [])
-     :hidden? (boolean (:hidden? spec))
-     :respect-gitignore? (get spec :respect-gitignore? true)
+     :is_hidden (boolean (:is_hidden spec))
+     :is_respect_gitignore (get spec :is_respect_gitignore true)
      :limit limit
      :before-ctx before-ctx
      :after-ctx  after-ctx
-     :files-only? files-only?
-     :counts? counts?
-     :regex? regex?
+     :is_files_only is_files_only
+     :is_counts is_counts
+     :is_regex is_regex
      :patterns patterns}))
 
 (defn- make-line-matcher
   "Return a `(fn [line] boolean)` predicate. Default mode is literal
-   substring (`str/includes?`); `:regex? true` uses pre-compiled
+   substring (`str/includes?`); `:is_regex true` uses pre-compiled
    `java.util.regex.Pattern` objects. `:all` means every needle must
    match the same line; `:any` means at least one."
-  [op needles patterns regex?]
+  [op needles patterns is_regex]
   (cond
-    (and (= op :all) regex?)
+    (and (= op :all) is_regex)
     (fn [^String line] (every? #(re-find % line) patterns))
 
-    (and (= op :any) regex?)
+    (and (= op :any) is_regex)
     (fn [^String line] (boolean (some #(re-find % line) patterns)))
 
     (= op :all)
@@ -1030,7 +1030,7 @@
 ;;
 ;; Realistic corpus exposure is bounded by:
 ;;   - the hit cap (`:truncated-by :limit`, default 250 hits)
-;;   - the model's choice to use `:files-only?` / `:counts?` /
+;;   - the model's choice to use `:is_files_only` / `:is_counts` /
 ;;     `:exclude` when scanning minified or wide-line corpora
 ;; If a `:text` ever needs to be capped again, the cap MUST be
 ;; explicit at the spec layer (e.g. an opt-in `:max-text-chars`) so
@@ -1071,7 +1071,7 @@
     (catch Throwable _ [])))
 
 (defn- file-has-any-hit?
-  "Short-circuit: true on first matching line. Used by :files-only? mode
+  "Short-circuit: true on first matching line. Used by :is_files_only mode
    so we exit each file as fast as possible."
   [^File f matches?]
   (try
@@ -1080,7 +1080,7 @@
     (catch Throwable _ false)))
 
 (defn- count-hits-in-file
-  "Total matching lines in `f`. Used by :counts? mode — returns the
+  "Total matching lines in `f`. Used by :is_counts mode — returns the
    real count regardless of the global :limit (since the limit caps
    FILE entries, not per-file lines)."
   [^File f matches?]
@@ -1094,7 +1094,7 @@
    actual file scanning. The public `rg-tool` (= `rg`) wraps this with
    arity/kwargs handling + the LLM-facing result envelope. Three output
    modes, picked by
-   `:files-only?` / `:counts?` / (default content).
+   `:is_files_only` / `:is_counts` / (default content).
 
    Returns one of:
      {:hits   [{:path :line :text :before? :after?} ...] :truncated-by KW}  ;; content
@@ -1106,8 +1106,8 @@
    and `:after` are verbatim — no per-line cap (see the per-line cap
    retirement note above)."
   [spec]
-  (let [{:keys [op needles patterns paths include exclude hidden? respect-gitignore?
-                limit before-ctx after-ctx files-only? counts? regex?]} (coerce-rg-spec spec)
+  (let [{:keys [op needles patterns paths include exclude is_hidden is_respect_gitignore
+                limit before-ctx after-ctx is_files_only is_counts is_regex]} (coerce-rg-spec spec)
         glob-matcher (fn [pattern]
                        (.getPathMatcher (java.nio.file.FileSystems/getDefault)
                          (str "glob:" pattern)))
@@ -1144,23 +1144,23 @@
                             acc
                             (conj acc f)))
                   []))
-        matches? (make-line-matcher op needles patterns regex?)
+        matches? (make-line-matcher op needles patterns is_regex)
         walk (fn walk [ignore-node root ^File f]
                (cond
-                 (and (not hidden?) (.isHidden f)) []
-                 (and respect-gitignore? (ignored? ignore-node f root)) []
+                 (and (not is_hidden) (.isHidden f)) []
+                 (and is_respect_gitignore (ignored? ignore-node f root)) []
                  (.isDirectory f) (mapcat #(walk ignore-node root %)
                                     (or (.listFiles f) (into-array File [])))
                  (and (.isFile f) (include-file? f)) [f]
                  :else []))
         files (->> roots
                 (mapcat (fn [root]
-                          (let [ignore-node (when respect-gitignore?
+                          (let [ignore-node (when is_respect_gitignore
                                               (load-ignore-node root))]
                             (walk ignore-node root root))))
                 (sort-by rel-path))]
     (cond
-      files-only?
+      is_files_only
       (let [out (atom [])
             capped? (atom false)]
         (doseq [^File f files :while (not @capped?)]
@@ -1170,7 +1170,7 @@
         {:files (vec @out)
          :truncated-by (if @capped? :limit :end-of-results)})
 
-      counts?
+      is_counts
       (let [out (atom [])
             capped? (atom false)]
         (doseq [^File f files :while (not @capped?)]
@@ -1199,26 +1199,26 @@
 (def ^:private patch-required-keys #{:path :replace})
 (def ^:private patch-locator-keys
   "Every edit needs EXACTLY ONE locator: `:search` (text match) or
-   `:from-hash` (hashline — content-addressed by the per-line hash from
+   `:from_hash` (hashline — content-addressed by the per-line hash from
    `cat`). The hashline form re-resolves against LIVE content on every
    edit, so it stays correct under line drift (insertions above, or
    earlier edits in the same grouped batch) where raw line numbers would
    silently target the wrong line."
-  #{:search :from-hash})
+  #{:search :from_hash})
 (def ^:private patch-optional-keys
   "Optional keys recognised on exact-replace edit maps.
    - :after / :before  positional anchors (string; first exact occurrence) [:search only]
    - :nth              :first | :last | :all | 1-based positive integer    [:search only]
-   - :to-hash          end of a hashline range; defaults to :from-hash (single line)
-   - :expected-mtime   epoch-ms; fail if file mtime differs (staleness guard)
-   - :expected-size    bytes;    fail if file size differs (staleness guard)"
-  #{:after :before :nth :to-hash :expected-mtime :expected-size})
+   - :to_hash          end of a hashline range; defaults to :from_hash (single line)
+   - :expected_mtime   epoch-ms; fail if file mtime differs (staleness guard)
+   - :expected_size    bytes;    fail if file size differs (staleness guard)"
+  #{:after :before :nth :to_hash :expected_mtime :expected_size})
 
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-locator-keys patch-optional-keys))
 
 (def ^:private patch-group-required-keys #{:path :edits})
-(def ^:private patch-group-optional-keys #{:expected-mtime :expected-size})
+(def ^:private patch-group-optional-keys #{:expected_mtime :expected_size})
 (def ^:private patch-group-allowed-keys
   (set/union patch-group-required-keys patch-group-optional-keys))
 
@@ -1227,7 +1227,7 @@
   (and (map? edit) (contains? edit :edits)))
 
 (defn- expand-patch-group
-  [{:keys [path edits expected-mtime expected-size] :as group}]
+  [{:keys [path edits expected_mtime expected_size] :as group}]
   (let [missing (seq (remove #(contains? group %) patch-group-required-keys))
         unknown (seq (remove patch-group-allowed-keys (keys group)))]
     (when missing
@@ -1259,8 +1259,8 @@
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
             (cond-> (assoc edit :path path)
-              (some? expected-mtime) (assoc :expected-mtime expected-mtime)
-              (some? expected-size) (assoc :expected-size expected-size)))
+              (some? expected_mtime) (assoc :expected_mtime expected_mtime)
+              (some? expected_size) (assoc :expected_size expected_size)))
       edits)))
 
 (defn- normalize-patch-edits-input
@@ -1293,12 +1293,12 @@
                           :missing (vec missing)
                           :edit edit})))
               (when (not= 1 (count locators))
-                (throw (ex-info "patch edit needs EXACTLY ONE of :search or :from-hash"
+                (throw (ex-info "patch edit needs EXACTLY ONE of :search or :from_hash"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :locators (vec locators)
                           :edit edit})))
-              (when (and (:to-hash edit) (not (:from-hash edit)))
-                (throw (ex-info "patch :to-hash requires :from-hash"
+              (when (and (:to_hash edit) (not (:from_hash edit)))
+                (throw (ex-info "patch :to_hash requires :from_hash"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :edit edit})))
               (when unknown
@@ -1608,23 +1608,23 @@
       " whole file, switch to (write).")))
 
 ;; -----------------------------------------------------------------------------
-;; Staleness check: :expected-mtime / :expected-size
+;; Staleness check: :expected_mtime / :expected_size
 ;; -----------------------------------------------------------------------------
 
 (defn- staleness-check
   "Return nil when the file's on-disk mtime/size matches the edit's
    expectations (or no expectations were given), else a structured
    `:stale` failure carrying the actual vs. expected values."
-  [^java.io.File file {:keys [expected-mtime expected-size]}]
+  [^java.io.File file {:keys [expected_mtime expected_size]}]
   (let [actual-mtime (.lastModified file)
         actual-size  (.length file)]
     (cond
-      (and (some? expected-mtime) (not= (long expected-mtime) actual-mtime))
-      {:reason :stale-mtime :expected-mtime expected-mtime :actual-mtime actual-mtime
+      (and (some? expected_mtime) (not= (long expected_mtime) actual-mtime))
+      {:reason :stale-mtime :expected_mtime expected_mtime :actual-mtime actual-mtime
        :actual-size actual-size}
 
-      (and (some? expected-size) (not= (long expected-size) actual-size))
-      {:reason :stale-size :expected-size expected-size :actual-size actual-size
+      (and (some? expected_size) (not= (long expected_size) actual-size))
+      {:reason :stale-size :expected_size expected_size :actual-size actual-size
        :actual-mtime actual-mtime})))
 
 ;; -----------------------------------------------------------------------------
@@ -1677,7 +1677,7 @@
 
 ;; Hashline locator resolution lives in the reusable `patch` layer
 ;; (`patch/resolve-hash-edit`, `patch/indices-matching-hash`). The
-;; `:from-hash`/`:to-hash` branch of `patch-analysis` calls straight into
+;; `:from_hash`/`:to_hash` branch of `patch-analysis` calls straight into
 ;; it — no bespoke hash math in this channel/IO namespace.
 
 (defn- patch-analysis
@@ -1688,7 +1688,7 @@
            states {}
            checks []
            failures []]
-      (if-let [{:keys [path search replace after before nth from-hash to-hash] :as edit}
+      (if-let [{:keys [path search replace after before nth from_hash to_hash] :as edit}
                (first remaining)]
         (let [resolved (resolve-edit-target path)]
           (if-let [path-error (:error resolved)]
@@ -1707,16 +1707,16 @@
                   replace (str replace)
                   stale   (when-not (contains? states path)
                             (staleness-check file edit))]
-              (if from-hash
+              (if from_hash
                 ;; ---- hashline locator (content-addressed by line hash) ----
                 (let [base-check {:edit-index idx :path rel
-                                  :from-hash from-hash
-                                  :to-hash (or to-hash from-hash)}]
+                                  :from_hash from_hash
+                                  :to_hash (or to_hash from_hash)}]
                   (if stale
                     (let [check (assoc base-check :reason :stale :stale stale)]
                       (recur (inc idx) (next remaining) states
                         (conj checks check) (conj failures check)))
-                    (let [res (patch/resolve-hash-edit current from-hash to-hash replace)]
+                    (let [res (patch/resolve-hash-edit current from_hash to_hash replace)]
                       (if-let [err (:error res)]
                         (let [check (assoc base-check :reason (:reason err) :hash-error err)]
                           (recur (inc idx) (next remaining) states
@@ -1830,11 +1830,11 @@
                         (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
                         " identical lines " (pr-str (:lines hash-error))
                         " - use :search instead, that line content is not unique.")
-      :hash-range-inverted (str head " failed: :to-hash line " (:to-line hash-error)
-                             " precedes :from-hash line " (:from-line hash-error) ".")
+      :hash-range-inverted (str head " failed: :to_hash line " (:to-line hash-error)
+                             " precedes :from_hash line " (:from-line hash-error) ".")
       :stale (str head
                " failed: file changed since :expected-" (name (:reason stale))
-               " check (expected " (or (:expected-mtime stale) (:expected-size stale))
+               " check (expected " (or (:expected_mtime stale) (:expected_size stale))
                ", actual " (or (:actual-mtime stale) (:actual-size stale))
                "). Re-read the file before retrying.")
       :anchor-not-found (str head " failed: "
@@ -1974,15 +1974,15 @@
 ;;    :loop-hint <string-or-nil>
 ;;    :message  <human-readable>}
 ;;
-;; The `:overwrite?` knob defaults to true. `:expected-mtime` /
-;; `:expected-size` provide the same staleness guard as patch — pair
+;; The `:is_overwrite` knob defaults to true. `:expected_mtime` /
+;; `:expected_size` provide the same staleness guard as patch — pair
 ;; them with (:mtime / :size) from a prior cat for atomic
 ;; read-modify-write on existing files.
 ;; =============================================================================
 
 (def ^:private write-required-keys #{:path :content})
 (def ^:private write-optional-keys
-  #{:expected-mtime :expected-size :overwrite?})
+  #{:expected_mtime :expected_size :is_overwrite})
 (def ^:private write-allowed-keys
   (set/union write-required-keys write-optional-keys))
 
@@ -2014,15 +2014,15 @@
 (defn write-safe
   "Whole-file write primitive: create a new file OR overwrite an
    existing one with `:content`. Returns a structured result; **never
-   throws on normal failure paths** (file exists with overwrite? false,
+   throws on normal failure paths** (file exists with is_overwrite false,
    stale mtime/size, path escape).
 
    Required keys: `:path`, `:content` (string).
    Optional keys:
-     :overwrite?       default true; when false and target exists
+     :is_overwrite       default true; when false and target exists
                        → :reason :exists
-     :expected-mtime   staleness guard; mismatch → :reason :stale
-     :expected-size    staleness guard; mismatch → :reason :stale
+     :expected_mtime   staleness guard; mismatch → :reason :stale
+     :expected_size    staleness guard; mismatch → :reason :stale
 
    Success shape:
      {:success? true
@@ -2039,9 +2039,9 @@
   (let [args (coerce-write-args args)
         path (:path args)
         content (str (:content args))
-        overwrite? (if (contains? args :overwrite?) (:overwrite? args) true)
-        expected-mtime (:expected-mtime args)
-        expected-size  (:expected-size  args)
+        is_overwrite (if (contains? args :is_overwrite) (:is_overwrite args) true)
+        expected_mtime (:expected_mtime args)
+        expected_size  (:expected_size  args)
         resolved (try {:file (safe-path path) :rel (rel-path (safe-path path))}
                    (catch clojure.lang.ExceptionInfo e
                      {:error {:reason (case (:type (ex-data e))
@@ -2070,31 +2070,31 @@
                    {:reason :path-is-dir
                     :message (str "write target is a directory: " rel)}
 
-                   (and (not overwrite?) exists?)
+                   (and (not is_overwrite) exists?)
                    {:reason :exists
                     :path rel
                     :message (str "write refused: " rel
-                               " already exists and :overwrite? is false")}
+                               " already exists and :is_overwrite is false")}
 
-                   (and exists? (some? expected-mtime)
-                     (not= (long expected-mtime) (long actual-mtime)))
+                   (and exists? (some? expected_mtime)
+                     (not= (long expected_mtime) (long actual-mtime)))
                    {:reason :stale
                     :stale  {:reason :stale-mtime
-                             :expected-mtime expected-mtime
+                             :expected_mtime expected_mtime
                              :actual-mtime actual-mtime
                              :actual-size actual-size}
                     :message (str "write refused: " rel
-                               " mtime changed since :expected-mtime")}
+                               " mtime changed since :expected_mtime")}
 
-                   (and exists? (some? expected-size)
-                     (not= (long expected-size) (long actual-size)))
+                   (and exists? (some? expected_size)
+                     (not= (long expected_size) (long actual-size)))
                    {:reason :stale
                     :stale  {:reason :stale-size
-                             :expected-size expected-size
+                             :expected_size expected_size
                              :actual-size actual-size
                              :actual-mtime actual-mtime}
                     :message (str "write refused: " rel
-                               " size changed since :expected-size")})]
+                               " size changed since :expected_size")})]
         (if fail
           (let [n (bump-patch-fail-count! file)]
             {:success? false
@@ -2184,7 +2184,7 @@
      (cat path :hash H)               — the single line whose content hash is H.
      (cat path :hash H1 H2)           — INCLUSIVE window between the lines hashed
                                           H1..H2. Addresses BY CONTENT (the read
-                                          twin of `patch :from-hash`/:to-hash`):
+                                          twin of `patch :from_hash`/:to_hash`):
                                           re-read a region you kept by its stored
                                           hashes, drift-proof — no line numbers.
                                           A missing/dup hash errors back to cat.
@@ -2197,7 +2197,7 @@
       :next-offset N? :eof? B :truncated? B :mtime :size}
    `:hashes` maps each line number to a stable 6-char content hash (also
    shown in the gutter as `<ln> <hash>│ text`). Feed a pair to
-   `patch` as `{:from-hash H1 :to-hash H2 :replace R}` to edit the line
+   `patch` as `{:from_hash H1 :to_hash H2 :replace R}` to edit the line
    range [H1..H2] without reconstructing the source text — anchors are
    content-addressed, so they survive line drift.
    `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
@@ -2221,18 +2221,41 @@
         :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}
         :presentation {:kind :source :path (:path out) :line-key :lines}})))
   ([path arg]
-   (when-not (= arg :tail)
-     (throw (ex-info "cat 2-arity must use :tail; for head/range use (cat path :range start end)"
+   (cond
+     ;; Python-native form: a single options dict, e.g.
+     ;;   cat("p", {"range": [5, 10]})       cat("p", {"ranges": [[1,5],[20,25]]})
+     ;;   cat("p", {"hash": H})              cat("p", {"hash": [H1, H2]})
+     ;;   cat("p", {"tail": 100})            cat("p", {})  -> whole file
+     ;; Delegated to the keyword arities below so internal Clojure callers
+     ;; (which pass bare keyword args) keep working unchanged.
+     (map? arg)
+     (let [rng    (:range arg)
+           ranges (:ranges arg)
+           hsh    (:hash arg)
+           tail   (:tail arg)]
+       (cond
+         rng            (cat-tool path :range (first rng) (second rng))
+         ranges         (cat-tool path :ranges ranges)
+         (vector? hsh)  (cat-tool path :hash (first hsh) (second hsh))
+         (some? hsh)    (cat-tool path :hash hsh)
+         (integer? tail) (cat-tool path :tail tail)
+         (some? tail)   (cat-tool path :tail)
+         :else          (cat-tool path)))
+
+     (= arg :tail)
+     (let [out (tail-file path default-cat-limit)]
+       (tool-success
+         {:op :cat
+          :path path
+          :kind :file
+          :result (assoc out :vis.op :cat)
+          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
+          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+
+     :else
+     (throw (ex-info "cat options must be a dict, e.g. cat(path, {\"range\": [start, end]})"
               {:type :ext.foundation.editing/invalid-cat-args
-               :got arg})))
-   (let [out (tail-file path default-cat-limit)]
-     (tool-success
-       {:op :cat
-        :path path
-        :kind :file
-        :result (assoc out :vis.op :cat)
-        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
-        :presentation {:kind :source :path (:path out) :line-key :lines}})))
+               :got arg}))))
   ([path arg n]
    (case arg
      :tail
@@ -2258,7 +2281,7 @@
 
      :hash
      ;; (cat path :hash H) — the single line whose content hash is H,
-     ;; addressed by content (the symmetric read for patch :from-hash).
+     ;; addressed by content (the symmetric read for patch :from_hash).
      (let [out (read-file-by-hash path n nil)]
        (tool-success
          {:op :cat
@@ -2292,8 +2315,8 @@
                        :range [start end]}
             :presentation {:kind :source :path (:path out) :line-key :lines}})))
 
-     ;; (cat path :hash from-hash to-hash) — INCLUSIVE window between the
-     ;; lines hashed from-hash..to-hash, addressed by content.
+     ;; (cat path :hash from_hash to_hash) — INCLUSIVE window between the
+     ;; lines hashed from_hash..to_hash, addressed by content.
      :hash
      (let [out (read-file-by-hash path start end)]
        (tool-success
@@ -2334,17 +2357,17 @@
    `(ls path)` reads with defaults. Opts can be supplied either as
    a trailing map OR as inline kwargs — BOTH calling conventions
    work and are equivalent (Clojure 1.11+ kwargs auto-coercion):
-     (ls path {:depth 2 :files-only? true})   ;; map form
-     (ls path :depth 2 :files-only? true)     ;; kwargs form
+     (ls path {:depth 2 :is_files_only true})   ;; map form
+     (ls path :depth 2 :is_files_only true)     ;; kwargs form
 
    Recognised opts (any combination):
      :depth N            — max recursion depth (default 10)
      :limit N            — stop after N entries (default 3000;
                            sets :truncated? true)
-     :files-only? B      — emit only file entries (no directories)
-     :dirs-only?  B      — emit only directory entries
-     :hidden? B          — include dotfiles / dotdirs (default false)
-     :respect-gitignore? B  default true"
+     :is_files_only B      — emit only file entries (no directories)
+     :is_dirs_only  B      — emit only directory entries
+     :is_hidden B          — include dotfiles / dotdirs (default false)
+     :is_respect_gitignore B  default true"
   ([path & {:as opts}]
    (let [listing (list-files path opts)
          result  (assoc listing :vis.op :ls)]
@@ -2359,14 +2382,14 @@
                     :file-count  (:file-count listing)
                     :dir-count   (:dir-count listing)
                     :truncated?  (:truncated? listing)
-                    :hidden? (:hidden? opts)
-                    :respect-gitignore? (get opts :respect-gitignore? true)}
+                    :is_hidden (:is_hidden opts)
+                    :is_respect_gitignore (get opts :is_respect_gitignore true)}
         :presentation {:kind :flat-list}}))))
 
 (defn- rg-tool
   "File-content search. Three output modes — default is content (hits with
-   optional context); `:files-only? true` returns just distinct paths;
-   `:counts? true` returns per-file match counts.
+   optional context); `:is_files_only true` returns just distinct paths;
+   `:is_counts true` returns per-file match counts.
 
    Spec accepts BOTH calling conventions (Clojure 1.11+ kwargs
    auto-coercion):
@@ -2379,23 +2402,23 @@
       :paths [\"src\"]        — search roots/files (default [\".\"])
       :include [\"**/*.clj\"] — glob filters (vector)
       :exclude [\"**/test/**\"]
-      :hidden? false :respect-gitignore? true
+      :is_hidden false :is_respect_gitignore true
       :limit 250            — cap hits / files / counts (default 250)
       :context N            — N lines before AND after each hit (alias)
       :before  N            — lines before each hit
       :after   N            — lines after  each hit
-      :files-only? false    — return only distinct paths (no line text)
-      :counts?     false    — return per-file match counts
-      :regex?      false}   — needles are java.util.regex patterns
+      :is_files_only false    — return only distinct paths (no line text)
+      :is_counts     false    — return per-file match counts
+      :is_regex      false}   — needles are java.util.regex patterns
    Exactly one of :all/:any. Strings are literal substrings by default;
-   pass :regex? true to treat them as full regex (e.g. `\\bdef login\\b`).
+   pass :is_regex true to treat them as full regex (e.g. `\\bdef login\\b`).
 
    Result shape varies by mode (the tool envelope's `:result` always
    carries `:vis.op :rg` plus a `:mode` discriminator):
      content     (:mode :content)     {:matches [{:path P :lines [[ln text]...]} ...]  :hit-count N  :file-count N  :first-hit P:L  ...}
                                      ;; path stated ONCE per file; :lines tuples mirror cat's [ln text] shape
-     files-only? (:mode :files-only)  {:files [...] :file-count N ...}
-     counts?     (:mode :counts)      {:counts [...] :file-count N ...}"
+     is_files_only (:mode :files-only)  {:files [...] :file-count N ...}
+     is_counts     (:mode :counts)      {:counts [...] :file-count N ...}"
   [& args]
   ;; Accept either a single spec map OR inline kwargs. Manual dispatch
   ;; (instead of `& {:as spec}`) so that malformed input — a stray
@@ -2415,11 +2438,11 @@
                         {:type :ext.foundation.editing/invalid-rg-arity
                          :expected '([spec-map] [& kwargs])
                          :got args})))
-        {:keys [paths include exclude files-only? counts? regex?
+        {:keys [paths include exclude is_files_only is_counts is_regex
                 before-ctx after-ctx limit] :as coerced} (coerce-rg-spec spec)
         out (rg-search spec)
-        mode (cond files-only? :files-only
-               counts?     :counts
+        mode (cond is_files_only :files-only
+               is_counts     :counts
                :else       :content)
         shared {:vis.op       :rg
                 :mode         mode
@@ -2427,7 +2450,7 @@
                 :spec         spec
                 :paths        paths
                 :limit        limit
-                :regex?       regex?}
+                :is_regex       is_regex}
         result (case mode
                  :content
                  (let [hits          (vec (:hits out))
@@ -2629,19 +2652,19 @@
   "Surgical file editing. Input is either edit maps or grouped same-file maps.
 
    Every edit carries EXACTLY ONE locator: `:search` (text) or
-   `:from-hash` (hashline). Both forms take `:replace`.
+   `:from_hash` (hashline). Both forms take `:replace`.
 
    Text edit:
      {:path P :search S :replace R
       :after \"context\"?  :before \"context\"?
       :nth :first|:last|:all|N?
-      :expected-mtime MS?  :expected-size BYTES?}
+      :expected_mtime MS?  :expected_size BYTES?}
 
    Hashline edit (content-addressed — no whitespace reconstruction):
-     {:path P :from-hash H1 :to-hash H2? :replace R}
+     {:path P :from_hash H1 :to_hash H2? :replace R}
    H1/H2 are per-line anchors from the `cat` `:hashes` map / gutter
    (`<ln> <hash>│ text`). The range is the line carrying H1 through the
-   line carrying H2 (inclusive); omit `:to-hash` for a single line. The
+   line carrying H2 (inclusive); omit `:to_hash` for a single line. The
    anchors are re-resolved against LIVE content on every edit, so they
    stay correct under line drift (insertions above, or earlier edits in
    the same batch) — unlike raw line numbers. Each hash must match exactly
@@ -2650,7 +2673,7 @@
    Grouped same-file map (preferred for several changes to one file):
      {:path P
       :edits [{:search S1 :replace R1}
-              {:from-hash \"a3f2e9\" :to-hash \"9c1d04\" :replace R2}]}
+              {:from_hash \"a3f2e9\" :to_hash \"9c1d04\" :replace R2}]}
 
    Replaces the FIRST occurrence by default. Use `:nth`, `:after` /
    `:before` anchors, or extend `:search` with context to target a
@@ -2713,9 +2736,9 @@
      (write {:path P :content S})
      (write :path P :content S)
 
-     (write {:path P :content S :overwrite? false})     fail if file exists
-     (write {:path P :content S :expected-mtime MS})    staleness guard
-     (write {:path P :content S :expected-size  BYTES}) staleness guard
+     (write {:path P :content S :is_overwrite false})     fail if file exists
+     (write {:path P :content S :expected_mtime MS})    staleness guard
+     (write {:path P :content S :expected_size  BYTES}) staleness guard
 
    Returns the same per-file summary shape as `patch` (so the model
    reads `:diff`, `:changed?`, etc. with one mental model). `:op` is
@@ -2781,8 +2804,8 @@
 
    Opts accept BOTH calling conventions (Clojure 1.11+ kwargs
    auto-coercion):
-     (copy src dest {:overwrite? true})
-     (copy src dest :overwrite? true)"
+     (copy src dest {:is_overwrite true})
+     (copy src dest :is_overwrite true)"
   ([src dest & {:as opts}]
    (let [out (copy-safe src dest opts)]
      (tool-success
@@ -2802,8 +2825,8 @@
    `(:src r)` / `(:dest r)` / `(:path r)` (alias for dest).
 
    Opts accept BOTH calling conventions:
-     (move src dest {:overwrite? true})
-     (move src dest :overwrite? true)"
+     (move src dest {:is_overwrite true})
+     (move src dest :is_overwrite true)"
   ([src dest & {:as opts}]
    (let [out (move-safe src dest opts)]
      (tool-success
@@ -3257,37 +3280,37 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools (bare: cat/ls/rg/patch/write + copy/move/delete/exists?). Canonical path only."
+    ["Editing tools — bare Python functions: cat / ls / rg / patch / write + copy / move / delete / exists. Canonical path only."
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
-     "    0. Already located it?      → it's a FACT. Re-patch by :from-hash. DON'T grep/cat again."
-     "    1. Know the path?           → scoped (rg {:path …}) + (cat …) batched in ONE fence."
-     "    2. Know content, not file?  → (rg {… :files-only? true}) → {:files [paths]}; cat each path."
-     "       rg ALWAYS returns a MAP, never a seq — content→{:matches [{:path :lines}…]}, files-only→{:files […]}, counts→{:counts …}. Map over (:matches r)/(:files r), NEVER (rg …) itself."
-     "    3. Tree unfamiliar?         → (ls …) for Shape — ONCE, not per turn."
-     "  Wide CONTENT grep is last resort, not default (dumps junk into ctx)."
-     "  Read:   (cat path)  — whole by default; large files use one 400-500 line range:"
-     "    (cat path :range start end)"
-     "    (cat path :ranges [[start end] ...])"
+     "    0. Already located it?      → it's a FACT. Re-patch by from_hash. DON'T grep/cat again."
+     "    1. Know the path?           → scoped rg({\"path\": …}) + cat(…) batched in ONE reply."
+     "    2. Know content, not file?  → rg({…, \"is_files_only\": True}) → {\"files\": [paths]}; cat each path."
+     "       rg ALWAYS returns a DICT, never a list — content→{\"matches\": [{\"path\":…, \"lines\":…}]}, is_files_only→{\"files\": [...]}, is_counts→{\"counts\": …}. Iterate r[\"matches\"] / r[\"files\"], NEVER rg(…) itself."
+     "    3. Tree unfamiliar?         → ls(…) for shape — ONCE, not per turn."
+     "  Wide CONTENT grep is last resort, not default (dumps junk into context)."
+     "  Read:   cat(path)  — whole by default; large files use one 400-500 line range:"
+     "    cat(path, {\"range\": [start, end]})"
+     "    cat(path, {\"ranges\": [[start, end], ...]})"
      "  cat rows render `HASH| text`; HASH anchors the line."
      "  PATCH STRATEGY — pick locator by intent, batch in one call:"
-     "  :from-hash = precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
-     "    (patch [{:path P :from-hash H :replace R}])"
-     "    (patch [{:path P :from-hash H1 :to-hash H2 :replace R}])  ; range; anchor UNIQUE ends"
-     "  Repeated-content line ((-> db, (let [, blank)? Its hash is AMBIGUOUS — never"
-     "  bare-target it: use from-hash..to-hash on unique neighbours, or :search with"
+     "  from_hash = precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
+     "    patch([{\"path\": P, \"from_hash\": H, \"replace\": R}])"
+     "    patch([{\"path\": P, \"from_hash\": H1, \"to_hash\": H2, \"replace\": R}])  # range; anchor UNIQUE ends"
+     "  Repeated-content line (a bare `}`, `})`, blank)? Its hash is AMBIGUOUS — never"
+     "  bare-target it: use from_hash..to_hash on unique neighbours, or \"search\" with"
      "  enough surrounding lines to match uniquely."
-     "  :search = bulk/fuzzy (rename-all, dup/blank/repeated lines, multi-line context):"
-     "    (patch {:path P :edits [{:search S1 :replace R1}]})"
-     "    (patch [{:path P :search S :replace R :nth :all}])  ; every hit"
-     "  Whole files:  (write {:path P :content S})"
-     "  File ops: (exists? path) (copy src dest) (move src dest) (delete path)"
+     "  search = bulk/fuzzy (rename-all, dup/blank/repeated lines, multi-line context):"
+     "    patch({\"path\": P, \"edits\": [{\"search\": S1, \"replace\": R1}]})"
+     "    patch([{\"path\": P, \"search\": S, \"replace\": R, \"nth\": \"all\"}])  # every hit"
+     "  Whole files:  write({\"path\": P, \"content\": S})"
+     "  File ops: exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"
-     "  - Maps for option-bearing tools. Do not assume `src`; root-search before reading paths."
-     "  - Don't re-cat after patch/write; diff is evidence."
-     "  - Side effect in own iteration; paths stay inside workspace root."]))
+     "  - Dicts (snake_case keys) for option-bearing tools. Don't assume paths; root-search before reading."
+     "  - Don't re-cat after patch/write; the diff is the evidence."
+     "  - Side effect in its own reply; paths stay inside the workspace root."]))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests."

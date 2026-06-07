@@ -4,7 +4,6 @@
    [com.blockether.vis.internal.foundation.editing.core :as editing]
    [com.blockether.vis.internal.foundation.environment.core :as environment]
    [com.blockether.vis.internal.foundation.introspection :as introspection]
-   [com.blockether.vis.internal.foundation.hints :as hints]
    [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
    [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
    [com.blockether.vis.internal.workspace :as workspace]))
@@ -71,7 +70,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation kernel (bare symbols, no alias): session-state/session-report, file I/O (cat/ls/rg/patch/write/copy/move/delete/delete-if-exists/exists?), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. SCI symbol introspection is an engine system call (`doc` / `apropos`), not a tool. Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation kernel (bare symbols, no alias): session-state/session-report, file I/O (cat/ls/rg/patch/write/copy/move/delete/delete-if-exists/exists?), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main-agent-instructions. Sandbox symbol introspection is an engine system call (`doc` / `apropos`), not a tool. Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -86,7 +85,6 @@
                                                   (editing/available-editing-symbols)
                                                   environment/environment-symbols))}
      :ext/kind           "foundation"
-     :ext/hooks          hints/hooks
      :ext/slash-commands workspace-slashes/specs
      :ext/ctx            combined-ctx
      :ext/prompt         combined-prompt

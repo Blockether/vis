@@ -6,7 +6,7 @@
    is a pure transform over basic Clojure / Java values.
 
      `format-date`      - `java.util.Date` to `dd-MM-yyyy HH:mm` (local TZ)
-     `format-clojure`   - pretty-print a Clojure source string with zprint
+     `format-clojure`   - pass-through (code is shown as written, not reformatted)
      `format-duration`  - millisecond duration to `2.3s`, `1m 15s`, etc.
      `format-tokens`    - `:input`/`:output` token counts to 'tok 11461→35'
      `format-cost`      - dollar cost to '~$0.006954'
@@ -14,79 +14,15 @@
      `format-meta-line` - canonical ' / '-joined turn-summary line
                           (used identically by CLI / TUI / Telegram)
 
-   zprint is a hard dep; `format-clojure` calls it directly. The
-   namespace is otherwise free of state - safe to require from any
-   layer."
+   No external pretty-printer: data renders through `clojure.pprint`
+   (built-in) and source code is shown verbatim. The namespace is free of
+   state - safe to require from any layer."
   (:require
+   [clojure.pprint :as pprint]
    [clojure.string :as str]
-   [edamame.core :as edamame]
-   [zprint.core :as zprint])
+   [edamame.core :as edamame])
   (:import
    [java.util Locale]))
-
-;; Single process-wide gate for every zprint entry point Vis uses.
-;;
-;; Why it exists: zprint keeps global in-flight state and throws
-;; `Attempted to run zprint with type ... when 1 invocations were
-;; already running with type ...` when a plain data pretty-print races a
-;; parse-string / zipper format. Vis does exactly that: sandbox
-;; `pp/pprint-str` renders data while the TUI render path formats code
-;; blocks with `:parse-string? true`. One lock across BOTH surfaces keeps
-;; the library's global state coherent.
-(defonce ^:private zprint-lock (Object.))
-
-(defn- locked-zprint-apply [f args]
-  (locking zprint-lock
-    (apply f args)))
-
-(defn safe-zprint-str
-  "Serialized wrapper around `zprint.core/zprint-str`."
-  [& args]
-  (locked-zprint-apply zprint/zprint-str args))
-
-(defn safe-zprint
-  "Serialized wrapper around `zprint.core/zprint`."
-  [& args]
-  (locked-zprint-apply zprint/zprint args))
-
-(defn safe-czprint-str
-  "Serialized wrapper around `zprint.core/czprint-str`."
-  [& args]
-  (locked-zprint-apply zprint/czprint-str args))
-
-(defn safe-czprint
-  "Serialized wrapper around `zprint.core/czprint`."
-  [& args]
-  (locked-zprint-apply zprint/czprint args))
-
-(defn safe-zprint-file-str
-  "Serialized wrapper around `zprint.core/zprint-file-str`."
-  [& args]
-  (locked-zprint-apply zprint/zprint-file-str args))
-
-(defn safe-set-zprint-options!
-  "Serialized wrapper around `zprint.core/set-options!`."
-  [& args]
-  (locked-zprint-apply zprint/set-options! args))
-
-(defn safe-configure-zprint!
-  "Serialized wrapper around `zprint.core/configure-all!`."
-  [& args]
-  (locked-zprint-apply zprint/configure-all! args))
-
-(defn safe-pprint
-  "Serialized wrapper for the sandbox's `clojure.pprint/pprint` alias.
-
-   Vis intentionally routes `pp/` through zprint so the model sees the
-   same stable formatting everywhere; this wrapper keeps that alias safe
-   under concurrent render activity."
-  [& args]
-  (apply safe-zprint args))
-
-(defn safe-pprint-str
-  "Serialized wrapper for the sandbox's `clojure.pprint/pprint-str` alias."
-  [& args]
-  (apply safe-zprint-str args))
 
 (defn format-date
   "Format a `java.util.Date` as `dd-MM-yyyy HH:mm` in local timezone."
@@ -96,20 +32,28 @@
                (.setTimeZone (java.util.TimeZone/getDefault)))
       d)))
 
-(defn format-clojure
-  "Pretty-print a Clojure/EDN source string with zprint.
+(defn safe-zprint-str
+  "Pretty-print a runtime DATA value to a string via `clojure.pprint`.
+   Kept under the historical name so existing data-render call sites
+   (ctx trailer, bounded-value previews) need no change. The optional
+   trailing args (width / opts) accepted by the old zprint wrapper are
+   ignored; pprint reads `*print-length*`/`*print-level*` from the
+   dynamic bindings the caller sets."
+  [v & _ignored]
+  (str/trimr (with-out-str (pprint/pprint v))))
 
-   The input is source text, not a single runtime value: it may be a
-   whole file with leading comments and multiple top-level forms.
-   zprint documents `:parse-string?` as single-expression parsing;
-   `:parse-string-all?` is the source/file mode that preserves every
-   top-level form. Falls back to the original string on any error."
-  [code-str width]
-  (try
-    (let [formatted (safe-zprint-str code-str width
-                      {:parse-string-all? true :style :community})]
-      (if (str/blank? formatted) code-str (str/trimr formatted)))
-    (catch Exception _ code-str)))
+(defn safe-zprint-file-str
+  "Source-formatting seam. Vis no longer reformats code — source is shown
+   as written — so this returns the input verbatim. Retained so callers
+   (e.g. the Clojure language extension) keep a stable entry point."
+  [source & _ignored]
+  (str source))
+
+(defn format-clojure
+  "Source is shown as written — no reformatting. Returns `code-str`
+   trimmed of trailing whitespace (or unchanged when not a string)."
+  [code-str _width]
+  (if (string? code-str) (str/trimr code-str) code-str))
 
 (def ^:private DEF_HEADS_TO_STRIP
   "Def-shaped heads whose 2nd-arg docstring slot should be stripped
@@ -163,18 +107,10 @@
       (catch Throwable _ source))))
 
 (defn format-clojure-ansi
-  "Pretty-print Clojure/EDN source with ANSI zprint syntax coloring.
-
-   Mirrors `format-clojure`'s source/file contract and uses
-   `:parse-string-all?` so fenced file contents with leading comments
-   do not collapse to the first parsed expression. Falls back to the
-   original string on any error."
-  [code-str width]
-  (try
-    (let [formatted (safe-czprint-str (str code-str) width
-                      {:parse-string-all? true})]
-      (if (str/blank? formatted) code-str (str/trimr formatted)))
-    (catch Exception _ code-str)))
+  "Source is shown as written — no reformatting or syntax coloring.
+   Returns `code-str` trimmed of trailing whitespace."
+  [code-str _width]
+  (if (string? code-str) (str/trimr code-str) (str code-str)))
 
 (defn format-duration
   "Human-readable millisecond duration. e.g. `2.3s`, `1m 15s`. Always
@@ -385,8 +321,7 @@
 ;; caps so non-tool progress chunks, history-restore previews, and trailer
 ;; `;; => …` lines never dump multi-megabyte payloads into a render buffer.
 ;; Tool results must use symbol-specific renderers in `internal.extension`.
-;; Distinct from `format-clojure` above (which formats *source code* via
-;; zprint); this one renders *runtime values* via zprint for data shapes and
+;; Renders *runtime values* via `clojure.pprint` for data shapes and
 ;; `pr-str` for scalar fallback.
 ;; =============================================================================
 
@@ -400,7 +335,7 @@
 (defn- strip-sandbox-ns [s]
   (str/replace (str s) #"\bsandbox/|\buser/" ""))
 
-(defn- zprintable-data?
+(defn- pprintable-data?
   [v]
   (or (map? v)
     (vector? v)
@@ -409,8 +344,8 @@
 
 (defn- value-pr-str
   [v bounded-print?]
-  (if (and (zprintable-data? v) (not bounded-print?))
-    (safe-zprint-str v {:width 80})
+  (if (and (pprintable-data? v) (not bounded-print?))
+    (safe-zprint-str v)
     (pr-str v)))
 
 (defn bounded-value-str

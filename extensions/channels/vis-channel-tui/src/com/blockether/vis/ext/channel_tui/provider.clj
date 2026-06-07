@@ -1248,6 +1248,77 @@
                 nil)))
           nil)))))
 
+;; ── First-run welcome ──────────────────────────────────────────────────────
+
+(def ^:private welcome-lines
+  "Centered brand moment. Kept sparse on purpose — one mark, one promise, one
+   action. Accent lines (the wordmark + the call to action) are highlighted."
+  ["◆  v i s"
+   "Your terminal, now agentic."
+   ""
+   "To begin, connect an AI provider."
+   ""
+   "→  Connect a provider"
+   ""
+   "Sign in: GitHub · OpenAI · Anthropic"
+   "…or paste an API key   …or run local"])
+
+(def ^:private welcome-accent-lines
+  #{"◆  v i s" "→  Connect a provider"})
+
+(def ^:private how-key-lines
+  ["How vis uses your provider"
+   ""
+   "• Your API key (or OAuth token) is stored locally in"
+   "  ~/.vis/config.edn — on this machine only."
+   "• vis sends your prompts and the files you ask it to read"
+   "  directly to the provider you choose. Nothing else."
+   "• No vis servers sit in between. No telemetry of your code."
+   "• Remove a provider any time from the Router (Ctrl+P)."
+   ""
+   "Local providers (Ollama / LM Studio) keep everything on-device."])
+
+(defn show-welcome!
+  "First-run welcome screen. The single primary action (Enter) drops straight
+   into the provider picker; `?` explains how the key is used; Esc quits.
+
+   Returns `{:providers [cfg]}` once a provider is added, or nil if the user
+   quits without connecting one."
+  [^TerminalScreen screen]
+  (loop []
+    (let [size   (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+          cols   (.getColumns size)
+          rows   (.getRows size)
+          g      (.newTextGraphics screen)
+          bounds (dlg/draw-dialog-chrome! g cols rows "Welcome to vis" nil)
+          {:keys [left inner-w]} bounds
+          {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds)]
+      (p/set-bg! g t/dialog-bg)
+      (p/fill-rect! g (inc left) content-top inner-w content-h)
+      (let [n     (count welcome-lines)
+            start (+ content-top (max 0 (quot (- content-h n) 2)))]
+        (doseq [[i line] (map-indexed vector welcome-lines)]
+          (p/set-colors! g
+            (if (contains? welcome-accent-lines line) t/dialog-title-fg t/dialog-fg)
+            t/dialog-bg)
+          (p/draw-centered! g (inc left) (+ start i) inner-w line)))
+      (dlg/draw-hint-bar! g left hint-row inner-w
+        [["Enter" "connect a provider"] ["?" "how your key is used"] ["Esc" "quit"]])
+      (.setCursorPosition screen (p/cursor-pos 0 0))
+      (.refresh screen Screen$RefreshType/DELTA)
+      (let [key (dlg/read-modal-key! screen)]
+        (if (nil? key)
+          (recur)
+          (condp = (.getKeyType key)
+            KeyType/Enter   (if-let [cfg (add-provider! screen #{})]
+                              {:providers [cfg]}
+                              (recur))
+            KeyType/Escape  nil
+            KeyType/Character (do (when (= \? (.getCharacter key))
+                                    (dlg/text-view-dialog! screen "How vis uses your key" how-key-lines))
+                                (recur))
+            (recur)))))))
+
 (defn show-provider-dialog!
   "Provider manager dialog.
    Esc saves and closes, returning {:providers [...]} in priority order.

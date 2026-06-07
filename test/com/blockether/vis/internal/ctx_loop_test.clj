@@ -111,18 +111,18 @@
         (expect (contains? (get-in @(:ctx-atom env) [:session/facts :b :contradicts]) :a))))))
 
 (defdescribe cycle-hard-reject-test
-  (describe "task-set! :depends-on cycle is hard-rejected via the binding"
+  (describe "task-set! :depends_on cycle is hard-rejected via the binding"
     (let [env (mk-env)
           {task-set 'task-set!} (cl/build-sci-bindings env)
           _ (task-set :a {:title "a" :status :todo})
-          _ (task-set :b {:title "b" :status :todo :depends-on [:a]})
-          _ (task-set :a {:depends-on [:b]})]
-      (it ":a has no :depends-on (write refused)"
+          _ (task-set :b {:title "b" :status :todo :depends_on [:a]})
+          _ (task-set :a {:depends_on [:b]})]
+      (it ":a has no :depends_on (write refused)"
         (expect (not (contains? (get-in @(:ctx-atom env) [:session/tasks :a])
-                       :depends-on))))
+                       :depends_on))))
 
-      (it ":depends-on-cycle warning captured"
-        (expect (some #(= :depends-on-cycle (:code %))
+      (it ":depends_on_cycle warning captured"
+        (expect (some #(= :depends_on_cycle (:code %))
                   (warnings-of env)))))))
 
 (defdescribe drain-warnings-test
@@ -158,7 +158,7 @@
           {task-set 'task-set!} (cl/build-sci-bindings env)
           ;; produce a structural warning: task :done with a non-terminal dep
           _ (task-set :prereq {:title "first" :status :todo})
-          _ (task-set :follow {:title "second" :depends-on [:prereq] :status :done})
+          _ (task-set :follow {:title "second" :depends_on [:prereq] :status :done})
           captured (atom nil)
           rendered (cl/render-block! env
                      (fn [payload] (reset! captured payload) (:ctx payload)))]
@@ -216,7 +216,7 @@
         (expect (= 2 (count (:session/tasks ctx)))))
 
       (it ":test depends on :swap (via task-depends!)"
-        (expect (= [:swap] (get-in ctx [:session/tasks :test :depends-on]))))
+        (expect (= [:swap] (get-in ctx [:session/tasks :test :depends_on]))))
 
       (it ":swap is :done with :done-born stamped"
         (expect (= :done (get-in ctx [:session/tasks :swap :status])))

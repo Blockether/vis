@@ -277,7 +277,7 @@
 ;;   indices-matching-hash    lines hash      -> [0-based idx …]
 ;;   resolve-hash-edit        content h h2 rep -> {:new-content}|{:error}
 ;;
-;; The gutter the reader SEES is the edit address — `patch :from-hash`
+;; The gutter the reader SEES is the edit address — `patch :from_hash`
 ;; resolves the same `line-hash` against live content. Line numbers live
 ;; only in the CAT summary / range headers (navigation), never the gutter:
 ;; hashes replace them.
@@ -285,7 +285,7 @@
 (def hash-width
   "Hex chars per line anchor. Measured knee of the collision-vs-token
    curve (loss = usable lines that share a truncated hash and so lose
-   their `:from-hash` anchor):
+   their `:from_hash` anchor):
 
      width  patch.clj(499)  core.clj(3152)  render.clj(4611)
        3        16.7%          55.4%           66.2%
@@ -312,7 +312,7 @@
   "Stable `hash-width`-hex-char content hash of `line` (trimmed). Folds
    the spec'd `String/hashCode` algorithm over the whitespace-trimmed
    line, so it is deterministic across JVM runs. Identical trimmed lines
-   share a hash — a dup-line collision makes a `:from-hash` anchor
+   share a hash — a dup-line collision makes a `:from_hash` anchor
    ambiguous and `resolve-hash-edit` refuses it (caller falls back to
    `:search`).
 
@@ -413,7 +413,7 @@
   "Render `[line-number text]` tuples as a HUMAN line-number gutter
    `<ln>│ <text>`, line numbers right-aligned to the widest number in
    the block. Unlike `render-hashline-block` (the MODEL surface, whose
-   gutter is the editable `:from-hash` anchor), this is the channel/TUI
+   gutter is the editable `:from_hash` anchor), this is the channel/TUI
    display surface: humans navigate by line number, not by content hash."
   [tuples]
   (let [tuples (vec tuples)
@@ -471,45 +471,45 @@
           [(nth all (dec (long ord)))]
           [])))))
 (defn resolve-hash-range
-  "Resolve `from-hash` (and `to-hash`, defaulting to `from-hash` for a single
+  "Resolve `from_hash` (and `to_hash`, defaulting to `from_hash` for a single
    line) against the LIVE `current` content by recomputing `line-hash` per
    line — so the anchor lands on the right line even if it drifted since the
    `cat` read. Each hash must match EXACTLY one line; a dup-line collision is
    refused (caller falls back to `:search`). Returns `{:from-line N :to-line N}`
    (1-based, INCLUSIVE) or `{:error {:reason KW …}}`.
 
-   Shared by `resolve-hash-edit` (WRITE — patch :from-hash) and the cat
+   Shared by `resolve-hash-edit` (WRITE — patch :from_hash) and the cat
    `:hash` READ path so both address lines by content identically."
-  [^String current from-hash to-hash]
+  [^String current from_hash to_hash]
   (let [lines (split-content-lines current)
-        to-hash (or to-hash from-hash)
-        froms (indices-matching-hash lines from-hash)
+        to_hash (or to_hash from_hash)
+        froms (indices-matching-hash lines from_hash)
         ;; Single-line range (to == from) is the common case — reuse the one
         ;; scan instead of hashing every line a second time.
-        tos (if (= to-hash from-hash) froms (indices-matching-hash lines to-hash))]
-    (cond (empty? froms) {:error {:reason :hash-not-found, :which :from, :hash (str from-hash)}}
+        tos (if (= to_hash from_hash) froms (indices-matching-hash lines to_hash))]
+    (cond (empty? froms) {:error {:reason :hash-not-found, :which :from, :hash (str from_hash)}}
           (> (count froms) 1) {:error {:reason :hash-ambiguous,
                                        :which :from,
-                                       :hash (str from-hash),
+                                       :hash (str from_hash),
                                        :lines (mapv inc froms)}}
-          (empty? tos) {:error {:reason :hash-not-found, :which :to, :hash (str to-hash)}}
+          (empty? tos) {:error {:reason :hash-not-found, :which :to, :hash (str to_hash)}}
           (> (count tos) 1)
             {:error
-               {:reason :hash-ambiguous, :which :to, :hash (str to-hash), :lines (mapv inc tos)}}
+               {:reason :hash-ambiguous, :which :to, :hash (str to_hash), :lines (mapv inc tos)}}
           (< (long (first tos)) (long (first froms))) {:error {:reason :hash-range-inverted,
                                                                :from-line (inc (first froms)),
                                                                :to-line (inc (first tos))}}
           :else {:from-line (inc (long (first froms))), :to-line (inc (long (first tos)))})))
 (defn resolve-hash-edit
-  "Content-addressed line-range replace. Resolves `from-hash` (and
-   `to-hash`, defaulting to `from-hash` for a single line) against the
+  "Content-addressed line-range replace. Resolves `from_hash` (and
+   `to_hash`, defaulting to `from_hash` for a single line) against the
    LIVE `current` content by recomputing `line-hash` per line — so the
    edit lands on the right line even if it drifted since the `cat` read.
    Each hash must match EXACTLY one line; a dup-line collision is refused
    (use `:search`). Returns `{:new-content S :applied-line N}` or
    `{:error {:reason KW …}}`."
-  [^String current from-hash to-hash ^String replace]
-  (let [res (resolve-hash-range current from-hash to-hash)]
+  [^String current from_hash to_hash ^String replace]
+  (let [res (resolve-hash-range current from_hash to_hash)]
     (if (:error res)
       res
       (let [line-start (dec (long (:from-line res)))

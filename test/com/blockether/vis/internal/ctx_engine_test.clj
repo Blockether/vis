@@ -114,7 +114,7 @@
          :born "t1/i1/f2"
          :done-born "t2/i1/f2"}
     :t2 {:title "task 2"
-         :depends-on [:t1]
+         :depends_on [:t1]
          :status :todo
          :born "t1/i1/f3"}}
    :session/facts
@@ -128,7 +128,7 @@
         (expect (= #{:dep-graph :rev-deps :task-status :fact-status}
                   (set (keys idx)))))
 
-      (it ":dep-graph captures :depends-on edges as typed refs"
+      (it ":dep-graph captures :depends_on edges as typed refs"
         (expect (= #{[:task :t1]} (get-in idx [:dep-graph [:task :t2]])))
         (expect (= #{} (get-in idx [:dep-graph [:task :t1]]))))
 
@@ -650,22 +650,22 @@
         (expect (= {} (:session/tasks advanced)))))))
 
 ;; =============================================================================
-;; Universal :depends-on across task/fact entities.
+;; Universal :depends_on across task/fact entities.
 ;;
-;; `:depends-on` is a first-class relation on tasks and facts. Refs are
+;; `:depends_on` is a first-class relation on tasks and facts. Refs are
 ;; either bare keys (same-kind shorthand) or typed `[:kind :K]` pairs.
 ;; Cycle detection is unified across the two subtrees so a chain
 ;; `task -> fact -> task` is hard-rejected at write time.
 ;; =============================================================================
 
 (defdescribe universal-depends-on-test
-  (describe "task-set! / fact-set! accept :depends-on"
-    (it "fact :depends-on is preserved through apply-fact-set!"
+  (describe "task-set! / fact-set! accept :depends_on"
+    (it "fact :depends_on is preserved through apply-fact-set!"
       (let [{ctx :ctx}
             (eng/apply-mutator (eng/empty-ctx "t") "t1/i1/f1"
-              :fact-set! [:K {:content "x" :depends-on [[:task :impl]]}])]
+              :fact-set! [:K {:content "x" :depends_on [[:task :impl]]}])]
         (expect (= [[:task :impl]]
-                  (get-in ctx [:session/facts :K :depends-on])))))
+                  (get-in ctx [:session/facts :K :depends_on])))))
 
     (it "task-depends! / fact-depends! all write through"
       (let [base (-> (eng/empty-ctx "t")
@@ -673,37 +673,37 @@
                    (assoc-in [:session/facts :F] {:content "f" :born "t1/i1/f1"}))
             after-t (:ctx (eng/apply-mutator base "t1/i1/f1" :task-depends! [:T [[:fact :F]]]))
             after-f (:ctx (eng/apply-mutator after-t "t1/i1/f1" :fact-depends! [:F []]))]
-        (expect (= [[:fact :F]] (get-in after-f [:session/tasks :T :depends-on])))
-        (expect (= []           (get-in after-f [:session/facts :F :depends-on])))))))
+        (expect (= [[:fact :F]] (get-in after-f [:session/tasks :T :depends_on])))
+        (expect (= []           (get-in after-f [:session/facts :F :depends_on])))))))
 
 (defdescribe cross-entity-cycle-rejection-test
   (describe "task→fact→task cycle is hard-rejected at write time"
     ;; Seed a chain that's already valid up to fact :F, then attempt to close
     ;; the loop with a fact-depends! that points back to task :T. The engine
-    ;; must refuse the write and emit :depends-on-cycle.
+    ;; must refuse the write and emit :depends_on_cycle.
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends-on [[:fact :F]]})
+                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact :F]]})
                 (assoc-in [:session/facts :F]
                   {:content "f" :born "t1/i1/f1"}))
           {ctx' :ctx warnings :warnings :as out}
           (eng/apply-mutator ctx "t1/i2/f1" :fact-depends! [:F [[:task :T]]])]
 
-      (it "refuses the write (no :depends-on on :F)"
+      (it "refuses the write (no :depends_on on :F)"
         (expect (not (:stamped? out)))
-        (expect (nil? (get-in ctx' [:session/facts :F :depends-on]))))
+        (expect (nil? (get-in ctx' [:session/facts :F :depends_on]))))
 
-      (it "emits a :depends-on-cycle warning"
-        (expect (some #(= :depends-on-cycle (:code %)) warnings))))))
+      (it "emits a :depends_on_cycle warning"
+        (expect (some #(= :depends_on_cycle (:code %)) warnings))))))
 
 (defdescribe build-indexes-dep-graph-typed-test
   (describe "build-indexes derives the typed :dep-graph across task + fact kinds"
     ;; Canonical shape: :dep-graph keys are typed `[:kind :K]` refs.
-    ;; Bare-key entries on `:depends-on` are normalized to same-kind
+    ;; Bare-key entries on `:depends_on` are normalized to same-kind
     ;; typed refs at index-build time.
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends-on [[:fact :F]]})
+                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact :F]]})
                 (assoc-in [:session/facts :F]
                   {:content "f" :born "t1/i1/f1"}))
           idx (eng/build-indexes ctx)]
@@ -722,16 +722,16 @@
           (expect (= #{} (get g [:fact :F]))))))))
 
 (defdescribe depends-on-dangling-warning-test
-  (describe "typed :depends-on refs that point at nonexistent entities surface as warnings"
+  (describe "typed :depends_on refs that point at nonexistent entities surface as warnings"
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends-on [[:fact :ghost]]}))
+                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact :ghost]]}))
           idx (eng/build-indexes ctx)
           warns (eng/derive-warnings ctx idx)]
       (it "emits a dangling-dep warning naming the missing kind+key"
         ;; derive-warnings is a vec of short strings now.
         (expect (some #(and (re-find #"ghost" %)
-                         (re-find #"depends-on" %))
+                         (re-find #"depends_on" %))
                   warns))))))
 
 ;; =============================================================================
@@ -849,7 +849,7 @@
                                                :born "t1/i1/f1"})
                 (assoc-in [:session/tasks :b] {:title "main" :status :done
                                                :done-born "t1/i2/f1"
-                                               :depends-on [:a]
+                                               :depends_on [:a]
                                                :born "t1/i1/f2"}))
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
       (it "emits a short warning string naming the task + non-terminal dep"
@@ -865,7 +865,7 @@
                                                :born "t1/i1/f1"})
                 (assoc-in [:session/tasks :b] {:title "main" :status :done
                                                :done-born "t1/i2/f1"
-                                               :depends-on [:a]
+                                               :depends_on [:a]
                                                :born "t1/i1/f2"}))
           warns (eng/derive-warnings ctx (eng/build-indexes ctx))]
       (it "stays quiet"

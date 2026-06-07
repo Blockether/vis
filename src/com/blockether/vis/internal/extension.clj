@@ -33,7 +33,6 @@
             [com.blockether.vis.internal.render :as render]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.workspace :as workspace]
-            [sci.core :as sci]
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)
            (java.net URL)
@@ -2665,25 +2664,23 @@
     (doseq [[id entry] manifests] (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
 (defn builtin-sandbox-bindings
-  "`{sym -> sci-var}` bindings for EVERY registered built-in extension\n   (`ext-builtin?`), to be merged into the sandbox ns alongside the engine\n   verbs at sci-context creation. `env-thunk` (0-arg) resolves the live\n   environment at call time, so these can be interned before the env map\n   exists. Loads built-ins first (idempotent) so registration is guaranteed\n   before we read the registry. Later extensions win on key collisions, but\n   built-ins are disjoint by construction (kernel tools vs engine verbs).\n\n   Each value is wrapped in an `sci/new-var` carrying `:doc`/`:arglists`/\n   `:vis/source` from the symbol entry (mirroring `loop/sci-binding-var`)\n   so `(doc 'rg)` / `(meta #'cat)` expose the real contract in-sandbox\n   instead of returning nil."
+  "`{sym -> fn}` bindings for EVERY registered built-in extension
+   (`ext-builtin?`), merged into the Python sandbox globals alongside the engine
+   verbs at sandbox-context creation. `env-thunk` (0-arg) resolves the live
+   environment at call time, so these can be wired before the env map exists.
+   Loads built-ins first (idempotent) so registration is guaranteed before we
+   read the registry. Later extensions win on key collisions, but built-ins are
+   disjoint by construction (kernel tools vs engine verbs).
+
+   Each value is the plain wrapped tool fn; `env_python/create-python-context`
+   installs it as a Python callable (ProxyExecutable). Per-tool docstrings are
+   surfaced through the sandbox's own `doc`/`apropos` introspection."
   [env-thunk]
   (load-builtin-extensions!)
-  (let [sandbox-ns (sci/create-ns (quote sandbox) nil)]
-    (into {}
-          (comp (filter ext-builtin?)
-                (mapcat
-                  (fn [ext]
-                    (let [entry-by-sym
-                            (into {} (map (juxt :ext.symbol/symbol identity)) (ext-symbols ext))]
-                      (map (fn [[sym val]]
-                             (let [{:ext.symbol/keys [doc arglists source]} (get entry-by-sym sym)
-                                   meta-map (cond-> {:ns sandbox-ns}
-                                              doc (assoc :doc doc)
-                                              arglists (assoc :arglists arglists)
-                                              source (assoc :vis/source source))]
-                               [sym (sci/new-var sym val meta-map)]))
-                        (wrap-extension-thunked ext env-thunk))))))
-          (registered-extensions))))
+  (into {}
+        (comp (filter ext-builtin?)
+              (mapcat (fn [ext] (wrap-extension-thunked ext env-thunk))))
+        (registered-extensions)))
 ;; =============================================================================
 ;; CLI bridge -- the `vis ext` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,
