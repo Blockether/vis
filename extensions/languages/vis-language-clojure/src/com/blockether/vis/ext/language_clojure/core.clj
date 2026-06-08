@@ -28,6 +28,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.language-clojure.edit :as edit]
+   [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
@@ -230,6 +231,21 @@
                           "clj_edit({\"path\": \"src/a.clj\", \"op\": \"replace_sexp\", \"target\": \"foo\", \"match\": \"(+ 1 1)\", \"code\": \"(+ 2 2)\"})"]})))
    (extension/success {:result (edit/apply-edit! (env-root env) arg)})))
 
+(defn clj-paren-repair-fn
+  ([arg]
+   (let [code  (cond (string? arg) arg
+                     (and (map? arg) (contains? arg :code)) (str (:code arg))
+                     :else (throw (ex-info "clj_paren_repair expects a code string or {\"code\": ...}"
+                                    {:type :clj/bad-args :got arg
+                                     :examples ["clj_paren_repair(\"(defn f [] (+ 1 2)\")"
+                                                "clj_paren_repair({\"code\": \"...\"})"]})))
+         fixed (repair/fix-delimiters code)]
+     (extension/success
+       {:result {:op        :clj-paren-repair
+                 :repaired? (some? fixed)
+                 :changed?  (boolean (and fixed (not= fixed code)))
+                 :text      (or fixed code)}}))))
+
 ;; =============================================================================
 ;; Symbols
 ;; =============================================================================
@@ -244,6 +260,9 @@
 
 (def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...}`. `op` ∈ #{\"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\"}. \"add\" inserts after \"target\", or appends a new top-level form at EOF when no \"target\" is given. \"replace_doc\" swaps \"target\"'s docstring (inserting one if absent) — here \"code\" is the docstring TEXT, a plain string, not a quoted form. \"target\" is a defn/def name string, `[name, dispatch]` for defmethod, or the wrapping form name for \"replace_sexp\" (use \"match\" for the sexp text to swap). Writes only when the result round-trips parse-clean. `\"is_format\": true` (default) runs zprint before writing."
        :arglists '([opts])} edit clj-edit-fn)
+
+(def ^{:doc "Balance the delimiters of a Clojure source STRING (parinfer indent-mode — it trusts your INDENTATION to place the missing/extra ( [ {). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-paren-repair :repaired? bool :changed? bool :text <fixed source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. Use it when you hand-wrote Clojure and a `.clj` won't parse, instead of counting brackets. For edits to EXISTING valid code prefer clj_edit (structure-aware — it can't unbalance)."
+       :arglists '([arg])} paren-repair clj-paren-repair-fn)
 
 ;; Each `:render-fn` is a structured IR builder over the raw
 ;; `:result` map (see render.clj). The MODEL surface is the Python
@@ -262,8 +281,13 @@
   (vis/symbol #'edit
     {:before-fn inject-env :tag :mutation :render-fn render/render-edit}))
 
+;; Pure string transform — no env, no filesystem; the model writes the result.
+(def paren-repair-symbol
+  (vis/symbol #'paren-repair
+    {:tag :observation :render-fn render/render-paren-repair}))
+
 (def clj-symbols
-  [repl-symbol eval-symbol edit-symbol])
+  [repl-symbol eval-symbol edit-symbol paren-repair-symbol])
 
 ;; =============================================================================
 ;; Extension manifest
@@ -295,7 +319,8 @@
     "      swaps the match sexp inside target.\n"
     "For structure exploration use `rg` (with `context`) + the engine `doc` / `apropos` system calls — there is no clj outline/find tool.\n"
     "Use clj_edit for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`. Use clj_eval to verify behaviour against the running REPL before claiming a fix.\n"
-    "clj_edit is STRUCTURE-AWARE (rewrite-clj): it edits the form, so it CANNOT leave unbalanced delimiters — you never count parens with it. If you instead hand-write Clojure via write/patch and a `.clj` won't parse, the cause is almost always an unbalanced ( [ {; fix it STRUCTURALLY (redo the change via clj_edit), don't hand-count brackets. After editing a `.clj`, VERIFY it still parses (clj_eval a load-file or eval the form); do NOT blanket-reformat the file — that buries a surgical change in unrelated layout churn."))
+    "clj_edit is STRUCTURE-AWARE (rewrite-clj): it edits the form, so it CANNOT leave unbalanced delimiters — you never count parens with it. If you instead hand-write Clojure via write/patch and a `.clj` won't parse, the cause is almost always an unbalanced ( [ {; fix it STRUCTURALLY (redo the change via clj_edit), don't hand-count brackets. After editing a `.clj`, VERIFY it still parses (clj_eval a load-file or eval the form); do NOT blanket-reformat the file — that buries a surgical change in unrelated layout churn.
+If you DID hand-write Clojure and the delimiters are off, call clj_paren_repair(\"<source>\") — it balances ( [ { from your INDENTATION (parinfer) and returns the fixed `:text`; write that, don't count brackets by hand."))
 
 (def vis-extension
   (vis/extension
