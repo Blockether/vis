@@ -1854,18 +1854,19 @@
       (expect (true? (:success? r)))
       (expect (= "X\nd\n" (slurp path)))))
 
-  (it "patch refuses a BARE :from_hash that hits >1 identical line"
+  (it "duplicate lines are surfaced as distinct `lineno:hash` anchors; a BARE hash that hits >1 line is refused"
     (let [path (write-temp! "hashline/dup.txt" "x\ny\nx\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
-          ;; The dup line 'x' is surfaced as `hash#1` / `hash#2` ordinal
-          ;; anchors (each addressable), but the BARE content hash still
-          ;; hits BOTH lines — feed it raw to exercise the ambiguity refusal.
+          ;; The dup line 'x' is surfaced as `1:hash` / `3:hash` — the line
+          ;; number disambiguates, no `#N` ordinal needed. A BARE content hash
+          ;; (no line number) still hits BOTH lines; feed it raw to exercise the
+          ;; legacy ambiguity refusal.
           hashes (:hashes (read-file path))
           r (patch [{:path path :from_hash (patch/line-hash "x") :replace "NEW"}])]
-      (expect (= (str (patch/line-hash "x") "#1") (get hashes 1)))  ;; 1st dup → #1
-      (expect (= (str (patch/line-hash "x") "#2") (get hashes 3)))  ;; 2nd dup → #2
-      (expect (= (patch/line-hash "y") (get hashes 2)))             ;; unique line kept bare
+      (expect (= (patch/line-anchor 1 "x") (get hashes 1)))  ;; 1st dup → 1:hash
+      (expect (= (patch/line-anchor 3 "x") (get hashes 3)))  ;; 2nd dup → 3:hash
+      (expect (= (patch/line-anchor 2 "y") (get hashes 2)))  ;; unique line too
       (expect (false? (:success? r)))
       (expect (= :hash-ambiguous (-> r :failures first :reason)))
       ;; file untouched
@@ -1908,29 +1909,30 @@
                 #(cat-tool path :nonsense h-beta h-gamma))))))
 
 ;; =============================================================================
-;; Patch: dup-hash ORDINAL anchors in a multi-edit batch, resolved vs the
-;; ORIGINAL snapshot (regression for the cumulative-resolution bug that made a
-;; batch's later #N anchors drift and fail).
+;; Patch: duplicate-line anchors in a multi-edit batch, resolved vs the ORIGINAL
+;; snapshot (regression for the cumulative-resolution bug that made a batch's
+;; later anchors drift and fail). Duplicate lines are now told apart by their
+;; LINE NUMBER (`lineno:hash`), not a `#N` ordinal.
 ;; =============================================================================
 
-(defdescribe patch-ordinal-batch-test
-  (it "dup-hash #N ordinal edits in one batch all resolve against the ORIGINAL and apply atomically"
+(defdescribe patch-dup-line-batch-test
+  (it "dup-line edits in one batch all resolve against the ORIGINAL and apply atomically"
     (let [patch (private-fn "patch-safe")
-          p     (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")
-          h     (patch/line-hash "DUP")]   ;; all three DUP lines share this hash
-      (let [r (patch [{:path p :from_hash (str h "#1") :replace "DUP1"}
-                      {:path p :from_hash (str h "#3") :replace "DUP3"}])]
+          p     (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")]
+      ;; DUP on lines 2,4,6 — same hash, different line numbers.
+      (let [r (patch [{:path p :from_hash (patch/line-anchor 2 "DUP") :replace "DUP1"}
+                      {:path p :from_hash (patch/line-anchor 6 "DUP") :replace "DUP3"}])]
         (expect (true? (:success? r)))
-        ;; #1 and #3 edited, #2 untouched — ordinals stayed file-wide, no drift.
+        ;; lines 2 and 6 edited, line 4 untouched — line numbers resolve vs the
+        ;; original snapshot, no drift.
         (expect (= "x\nDUP1\ny\nDUP\nz\nDUP3\n" (slurp p))))))
 
-  (it "all three ordinals editable in one batch"
+  (it "all three duplicate lines editable in one batch"
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "ord/dup3.txt" "DUP\nDUP\nDUP\n")
-          h     (patch/line-hash "DUP")
-          r     (patch [{:path p :from_hash (str h "#1") :replace "A"}
-                        {:path p :from_hash (str h "#2") :replace "B"}
-                        {:path p :from_hash (str h "#3") :replace "C"}])]
+          r     (patch [{:path p :from_hash (patch/line-anchor 1 "DUP") :replace "A"}
+                        {:path p :from_hash (patch/line-anchor 2 "DUP") :replace "B"}
+                        {:path p :from_hash (patch/line-anchor 3 "DUP") :replace "C"}])]
       (expect (true? (:success? r)))
       (expect (= "A\nB\nC\n" (slurp p)))))
 
@@ -1951,18 +1953,17 @@
 (defdescribe rg-returns-hash-test
   (let [rg-search (private-fn "rg-search")
         patch     (private-fn "patch-safe")]
-    (it "a content hit carries :hash and that hash patches the line"
+    (it "a content hit carries its `lineno:hash` anchor and that anchor patches the line"
       (let [p   (write-temp! "rgh/uniq.clj" "(def a 1)\n(def b 2)\n(def c 3)\n")
             res (rg-search {:any ["def b"] :paths [p]})
             hit (first (:hits res))]
-        (expect (= (patch/line-hash "(def b 2)") (:hash hit)))
+        (expect (= (patch/line-anchor 2 "(def b 2)") (:hash hit)))
         (let [r (patch [{:path p :from_hash (:hash hit) :replace "(def b 200)"}])]
           (expect (true? (:success? r)))
           (expect (string/includes? (slurp p) "(def b 200)")))))
 
-    (it "a hit on a DUPLICATED line carries the file-wide #N ordinal anchor"
+    (it "hits on a DUPLICATED line carry distinct `lineno:hash` anchors (line number disambiguates)"
       (let [p   (write-temp! "rgh/dup.clj" "(def x 1)\n(other)\n(def x 1)\n")
             res (rg-search {:any ["def x"] :paths [p]})
-            hashes (map :hash (:hits res))
-            h   (patch/line-hash "(def x 1)")]
-        (expect (= [(str h "#1") (str h "#2")] hashes))))))
+            hashes (map :hash (:hits res))]
+        (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")] hashes))))))

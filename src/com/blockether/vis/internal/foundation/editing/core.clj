@@ -600,34 +600,24 @@
   "Human message for a `patch/resolve-hash-range` `:error` on the cat READ
    path — mirrors the patch hash-error copy and always points back to a
    fresh read for current `:hashes`."
-  [{:keys [reason which hash lines from-line to-line]}]
+  [{:keys [reason which hash lines from-line to-line stated-line found-lines]}]
   (case reason
     :hash-not-found
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
       " matches no line (the line changed or the file moved)."
-      " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh hashes.")
+      " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
+    :hash-misplaced
+    (str "cat hash failed: " (name which) "-hash " (pr-str hash)
+      " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
+      " — stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
     :hash-ambiguous
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
       " matches " (count lines) " lines " (pr-str lines)
-      " — a dup-line collision. Use cat(path, {\"range\": [start, end]}) instead.")
+      " — a dup-line collision near that line. Use cat(path, {\"range\": [start, end]}) instead.")
     :hash-range-inverted
     (str "cat hash failed: to_hash line " to-line
       " precedes from_hash line " from-line ".")
     (str "cat :hash failed: " (pr-str reason))))
-
-(defn- read-all-line-tuples
-  "Stream the WHOLE file into a vec of `[line-number text]` tuples. Feeds
-   `patch/lines->hashes` as the FILE-WIDE freq/ordinal source for windowed
-   reads (range / tail / by-hash) so a duplicate line OUTSIDE the read window
-   still renders `hash#N` — keeping `cat` anchors consistent with patch's
-   file-wide hash resolution. Holds line text only; callers are the edit read
-   paths, which patch already slurps whole."
-  [^java.io.File f]
-  (with-open [^java.io.BufferedReader rdr (io/reader f)]
-    (loop [acc (transient []) ln 1]
-      (if-let [raw (.readLine rdr)]
-        (recur (conj! acc [ln raw]) (inc ln))
-        (persistent! acc)))))
 
 (defn- read-file-by-hash
   "Read the inclusive window between the lines hashed `from_hash`..`to_hash`
@@ -649,7 +639,7 @@
             n (inc (- (long to-line) (long from-line)))]
         (let [out (read-file path from-line n)]
           (assoc out :range [from-line to-line]
-            :hashes (patch/lines->hashes (:lines out) (read-all-line-tuples f))))))))
+            :hashes (patch/lines->hashes (:lines out))))))))
 
 (defn- read-file-ranges
   "Read several inclusive 1-based line ranges from one file. Result keeps both
@@ -666,7 +656,7 @@
         f       (ensure-existing-file! (safe-path path))]
     {:path        (rel-path f)
      :lines       (vec (mapcat :lines windows))
-     :hashes      (patch/lines->hashes (vec (mapcat :lines windows)) (read-all-line-tuples f))
+     :hashes      (patch/lines->hashes (vec (mapcat :lines windows)))
      :ranges      windows
      :next-offset nil
      :eof?        (every? :eof? windows)
@@ -728,7 +718,7 @@
                   numbered     (mapv vector (iterate inc start-line) final-lines)]
               {:path        (rel-path f)
                :lines       numbered
-               :hashes      (patch/lines->hashes numbered (read-all-line-tuples f))
+               :hashes      (patch/lines->hashes numbered)
                :next-offset nil
                :eof?        true
                :truncated?  bytes-truncated?
@@ -1148,9 +1138,9 @@
 
    Returns one of:
      {:hits   [{:path :line :text :hash :before? :after?} ...] :truncated-by KW}  ;; content
-   `:hash` is the content-addressed anchor (`hash` or `hash#N`) for that line —
-   the same one `cat` emits in `:hashes` — so a hit is directly patchable via
-   `{:from_hash <hash>}` without a follow-up `cat`. Absent on blank lines.
+   `:hash` is the `<lineno>:<hash>` anchor for that line — the same one `cat`
+   emits in `:hashes` — so a hit is directly patchable via `{:from_hash <anchor>}`
+   without a follow-up `cat`. Absent on blank lines.
      {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW}  ;; files-only
      {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
 
@@ -1240,16 +1230,17 @@
         (doseq [^File f files :while (not @capped?)]
           (let [hits (search-file-content f matches? before-ctx after-ctx)]
             (when (seq hits)
-              ;; Attach the content-addressed anchor (`hash` / `hash#N`) to each
-              ;; hit so the model can patch STRAIGHT from an rg result — the same
-              ;; addressing `cat` emits in `:hashes`, with file-wide ordinals.
-              ;; Hashed once per hit-file (blank lines carry no anchor).
-              (let [hashes (try (patch/lines->hashes (read-all-line-tuples f))
-                             (catch Throwable _ {}))]
-                (doseq [hit hits :while (not @capped?)]
-                  (swap! out conj (let [h (get hashes (:line hit))]
-                                    (cond-> hit h (assoc :hash h))))
-                  (when (>= (count @out) limit) (reset! capped? true)))))))
+              ;; Attach the `lineno:hash` anchor to each hit so the model can
+              ;; patch STRAIGHT from an rg result — the same addressing `cat`
+              ;; emits in `:hashes`. The hit already carries :line and :text, so
+              ;; this is a per-hit compute — no whole-file rehash (the old
+              ;; file-wide-ordinal scheme that forced one is gone). Blank lines
+              ;; carry no anchor.
+              (doseq [hit hits :while (not @capped?)]
+                (swap! out conj (cond-> hit
+                                  (not (str/blank? (:text hit)))
+                                  (assoc :hash (patch/line-anchor (:line hit) (:text hit)))))
+                (when (>= (count @out) limit) (reset! capped? true))))))
         {:hits (vec @out)
          :truncated-by (if @capped? :limit :end-of-results)}))))
 
@@ -1885,17 +1876,23 @@
   (let [head (str "edit " edit-index " in " path)]
     (case reason
       :hash-not-found (str head " failed: " (name (:which hash-error)) "-hash "
-                        (pr-str (:hash hash-error)) " matches no line in the current file."
-                        " Use the EXACT hash cat printed (including its `#N` ordinal for a"
-                        " duplicated line); don't fabricate the ordinal. Re-read with cat"
-                        " for fresh :hashes, then resend the batch.")
+                        (pr-str (:hash hash-error)) " matches no line in the current file"
+                        " (that line changed or the file moved). Use the EXACT `lineno:hash`"
+                        " anchor cat printed; re-read with cat for fresh :hashes, then resend"
+                        " the batch.")
+      :hash-misplaced (str head " failed: " (name (:which hash-error)) "-hash "
+                        (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
+                        " but that content is at line(s) " (pr-str (:found-lines hash-error))
+                        " — too far to be drift, so this looks like a stale/misattributed"
+                        " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
+                        " editing (this guard is what stops an edit landing on the wrong line).")
       :overlapping-edits (str head " failed: this edit's target overlaps another edit"
                            " in the same file — two edits touch the same lines. Merge"
                            " them into ONE edit, or split into separate patch calls.")
       :hash-ambiguous (str head " failed: " (name (:which hash-error)) "-hash "
                         (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
                         " identical lines " (pr-str (:lines hash-error))
-                        " - use :search instead, that line content is not unique.")
+                        " near that line — use :search instead, that content is not unique.")
       :hash-range-inverted (str head " failed: :to_hash line " (:to-line hash-error)
                              " precedes :from_hash line " (:from-line hash-error) ".")
       :stale (str head
@@ -2373,9 +2370,7 @@
        (validate-cat-range! start end)
        (let [n (inc (- (long end) (long start)))
              out (read-file path start n)
-             out (assoc out :hashes
-                   (patch/lines->hashes (:lines out)
-                     (read-all-line-tuples (ensure-existing-file! (safe-path path)))))]
+             out (assoc out :hashes (patch/lines->hashes (:lines out)))]
          (tool-success
            {:op :cat
             :path path

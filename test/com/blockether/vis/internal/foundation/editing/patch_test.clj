@@ -107,89 +107,112 @@
     (expect (= (patch/line-hash "hello") (patch/line-hash "  hello  ")))
     (expect (= (patch/line-hash "x") (patch/line-hash "x"))))
 
-  (it "lines->hashes maps unique non-blank tuples to their content hash"
-    (expect (= {1 (patch/line-hash "a") 2 (patch/line-hash "b")}
+  (it "line-anchor is `<lineno>:<hash>`"
+    (expect (= (str 325 ":" (patch/line-hash "hello")) (patch/line-anchor 325 "hello"))))
+
+  (it "lines->hashes maps non-blank tuples to `lineno:hash` anchors"
+    (expect (= {1 (patch/line-anchor 1 "a") 2 (patch/line-anchor 2 "b")}
               (patch/lines->hashes [[1 "a"] [2 "b"]]))))
 
-  (it "lines->hashes omits blanks, disambiguates duplicates with #N ordinals"
-    ;; dup 'x' (lines 1,3) gets `hash#1`/`hash#2` ordinal anchors so each
-    ;; stays addressable; the blank line 4 is never a usable anchor and is
-    ;; omitted; the unique 'y' maps to its bare content hash.
-    (expect (= {1 (str (patch/line-hash "x") "#1")
-                2 (patch/line-hash "y")
-                3 (str (patch/line-hash "x") "#2")}
+  (it "lines->hashes omits blanks; duplicate lines stay distinct via line number"
+    ;; dup 'x' (lines 1,3) now map to `1:hash`/`3:hash` — the line number is
+    ;; the disambiguator, so there is NO `#N` ordinal anymore. blank line 4 is
+    ;; omitted; 'y' maps to its own `lineno:hash`.
+    (expect (= {1 (patch/line-anchor 1 "x")
+                2 (patch/line-anchor 2 "y")
+                3 (patch/line-anchor 3 "x")}
               (patch/lines->hashes [[1 "x"] [2 "y"] [3 "x"] [4 "   "]]))))
 
-  (it "render-hashline-block renders a `<hash>| text` gutter, no line numbers"
+  (it "render-hashline-block renders a `<lineno>:<hash>│ text` gutter"
     (let [out (patch/render-hashline-block [[7 "alpha"] [8 "beta"]])]
-      (expect (= (str (patch/line-hash "alpha") "│ alpha\n"
-                   (patch/line-hash "beta") "│ beta")
-                out))
-      ;; line numbers (7/8) are NOT in the gutter
-      (expect (not (re-find #"\b7\b" out)))))
+      (expect (= (str "7:" (patch/line-hash "alpha") "│ alpha\n"
+                   "8:" (patch/line-hash "beta") "│ beta")
+                out))))
 
-  (it "render-hashline-block shows ordinal anchors for dups, blank gutter for blanks"
-    (let [out   (patch/render-hashline-block [[1 "dup"] [2 "uniq"] [3 "dup"] [4 ""]])
+  (it "render-hashline-block right-aligns line numbers, blank hash slot for blanks"
+    (let [out   (patch/render-hashline-block [[9 "nine"] [10 "ten"] [11 ""]])
           lines (clojure.string/split-lines out)
-          blank (apply str (repeat (long patch/hash-width) \space))
-          hdup  (patch/line-hash "dup")]
-      ;; unique line shows its bare content hash
-      (expect (= (str (patch/line-hash "uniq") "│ uniq") (nth lines 1)))
-      ;; duplicate lines stay addressable via `hash#N` ordinal anchors
-      (expect (= (str hdup "#1│ dup") (nth lines 0)))
-      (expect (= (str hdup "#2│ dup") (nth lines 2)))
-      ;; blank line is never an anchor — aligned `hash-width`-space gutter, no hash
-      (expect (= (str blank "│ ") (nth lines 3)))
-      ;; bare-hash and blank rows share the `hash-width` gutter column; the
-      ;; `#N` ordinal rows are intentionally wider (the suffix keeps dups
-      ;; editable, costing 2 extra columns on those rows only).
-      (expect (= (clojure.string/index-of (nth lines 1) "│")
-                (clojure.string/index-of (nth lines 3) "│")))))
+          blank (apply str (repeat (long patch/hash-width) \space))]
+      ;; ln 9 right-aligned to width 2 to line up with 10/11
+      (expect (= (str " 9:" (patch/line-hash "nine") "│ nine") (nth lines 0)))
+      (expect (= (str "10:" (patch/line-hash "ten") "│ ten") (nth lines 1)))
+      ;; blank line keeps its line number, hash slot is spaces, `│` column aligned
+      (expect (= (str "11:" blank "│ ") (nth lines 2)))
+      (expect (apply = (map #(clojure.string/index-of % "│") lines)))))
 
-  (it "line-hash is exactly hash-width hex chars (aligned), zero-padded"
+  (it "line-hash is exactly hash-width hex chars, zero-padded"
     (expect (= (long patch/hash-width) (count (patch/line-hash "anything"))))
-    (expect (= (long patch/hash-width) (count (patch/line-hash ""))))
-    (expect (re-matches (re-pattern (str "[0-9a-f]{" patch/hash-width "}"))
-              (patch/line-hash "x"))))
+    (expect (= (long patch/hash-width) (count (patch/line-hash "")))))
 
-  (it "render-hashline-range-block headers each window then the hash gutter"
+  (it "render-hashline-range-block headers each window then the gutter"
     (let [out (patch/render-hashline-range-block
                 [{:range [2 3] :lines [[2 "b"] [3 "c"]]}
                  {:range [9 9] :lines [[9 "i"]]}])]
       (expect (clojure.string/includes? out "-- range 2-3 --"))
-      (expect (clojure.string/includes? out (str (patch/line-hash "b") "│ b")))
+      (expect (clojure.string/includes? out (str "2:" (patch/line-hash "b") "│ b")))
       (expect (clojure.string/includes? out "-- range 9-9 --"))
-      (expect (clojure.string/includes? out (str (patch/line-hash "i") "│ i")))))
+      (expect (clojure.string/includes? out (str "9:" (patch/line-hash "i") "│ i")))))
 
-  (it "indices-matching-hash returns every 0-based match"
+  (it "indices-matching-hash returns every 0-based content match"
     (let [lines ["x" "y" "x"]]
       (expect (= [0 2] (patch/indices-matching-hash lines (patch/line-hash "x"))))
       (expect (= [1] (patch/indices-matching-hash lines (patch/line-hash "y"))))))
 
-  (it "resolve-hash-edit replaces a single anchored line against live content"
-    (let [content "alpha\nbeta\ngamma\n"
-          h (patch/line-hash "beta")]
+  (it "resolve-hash-edit replaces a single `lineno:hash`-anchored line"
+    (let [content "alpha\nbeta\ngamma\n"]
       (expect (= {:new-content "alpha\nBETA\ngamma\n" :applied-line 2}
-                (patch/resolve-hash-edit content h nil "BETA")))))
+                (patch/resolve-hash-edit content (patch/line-anchor 2 "beta") nil "BETA")))))
 
-  (it "resolve-hash-edit replaces a from..to hash range"
+  (it "resolve-hash-edit replaces a from..to `lineno:hash` range"
     (let [content "a\nb\nc\nd\n"]
       (expect (= {:new-content "X\nd\n" :applied-line 1}
                 (patch/resolve-hash-edit content
-                  (patch/line-hash "a") (patch/line-hash "c") "X")))))
+                  (patch/line-anchor 1 "a") (patch/line-anchor 3 "c") "X")))))
 
-  (it "resolve-hash-edit refuses a hash that hits >1 identical line"
-    (let [content "x\ny\nx\n"
-          res (patch/resolve-hash-edit content (patch/line-hash "x") nil "NEW")]
-      (expect (= :hash-ambiguous (-> res :error :reason)))
-      (expect (= [1 3] (-> res :error :lines)))))
+  (it "duplicate lines are addressable by line number — no ambiguity"
+    ;; 'x' on lines 1 and 3; the line number picks which one (no `#N` needed).
+    (let [content "x\ny\nx\n"]
+      (expect (= "X\ny\nx\n"
+                (:new-content (patch/resolve-hash-edit content (patch/line-anchor 1 "x") nil "X"))))
+      (expect (= "x\ny\nX\n"
+                (:new-content (patch/resolve-hash-edit content (patch/line-anchor 3 "x") nil "X"))))))
 
-  (it "resolve-hash-edit reports :hash-not-found for an unknown anchor"
+  (it "WRONG-LINE GUARD: a valid hash whose content sits far from the stated line is REFUSED"
+    ;; The regression that motivated `lineno:hash`: the model supplies a real,
+    ;; unique hash ('target', actually on line 1) but a wrong/stale line number
+    ;; far away (100). The old bare-hash scheme applied it at line 1 and
+    ;; corrupted the file; now it refuses.
+    (let [base    (mapv #(str "line" %) (range 1 121))
+          content (str (clojure.string/join "\n" (assoc base 0 "target")) "\n")
+          res     (patch/resolve-hash-edit content
+                    (str 100 ":" (patch/line-hash "target")) nil "X")]
+      (expect (= :hash-misplaced (-> res :error :reason)))
+      (expect (= 100 (-> res :error :stated-line)))
+      (expect (= [1] (-> res :error :found-lines)))
+      (expect (nil? (:new-content res)))))
+
+  (it "small drift within tolerance still resolves"
+    (let [base    (mapv #(str "line" %) (range 1 121))
+          content (str (clojure.string/join "\n" (assoc base 49 "target")) "\n")] ; target at line 50
+      ;; stated line 55, real line 50 — gap 5 <= tolerance -> applies at 50
+      (expect (= 50 (:applied-line (patch/resolve-hash-edit content
+                                     (str 55 ":" (patch/line-hash "target")) nil "X"))))))
+
+  (it "resolve-hash-edit reports :hash-not-found for absent content"
     (expect (= :hash-not-found
-              (-> (patch/resolve-hash-edit "a\nb\n" "ffffff" nil "Z") :error :reason))))
+              (-> (patch/resolve-hash-edit "a\nb\n" (patch/line-anchor 1 "nope") nil "Z")
+                :error :reason))))
+
+  (it "legacy bare hash (no line number) still resolves by uniqueness"
+    (let [content "alpha\nbeta\ngamma\n"]
+      (expect (= 2 (:applied-line (patch/resolve-hash-edit content (patch/line-hash "beta") nil "BETA"))))
+      ;; ambiguous bare hash is still refused
+      (expect (= :hash-ambiguous
+                (-> (patch/resolve-hash-edit "x\ny\nx\n" (patch/line-hash "x") nil "N")
+                  :error :reason)))))
 
   (it "resolve-hash-edit refuses an inverted range"
     (let [content "a\nb\nc\n"
           res (patch/resolve-hash-edit content
-                (patch/line-hash "c") (patch/line-hash "a") "X")]
+                (patch/line-anchor 3 "c") (patch/line-anchor 1 "a") "X")]
       (expect (= :hash-range-inverted (-> res :error :reason))))))
