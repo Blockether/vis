@@ -513,8 +513,8 @@
     ;; RIGHT slot: F1/F2 as real BUTTONS — filled chips via the shared `button!`
     ;; (visible inverted-chip bg, accent on hover), right-aligned as a cluster
     ;; just left of the id badge. No `|` separators; the bg IS the affordance.
-    ;; Only these two ride the header — the full shortcut list lives in F1 help.
-    (let [chips     [[:header-help " F1 help "] [:header-tasks " F2 context "]]
+    ;; These three ride the header - the full shortcut list lives in F1 help.
+    (let [chips     [[:header-help " F1 help "] [:header-tasks " F2 context "] [:header-search " F3 search "]]
           gap       1
           cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
                       (* gap (count chips)))

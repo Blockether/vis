@@ -38,7 +38,12 @@
                      :is_format false})]
           (expect (= :ok (:status res)))
           (expect (re-find #"\(\+ x 1\)" (slurp f)))
-          (expect (re-find #"defmulti area" (slurp f))))
+          (expect (re-find #"defmulti area" (slurp f)))
+          ;; result carries a unified diff (write evidence + the channel's
+          ;; "regular patch view"): old line removed, new line added.
+          (expect (string? (:diff res)))
+          (expect (re-find #"(?m)^-.*\(\* x 2\)" (:diff res)))
+          (expect (re-find #"(?m)^\+.*\(\+ x 1\)" (:diff res))))
         (finally (cleanup root))))))
 
 (defdescribe op-as-python-snake-string

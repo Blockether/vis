@@ -118,4 +118,18 @@
       (expect (contract? res))
       (expect (re-find #"EDIT FAILED" (summary-text (:summary res))))
       (expect (re-find #"target not found" (summary-text (:summary res))))
-      (expect (re-find #"target not found" (pr-str (:display res)))))))
+      (expect (re-find #"target not found" (pr-str (:display res))))))
+
+  (it "an OK edit with a :diff expands to a unified-diff code block (the regular patch view)"
+    (let [diff "--- before\n+++ after\n@@ -1,1 +1,1 @@\n-(defn foo [] 1)\n+(defn foo [] 2)"
+          res  (r/render-edit
+                 {:status :ok :path "src/a.clj" :op :clj/edit :edit-op :replace :target "foo"
+                  :bytes {:before 100 :after 100} :delta 0 :diff diff})
+          blocks (rest (:display res))
+          diff-block (some #(when (and (vector? %) (= :code (first %))
+                                    (= "diff" (:lang (second %)))) %)
+                       blocks)]
+      (expect (contract? res))
+      ;; display is no longer just a `→ path Δ` line — it carries the diff
+      (expect (some? diff-block))
+      (expect (re-find #"\+\(defn foo \[\] 2\)" (last diff-block))))))
