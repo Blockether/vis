@@ -8,7 +8,7 @@
 (defdescribe prompt-assembly-test
   (it "normalizes core addendum and extension prompt text"
     (let [ext {:ext/name "test.prompt"
-               :ext/sci {:ext.sci/alias 't}
+               :ext/engine {:ext.engine/alias 't}
                :ext/prompt (fn [_]
                              "\n\n    Extension line\n\n\n\n      Nested extension line\n")}
           env {:extensions (atom [ext])}

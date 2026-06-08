@@ -200,29 +200,25 @@
 (defdescribe classify-form-tag-test
   (describe "classify-form-tag"
     (it ":mutation for engine-owned mutators"
-      (expect (= :mutation (eng/classify-form-tag "(task-set! :A {})")))
-      (expect (= :mutation (eng/classify-form-tag "(fact-set! :F {:content \"y\"})")))
-      (expect (= :mutation (eng/classify-form-tag "(task-depends! :A [:b])")))
-      (expect (= :mutation (eng/classify-form-tag "(fact-contradicts! :f1 :f2)"))))
-
-    (it ":mutation for def / defn / defmacro"
-      (expect (= :mutation (eng/classify-form-tag "(def x 42)")))
-      (expect (= :mutation (eng/classify-form-tag "(defn f [a] a)"))))
+      (expect (= :mutation (eng/classify-form-tag "task_set(\"A\", {})")))
+      (expect (= :mutation (eng/classify-form-tag "fact_set(\"F\", {\"content\": \"y\"})")))
+      (expect (= :mutation (eng/classify-form-tag "task_depends(\"A\", [\"b\"])")))
+      (expect (= :mutation (eng/classify-form-tag "fact_contradicts(\"f1\", \"f2\")"))))
 
     (it ":mutation for control verbs (D12: satisfy-hint! retired)"
-      (expect (= :mutation (eng/classify-form-tag "(done {:answer \"hi\"})")))
-      (expect (= :mutation (eng/classify-form-tag "(set-session-title! \"x\")")))
+      (expect (= :mutation (eng/classify-form-tag "done(\"hi\")")))
+      (expect (= :mutation (eng/classify-form-tag "set_session_title(\"x\")")))
       ;; satisfy-hint! is no longer a primitive; hook-task satisfaction
-      ;; goes through task-set!, which is already in mutation-heads.
-      (expect (= :observation (eng/classify-form-tag "(satisfy-hint! :h)"))))
+      ;; goes through task_set, which is already in mutation-heads.
+      (expect (= :observation (eng/classify-form-tag "satisfy_hint(\"h\")"))))
 
     (it ":observation for everything else"
-      (expect (= :observation (eng/classify-form-tag "(+ 1 2)")))
-      (expect (= :observation (eng/classify-form-tag "(cat \"src/x.clj\")")))
-      (expect (= :observation (eng/classify-form-tag "(recall \"t1/i1/f1\")")))
-      (expect (= :observation (eng/classify-form-tag "(recall {:match \"x\"})")))
+      (expect (= :observation (eng/classify-form-tag "1 + 2")))
+      (expect (= :observation (eng/classify-form-tag "cat(\"src/x.clj\")")))
+      (expect (= :observation (eng/classify-form-tag "recall(\"t1/i1/f1\")")))
+      (expect (= :observation (eng/classify-form-tag "recall({\"match\": \"x\"})")))
       (expect (= :observation (eng/classify-form-tag "42")))
-      (expect (= :observation (eng/classify-form-tag ":kw")))
+      (expect (= :observation (eng/classify-form-tag "\"kw\"")))
       (expect (= :observation (eng/classify-form-tag ""))))
 
     (it "extension tool heads default to :observation when no resolver is wired"
@@ -232,25 +228,25 @@
       ;; layer in `loop.clj` passes a `head-tag-resolver` that hits
       ;; `extension/op-tag`; with that resolver, the same head
       ;; classifies as :mutation.
-      (expect (= :observation (eng/classify-form-tag "(patch [{:path \"x\"}])")))
+      (expect (= :observation (eng/classify-form-tag "patch([{\"path\": \"x\"}])")))
       (expect (= :mutation
-                (eng/classify-form-tag "(patch [{:path \"x\"}])"
-                  (fn [head] (when (= 'patch head) :mutation))))))
+                (eng/classify-form-tag "patch([{\"path\": \"x\"}])"
+                  (fn [head] (when (= "patch" head) :mutation))))))
 
     (it "resolver-supplied tag wins over the engine's core fallback"
       ;; A resolver can also flip an engine-owned head, but in
       ;; practice extensions only declare their own ops; this just
       ;; documents the precedence rule.
       (expect (= :observation
-                (eng/classify-form-tag "(task-set! :K {:title \"x\"})"
+                (eng/classify-form-tag "task_set(\"K\", {\"title\": \"x\"})"
                   (fn [_] :observation))))
       (expect (= :mutation
-                (eng/classify-form-tag "(task-set! :K {:title \"x\"})"))))))
+                (eng/classify-form-tag "task_set(\"K\", {\"title\": \"x\"})"))))))
 
 (defdescribe advance-iter-trailer-test
   (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
               :session/trailer []}
-        obs1 [{:scope "t1/i1/f1" :tag :observation :src "(cat \"a\")" :result "old"}]
+        obs1 [{:scope "t1/i1/f1" :tag :observation :src "cat(\"a\")" :result "old"}]
         obs2 [{:scope "t1/i2/f1" :tag :observation :src "(cat \"b\")" :result "new"}]
         mut3 [{:scope "t1/i3/f1" :tag :mutation :src "(patch [])" :result []}]]
 
@@ -331,13 +327,13 @@
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           mixed [{:scope "t1/i1/f1" :tag :mutation
-                  :src "(task-set! :K {:title \"x\"})"
+                  :src "task_set(\"K\", {\"title\": \"x\"})"
                   :result "vis_silent"}
                  {:scope "t1/i1/f2" :tag :observation
-                  :src "(cat \"a\")"
+                  :src "cat(\"a\")"
                   :result "old"}
                  {:scope "t1/i1/f3" :tag :mutation
-                  :src "(fact-set! :baseline {:content \"x\"})"
+                  :src "fact_set(\"baseline\", {\"content\": \"x\"})"
                   :result "vis_silent"}]
           ctx (eng/advance-iter base mixed)
           pin (first (:session/trailer ctx))]
@@ -347,16 +343,16 @@
 
       (it "only the non-silent cat form is kept under :forms"
         (expect (= 1 (count (:forms pin))))
-        (expect (= "(cat \"a\")" (:src (first (:forms pin))))))))
+        (expect (= "cat(\"a\")" (:src (first (:forms pin))))))))
 
   (describe "an iter with ONLY :vis/silent forms produces no pin"
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           all-silent [{:scope "t1/i1/f1" :tag :mutation
-                       :src "(task-set! :K {:title \"x\"})"
+                       :src "task_set(\"K\", {\"title\": \"x\"})"
                        :result "vis_silent"}
                       {:scope "t1/i1/f2" :tag :mutation
-                       :src "(task-set! :T {:title \"x\"})"
+                       :src "task_set(\"T\", {\"title\": \"x\"})"
                        :result "vis_silent"}]
           ctx (eng/advance-iter base all-silent)]
 
@@ -367,11 +363,11 @@
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           forms [{:scope "t1/i1/f1" :tag :mutation
-                  :src "(fact-set! :K {})"
+                  :src "fact_set(\"K\", {})"
                   :vis/silent true
                   :result "vis_silent"}
                  {:scope "t1/i1/f2" :tag :observation
-                  :src "(cat \"a\")"
+                  :src "cat(\"a\")"
                   :result "..."}]
           ctx (eng/advance-iter base forms)
           pin (first (:session/trailer ctx))]
@@ -383,7 +379,7 @@
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
           forms [{:scope "t1/i1/f1" :tag :observation
-                  :src "(cat \"a\")"
+                  :src "cat(\"a\")"
                   :result "..."}
                  {:scope "t1/i1/f2" :tag :mutation
                   :src "done(\"x\")"
@@ -393,7 +389,7 @@
 
       (it "only cat lands in :forms (done excluded)"
         (expect (= 1 (count (:forms pin))))
-        (expect (= "(cat \"a\")" (:src (first (:forms pin)))))))))
+        (expect (= "cat(\"a\")" (:src (first (:forms pin)))))))))
 
 (defdescribe block-envelope-def-deref-test
   (it "derefs the Var returned by `(def NAME …)` so the trailer carries the bound value"
@@ -402,14 +398,14 @@
     ;; Model then re-emits `persist` to inspect, wasting an iter.
     ;; block->envelope now derefs IDeref results for def-shaped sources.
     (let [boxed (atom {:files ["a.clj"] :count 1})
-          env (eng/block->envelope {:code "(def persist (rg :any [\"x\"]))"
+          env (eng/block->envelope {:code "task_set(\"persist\", rg(any=[\"x\"]))"
                                     :result boxed}
                 1 {:turn 3 :iter 4})]
       (expect (= {:files ["a.clj"] :count 1} (:result env)))
       (expect (= :mutation (:tag env)))))
 
   (it "leaves non-def results untouched"
-    (let [env (eng/block->envelope {:code "(+ 1 2)" :result 3}
+    (let [env (eng/block->envelope {:code "1 + 2" :result 3}
                 1 {:turn 1 :iter 1})]
       (expect (= 3 (:result env)))))
 
@@ -467,7 +463,7 @@
                     :result [:ir {} [:strong {} "ls"] [:p {} ". (844)"]]
                     :error nil}]
           env (eng/block->envelope
-                {:code "(def r (ls \".\"))"
+                {:code "task_set(\"r\", ls(\".\"))"
                  :result {:op :ls :path "." :entry-count 844}
                  :channel channel}
                 1 {:turn 2 :iter 1})]
@@ -489,9 +485,9 @@
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
     (let [cursor {:turn 5 :iter 2}
-          blocks [{:code "(task-set! :K {:title \"x\"})" :result :ok}
-                  {:code "(cat \"a.clj\")"          :result "(ns a) ..."}
-                  {:code "(/ 1 0)" :error {:message "Divide by zero"}}]
+          blocks [{:code "task_set(\"K\", {\"title\": \"x\"})" :result :ok}
+                  {:code "cat(\"a.clj\")"          :result "(ns a) ..."}
+                  {:code "1 / 0" :error {:message "Divide by zero"}}]
           forms (eng/blocks->forms blocks cursor)]
 
       (it "preserves block order (1-based scope :form)"
@@ -509,7 +505,7 @@
         (expect (not (contains? (nth forms 2) :result))))
 
       (it "every envelope has :src from block :code"
-        (expect (= "(task-set! :K {:title \"x\"})" (:src (first forms)))))
+        (expect (= "task_set(\"K\", {\"title\": \"x\"})" (:src (first forms)))))
 
       (it "empty input returns empty vec"
         (expect (= [] (eng/blocks->forms [] cursor)))))))

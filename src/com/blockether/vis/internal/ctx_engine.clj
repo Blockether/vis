@@ -49,7 +49,6 @@
    a write outside the three hard rules above."
   (:require [clojure.set :as set]
             [clojure.string :as str]
-            [edamame.core :as edamame]
             [com.blockether.vis.internal.tokens :as tokens]))
 ;; =============================================================================
 ;; Scope parsing — deterministic, regex-driven
@@ -1594,55 +1593,34 @@
 ;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
 ;; =============================================================================
-(def ^:private head-edamame-opts
-  "Tag-tolerant edamame parse opts. Mirrors `env/validation-edamame-opts`
-   so a tagged-literal form (`#inst …`, `#some/tag …`) does not derail
-   head extraction. Reader macros expand to `(do val)` which is exactly
-   what we want — the head of an iter-top-level form is still detectable."
-  {:all true, :fn true, :regex true, :readers (fn [_tag] (fn [val] (list 'do val)))})
-(defn parse-form
-  "Parse `src` into a top-level Clojure form via edamame, using the
-   same tag-tolerant opts as `form-head-symbol`. Returns the FIRST
-   parsed form (sexp / scalar) or nil on parse failure / empty source.
-
-   Single source of truth for any \"give me the actual form structure,
-   not a string\" consumer (validator-fns, structural matchers,
-   audit logs). String-matching the raw `:src` is fragile —
-   comments / strings / nested calls can carry the target symbol
-   without the form actually invoking it; pattern-matching on the
-   parsed sexp eliminates that whole class of false positives."
+(def ^:private py-head-name-re
+  "Matches the head call NAME of a Python top-level form: any number of
+   leading blank or `#`-comment lines, then a bare `identifier(`. Captures
+   the identifier. A form that is not a `name(...)` call (a bare value, an
+   assignment, a comment-only block) does not match."
+  #"\A(?:[ \t]*(?:#[^\n]*)?\n)*[ \t]*([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+(defn form-head-name
+  "Return the head call NAME (a string) of `src` — a Python source string —
+   or nil when `src` is not a `name(...)` call form. Leading comments and
+   blank lines are skipped. Reading the head name (rather than scanning the
+   raw source) avoids false positives — a `\"done(x)\"` inside a string can't
+   match. Used by `classify-form-tag` and `engine-form-src?`; both agree on
+   the head, so there is one implementation."
   [src]
-  (try (first (edamame/parse-string-all (or src "") head-edamame-opts)) (catch Throwable _ nil)))
-(defn form-head-symbol
-  "Return the top-level head symbol of `src` (a Clojure source string)
-   or nil when `src` is not a call form. Uses edamame so reader meta,
-   discard forms (`#_`), comments, and tagged literals all behave the
-   same way they do during real evaluation. Used by `classify-form-tag`
-   and `engine-form-src?`; both must agree on what counts as the head,
-   so there is exactly one implementation.
-
-   Parse failure / non-list head / empty source → nil."
-  [src]
-  (let [form (parse-form src)] (when (and (seq? form) (symbol? (first form))) (first form))))
+  (some-> (re-find py-head-name-re (str src)) second))
 (def ^:private core-mutation-heads
-  "Engine-owned bare-symbol heads that classify a form as `:mutation`.
-   These are the symbols the engine itself defines and recognises:
+  "Engine-owned call NAMES (Python, snake_case) that classify a form as
+   `:mutation`: the CTX memory mutators (task/fact surface) plus control
+   flow (`done`, `set_session_title`).
 
-     • def-shape forms (sandbox state writes)
-     • CTX memory mutators (task/fact surface)
-     • Control flow (done, set-session-title!)
-     • Clojure native mutators that survive the sandbox
-       (reset!, swap!, alter-var-root)
-
-   Extension tools (`patch`, `write`, `git/commit!`, anything an
-   extension ships) are NOT here. Extensions declare their own
-   observation / mutation tag at registration time; the integration
-   layer reaches that tag through `extension/op-tag` and passes it to
-   `classify-form-tag` as an optional resolver. Keeping the core set
-   pure of `v/*` heads stops the engine from owning extension policy."
-  '#{def defn defmacro defmulti defmethod task-set! fact-set! task-depends! fact-depends!
-     fact-contradicts! fact-contradicts-remove! done set-session-title! reset! swap!
-     alter-var-root})
+   Extension tools (`patch`, `write`, `git_commit`, anything an extension
+   ships) are NOT here. Extensions declare their own observation / mutation
+   tag at registration time; the integration layer reaches that tag through
+   `extension/op-tag` and passes it to `classify-form-tag` as an optional
+   resolver. Keeping the core set pure of tool names stops the engine from
+   owning extension policy."
+  #{"task_set" "fact_set" "task_depends" "fact_depends" "fact_contradicts"
+    "fact_contradicts_remove" "done" "set_session_title"})
 (def ^:private engine-form-heads
   "Bare-symbol heads whose RAW source row is engine-only chrome (no
    observable side effect, no answer payload). The UI hides these forms
@@ -1657,8 +1635,8 @@
 
    Single source of truth shared by `progress.clj` (live trace) and
    `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
-  '#{set-session-title! done task-set! fact-set! task-depends! fact-depends! fact-contradicts!
-     fact-contradicts-remove!})
+  #{"set_session_title" "done" "task_set" "fact_set" "task_depends" "fact_depends"
+    "fact_contradicts" "fact_contradicts_remove"})
 (defn engine-form-src?
   "True when `src` is a top-level call whose head names an engine-only
    form: every member of `engine-form-heads`, plus the entire
@@ -1671,9 +1649,8 @@
    scanning the raw source string, which avoids false positives (a
    `\"(done x)\"` inside a string would otherwise have matched)."
   [src]
-  (when-let [sym (form-head-symbol src)]
-    (let [nm (name sym)]
-      (or (contains? engine-form-heads sym) (str/starts-with? nm "introspect-")))))
+  (when-let [nm (form-head-name src)]
+    (or (contains? engine-form-heads nm) (str/starts-with? nm "introspect_"))))
 (defn classify-form-tag
   "Classify a form-source string as `:observation` or `:mutation`.
 
@@ -1692,9 +1669,9 @@
    coding its symbol."
   ([src] (classify-form-tag src nil))
   ([src head-tag-resolver]
-   (let [sym (form-head-symbol src)]
-     (or (when (and sym head-tag-resolver) (try (head-tag-resolver sym) (catch Throwable _ nil)))
-       (if (and sym (contains? core-mutation-heads sym)) :mutation :observation)))))
+   (let [nm (form-head-name src)]
+     (or (when (and nm head-tag-resolver) (try (head-tag-resolver nm) (catch Throwable _ nil)))
+       (if (and nm (contains? core-mutation-heads nm)) :mutation :observation)))))
 ;; =============================================================================
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
 ;; into the canonical engine envelope shape
@@ -1725,14 +1702,9 @@
    1-based position and the engine cursor into the per-form envelope
    shape:
 
-     {:scope :tag :src :form :duration-ms :result :error :channel}
+     {:scope :tag :src :duration-ms :result :error :channel}
 
-   `:src` carries the form's source text; `:form` carries the same
-   text PARSED via edamame so validator-fns / structural matchers can
-   pattern-match on the actual sexp instead of `(includes? src \"...\")`-
-   shaped string regexes (a comment or string literal carrying the
-   target symbol would have produced false positives). Parse failure
-   leaves `:form` absent. `:tag` is derived from the source via
+   `:src` carries the form's source text. `:tag` is derived from the source via
    `classify-form-tag`. `:result` is included only when the block has
    one (engine convention: drop on default/nil). `:error` is included
    only when the block errored. `:channel` is included only when the
@@ -1770,13 +1742,11 @@
          ;; introspection.
          result (realize-trailer-value raw-result)
          channel (seq (:channel block))
-         parsed-form (parse-form src)
          duration-ms
          (when-let [envelope (:envelope block)]
            (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
              (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
      (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src}
-       (some? parsed-form) (assoc :form parsed-form)
        (some? duration-ms) (assoc :duration-ms duration-ms)
        (contains? block :result) (assoc :result result)
        (some? (:error block)) (assoc :error (:error block))

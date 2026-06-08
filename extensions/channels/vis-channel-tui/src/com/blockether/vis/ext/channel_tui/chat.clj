@@ -41,8 +41,7 @@
       s)))
 
 ;; Engine-form detection delegates to `ctx-engine/engine-form-src?` so
-;; we share one edamame-parsed head-symbol predicate with progress.clj.
-;; No string-prefix list to keep in sync.
+;; we share one Python head-name predicate with progress.clj.
 
 (defn- visible-code-segments?
   "True when an iteration block has at least one `:code` segment that

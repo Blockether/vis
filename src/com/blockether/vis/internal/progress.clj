@@ -228,12 +228,10 @@
   (boolean (:silent? chunk)))
 
 ;; Engine-form detection ("is this form silent UI chrome?") delegates
-;; to `ctx-engine/engine-form-src?`. It edamame-parses the head symbol
-;; so reader meta / discard forms / tagged literals never trip it, and
-;; there is exactly ONE list of engine-form heads in the codebase
-;; (`engine-form-heads` in `ctx-engine`). The old string-prefix scan
-;; over raw source was a false-positive magnet (a `"(done x)"` inside
-;; a string would have matched).
+;; to `ctx-engine/engine-form-src?`. It reads the Python call head name
+;; so a `done(...)` inside a string never trips it, and there is exactly
+;; ONE list of engine-form heads in the codebase (`engine-form-heads` in
+;; `ctx-engine`).
 
 (defn- visible-code-segments?
   "True when the chunk has at least one `:code` segment that should

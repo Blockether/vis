@@ -17,7 +17,7 @@
    [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- via [env sym & args]
-  (let [{f sym} (ctx-loop/build-sci-bindings env)]
+  (let [{f sym} (ctx-loop/build-engine-bindings env)]
     (apply f args)))
 
 (defn- simulate-turn!

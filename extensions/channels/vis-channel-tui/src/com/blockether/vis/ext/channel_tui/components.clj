@@ -710,7 +710,7 @@
         body-w (dialogs/default-content-width cols)
         blank [["" t/dialog-hint false]]
         arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
-        lines (vec (concat [(section-line "TASKS" 2) blank]
+        lines (vec (concat [blank (section-line "TASKS" 2) blank]
                            (task-overlay-lines tasks body-w)
                            (when (seq arch-tasks)
                              (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
