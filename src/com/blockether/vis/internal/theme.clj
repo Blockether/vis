@@ -323,11 +323,19 @@
   {"vis-light" vis-light
    "vis-dark" vis-dark})
 
-(def themes
-  "Process theme registry atom, keyed by string theme id.
-
-   Built-ins live here, and extensions can add more through
-   `register-theme!`, `register-themes!`, or `:ext/theme` registration."
+(defonce themes
+  ;; Process theme registry atom, keyed by string theme id.
+  ;;
+  ;; Built-ins live here, and extensions can add more through
+  ;; `register-theme!`, `register-themes!`, or `:ext/theme` registration.
+  ;;
+  ;; `defonce`, NOT `def`: extension themes are registered as a
+  ;; `register-extension!` side effect that `require` won't re-fire, so a
+  ;; plain `def` would drop every extension-contributed theme on each
+  ;; `:reload`. Tradeoff: editing the `built-in-themes` literal no longer
+  ;; takes effect on a bare reload — call `(reset! themes built-in-themes)`
+  ;; (as `unregister-themes!` does) or reboot to refresh built-ins.
+  ;; (`defonce` takes no docstring — hence the `;;` comment.)
   (atom built-in-themes))
 
 (def palette
