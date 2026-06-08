@@ -427,8 +427,7 @@
         base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts))
         bd t/dialog-border
         line-cnt (inc (* 2 (count help-shortcuts)))
-        prov-w (max (p/display-width title) (+ key-w base-desc-w 7))
-        bounds (dialogs/draw-dialog-chrome! g cols rows title prov-w line-cnt)
+        bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt)
         {:keys [left inner-w]} bounds
         desc-w (max base-desc-w (- inner-w key-w 8))
         bar
@@ -730,15 +729,13 @@
                                      (task-overlay-lines arch-tasks body-w 5)))
                            [blank (section-line "FACTS" 2) blank]
                            (fact-overlay-lines facts body-w)))
-        line-w (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))
-        content-w (reduce max (p/display-width title) (map line-w lines))
         n (count lines)
         ;; Cap the dialog to the shared modal footprint so the panel takes a
         ;; consistent, smaller slice of the screen instead of growing to fill
         ;; the terminal; the rest of the content is reachable by scrolling.
         cap-h (dialogs/default-content-height rows)
         req-h (min n cap-h)
-        bounds (dialogs/draw-dialog-chrome! g cols rows title content-w req-h)
+        bounds (dialogs/draw-dialog-chrome! g cols rows title req-h)
         {:keys [left inner-w]} bounds
         {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h)
         visible content-h
