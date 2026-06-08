@@ -1834,7 +1834,7 @@
                       :tokens {:input 100 :output 20 :cached 70}}
                      4 2 60 {:viewport-h 40})]
       (expect (= 5 height))
-      (expect (some #(str/includes? (:text %) "tok 100→20 (cached 70)")
+      (expect (some #(str/includes? (:text %) "100→20 (cached 70)")
                 @puts))))
 
   (it "omits zero cached token usage in the assistant bubble footer"
@@ -1859,7 +1859,7 @@
                       :tokens {:input 100 :output 20 :cached 0}}
                      4 2 60 {:viewport-h 40})]
       (expect (= 5 height))
-      (expect (some #(str/includes? (:text %) "tok 100→20")
+      (expect (some #(str/includes? (:text %) "100→20")
                 @puts))
       (expect (not-any? #(str/includes? (:text %) "cached 0")
                 @puts))))
@@ -1886,11 +1886,16 @@
                       :tokens {:input 100 :output 20}}
                      4 2 60 {:viewport-h 40})
           answer-row (:row (first (filter #(= "hello" (:text %)) @puts)))
-          footer-row (:row (first (filter #(str/includes? (:text %) "tok 100→20") @puts)))]
+          footer-row (:row (first (filter #(str/includes? (:text %) "100→20") @puts)))]
       (expect (= 5 height))
       (expect (= 2 (- footer-row answer-row)))))
 
-  (it "renders hidden silent form count next to iteration count in the footer"
+  (it "omits the footer for an iteration-only turn with no model / tokens / cost"
+    ;; The bubble footer is now the SHARED humanized turn-summary line
+    ;; (`vis/meta-summary-line`): model · in→out (cached) · ~$cost · duration.
+    ;; Iteration / silent-form bookkeeping no longer rides this footer, so a
+    ;; turn that only carries iteration metadata produces no footer line at all
+    ;; and the bubble collapses to the bare answer height (no footer rows).
     (let [puts    (atom [])
           graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
                      (clearModifiers [] this)
@@ -1914,9 +1919,9 @@
                                         {:silent? false}]}
                                {:forms [{:silent? true}]}]}
                      4 2 60 {:viewport-h 40})]
-      (expect (= 5 height))
-      (expect (some #(str/includes? (:text %) "3 iters (2 silent)")
-                @puts))))
+      (expect (= 3 height))
+      (expect (not-any? #(str/includes? (str (:text %)) "iter") @puts))
+      (expect (not-any? #(str/includes? (str (:text %)) "silent") @puts))))
 
   (it "ignores legacy turn separator flag on user prompts"
     (let [puts    (atom [])

@@ -262,7 +262,8 @@
                          (cells {:status-label "modified"
                                  :path "src/com/blockether/vis/core.clj"
                                  :size-label "14.0K"
-                                 :age-label "1m"}))]
+                                 :age-label "1m"}
+                           (second widths)))]
       (expect (str/includes? line "modified"))
       (expect (not (str/includes? line "[M]")))))
 
@@ -587,12 +588,10 @@
       (expect (every? #(str/includes? % "│") [header active-label inactive-label]))
       (expect (str/includes? header "ID"))
       (expect (str/includes? header "Turns"))
-      ;; The active marker sits in a width-1 gutter column. `●` (U+25CF) is
-      ;; display-width 2, so the boxed-row justify clips it to the 1-col
-      ;; ellipsis; inactive rows leave that column blank. Assert the marker
-      ;; *cell* (between the first two │) rather than the raw glyph, which
-      ;; cannot survive a single-column cell.
-      (expect (= " … " (second (str/split active-label #"│"))))
+      ;; The active marker sits in the gutter column. `●` (U+25CF) renders in
+      ;; its own cell (` ● `); inactive rows leave that column blank. Assert
+      ;; the marker *cell* (between the first two │) rather than the raw glyph.
+      (expect (= " ● " (second (str/split active-label #"│"))))
       (expect (= "   " (second (str/split inactive-label #"│"))))
       (expect (str/includes? active-label "│ 123e4567 │"))
       (expect (str/includes? active-label "│     2 │"))

@@ -98,15 +98,20 @@
                                                                     :models [{:name "gpt-5"}]})
                 [:authenticated? :source :config-path]))))
 
-  (it "delegates to the registered provider status fn when no api-key is persisted"
-    (with-redefs [vis/provider-by-id (constantly {:provider/status-fn (constantly {:authenticated? true
-                                                                                   :source :local
-                                                                                   :model-count 3})})]
+  (it "routes local no-auth providers through the liveness probe (source :local)"
+    ;; Local providers (Ollama / LM Studio) have no api-key and their
+    ;; registered status-fn is a hardcoded stub, so `configured-provider-status`
+    ;; now probes the endpoint for real instead of delegating. The probe owns
+    ;; the `{:source :local}` shape; stub it so this stays hermetic.
+    (with-redefs-fn {#'provider/probe-local-reachable (constantly {:authenticated? true
+                                                                   :source :local
+                                                                   :provider-id :ollama})}
+      (fn []
       (expect (= {:authenticated? true
                   :source :local
-                  :model-count 3}
+                  :provider-id :ollama}
                 (select-keys (@#'provider/configured-provider-status {:id :ollama})
-                  [:authenticated? :source :model-count]))))))
+                  [:authenticated? :source :provider-id])))))))
 
 (defdescribe provider-dialog-async-diagnostics-test
   (it "seeds provider diagnostics without running blocking provider probes"
