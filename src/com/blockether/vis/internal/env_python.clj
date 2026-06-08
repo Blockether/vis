@@ -88,8 +88,9 @@
 
 (defn ->clj
   "Polyglot `Value` (a Python value) -> Clojure data. Dicts -> maps with
-   keyword keys, lists/tuples -> vectors, callables/opaque objects -> the raw
-   `Value` (rare on the tool-arg path)."
+   keyword keys, lists/tuples -> vectors, host objects (Java values that
+   crossed the boundary, e.g. UUIDs) -> their underlying Java value via
+   `asHostObject`, callables/opaque objects -> the raw `Value`."
   [^Value v]
   (cond
     (nil? v)            nil
@@ -107,6 +108,7 @@
                                          (py-key->clj (.asString k))
                                          (->clj (.getHashValue v k)))))
                               (persistent! m))))
+    (.isHostObject v)   (.asHostObject v)
     :else               v))
 
 (defn sym->py-name
