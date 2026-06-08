@@ -50,8 +50,8 @@
     (let [env (mk-env)
           bindings (cl/build-engine-bindings env)]
       (it "exposes exactly the surviving engine mutators"
-        (expect (= #{'task-set! 'fact-set!
-                     'task-depends! 'fact-depends!
+        (expect (= #{'update-plan! 'plan-step! 'fact-set!
+                     'fact-depends!
                      'fact-contradicts! 'fact-contradicts-remove!}
                   (set (keys bindings)))))
 
@@ -59,20 +59,22 @@
         (expect (every? fn? (vals bindings)))))))
 
 (defdescribe task-mutator-roundtrip-test
-  (describe "task-set! through the binding mutates the ctx atom"
+  (describe "update-plan! through the binding mutates the ctx atom"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-engine-bindings env)
-          ret (task-set :auth {:title "switch to bcrypt" :status :todo})]
+          {update-plan 'update-plan!} (cl/build-engine-bindings env)
+          ;; title "switch to bcrypt" slugs to the snake_case step key
+          ;; "switch_to_bcrypt"; a lone :todo auto-promotes to :doing.
+          ret (update-plan [{:title "switch to bcrypt" :status "todo"}])]
       (it "returns the vis_silent sentinel (no echo)"
         (expect (= "vis_silent" ret)))
 
-      (it "ctx atom carries the new task"
+      (it "ctx atom carries the new plan step keyed by title slug"
         (expect (= "switch to bcrypt"
-                  (get-in @(:ctx-atom env) [:session/tasks :auth :title]))))
+                  (get-in @(:ctx-atom env) [:session/tasks "switch_to_bcrypt" :title]))))
 
       (it "the :born scope was stamped from the loop cursor"
         (expect (= "t2/i3/f5"
-                  (get-in @(:ctx-atom env) [:session/tasks :auth :born])))))))
+                  (get-in @(:ctx-atom env) [:session/tasks "switch_to_bcrypt" :born])))))))
 
 (defdescribe fact-mutator-roundtrip-test
   (describe "fact-set! through the binding mutates the ctx atom"
@@ -88,16 +90,17 @@
                   (get-in @(:ctx-atom env) [:session/facts :race :born])))))))
 
 (defdescribe done-self-asserted-test
-  (describe "task-set! :status :done is accepted and stamped (self-asserted)"
+  (describe "plan step :status done is accepted and stamped (self-asserted)"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-engine-bindings env)
-          _ (task-set :ship {:title "ship it" :status :todo})
-          _ (task-set :ship {:status :done})]
+          {update-plan 'update-plan! plan-step 'plan-step!} (cl/build-engine-bindings env)
+          ;; "ship it" → key "ship_it"; create then self-assert done.
+          _ (update-plan [{:title "ship it" :status "todo"}])
+          _ (plan-step "ship_it" {:status "done"})]
       (it "status is :done"
-        (expect (= :done (get-in @(:ctx-atom env) [:session/tasks :ship :status]))))
+        (expect (= :done (get-in @(:ctx-atom env) [:session/tasks "ship_it" :status]))))
 
       (it ":done-born stamped by the engine"
-        (expect (some? (get-in @(:ctx-atom env) [:session/tasks :ship :done-born])))))))
+        (expect (some? (get-in @(:ctx-atom env) [:session/tasks "ship_it" :done-born])))))))
 
 (defdescribe fact-contradicts-binding-test
   (describe "fact-contradicts! through the binding writes symmetric link"
@@ -109,21 +112,6 @@
       (it "both facts carry the symmetric :contradicts link"
         (expect (contains? (get-in @(:ctx-atom env) [:session/facts :a :contradicts]) :b))
         (expect (contains? (get-in @(:ctx-atom env) [:session/facts :b :contradicts]) :a))))))
-
-(defdescribe cycle-hard-reject-test
-  (describe "task-set! :depends_on cycle is hard-rejected via the binding"
-    (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-engine-bindings env)
-          _ (task-set :a {:title "a" :status :todo})
-          _ (task-set :b {:title "b" :status :todo :depends_on [:a]})
-          _ (task-set :a {:depends_on [:b]})]
-      (it ":a has no :depends_on (write refused)"
-        (expect (not (contains? (get-in @(:ctx-atom env) [:session/tasks :a])
-                       :depends_on))))
-
-      (it ":depends_on_cycle warning captured"
-        (expect (some #(= :depends_on_cycle (:code %))
-                  (warnings-of env)))))))
 
 (defdescribe drain-warnings-test
   (describe "drain-warnings! returns + clears"
@@ -155,10 +143,11 @@
 (defdescribe render-block-payload-test
   (describe "render-block! passes {:ctx :warnings} and surfaces :session/hints"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-engine-bindings env)
-          ;; produce a structural warning: task :done with a non-terminal dep
-          _ (task-set :prereq {:title "first" :status :todo})
-          _ (task-set :follow {:title "second" :depends_on [:prereq] :status :done})
+          {update-plan 'update-plan!} (cl/build-engine-bindings env)
+          ;; produce a structural warning: a :done step with an :acceptance
+          ;; but :verified? not true (done-unverified).
+          _ (update-plan [{:title "ship" :status "done"
+                           :acceptance "tests pass"}])
           captured (atom nil)
           rendered (cl/render-block! env
                      (fn [payload] (reset! captured payload) (:ctx payload)))]
@@ -184,11 +173,11 @@
 (defdescribe current-ctx-test
   (describe "current-ctx stamps the cursor at render time"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-engine-bindings env)
-          _ (task-set :s {:title "x" :status :todo})
+          {update-plan 'update-plan!} (cl/build-engine-bindings env)
+          _ (update-plan [{:title "x" :status "todo"}])
           c (cl/current-ctx env)]
       (it "ctx carries the task"
-        (expect (= "x" (get-in c [:session/tasks :s :title]))))
+        (expect (= "x" (get-in c [:session/tasks "x" :title]))))
 
       (it ":session/scope reflects current cursor"
         (expect (= {:turn 2 :iter 3 :next-form 5}
@@ -202,25 +191,28 @@
         (expect (= "test-session" (:session/id c)))))))
 
 (defdescribe end-to-end-mini-scenario-test
-  (describe "small scenario via engine bindings: facts → tasks → deps → done"
+  (describe "small scenario via engine bindings: fact + ordered plan → done"
     (let [env (mk-env)
-          {tk 'task-set! ft 'fact-set! td 'task-depends!} (cl/build-engine-bindings env)
+          {update-plan 'update-plan! ft 'fact-set!} (cl/build-engine-bindings env)
           _ (ft :rl-bug {:content "race"})
-          _ (tk :swap {:title "CAS" :status :doing})
-          _ (tk :test {:title "property test" :status :todo})
-          _ (td :test [:swap])
-          _ (tk :swap {:status :done})
+          ;; ordered plan replaces task deps: "CAS" runs before "property test".
+          _ (update-plan [{:title "CAS" :status "doing"}
+                          {:title "property test" :status "todo"}])
+          ;; self-assert the first step done via a whole-plan re-emit.
+          _ (update-plan [{:title "CAS" :status "done"}
+                          {:title "property test" :status "todo"}])
           ctx (cl/current-ctx env)]
-      (it "ctx has the fact and both tasks"
+      (it "ctx has the fact and both plan steps"
         (expect (= 1 (count (:session/facts ctx))))
         (expect (= 2 (count (:session/tasks ctx)))))
 
-      (it ":test depends on :swap (via task-depends!)"
-        (expect (= [:swap] (get-in ctx [:session/tasks :test :depends_on]))))
+      (it "plan order is preserved (1-based :order)"
+        (expect (= 1 (get-in ctx [:session/tasks "cas" :order])))
+        (expect (= 2 (get-in ctx [:session/tasks "property_test" :order]))))
 
-      (it ":swap is :done with :done-born stamped"
-        (expect (= :done (get-in ctx [:session/tasks :swap :status])))
-        (expect (some? (get-in ctx [:session/tasks :swap :done-born])))))))
+      (it "\"cas\" is :done with :done-born stamped"
+        (expect (= :done (get-in ctx [:session/tasks "cas" :status])))
+        (expect (some? (get-in ctx [:session/tasks "cas" :done-born])))))))
 
 ;; =============================================================================
 ;; trailer→form-results projection
@@ -262,8 +254,10 @@
 (defdescribe recall-window-entity-test
   (describe "recall by entity address windows a live value"
     (let [env (mk-env)
-          {tk 'task-set!} (cl/build-engine-bindings env)
-          _ (tk :swap {:title "CAS rewrite" :status :doing})
+          {ft 'fact-set!} (cl/build-engine-bindings env)
+          ;; facts are still keyword-keyed, so recall by keyword address
+          ;; resolves a live fact value.
+          _ (ft :swap {:content "CAS rewrite"})
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))]
 
       (it "recall :K windows a stored entity's value"

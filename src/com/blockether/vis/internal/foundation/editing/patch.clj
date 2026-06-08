@@ -500,14 +500,14 @@
                                                                :from-line (inc (first froms)),
                                                                :to-line (inc (first tos))}}
           :else {:from-line (inc (long (first froms))), :to-line (inc (long (first tos)))})))
-(defn resolve-hash-edit
-  "Content-addressed line-range replace. Resolves `from_hash` (and
-   `to_hash`, defaulting to `from_hash` for a single line) against the
-   LIVE `current` content by recomputing `line-hash` per line — so the
-   edit lands on the right line even if it drifted since the `cat` read.
-   Each hash must match EXACTLY one line; a dup-line collision is refused
-   (use `:search`). Returns `{:new-content S :applied-line N}` or
-   `{:error {:reason KW …}}`."
+(defn resolve-hash-edit-span
+  "Resolve a content-addressed line-range edit to a CHAR SPAN against `current`,
+   WITHOUT building new content: `{:start S :end E :replacement R :applied-line N}`
+   or `{:error {:reason KW …}}`. Lets a multi-edit batch resolve every anchor
+   against the ORIGINAL snapshot and splice all spans together atomically, so an
+   earlier edit can't drift a later edit's hash/ordinal. `to_hash` defaults to
+   `from_hash` (single line). Each hash must match EXACTLY one line; a dup-line
+   collision is refused (use `:search`)."
   [^String current from_hash to_hash ^String replace]
   (let [res (resolve-hash-range current from_hash to_hash)]
     (if (:error res)
@@ -519,5 +519,14 @@
                                   (= \newline (.charAt current (dec (long char-end)))))
             replace-ends-nl? (str/ends-with? replace "\n")
             rewritten (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
-        {:new-content (str (subs current 0 char-start) rewritten (subs current char-end)),
-         :applied-line (inc line-start)}))))
+        {:start char-start :end char-end :replacement rewritten :applied-line (inc line-start)}))))
+(defn resolve-hash-edit
+  "Content-addressed line-range replace returning full `{:new-content S
+   :applied-line N}` (or `{:error …}`). Thin wrapper over
+   `resolve-hash-edit-span`; prefer the span variant inside a batch."
+  [^String current from_hash to_hash ^String replace]
+  (let [res (resolve-hash-edit-span current from_hash to_hash replace)]
+    (if (:error res)
+      res
+      {:new-content (str (subs current 0 (:start res)) (:replacement res) (subs current (:end res))),
+       :applied-line (:applied-line res)})))

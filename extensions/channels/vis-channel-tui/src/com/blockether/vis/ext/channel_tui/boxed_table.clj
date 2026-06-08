@@ -174,7 +174,9 @@
           :else
           (do
             (p/set-colors! g t/dialog-fg t/dialog-bg)
-            (p/fill-rect! g table-x row rendered-w 1)))))
+            (p/fill-rect! g table-x row rendered-w 1)
+            (p/put-str! g table-x row
+              (table/boxed-row-line full-widths (vec (repeat (count full-widths) "")) aligns))))))
     ;; Optional closing border (matches navigator-style boxed picker)
     (when closed?
       (p/set-colors! g t/dialog-border t/dialog-bg)

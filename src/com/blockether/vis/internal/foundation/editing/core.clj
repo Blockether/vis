@@ -1731,142 +1731,142 @@
 ;; it — no bespoke hash math in this channel/IO namespace.
 
 (defn- patch-analysis
+  "Resolve every edit to a char SPAN against the ORIGINAL per-file snapshot (the
+   file as the model last read it), collect spans per path, then splice them all
+   together bottom-up. Resolving against the original — never cumulatively — keeps
+   hashline / ordinal anchors and line numbers valid across a multi-edit batch:
+   an earlier edit can no longer drift a later edit's anchor. Overlapping spans
+   in one file are a hard error (split into separate patches). Atomic: any failure
+   means `patch-safe` writes nothing."
   [edits]
-  (let [edits (coerce-patch-edits edits)]
-    (loop [idx 0
-           remaining edits
-           states {}
-           checks []
-           failures []]
-      (if-let [{:keys [path search replace after before nth from_hash to_hash] :as edit}
-               (first remaining)]
-        (let [resolved (resolve-edit-target path)]
-          (if-let [path-error (:error resolved)]
-            (let [check {:edit-index idx
-                         :path path
-                         :reason (:reason path-error)
-                         :path-error path-error
-                         :search-preview (search-preview (str search))}]
-              (recur (inc idx) (next remaining) states
-                (conj checks check) (conj failures check)))
-            (let [file    (:file resolved)
-                  rel     (:rel resolved)
-                  before-text (or (get-in states [path :before]) (slurp file))
-                  current (or (get-in states [path :after]) before-text)
-                  search  (str search)
-                  replace (str replace)
-                  stale   (when-not (contains? states path)
-                            (staleness-check file edit))]
-              (if from_hash
-                ;; ---- hashline locator (content-addressed by line hash) ----
-                (let [base-check {:edit-index idx :path rel
-                                  :from_hash from_hash
-                                  :to_hash (or to_hash from_hash)}]
-                  (if stale
-                    (let [check (assoc base-check :reason :stale :stale stale)]
-                      (recur (inc idx) (next remaining) states
-                        (conj checks check) (conj failures check)))
-                    (let [res (patch/resolve-hash-edit current from_hash to_hash replace)]
-                      (if-let [err (:error res)]
-                        (let [check (assoc base-check :reason (:reason err) :hash-error err)]
-                          (recur (inc idx) (next remaining) states
-                            (conj checks check) (conj failures check)))
-                        (recur (inc idx) (next remaining)
-                          (assoc states path {:file file :path rel
-                                              :before before-text
-                                              :after (:new-content res)})
-                          (conj checks (assoc base-check :pass :hashline
-                                         :applied-positions [(:applied-line res)]))
-                          failures)))))
-                ;; ---- text locator (:search), original machinery ----
-                (let [all-positions (find-substring-positions current search)
-                      anchor-result (filter-positions-by-anchors all-positions (count search) current
-                                      {:after after :before before})
-                      filtered-positions (:positions anchor-result)
-                      selected (when (nil? (:anchor-error anchor-result))
-                                 (select-by-nth filtered-positions nth))
-                      base-check {:edit-index idx
-                                  :path rel
-                                  :matches (count all-positions)
-                                  :filtered-matches (count (or filtered-positions []))
-                                  :search-preview (search-preview search)
-                                  :anchors (cond-> {}
-                                             after  (assoc :after (search-preview (str after)))
-                                             before (assoc :before (search-preview (str before)))
-                                             nth    (assoc :nth nth))}]
-                  (cond
-                    stale
-                    (let [check (assoc base-check :reason :stale :stale stale)]
-                      (recur (inc idx) (next remaining) states
-                        (conj checks check) (conj failures check)))
+  (let [edits (coerce-patch-edits edits)
+        ;; PHASE 1 — resolve each edit to span(s) against the file's ORIGINAL text.
+        {:keys [origs spans checks failures]}
+        (loop [idx 0, remaining edits, origs {}, spans {}, checks [], failures []]
+          (if-let [{:keys [path search replace after before nth from_hash to_hash] :as edit}
+                   (first remaining)]
+            (let [resolved (resolve-edit-target path)]
+              (if-let [path-error (:error resolved)]
+                (let [check {:edit-index idx :path path :reason (:reason path-error)
+                             :path-error path-error :search-preview (search-preview (str search))}]
+                  (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
+                (let [file        (:file resolved)
+                      rel         (:rel resolved)
+                      seen?       (contains? origs path)
+                      ;; ALWAYS the original snapshot — never the cumulative result.
+                      current     (or (get origs path) (slurp file))
+                      origs       (assoc origs path current)
+                      search      (str search)
+                      replace     (str replace)
+                      stale       (when-not seen? (staleness-check file edit))]
+                  (if from_hash
+                    ;; ---- hashline locator (content-addressed by line hash) ----
+                    (let [base-check {:edit-index idx :path rel :from_hash from_hash :to_hash (or to_hash from_hash)}]
+                      (if stale
+                        (let [check (assoc base-check :reason :stale :stale stale)]
+                          (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
+                        (let [res (patch/resolve-hash-edit-span current from_hash to_hash replace)]
+                          (if-let [err (:error res)]
+                            (let [check (assoc base-check :reason (:reason err) :hash-error err)]
+                              (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
+                            (let [span  {:start (:start res) :end (:end res) :replacement (:replacement res)
+                                         :file file :path rel :edit-index idx}
+                                  check (assoc base-check :pass :hashline :applied-positions [(:applied-line res)])]
+                              (recur (inc idx) (next remaining) origs
+                                (update spans path (fnil conj []) span)
+                                (conj checks check) failures))))))
+                    ;; ---- text locator (:search) ----
+                    (let [all-positions (find-substring-positions current search)
+                          anchor-result (filter-positions-by-anchors all-positions (count search) current
+                                          {:after after :before before})
+                          filtered-positions (:positions anchor-result)
+                          selected (when (nil? (:anchor-error anchor-result))
+                                     (select-by-nth filtered-positions nth))
+                          base-check {:edit-index idx :path rel
+                                      :matches (count all-positions)
+                                      :filtered-matches (count (or filtered-positions []))
+                                      :search-preview (search-preview search)
+                                      :anchors (cond-> {}
+                                                 after  (assoc :after (search-preview (str after)))
+                                                 before (assoc :before (search-preview (str before)))
+                                                 nth    (assoc :nth nth))}]
+                      (cond
+                        stale
+                        (let [check (assoc base-check :reason :stale :stale stale)]
+                          (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
 
-                    (:anchor-error anchor-result)
-                    (let [check (assoc base-check :reason :anchor-not-found
-                                  :anchor-error (:anchor-error anchor-result))]
-                      (recur (inc idx) (next remaining) states
-                        (conj checks check) (conj failures check)))
+                        (:anchor-error anchor-result)
+                        (let [check (assoc base-check :reason :anchor-not-found :anchor-error (:anchor-error anchor-result))]
+                          (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
 
-                    (seq selected)
-                    (let [new-content (apply-substring-replacements current selected (count search) replace)
-                          check       (assoc base-check :applied-positions (vec selected) :pass :exact)]
-                      (recur (inc idx) (next remaining)
-                        (assoc states path {:file file
-                                            :path rel
-                                            :before before-text
-                                            :after new-content})
-                        (conj checks check) failures))
+                        (seq selected)
+                        (let [slen      (count search)
+                              new-spans (mapv (fn [pos] {:start pos :end (+ (long pos) slen) :replacement replace
+                                                         :file file :path rel :edit-index idx})
+                                          selected)
+                              check     (assoc base-check :applied-positions (vec selected) :pass :exact)]
+                          (recur (inc idx) (next remaining) origs
+                            (update spans path (fnil into []) new-spans)
+                            (conj checks check) failures))
 
-                    ;; Zero or out-of-range -> try fuzzy if multi-line
-                    :else
-                    (if-let [fuzzy (and (zero? (count all-positions))
-                                     (not after) (not before) (nil? nth)
-                                     (or (fuzzy-line-match current search)
-                                       (ws-agnostic-match current search)))]
-                      (let [{:keys [char-start char-end pass indent-delta]} fuzzy
-                            rewritten (adjust-replace-for-indent replace indent-delta)
-                            ;; Line-based fuzzy matches whole lines, so the
-                            ;; substring being replaced may include the trailing
-                            ;; `\n` of the last matched line. If the model's
-                            ;; `:replace` did not include a trailing newline
-                            ;; (typical when authoring a SEARCH block by hand),
-                            ;; preserve the line boundary by reapplying it.
-                            matched-ends-with-nl? (and (> char-end 0)
-                                                    (= \newline (.charAt current (dec char-end))))
-                            replace-ends-with-nl? (str/ends-with? rewritten "\n")
-                            rewritten (if (and matched-ends-with-nl?
-                                            (not replace-ends-with-nl?))
-                                        (str rewritten "\n")
-                                        rewritten)
-                            new-content (str (subs current 0 char-start)
-                                          rewritten
-                                          (subs current char-end))
-                            check (assoc base-check :pass pass
-                                    :indent-delta indent-delta
-                                    :applied-positions [char-start])]
-                        (recur (inc idx) (next remaining)
-                          (assoc states path {:file file
-                                              :path rel
-                                              :before before-text
-                                              :after new-content})
-                          (conj checks check) failures))
-                      (let [reason (cond
-                                     (and nth (pos? (count filtered-positions))) :nth-out-of-range
-                                     (and (or after before)
-                                       (pos? (count all-positions))
-                                       (zero? (count filtered-positions)))
-                                     :anchors-exclude-all-matches
-                                     (zero? (count all-positions)) :no-match
-                                     :else :ambiguous-no-anchor)
-                            nearest (when (zero? (count all-positions))
-                                      (nearest-match-context current search))
-                            check (cond-> (assoc base-check :reason reason)
-                                    nearest (assoc :nearest nearest))]
-                        (recur (inc idx) (next remaining) states
-                          (conj checks check) (conj failures check))))))))))
-        {:plans (vals states)
-         :checks checks
-         :failures failures
-         :valid? (empty? failures)}))))
+                        ;; Zero or out-of-range -> try fuzzy if multi-line
+                        :else
+                        (if-let [fuzzy (and (zero? (count all-positions))
+                                         (not after) (not before) (nil? nth)
+                                         (or (fuzzy-line-match current search)
+                                           (ws-agnostic-match current search)))]
+                          (let [{:keys [char-start char-end pass indent-delta]} fuzzy
+                                rewritten (adjust-replace-for-indent replace indent-delta)
+                                matched-ends-with-nl? (and (> (long char-end) 0)
+                                                        (= \newline (.charAt current (dec (long char-end)))))
+                                rewritten (if (and matched-ends-with-nl? (not (str/ends-with? rewritten "\n")))
+                                            (str rewritten "\n")
+                                            rewritten)
+                                span  {:start char-start :end char-end :replacement rewritten
+                                       :file file :path rel :edit-index idx}
+                                check (assoc base-check :pass pass :indent-delta indent-delta
+                                        :applied-positions [char-start])]
+                            (recur (inc idx) (next remaining) origs
+                              (update spans path (fnil conj []) span)
+                              (conj checks check) failures))
+                          (let [reason (cond
+                                         (and nth (pos? (count filtered-positions))) :nth-out-of-range
+                                         (and (or after before)
+                                           (pos? (count all-positions))
+                                           (zero? (count filtered-positions)))
+                                         :anchors-exclude-all-matches
+                                         (zero? (count all-positions)) :no-match
+                                         :else :ambiguous-no-anchor)
+                                nearest (when (zero? (count all-positions))
+                                          (nearest-match-context current search))
+                                check (cond-> (assoc base-check :reason reason)
+                                        nearest (assoc :nearest nearest))]
+                            (recur (inc idx) (next remaining) origs spans
+                              (conj checks check) (conj failures check))))))))))
+            {:origs origs :spans spans :checks checks :failures failures}))
+        ;; PHASE 2 — splice each file's spans into its ORIGINAL, bottom-up so
+        ;; earlier offsets stay valid. Overlapping spans are a conflict.
+        results (for [[path file-spans] spans]
+                  (let [before (get origs path)
+                        sorted (sort-by :start file-spans)
+                        bad    (first (filter (fn [[a b]] (> (long (:end a)) (long (:start b))))
+                                        (partition 2 1 sorted)))]
+                    (if bad
+                      {:failure {:edit-index (:edit-index (second bad)) :path path
+                                 :reason :overlapping-edits
+                                 :overlap (mapv :edit-index bad)}}
+                      {:plan {:file (:file (first file-spans)) :path (:path (first file-spans))
+                              :before before
+                              :after (reduce (fn [c {:keys [start end replacement]}]
+                                               (str (subs c 0 start) replacement (subs c end)))
+                                       before (reverse sorted))}})))
+        overlap-failures (vec (keep :failure results))
+        plans (vec (keep :plan results))
+        all-failures (into failures overlap-failures)]
+    {:plans plans
+     :checks checks
+     :failures all-failures
+     :valid? (empty? all-failures)}))
 
 (defn- explain-failure
   [{:keys [edit-index path matches filtered-matches reason anchors nearest stale anchor-error

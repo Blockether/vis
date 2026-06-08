@@ -152,20 +152,20 @@
     "vis_silent"))
 
 (defn build-engine-bindings
-  "Return `{'symbol bare-fn}` for every engine mutator. The model writes
-   `(task-set! :K {:status :done})` or `(fact-set! :K {…})` directly inside
-   a fence; we route the call through `apply-and-record!` against the
-   single ctx-atom.
+  "Return `{'symbol bare-fn}` for every model-facing engine mutator. The model
+   writes `update_plan([...])` or `fact_set(k, {…})` directly in its Python and
+   we route the call through `apply-and-record!` against the single ctx-atom.
 
    All mutators return `:vis/silent` — engine mutations are 'effect-only',
    visible on next render but quiet in the form echo.
 
-   D12: no `satisfy-hint!` binding. Hook-task satisfaction goes through
-   the standard `task-set!` mutator with `{:status :done}`."
+   Tasks: the ONE task verb is `update_plan` (ordered plan, Codex-style). The
+   internal `:task-set!` mutator is NOT bound here — it stays engine-private for
+   foundation hook-tasks."
   [env]
-  {'task-set!     (fn task-set!     [k partial]            (apply-and-record! env :task-set!     [k partial]))
+  {'update-plan!  (fn update-plan!  [steps]                 (apply-and-record! env :update-plan!  [steps]))
+   'plan-step!    (fn plan-step!    [k partial]             (apply-and-record! env :plan-step!    [k partial]))
    'fact-set!     (fn fact-set!     [k partial]            (apply-and-record! env :fact-set!     [k partial]))
-   'task-depends! (fn task-depends! [k deps]               (apply-and-record! env :task-depends! [k deps]))
    'fact-depends! (fn fact-depends! [k deps]               (apply-and-record! env :fact-depends! [k deps]))
    'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
    'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))})

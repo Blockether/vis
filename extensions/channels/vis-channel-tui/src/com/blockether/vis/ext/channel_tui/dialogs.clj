@@ -551,8 +551,8 @@
             file-w (max 1 (- available status-w size-w modified-w))]
         [status-w file-w size-w modified-w]))))
 (defn- file-picker-table-cells
-  [{:keys [status-label path size-label age-label]}]
-  [status-label path size-label age-label])
+  [{:keys [status-label path size-label age-label]} file-w]
+  [status-label (table/middle-ellipsize path file-w) size-label age-label])
 (defn- reset-picker-cursor!
   "Reset selection + scroll to top. Used after filter/sort/ignore changes
    so cursor doesn't dangle past the new result set."
@@ -604,7 +604,7 @@
              :scroll      @scroll
              :selected    @selected
              :closed?     true
-             :cell-fn     (fn [idx] (file-picker-table-cells (nth items idx)))
+             :cell-fn     (fn [idx] (file-picker-table-cells (nth items idx) (nth widths 1)))
              :empty-cells ["" "No matching files." "" ""]})
           ;; Footer carries every modifier so the dialog body stays
           ;; pure table. Pairs follow navigator's pattern: the key in
