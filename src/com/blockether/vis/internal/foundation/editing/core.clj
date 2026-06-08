@@ -1147,7 +1147,10 @@
    `:is_files_only` / `:is_counts` / (default content).
 
    Returns one of:
-     {:hits   [{:path :line :text :before? :after?} ...] :truncated-by KW}  ;; content
+     {:hits   [{:path :line :text :hash :before? :after?} ...] :truncated-by KW}  ;; content
+   `:hash` is the content-addressed anchor (`hash` or `hash#N`) for that line —
+   the same one `cat` emits in `:hashes` — so a hit is directly patchable via
+   `{:from_hash <hash>}` without a follow-up `cat`. Absent on blank lines.
      {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW}  ;; files-only
      {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
 
@@ -1235,10 +1238,18 @@
       (let [out (atom [])
             capped? (atom false)]
         (doseq [^File f files :while (not @capped?)]
-          (doseq [hit (search-file-content f matches? before-ctx after-ctx)
-                  :while (not @capped?)]
-            (swap! out conj hit)
-            (when (>= (count @out) limit) (reset! capped? true))))
+          (let [hits (search-file-content f matches? before-ctx after-ctx)]
+            (when (seq hits)
+              ;; Attach the content-addressed anchor (`hash` / `hash#N`) to each
+              ;; hit so the model can patch STRAIGHT from an rg result — the same
+              ;; addressing `cat` emits in `:hashes`, with file-wide ordinals.
+              ;; Hashed once per hit-file (blank lines carry no anchor).
+              (let [hashes (try (patch/lines->hashes (read-all-line-tuples f))
+                             (catch Throwable _ {}))]
+                (doseq [hit hits :while (not @capped?)]
+                  (swap! out conj (let [h (get hashes (:line hit))]
+                                    (cond-> hit h (assoc :hash h))))
+                  (when (>= (count @out) limit) (reset! capped? true)))))))
         {:hits (vec @out)
          :truncated-by (if @capped? :limit :end-of-results)}))))
 
@@ -1874,8 +1885,13 @@
   (let [head (str "edit " edit-index " in " path)]
     (case reason
       :hash-not-found (str head " failed: " (name (:which hash-error)) "-hash "
-                        (pr-str (:hash hash-error)) " matches no line (the line changed or"
-                        " the file moved). Re-read with cat for fresh :hashes.")
+                        (pr-str (:hash hash-error)) " matches no line in the current file."
+                        " Use the EXACT hash cat printed (including its `#N` ordinal for a"
+                        " duplicated line); don't fabricate the ordinal. Re-read with cat"
+                        " for fresh :hashes, then resend the batch.")
+      :overlapping-edits (str head " failed: this edit's target overlaps another edit"
+                           " in the same file — two edits touch the same lines. Merge"
+                           " them into ONE edit, or split into separate patch calls.")
       :hash-ambiguous (str head " failed: " (name (:which hash-error)) "-hash "
                         (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
                         " identical lines " (pr-str (:lines hash-error))
@@ -1913,10 +1929,14 @@
 
 (defn- patch-failure-message
   [failures]
-  (if (= 1 (count failures))
-    (str "patch " (explain-failure (first failures)))
-    (str "patch " (count failures) " edits failed; first: "
-      (explain-failure (first failures)))))
+  ;; patch is ATOMIC — a single failed edit rejects the WHOLE batch and writes
+  ;; NOTHING, so the file is byte-for-byte unchanged. Say so up front: the model
+  ;; must not assume a partial application and must not re-read to \"repair\" it.
+  (let [atomic "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit below and resend the full batch. "]
+    (if (= 1 (count failures))
+      (str atomic (explain-failure (first failures)))
+      (str atomic (count failures) " edits failed; first: "
+        (explain-failure (first failures))))))
 
 (defn- non-exact-passes-for-path
   "Pull the non-`:exact` fuzzy passes that fired against `rel-path` out

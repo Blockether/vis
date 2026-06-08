@@ -213,7 +213,17 @@
     "  outlive the form goes through the verbs: update_plan([...]),\n"
     "  fact_set(\"key\", {...}). A local binding is throwaway scratch —\n"
     "  the trailer + `context` are how state actually reaches the next turn.\n"
-    "- Edit files via patch(...), not by re-writing whole files blindly.\n"
+    "- Edit files via patch(...), not by re-writing whole files blindly. patch is\n"
+    "  ATOMIC and all-or-nothing: every hunk resolves against the file as you last\n"
+    "  read it, so a batch of hunks to one file is safe — they don't shift each\n"
+    "  other. If patch RETURNS, every hunk applied and the returned diff IS your\n"
+    "  confirmation — do NOT re-cat to \"check\". If it ERRORS, NOTHING changed —\n"
+    "  the file is exactly as before; fix the one failing hunk and resend.\n"
+    "- Anchor a hunk with the EXACT `from_hash` cat printed — INCLUDING its `#N`\n"
+    "  ordinal when cat shows one (cat appends `#1`,`#2`,… to a hash shared by\n"
+    "  duplicate lines, so each line is still addressable). Use the ordinal cat\n"
+    "  gave you; never FABRICATE one. Bare hash for a unique line, `hash#N` for a\n"
+    "  duplicated one.\n"
     "- Keep each reply small and purposeful: plan→read, then act.\n"))
 
 (defn build-system-prompt
